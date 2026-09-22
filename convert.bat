@@ -1,0 +1,1 @@
+.\build\bin\uno3d_converter.exe --convert-textures "C:\Program Files (x86)\Steam\steamapps\common\OMSI 2\Vehicles\MAN_DL05\Model\DL05.cfg"

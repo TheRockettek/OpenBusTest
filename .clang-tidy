@@ -1,0 +1,11 @@
+Checks: >-
+  -*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  modernize-use-nullptr,
+  modernize-use-override
+WarningsAsErrors: ''
+HeaderFilterRegex: '(^|/)(src|uno3d)/.*'
+FormatStyle: file

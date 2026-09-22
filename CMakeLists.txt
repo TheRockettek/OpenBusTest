@@ -1,0 +1,84 @@
+cmake_minimum_required(VERSION 3.20)
+
+project(OpenBus VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+option(OPENBUS_ENABLE_CLANG_TIDY
+       "Run clang-tidy during compilation"
+       OFF)
+
+if(OPENBUS_ENABLE_CLANG_TIDY)
+    find_program(OPENBUS_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
+    set(CMAKE_CXX_CLANG_TIDY "${OPENBUS_CLANG_TIDY_EXECUTABLE}")
+endif()
+
+include(FetchContent)
+
+find_package(ODE CONFIG QUIET)
+find_package(glfw3 CONFIG QUIET)
+
+if(NOT TARGET glfw)
+    message(STATUS
+        "glfw3 was not found via CMake package config; fetching GLFW from GitHub.")
+    FetchContent_Declare(glfw
+        GIT_REPOSITORY https://github.com/glfw/glfw.git
+        GIT_TAG 3.4
+    )
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(glfw)
+endif()
+
+if(NOT TARGET glfw)
+    message(FATAL_ERROR
+        "GLFW was not found and could not be fetched automatically. "
+        "Install glfw3 with a package manager such as vcpkg, or set glfw3_DIR "
+        "or CMAKE_PREFIX_PATH to a GLFW installation.")
+endif()
+
+find_package(OpenGL REQUIRED)
+
+if(TARGET ODE::ODE)
+    set(OPENBUS_ODE_TARGET ODE::ODE)
+else()
+    find_path(ODE_INCLUDE_DIR NAMES ode/ode.h)
+    find_library(ODE_LIBRARY NAMES ode ode_double ode_single)
+
+    if(NOT ODE_INCLUDE_DIR OR NOT ODE_LIBRARY)
+        message(FATAL_ERROR
+            "ODE was not found. Install it with vcpkg (vcpkg install ode:x64-windows) "
+            "or set CMAKE_PREFIX_PATH to an ODE installation.")
+    endif()
+
+    add_library(OpenBus::ODE UNKNOWN IMPORTED)
+    set_target_properties(OpenBus::ODE PROPERTIES
+        IMPORTED_LOCATION "${ODE_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${ODE_INCLUDE_DIR}")
+    set(OPENBUS_ODE_TARGET OpenBus::ODE)
+endif()
+
+add_executable(OpenBus
+    src/main.cpp
+    src/BusSimulation.cpp
+    src/Logger.cpp
+    src/Renderer.cpp
+)
+
+target_include_directories(OpenBus PRIVATE src)
+target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} glfw OpenGL::GL)
+
+add_executable(uno3d_converter
+    uno3d/o3d_to_obj.cpp
+)
+
+if(MSVC)
+    target_compile_options(OpenBus PRIVATE /W4 /permissive-)
+    target_link_libraries(OpenBus PRIVATE windowscodecs)
+else()
+    target_compile_options(OpenBus PRIVATE -Wall -Wextra -Wpedantic)
+endif()

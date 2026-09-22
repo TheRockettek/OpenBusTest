@@ -1,0 +1,4 @@
+cfgWheel=0 odeWheel=0 origin=(2.80019,1.10144,0.478902) rotationVar=Wheel_Rotation_0_L suspensionVar=Axle_Suspension_0_L steeringVar=Axle_Steering_0_L pose=(2.80019,1.1014,0.508876)
+cfgWheel=1 odeWheel=1 origin=(2.80019,-1.10144,0.478902) rotationVar=Wheel_Rotation_0_R suspensionVar=Axle_Suspension_0_R steeringVar=Axle_Steering_0_R pose=(2.80019,-1.1014,0.508876)
+cfgWheel=2 odeWheel=2 origin=(-2.92441,0.966357,0.478902) rotationVar=Wheel_Rotation_1_L suspensionVar=Axle_Suspension_1_L steeringVar= pose=(-2.92441,0.96636,0.508876)
+cfgWheel=3 odeWheel=3 origin=(-2.92441,-0.966357,0.478902) rotationVar=Wheel_Rotation_1_R suspensionVar=Axle_Suspension_1_R steeringVar= pose=(-2.92441,-0.96636,0.508876)
