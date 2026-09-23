@@ -3,6 +3,7 @@
 #include "BusSimulation.h"
 
 #include <array>
+#include <filesystem>
 #include <memory>
 #include <vector>
 
@@ -21,6 +22,8 @@ class Renderer {
     void beginFrame();
     void draw(const BusSimulation& simulation);
     void endFrame();
+    void captureViews(const BusSimulation& simulation, const std::filesystem::path& directory);
+    bool consumeCaptureRequest();
     double throttle() const;
     double steering() const;
     double brake() const;
@@ -42,6 +45,9 @@ class Renderer {
     bool draggingCamera_ = false;
     std::array<bool, 4> previousKeyStates_ = {};
     std::array<bool, 10> previousViewKeyStates_ = {};
+    bool previousCaptureKeyState_ = false;
+    bool captureRequested_ = false;
+    bool captureMode_ = false;
     std::vector<KeyEvent> keyEvents_;
     std::unique_ptr<BusModel> busModel_;
 };

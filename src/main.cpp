@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -39,6 +40,7 @@ int main() {
         double diagnosticsAccumulator = 0.0;
         double nextWheelRotationLogTime = 1.0;
         bool firstDiagnosticSample = true;
+        bool captureOnStartup = std::getenv("OPENBUS_CAPTURE_VIEWS") != nullptr;
         std::vector<KeyEvent> pendingKeyEvents;
         while (!renderer.shouldClose()) {
             const double currentTime = glfwGetTime();
@@ -65,6 +67,10 @@ int main() {
                 diagnosticsAccumulator = std::fmod(diagnosticsAccumulator, 0.2);
             }
             renderer.draw(simulation);
+            if ((captureOnStartup && currentTime >= 2.0) || renderer.consumeCaptureRequest()) {
+                captureOnStartup = false;
+                renderer.captureViews(simulation, "screenshots");
+            }
             renderer.endFrame();
         }
         if (!pendingKeyEvents.empty()) {

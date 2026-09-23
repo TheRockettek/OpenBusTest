@@ -31,8 +31,15 @@ geometry for collision.
 
 ### `[viewpoint]`
 
-Sets the view category/index in which the following mesh is active, such as
-driver, passenger, exterior, or AI view.
+Sets the view categories in which the following mesh is active. The value is a
+bit mask made by adding:
+
+- `1`: player-vehicle exterior
+- `2`: player-vehicle interior
+- `4`: non-player vehicle
+
+`0` means all viewpoints. This is a mesh-level optimization and is separate
+from selecting a camera.
 
 ### `[fixed]`
 
@@ -99,7 +106,11 @@ expression such as `\S:1`.
 
 ### `[matl_alpha]`
 
-One alpha/rendering mode integer.
+One alpha/rendering mode integer:
+
+- `0`: ignore alpha; render opaque
+- `1`: clip alpha at `0.5`
+- `2`: blend alpha with the existing image
 
 ### `[matl_noZcheck]`
 
@@ -107,7 +118,9 @@ Marker disabling depth-buffer comparison for the material.
 
 ### `[matl_noZwrite]`
 
-Marker disabling depth-buffer writes for the material.
+Marker disabling depth-buffer writes for the material. It does not itself
+enable alpha blending; combine it with `[matl_alpha]` when both behaviors are
+required.
 
 ### `[matl_texadress_border]`
 
@@ -172,6 +185,42 @@ One text-texture identifier/index applied to the current mesh/material.
 
 Six display bounds: minimum x/y/z followed by maximum x/y/z. A following
 view-context flag may restrict the display to interior, exterior, or AI views.
+
+## 4. Camera definitions
+
+These records are normally defined in a BUS or vehicle CFG rather than in an
+individual mesh section.
+
+### `[add_camera_driver]`
+
+Adds a driver camera. The record contains local position, orbit distance, field
+of view, initial pan, and initial tilt. Pan is positive to the right and tilt
+is positive upward. The left/right camera keys step through driver cameras in
+file order.
+
+### `[add_camera_pax]`
+
+Adds a passenger camera with the same layout and angle conventions as
+`[add_camera_driver]`.
+
+### `[add_camera_reflexion]`
+
+Adds a reflection/mirror camera. Its render target is a square virtual texture
+named `reflexionN.bmp`, where `N` is the zero-based reflection-camera index.
+The orbit distance should normally be zero.
+
+### `[add_camera_reflexion_2]`
+
+Adds a reflection camera with an additional culling value. The culling value
+controls when rendering stops as the mirror leaves the view.
+
+### `[set_camera_std]`
+
+Sets the zero-based default driver-camera index.
+
+### `[set_camera_outside_center]`
+
+Sets the local point around which the exterior camera orbits.
 
 ### `[texcoordtransX]` and `[texcoordtransY]`
 
@@ -292,4 +341,3 @@ vehicle/
     *.osc
     *.txt
 ```
-

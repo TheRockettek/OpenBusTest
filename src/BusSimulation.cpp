@@ -74,7 +74,7 @@ const std::vector<RoadBump>& testRoadBumps() {
             {62.0, -2.00, 0.55, 0.35, 0.75, RoadFeatureType::Barrier},
             {65.0, 0.65, 0.80, 0.45, 0.30, RoadFeatureType::Barrier},
             {67.0, -0.65, 0.80, 0.45, 0.30, RoadFeatureType::Barrier},
-            {90.0, 0.0, 32.0, 68, 18.0, RoadFeatureType::Incline},
+            {90.0, 0.0, 120.0, 250, 50.0, RoadFeatureType::Incline},
         };
         for (int index = 0; index < 10; ++index) {
             result.push_back({24.0 + index * 0.62, 0.0, 0.36, 6.8, index % 2 == 0 ? 0.055 : 0.085});
@@ -851,7 +851,7 @@ void BusSimulation::update(double elapsedSeconds, double throttle, double steeri
         impl_->accumulator = std::fmod(impl_->accumulator, impl_->fixedStep);
         impl_->dropped = true;
         if (!impl_->dropReported) {
-            simulationLog.Log("Dropped accumulated simulation time after exceeding catch-up limit");
+            simulationLog.Log("Dropped accumulated simulation time after exceeding catch-up limit. Dropped frames: " + std::to_string(impl_->lastSteps));
             impl_->dropReported = true;
         }
     } else {

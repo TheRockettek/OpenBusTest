@@ -62,8 +62,13 @@ addition to the visible meshes for collision detection.
 
 ### `[viewpoint]`
 
-One viewpoint or visibility category/index. It is commonly used to restrict an
-object to interior, exterior, AI, or other view contexts.
+Restricts mesh visibility with a bit mask:
+
+- `1`: player-vehicle exterior
+- `2`: player-vehicle interior
+- `4`: non-player vehicle
+
+Add flags to enable multiple categories; `0` means all viewpoints.
 
 ### `[mouseevent]`
 
@@ -73,9 +78,39 @@ specific.
 
 ### `[illumination_interior]`
 
-A repeated interior-light assignment. The values identify an illumination
-mode and affected mesh/vertex/material groups. Preserve the record order from
-the source model.
+A repeated assignment of four zero-based `[interiorlight]` indexes. Use `-1`
+for an unused slot. The keyword must follow `[mesh]`.
+
+### `[boundingbox]`
+
+Defines a cuboid collider using size x/y/z followed by center x/y/z, in metres
+relative to the origin.
+
+### `[nocollision]`
+
+Disables collision for the object.
+
+## Camera keywords
+
+### `[add_camera_driver]` and `[add_camera_pax]`
+
+Define driver or passenger cameras using local position, orbit distance, field
+of view, initial pan, and initial tilt. Pan is positive right and tilt is
+positive up.
+
+### `[add_camera_reflexion]` and `[add_camera_reflexion_2]`
+
+Define reflection cameras. Reflection textures use zero-based names such as
+`reflexion0.bmp`. The second form adds a culling value that stops rendering
+when the mirror leaves the view.
+
+### `[set_camera_std]`
+
+Sets the zero-based default driver-camera index.
+
+### `[set_camera_outside_center]`
+
+Sets the local point around which the exterior camera rotates.
 
 ### `[CTC]`
 

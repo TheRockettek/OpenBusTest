@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -23,6 +24,8 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -40,6 +43,16 @@ Logger textureLog = Logger("Texture");
 Logger wheelLog = Logger("Wheel");
 
 namespace {
+
+enum class RenderViewContext {
+    PlayerExterior = 1,
+    PlayerInterior = 2,
+    NonPlayer = 4,
+};
+
+constexpr int viewpointMask(RenderViewContext context) {
+    return static_cast<int>(context);
+}
 
 constexpr double MAN_DL05_MODEL_OFFSET_Z = -1.035;
 constexpr int ROAD_BUMP_SEGMENTS = 12;
@@ -405,6 +418,53 @@ void drawCollisionWireframe(const BusSimulation& simulation) {
     glDepthMask(GL_TRUE);
     glColor4d(1.0, 1.0, 1.0, 1.0);
 }
+
+bool saveFramebufferBmp(const std::filesystem::path& path, int width, int height) {
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+
+    std::array<std::uint8_t, 54> header = {};
+    const std::uint32_t imageSize = static_cast<std::uint32_t>(width * height * 3);
+    const std::uint32_t fileSize = 54 + imageSize;
+    header[0] = 'B';
+    header[1] = 'M';
+    header[2] = static_cast<std::uint8_t>(fileSize);
+    header[3] = static_cast<std::uint8_t>(fileSize >> 8);
+    header[4] = static_cast<std::uint8_t>(fileSize >> 16);
+    header[5] = static_cast<std::uint8_t>(fileSize >> 24);
+    header[10] = 54;
+    header[14] = 40;
+    header[18] = static_cast<std::uint8_t>(width);
+    header[19] = static_cast<std::uint8_t>(width >> 8);
+    header[20] = static_cast<std::uint8_t>(width >> 16);
+    header[21] = static_cast<std::uint8_t>(width >> 24);
+    header[22] = static_cast<std::uint8_t>(height);
+    header[23] = static_cast<std::uint8_t>(height >> 8);
+    header[24] = static_cast<std::uint8_t>(height >> 16);
+    header[25] = static_cast<std::uint8_t>(height >> 24);
+    header[26] = 1;
+    header[28] = 24;
+    header[34] = static_cast<std::uint8_t>(imageSize);
+    header[35] = static_cast<std::uint8_t>(imageSize >> 8);
+    header[36] = static_cast<std::uint8_t>(imageSize >> 16);
+    header[37] = static_cast<std::uint8_t>(imageSize >> 24);
+
+    std::ofstream output(path, std::ios::binary);
+    if (!output) {
+        return false;
+    }
+    output.write(reinterpret_cast<const char*>(header.data()), header.size());
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const std::size_t index = (static_cast<std::size_t>(y) * width + x) * 4;
+            const std::array<std::uint8_t, 3> pixel = {pixels[index + 2], pixels[index + 1],
+                                                        pixels[index]};
+            output.write(reinterpret_cast<const char*>(pixel.data()), pixel.size());
+        }
+    }
+    return output.good();
+}
 } // namespace
 
 struct BusModel {
@@ -412,6 +472,16 @@ struct BusModel {
         int width = 0;
         int height = 0;
         std::vector<std::uint8_t> rgba;
+    };
+
+    struct TextureRequest {
+        std::filesystem::path root;
+        std::filesystem::path path;
+        std::string name;
+        std::filesystem::path resolvedPath;
+        Image image;
+        bool complete = false;
+        std::mutex mutex;
     };
 
     struct ObjPosition {
@@ -437,14 +507,29 @@ struct BusModel {
 
     struct ObjMaterial {
         std::filesystem::path texturePath;
+        std::string textureName;
         std::array<double, 3> color = {0.65, 0.65, 0.65};
+    };
+
+    struct ParsedObj {
+        std::vector<ObjPosition> positions;
+        std::vector<ObjTexCoord> texCoords;
+        std::vector<ObjTriangle> triangles;
+        std::unordered_map<std::string, ObjMaterial> materials;
+        std::array<double, 3> boundsCenter = {};
+        double boundsRadius = 0.0;
     };
 
     struct MaterialState {
         std::filesystem::path texturePath;
+        std::string textureName;
+        std::string environmentTextureName;
+        double environmentStrength = 0.0;
         int alphaMode = 0;
         bool noZwrite = false;
     };
+
+    struct ObjRequest;
 
     struct WheelAnimation {
         std::string rotationVariable;
@@ -457,13 +542,23 @@ struct BusModel {
     struct Part {
         std::filesystem::path objPath;
         std::filesystem::path texturePath;
+        std::string textureName;
         std::array<double, 3> color = {0.65, 0.65, 0.65};
         int viewpoint = 0;
+        int renderType = 2;
         std::string meshIdentifier;
         std::string animationParent;
         std::unordered_map<std::string, MaterialState> materialStates;
         int lodIndex = -1;
         WheelAnimation wheelAnimation;
+        std::shared_ptr<ObjRequest> objRequest;
+    };
+
+    struct ObjRequest {
+        Part part;
+        std::shared_ptr<ParsedObj> parsed;
+        bool complete = false;
+        std::mutex mutex;
     };
 
     struct Vertex {
@@ -473,8 +568,18 @@ struct BusModel {
     struct Batch {
         GLuint buffer = 0;
         GLuint texture = 0;
+        std::filesystem::path texturePath;
+        std::filesystem::path textureRoot;
+        std::string textureName;
+        std::string environmentTextureName;
+        GLuint environmentTexture = 0;
+        double environmentStrength = 0.0;
+        bool environmentLoadAttempted = false;
         std::array<double, 3> color = {0.65, 0.65, 0.65};
         bool textured = false;
+        bool textureLoadAttempted = false;
+        bool textureLoadStarted = false;
+        std::shared_ptr<TextureRequest> textureRequest;
         int alphaMode = 0;
         bool noZwrite = false;
         std::size_t vertexCount = 0;
@@ -483,6 +588,7 @@ struct BusModel {
     struct DisplayPart {
         std::vector<Batch> batches;
         int viewpoint;
+        int renderType = 2;
         bool transparent;
         int lodIndex;
         std::array<double, 3> center;
@@ -497,17 +603,20 @@ struct BusModel {
 
     std::vector<DisplayPart> displayLists;
     std::vector<WheelModel> wheelModels;
+    std::vector<Part> pendingParts;
     std::vector<GLuint> textures;
-    std::unordered_map<std::string, GLuint> textureCache;
-    std::unordered_set<std::string> loggedTextureIssues;
     mutable std::unordered_set<std::size_t> loggedWheelBindings;
     double modelOffsetZ = MAN_DL05_MODEL_OFFSET_Z;
     double textureScale = 1;
-    bool frustumCulling = false;
+    bool frustumCulling = true;
     std::vector<double> lodThresholds;
     std::size_t opaqueDisplayCount = 0;
     mutable std::size_t lastRenderedTriangles = 0;
     bool loaded = false;
+    int activeLod = -1;
+
+    void loadTextureRequest(const std::shared_ptr<TextureRequest>& request);
+    void loadObjRequest(const std::shared_ptr<ObjRequest>& request);
 
 #ifdef _WIN32
     bool comInitialized = false;
@@ -581,7 +690,7 @@ struct BusModel {
 #endif
     }
 
-    void draw(bool outsideView) const {
+    void draw(RenderViewContext context) {
         if (!loaded) {
             return;
         }
@@ -596,11 +705,33 @@ struct BusModel {
         GLdouble projection[16] = {};
         glGetDoublev(GL_MODELVIEW_MATRIX, modelView);
         glGetDoublev(GL_PROJECTION_MATRIX, projection);
+        std::array<std::array<double, 4>, 6> frustumPlanes = {};
+        std::array<double, 6> frustumPlaneLengths = {};
+        if (frustumCulling) {
+            const std::array<std::array<double, 4>, 6> planeSigns = {
+                {{{1.0, 0.0, 0.0, 1.0}}, {{-1.0, 0.0, 0.0, 1.0}},
+                 {{0.0, 1.0, 0.0, 1.0}}, {{0.0, -1.0, 0.0, 1.0}},
+                 {{0.0, 0.0, 1.0, 1.0}}, {{0.0, 0.0, -1.0, 1.0}}}};
+            for (std::size_t plane = 0; plane < planeSigns.size(); ++plane) {
+                const auto& signs = planeSigns[plane];
+                double lengthSquared = 0.0;
+                for (int column = 0; column < 4; ++column) {
+                    double coefficient = 0.0;
+                    for (int row = 0; row < 4; ++row) {
+                        coefficient += signs[row] * projection[row + column * 4];
+                    }
+                    frustumPlanes[plane][column] = coefficient;
+                    if (column < 3) {
+                        lengthSquared += coefficient * coefficient;
+                    }
+                }
+                frustumPlaneLengths[plane] = std::sqrt(lengthSquared);
+            }
+        }
         const auto visible = [&](const DisplayPart& part) {
             const double local[4] = {part.center[0], part.center[1], part.center[2] + modelOffsetZ,
                                      1.0};
             double eye[4] = {};
-            double clip[4] = {};
             for (int row = 0; row < 4; ++row) {
                 for (int column = 0; column < 4; ++column) {
                     eye[row] += modelView[row + column * 4] * local[column];
@@ -623,22 +754,16 @@ struct BusModel {
             if (!frustumCulling) {
                 return true;
             }
-            for (int row = 0; row < 4; ++row) {
-                for (int column = 0; column < 4; ++column) {
-                    clip[row] += projection[row + column * 4] * eye[column];
+            for (std::size_t plane = 0; plane < frustumPlanes.size(); ++plane) {
+                const double planeDistance = frustumPlanes[plane][0] * eye[0] +
+                                             frustumPlanes[plane][1] * eye[1] +
+                                             frustumPlanes[plane][2] * eye[2] +
+                                             frustumPlanes[plane][3];
+                if (planeDistance < -part.radius * frustumPlaneLengths[plane]) {
+                    return false;
                 }
             }
-            if (clip[3] + part.radius <= 0.0) {
-                return false;
-            }
-            if (part.radius > 8.0) {
-                return true;
-            }
-            const double margin =
-                part.radius * 2.5 * std::max(std::abs(projection[0]), std::abs(projection[5]));
-            return clip[0] >= -clip[3] - margin && clip[0] <= clip[3] + margin &&
-                   clip[1] >= -clip[3] - margin && clip[1] <= clip[3] + margin &&
-                   clip[2] >= -clip[3] - margin && clip[2] <= clip[3] + margin;
+            return true;
         };
         const auto viewDepth = [&](const DisplayPart& part) {
             const double local[4] = {part.center[0], part.center[1], part.center[2] + modelOffsetZ,
@@ -649,25 +774,30 @@ struct BusModel {
             }
             return -eyeZ;
         };
-        std::vector<const DisplayPart*> opaqueParts;
-        std::vector<const DisplayPart*> transparentParts;
-        for (const DisplayPart& part : displayLists) {
-            const bool visibleOutside = part.viewpoint == 0 || (part.viewpoint & 1) != 0;
-            const bool visibleInside = part.viewpoint == 0 || (part.viewpoint & 2) != 0;
-            if ((outsideView && !visibleOutside) || (!outsideView && !visibleInside) ||
-                !visible(part)) {
+        struct TransparentBatch {
+            Batch* batch;
+            double depth;
+            int renderType;
+        };
+        std::vector<DisplayPart*> opaqueParts;
+        std::vector<TransparentBatch> noDepthOpaqueBatches;
+        std::vector<TransparentBatch> transparentBatches;
+        for (DisplayPart& part : displayLists) {
+            const bool viewpointMatches =
+                part.viewpoint == 0 || (part.viewpoint & viewpointMask(context)) != 0;
+            if (!viewpointMatches || !visible(part)) {
                 continue;
             }
-            const bool hasTransparentBatch =
-                std::any_of(part.batches.begin(), part.batches.end(), [](const Batch& batch) {
-                    return batch.alphaMode != 0 || batch.noZwrite;
-                });
             const bool hasOpaqueBatch =
                 std::any_of(part.batches.begin(), part.batches.end(), [](const Batch& batch) {
                     return batch.alphaMode == 0 && !batch.noZwrite;
                 });
-            if (hasTransparentBatch) {
-                transparentParts.push_back(&part);
+            for (Batch& batch : part.batches) {
+                if (batch.alphaMode == 0 && batch.noZwrite) {
+                    noDepthOpaqueBatches.push_back({&batch, viewDepth(part), part.renderType});
+                } else if (batch.alphaMode != 0) {
+                    transparentBatches.push_back({&batch, viewDepth(part), part.renderType});
+                }
             }
             if (hasOpaqueBatch) {
                 opaqueParts.push_back(&part);
@@ -677,28 +807,32 @@ struct BusModel {
                   [&](const DisplayPart* first, const DisplayPart* second) {
                       return viewDepth(*first) < viewDepth(*second);
                   });
-        std::sort(transparentParts.begin(), transparentParts.end(),
-                  [&](const DisplayPart* first, const DisplayPart* second) {
-                      return viewDepth(*first) > viewDepth(*second);
-                  });
+        std::stable_sort(transparentBatches.begin(), transparentBatches.end(),
+                         [](const TransparentBatch& first, const TransparentBatch& second) {
+                             return first.renderType < second.renderType;
+                         });
+        std::stable_sort(noDepthOpaqueBatches.begin(), noDepthOpaqueBatches.end(),
+                         [](const TransparentBatch& first, const TransparentBatch& second) {
+                             return first.renderType < second.renderType;
+                         });
         lastRenderedTriangles = 0;
-        for (const DisplayPart* part : opaqueParts) {
+        for (DisplayPart* part : opaqueParts) {
             lastRenderedTriangles += part->triangleCount;
         }
-        for (const DisplayPart* part : transparentParts) {
-            lastRenderedTriangles += part->triangleCount;
+        for (const TransparentBatch& transparent : transparentBatches) {
+            lastRenderedTriangles += transparent.batch->vertexCount / 3;
         }
         glPushMatrix();
         glTranslated(0.0, 0.0, modelOffsetZ);
-        for (const DisplayPart* part : opaqueParts) {
-            for (const Batch& batch : part->batches) {
+        for (DisplayPart* part : opaqueParts) {
+            for (Batch& batch : part->batches) {
                 if (batch.alphaMode != 0 || batch.noZwrite) {
                     continue;
                 }
                 if (batch.alphaMode == 2 || batch.noZwrite) {
                     glEnable(GL_BLEND);
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    glDepthMask(GL_FALSE);
+                    glDepthMask(GL_TRUE);
                 } else if (batch.alphaMode == 1) {
                     glDisable(GL_BLEND);
                     glEnable(GL_ALPHA_TEST);
@@ -709,6 +843,7 @@ struct BusModel {
                     glDisable(GL_ALPHA_TEST);
                     glDepthMask(GL_TRUE);
                 }
+                ensureTexture(batch);
                 if (batch.textured) {
                     glEnable(GL_TEXTURE_2D);
                     glBindTexture(GL_TEXTURE_2D, batch.texture);
@@ -728,43 +863,72 @@ struct BusModel {
                 glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
                 glDisableClientState(GL_TEXTURE_COORD_ARRAY);
                 glDisableClientState(GL_VERTEX_ARRAY);
+                drawEnvironmentMap(batch);
             }
         }
         glDepthMask(GL_FALSE);
-        for (const DisplayPart* part : transparentParts) {
-            for (const Batch& batch : part->batches) {
-                if (batch.alphaMode == 0 && !batch.noZwrite) {
-                    continue;
-                }
-                if (batch.alphaMode == 1) {
-                    glDisable(GL_BLEND);
-                    glEnable(GL_ALPHA_TEST);
-                    glAlphaFunc(GL_GREATER, 0.5f);
-                } else {
-                    glEnable(GL_BLEND);
-                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    glDisable(GL_ALPHA_TEST);
-                }
-                if (batch.textured) {
-                    glEnable(GL_TEXTURE_2D);
-                    glBindTexture(GL_TEXTURE_2D, batch.texture);
-                    glColor3d(1.0, 1.0, 1.0);
-                } else {
-                    glDisable(GL_TEXTURE_2D);
-                    glColor3d(batch.color[0], batch.color[1], batch.color[2]);
-                }
-                pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-                glEnableClientState(GL_VERTEX_ARRAY);
-                glVertexPointer(3, GL_FLOAT, sizeof(Vertex), nullptr);
-                if (batch.textured) {
-                    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-                    glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex),
-                                      reinterpret_cast<const void*>(3 * sizeof(float)));
-                }
-                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
-                glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-                glDisableClientState(GL_VERTEX_ARRAY);
+        glDisable(GL_BLEND);
+        glDisable(GL_ALPHA_TEST);
+        for (const TransparentBatch& noDepthOpaque : noDepthOpaqueBatches) {
+            Batch& batch = *noDepthOpaque.batch;
+            ensureTexture(batch);
+            if (batch.textured) {
+                glEnable(GL_TEXTURE_2D);
+                glBindTexture(GL_TEXTURE_2D, batch.texture);
+                glColor3d(1.0, 1.0, 1.0);
+            } else {
+                glDisable(GL_TEXTURE_2D);
+                glColor3d(batch.color[0], batch.color[1], batch.color[2]);
             }
+            pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+            glEnableClientState(GL_VERTEX_ARRAY);
+            glVertexPointer(3, GL_FLOAT, sizeof(Vertex), nullptr);
+            if (batch.textured) {
+                glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+                glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex),
+                                  reinterpret_cast<const void*>(3 * sizeof(float)));
+            }
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            glDisableClientState(GL_VERTEX_ARRAY);
+            drawEnvironmentMap(batch);
+        }
+        glDepthMask(GL_FALSE);
+        for (const TransparentBatch& transparent : transparentBatches) {
+            Batch& batch = *transparent.batch;
+            if (batch.alphaMode == 1) {
+                glDisable(GL_BLEND);
+                glEnable(GL_ALPHA_TEST);
+                glAlphaFunc(GL_GREATER, 0.5f);
+            } else if (batch.alphaMode == 2) {
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glDisable(GL_ALPHA_TEST);
+            } else {
+                glDisable(GL_BLEND);
+                glDisable(GL_ALPHA_TEST);
+            }
+            ensureTexture(batch);
+            if (batch.textured) {
+                glEnable(GL_TEXTURE_2D);
+                glBindTexture(GL_TEXTURE_2D, batch.texture);
+                glColor3d(1.0, 1.0, 1.0);
+            } else {
+                glDisable(GL_TEXTURE_2D);
+                glColor3d(batch.color[0], batch.color[1], batch.color[2]);
+            }
+            pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+            glEnableClientState(GL_VERTEX_ARRAY);
+            glVertexPointer(3, GL_FLOAT, sizeof(Vertex), nullptr);
+            if (batch.textured) {
+                glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+                glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex),
+                                  reinterpret_cast<const void*>(3 * sizeof(float)));
+            }
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
+            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            glDisableClientState(GL_VERTEX_ARRAY);
+            drawEnvironmentMap(batch);
         }
         pglBindBuffer(GL_ARRAY_BUFFER, 0);
         glDepthMask(GL_TRUE);
@@ -781,10 +945,10 @@ struct BusModel {
     }
 
     void drawConfiguredWheels(const BusSimulation& simulation, const BodyPose& chassis,
-                              bool outsideView) const {
+                              bool outsideView) {
         std::vector<bool> usedWheelIndices(simulation.wheelCount(), false);
         for (std::size_t modelIndex = 0; modelIndex < wheelModels.size(); ++modelIndex) {
-            const WheelModel& wheel = wheelModels[modelIndex];
+            WheelModel& wheel = wheelModels[modelIndex];
             if (wheel.parts.empty() || !wheel.animation.hasOrigin) {
                 continue;
             }
@@ -825,7 +989,7 @@ struct BusModel {
                              std::to_string(pose.position[1]) + ',' +
                              std::to_string(pose.position[2]) + ")");
             }
-            for (const DisplayPart& part : wheel.parts) {
+            for (DisplayPart& part : wheel.parts) {
                 const bool visibleOutside = part.viewpoint == 0 || (part.viewpoint & 1) != 0;
                 const bool visibleInside = part.viewpoint == 0 || (part.viewpoint & 2) != 0;
                 if ((outsideView && !visibleOutside) || (!outsideView && !visibleInside)) {
@@ -835,7 +999,8 @@ struct BusModel {
                 applyPose(pose);
                 glRotated(90.0, 1.0, 0.0, 0.0);
                 glTranslated(-part.center[0], -part.center[1], -part.center[2]);
-                for (const Batch& batch : part.batches) {
+                for (Batch& batch : part.batches) {
+                    ensureTexture(batch);
                     if (batch.alphaMode == 2 || batch.noZwrite) {
                         glEnable(GL_BLEND);
                         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -885,6 +1050,10 @@ struct BusModel {
 
     std::size_t renderedTriangles() const {
         return lastRenderedTriangles;
+    }
+
+    void loadForView(RenderViewContext context, double viewDistance) {
+        ensureLoaded(context, viewDistance);
     }
 
   private:
@@ -1312,18 +1481,8 @@ struct BusModel {
         return true;
     }
 
-    GLuint loadTexture(const std::filesystem::path& path) {
-        gameLog.Log("Loading texture from path: " + path.generic_string());
-        const std::string cacheKey = path.generic_string();
-        const auto cached = textureCache.find(cacheKey);
-        if (cached != textureCache.end()) {
-            return cached->second;
-        }
-        Image image;
-        if (!readImage(path, image)) {
-            textureLog.Log("decode-failed: " + path.generic_string());
-            return 0;
-        }
+    GLuint uploadTexture(const std::filesystem::path& path, Image image) {
+        gameLog.Log("Uploading texture from path: " + path.generic_string());
         if (textureScale < 0.999) {
             const int scaledWidth =
                 std::max(1, static_cast<int>(std::lround(image.width * textureScale)));
@@ -1357,7 +1516,6 @@ struct BusModel {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, image.rgba.data());
         textures.push_back(texture);
-        textureCache.emplace(cacheKey, texture);
         return texture;
     }
 
@@ -1398,13 +1556,49 @@ struct BusModel {
         if (cleaned.empty()) {
             return {};
         }
+        const auto cacheResult = [](const std::filesystem::path& path) { return path; };
         std::filesystem::path direct = root / cleaned;
         if (std::filesystem::exists(direct)) {
-            return direct;
+            return cacheResult(direct);
         }
+        for (std::filesystem::path ancestor = root; !ancestor.empty();
+             ancestor = ancestor.parent_path()) {
+            const std::filesystem::path textureRoot = ancestor / "Texture";
+            if (std::filesystem::exists(textureRoot)) {
+                direct = textureRoot / cleaned;
+                if (std::filesystem::exists(direct)) {
+                    return cacheResult(direct);
+                }
+            }
+            const std::filesystem::path parent = ancestor.parent_path();
+            if (parent == ancestor) {
+                break;
+            }
+        }
+        const std::string basename = lower(std::filesystem::path(cleaned).filename().string());
         const std::string requestedStem = lower(std::filesystem::path(cleaned).stem().string());
         const std::array<std::string, 6> imageExtensions = {".tga", ".bmp", ".png",
                                                             ".dds", ".jpg", ".jpeg"};
+        for (std::filesystem::path ancestor = root; !ancestor.empty();
+             ancestor = ancestor.parent_path()) {
+            const std::filesystem::path textureRoot = ancestor / "Texture";
+            if (std::filesystem::exists(textureRoot)) {
+                for (const auto& entry : std::filesystem::directory_iterator(
+                         textureRoot, std::filesystem::directory_options::skip_permission_denied)) {
+                    if (entry.is_regular_file() &&
+                        lower(entry.path().stem().string()) == requestedStem &&
+                        std::find(imageExtensions.begin(), imageExtensions.end(),
+                                  lower(entry.path().extension().string())) !=
+                            imageExtensions.end()) {
+                        return cacheResult(entry.path());
+                    }
+                }
+            }
+            const std::filesystem::path parent = ancestor.parent_path();
+            if (parent == ancestor) {
+                break;
+            }
+        }
         if (std::filesystem::exists(root)) {
             for (const auto& entry : std::filesystem::directory_iterator(
                      root, std::filesystem::directory_options::skip_permission_denied)) {
@@ -1413,11 +1607,10 @@ struct BusModel {
                     std::find(imageExtensions.begin(), imageExtensions.end(),
                               lower(entry.path().extension().string())) != imageExtensions.end()) {
                     gameLog.Log("Found texture directly at path: " + entry.path().generic_string());
-                    return entry.path();
+                    return cacheResult(entry.path());
                 }
             }
         }
-        const std::string basename = std::filesystem::path(cleaned).filename().string();
         for (std::filesystem::path ancestor = root; !ancestor.empty();
              ancestor = ancestor.parent_path()) {
             const std::filesystem::path textureRoot = ancestor / "Texture";
@@ -1425,15 +1618,15 @@ struct BusModel {
                 direct = textureRoot / cleaned;
                 if (std::filesystem::exists(direct)) {
                     gameLog.Log("Found texture at direct path: " + direct.generic_string());
-                    return direct;
+                    return cacheResult(direct);
                 }
                 for (const auto& entry : std::filesystem::recursive_directory_iterator(
                          textureRoot, std::filesystem::directory_options::skip_permission_denied)) {
                     if (entry.is_regular_file() &&
-                        lower(entry.path().filename().string()) == lower(basename)) {
+                        lower(entry.path().filename().string()) == basename) {
                         gameLog.Log("Found texture at recursive path: " +
                                     entry.path().generic_string());
-                        return entry.path();
+                        return cacheResult(entry.path());
                     }
                 }
                 for (const auto& entry : std::filesystem::recursive_directory_iterator(
@@ -1447,7 +1640,7 @@ struct BusModel {
                         imageExtensions.end()) {
                         gameLog.Log("Found texture at recursive path with extension: " +
                                     entry.path().generic_string());
-                        return entry.path();
+                        return cacheResult(entry.path());
                     }
                 }
             }
@@ -1457,19 +1650,82 @@ struct BusModel {
             }
         }
         textureLog.Log("missing: " + cleaned);
-        return {};
+        return cacheResult({});
     }
 
-    void loadObj(const Part& part) {
-        gameLog.Log("Loading OBJ model from path: " + part.objPath.generic_string());
-        std::ifstream input(part.objPath);
-        if (!input) {
-            gameLog.Log("Failed to open OBJ model at path: " + part.objPath.generic_string());
+    void ensureTexture(Batch& batch) {
+        if (batch.textureLoadAttempted) {
             return;
         }
-        std::vector<ObjPosition> positions;
-        std::vector<ObjTexCoord> texCoords;
-        std::vector<ObjTriangle> triangles;
+        if (!batch.textureLoadStarted) {
+            batch.textureLoadStarted = true;
+            batch.textureRequest = std::make_shared<TextureRequest>();
+            batch.textureRequest->root = batch.textureRoot;
+            batch.textureRequest->path = batch.texturePath;
+            batch.textureRequest->name = batch.textureName;
+            loadTextureRequest(batch.textureRequest);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(batch.textureRequest->mutex);
+            if (!batch.textureRequest->complete) {
+                return;
+            }
+            batch.texturePath = batch.textureRequest->resolvedPath;
+            if (batch.texturePath.empty()) {
+                batch.textureLoadAttempted = true;
+                textureLog.Log("decode-failed: " + batch.textureName);
+                return;
+            }
+            batch.texture =
+                uploadTexture(batch.texturePath, std::move(batch.textureRequest->image));
+        }
+        batch.textureLoadAttempted = true;
+        batch.textured = batch.texture != 0;
+        if (!batch.environmentLoadAttempted && !batch.environmentTextureName.empty() &&
+            batch.environmentStrength > 0.0) {
+            batch.environmentLoadAttempted = true;
+            const std::filesystem::path environmentPath =
+                findTexture(batch.textureRoot, batch.environmentTextureName);
+            if (!environmentPath.empty()) {
+                Image environmentImage;
+                if (readImage(environmentPath, environmentImage)) {
+                    batch.environmentTexture =
+                        uploadTexture(environmentPath, std::move(environmentImage));
+                }
+            }
+        }
+    }
+
+    void drawEnvironmentMap(const Batch& batch) const {
+        if (!batch.environmentTexture || batch.environmentStrength <= 0.0) {
+            return;
+        }
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, batch.environmentTexture);
+        glColor4d(1.0, 1.0, 1.0, std::clamp(batch.environmentStrength, 0.0, 1.0));
+        pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+        glEnableClientState(GL_VERTEX_ARRAY);
+        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+        glVertexPointer(3, GL_FLOAT, sizeof(Vertex), nullptr);
+        glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex),
+                          reinterpret_cast<const void*>(3 * sizeof(float)));
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        glDisableClientState(GL_VERTEX_ARRAY);
+        glDisable(GL_TEXTURE_2D);
+        glDisable(GL_BLEND);
+        glColor4d(1.0, 1.0, 1.0, 1.0);
+    }
+
+    static std::shared_ptr<ParsedObj> parseObj(const std::filesystem::path& path) {
+        auto result = std::make_shared<ParsedObj>();
+        std::ifstream input(path);
+        if (!input) {
+            return {};
+        }
         std::filesystem::path materialLibrary;
         std::string currentMaterial;
         std::string line;
@@ -1480,16 +1736,16 @@ struct BusModel {
             if (type == "v") {
                 ObjPosition position = {};
                 stream >> position.x >> position.y >> position.z;
-                positions.push_back(position);
+                result->positions.push_back(position);
             } else if (type == "vt") {
                 ObjTexCoord texCoord = {};
                 stream >> texCoord.u >> texCoord.v;
-                texCoords.push_back(texCoord);
+                result->texCoords.push_back(texCoord);
             } else if (type == "mtllib") {
                 std::string materialPath;
                 stream >> materialPath;
                 std::replace(materialPath.begin(), materialPath.end(), '\\', '/');
-                materialLibrary = part.objPath.parent_path() / materialPath;
+                materialLibrary = path.parent_path() / materialPath;
             } else if (type == "usemtl") {
                 stream >> currentMaterial;
             } else if (type == "f") {
@@ -1498,41 +1754,39 @@ struct BusModel {
                     continue;
                 }
                 const std::vector<ObjIndex> face =
-                    parseFace(line.substr(typeEnd + 1), static_cast<int>(positions.size()),
-                              static_cast<int>(texCoords.size()));
+                    parseFace(line.substr(typeEnd + 1), static_cast<int>(result->positions.size()),
+                              static_cast<int>(result->texCoords.size()));
                 for (std::size_t index = 2; index < face.size(); ++index) {
-                    triangles.push_back(
+                    result->triangles.push_back(
                         {{{face[0], face[index - 1], face[index]}}, currentMaterial});
                 }
             }
         }
-        if (triangles.empty()) {
-            return;
+        if (result->triangles.empty()) {
+            return {};
         }
-        std::array<double, 3> boundsMin = {std::numeric_limits<double>::max(),
-                                           std::numeric_limits<double>::max(),
-                                           std::numeric_limits<double>::max()};
+        result->boundsCenter = {std::numeric_limits<double>::max(),
+                                std::numeric_limits<double>::max(),
+                                std::numeric_limits<double>::max()};
         std::array<double, 3> boundsMax = {std::numeric_limits<double>::lowest(),
                                            std::numeric_limits<double>::lowest(),
                                            std::numeric_limits<double>::lowest()};
-        for (const ObjPosition& position : positions) {
+        for (const ObjPosition& position : result->positions) {
             const std::array<double, 3> converted = {position.z, -position.x, position.y};
             for (int axis = 0; axis < 3; ++axis) {
-                boundsMin[axis] = std::min(boundsMin[axis], converted[axis]);
+                result->boundsCenter[axis] = std::min(result->boundsCenter[axis], converted[axis]);
                 boundsMax[axis] = std::max(boundsMax[axis], converted[axis]);
             }
         }
-        const std::array<double, 3> boundsCenter = {(boundsMin[0] + boundsMax[0]) * 0.5,
-                                                    (boundsMin[1] + boundsMax[1]) * 0.5,
-                                                    (boundsMin[2] + boundsMax[2]) * 0.5};
-        double boundsRadius = 0.0;
-        for (const ObjPosition& position : positions) {
-            const double x = position.z - boundsCenter[0];
-            const double y = -position.x - boundsCenter[1];
-            const double z = position.y - boundsCenter[2];
-            boundsRadius = std::max(boundsRadius, std::sqrt(x * x + y * y + z * z));
+        for (int axis = 0; axis < 3; ++axis) {
+            result->boundsCenter[axis] = (result->boundsCenter[axis] + boundsMax[axis]) * 0.5;
         }
-        std::unordered_map<std::string, ObjMaterial> materials;
+        for (const ObjPosition& position : result->positions) {
+            const double x = position.z - result->boundsCenter[0];
+            const double y = -position.x - result->boundsCenter[1];
+            const double z = position.y - result->boundsCenter[2];
+            result->boundsRadius = std::max(result->boundsRadius, std::sqrt(x * x + y * y + z * z));
+        }
         if (!materialLibrary.empty()) {
             std::ifstream materialInput(materialLibrary);
             std::string materialLine;
@@ -1543,18 +1797,32 @@ struct BusModel {
                 materialStream >> materialType;
                 if (materialType == "newmtl") {
                     materialStream >> materialName;
-                    materials[materialName] = {};
+                    result->materials[materialName] = {};
                 } else if (materialType == "map_Kd" && !materialName.empty()) {
                     std::string textureName;
                     std::getline(materialStream, textureName);
-                    materials[materialName].texturePath =
-                        findTexture(part.objPath.parent_path(), trim(textureName));
+                    result->materials[materialName].textureName = trim(textureName);
                 } else if (materialType == "Kd" && !materialName.empty()) {
-                    materialStream >> materials[materialName].color[0] >>
-                        materials[materialName].color[1] >> materials[materialName].color[2];
+                    materialStream >> result->materials[materialName].color[0] >>
+                        result->materials[materialName].color[1] >>
+                        result->materials[materialName].color[2];
                 }
             }
         }
+        return result;
+    }
+
+    void loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed) {
+        gameLog.Log("Loading OBJ model from path: " + part.objPath.generic_string());
+        if (!parsed) {
+            return;
+        }
+        const auto& positions = parsed->positions;
+        const auto& texCoords = parsed->texCoords;
+        const auto& triangles = parsed->triangles;
+        const auto& materials = parsed->materials;
+        const auto& boundsCenter = parsed->boundsCenter;
+        const double boundsRadius = parsed->boundsRadius;
 
         WheelAnimation wheelAnimation = part.wheelAnimation;
         if (!wheelAnimation.rotationVariable.empty() && !wheelAnimation.hasOrigin) {
@@ -1565,20 +1833,13 @@ struct BusModel {
         if (!wheelAnimation.rotationVariable.empty()) {
             auto wheel = std::find_if(
                 wheelModels.begin(), wheelModels.end(), [&](const WheelModel& candidate) {
-                    if (wheelAnimation.rotationVariable == candidate.animation.rotationVariable &&
-                        wheelAnimation.suspensionVariable ==
-                            candidate.animation.suspensionVariable &&
-                        wheelAnimation.steeringVariable == candidate.animation.steeringVariable) {
-                        return true;
-                    }
                     if (wheelAnimation.hasOrigin && candidate.animation.hasOrigin) {
                         const double dx = wheelAnimation.origin[0] - candidate.animation.origin[0];
                         const double dy = wheelAnimation.origin[1] - candidate.animation.origin[1];
                         const double dz = wheelAnimation.origin[2] - candidate.animation.origin[2];
                         return dx * dx + dy * dy + dz * dz < 0.0001;
                     }
-                    return wheelAnimation.rotationVariable ==
-                               candidate.animation.rotationVariable &&
+                    return wheelAnimation.rotationVariable == candidate.animation.rotationVariable &&
                            wheelAnimation.suspensionVariable ==
                                candidate.animation.suspensionVariable &&
                            wheelAnimation.steeringVariable == candidate.animation.steeringVariable;
@@ -1591,7 +1852,9 @@ struct BusModel {
         }
         auto makeBatch = [&](const std::vector<const ObjTriangle*>& source,
                              const std::filesystem::path& texturePath,
-                             const std::array<double, 3>& color, int alphaMode, bool noZwrite) {
+                             const std::string& textureName, const std::array<double, 3>& color,
+                             const std::string& environmentTextureName, double environmentStrength,
+                             int alphaMode, bool noZwrite) {
             std::vector<Vertex> vertices;
             vertices.reserve(source.size() * 3);
             for (const ObjTriangle* triangle : source) {
@@ -1617,8 +1880,11 @@ struct BusModel {
             if (vertices.empty())
                 return;
             Batch batch;
-            batch.texture = texturePath.empty() ? 0 : loadTexture(texturePath);
-            batch.textured = batch.texture != 0;
+            batch.texturePath = texturePath;
+            batch.textureRoot = part.objPath.parent_path();
+            batch.textureName = textureName;
+            batch.environmentTextureName = environmentTextureName;
+            batch.environmentStrength = environmentStrength;
             batch.color = color;
             batch.alphaMode = alphaMode;
             batch.noZwrite = noZwrite;
@@ -1629,13 +1895,19 @@ struct BusModel {
                           static_cast<std::ptrdiff_t>(vertices.size() * sizeof(Vertex)),
                           vertices.data(), GL_STATIC_DRAW);
             pglBindBuffer(GL_ARRAY_BUFFER, 0);
-            destination->back().batches.push_back(batch);
+            destination->back().batches.push_back(std::move(batch));
         };
 
         std::unordered_map<std::string, std::vector<const ObjTriangle*>> groups;
         std::unordered_map<std::string, std::filesystem::path> groupTextures;
+        std::unordered_map<std::string, std::string> groupTextureNames;
+        std::unordered_map<std::string, std::string> groupEnvironmentNames;
+        std::unordered_map<std::string, double> groupEnvironmentStrengths;
         std::unordered_map<std::string, std::array<double, 3>> groupColors;
         std::unordered_map<std::string, MaterialState> groupStates;
+        std::vector<std::string> groupOrder;
+        const std::filesystem::path fallbackTexturePath = part.texturePath;
+        const std::string fallbackTextureName = part.textureName;
         std::size_t renderedTriangleCount = 0;
         bool hasTransparentMaterial = false;
         for (const auto& triangle : triangles) {
@@ -1645,36 +1917,159 @@ struct BusModel {
             std::filesystem::path texturePath =
                 material != materials.end() && !material->second.texturePath.empty()
                     ? material->second.texturePath
-                    : part.texturePath;
-            const std::array<double, 3> color =
+                    : fallbackTexturePath;
+            std::string textureName =
+                material != materials.end() && !material->second.textureName.empty()
+                    ? material->second.textureName
+                    : fallbackTextureName;
+            std::array<double, 3> color =
                 material != materials.end() ? material->second.color : part.color;
             const std::string key = triangle.material.empty() ? "__fallback__" : triangle.material;
+            if (groups.find(key) == groups.end()) {
+                groupOrder.push_back(key);
+            }
             MaterialState state;
-            if (!texturePath.empty()) {
-                const auto found = part.materialStates.find(lower(texturePath.filename().string()));
-                if (found != part.materialStates.end())
+            if (!textureName.empty() || !texturePath.empty()) {
+                const std::filesystem::path statePath =
+                    textureName.empty() ? texturePath : std::filesystem::path(textureName);
+                const std::string stateKey = lower(statePath.filename().string());
+                const auto found = part.materialStates.find(stateKey);
+                if (found != part.materialStates.end()) {
                     state = found->second;
+                } else {
+                    const std::string stateStem = lower(statePath.stem().string());
+                    const auto matchingState = std::find_if(
+                        part.materialStates.begin(), part.materialStates.end(),
+                        [&](const auto& entry) {
+                            return lower(std::filesystem::path(entry.first).stem().string()) ==
+                                   stateStem;
+                        });
+                    if (matchingState != part.materialStates.end()) {
+                        state = matchingState->second;
+                    } else {
+                        const std::string materialStem = lower(triangle.material);
+                        const auto matchingMaterial = std::find_if(
+                            part.materialStates.begin(), part.materialStates.end(),
+                            [&](const auto& entry) {
+                                return lower(std::filesystem::path(entry.first).stem().string()) ==
+                                       materialStem;
+                            });
+                        if (matchingMaterial != part.materialStates.end()) {
+                            state = matchingMaterial->second;
+                        }
+                    }
+                }
+            }
+            if (!state.textureName.empty()) {
+                textureName = state.textureName;
+                color = {1.0, 1.0, 1.0};
+            }
+            if (state.alphaMode == 0) {
+                state.noZwrite = false;
             }
             groups[key].push_back(&triangle);
             groupTextures[key] = texturePath;
+            groupTextureNames[key] = textureName;
+            groupEnvironmentNames[key] = state.environmentTextureName;
+            groupEnvironmentStrengths[key] = state.environmentStrength;
             groupColors[key] = color;
             groupStates[key] = state;
+            if (state.alphaMode != 0 || state.noZwrite) {
+                gameLog.Log("Transparent material " + triangle.material + " for " +
+                            part.objPath.filename().string() +
+                            " alpha=" + std::to_string(state.alphaMode) +
+                            " noZwrite=" + (state.noZwrite ? "true" : "false"));
+            }
             hasTransparentMaterial =
                 hasTransparentMaterial || state.alphaMode != 0 || state.noZwrite;
         }
         destination->push_back({{},
                                 part.viewpoint,
+                                part.renderType,
                                 hasTransparentMaterial,
                                 part.lodIndex,
                                 boundsCenter,
                                 boundsRadius,
                                 renderedTriangleCount});
-        for (const auto& group : groups) {
-            const MaterialState& state = groupStates[group.first];
-            makeBatch(group.second, groupTextures[group.first], groupColors[group.first],
-                      state.alphaMode, state.noZwrite);
+        for (const std::string& key : groupOrder) {
+            const MaterialState& state = groupStates[key];
+            makeBatch(groups[key], groupTextures[key], groupTextureNames[key], groupColors[key],
+                      groupEnvironmentNames[key], groupEnvironmentStrengths[key], state.alphaMode,
+                      state.noZwrite);
         }
     }
+
+    int lodForDistance(double distance) const {
+        if (lodThresholds.empty()) {
+            return -1;
+        }
+        for (std::size_t index = 0; index < lodThresholds.size(); ++index) {
+            const double boundary = 25.0 / std::max(lodThresholds[index], 0.001);
+            if (distance <= boundary) {
+                return static_cast<int>(index);
+            }
+        }
+        return static_cast<int>(lodThresholds.size() - 1);
+    }
+
+    void rebuildDisplayOrder() {
+        std::stable_sort(displayLists.begin(), displayLists.end(),
+                         [](const DisplayPart& first, const DisplayPart& second) {
+                             return first.transparent < second.transparent;
+                         });
+        opaqueDisplayCount = 0;
+        while (opaqueDisplayCount < displayLists.size() &&
+               !displayLists[opaqueDisplayCount].transparent) {
+            ++opaqueDisplayCount;
+        }
+    }
+
+    // Parse configuration at startup, but defer OBJ parsing, VBO creation, and texture upload
+    // until a part can be visible in the current viewpoint and LOD.
+    void ensureLoaded(RenderViewContext context, double viewDistance) {
+        const int selectedLod = lodForDistance(viewDistance);
+        activeLod = selectedLod;
+        bool loadedPart = false;
+        const auto loadStart = std::chrono::steady_clock::now();
+        constexpr auto loadBudget = std::chrono::milliseconds(4);
+        auto part = pendingParts.begin();
+        while (part != pendingParts.end()) {
+            const bool viewpointMatches =
+                part->viewpoint == 0 || (part->viewpoint & viewpointMask(context)) != 0;
+            if (!viewpointMatches || (selectedLod >= 0 && part->lodIndex != selectedLod)) {
+                ++part;
+                continue;
+            }
+            if (!part->objRequest) {
+                part->objRequest = std::make_shared<ObjRequest>();
+                part->objRequest->part = *part;
+                part->objRequest->part.objRequest.reset();
+                loadObjRequest(part->objRequest);
+                ++part;
+                continue;
+            }
+            std::shared_ptr<ParsedObj> parsed;
+            {
+                std::lock_guard<std::mutex> lock(part->objRequest->mutex);
+                if (!part->objRequest->complete) {
+                    ++part;
+                    continue;
+                }
+                parsed = part->objRequest->parsed;
+            }
+            loadObj(*part, parsed);
+            part = pendingParts.erase(part);
+            loadedPart = true;
+            if (std::chrono::steady_clock::now() - loadStart >= loadBudget) {
+                break;
+            }
+        }
+        if (loadedPart) {
+            rebuildDisplayOrder();
+        }
+        loaded = !displayLists.empty() || !pendingParts.empty();
+    }
+
     void load(const std::filesystem::path& configPath, const std::filesystem::path& modelRoot) {
         std::ifstream input(configPath);
         if (!input) {
@@ -1725,6 +2120,11 @@ struct BusModel {
                 if (std::getline(input, viewpoint)) {
                     const int viewpointFlag = parseInt(viewpoint, 0);
                     parts.back().viewpoint = viewpointFlag;
+                }
+            } else if (value == "[rendertype]" && !parts.empty()) {
+                std::string renderType;
+                if (std::getline(input, renderType)) {
+                    parts.back().renderType = parseInt(renderType, 2);
                 }
             } else if (value == "[mesh_ident]" && !parts.empty()) {
                 std::string identifier;
@@ -1789,11 +2189,11 @@ struct BusModel {
                 std::string slot;
                 if (std::getline(input, texture) && std::getline(input, slot)) {
                     const std::string textureName = trim(texture);
-                    const std::filesystem::path texturePath = findTexture(modelRoot, textureName);
                     lastMaterialKey = lower(std::filesystem::path(textureName).filename().string());
-                    parts.back().materialStates[lastMaterialKey] = {texturePath, 0, false};
-                    if (parts.back().texturePath.empty()) {
-                        parts.back().texturePath = texturePath;
+                    parts.back().materialStates[lastMaterialKey] = {{},  textureName, {},
+                                                                    0.0, 0,           false};
+                    if (parts.back().textureName.empty()) {
+                        parts.back().textureName = textureName;
                     }
                 }
             } else if (value == "[matl_alpha]" && !parts.empty()) {
@@ -1803,6 +2203,15 @@ struct BusModel {
                 }
             } else if (value == "[matl_noZwrite]" && !parts.empty() && !lastMaterialKey.empty()) {
                 parts.back().materialStates[lastMaterialKey].noZwrite = true;
+            } else if (value == "[matl_envmap]" && !parts.empty() && !lastMaterialKey.empty()) {
+                std::string texture;
+                std::string strength;
+                if (std::getline(input, texture) && std::getline(input, strength)) {
+                    parts.back().materialStates[lastMaterialKey].environmentTextureName =
+                        trim(texture);
+                    parts.back().materialStates[lastMaterialKey].environmentStrength =
+                        parseDouble(strength, 0.0);
+                }
             } else if (value == "[matl_change]" && !parts.empty()) {
                 std::string texture;
                 std::string slot;
@@ -1823,24 +2232,40 @@ struct BusModel {
                 part.wheelAnimation = parent->wheelAnimation;
             }
         }
-        for (const Part& part : parts) {
-            if (part.objPath.empty()) {
-                continue;
-            }
-            loadObj(part);
-        }
-        std::stable_sort(displayLists.begin(), displayLists.end(),
-                         [](const DisplayPart& first, const DisplayPart& second) {
-                             return first.transparent < second.transparent;
-                         });
-        opaqueDisplayCount = 0;
-        while (opaqueDisplayCount < displayLists.size() &&
-               !displayLists[opaqueDisplayCount].transparent) {
-            ++opaqueDisplayCount;
-        }
-        loaded = !displayLists.empty();
+        pendingParts = std::move(parts);
+        loaded = !pendingParts.empty();
     }
 };
+
+void BusModel::loadTextureRequest(const std::shared_ptr<TextureRequest>& request) {
+#ifdef _WIN32
+    const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+#endif
+    std::filesystem::path resolved = request->path;
+    if (resolved.empty()) {
+        resolved = findTexture(request->root, request->name);
+    }
+    Image image;
+    const bool textureLoaded = !resolved.empty() && readImage(resolved, image);
+#ifdef _WIN32
+    if (SUCCEEDED(comResult)) {
+        CoUninitialize();
+    }
+#endif
+    std::lock_guard<std::mutex> lock(request->mutex);
+    if (textureLoaded) {
+        request->resolvedPath = std::move(resolved);
+        request->image = std::move(image);
+    }
+    request->complete = true;
+}
+
+void BusModel::loadObjRequest(const std::shared_ptr<ObjRequest>& request) {
+    std::shared_ptr<ParsedObj> parsed = parseObj(request->part.objPath);
+    std::lock_guard<std::mutex> lock(request->mutex);
+    request->parsed = std::move(parsed);
+    request->complete = true;
+}
 
 void Renderer::scrollCallback(GLFWwindow* window, double, double yOffset) {
     auto* renderer = static_cast<Renderer*>(glfwGetWindowUserPointer(window));
@@ -1915,6 +2340,11 @@ void Renderer::beginFrame() {
         }
         previousViewKeyStates_[index] = pressed;
     }
+    const bool captureKeyPressed = glfwGetKey(window_, GLFW_KEY_F12) == GLFW_PRESS;
+    if (captureKeyPressed && !previousCaptureKeyState_) {
+        captureRequested_ = true;
+    }
+    previousCaptureKeyState_ = captureKeyPressed;
     int width = 1;
     int height = 1;
     glfwGetFramebufferSize(window_, &width, &height);
@@ -2020,10 +2450,20 @@ void Renderer::draw(const BusSimulation& simulation) {
     drawGround(simulation.roadBumps());
     glPopMatrix();
 
-    if (busModel_ && busModel_->loaded) {
+    const RenderViewContext context =
+        cameraView_ == 0 ? RenderViewContext::PlayerExterior : RenderViewContext::PlayerInterior;
+
+        if (busModel_) {
+        // The first draw establishes the active viewpoint/LOD. Subsequent camera changes
+        // populate only the newly eligible parts.
+        const double modelViewDistance = cameraView_ == 0 ? cameraDistance_ : 3.0;
+        busModel_->loadForView(context, modelViewDistance);
+    }
+
+    if (busModel_ && busModel_->loaded && !busModel_->displayLists.empty()) {
         glPushMatrix();
         applyPose(chassis);
-        busModel_->draw(cameraView_ == 0);
+        busModel_->draw(context);
         glPopMatrix();
     } else {
         glPushMatrix();
@@ -2040,23 +2480,25 @@ void Renderer::draw(const BusSimulation& simulation) {
         lastStatsTitleTime_ = glfwGetTime();
     }
 
-    const std::array<double, 3> centerOfGravity = simulation.centerOfGravity();
-    glPushMatrix();
-    glTranslated(centerOfGravity[0], centerOfGravity[1], centerOfGravity[2]);
-    drawCenterOfGravityMarker(0.35);
-    glPopMatrix();
+    // Render center of gravity marker
+    // const std::array<double, 3> centerOfGravity = simulation.centerOfGravity();
+    // glPushMatrix();
+    // glTranslated(centerOfGravity[0], centerOfGravity[1], centerOfGravity[2]);
+    // drawCenterOfGravityMarker(0.35);
+    // glPopMatrix();
 
-    glPushMatrix();
-    glColor3d(0.20, 0.20, 0.20);
-    for (std::size_t axleIndex = 0; axleIndex < simulation.axleCount(); ++axleIndex) {
-        const BodyPose leftWheel = simulation.wheelPose(axleIndex * 2);
-        const BodyPose rightWheel = simulation.wheelPose(axleIndex * 2 + 1);
-        glBegin(GL_LINES);
-        glVertex3dv(rightWheel.position.data());
-        glVertex3dv(leftWheel.position.data());
-        glEnd();
-    }
-    glPopMatrix();
+    // Render axle lines
+    // glPushMatrix();
+    // glColor3d(0.20, 0.20, 0.20);
+    // for (std::size_t axleIndex = 0; axleIndex < simulation.axleCount(); ++axleIndex) {
+    //     const BodyPose leftWheel = simulation.wheelPose(axleIndex * 2);
+    //     const BodyPose rightWheel = simulation.wheelPose(axleIndex * 2 + 1);
+    //     glBegin(GL_LINES);
+    //     glVertex3dv(rightWheel.position.data());
+    //     glVertex3dv(leftWheel.position.data());
+    //     glEnd();
+    // }
+    // glPopMatrix();
 
     if (busModel_ && busModel_->hasConfiguredWheels()) {
         busModel_->drawConfiguredWheels(simulation, chassis, cameraView_ == 0);
@@ -2069,11 +2511,72 @@ void Renderer::draw(const BusSimulation& simulation) {
             glPopMatrix();
         }
     }
-    drawCollisionWireframe(simulation);
+    // drawCollisionWireframe(simulation);
 }
 
 void Renderer::endFrame() {
     glfwSwapBuffers(window_);
+}
+
+void Renderer::captureViews(const BusSimulation& simulation,
+                            const std::filesystem::path& directory) {
+    std::filesystem::create_directories(directory);
+    int width = 1;
+    int height = 1;
+    glfwGetFramebufferSize(window_, &width, &height);
+
+    const int previousCameraView = cameraView_;
+    const double previousCameraYaw = cameraYaw_;
+    const double previousCameraPitch = cameraPitch_;
+    const double previousCameraDistance = cameraDistance_;
+    const double previousViewLookYaw = viewLookYaw_;
+    const double previousViewLookPitch = viewLookPitch_;
+    captureMode_ = true;
+    cameraView_ = 0;
+    cameraDistance_ = 24.0;
+    viewLookYaw_ = 0.0;
+    viewLookPitch_ = 0.0;
+
+    struct CaptureView {
+        const char* name;
+        double yaw;
+        double pitch;
+        double distance;
+    };
+    const std::array<CaptureView, 4> views = {{{"top", 0.0, 1.25, 28.0},
+                                                {"front", 0.0, 0.25, 18.0},
+                                                {"left", 1.5707963267948966, 0.25, 18.0},
+                                                {"right", -1.5707963267948966, 0.25, 18.0}}};
+    for (const CaptureView& view : views) {
+        cameraYaw_ = view.yaw;
+        cameraPitch_ = view.pitch;
+        cameraDistance_ = view.distance;
+        glViewport(0, 0, width, height);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        setPerspective(static_cast<double>(width), static_cast<double>(height));
+        draw(simulation);
+        glFinish();
+        const std::filesystem::path path = directory / (std::string(view.name) + ".bmp");
+        if (!saveFramebufferBmp(path, width, height)) {
+            gameLog.Log("Failed to save screenshot: " + path.string());
+        } else {
+            gameLog.Log("Saved screenshot: " + path.string());
+        }
+    }
+
+    cameraView_ = previousCameraView;
+    cameraYaw_ = previousCameraYaw;
+    cameraPitch_ = previousCameraPitch;
+    cameraDistance_ = previousCameraDistance;
+    viewLookYaw_ = previousViewLookYaw;
+    viewLookPitch_ = previousViewLookPitch;
+    captureMode_ = false;
+}
+
+bool Renderer::consumeCaptureRequest() {
+    const bool requested = captureRequested_;
+    captureRequested_ = false;
+    return requested;
 }
 
 double Renderer::throttle() const {
