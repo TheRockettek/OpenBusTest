@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -29,6 +30,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -482,6 +484,13 @@ struct BusModel {
         Image image;
         bool complete = false;
         std::mutex mutex;
+        std::thread worker;
+    };
+
+    struct TextureCacheEntry {
+        std::shared_ptr<TextureRequest> request;
+        GLuint texture = 0;
+        bool uploadAttempted = false;
     };
 
     struct ObjPosition {
@@ -520,6 +529,10 @@ struct BusModel {
         double boundsRadius = 0.0;
     };
 
+    struct ObjRequest {
+        std::future<std::shared_ptr<ParsedObj>> future;
+    };
+
     struct MaterialState {
         std::filesystem::path texturePath;
         std::string textureName;
@@ -528,8 +541,6 @@ struct BusModel {
         int alphaMode = 0;
         bool noZwrite = false;
     };
-
-    struct ObjRequest;
 
     struct WheelAnimation {
         std::string rotationVariable;
@@ -554,13 +565,6 @@ struct BusModel {
         std::shared_ptr<ObjRequest> objRequest;
     };
 
-    struct ObjRequest {
-        Part part;
-        std::shared_ptr<ParsedObj> parsed;
-        bool complete = false;
-        std::mutex mutex;
-    };
-
     struct Vertex {
         float x, y, z, u, v;
     };
@@ -580,6 +584,7 @@ struct BusModel {
         bool textureLoadAttempted = false;
         bool textureLoadStarted = false;
         std::shared_ptr<TextureRequest> textureRequest;
+        std::shared_ptr<TextureCacheEntry> textureCacheEntry;
         int alphaMode = 0;
         bool noZwrite = false;
         std::size_t vertexCount = 0;
@@ -605,6 +610,8 @@ struct BusModel {
     std::vector<WheelModel> wheelModels;
     std::vector<Part> pendingParts;
     std::vector<GLuint> textures;
+    std::unordered_map<std::string, std::shared_ptr<TextureCacheEntry>> textureCache;
+    std::unordered_map<std::string, std::shared_ptr<TextureCacheEntry>> textureAliases;
     mutable std::unordered_set<std::size_t> loggedWheelBindings;
     double modelOffsetZ = MAN_DL05_MODEL_OFFSET_Z;
     double textureScale = 1;
@@ -616,7 +623,14 @@ struct BusModel {
     int activeLod = -1;
 
     void loadTextureRequest(const std::shared_ptr<TextureRequest>& request);
-    void loadObjRequest(const std::shared_ptr<ObjRequest>& request);
+
+    void joinTextureWorkers() {
+        for (const auto& cache : textureCache) {
+            if (cache.second->request && cache.second->request->worker.joinable()) {
+                cache.second->request->worker.join();
+            }
+        }
+    }
 
 #ifdef _WIN32
     bool comInitialized = false;
@@ -667,6 +681,7 @@ struct BusModel {
     }
 
     ~BusModel() {
+        joinTextureWorkers();
         const auto deleteBuffers = [](const std::vector<DisplayPart>& parts) {
             for (const DisplayPart& part : parts) {
                 for (const Batch& batch : part.batches) {
@@ -940,8 +955,12 @@ struct BusModel {
         glPopMatrix();
     }
 
-    bool hasConfiguredWheels() const {
-        return !wheelModels.empty();
+    bool hasConfiguredWheels(std::size_t expectedWheelCount) const {
+        if (wheelModels.size() < expectedWheelCount) {
+            return false;
+        }
+        return std::all_of(wheelModels.begin(), wheelModels.end(),
+                           [](const WheelModel& wheel) { return !wheel.parts.empty(); });
     }
 
     void drawConfiguredWheels(const BusSimulation& simulation, const BodyPose& chassis,
@@ -1653,47 +1672,108 @@ struct BusModel {
         return cacheResult({});
     }
 
-    void ensureTexture(Batch& batch) {
+    std::string textureCacheKey(const Batch& batch) const {
+        const std::filesystem::path identity = batch.texturePath.empty()
+                                                   ? batch.textureRoot / batch.textureName
+                                                   : batch.texturePath;
+        return lower(std::filesystem::absolute(identity).lexically_normal().generic_string());
+    }
+
+    std::shared_ptr<TextureCacheEntry> textureEntry(Batch& batch) {
+        const std::string key = textureCacheKey(batch);
+        const auto found = textureCache.find(key);
+        if (found != textureCache.end()) {
+            return found->second;
+        }
+        const std::string alias = lower(std::filesystem::path(
+                                             batch.texturePath.empty() ? batch.textureName
+                                                                       : batch.texturePath.string())
+                                             .filename()
+                                             .generic_string());
+        if (!alias.empty()) {
+            const auto aliasFound = textureAliases.find(alias);
+            if (aliasFound != textureAliases.end()) {
+                textureCache.emplace(key, aliasFound->second);
+                return aliasFound->second;
+            }
+        }
+        auto entry = std::make_shared<TextureCacheEntry>();
+        entry->request = std::make_shared<TextureRequest>();
+        entry->request->root = batch.textureRoot;
+        entry->request->path = batch.texturePath;
+        entry->request->name = batch.textureName;
+        textureCache.emplace(key, entry);
+        if (!alias.empty()) {
+            textureAliases.emplace(alias, entry);
+        }
+        return entry;
+    }
+
+    void startTextureRequest(const std::shared_ptr<TextureCacheEntry>& entry) {
+        if (!entry->request->worker.joinable()) {
+            entry->request->worker = std::thread(&BusModel::loadTextureRequest, this,
+                                                 entry->request);
+        }
+    }
+
+    void ensureTexture(Batch& batch, bool visible = true) {
         if (batch.textureLoadAttempted) {
             return;
         }
-        if (!batch.textureLoadStarted) {
+        if (!batch.textureCacheEntry) {
+            batch.textureCacheEntry = textureEntry(batch);
+            batch.textureRequest = batch.textureCacheEntry->request;
             batch.textureLoadStarted = true;
-            batch.textureRequest = std::make_shared<TextureRequest>();
-            batch.textureRequest->root = batch.textureRoot;
-            batch.textureRequest->path = batch.texturePath;
-            batch.textureRequest->name = batch.textureName;
-            loadTextureRequest(batch.textureRequest);
+        }
+        startTextureRequest(batch.textureCacheEntry);
+        if (visible && batch.textureCacheEntry->request->worker.joinable()) {
+            batch.textureCacheEntry->request->worker.join();
+        }
+        std::lock_guard<std::mutex> lock(batch.textureCacheEntry->request->mutex);
+        if (!batch.textureCacheEntry->request->complete) {
             return;
         }
-        {
-            std::lock_guard<std::mutex> lock(batch.textureRequest->mutex);
-            if (!batch.textureRequest->complete) {
-                return;
-            }
-            batch.texturePath = batch.textureRequest->resolvedPath;
-            if (batch.texturePath.empty()) {
-                batch.textureLoadAttempted = true;
-                textureLog.Log("decode-failed: " + batch.textureName);
-                return;
-            }
-            batch.texture =
-                uploadTexture(batch.texturePath, std::move(batch.textureRequest->image));
+        if (!visible) {
+            return;
         }
+        batch.texturePath = batch.textureCacheEntry->request->resolvedPath;
+        if (!batch.textureCacheEntry->uploadAttempted) {
+            batch.textureCacheEntry->uploadAttempted = true;
+            if (!batch.texturePath.empty()) {
+                batch.textureCacheEntry->texture = uploadTexture(
+                    batch.texturePath, std::move(batch.textureCacheEntry->request->image));
+            }
+        }
+        batch.texture = batch.textureCacheEntry->texture;
         batch.textureLoadAttempted = true;
         batch.textured = batch.texture != 0;
+        if (batch.texturePath.empty()) {
+            textureLog.Log("decode-failed: " + batch.textureName);
+        }
         if (!batch.environmentLoadAttempted && !batch.environmentTextureName.empty() &&
             batch.environmentStrength > 0.0) {
             batch.environmentLoadAttempted = true;
-            const std::filesystem::path environmentPath =
-                findTexture(batch.textureRoot, batch.environmentTextureName);
-            if (!environmentPath.empty()) {
-                Image environmentImage;
-                if (readImage(environmentPath, environmentImage)) {
-                    batch.environmentTexture =
-                        uploadTexture(environmentPath, std::move(environmentImage));
+            Batch environmentBatch;
+            environmentBatch.textureRoot = batch.textureRoot;
+            environmentBatch.textureName = batch.environmentTextureName;
+            ensureTexture(environmentBatch, visible);
+            batch.environmentTexture = environmentBatch.texture;
+        }
+    }
+
+    void preloadTextures() {
+        const auto preload = [&](std::vector<DisplayPart>& parts) {
+            for (DisplayPart& part : parts) {
+                for (Batch& batch : part.batches) {
+                    if (!batch.texturePath.empty() || !batch.textureName.empty()) {
+                        ensureTexture(batch, false);
+                    }
                 }
             }
+        };
+        preload(displayLists);
+        for (WheelModel& wheel : wheelModels) {
+            preload(wheel.parts);
         }
     }
 
@@ -1974,12 +2054,6 @@ struct BusModel {
             groupEnvironmentStrengths[key] = state.environmentStrength;
             groupColors[key] = color;
             groupStates[key] = state;
-            if (state.alphaMode != 0 || state.noZwrite) {
-                gameLog.Log("Transparent material " + triangle.material + " for " +
-                            part.objPath.filename().string() +
-                            " alpha=" + std::to_string(state.alphaMode) +
-                            " noZwrite=" + (state.noZwrite ? "true" : "false"));
-            }
             hasTransparentMaterial =
                 hasTransparentMaterial || state.alphaMode != 0 || state.noZwrite;
         }
@@ -2032,6 +2106,19 @@ struct BusModel {
         bool loadedPart = false;
         const auto loadStart = std::chrono::steady_clock::now();
         constexpr auto loadBudget = std::chrono::milliseconds(4);
+
+        for (Part& part : pendingParts) {
+            const bool viewpointMatches =
+                part.viewpoint == 0 || (part.viewpoint & viewpointMask(context)) != 0;
+            if (!viewpointMatches || (selectedLod >= 0 && part.lodIndex != selectedLod)) {
+                if (!part.objRequest) {
+                    part.objRequest = std::make_shared<ObjRequest>();
+                    part.objRequest->future =
+                        std::async(std::launch::async, &BusModel::parseObj, part.objPath);
+                }
+            }
+        }
+
         auto part = pendingParts.begin();
         while (part != pendingParts.end()) {
             const bool viewpointMatches =
@@ -2040,23 +2127,9 @@ struct BusModel {
                 ++part;
                 continue;
             }
-            if (!part->objRequest) {
-                part->objRequest = std::make_shared<ObjRequest>();
-                part->objRequest->part = *part;
-                part->objRequest->part.objRequest.reset();
-                loadObjRequest(part->objRequest);
-                ++part;
-                continue;
-            }
-            std::shared_ptr<ParsedObj> parsed;
-            {
-                std::lock_guard<std::mutex> lock(part->objRequest->mutex);
-                if (!part->objRequest->complete) {
-                    ++part;
-                    continue;
-                }
-                parsed = part->objRequest->parsed;
-            }
+            const std::shared_ptr<ParsedObj> parsed = part->objRequest
+                                                          ? part->objRequest->future.get()
+                                                          : parseObj(part->objPath);
             loadObj(*part, parsed);
             part = pendingParts.erase(part);
             loadedPart = true;
@@ -2064,8 +2137,28 @@ struct BusModel {
                 break;
             }
         }
+
+        auto backgroundPart = pendingParts.begin();
+        while (backgroundPart != pendingParts.end() &&
+               std::chrono::steady_clock::now() - loadStart < loadBudget) {
+            const bool viewpointMatches =
+                backgroundPart->viewpoint == 0 ||
+                (backgroundPart->viewpoint & viewpointMask(context)) != 0;
+            const bool lodMatches = selectedLod < 0 || backgroundPart->lodIndex == selectedLod;
+            if ((viewpointMatches && lodMatches) || !backgroundPart->objRequest ||
+                backgroundPart->objRequest->future.wait_for(std::chrono::milliseconds(0)) !=
+                    std::future_status::ready) {
+                ++backgroundPart;
+                continue;
+            }
+            const std::shared_ptr<ParsedObj> parsed = backgroundPart->objRequest->future.get();
+            loadObj(*backgroundPart, parsed);
+            backgroundPart = pendingParts.erase(backgroundPart);
+            loadedPart = true;
+        }
         if (loadedPart) {
             rebuildDisplayOrder();
+            preloadTextures();
         }
         loaded = !displayLists.empty() || !pendingParts.empty();
     }
@@ -2257,13 +2350,6 @@ void BusModel::loadTextureRequest(const std::shared_ptr<TextureRequest>& request
         request->resolvedPath = std::move(resolved);
         request->image = std::move(image);
     }
-    request->complete = true;
-}
-
-void BusModel::loadObjRequest(const std::shared_ptr<ObjRequest>& request) {
-    std::shared_ptr<ParsedObj> parsed = parseObj(request->part.objPath);
-    std::lock_guard<std::mutex> lock(request->mutex);
-    request->parsed = std::move(parsed);
     request->complete = true;
 }
 
@@ -2481,26 +2567,26 @@ void Renderer::draw(const BusSimulation& simulation) {
     }
 
     // Render center of gravity marker
-    // const std::array<double, 3> centerOfGravity = simulation.centerOfGravity();
-    // glPushMatrix();
-    // glTranslated(centerOfGravity[0], centerOfGravity[1], centerOfGravity[2]);
-    // drawCenterOfGravityMarker(0.35);
-    // glPopMatrix();
+    const std::array<double, 3> centerOfGravity = simulation.centerOfGravity();
+    glPushMatrix();
+    glTranslated(centerOfGravity[0], centerOfGravity[1], centerOfGravity[2]);
+    drawCenterOfGravityMarker(0.35);
+    glPopMatrix();
 
     // Render axle lines
-    // glPushMatrix();
-    // glColor3d(0.20, 0.20, 0.20);
-    // for (std::size_t axleIndex = 0; axleIndex < simulation.axleCount(); ++axleIndex) {
-    //     const BodyPose leftWheel = simulation.wheelPose(axleIndex * 2);
-    //     const BodyPose rightWheel = simulation.wheelPose(axleIndex * 2 + 1);
-    //     glBegin(GL_LINES);
-    //     glVertex3dv(rightWheel.position.data());
-    //     glVertex3dv(leftWheel.position.data());
-    //     glEnd();
-    // }
-    // glPopMatrix();
+    glPushMatrix();
+    glColor3d(0.20, 0.20, 0.20);
+    for (std::size_t axleIndex = 0; axleIndex < simulation.axleCount(); ++axleIndex) {
+        const BodyPose leftWheel = simulation.wheelPose(axleIndex * 2);
+        const BodyPose rightWheel = simulation.wheelPose(axleIndex * 2 + 1);
+        glBegin(GL_LINES);
+        glVertex3dv(rightWheel.position.data());
+        glVertex3dv(leftWheel.position.data());
+        glEnd();
+    }
+    glPopMatrix();
 
-    if (busModel_ && busModel_->hasConfiguredWheels()) {
+    if (busModel_ && busModel_->hasConfiguredWheels(simulation.wheelCount())) {
         busModel_->drawConfiguredWheels(simulation, chassis, cameraView_ == 0);
     } else {
         for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
@@ -2511,7 +2597,7 @@ void Renderer::draw(const BusSimulation& simulation) {
             glPopMatrix();
         }
     }
-    // drawCollisionWireframe(simulation);
+    drawCollisionWireframe(simulation);
 }
 
 void Renderer::endFrame() {

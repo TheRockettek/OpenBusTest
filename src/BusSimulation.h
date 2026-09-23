@@ -19,6 +19,12 @@ enum class BusVehicle {
 struct BusAxle {
     double position;
     double trackWidth;
+    double maxWidth = 0.0;
+    double minWidth = 0.0;
+    double wheelDiameter = 0.0;
+    double springRate = 250000.0;
+    double maxForce = 0.0;
+    double damperRate = 16000.0;
     bool steerable;
     bool driven;
 };
