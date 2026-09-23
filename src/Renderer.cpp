@@ -1,6 +1,8 @@
 #include "Renderer.h"
 
+#include "BusSimulation.h"
 #include "Logger.h"
+#include "RoadFeatures.h"
 
 #include <GLFW/glfw3.h>
 
@@ -13,6 +15,7 @@
 #include <wrl/client.h>
 #endif
 #include <GL/gl.h>
+#include <gli/gli.hpp>
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -65,17 +68,23 @@ using GenBuffersProc = void (*)(GLsizei, GLuint*);
 using BindBufferProc = void (*)(GLenum, GLuint);
 using BufferDataProc = void (*)(GLenum, std::ptrdiff_t, const void*, GLenum);
 using DeleteBuffersProc = void (*)(GLsizei, const GLuint*);
+using CompressedTexImage2DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint,
+                                          GLsizei, const void*);
 GenBuffersProc pglGenBuffers = nullptr;
 BindBufferProc pglBindBuffer = nullptr;
 BufferDataProc pglBufferData = nullptr;
 DeleteBuffersProc pglDeleteBuffers = nullptr;
+CompressedTexImage2DProc pglCompressedTexImage2D = nullptr;
 
 bool loadBufferFunctions() {
     pglGenBuffers = reinterpret_cast<GenBuffersProc>(glfwGetProcAddress("glGenBuffers"));
     pglBindBuffer = reinterpret_cast<BindBufferProc>(glfwGetProcAddress("glBindBuffer"));
     pglBufferData = reinterpret_cast<BufferDataProc>(glfwGetProcAddress("glBufferData"));
     pglDeleteBuffers = reinterpret_cast<DeleteBuffersProc>(glfwGetProcAddress("glDeleteBuffers"));
-    const bool available = pglGenBuffers && pglBindBuffer && pglBufferData && pglDeleteBuffers;
+    pglCompressedTexImage2D = reinterpret_cast<CompressedTexImage2DProc>(
+        glfwGetProcAddress("glCompressedTexImage2D"));
+    const bool available = pglGenBuffers && pglBindBuffer && pglBufferData && pglDeleteBuffers &&
+                           pglCompressedTexImage2D;
     if (!available) {
         gameLog.Log("Failed to load required OpenGL VBO functions");
     }
@@ -470,6 +479,7 @@ bool saveFramebufferBmp(const std::filesystem::path& path, int width, int height
 } // namespace
 
 struct BusModel {
+    ModelLoadingPolicy loadingPolicy;
     struct Image {
         int width = 0;
         int height = 0;
@@ -481,10 +491,16 @@ struct BusModel {
         std::filesystem::path path;
         std::string name;
         std::filesystem::path resolvedPath;
-        Image image;
+        std::shared_ptr<Image> image;
+        std::shared_ptr<gli::texture> compressedTexture;
         bool complete = false;
         std::mutex mutex;
         std::thread worker;
+    };
+
+    struct DecodedTexture {
+        std::shared_ptr<Image> image;
+        std::shared_ptr<gli::texture> compressedTexture;
     };
 
     struct TextureCacheEntry {
@@ -612,6 +628,8 @@ struct BusModel {
     std::vector<GLuint> textures;
     std::unordered_map<std::string, std::shared_ptr<TextureCacheEntry>> textureCache;
     std::unordered_map<std::string, std::shared_ptr<TextureCacheEntry>> textureAliases;
+    std::mutex decodedTextureMutex;
+    std::unordered_map<std::string, std::shared_ptr<DecodedTexture>> decodedTextureCache;
     mutable std::unordered_set<std::size_t> loggedWheelBindings;
     double modelOffsetZ = MAN_DL05_MODEL_OFFSET_Z;
     double textureScale = 1;
@@ -620,7 +638,9 @@ struct BusModel {
     std::size_t opaqueDisplayCount = 0;
     mutable std::size_t lastRenderedTriangles = 0;
     bool loaded = false;
+    bool hasLoadedInitialView = false;
     int activeLod = -1;
+    std::chrono::steady_clock::time_point textureUploadStart;
 
     void loadTextureRequest(const std::shared_ptr<TextureRequest>& request);
 
@@ -636,7 +656,8 @@ struct BusModel {
     bool comInitialized = false;
 #endif
 
-    explicit BusModel(BusVehicle vehicle) {
+    explicit BusModel(BusVehicle vehicle, ModelLoadingPolicy policy)
+        : loadingPolicy(policy) {
         if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
             try {
                 textureScale = std::clamp(std::stod(scale), 0.25, 1.0);
@@ -709,6 +730,7 @@ struct BusModel {
         if (!loaded) {
             return;
         }
+        textureUploadStart = std::chrono::steady_clock::now();
 
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_BLEND);
@@ -809,8 +831,7 @@ struct BusModel {
                 });
             for (Batch& batch : part.batches) {
                 if (batch.alphaMode == 0 && batch.noZwrite) {
-                    noDepthOpaqueBatches.push_back({&batch, viewDepth(part), part.renderType});
-                } else if (batch.alphaMode != 0) {
+                        ensureTexture(batch);
                     transparentBatches.push_back({&batch, viewDepth(part), part.renderType});
                 }
             }
@@ -1312,6 +1333,59 @@ struct BusModel {
                (static_cast<std::uint32_t>(data[offset + 3]) << 24);
     }
 
+    static bool isSafeCompressedDds(const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        if (!input) {
+            return false;
+        }
+        std::array<std::uint8_t, 128> header = {};
+        input.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
+        if (!input || std::string(header.begin(), header.begin() + 4) != "DDS ") {
+            return false;
+        }
+
+        const auto readHeaderU32 = [&header](std::size_t offset) {
+            return static_cast<std::uint32_t>(header[offset]) |
+                   (static_cast<std::uint32_t>(header[offset + 1]) << 8) |
+                   (static_cast<std::uint32_t>(header[offset + 2]) << 16) |
+                   (static_cast<std::uint32_t>(header[offset + 3]) << 24);
+        };
+        const std::uint32_t width = readHeaderU32(16);
+        const std::uint32_t height = readHeaderU32(12);
+        const std::string fourCC(header.begin() + 84, header.begin() + 88);
+        const std::size_t blockSize = fourCC == "DXT1" ? 8 : (fourCC == "DXT3" || fourCC == "DXT5" ? 16 : 0);
+        if (width == 0 || height == 0 || blockSize == 0) {
+            return false;
+        }
+
+        const std::uint32_t flags = readHeaderU32(8);
+        const std::uint32_t declaredLevels = readHeaderU32(28);
+        const std::size_t levelCount = (flags & 0x20000U) != 0 ? declaredLevels : 1;
+        if (levelCount == 0 || levelCount > 32) {
+            return false;
+        }
+
+        std::size_t requiredSize = 128;
+        std::uint32_t levelWidth = width;
+        std::uint32_t levelHeight = height;
+        for (std::size_t level = 0; level < levelCount; ++level) {
+            const std::size_t blocksX = (static_cast<std::size_t>(levelWidth) + 3) / 4;
+            const std::size_t blocksY = (static_cast<std::size_t>(levelHeight) + 3) / 4;
+            if (blocksX > (std::numeric_limits<std::size_t>::max() / blocksY) ||
+                blocksX * blocksY > std::numeric_limits<std::size_t>::max() / blockSize ||
+                requiredSize > std::numeric_limits<std::size_t>::max() - blocksX * blocksY * blockSize) {
+                return false;
+            }
+            requiredSize += blocksX * blocksY * blockSize;
+            levelWidth = std::max(1U, levelWidth / 2);
+            levelHeight = std::max(1U, levelHeight / 2);
+        }
+
+        input.seekg(0, std::ios::end);
+        const std::streamoff fileSize = input.tellg();
+        return fileSize >= 0 && static_cast<std::uintmax_t>(fileSize) >= requiredSize;
+    }
+
     static void decode565(std::uint16_t value, std::uint8_t* color) {
         color[0] = static_cast<std::uint8_t>(((value >> 11) & 0x1F) * 255 / 31);
         color[1] = static_cast<std::uint8_t>(((value >> 5) & 0x3F) * 255 / 63);
@@ -1538,6 +1612,34 @@ struct BusModel {
         return texture;
     }
 
+    GLuint uploadCompressedTexture(const std::filesystem::path& path,
+                                   const gli::texture& image) {
+        gli::gl translator(gli::gl::PROFILE_GL33);
+        const gli::gl::format format = translator.translate(image.format(), image.swizzles());
+        if (format.Internal == 0 || !gli::is_compressed(image.format())) {
+            return 0;
+        }
+        GLuint texture = 0;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, image.levels() > 1
+                                                               ? GL_LINEAR_MIPMAP_LINEAR
+                                                               : GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        for (std::size_t level = 0; level < image.levels(); ++level) {
+            const auto extent = image.extent(level);
+            pglCompressedTexImage2D(
+                GL_TEXTURE_2D, static_cast<GLint>(level), format.Internal,
+                static_cast<GLsizei>(extent.x), static_cast<GLsizei>(extent.y), 0,
+                static_cast<GLsizei>(image.size(level)), image.data(0, 0, level));
+        }
+        textures.push_back(texture);
+        gameLog.Log("Uploaded compressed texture from path: " + path.generic_string());
+        return texture;
+    }
+
     static std::vector<ObjIndex> parseFace(const std::string& value, int positionCount,
                                            int texCoordCount) {
         std::vector<ObjIndex> result;
@@ -1570,12 +1672,23 @@ struct BusModel {
     }
 
     std::filesystem::path findTexture(const std::filesystem::path& root, const std::string& name) {
-        gameLog.Log("Finding texture with name: " + name + " in root: " + root.generic_string());
         const std::string cleaned = trim(name);
         if (cleaned.empty()) {
             return {};
         }
-        const auto cacheResult = [](const std::filesystem::path& path) { return path; };
+        static std::mutex resolutionMutex;
+        static std::unordered_map<std::string, std::filesystem::path> resolutionCache;
+        const std::string resolutionKey = lower(std::filesystem::path(cleaned).stem().string());
+        std::lock_guard<std::mutex> lock(resolutionMutex);
+        const auto cached = resolutionCache.find(resolutionKey);
+        if (cached != resolutionCache.end()) {
+            return cached->second;
+        }
+        gameLog.Log("Resolving texture with name: " + name + " in root: " + root.generic_string());
+        const auto cacheResult = [&](const std::filesystem::path& path) {
+            resolutionCache.emplace(resolutionKey, path);
+            return path;
+        };
         std::filesystem::path direct = root / cleaned;
         if (std::filesystem::exists(direct)) {
             return cacheResult(direct);
@@ -1686,10 +1799,10 @@ struct BusModel {
             return found->second;
         }
         const std::string alias = lower(std::filesystem::path(
-                                             batch.texturePath.empty() ? batch.textureName
-                                                                       : batch.texturePath.string())
-                                             .filename()
-                                             .generic_string());
+                             batch.texturePath.empty() ? batch.textureName
+                                           : batch.texturePath.string())
+                             .stem()
+                             .generic_string());
         if (!alias.empty()) {
             const auto aliasFound = textureAliases.find(alias);
             if (aliasFound != textureAliases.end()) {
@@ -1726,7 +1839,15 @@ struct BusModel {
             batch.textureLoadStarted = true;
         }
         startTextureRequest(batch.textureCacheEntry);
-        if (visible && batch.textureCacheEntry->request->worker.joinable()) {
+        bool requestComplete = false;
+        {
+            std::lock_guard<std::mutex> lock(batch.textureCacheEntry->request->mutex);
+            requestComplete = batch.textureCacheEntry->request->complete;
+        }
+        if (!requestComplete) {
+            return;
+        }
+        if (batch.textureCacheEntry->request->worker.joinable()) {
             batch.textureCacheEntry->request->worker.join();
         }
         std::lock_guard<std::mutex> lock(batch.textureCacheEntry->request->mutex);
@@ -1738,10 +1859,23 @@ struct BusModel {
         }
         batch.texturePath = batch.textureCacheEntry->request->resolvedPath;
         if (!batch.textureCacheEntry->uploadAttempted) {
+            if (loadingPolicy.textureMode == AssetLoadingMode::Deferred) {
+                constexpr auto textureUploadBudget = std::chrono::milliseconds(2);
+                if (std::chrono::steady_clock::now() - textureUploadStart >=
+                    textureUploadBudget) {
+                    return;
+                }
+            }
             batch.textureCacheEntry->uploadAttempted = true;
             if (!batch.texturePath.empty()) {
-                batch.textureCacheEntry->texture = uploadTexture(
-                    batch.texturePath, std::move(batch.textureCacheEntry->request->image));
+                if (batch.textureCacheEntry->request->compressedTexture) {
+                    batch.textureCacheEntry->texture = uploadCompressedTexture(
+                        batch.texturePath,
+                        *batch.textureCacheEntry->request->compressedTexture);
+                } else {
+                    batch.textureCacheEntry->texture = uploadTexture(
+                        batch.texturePath, *batch.textureCacheEntry->request->image);
+                }
             }
         }
         batch.texture = batch.textureCacheEntry->texture;
@@ -1766,7 +1900,7 @@ struct BusModel {
             for (DisplayPart& part : parts) {
                 for (Batch& batch : part.batches) {
                     if (!batch.texturePath.empty() || !batch.textureName.empty()) {
-                        ensureTexture(batch, false);
+                        ensureTexture(batch, loadingPolicy.textureMode == AssetLoadingMode::Eager);
                     }
                 }
             }
@@ -1913,16 +2047,25 @@ struct BusModel {
         if (!wheelAnimation.rotationVariable.empty()) {
             auto wheel = std::find_if(
                 wheelModels.begin(), wheelModels.end(), [&](const WheelModel& candidate) {
+                    const bool sameAnimation =
+                        wheelAnimation.rotationVariable == candidate.animation.rotationVariable &&
+                        wheelAnimation.suspensionVariable ==
+                            candidate.animation.suspensionVariable &&
+                        wheelAnimation.steeringVariable == candidate.animation.steeringVariable;
+                    if (sameAnimation) {
+                        return true;
+                    }
+                    if (wheelAnimation.rotationVariable.empty() ||
+                        candidate.animation.rotationVariable.empty()) {
+                        return false;
+                    }
                     if (wheelAnimation.hasOrigin && candidate.animation.hasOrigin) {
                         const double dx = wheelAnimation.origin[0] - candidate.animation.origin[0];
                         const double dy = wheelAnimation.origin[1] - candidate.animation.origin[1];
                         const double dz = wheelAnimation.origin[2] - candidate.animation.origin[2];
                         return dx * dx + dy * dy + dz * dz < 0.0001;
                     }
-                    return wheelAnimation.rotationVariable == candidate.animation.rotationVariable &&
-                           wheelAnimation.suspensionVariable ==
-                               candidate.animation.suspensionVariable &&
-                           wheelAnimation.steeringVariable == candidate.animation.steeringVariable;
+                    return false;
                 });
             if (wheel == wheelModels.end()) {
                 wheelModels.push_back({wheelAnimation, {}});
@@ -2098,14 +2241,18 @@ struct BusModel {
         }
     }
 
-    // Parse configuration at startup, but defer OBJ parsing, VBO creation, and texture upload
-    // until a part can be visible in the current viewpoint and LOD.
+    // Load visible OBJ geometry immediately; texture decoding remains asynchronous.
     void ensureLoaded(RenderViewContext context, double viewDistance) {
         const int selectedLod = lodForDistance(viewDistance);
         activeLod = selectedLod;
         bool loadedPart = false;
+        const bool immediateLoad = !hasLoadedInitialView ||
+                       loadingPolicy.modelMode == AssetLoadingMode::Eager;
         const auto loadStart = std::chrono::steady_clock::now();
         constexpr auto loadBudget = std::chrono::milliseconds(4);
+        const auto budgetReached = [&] {
+            return !immediateLoad && std::chrono::steady_clock::now() - loadStart >= loadBudget;
+        };
 
         for (Part& part : pendingParts) {
             const bool viewpointMatches =
@@ -2121,9 +2268,15 @@ struct BusModel {
 
         auto part = pendingParts.begin();
         while (part != pendingParts.end()) {
+            if (budgetReached()) {
+                break;
+            }
             const bool viewpointMatches =
                 part->viewpoint == 0 || (part->viewpoint & viewpointMask(context)) != 0;
-            if (!viewpointMatches || (selectedLod >= 0 && part->lodIndex != selectedLod)) {
+            const bool shouldLoad = loadingPolicy.modelMode == AssetLoadingMode::Eager ||
+                                    (viewpointMatches &&
+                                     (selectedLod < 0 || part->lodIndex == selectedLod));
+            if (!shouldLoad) {
                 ++part;
                 continue;
             }
@@ -2133,14 +2286,10 @@ struct BusModel {
             loadObj(*part, parsed);
             part = pendingParts.erase(part);
             loadedPart = true;
-            if (std::chrono::steady_clock::now() - loadStart >= loadBudget) {
-                break;
-            }
         }
 
         auto backgroundPart = pendingParts.begin();
-        while (backgroundPart != pendingParts.end() &&
-               std::chrono::steady_clock::now() - loadStart < loadBudget) {
+        while (backgroundPart != pendingParts.end() && !budgetReached()) {
             const bool viewpointMatches =
                 backgroundPart->viewpoint == 0 ||
                 (backgroundPart->viewpoint & viewpointMask(context)) != 0;
@@ -2156,7 +2305,8 @@ struct BusModel {
             backgroundPart = pendingParts.erase(backgroundPart);
             loadedPart = true;
         }
-        if (loadedPart) {
+        hasLoadedInitialView = true;
+        if (loadedPart || loadingPolicy.textureMode == AssetLoadingMode::Eager) {
             rebuildDisplayOrder();
             preloadTextures();
         }
@@ -2338,8 +2488,48 @@ void BusModel::loadTextureRequest(const std::shared_ptr<TextureRequest>& request
     if (resolved.empty()) {
         resolved = findTexture(request->root, request->name);
     }
+    const std::string resolvedKey = resolved.empty()
+                                        ? std::string()
+                                        : lower(std::filesystem::absolute(resolved)
+                                                    .lexically_normal()
+                                                    .generic_string());
+    if (!resolvedKey.empty()) {
+        std::shared_ptr<DecodedTexture> cachedTexture;
+        {
+            std::lock_guard<std::mutex> lock(decodedTextureMutex);
+            const auto cached = decodedTextureCache.find(resolvedKey);
+            if (cached != decodedTextureCache.end()) {
+                cachedTexture = cached->second;
+            }
+        }
+        if (cachedTexture) {
+            std::lock_guard<std::mutex> requestLock(request->mutex);
+            request->resolvedPath = resolved;
+            request->image = cachedTexture->image;
+            request->compressedTexture = cachedTexture->compressedTexture;
+            request->complete = true;
+            return;
+        }
+    }
     Image image;
-    const bool textureLoaded = !resolved.empty() && readImage(resolved, image);
+    bool textureLoaded = false;
+    std::shared_ptr<gli::texture> compressedTexture;
+    if (!resolved.empty() && lower(resolved.extension().string()) == ".dds" &&
+        isSafeCompressedDds(resolved)) {
+        try {
+            gli::texture loaded = gli::load(resolved.string());
+            if (!loaded.empty() && gli::is_compressed(loaded.format())) {
+                compressedTexture = std::make_shared<gli::texture>(std::move(loaded));
+                textureLoaded = true;
+            }
+        } catch (const std::exception& error) {
+            gameLog.Log("GLI failed to load compressed texture " + resolved.generic_string() +
+                        ": " + error.what());
+        }
+    }
+    if (!textureLoaded) {
+        textureLoaded = !resolved.empty() && readImage(resolved, image);
+    }
 #ifdef _WIN32
     if (SUCCEEDED(comResult)) {
         CoUninitialize();
@@ -2348,7 +2538,15 @@ void BusModel::loadTextureRequest(const std::shared_ptr<TextureRequest>& request
     std::lock_guard<std::mutex> lock(request->mutex);
     if (textureLoaded) {
         request->resolvedPath = std::move(resolved);
-        request->image = std::move(image);
+        request->image = std::make_shared<Image>(std::move(image));
+        request->compressedTexture = std::move(compressedTexture);
+        if (!resolvedKey.empty()) {
+            auto decoded = std::make_shared<DecodedTexture>();
+            decoded->image = request->image;
+            decoded->compressedTexture = request->compressedTexture;
+            std::lock_guard<std::mutex> cacheLock(decodedTextureMutex);
+            decodedTextureCache.emplace(resolvedKey, std::move(decoded));
+        }
     }
     request->complete = true;
 }
@@ -2361,7 +2559,8 @@ void Renderer::scrollCallback(GLFWwindow* window, double, double yOffset) {
     renderer->cameraDistance_ = std::clamp(renderer->cameraDistance_ - yOffset * 2.0, 6.0, 80.0);
 }
 
-Renderer::Renderer(int width, int height, const char* title, BusVehicle vehicle)
+Renderer::Renderer(int width, int height, const char* title, BusVehicle vehicle,
+                   ModelLoadingPolicy loadingPolicy)
     : window_(nullptr) {
     if (!glfwInit()) {
         gameLog.Log("Failed to initialize GLFW");
@@ -2376,7 +2575,13 @@ Renderer::Renderer(int width, int height, const char* title, BusVehicle vehicle)
     glfwMakeContextCurrent(window_);
     glfwSetWindowUserPointer(window_, this);
     glfwSetScrollCallback(window_, &Renderer::scrollCallback);
-    glfwSwapInterval(0);
+    const char* vsyncSetting = std::getenv("OPENBUS_VSYNC");
+    const bool vsyncEnabled = vsyncSetting == nullptr ||
+                              (std::string(vsyncSetting) != "0" &&
+                               std::string(vsyncSetting) != "off" &&
+                               std::string(vsyncSetting) != "false");
+    glfwSwapInterval(vsyncEnabled ? 1 : 0);
+    gameLog.Log(std::string("VSync ") + (vsyncEnabled ? "enabled" : "disabled"));
     if (!loadBufferFunctions()) {
         glfwDestroyWindow(window_);
         window_ = nullptr;
@@ -2385,7 +2590,7 @@ Renderer::Renderer(int width, int height, const char* title, BusVehicle vehicle)
     }
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.45f, 0.65f, 0.88f, 1.0f);
-    busModel_ = std::make_unique<BusModel>(vehicle);
+    busModel_ = std::make_unique<BusModel>(vehicle, loadingPolicy);
     gameLog.Log("Renderer initialized");
 }
 

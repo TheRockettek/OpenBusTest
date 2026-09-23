@@ -1,6 +1,6 @@
 #pragma once
 
-#include "BusSimulation.h"
+#include "BusTypes.h"
 
 #include <array>
 #include <filesystem>
@@ -9,10 +9,22 @@
 
 struct GLFWwindow;
 struct BusModel;
+class BusSimulation;
+
+enum class AssetLoadingMode {
+  Eager,
+  Deferred,
+};
+
+struct ModelLoadingPolicy {
+  AssetLoadingMode modelMode = AssetLoadingMode::Deferred;
+  AssetLoadingMode textureMode = AssetLoadingMode::Deferred;
+};
 
 class Renderer {
   public:
-    Renderer(int width, int height, const char* title, BusVehicle vehicle = BusVehicle::ManDl05);
+  Renderer(int width, int height, const char* title, BusVehicle vehicle = BusVehicle::ManDl05,
+       ModelLoadingPolicy loadingPolicy = {});
     ~Renderer();
 
     Renderer(const Renderer&) = delete;

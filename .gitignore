@@ -4,3 +4,4 @@ build
 build-lint
 build-local
 build-ode
+game.log

@@ -5,6 +5,7 @@ project(OpenBus VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
 option(OPENBUS_ENABLE_CLANG_TIDY
        "Run clang-tidy during compilation"
@@ -32,6 +33,15 @@ if(NOT TARGET glfw)
     set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(glfw)
+endif()
+
+FetchContent_Declare(gli
+    GIT_REPOSITORY https://github.com/g-truc/gli.git
+    GIT_TAG 0.8.2.0
+)
+FetchContent_GetProperties(gli)
+if(NOT gli_POPULATED)
+    FetchContent_Populate(gli)
 endif()
 
 if(NOT TARGET glfw)
@@ -64,12 +74,18 @@ endif()
 
 add_executable(OpenBus
     src/main.cpp
+    src/BusConfiguration.cpp
+    src/CrashHandler.cpp
+    src/RoadFeatures.cpp
     src/BusSimulation.cpp
     src/Logger.cpp
     src/Renderer.cpp
 )
 
-target_include_directories(OpenBus PRIVATE src)
+target_include_directories(OpenBus PRIVATE
+    src
+    ${gli_SOURCE_DIR}
+    ${gli_SOURCE_DIR}/external/glm)
 target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} glfw OpenGL::GL)
 
 add_executable(uno3d_converter
@@ -78,7 +94,7 @@ add_executable(uno3d_converter
 
 if(MSVC)
     target_compile_options(OpenBus PRIVATE /W4 /permissive-)
-    target_link_libraries(OpenBus PRIVATE windowscodecs)
+    target_link_libraries(OpenBus PRIVATE windowscodecs dbghelp)
 else()
     target_compile_options(OpenBus PRIVATE -Wall -Wextra -Wpedantic)
 endif()

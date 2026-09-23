@@ -103,7 +103,8 @@ added as a separate ODE body/joint layer.
 - Hold middle mouse and drag: orbit outside view `0`, or look around the
   selected non-third-person viewport
 - Scroll up/down: zoom in/out
-- VSync is disabled so the renderer can run above the display refresh cadence
+- VSync is enabled by default; set `OPENBUS_VSYNC=0`, `off`, or `false` before
+  launching to run above the display refresh cadence
 - Optional texture downscaling: set `OPENBUS_TEXTURE_SCALE=0.5` before
   launching to upload half-resolution textures; valid range is `0.25`-`1.0`
 - The window title reports the currently visible/rendered triangle count

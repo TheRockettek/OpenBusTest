@@ -1,4 +1,6 @@
 #include "BusSimulation.h"
+#include "BusConfiguration.h"
+#include "CrashHandler.h"
 #include "Logger.h"
 #include "Renderer.h"
 
@@ -9,14 +11,17 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 int main() {
+    installCrashHandler();
     Logger applicationLog("Application");
     try {
         const BusVehicle vehicle = busVehicleFromEnvironment();
         applicationLog.Log("Starting OpenBus");
         BusSimulation simulation(busConfigurationFor(vehicle));
-        Renderer renderer(1280, 720, "OpenBus", vehicle);
+        Renderer renderer(1280, 720, "OpenBus", vehicle,
+                  {AssetLoadingMode::Eager, AssetLoadingMode::Eager});
         std::ofstream diagnostics("OpenBus_physics.json", std::ios::trunc);
         if (!diagnostics) {
             applicationLog.Log("Failed to open OpenBus_physics.json");
@@ -45,24 +50,12 @@ int main() {
             pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(),
                                     frameKeyEvents.end());
             simulation.update(elapsed, renderer.throttle(), renderer.steering(), renderer.brake());
-            diagnosticsAccumulator += std::max(0.0, elapsed);
-            if (diagnosticsAccumulator >= 0.2) {
-                simulation.writeDiagnosticsJson(diagnostics, firstDiagnosticSample,
-                                                pendingKeyEvents);
-                firstDiagnosticSample = false;
-                pendingKeyEvents.clear();
-                diagnostics.flush();
-                diagnosticsAccumulator = std::fmod(diagnosticsAccumulator, 0.2);
-            }
             renderer.draw(simulation);
-            if ((captureOnStartup && currentTime >= 2.0) || renderer.consumeCaptureRequest()) {
+            if ((captureOnStartup && currentTime >= 10.0) || renderer.consumeCaptureRequest()) {
                 captureOnStartup = false;
                 renderer.captureViews(simulation, "screenshots");
             }
             renderer.endFrame();
-        }
-        if (!pendingKeyEvents.empty()) {
-            simulation.writeDiagnosticsJson(diagnostics, firstDiagnosticSample, pendingKeyEvents);
         }
         diagnostics << "\n  ]\n}\n";
         diagnostics.flush();
