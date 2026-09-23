@@ -22,14 +22,8 @@ int main() {
             applicationLog.Log("Failed to open OpenBus_physics.json");
             throw std::runtime_error("Failed to open OpenBus_physics.json for diagnostics");
         }
-        std::ofstream wheelRotationLog("OpenBus_wheel_rotation.log", std::ios::trunc);
-        if (!wheelRotationLog) {
-            applicationLog.Log("Failed to open OpenBus_wheel_rotation.log");
-            throw std::runtime_error("Failed to open OpenBus_wheel_rotation.log for diagnostics");
-        }
+
         applicationLog.Log("Diagnostics files opened");
-        wheelRotationLog << "time_s,wheel_index,angular_velocity_rad_s,rpm\n";
-        wheelRotationLog.flush();
         diagnostics << "{\n"
                        "  \"format_version\": 2,\n"
                        "  \"sample_rate_hz\": 5,\n"
@@ -38,7 +32,6 @@ int main() {
 
         double previousTime = glfwGetTime();
         double diagnosticsAccumulator = 0.0;
-        double nextWheelRotationLogTime = 1.0;
         bool firstDiagnosticSample = true;
         bool captureOnStartup = std::getenv("OPENBUS_CAPTURE_VIEWS") != nullptr;
         std::vector<KeyEvent> pendingKeyEvents;
@@ -52,11 +45,6 @@ int main() {
             pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(),
                                     frameKeyEvents.end());
             simulation.update(elapsed, renderer.throttle(), renderer.steering(), renderer.brake());
-            while (simulation.simulationTime() >= nextWheelRotationLogTime) {
-                simulation.writeWheelRotationLog(wheelRotationLog);
-                wheelRotationLog.flush();
-                nextWheelRotationLogTime += 1.0;
-            }
             diagnosticsAccumulator += std::max(0.0, elapsed);
             if (diagnosticsAccumulator >= 0.2) {
                 simulation.writeDiagnosticsJson(diagnostics, firstDiagnosticSample,
