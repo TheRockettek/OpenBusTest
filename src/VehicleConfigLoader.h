@@ -6,8 +6,9 @@
 
 #include <array>
 #include <filesystem>
-#include <string>
 #include <vector>
+#include <string>
+#include <unordered_map>
 
 enum class VehicleFileKind { Vehicle, Bus };
 
@@ -21,6 +22,16 @@ struct VehicleCamera {
     double pan = 0.0;
     double tilt = 0.0;
     double culling = 0.0;
+};
+
+struct ConstantCurvePoint {
+    double x = 0.0;
+    double y = 0.0;
+};
+
+struct ConstantCurve {
+    std::string name;
+    std::vector<ConstantCurvePoint> points;
 };
 
 struct VehicleConfig {
@@ -46,6 +57,10 @@ struct VehicleConfig {
     std::vector<std::string> variableLists;
     std::vector<std::string> stringVariableLists;
     std::vector<std::string> constantFiles;
+    std::vector<std::string> floatVariables;
+    std::vector<std::string> stringVariables;
+    std::unordered_map<std::string, double> constants;
+    std::vector<ConstantCurve> curves;
     ConfigurationDiagnostics diagnostics;
 };
 

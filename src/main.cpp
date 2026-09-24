@@ -59,6 +59,8 @@ int main() {
         bool pendingCaptureRequest = false;
         std::vector<KeyEvent> pendingKeyEvents;
         while (!renderer.shouldClose()) {
+            // Each frame updates input-backed variables first, advances physics,
+            // then renders using the resulting simulation and variable state.
             const double currentTime = glfwGetTime();
             const double elapsed = currentTime - previousTime;
             previousTime = currentTime;

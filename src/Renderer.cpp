@@ -53,6 +53,10 @@
 #define GL_COMPRESSED_RGBA_S3TC_DXT5_EXT 0x83F3
 #endif
 
+#ifndef GL_TEXTURE_2D_ARRAY
+#define GL_TEXTURE_2D_ARRAY 0x8C1A
+#endif
+
 #ifndef GL_TEXTURE0
 #define GL_TEXTURE0 0x84C0
 #define GL_TEXTURE1 0x84C1
@@ -81,6 +85,8 @@ Logger wheelLog = Logger("Wheel");
 namespace {
 
 bool parseEnabledFlag(const char* value) {
+    // Environment flags accept the same common true spellings for diagnostics
+    // and optional performance tracing.
     if (value == nullptr) {
         return false;
     }
@@ -127,6 +133,8 @@ class PerfTraceState {
     }
 
     ~PerfTraceState() {
+        // Trace output is written once at shutdown so worker-thread events remain
+        // cheap during rendering.
         if (!enabled) {
             return;
         }
@@ -214,21 +222,28 @@ using BufferDataProc = void (*)(GLenum, std::ptrdiff_t, const void*, GLenum);
 using DeleteBuffersProc = void (*)(GLsizei, const GLuint*);
 using CompressedTexImage2DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint,
                                           GLsizei, const void*);
+using CompressedTexImage3DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLsizei,
+                                          GLint, GLsizei, const void*);
 using ActiveTextureProc = void (*)(GLenum);
 GenBuffersProc pglGenBuffers = nullptr;
 BindBufferProc pglBindBuffer = nullptr;
 BufferDataProc pglBufferData = nullptr;
 DeleteBuffersProc pglDeleteBuffers = nullptr;
 CompressedTexImage2DProc pglCompressedTexImage2D = nullptr;
+CompressedTexImage3DProc pglCompressedTexImage3D = nullptr;
 ActiveTextureProc pglActiveTexture = nullptr;
 
 bool loadBufferFunctions() {
+    // VBO and compressed-texture entry points are loaded after the GLFW context
+    // exists because legacy OpenGL headers do not expose them portably.
     pglGenBuffers = reinterpret_cast<GenBuffersProc>(glfwGetProcAddress("glGenBuffers"));
     pglBindBuffer = reinterpret_cast<BindBufferProc>(glfwGetProcAddress("glBindBuffer"));
     pglBufferData = reinterpret_cast<BufferDataProc>(glfwGetProcAddress("glBufferData"));
     pglDeleteBuffers = reinterpret_cast<DeleteBuffersProc>(glfwGetProcAddress("glDeleteBuffers"));
     pglCompressedTexImage2D = reinterpret_cast<CompressedTexImage2DProc>(
         glfwGetProcAddress("glCompressedTexImage2D"));
+    pglCompressedTexImage3D = reinterpret_cast<CompressedTexImage3DProc>(
+        glfwGetProcAddress("glCompressedTexImage3D"));
     pglActiveTexture = reinterpret_cast<ActiveTextureProc>(glfwGetProcAddress("glActiveTexture"));
     const bool available = pglGenBuffers && pglBindBuffer && pglBufferData && pglDeleteBuffers &&
                            pglCompressedTexImage2D && pglActiveTexture;
@@ -640,6 +655,8 @@ struct BusModel {
     };
 
     struct TextureRequest {
+        // Decode work runs asynchronously; the mutex protects completion and
+        // decoded payload ownership while the render thread uploads to GL.
         std::filesystem::path root;
         std::filesystem::path path;
         std::string name;
@@ -662,6 +679,8 @@ struct BusModel {
     struct TextureCacheEntry {
         std::shared_ptr<TextureRequest> request;
         GLuint texture = 0;
+        bool textureArray = false;
+        std::size_t textureArrayLayers = 1;
         bool uploadAttempted = false;
     };
 
@@ -714,6 +733,13 @@ struct BusModel {
         int alphaMode = 0;
         bool noZwrite = false;
         std::string alphaScaleVariable;
+        struct TextureChange {
+            std::filesystem::path texturePath;
+            std::string textureName;
+            int layer = 0;
+            std::string activationVariable;
+        };
+        std::vector<TextureChange> textureChanges;
     };
 
     struct WheelAnimation {
@@ -731,6 +757,8 @@ struct BusModel {
         std::array<double, 3> color = {0.65, 0.65, 0.65};
         int viewpoint = 0;
         int renderType = 2;
+        std::string visibleVariable;
+        int visibleValue = 0;
         std::string meshIdentifier;
         std::string animationParent;
         std::unordered_map<std::string, MaterialState> materialStates;
@@ -740,12 +768,16 @@ struct BusModel {
     };
 
     struct Vertex {
-        float x, y, z, u, v;
+        float x, y, z, u, v, layer;
     };
 
     struct Batch {
         GLuint buffer = 0;
         GLuint texture = 0;
+        bool textureArray = false;
+        std::size_t textureArrayLayers = 1;
+        std::filesystem::path baseTexturePath;
+        std::string baseTextureName;
         std::filesystem::path texturePath;
         std::filesystem::path textureRoot;
         std::string textureName;
@@ -762,15 +794,23 @@ struct BusModel {
         int alphaMode = 0;
         bool noZwrite = false;
         std::string alphaScaleVariable;
+        int baseTextureLayer = 0;
+        int textureLayer = 0;
+        std::vector<Vertex> vertices;
+        std::vector<MaterialState::TextureChange> textureChanges;
         std::size_t vertexCount = 0;
     };
 
     struct DisplayPart {
+        // Geometry metadata is immutable after loading; visibility is still
+        // evaluated from live variables during each draw.
         std::vector<Batch> batches;
         int viewpoint;
         int renderType = 2;
         bool transparent;
         int lodIndex;
+        std::string visibleVariable;
+        int visibleValue = 0;
         std::array<double, 3> center;
         std::array<double, 3> size;
         double radius;
@@ -810,6 +850,52 @@ struct BusModel {
 
     void loadTextureRequest(const std::shared_ptr<TextureRequest>& request);
 
+    void updateMaterialChange(Batch& batch) {
+        // Select the last active material change, then reset only the texture
+        // request state so the new texture is resolved and uploaded.
+        const MaterialState::TextureChange* selected = nullptr;
+        for (const MaterialState::TextureChange& change : batch.textureChanges) {
+            if (variables.get(change.activationVariable) != 0.0) {
+                selected = &change;
+            }
+        }
+        const std::filesystem::path texturePath = selected == nullptr
+                                                       ? batch.baseTexturePath
+                                                       : selected->texturePath;
+        const std::string textureName = selected == nullptr ? batch.baseTextureName
+                                                            : selected->textureName;
+        const int requestedLayer = selected == nullptr ? batch.baseTextureLayer : selected->layer;
+        const int layer = batch.textureArray
+                              ? std::clamp(requestedLayer, 0,
+                                           static_cast<int>(batch.textureArrayLayers) - 1)
+                              : 0;
+        if (texturePath == batch.texturePath && textureName == batch.textureName &&
+            layer == batch.textureLayer) {
+            return;
+        }
+        batch.texturePath = texturePath;
+        batch.textureName = textureName;
+        batch.textureCacheEntry.reset();
+        batch.textureRequest.reset();
+        batch.texture = 0;
+        batch.textured = false;
+        batch.textureLoadAttempted = false;
+        batch.textureLoadStarted = false;
+        if (layer != batch.textureLayer) {
+            batch.textureLayer = layer;
+            for (Vertex& vertex : batch.vertices) {
+                vertex.layer = static_cast<float>(layer);
+            }
+            if (!batch.vertices.empty()) {
+                pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+                pglBufferData(GL_ARRAY_BUFFER,
+                              static_cast<std::ptrdiff_t>(batch.vertices.size() * sizeof(Vertex)),
+                              batch.vertices.data(), GL_STATIC_DRAW);
+                pglBindBuffer(GL_ARRAY_BUFFER, 0);
+            }
+        }
+    }
+
     double alphaScale(const Batch& batch) const {
         if (batch.alphaScaleVariable.empty()) {
             return 1.0;
@@ -818,6 +904,7 @@ struct BusModel {
     }
 
     void updateFrameVariables(double timegap, double getTime, double mouseX, double mouseY) {
+        // Frame-scoped values are refreshed before simulation and rendering run.
         variables.updateFrame(timegap, getTime, mouseX, mouseY);
     }
 
@@ -907,6 +994,8 @@ struct BusModel {
         if (!loaded) {
             return;
         }
+        // Texture uploads must happen on the OpenGL thread, so decoding and GL
+        // upload are deliberately split between the worker and draw paths.
         textureUploadStart = std::chrono::steady_clock::now();
 
         glDisable(GL_TEXTURE_2D);
@@ -944,6 +1033,10 @@ struct BusModel {
             }
         }
         const auto visible = [&](const DisplayPart& part) {
+            if (!part.visibleVariable.empty() &&
+                variables.get(part.visibleVariable) != static_cast<double>(part.visibleValue)) {
+                return false;
+            }
             const double local[4] = {part.center[0], part.center[1], part.center[2] + modelOffsetZ,
                                      1.0};
             double eye[4] = {};
@@ -1063,7 +1156,8 @@ struct BusModel {
                 ensureTexture(batch);
                 if (batch.textured) {
                     glEnable(GL_TEXTURE_2D);
-                    glBindTexture(GL_TEXTURE_2D, batch.texture);
+                    glBindTexture(batch.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
+                                  batch.texture);
                     glColor4d(1.0, 1.0, 1.0, alphaScale(batch));
                 } else {
                     glDisable(GL_TEXTURE_2D);
@@ -1074,7 +1168,7 @@ struct BusModel {
                 glVertexPointer(3, GL_FLOAT, sizeof(Vertex), reinterpret_cast<const void*>(0));
                 if (batch.textured) {
                     glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-                    glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex),
+                    glTexCoordPointer(batch.textureArray ? 3 : 2, GL_FLOAT, sizeof(Vertex),
                                       reinterpret_cast<const void*>(3 * sizeof(float)));
                 }
                 glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
@@ -1094,7 +1188,8 @@ struct BusModel {
             ensureTexture(batch);
             if (batch.textured) {
                 glEnable(GL_TEXTURE_2D);
-                glBindTexture(GL_TEXTURE_2D, batch.texture);
+                glBindTexture(batch.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
+                              batch.texture);
                 glColor4d(1.0, 1.0, 1.0, alphaScale(batch));
             } else {
                 glDisable(GL_TEXTURE_2D);
@@ -1105,7 +1200,7 @@ struct BusModel {
             glVertexPointer(3, GL_FLOAT, sizeof(Vertex), nullptr);
             if (batch.textured) {
                 glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-                glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex),
+                glTexCoordPointer(batch.textureArray ? 3 : 2, GL_FLOAT, sizeof(Vertex),
                                   reinterpret_cast<const void*>(3 * sizeof(float)));
             }
             glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
@@ -1138,7 +1233,8 @@ struct BusModel {
             ensureTexture(batch);
             if (batch.textured) {
                 glEnable(GL_TEXTURE_2D);
-                glBindTexture(GL_TEXTURE_2D, batch.texture);
+                glBindTexture(batch.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
+                              batch.texture);
                 glColor4d(1.0, 1.0, 1.0, alphaScale(batch));
             } else {
                 glDisable(GL_TEXTURE_2D);
@@ -1149,7 +1245,7 @@ struct BusModel {
             glVertexPointer(3, GL_FLOAT, sizeof(Vertex), nullptr);
             if (batch.textured) {
                 glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-                glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex),
+                glTexCoordPointer(batch.textureArray ? 3 : 2, GL_FLOAT, sizeof(Vertex),
                                   reinterpret_cast<const void*>(3 * sizeof(float)));
             }
             glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
@@ -1276,7 +1372,8 @@ struct BusModel {
                     }
                     if (batch.textured && !isWheelRubberTexture(batch.textureName)) {
                         glEnable(GL_TEXTURE_2D);
-                        glBindTexture(GL_TEXTURE_2D, batch.texture);
+                        glBindTexture(batch.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
+                                      batch.texture);
                         glColor3d(1.0, 1.0, 1.0);
                     } else {
                         glDisable(GL_TEXTURE_2D);
@@ -1291,7 +1388,7 @@ struct BusModel {
                     glVertexPointer(3, GL_FLOAT, sizeof(Vertex), nullptr);
                     if (batch.textured) {
                         glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-                        glTexCoordPointer(2, GL_FLOAT, sizeof(Vertex),
+                        glTexCoordPointer(batch.textureArray ? 3 : 2, GL_FLOAT, sizeof(Vertex),
                                           reinterpret_cast<const void*>(3 * sizeof(float)));
                     } else {
                         glDisableClientState(GL_TEXTURE_COORD_ARRAY);
@@ -1685,6 +1782,11 @@ struct BusModel {
         const std::uint32_t width = readHeaderU32(16);
         const std::uint32_t height = readHeaderU32(12);
         const std::string fourCC(header.begin() + 84, header.begin() + 88);
+        if (fourCC == "DX10") {
+            input.seekg(0, std::ios::end);
+            const std::streamoff fileSize = input.tellg();
+            return width > 0 && height > 0 && fileSize >= 148;
+        }
         const std::size_t blockSize = fourCC == "DXT1" ? 8 : (fourCC == "DXT3" || fourCC == "DXT5" ? 16 : 0);
         if (width == 0 || height == 0 || blockSize == 0) {
             return false;
@@ -1917,6 +2019,28 @@ struct BusModel {
         return input && std::string(fourCC.data(), fourCC.size()) == "DXT5";
     }
 
+    static bool isDdsTextureArray(const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        if (!input) {
+            return false;
+        }
+        std::array<std::uint8_t, 128> header = {};
+        input.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
+        if (!input || std::string(header.data() + 84, header.data() + 88) != "DX10") {
+            return false;
+        }
+        std::array<std::uint8_t, 20> dx10 = {};
+        input.read(reinterpret_cast<char*>(dx10.data()), static_cast<std::streamsize>(dx10.size()));
+        if (!input) {
+            return false;
+        }
+        const std::uint32_t arraySize = static_cast<std::uint32_t>(dx10[12]) |
+                                        (static_cast<std::uint32_t>(dx10[13]) << 8) |
+                                        (static_cast<std::uint32_t>(dx10[14]) << 16) |
+                                        (static_cast<std::uint32_t>(dx10[15]) << 24);
+        return arraySize > 1;
+    }
+
     static bool readDxt5CompressedDds(const std::filesystem::path& path,
                                       BusModel::CompressedDds& image) {
         TraceScope trace("texture", "readDxt5CompressedDds");
@@ -2019,28 +2143,43 @@ struct BusModel {
     }
 
     GLuint uploadCompressedTexture(const std::filesystem::path& path,
-                                   const gli::texture& image) {
+                                   const gli::texture& image, bool& textureArray,
+                                   std::size_t& textureArrayLayers) {
         TraceScope trace("texture", "uploadCompressedTexture");
+        textureArray = image.layers() > 1;
+        textureArrayLayers = std::max<std::size_t>(1, image.layers());
         gli::gl translator(gli::gl::PROFILE_GL33);
         const gli::gl::format format = translator.translate(image.format(), image.swizzles());
         if (format.Internal == 0 || !gli::is_compressed(image.format())) {
             return 0;
         }
+        if (textureArray && pglCompressedTexImage3D == nullptr) {
+            return 0;
+        }
         GLuint texture = 0;
         glGenTextures(1, &texture);
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, image.levels() > 1
-                                                               ? GL_LINEAR_MIPMAP_LINEAR
-                                                               : GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        const GLenum target = textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+        glBindTexture(target, texture);
+        glTexParameteri(target, GL_TEXTURE_MIN_FILTER, image.levels() > 1
+                                                           ? GL_LINEAR_MIPMAP_LINEAR
+                                                           : GL_LINEAR);
+        glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_REPEAT);
         for (std::size_t level = 0; level < image.levels(); ++level) {
             const auto extent = image.extent(level);
-            pglCompressedTexImage2D(
-                GL_TEXTURE_2D, static_cast<GLint>(level), format.Internal,
-                static_cast<GLsizei>(extent.x), static_cast<GLsizei>(extent.y), 0,
-                static_cast<GLsizei>(image.size(level)), image.data(0, 0, level));
+            if (textureArray) {
+                pglCompressedTexImage3D(
+                    GL_TEXTURE_2D_ARRAY, static_cast<GLint>(level), format.Internal,
+                    static_cast<GLsizei>(extent.x), static_cast<GLsizei>(extent.y),
+                    static_cast<GLsizei>(textureArrayLayers), 0,
+                    static_cast<GLsizei>(image.size(level)), image.data(0, 0, level));
+            } else {
+                pglCompressedTexImage2D(
+                    GL_TEXTURE_2D, static_cast<GLint>(level), format.Internal,
+                    static_cast<GLsizei>(extent.x), static_cast<GLsizei>(extent.y), 0,
+                    static_cast<GLsizei>(image.size(level)), image.data(0, 0, level));
+            }
         }
         textures.push_back(texture);
         static const bool verboseTextureUploadLogs =
@@ -2368,6 +2507,7 @@ struct BusModel {
     }
 
     void ensureTexture(Batch& batch, bool visible = true) {
+        updateMaterialChange(batch);
         if (batch.textureLoadAttempted) {
             return;
         }
@@ -2417,7 +2557,9 @@ struct BusModel {
                 } else if (batch.textureCacheEntry->request->compressedTexture) {
                     batch.textureCacheEntry->texture = uploadCompressedTexture(
                         batch.texturePath,
-                        *batch.textureCacheEntry->request->compressedTexture);
+                        *batch.textureCacheEntry->request->compressedTexture,
+                        batch.textureCacheEntry->textureArray,
+                        batch.textureCacheEntry->textureArrayLayers);
                 } else {
                     batch.textureCacheEntry->texture = uploadTexture(
                         batch.texturePath, *batch.textureCacheEntry->request->image);
@@ -2425,6 +2567,8 @@ struct BusModel {
             }
         }
         batch.texture = batch.textureCacheEntry->texture;
+        batch.textureArray = batch.textureCacheEntry->textureArray;
+        batch.textureArrayLayers = batch.textureCacheEntry->textureArrayLayers;
         batch.textureLoadAttempted = true;
         batch.textured = batch.texture != 0;
         if (batch.texturePath.empty()) {
@@ -2614,7 +2758,8 @@ struct BusModel {
                              const std::string& textureName, const std::array<double, 3>& color,
                              const std::string& environmentTextureName, double environmentStrength,
                              int alphaMode, bool noZwrite,
-                             const std::string& alphaScaleVariable) {
+                             const std::string& alphaScaleVariable,
+                             const std::vector<MaterialState::TextureChange>& textureChanges) {
             TraceScope batchTrace("obj", "loadObj.makeBatch");
             std::vector<Vertex> vertices;
             vertices.reserve(source.size() * 3);
@@ -2637,13 +2782,17 @@ struct BusModel {
                                         static_cast<float>(-position.x),
                                         static_cast<float>(position.y),
                                         texCoord ? static_cast<float>(texCoord->u) : 0.0f,
-                                        texCoord ? static_cast<float>(1.0 - texCoord->v) : 0.0f});
+                                        texCoord ? static_cast<float>(1.0 - texCoord->v) : 0.0f,
+                                        0.0f});
                 }
             }
             }
             if (vertices.empty())
                 return;
             Batch batch;
+            batch.vertices = std::move(vertices);
+            batch.baseTexturePath = texturePath;
+            batch.baseTextureName = textureName;
             batch.texturePath = texturePath;
             batch.textureRoot = part.objPath.parent_path();
             batch.textureName = textureName;
@@ -2653,14 +2802,15 @@ struct BusModel {
             batch.alphaMode = alphaMode;
             batch.noZwrite = noZwrite;
             batch.alphaScaleVariable = alphaScaleVariable;
-            batch.vertexCount = vertices.size();
+            batch.textureChanges = textureChanges;
+            batch.vertexCount = batch.vertices.size();
             {
                 TraceScope uploadTrace("obj", "loadObj.uploadVbo");
                 pglGenBuffers(1, &batch.buffer);
                 pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
                 pglBufferData(GL_ARRAY_BUFFER,
-                              static_cast<std::ptrdiff_t>(vertices.size() * sizeof(Vertex)),
-                              vertices.data(), GL_STATIC_DRAW);
+                              static_cast<std::ptrdiff_t>(batch.vertices.size() * sizeof(Vertex)),
+                              batch.vertices.data(), GL_STATIC_DRAW);
                 pglBindBuffer(GL_ARRAY_BUFFER, 0);
             }
             destination->back().batches.push_back(std::move(batch));
@@ -2752,6 +2902,8 @@ struct BusModel {
                                 part.renderType,
                                 hasTransparentMaterial,
                                 part.lodIndex,
+                                part.visibleVariable,
+                                part.visibleValue,
                                 boundsCenter,
                                 boundsSize,
                                 boundsRadius,
@@ -2760,7 +2912,7 @@ struct BusModel {
             const MaterialState& state = groupStates[key];
             makeBatch(groups[key], groupTextures[key], groupTextureNames[key], groupColors[key],
                       groupEnvironmentNames[key], groupEnvironmentStrengths[key], state.alphaMode,
-                      state.noZwrite, state.alphaScaleVariable);
+                      state.noZwrite, state.alphaScaleVariable, state.textureChanges);
         }
     }
 
@@ -2998,6 +3150,8 @@ struct BusModel {
             part.textureName = source.textureName;
             part.viewpoint = source.viewpoint;
             part.renderType = source.renderType;
+            part.visibleVariable = source.visibleVariable;
+            part.visibleValue = source.visibleValue;
             part.meshIdentifier = source.meshIdentifier;
             part.animationParent = source.animationParent;
             part.lodIndex = source.lodIndex;
@@ -3015,6 +3169,11 @@ struct BusModel {
                 state.alphaMode = materialEntry.second.alphaMode;
                 state.noZwrite = materialEntry.second.noZwrite;
                 state.alphaScaleVariable = materialEntry.second.alphaScaleVariable;
+                                state.textureChanges.reserve(materialEntry.second.textureChanges.size());
+                                for (const auto& change : materialEntry.second.textureChanges) {
+                                    state.textureChanges.push_back({change.texturePath, change.textureName,
+                                                                    change.layer, change.activationVariable});
+                                }
                 part.materialStates.emplace(materialEntry.first, std::move(state));
             }
             parts.push_back(std::move(part));
@@ -3041,9 +3200,18 @@ void BusModel::loadTextureRequest(const std::shared_ptr<TextureRequest>& request
 #ifdef _WIN32
     const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 #endif
-    std::filesystem::path resolved = request->path;
-    if (resolved.empty()) {
-        resolved = findTexture(request->root, request->name);
+    std::filesystem::path resolved;
+    const std::string logicalName = request->name.empty() ? request->path.string() : request->name;
+    if (!logicalName.empty() && !std::filesystem::path(logicalName).is_absolute()) {
+        resolved = findTexture(request->root, logicalName);
+    }
+    if (resolved.empty() && !request->path.empty()) {
+        const std::filesystem::path candidate = request->path;
+        if (candidate.is_absolute() && std::filesystem::exists(candidate)) {
+            resolved = candidate;
+        } else if (request->name.empty() && std::filesystem::exists(candidate)) {
+            resolved = candidate;
+        }
     }
     const std::string resolvedKey = resolved.empty()
                                         ? std::string()
@@ -3075,7 +3243,7 @@ void BusModel::loadTextureRequest(const std::shared_ptr<TextureRequest>& request
     std::shared_ptr<CompressedDds> compressedDds;
     if (!resolved.empty() && lower(resolved.extension().string()) == ".dds" &&
         isSafeCompressedDds(resolved)) {
-        if (isDxt5Dds(resolved)) {
+        if (isDxt5Dds(resolved) && !isDdsTextureArray(resolved)) {
             compressedDds = std::make_shared<CompressedDds>();
             textureLoaded = readDxt5CompressedDds(resolved, *compressedDds);
             if (!textureLoaded) {

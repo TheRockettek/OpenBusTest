@@ -4,6 +4,8 @@
 #include "ModelConfigLoader.h"
 
 #include <array>
+#include <algorithm>
+#include <filesystem>
 #include <string>
 #include <utility>
 #include <vector>
@@ -57,6 +59,107 @@ bool allowsBusOnly(const std::string& keyword, VehicleFileKind kind) {
     }
     return keyword != "add_camera_reflexion" && keyword != "add_camera_reflexion_2" &&
            keyword != "view_schedule" && keyword != "view_ticketselling";
+}
+
+std::filesystem::path resolveReferencedPath(const std::filesystem::path& configPath,
+                                            const std::string& referencedPath) {
+    std::string normalized = referencedPath;
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+    return configPath.parent_path() / std::filesystem::path(normalized);
+}
+
+void loadVariableFile(const std::filesystem::path& configPath, const std::string& referencedPath,
+                      bool stringVariables, VehicleConfig& result) {
+    const std::filesystem::path path = resolveReferencedPath(configPath, referencedPath);
+    Reader reader(path);
+    if (!reader.isOpen()) {
+        result.diagnostics.error(0, stringVariables ? "stringvarnamelist" : "varnamelist",
+                                 "unable to open " + path.string());
+        return;
+    }
+    Line line;
+    while (reader.next(line)) {
+        const std::string name = trim(line.text);
+        if (name.empty() || name.front() == ';' || name.front() == '/') {
+            continue;
+        }
+        (stringVariables ? result.stringVariables : result.floatVariables).push_back(name);
+    }
+}
+
+void loadConstantFile(const std::filesystem::path& configPath, const std::string& referencedPath,
+                      VehicleConfig& result) {
+    const std::filesystem::path path = resolveReferencedPath(configPath, referencedPath);
+    Reader reader(path);
+    if (!reader.isOpen()) {
+        result.diagnostics.error(0, "constfile", "unable to open " + path.string());
+        return;
+    }
+    Line line;
+    while (reader.next(line)) {
+        if (!line.isKeyword()) {
+            continue;
+        }
+        const std::string keyword = lower(line.keyword());
+        if (keyword == "const") {
+            Line nameLine;
+            Line valueLine;
+            double value = 0.0;
+            if (!reader.readPayload(nameLine, result.diagnostics, "const") ||
+                !reader.readPayload(valueLine, result.diagnostics, "const") ||
+                !parseDouble(valueLine.text, value)) {
+                result.diagnostics.error(line.number, "const", "expected a name and numeric value");
+                continue;
+            }
+            result.constants[trim(nameLine.text)] = value;
+            continue;
+        }
+        if (keyword == "newcurve") {
+            Line nameLine;
+            if (!reader.readPayload(nameLine, result.diagnostics, "newcurve")) {
+                continue;
+            }
+            ConstantCurve curve;
+            curve.name = trim(nameLine.text);
+            while (reader.next(line)) {
+                if (!line.isKeyword()) {
+                    continue;
+                }
+                if (lower(line.keyword()) != "pnt") {
+                    reader.pushBack(std::move(line));
+                    break;
+                }
+                std::vector<std::string> values;
+                if (!reader.readPayloads(2, values, result.diagnostics, "pnt")) {
+                    break;
+                }
+                ConstantCurvePoint point;
+                if (!parseDouble(values[0], point.x) || !parseDouble(values[1], point.y)) {
+                    result.diagnostics.error(line.number, "pnt", "expected numeric x and y values");
+                    continue;
+                }
+                curve.points.push_back(point);
+            }
+            if (curve.name.empty() || curve.points.empty()) {
+                result.diagnostics.error(nameLine.number, "newcurve",
+                                         "curve requires a name and at least one point");
+            } else {
+                result.curves.push_back(std::move(curve));
+            }
+        }
+    }
+}
+
+void loadReferencedDefinitions(const std::filesystem::path& configPath, VehicleConfig& result) {
+    for (const std::string& path : result.variableLists) {
+        loadVariableFile(configPath, path, false, result);
+    }
+    for (const std::string& path : result.stringVariableLists) {
+        loadVariableFile(configPath, path, true, result);
+    }
+    for (const std::string& path : result.constantFiles) {
+        loadConstantFile(configPath, path, result);
+    }
 }
 
 bool parseCamera(Reader& reader, const std::string& keyword, VehicleCameraKind kind,
@@ -398,6 +501,7 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
         result.diagnostics.error(ticketSellingLine, "view_ticketselling",
                                  "must follow at least one [add_camera_driver]");
     }
+    loadReferencedDefinitions(configPath, result);
     return result;
 }
 

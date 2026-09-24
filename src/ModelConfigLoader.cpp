@@ -35,6 +35,8 @@ std::string kindName(ModelConfigKind kind) {
 }
 
 bool isKnownKeyword(const std::string& keyword) {
+    // Keep this list synchronized with the dispatch table below so unsupported
+    // records produce diagnostics instead of being silently ignored.
     static const std::unordered_set<std::string> keywords = {
         "absheight",          "alphascale",       "animparent",          "boundingbox",
         "collision_mesh",     "ctc",              "ctctexture",          "fixed",
@@ -53,6 +55,7 @@ bool isKnownKeyword(const std::string& keyword) {
 }
 
 bool validForKind(const std::string& keyword, ModelConfigKind kind) {
+    // Some CFG records are legal only for bus, vehicle, or scenery models.
     if ((keyword == "animparent" || keyword == "mesh_ident") &&
         kind != ModelConfigKind::Bus) {
         return false;
@@ -81,6 +84,8 @@ bool validForKind(const std::string& keyword, ModelConfigKind kind) {
 
 bool readValues(Reader& reader, std::size_t line, const std::string& keyword, std::size_t count,
                 std::vector<std::string>& values, ConfigurationDiagnostics& diagnostics) {
+    // Read fixed-width records through the shared reader so missing payloads
+    // are reported with the keyword and source location.
     if (!reader.readPayloads(count, values, diagnostics, keyword)) {
         return false;
     }
@@ -118,6 +123,7 @@ bool readIntValue(Reader& reader, const std::string& keyword, int& value,
 }
 
 void declareIfVariable(const std::string& value, Variables& variables) {
+    // Configuration records mix numeric constants and script-variable names.
     double numericValue = 0.0;
     if (!value.empty() && !parseDouble(value, numericValue)) {
         variables.declare(value);
@@ -170,6 +176,8 @@ void writeModelAnimationsJson(std::ostream& output,
 
 std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
                                   const std::string& meshValue) {
+    // Converted OBJ files normally preserve the source subdirectory, but some
+    // converters flatten it; try both layouts before reporting a missing mesh.
     std::string normalized = trim(meshValue);
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
     std::filesystem::path relative = normalized;
@@ -187,6 +195,7 @@ std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
 
 bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
                        Variables& variables, ConfigurationDiagnostics& diagnostics) {
+    // [newanim] is a variable-length block terminated by the next keyword or '--'.
     ModelWheelAnimation animation;
     std::string animationVariable;
     bool hasTransform = false;
@@ -363,6 +372,11 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             return current;
         };
 
+        // The parser keeps the current mesh, material, and LOD as context for
+        // subsequent records in the configuration stream.
+        // LOD records change the default LOD for following meshes and reset the
+        // current mesh/material context.
+        // [lod]: one positive threshold; subsequent meshes use the new LOD index.
         if (keyword == "lod") {
             double threshold = 0.0;
             if (!readDoubleValue(reader, "LOD", threshold, result.diagnostics)) {
@@ -384,6 +398,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             currentMaterialKey.clear();
             continue;
         }
+        // [mesh]: one source .o3d path; it is mapped to the converted .obj path.
         if (keyword == "mesh") {
             Line meshLine;
             if (!reader.readPayload(meshLine, result.diagnostics, "mesh")) {
@@ -396,6 +411,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                                            "converted mesh was not found: " + meshValue);
             }
             ModelPart newPart;
+            // Store both source text and resolved path for diagnostics and export.
             newPart.objPath = objPath;
             newPart.sourceMeshPath = meshValue;
             newPart.lodIndex = currentLodIndex;
@@ -404,6 +420,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             currentMaterialKey.clear();
             continue;
         }
+        // [mesh_ident]: one unique identifier used by later [animparent] records.
         if (keyword == "mesh_ident") {
             ModelPart* current = requirePart();
             Line value;
@@ -415,11 +432,13 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     result.diagnostics.error(value.number, "mesh_ident",
                                              "duplicate mesh identifier: " + identifier);
                 } else {
+                    // Identifiers are later used to validate [animparent] links.
                     current->meshIdentifier = identifier;
                 }
             }
             continue;
         }
+        // [animparent]: one previously declared [mesh_ident] to inherit transforms from.
         if (keyword == "animparent") {
             ModelPart* current = requirePart();
             Line value;
@@ -431,6 +450,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [viewpoint]: one mask from 0 through 7 selecting exterior/interior views.
         if (keyword == "viewpoint") {
             ModelPart* current = requirePart();
             int viewpoint = 0;
@@ -442,6 +462,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [rendertype]: one render mode, or the literal "surface" (mode 2).
         if (keyword == "rendertype") {
             ModelPart* current = requirePart();
             Line value;
@@ -456,6 +477,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [visible]: script variable followed by the integer value that permits drawing.
         if (keyword == "visible") {
             ModelPart* current = requirePart();
             std::vector<std::string> values;
@@ -465,6 +487,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 if (!parseInt(values[1], value)) {
                     result.diagnostics.error(line.number, "visible", "expected an integer value");
                 } else {
+                    // The renderer compares this variable with the target at frame time.
                     current->visibleVariable = trim(values[0]);
                     current->visibleValue = value;
                     variables.declare(current->visibleVariable);
@@ -472,11 +495,14 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [illumination_interior]: four integer light-group indexes; -1 disables a slot.
         if (keyword == "illumination_interior") {
             ModelPart* current = requirePart();
             std::vector<std::string> values;
             if (current != nullptr && readValues(reader, line.number, keyword, 4, values,
                                                  result.diagnostics)) {
+                // -1 means that an illumination slot is unused; other values
+                // identify the corresponding light group.
                 for (std::size_t index = 0; index < values.size(); ++index) {
                     int value = -1;
                     if (!parseInt(values[index], value)) {
@@ -492,17 +518,25 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [interiorlight]: eight fields; field 0 is the controller, followed by
+        // position, colour, intensity, and mode data retained only for validation.
         if (keyword == "interiorlight") {
             if (requirePart() != nullptr) {
                 std::vector<std::string> values;
                 if (readValues(reader, line.number, keyword, 8, values, result.diagnostics)) {
+                    // The first field controls the light; the remaining fields
+                    // are validated but are not rendered yet.
                     declareIfVariable(values[0], variables);
                 }
             }
             continue;
         }
+        // [light_enh]: 13 fields; [light_enh_2]: 24 fields. Each has a fixed
+        // controller-variable field, while the remaining light data is preserved
+        // by consuming the record but is not yet represented in the model.
         if (keyword == "light_enh" || keyword == "light_enh_2") {
             if (requirePart() != nullptr) {
+                // These layouts have different widths and fixed variable positions.
                 const std::size_t count = keyword == "light_enh" ? 13 : 24;
                 std::vector<std::string> values;
                 if (readValues(reader, line.number, keyword, count, values, result.diagnostics)) {
@@ -511,13 +545,18 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [spotlight]: twelve position, direction, colour, range, and cone fields.
         if (keyword == "spotlight") {
             if (requirePart() != nullptr) {
                 std::vector<std::string> values;
+                // Validate the complete record even though spotlight fields are
+                // not yet represented in the runtime model.
                 readValues(reader, line.number, keyword, 12, values, result.diagnostics);
             }
             continue;
         }
+        // [newanim]: a variable-length block containing origin fields and anim_rot/
+        // anim_trans pairs of controller variable plus scale.
         if (keyword == "newanim") {
             ModelPart* current = requirePart();
             if (current != nullptr) {
@@ -525,19 +564,24 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [mouseevent]: one event identifier; the event behavior is script-defined.
         if (keyword == "mouseevent") {
             if (requirePart() != nullptr) {
                 Line value;
+                // Consume the event identifier so the next keyword stays aligned.
                 reader.readPayload(value, result.diagnostics, keyword);
             }
             continue;
         }
+        // [matl]: texture name plus material mode; the texture name keys following
+        // material modifiers and supplies the part fallback texture.
         if (keyword == "matl") {
             ModelPart* current = requirePart();
             std::vector<std::string> values;
             if (current != nullptr && readValues(reader, line.number, keyword, 2, values,
                                                  result.diagnostics)) {
                 const std::string textureName = trim(values[0]);
+                // Material modifiers that follow are associated with this key.
                 currentMaterialKey = lower(std::filesystem::path(textureName).filename().string());
                 ModelMaterialState state;
                 state.textureName = textureName;
@@ -549,6 +593,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [matl_alpha]: one mode, where 0 is opaque and 1/2 select alpha modes.
         if (keyword == "matl_alpha") {
             ModelMaterialState* current = requireMaterial();
             int alphaMode = 0;
@@ -556,10 +601,12 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 if (alphaMode < 0 || alphaMode > 2) {
                     result.diagnostics.error(line.number, keyword, "mode must be 0, 1, or 2");
                 }
+                // Preserve the parsed value so diagnostics do not discard source data.
                 current->alphaMode = alphaMode;
             }
             continue;
         }
+        // [alphascale]: one script variable controlling the material alpha factor.
         if (keyword == "alphascale") {
             ModelMaterialState* current = requireMaterial();
             Line value;
@@ -569,6 +616,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [matl_nozwrite]: marker with no payload; disables depth-buffer writes.
         if (keyword == "matl_nozwrite") {
             ModelMaterialState* current = requireMaterial();
             if (current != nullptr) {
@@ -576,6 +624,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [matl_envmap]: environment texture name followed by reflection strength.
         if (keyword == "matl_envmap") {
             ModelMaterialState* current = requireMaterial();
             std::vector<std::string> values;
@@ -588,6 +637,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [matl_bumpmap]: texture plus mode; [matl_transmap]/[matl_nightmap]: one texture.
         if (keyword == "matl_bumpmap" || keyword == "matl_transmap" ||
             keyword == "matl_nightmap") {
             ModelMaterialState* current = requireMaterial();
@@ -598,12 +648,15 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [matl_lightmap]/[matl_freetex]: texture name followed by an optional
+        // script variable controlling the generated or free texture.
         if (keyword == "matl_lightmap" || keyword == "matl_freetex") {
             ModelMaterialState* current = requireMaterial();
             if (current != nullptr) {
                 Line texture;
                 if (reader.readPayload(texture, result.diagnostics, keyword)) {
                     Line variable;
+                    // Push keywords back because the optional variable may be absent.
                     if (reader.next(variable)) {
                         if (variable.isKeyword()) {
                             reader.pushBack(std::move(variable));
@@ -618,32 +671,50 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [matl_change]: replacement texture, texture-array layer, activation variable.
         if (keyword == "matl_change") {
             ModelPart* current = requirePart();
             if (current != nullptr) {
                 std::vector<std::string> values;
                 if (readValues(reader, line.number, keyword, 3, values, result.diagnostics)) {
                     const std::string textureName = trim(values[0]);
+                    int layer = 0;
+                    if (!parseInt(values[1], layer) || layer < 0) {
+                        result.diagnostics.error(line.number, keyword,
+                                                 "expected a non-negative texture layer");
+                        continue;
+                    }
+                    const std::string activationVariable = trim(values[2]);
+                    if (textureName.empty() || activationVariable.empty()) {
+                        result.diagnostics.error(line.number, keyword,
+                                                 "texture name and activation variable are required");
+                        continue;
+                    }
                     currentMaterialKey =
                         lower(std::filesystem::path(textureName).filename().string());
-                    if (current->materialStates.find(currentMaterialKey) ==
-                        current->materialStates.end()) {
-                        ModelMaterialState state;
+                    ModelMaterialState& state = current->materialStates[currentMaterialKey];
+                    // A material change is retained as runtime data; activation
+                    // variables are evaluated when the renderer draws the part.
+                    if (state.textureName.empty()) {
                         state.textureName = textureName;
                         state.texturePath = textureName;
-                        current->materialStates.emplace(currentMaterialKey, std::move(state));
                     }
-                    declareIfVariable(values[2], variables);
+                    state.textureChanges.push_back({{}, textureName, layer,
+                                                    activationVariable});
+                    declareIfVariable(activationVariable, variables);
                 }
             }
             continue;
         }
+        // These material flags have no payload; their presence changes renderer state
+        // or is accepted for compatibility with the source format.
         if (keyword == "matl_item" || keyword == "matl_nozcheck" ||
             keyword == "matl_texadress_border" || keyword == "matl_texadress_clamp" ||
             keyword == "matl_texadress_mirror" || keyword == "matl_texadress_mirroronce") {
             requireMaterial();
             continue;
         }
+        // [texcoordtransx]/[texcoordtransy]: one script variable for UV translation.
         if (keyword == "texcoordtransx" || keyword == "texcoordtransy") {
             if (requireMaterial() != nullptr) {
                 Line value;
@@ -653,6 +724,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [usetexttexture]/[usescripttexture]: one numeric texture-slot index.
         if (keyword == "usetexttexture" || keyword == "usescripttexture") {
             if (requireMaterial() != nullptr) {
                 int index = 0;
@@ -660,48 +732,59 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        // [fixed]/[absheight]/[isshadow]: marker records with no payload consumed here.
         if (keyword == "fixed" || keyword == "absheight" || keyword == "isshadow") {
             requirePart();
             continue;
         }
+        // [boundingbox]: six numeric bounds, normally min/max coordinates.
         if (keyword == "boundingbox") {
             std::vector<std::string> values;
             readValues(reader, line.number, keyword, 6, values, result.diagnostics);
             continue;
         }
+        // [collision_mesh]: one collision mesh path consumed for diagnostics only.
         if (keyword == "collision_mesh") {
             Line value;
             reader.readPayload(value, result.diagnostics, keyword);
             continue;
         }
+        // [nocollision]: marker disabling collision for the current object.
         if (keyword == "nocollision") {
             continue;
         }
+        // [vfdmaxmin]: six numeric display limits for VFD/text rendering.
         if (keyword == "vfdmaxmin") {
             std::vector<std::string> values;
             readValues(reader, line.number, keyword, 6, values, result.diagnostics);
             continue;
         }
+        // [tex_detail_factor]: texture-detail identifier and numeric blend factor.
         if (keyword == "tex_detail_factor") {
             std::vector<std::string> values;
             readValues(reader, line.number, keyword, 2, values, result.diagnostics);
             continue;
         }
+        // [ctc]: three texture/color-template values retained for record alignment.
         if (keyword == "ctc") {
             std::vector<std::string> values;
             readValues(reader, line.number, keyword, 3, values, result.diagnostics);
             continue;
         }
+        // [ctctexture]: texture name plus template slot/index.
         if (keyword == "ctctexture") {
             std::vector<std::string> values;
             readValues(reader, line.number, keyword, 2, values, result.diagnostics);
             continue;
         }
+        // [scripttexture]: texture name plus script texture index.
         if (keyword == "scripttexture") {
             std::vector<std::string> values;
             readValues(reader, line.number, keyword, 2, values, result.diagnostics);
             continue;
         }
+        // [texttexture]/[texttexture_enh]: variable-length text-display blocks;
+        // consume until the next keyword because their field layout varies.
         if (keyword == "texttexture" || keyword == "texttexture_enh") {
             Line value;
             while (reader.next(value)) {
@@ -714,6 +797,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
     }
 
+    // Parent references can only be checked after all mesh identifiers are known.
     for (const ModelPart& part : result.parts) {
         if (!part.animationParent.empty() && meshIdentifiers.find(part.animationParent) == meshIdentifiers.end()) {
             result.diagnostics.error(0, "animparent",
@@ -729,6 +813,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
 void writeModelConfigurationJson(std::ostream& output,
                                  const std::filesystem::path& configPath,
                                  const ModelConfig& configuration) {
+    // Export the parsed representation without re-reading the source CFG.
     output << std::setprecision(17)
            << "{\n"
               "  \"format_version\": 1,\n"

@@ -18,6 +18,13 @@ struct ModelMaterialState {
     int alphaMode = 0;
     bool noZwrite = false;
     std::string alphaScaleVariable;
+    struct TextureChange {
+        std::filesystem::path texturePath;
+        std::string textureName;
+        int layer = 0;
+        std::string activationVariable;
+    };
+    std::vector<TextureChange> textureChanges;
 };
 
 struct ModelWheelAnimation {

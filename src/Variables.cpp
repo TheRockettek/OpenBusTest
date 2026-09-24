@@ -10,6 +10,8 @@
 namespace {
 
 std::string keyFor(const std::string& name) {
+    // Script variable names are case-insensitive throughout the loaders and
+    // renderer, so storage uses a normalized lowercase key.
     std::string key = name;
     std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
         return static_cast<char>(std::tolower(character));
@@ -20,6 +22,8 @@ std::string keyFor(const std::string& name) {
 } // namespace
 
 Variables::Variables() {
+    // Seed variables used by configuration files before model-specific names
+    // are declared by the parsers.
     const std::time_t now = std::time(nullptr);
     std::tm localDate = {};
     if (const std::tm* currentDate = std::localtime(&now)) {
@@ -54,12 +58,14 @@ void Variables::declare(const std::string& name) {
         return;
     }
     std::unique_lock<std::shared_mutex> lock(mutex_);
+    // Do not overwrite a value that may have been assigned before declaration.
     values_.try_emplace(key, 0.0);
 }
 
 double Variables::get(const std::string& name) const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     const auto found = values_.find(keyFor(name));
+    // Unknown variables follow the simulator's numeric default of zero.
     return found == values_.end() ? 0.0 : found->second;
 }
 
@@ -73,6 +79,7 @@ void Variables::set(const std::string& name, double value) {
 }
 
 void Variables::updateFrame(double timegap, double getTime, double mouseX, double mouseY) {
+    // These values are refreshed as one snapshot at the start of each frame.
     std::unique_lock<std::shared_mutex> lock(mutex_);
     values_[keyFor("Timegap")] = timegap;
     values_[keyFor("GetTime")] = getTime;

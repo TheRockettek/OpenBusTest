@@ -7,6 +7,8 @@
 namespace openbus::config {
 
 std::string trim(const std::string& value) {
+    // CFG payloads are line-oriented, so whitespace is removed before parsing
+    // keywords, numbers, and variable names.
     const std::size_t first = value.find_first_not_of(" \t\r\n");
     if (first == std::string::npos) {
         return {};
@@ -23,6 +25,8 @@ std::string lower(std::string value) {
 }
 
 bool parseInt(const std::string& value, int& result) {
+    // Require the entire trimmed payload to be an integer; partial conversions
+    // such as "12px" are rejected.
     const std::string normalized = trim(value);
     if (normalized.empty()) {
         return false;
@@ -38,6 +42,8 @@ bool parseInt(const std::string& value, int& result) {
 }
 
 bool parseDouble(const std::string& value, double& result) {
+    // As with integers, reject trailing characters instead of accepting a
+    // partially parsed numeric value.
     const std::string normalized = trim(value);
     if (normalized.empty()) {
         return false;
@@ -53,6 +59,8 @@ bool parseDouble(const std::string& value, double& result) {
 }
 
 bool Line::isKeyword() const {
+    // Keywords are preserved exactly as bracketed lines so ordinary payloads
+    // beginning with similar text are not misclassified.
     return raw.size() >= 3 && raw.front() == '[' && raw.back() == ']' && raw == text;
 }
 
@@ -70,6 +78,8 @@ bool Reader::isOpen() const {
 }
 
 bool Reader::readRaw(Line& line) {
+    // Skip blank lines and disabled sections while retaining source line numbers
+    // for useful diagnostics.
     std::string raw;
     while (std::getline(input_, raw)) {
         ++nextLineNumber_;
@@ -110,6 +120,8 @@ void Reader::pushBack(Line line) {
 
 bool Reader::readPayload(Line& line, ConfigurationDiagnostics& diagnostics,
                          const std::string& ownerKeyword) {
+    // A keyword where a payload is expected belongs to the next record, so it is
+    // pushed back after reporting the malformed current record.
     if (!next(line)) {
         diagnostics.error(nextLineNumber_, ownerKeyword, "missing value at end of file");
         return false;
