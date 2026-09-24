@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BusTypes.h"
+#include "VehicleConfigLoader.h"
 
 #include <array>
 #include <filesystem>
@@ -36,6 +37,7 @@ class Renderer {
     void endFrame();
     void captureViews(const BusSimulation& simulation, const std::filesystem::path& directory);
     bool consumeCaptureRequest();
+    bool isCaptureReady() const;
     double throttle() const;
     double steering() const;
     double brake() const;
@@ -43,6 +45,10 @@ class Renderer {
 
   private:
     static void scrollCallback(GLFWwindow* window, double xOffset, double yOffset);
+    bool isExteriorView() const;
+    const VehicleCamera* currentVehicleCamera() const;
+    void selectVehicleCamera(int direction);
+    double currentFieldOfView() const;
 
     GLFWwindow* window_;
     double cameraYaw_ = -2.3;
@@ -51,15 +57,19 @@ class Renderer {
     double viewLookPitch_ = 0.0;
     double lastStatsTitleTime_ = 0.0;
     double cameraDistance_ = 24.0;
-    int cameraView_ = 1;
+    double previousVariableTime_ = 0.0;
+    int cameraView_ = 0;
     double previousCursorX_ = 0.0;
     double previousCursorY_ = 0.0;
     bool draggingCamera_ = false;
     std::array<bool, 4> previousKeyStates_ = {};
     std::array<bool, 10> previousViewKeyStates_ = {};
+    std::array<bool, 2> previousCameraNavigationStates_ = {};
     bool previousCaptureKeyState_ = false;
+    bool hasPreviousVariableTime_ = false;
     bool captureRequested_ = false;
     bool captureMode_ = false;
     std::vector<KeyEvent> keyEvents_;
+    std::vector<VehicleCamera> vehicleCameras_;
     std::unique_ptr<BusModel> busModel_;
 };

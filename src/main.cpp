@@ -2,6 +2,7 @@
 #include "BusConfiguration.h"
 #include "CrashHandler.h"
 #include "Logger.h"
+#include "ModelConfigLoader.h"
 #include "Renderer.h"
 
 #include <GLFW/glfw3.h>
@@ -19,9 +20,27 @@ int main() {
     try {
         const BusVehicle vehicle = busVehicleFromEnvironment();
         applicationLog.Log("Starting OpenBus");
-        BusSimulation simulation(busConfigurationFor(vehicle));
+        const std::filesystem::path busConfigPath = busConfigurationPathFor(vehicle);
+        const std::filesystem::path modelConfigPath = modelConfigurationPathForBus(busConfigPath);
+        const BusConfiguration configuration = loadBusConfiguration(busConfigPath);
+        const ModelConfig modelConfiguration = loadBusModelConfiguration(busConfigPath);
+        std::ofstream configurationOutput("OpenBus_configuration.json", std::ios::trunc);
+        if (!configurationOutput) {
+            applicationLog.Log("Failed to open OpenBus_configuration.json");
+            throw std::runtime_error("Failed to open OpenBus_configuration.json");
+        }
+        writeBusConfigurationJson(configurationOutput, configuration);
+        configurationOutput.flush();
+        std::ofstream modelConfigurationOutput("OpenBus_model_configuration.json", std::ios::trunc);
+        if (!modelConfigurationOutput) {
+            applicationLog.Log("Failed to open OpenBus_model_configuration.json");
+            throw std::runtime_error("Failed to open OpenBus_model_configuration.json");
+        }
+        writeModelConfigurationJson(modelConfigurationOutput, modelConfigPath, modelConfiguration);
+        modelConfigurationOutput.flush();
+        BusSimulation simulation(configuration);
         Renderer renderer(1280, 720, "OpenBus", vehicle,
-                  {AssetLoadingMode::Eager, AssetLoadingMode::Eager});
+                          {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
         std::ofstream diagnostics("OpenBus_physics.json", std::ios::trunc);
         if (!diagnostics) {
             applicationLog.Log("Failed to open OpenBus_physics.json");
@@ -36,9 +55,8 @@ int main() {
         diagnostics.flush();
 
         double previousTime = glfwGetTime();
-        double diagnosticsAccumulator = 0.0;
-        bool firstDiagnosticSample = true;
         bool captureOnStartup = std::getenv("OPENBUS_CAPTURE_VIEWS") != nullptr;
+        bool pendingCaptureRequest = false;
         std::vector<KeyEvent> pendingKeyEvents;
         while (!renderer.shouldClose()) {
             const double currentTime = glfwGetTime();
@@ -51,9 +69,17 @@ int main() {
                                     frameKeyEvents.end());
             simulation.update(elapsed, renderer.throttle(), renderer.steering(), renderer.brake());
             renderer.draw(simulation);
-            if ((captureOnStartup && currentTime >= 10.0) || renderer.consumeCaptureRequest()) {
+            if (captureOnStartup) {
+                pendingCaptureRequest = true;
+            }
+            if (renderer.consumeCaptureRequest()) {
+                pendingCaptureRequest = true;
+            }
+            if (pendingCaptureRequest && renderer.isCaptureReady()) {
+                pendingCaptureRequest = false;
                 captureOnStartup = false;
                 renderer.captureViews(simulation, "screenshots");
+                exit(0);
             }
             renderer.endFrame();
         }

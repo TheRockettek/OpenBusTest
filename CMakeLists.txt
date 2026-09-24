@@ -41,7 +41,26 @@ FetchContent_Declare(gli
 )
 FetchContent_GetProperties(gli)
 if(NOT gli_POPULATED)
+    cmake_policy(PUSH)
+    if(POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
     FetchContent_Populate(gli)
+    cmake_policy(POP)
+endif()
+
+FetchContent_Declare(stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG master
+)
+FetchContent_GetProperties(stb)
+if(NOT stb_POPULATED)
+    cmake_policy(PUSH)
+    if(POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
+    FetchContent_Populate(stb)
+    cmake_policy(POP)
 endif()
 
 if(NOT TARGET glfw)
@@ -79,13 +98,20 @@ add_executable(OpenBus
     src/RoadFeatures.cpp
     src/BusSimulation.cpp
     src/Logger.cpp
+    src/Variables.cpp
+    src/ConfigurationParser.cpp
+    src/VehicleConfigLoader.cpp
+    src/ModelConfigLoader.cpp
+    src/BusConfigLoader.cpp
+    src/SceneryObjectConfigLoader.cpp
     src/Renderer.cpp
 )
 
-target_include_directories(OpenBus PRIVATE
-    src
+target_include_directories(OpenBus PRIVATE src)
+target_include_directories(OpenBus SYSTEM PRIVATE
     ${gli_SOURCE_DIR}
-    ${gli_SOURCE_DIR}/external/glm)
+    ${gli_SOURCE_DIR}/external/glm
+    ${stb_SOURCE_DIR})
 target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} glfw OpenGL::GL)
 
 add_executable(uno3d_converter
@@ -94,6 +120,7 @@ add_executable(uno3d_converter
 
 if(MSVC)
     target_compile_options(OpenBus PRIVATE /W4 /permissive-)
+    target_compile_definitions(OpenBus PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(OpenBus PRIVATE windowscodecs dbghelp)
 else()
     target_compile_options(OpenBus PRIVATE -Wall -Wextra -Wpedantic)

@@ -1,160 +1,213 @@
 #include "BusConfiguration.h"
+#include "BusConfigLoader.h"
+#include "ConfigurationParser.h"
+#include "ModelConfigLoader.h"
+#include "Variables.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
+#include <iomanip>
+#include <optional>
+#include <ostream>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
-#include <vector>
 
 namespace {
 
-std::vector<BusAxle> loadBusAxles(const std::filesystem::path& busPath) {
-    std::ifstream input(busPath);
-    if (!input) {
-        return {};
-    }
-
-    const auto trim = [](std::string value) {
-        const std::size_t first = value.find_first_not_of(" \t\r");
-        if (first == std::string::npos) {
-            return std::string();
-        }
-        const std::size_t last = value.find_last_not_of(" \t\r");
-        return value.substr(first, last - first + 1);
-    };
-
-    std::vector<BusAxle> axles;
-    std::string line;
-    while (std::getline(input, line)) {
-        if (trim(line) != "[newachse]") {
-            continue;
-        }
-
-        std::unordered_map<std::string, double> values;
-        std::string key;
-        const auto isAxleKey = [](const std::string& candidate) {
-            return candidate == "achse_long" || candidate == "achse_maxwidth" ||
-                   candidate == "achse_minwidth" || candidate == "achse_raddurchmesser" ||
-                   candidate == "achse_feder" || candidate == "achse_maxforce" ||
-                   candidate == "achse_daempfer" || candidate == "achse_antrieb";
-        };
-        while (true) {
-            const std::streampos linePosition = input.tellg();
-            if (!std::getline(input, line)) {
-                break;
-            }
-            const std::string normalized = trim(line);
-            if (normalized.empty() || normalized.front() == ';') {
-                continue;
-            }
-            if (normalized.front() == '[') {
-                input.clear();
-                input.seekg(linePosition);
-                break;
-            }
-            if (key.empty()) {
-                if (isAxleKey(normalized)) {
-                    key = normalized;
-                }
-                continue;
-            }
-            try {
-                values[key] = std::stod(normalized);
-            } catch (const std::exception&) {
-                continue;
-            }
-            key.clear();
-        }
-
-        const auto value = [&](const char* name, double fallback) {
-            const auto found = values.find(name);
-            return found != values.end() ? found->second : fallback;
-        };
-        const double position = value("achse_long", 0.0);
-        const double maxWidth = value("achse_maxwidth", 0.0);
-        const double minWidth = value("achse_minwidth", 0.0);
-        const double wheelDiameter = value("achse_raddurchmesser", 0.0);
-        if (maxWidth <= 0.0 || wheelDiameter <= 0.0) {
-            continue;
-        }
-        axles.push_back({position,
-                         maxWidth,
-                         maxWidth,
-                         minWidth,
-                         wheelDiameter,
-                         value("achse_feder", 250.0) * 1000.0,
-                         value("achse_maxforce", 0.0) * 1000.0,
-                         value("achse_daempfer", 16.0) * 1000.0,
-                         false,
-                         value("achse_antrieb", 0.0) != 0.0});
-    }
-    return axles;
+BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source) {
+    const std::array<double, 6>& boundingBox = source.boundingBox;
+    BusConfiguration configuration{};
+    configuration.mass = source.massTonnes * 1000.0;
+    configuration.length = boundingBox[1];
+    configuration.width = boundingBox[0];
+    configuration.bodyHalfLength = boundingBox[1] * 0.5;
+    configuration.bodyHalfWidth = boundingBox[0] * 0.5;
+    configuration.bodyHalfHeight = boundingBox[2] * 0.5;
+    configuration.wheelRadius = source.axles.front().wheelDiameter * 0.5;
+    configuration.wheelHalfWidth = source.wheelHalfWidth;
+    configuration.collisionLength = boundingBox[1];
+    configuration.collisionWidth = boundingBox[0];
+    configuration.collisionHeight = boundingBox[2];
+    configuration.collisionOffsetX = boundingBox[3];
+    configuration.collisionOffsetY = boundingBox[4];
+    configuration.collisionOffsetZ = boundingBox[5] - source.centerOfGravityHeight;
+    configuration.centerOfGravityHeight = source.centerOfGravityHeight;
+    configuration.articulated = source.articulated;
+    configuration.axles = source.axles;
+    return configuration;
 }
 
-std::vector<BusAxle> loadE400Axles() {
-    const std::array<std::filesystem::path, 3> candidates = {
-        std::filesystem::path("SP_E400MMC") / "E400MMC_ADL_10.9m_Voith_LowHeight.bus",
-        std::filesystem::current_path() / "SP_E400MMC" / "E400MMC_ADL_10.9m_Voith_LowHeight.bus",
-        std::filesystem::current_path().parent_path() / "SP_E400MMC" /
-            "E400MMC_ADL_10.9m_Voith_LowHeight.bus"};
+std::filesystem::path resolveModelConfigPath(const std::filesystem::path& busPath,
+                                             const std::filesystem::path& modelPath) {
+    std::string normalized = modelPath.string();
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+    return busPath.parent_path() / std::filesystem::path(normalized);
+}
+
+std::optional<std::size_t> steeringAxleIndex(const std::string& variable) {
+    const std::string normalized = openbus::config::lower(variable);
+    constexpr const char* prefix = "axle_steering_";
+    constexpr std::size_t prefixLength = 14;
+    if (normalized.rfind(prefix, 0) != 0) {
+        return {};
+    }
+    const std::size_t sideSeparator = normalized.find('_', prefixLength);
+    if (sideSeparator == std::string::npos ||
+        normalized.substr(sideSeparator + 1) != "l" &&
+            normalized.substr(sideSeparator + 1) != "r") {
+        return {};
+    }
+    int index = -1;
+    if (!openbus::config::parseInt(
+            normalized.substr(prefixLength, sideSeparator - prefixLength), index) ||
+        index < 0) {
+        return {};
+    }
+    return static_cast<std::size_t>(index);
+}
+
+void applyModelSteering(VehicleConfig& vehicle, const ModelConfig& model) {
+    for (const ModelPart& part : model.parts) {
+        const std::optional<std::size_t> axleIndex =
+            steeringAxleIndex(part.wheelAnimation.steeringVariable);
+        if (axleIndex.has_value() && *axleIndex < vehicle.axles.size()) {
+            vehicle.axles[*axleIndex].steerable = true;
+        }
+    }
+}
+
+std::filesystem::path findBusFile(BusVehicle vehicle) {
+    const std::filesystem::path relative =
+        vehicle == BusVehicle::SpE400Mmc
+            ? std::filesystem::path("SP_E400MMC") / "E400MMC_ADL_10.9m_Voith_LowHeight.bus"
+            : std::filesystem::path("MAN_DL05") / "MAN_DL05.bus";
+    const std::array<std::filesystem::path, 4> candidates = {
+        relative,
+        std::filesystem::current_path() / relative,
+        std::filesystem::current_path().parent_path() / relative,
+        std::filesystem::current_path().parent_path().parent_path() / relative};
     for (const auto& candidate : candidates) {
         if (std::filesystem::exists(candidate)) {
-            const std::vector<BusAxle> axles = loadBusAxles(candidate);
-            if (!axles.empty()) {
-                return axles;
-            }
+            return candidate;
         }
     }
     return {};
 }
 
-} // namespace
+}  // namespace
 
-BusConfiguration BusConfiguration::lionCity12() {
-    BusConfiguration configuration;
-    configuration.axles = {{3.45, 2.30, 2.30, 0.0, 1.01, 250000.0, 0.0, 16000.0, true, true},
-                           {-3.45, 2.30, 2.30, 0.0, 1.01, 250000.0, 0.0, 16000.0, false,
-                            true}};
-    return configuration;
-}
-
-BusConfiguration BusConfiguration::manDl05() {
-    BusConfiguration configuration;
-    configuration.axles = {{4.05018, 2.11836, 2.11836, 0.0, 1.01, 250000.0, 0.0, 16000.0, true,
-                            true},
-                           {-1.73317, 1.79100, 1.79100, 0.0, 1.01, 250000.0, 0.0, 16000.0, false,
-                            true},
-                           {-3.40552, 2.11836, 2.11836, 0.0, 1.01, 250000.0, 0.0, 16000.0, false,
-                            true}};
-    return configuration;
-}
-
-BusConfiguration BusConfiguration::spE400Mmc() {
-    BusConfiguration configuration;
-    configuration.mass = 12600.0;
-    configuration.length = 10.90;
-    configuration.width = 2.52;
-    configuration.bodyHalfLength = 5.45;
-    configuration.bodyHalfWidth = 1.26;
-    configuration.wheelRadius = 0.483;
-    configuration.wheelHalfWidth = 0.153;
-    configuration.collisionLength = 10.84;
-    configuration.collisionWidth = 2.52;
-    configuration.collisionHeight = 3.96;
-    configuration.collisionOffsetZ = 1.34;
-    configuration.axles = {{2.80019, 2.20280, 2.20280, 0.0, 0.946602, 250000.0, 0.0,
-                            16000.0, true, false},
-                           {-2.92441, 1.93272, 1.93272, 0.0, 0.946602, 250000.0, 0.0, 16000.0,
-                            false, true}};
-    const std::vector<BusAxle> parsedAxles = loadE400Axles();
-    if (!parsedAxles.empty()) {
-        configuration.axles = parsedAxles;
-        configuration.axles.front().steerable = true;
-        configuration.wheelRadius = configuration.axles.front().wheelDiameter * 0.5;
+std::filesystem::path modelConfigurationPathForBus(
+    const std::filesystem::path& busConfigPath) {
+    const VehicleConfig source = loadBusConfig(busConfigPath);
+    if (source.modelPath.empty()) {
+        throw std::runtime_error("Bus configuration has no [model] entry: " +
+                                 busConfigPath.string());
     }
-    return configuration;
+    const std::filesystem::path modelConfigPath =
+        resolveModelConfigPath(busConfigPath, source.modelPath);
+    if (!std::filesystem::exists(modelConfigPath)) {
+        throw std::runtime_error("Bus model configuration was not found: " +
+                                 modelConfigPath.string());
+    }
+    return modelConfigPath;
+}
+
+ModelConfig loadBusModelConfiguration(const std::filesystem::path& busConfigPath) {
+    const std::filesystem::path modelConfigPath = modelConfigurationPathForBus(busConfigPath);
+    Variables variables;
+    return loadModelConfig(modelConfigPath, modelConfigPath.parent_path(), ModelConfigKind::Bus,
+                           variables);
+}
+
+BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath) {
+    VehicleConfig source = loadBusConfig(configPath);
+    if (source.massTonnes <= 0.0) {
+        throw std::runtime_error("Bus configuration has no positive [mass]: " +
+                                 configPath.string());
+    }
+    if (!source.hasBoundingBox || source.boundingBox[0] <= 0.0 || source.boundingBox[1] <= 0.0 ||
+        source.boundingBox[2] <= 0.0) {
+        throw std::runtime_error("Bus configuration has no valid [boundingbox]: " +
+                                 configPath.string());
+    }
+    if (!source.hasCenterOfGravityHeight || source.centerOfGravityHeight <= 0.0) {
+        throw std::runtime_error("Bus configuration has no positive [schwerpunkt]: " +
+                                 configPath.string());
+    }
+    if (!source.hasWheelHalfWidth || source.wheelHalfWidth <= 0.0) {
+        throw std::runtime_error("Bus configuration has no positive [openbus_wheel_half_width]: " +
+                                 configPath.string());
+    }
+    if (!source.hasArticulated) {
+        throw std::runtime_error("Bus configuration has no [openbus_articulated] value: " +
+                                 configPath.string());
+    }
+    if (source.axles.empty()) {
+        throw std::runtime_error("Bus configuration contains no valid [newachse] entries: " +
+                                 configPath.string());
+    }
+    const ModelConfig model = loadBusModelConfiguration(configPath);
+    applyModelSteering(source, model);
+    return configurationFromVehicleConfig(source);
+}
+
+void writeBusConfigurationJson(std::ostream& output, const BusConfiguration& configuration) {
+     output << std::setprecision(17)
+              << "{\n"
+                  "  \"format_version\": 1,\n"
+              << "  \"mass_kg\": " << configuration.mass << ",\n"
+              << "  \"dimensions_m\": {\n"
+                  "    \"length\": "
+              << configuration.length << ",\n"
+              << "    \"width\": " << configuration.width << ",\n"
+              << "    \"body_half_length\": " << configuration.bodyHalfLength << ",\n"
+              << "    \"body_half_width\": " << configuration.bodyHalfWidth << ",\n"
+              << "    \"body_half_height\": " << configuration.bodyHalfHeight << "\n"
+                  "  },\n"
+                  "  \"wheels\": {\n"
+                  "    \"radius_m\": "
+              << configuration.wheelRadius << ",\n"
+              << "    \"half_width_m\": " << configuration.wheelHalfWidth << "\n"
+                  "  },\n"
+                  "  \"center_of_gravity_height_m\": "
+              << configuration.centerOfGravityHeight << ",\n"
+              << "  \"articulated\": " << (configuration.articulated ? "true" : "false") << ",\n"
+                  "  \"collision_box\": {\n"
+                  "    \"length_m\": "
+              << configuration.collisionLength << ",\n"
+              << "    \"width_m\": " << configuration.collisionWidth << ",\n"
+              << "    \"height_m\": " << configuration.collisionHeight << ",\n"
+                  "    \"offset_m\": {\n"
+                  "      \"x\": "
+              << configuration.collisionOffsetX << ",\n"
+              << "      \"y\": " << configuration.collisionOffsetY << ",\n"
+              << "      \"z\": " << configuration.collisionOffsetZ << "\n"
+                  "    }\n"
+                  "  },\n"
+                  "  \"axles\": [\n";
+     for (std::size_t index = 0; index < configuration.axles.size(); ++index) {
+          const BusAxle& axle = configuration.axles[index];
+          if (index != 0) {
+                output << ",\n";
+          }
+          output << "    {\n"
+                        "      \"index\": "
+                    << index << ",\n"
+                    << "      \"position_m\": " << axle.position << ",\n"
+                    << "      \"track_width_m\": " << axle.trackWidth << ",\n"
+                    << "      \"max_width_m\": " << axle.maxWidth << ",\n"
+                    << "      \"min_width_m\": " << axle.minWidth << ",\n"
+                    << "      \"wheel_diameter_m\": " << axle.wheelDiameter << ",\n"
+                    << "      \"spring_rate_N_per_m\": " << axle.springRate << ",\n"
+                    << "      \"max_force_N\": " << axle.maxForce << ",\n"
+                    << "      \"damper_rate_Ns_per_m\": " << axle.damperRate << ",\n"
+                    << "      \"steerable\": " << (axle.steerable ? "true" : "false") << ",\n"
+                    << "      \"driven\": " << (axle.driven ? "true" : "false") << "\n"
+                        "    }";
+     }
+     output << "\n  ]\n}\n";
 }
 
 BusVehicle busVehicleFromEnvironment() {
@@ -168,7 +221,18 @@ BusVehicle busVehicleFromEnvironment() {
     return BusVehicle::ManDl05;
 }
 
+std::filesystem::path busConfigurationPathFor(BusVehicle vehicle) {
+    if (const char* configuredPath = std::getenv("OPENBUS_BUS_CONFIG"); configuredPath != nullptr &&
+        *configuredPath != '\0') {
+        return configuredPath;
+    }
+    const std::filesystem::path busFile = findBusFile(vehicle);
+    if (busFile.empty()) {
+        throw std::runtime_error("No .bus configuration found for selected vehicle");
+    }
+    return busFile;
+}
+
 BusConfiguration busConfigurationFor(BusVehicle vehicle) {
-    return vehicle == BusVehicle::SpE400Mmc ? BusConfiguration::spE400Mmc()
-                                            : BusConfiguration::manDl05();
+    return loadBusConfiguration(busConfigurationPathFor(vehicle));
 }

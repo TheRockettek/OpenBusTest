@@ -798,10 +798,6 @@ ParsedCfg parseCfg(const fs::path& cfgPath) {
             if (i + 1 < lines.size()) {
                 ++i; // consume alpha variable name
             }
-
-            if (currentSelector) {
-                currentSelector->hideFromAlphaScale = true;
-            }
             continue;
         }
     }

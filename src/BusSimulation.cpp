@@ -19,8 +19,6 @@ Logger simulationLog("Simulation");
 
 constexpr dReal GRAVITY = -9.81;
 
-constexpr dReal BUS_COG_HEIGHT = 1.0;
-constexpr dReal CHASSIS_SUSPENSION_ANCHOR_Z = 1.044;
 constexpr dReal SUSP_REST = 0.35;
 constexpr dReal SUSP_MAX_TRAVEL = 0.25;
 constexpr dReal SUSP_SPRING_K = 250000.0;
@@ -142,6 +140,10 @@ struct BusSimulation::Impl {
     double lastThrottle = 0.0;
     double lastSteering = 0.0;
     double lastBrake = 0.0;
+
+    dReal suspensionAnchorZ() const {
+        return configuration.wheelRadius + SUSP_REST - configuration.centerOfGravityHeight;
+    }
 
     ~Impl() {
         for (dGeomID geometry : roadMeshGeoms) {
@@ -365,12 +367,13 @@ struct BusSimulation::Impl {
             configuration.mass * std::abs(GRAVITY) / (corners.size() * averageSpringRate), 0.0,
             SUSP_MAX_TRAVEL * 0.9);
         dBodySetPosition(chassis, 0.0, 0.0,
-                         BUS_COG_HEIGHT +
+                         configuration.centerOfGravityHeight +
                              (configuration.mass - chassisMass) / configuration.mass * 0.5);
         chassisGeom = dCreateBox(ode.space, configuration.collisionLength,
                                  configuration.collisionWidth, configuration.collisionHeight);
         dGeomSetBody(chassisGeom, chassis);
-        dGeomSetOffsetPosition(chassisGeom, 0.0, 0.0, configuration.collisionOffsetZ);
+        dGeomSetOffsetPosition(chassisGeom, configuration.collisionOffsetX,
+                       configuration.collisionOffsetY, configuration.collisionOffsetZ);
         dBodySetAutoDisableFlag(chassis, 0);
         dBodySetMaxAngularSpeed(chassis, MAX_CHASSIS_ANGULAR_SPEED);
 
@@ -379,7 +382,7 @@ struct BusSimulation::Impl {
         dMass wheelMass;
         dMassSetCylinderTotal(&wheelMass, WHEEL_MASS, 3, configuration.wheelRadius,
                               configuration.wheelHalfWidth * 2.0);
-        const dReal wheelLocalZ = -configuration.bodyHalfHeight - SUSP_REST + staticCompression;
+        const dReal wheelLocalZ = suspensionAnchorZ() - SUSP_REST + staticCompression;
         for (std::size_t index = 0; index < corners.size(); ++index) {
             Corner& corner = corners[index];
             corner.suspensionBody = dBodyCreate(ode.world);
@@ -396,8 +399,7 @@ struct BusSimulation::Impl {
             const dReal side = index % 2 == 0 ? 1.0 : -1.0;
             const dReal worldX = configuration.axles[axleIndex].position;
             const dReal worldY = side * configuration.axles[axleIndex].trackWidth * 0.5;
-            const dReal worldZ =
-                dBodyGetPosition(chassis)[2] + CHASSIS_SUSPENSION_ANCHOR_Z + wheelLocalZ;
+            const dReal worldZ = dBodyGetPosition(chassis)[2] + wheelLocalZ;
             dBodySetPosition(corner.suspensionBody, worldX, worldY, worldZ);
             dBodySetPosition(corner.steeringBody, worldX, worldY, worldZ);
             dBodySetPosition(corner.wheelBody, worldX, worldY, worldZ);
@@ -445,7 +447,7 @@ struct BusSimulation::Impl {
         const dReal* chassisAngularVelocity = dBodyGetAngularVel(chassis);
         for (std::size_t index = 0; index < corners.size(); ++index) {
             Corner& corner = corners[index];
-            const dReal localZ = CHASSIS_SUSPENSION_ANCHOR_Z - configuration.bodyHalfHeight;
+            const dReal localZ = suspensionAnchorZ();
             const dReal offsetX = chassisRotation[0] * corner.x + chassisRotation[1] * corner.y +
                                   chassisRotation[2] * localZ;
             const dReal offsetY = chassisRotation[4] * corner.x + chassisRotation[5] * corner.y +
@@ -554,7 +556,7 @@ struct BusSimulation::Impl {
             dBodyAddForce(corners[index].suspensionBody, 0.0, 0.0, -supportForce);
             dBodyAddForceAtRelPos(chassis, 0.0, 0.0, supportForce, corners[index].x,
                                   corners[index].y,
-                                  CHASSIS_SUSPENSION_ANCHOR_Z - configuration.bodyHalfHeight);
+                                  suspensionAnchorZ());
             corners[index].normalLoad = supportForce;
 
             const dReal targetSteering = front ? steeringAngle : 0.0;
@@ -710,8 +712,8 @@ struct BusSimulation::Impl {
             if (axleIndex != 0) {
                 output << ',';
             }
-            const std::array<dReal, 3> axlePoint = worldPoint(
-                axle.position, 0.0, CHASSIS_SUSPENSION_ANCHOR_Z - configuration.bodyHalfHeight);
+            const std::array<dReal, 3> axlePoint =
+                worldPoint(axle.position, 0.0, suspensionAnchorZ());
             output << "\n      {\"index\":" << axleIndex << ",\"position\":";
             writeVector(axlePoint);
             writePointVelocity(axlePoint);
@@ -844,7 +846,8 @@ BodyPose BusSimulation::chassisPose() const {
 
 ChassisCollisionBox BusSimulation::chassisCollisionBox() const {
     return {impl_->configuration.collisionLength, impl_->configuration.collisionWidth,
-            impl_->configuration.collisionHeight, impl_->configuration.collisionOffsetZ};
+            impl_->configuration.collisionHeight, impl_->configuration.collisionOffsetX,
+            impl_->configuration.collisionOffsetY, impl_->configuration.collisionOffsetZ};
 }
 
 BodyPose BusSimulation::wheelPose(std::size_t index) const {
@@ -906,8 +909,8 @@ double BusSimulation::wheelLocalZ(std::size_t index) const {
     if (index >= impl_->corners.size()) {
         throw std::out_of_range("Wheel index is outside the bus configuration");
     }
-    return -impl_->configuration.bodyHalfHeight - SUSP_REST +
-           impl_->corners[index].springCompression;
+        return impl_->configuration.wheelRadius - impl_->configuration.centerOfGravityHeight -
+            SUSP_REST + impl_->corners[index].springCompression;
 }
 
 double BusSimulation::simulationTime() const {

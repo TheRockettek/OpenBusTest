@@ -83,13 +83,41 @@ the next sample under `key_events`, including their wall-clock timestamps.
   frame exceeds that budget, excess accumulated time is dropped to avoid a
   spiral of death
 
-`BusConfiguration::lionCity12()` remains available as a two-axle example. The
-default simulation uses `BusConfiguration::manDl05()` with three axles aligned
-to the supplied MAN DL05 model. Add more entries to an `axles` vector for
-other tri-axle or multi-axle vehicles. The
-`articulated` flag is retained in the configuration so articulated buses can
-share the same vehicle description; articulated multi-body sections will be
-added as a separate ODE body/joint layer.
+Vehicle physics is loaded from the selected OMSI `.bus` file. The default MAN
+DL05 file is `MAN_DL05/MAN_DL05.bus`, and the supplied E400 MMC file is loaded
+for the E400 configuration. Vehicle values are not duplicated in C++.
+Articulated vehicles can set the `articulated` flag in the file; articulated
+multi-body sections will be added as a separate ODE body/joint layer.
+The parsed configuration is written to `OpenBus_configuration.json` at startup.
+Parsed model parts, materials, visibility variables, animation variables, and
+wheel bindings are written to `OpenBus_model_configuration.json` as well. For
+parts with `[animparent]`, `parent_animations` shows the variables inherited
+from the referenced mesh, which makes door-glass control variables visible.
+
+The model variable store initializes OMSI-style system variables with the local
+system date at midday: `Time` is `43200`, `Day`, `Month`, and `Year` come from
+the current date, and `DayOfYear` is the zero-based day index. Defaults include
+`NoSound=1`, `Pause=0`, `PrecipType=0`, `PrecipRate=0`,
+`Weather_Temperature=20`, `Weather_AbsHum=10`, `Envir_Brightness=1`,
+`AutoClutch=0`, and `SunAlt=60`.
+`Timegap`, `GetTime`, `mouse_x`, and `mouse_y` are updated from the renderer
+each frame.
+
+Set `OPENBUS_BUS_CONFIG` to an OMSI `.bus` file to load physics data at startup
+instead of selecting a built-in configuration, for example:
+
+```powershell
+$env:OPENBUS_BUS_CONFIG = "SP_E400MMC/E400MMC_ADL_10.9m_Voith_LowHeight.bus"
+./build-ode/Release/OpenBus.exe
+```
+
+The loader uses `[mass]`, `[boundingbox]`, `[schwerpunkt]`, and `[newachse]`
+records, including axle spring, damper, load, and driven flags. The
+`bodyHalfLength`, `bodyHalfWidth`, `bodyHalfHeight`, collision dimensions, and
+collision offsets are derived from `[boundingbox]`. Because standard OMSI
+records do not define wheel thickness or articulation, each file also supplies
+`[openbus_wheel_half_width]` and `[openbus_articulated]`. Axle steering is
+derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
 
 ## Renderer controls
 
@@ -97,9 +125,9 @@ added as a separate ODE body/joint layer.
 - `S`: brake
 - `A` / `D`: steer
 - `0`: outside orbit camera
-- `1`: driver viewpoint
-- `2`-`9`: additional passenger, mirror, and exterior viewports
-- Default camera: MAN DL05 driver viewpoint (`1`)
+- `1`-`9`: cameras from the selected `.bus` file in driver/passenger order
+- Left/right arrow: step through driver/passenger cameras in file order
+- Default camera: the driver camera selected by `[set_camera_std]`
 - Hold middle mouse and drag: orbit outside view `0`, or look around the
   selected non-third-person viewport
 - Scroll up/down: zoom in/out
@@ -107,8 +135,8 @@ added as a separate ODE body/joint layer.
   launching to run above the display refresh cadence
 - Optional texture downscaling: set `OPENBUS_TEXTURE_SCALE=0.5` before
   launching to upload half-resolution textures; valid range is `0.25`-`1.0`
-- The window title reports the currently visible/rendered triangle count
-- Model display parts use conservative frustum culling, CFG-driven LOD
+  JPEG files. To create BC3 DDS siblings with AMD Compressonator, run
+  `.\convert_textures.ps1 -Compressonator C:\path\to\CompressonatorCLI.exe`.
   selection, and sorted opaque/transparent batches to reduce off-screen work
   and state churn. Set `OPENBUS_FRUSTUM_CULLING=0` to disable culling for
   debugging. Opaque parts are front-to-back and transparent parts

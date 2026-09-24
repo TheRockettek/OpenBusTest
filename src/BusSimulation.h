@@ -1,12 +1,13 @@
 #pragma once
 
-#include "BusTypes.h"
+#include "BusConfiguration.h"
 
 #include <ostream>
 
 class BusSimulation {
   public:
-    explicit BusSimulation(BusConfiguration configuration = BusConfiguration::manDl05(),
+    explicit BusSimulation(BusConfiguration configuration =
+                   busConfigurationFor(BusVehicle::ManDl05),
                            double physicsHz = 60.0, int maxCatchUpSteps = 8);
     ~BusSimulation();
 

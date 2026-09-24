@@ -19,35 +19,34 @@ enum class BusVehicle {
 struct BusAxle {
     double position;
     double trackWidth;
-    double maxWidth = 0.0;
-    double minWidth = 0.0;
-    double wheelDiameter = 0.0;
-    double springRate = 250000.0;
-    double maxForce = 0.0;
-    double damperRate = 16000.0;
+    double maxWidth;
+    double minWidth;
+    double wheelDiameter;
+    double springRate;
+    double maxForce;
+    double damperRate;
     bool steerable;
     bool driven;
 };
 
 struct BusConfiguration {
-    double mass = 11500.0;
-    double length = 12.0;
-    double width = 2.55;
-    double bodyHalfLength = 5.60;
-    double bodyHalfWidth = 1.15;
-    double bodyHalfHeight = 1.35;
-    double wheelRadius = 0.505;
-    double wheelHalfWidth = 0.145;
-    double collisionLength = 13.56;
-    double collisionWidth = 2.52;
-    double collisionHeight = 3.75;
-    double collisionOffsetZ = 1.253;
-    bool articulated = false;
+    double mass;
+    double length;
+    double width;
+    double bodyHalfLength;
+    double bodyHalfWidth;
+    double bodyHalfHeight;
+    double wheelRadius;
+    double wheelHalfWidth;
+    double collisionLength;
+    double collisionWidth;
+    double collisionHeight;
+    double collisionOffsetX;
+    double collisionOffsetY;
+    double collisionOffsetZ;
+    double centerOfGravityHeight;
+    bool articulated;
     std::vector<BusAxle> axles;
-
-    static BusConfiguration lionCity12();
-    static BusConfiguration manDl05();
-    static BusConfiguration spE400Mmc();
 };
 
 enum class RoadFeatureType {
@@ -78,5 +77,7 @@ struct ChassisCollisionBox {
     double length;
     double width;
     double height;
+    double offsetX;
+    double offsetY;
     double offsetZ;
 };
