@@ -15,4 +15,4 @@ class TraceScope {
     bool active_;
 };
 
-}  // namespace openbus::rendering
+} // namespace openbus::rendering

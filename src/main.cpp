@@ -1,8 +1,9 @@
-#include "BusSimulation.h"
 #include "BusConfiguration.h"
+#include "BusSimulation.h"
 #include "CrashHandler.h"
 #include "Logger.h"
 #include "ModelConfigLoader.h"
+#include "PerfTrace.h"
 #include "Renderer.h"
 
 #include <GLFW/glfw3.h>
@@ -20,24 +21,42 @@ int main() {
     try {
         const BusVehicle vehicle = busVehicleFromEnvironment();
         applicationLog.Log("Starting OpenBus");
-        const std::filesystem::path busConfigPath = busConfigurationPathFor(vehicle);
-        const std::filesystem::path modelConfigPath = modelConfigurationPathForBus(busConfigPath);
-        const BusConfiguration configuration = loadBusConfiguration(busConfigPath);
-        const ModelConfig modelConfiguration = loadBusModelConfiguration(busConfigPath);
-        std::ofstream configurationOutput("OpenBus_configuration.json", std::ios::trunc);
-        if (!configurationOutput) {
-            applicationLog.Log("Failed to open OpenBus_configuration.json");
-            throw std::runtime_error("Failed to open OpenBus_configuration.json");
+        std::filesystem::path busConfigPath;
+        std::filesystem::path modelConfigPath;
+        {
+            openbus::rendering::TraceScope trace("config", "main.resolveConfigurationPaths");
+            busConfigPath = busConfigurationPathFor(vehicle);
+            modelConfigPath = modelConfigurationPathForBus(busConfigPath);
         }
-        writeBusConfigurationJson(configurationOutput, configuration);
-        configurationOutput.flush();
-        std::ofstream modelConfigurationOutput("OpenBus_model_configuration.json", std::ios::trunc);
-        if (!modelConfigurationOutput) {
-            applicationLog.Log("Failed to open OpenBus_model_configuration.json");
-            throw std::runtime_error("Failed to open OpenBus_model_configuration.json");
+        BusConfiguration configuration;
+        {
+            openbus::rendering::TraceScope trace("config", "main.loadBusConfiguration");
+            configuration = loadBusConfiguration(busConfigPath);
         }
-        writeModelConfigurationJson(modelConfigurationOutput, modelConfigPath, modelConfiguration);
-        modelConfigurationOutput.flush();
+        ModelConfig modelConfiguration;
+        {
+            openbus::rendering::TraceScope trace("config", "main.loadBusModelConfiguration");
+            modelConfiguration = loadBusModelConfiguration(busConfigPath);
+        }
+        {
+            openbus::rendering::TraceScope trace("config", "main.writeConfigurationSnapshots");
+            std::ofstream configurationOutput("OpenBus_configuration.json", std::ios::trunc);
+            if (!configurationOutput) {
+                applicationLog.Log("Failed to open OpenBus_configuration.json");
+                throw std::runtime_error("Failed to open OpenBus_configuration.json");
+            }
+            writeBusConfigurationJson(configurationOutput, configuration);
+            configurationOutput.flush();
+            std::ofstream modelConfigurationOutput("OpenBus_model_configuration.json",
+                                                   std::ios::trunc);
+            if (!modelConfigurationOutput) {
+                applicationLog.Log("Failed to open OpenBus_model_configuration.json");
+                throw std::runtime_error("Failed to open OpenBus_model_configuration.json");
+            }
+            writeModelConfigurationJson(modelConfigurationOutput, modelConfigPath,
+                                        modelConfiguration);
+            modelConfigurationOutput.flush();
+        }
         BusSimulation simulation(configuration);
         Renderer renderer(1280, 720, "OpenBus", vehicle,
                           {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
@@ -46,6 +65,7 @@ int main() {
         bool pendingCaptureRequest = false;
         std::vector<KeyEvent> pendingKeyEvents;
         while (!renderer.shouldClose()) {
+            openbus::rendering::TraceScope frameTrace("frame", "main");
             // Each frame updates input-backed variables first, advances physics,
             // then renders using the resulting simulation and variable state.
             const double currentTime = glfwGetTime();

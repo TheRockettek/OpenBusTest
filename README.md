@@ -176,6 +176,28 @@ derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
 
 The ground uses a world-space grid with highlighted ten-metre lines.
 
+## CPU flame graphs
+
+Set `OPENBUS_TRACE=1` to write both the existing Chrome trace
+(`openbus_trace.json`) and Brendan Gregg collapsed stacks
+(`openbus_trace.collapsed`). Set `OPENBUS_TRACE_COLLAPSED=1` to write only the
+collapsed stacks. `OPENBUS_TRACE_FILE` and `OPENBUS_TRACE_COLLAPSED_FILE`
+override the respective output paths.
+
+Use `profile.bat` for the standard Release profiled launch.
+
+Collapsed values are elapsed microseconds. Each stack is prefixed with its
+thread ID and includes frame, physics, renderer, OBJ, and texture scopes. With
+the [FlameGraph](https://github.com/brendangregg/FlameGraph) scripts available:
+
+```powershell
+perl .\FlameGraph\flamegraph.pl .\openbus_trace.collapsed > .\openbus_trace.svg
+```
+
+The main frame path begins with `frame:main`; expand it to compare
+`Renderer::beginFrame`, `BusSimulation::update`, `Renderer::draw`, and
+`Renderer::endFrame` work.
+
 ## OMSI bus-file reference
 
 The supplied OMSI examples are summarized in

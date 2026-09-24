@@ -25,8 +25,7 @@ const std::vector<RoadBump>& defaultRoadBumps() {
             {90.0, 0.0, 120.0, 250, 50.0, RoadFeatureType::Incline},
         };
         for (int index = 0; index < 10; ++index) {
-            result.push_back({24.0 + index * 0.62, 0.0, 0.36, 6.8,
-                              index % 2 == 0 ? 0.055 : 0.085});
+            result.push_back({24.0 + index * 0.62, 0.0, 0.36, 6.8, index % 2 == 0 ? 0.055 : 0.085});
         }
         result.insert(result.end(), {
                                         {31.0, 0.82, 1.30, 1.15, 0.18},

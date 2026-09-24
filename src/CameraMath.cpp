@@ -1,7 +1,10 @@
 #include "CameraMath.h"
 
-#include <GLFW/glfw3.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <GL/gl.h>
+#include <GLFW/glfw3.h>
 #include <cmath>
 
 namespace openbus::rendering {
@@ -75,4 +78,4 @@ std::array<double, 3> transformLocalPoint(const BodyPose& pose,
                 pose.rotation[8] * local[2]};
 }
 
-}  // namespace openbus::rendering
+} // namespace openbus::rendering

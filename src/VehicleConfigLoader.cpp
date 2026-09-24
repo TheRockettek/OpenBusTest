@@ -2,9 +2,10 @@
 
 #include "ConfigurationParser.h"
 #include "ModelConfigLoader.h"
+#include "PerfTrace.h"
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -13,10 +14,10 @@
 namespace {
 
 using openbus::config::Line;
-using openbus::config::Reader;
 using openbus::config::lower;
 using openbus::config::parseDouble;
 using openbus::config::parseInt;
+using openbus::config::Reader;
 using openbus::config::trim;
 
 bool readValues(Reader& reader, const std::string& keyword, std::size_t count,
@@ -207,9 +208,9 @@ bool parseAxle(Reader& reader, VehicleConfig& result, const Line& keywordLine) {
         }
         const std::string name = lower(field.text);
         const bool recognized = name == "achse_long" || name == "achse_maxwidth" ||
-                               name == "achse_minwidth" || name == "achse_raddurchmesser" ||
-                               name == "achse_feder" || name == "achse_maxforce" ||
-                               name == "achse_daempfer" || name == "achse_antrieb";
+                                name == "achse_minwidth" || name == "achse_raddurchmesser" ||
+                                name == "achse_feder" || name == "achse_maxforce" ||
+                                name == "achse_daempfer" || name == "achse_antrieb";
         if (!recognized) {
             continue;
         }
@@ -252,26 +253,20 @@ bool parseAxle(Reader& reader, VehicleConfig& result, const Line& keywordLine) {
     // TODO: Validate all axle dimensions and suspension values before accepting the record.
     if (!hasPosition || !hasMaxWidth || !hasMinWidth || !hasWheelDiameter || !hasSpring ||
         !hasMaxForce || !hasDamper || !hasDriven || maxWidth <= 0.0 || wheelDiameter <= 0.0) {
-        result.diagnostics.error(keywordLine.number, "newachse",
-                                 "axle requires position, widths, wheel, suspension, and drive values");
+        result.diagnostics.error(
+            keywordLine.number, "newachse",
+            "axle requires position, widths, wheel, suspension, and drive values");
         return false;
     }
-    result.axles.push_back({position,
-                            maxWidth,
-                            maxWidth,
-                            minWidth,
-                            wheelDiameter,
-                            spring * 1000.0,
-                            maxForce * 1000.0,
-                            damper * 1000.0,
-                            false,
-                            driven != 0.0});
+    result.axles.push_back({position, maxWidth, maxWidth, minWidth, wheelDiameter, spring * 1000.0,
+                            maxForce * 1000.0, damper * 1000.0, false, driven != 0.0});
     return true;
 }
 
-}  // namespace
+} // namespace
 
 VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, VehicleFileKind kind) {
+    openbus::rendering::TraceScope trace("config", "loadVehicleConfig");
     VehicleConfig result;
     result.kind = kind;
     result.sourcePath = configPath;
@@ -329,7 +324,8 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             int count = 0;
             if (!reader.readPayload(countLine, result.diagnostics, keyword) ||
                 !parseInt(countLine.text, count) || count < 0) {
-                result.diagnostics.error(line.number, keyword, "expected a non-negative entry count");
+                result.diagnostics.error(line.number, keyword,
+                                         "expected a non-negative entry count");
                 continue;
             }
             std::vector<std::string> values;
@@ -356,13 +352,10 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             }
             VehicleCamera camera;
             const VehicleCameraKind cameraKind =
-                keyword == "add_camera_driver"
-                    ? VehicleCameraKind::Driver
-                    : keyword == "add_camera_pax"
-                          ? VehicleCameraKind::Passenger
-                          : keyword == "add_camera_reflexion"
-                                ? VehicleCameraKind::Reflexion
-                                : VehicleCameraKind::Reflexion2;
+                keyword == "add_camera_driver"      ? VehicleCameraKind::Driver
+                : keyword == "add_camera_pax"       ? VehicleCameraKind::Passenger
+                : keyword == "add_camera_reflexion" ? VehicleCameraKind::Reflexion
+                                                    : VehicleCameraKind::Reflexion2;
             if (parseCamera(reader, keyword, cameraKind, camera, result.diagnostics)) {
                 result.cameras.push_back(camera);
             }
@@ -484,8 +477,9 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             }
         }
         if (result.standardDriverCamera >= driverCount) {
-            result.diagnostics.error(0, "set_camera_std",
-                                     "default driver camera index is outside the driver camera list");
+            result.diagnostics.error(
+                0, "set_camera_std",
+                "default driver camera index is outside the driver camera list");
         }
     }
     if (scheduleLine != 0 &&

@@ -4,7 +4,6 @@
 
 #include <Windows.h>
 #include <DbgHelp.h>
-
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -16,7 +15,8 @@ namespace {
 
 std::atomic_flag reportInProgress = ATOMIC_FLAG_INIT;
 
-void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* exceptionAddress = nullptr) {
+void writeCrashReport(const char* reason, DWORD exceptionCode = 0,
+                      void* exceptionAddress = nullptr) {
     if (reportInProgress.test_and_set()) {
         return;
     }
@@ -49,8 +49,8 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* excepti
             symbol->MaxNameLen = MAX_SYM_NAME;
             DWORD64 displacement = 0;
             if (SymFromAddr(process, address, &displacement, symbol)) {
-                report << "  #" << index << " " << symbol->Name << "+0x" << std::hex
-                       << displacement << std::dec << "\n";
+                report << "  #" << index << " " << symbol->Name << "+0x" << std::hex << displacement
+                       << std::dec << "\n";
             } else {
                 report << "  #" << index << " 0x" << std::hex << address << std::dec << "\n";
             }
@@ -83,7 +83,8 @@ void handlePureCall() {
     std::_Exit(EXIT_FAILURE);
 }
 
-void handleInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t) {
+void handleInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int,
+                            uintptr_t) {
     writeCrashReport("invalid parameter");
     std::_Exit(EXIT_FAILURE);
 }

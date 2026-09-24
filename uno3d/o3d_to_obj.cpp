@@ -464,9 +464,8 @@ std::optional<fs::path> tryResolveTexture(const std::string& textureRef, const f
             }
             fs::path compressed = p;
             compressed.replace_extension(".dds");
-            return fs::exists(compressed, ec) && fs::is_regular_file(compressed, ec)
-                       ? compressed
-                       : p;
+            return fs::exists(compressed, ec) && fs::is_regular_file(compressed, ec) ? compressed
+                                                                                     : p;
         }
     }
 
@@ -488,8 +487,8 @@ bool convertTextureToPng(const fs::path& source, const fs::path& destination) {
         return false;
     }
 
-    const int written = stbi_write_png(destination.string().c_str(), width, height, 4, pixels,
-                                       width * 4);
+    const int written =
+        stbi_write_png(destination.string().c_str(), width, height, 4, pixels, width * 4);
     stbi_image_free(pixels);
     return written != 0;
 }
@@ -561,8 +560,8 @@ void writeObjMtl(const Mesh& mesh, const fs::path& outObj, bool flipWinding,
                     std::string mapKdPath = texRef;
 
                     if ((copyTextures || convertTextures) && cfgDir && meshSourceDir) {
-                        const auto resolved = tryResolveTexture(
-                            texRef, *cfgDir, *meshSourceDir, !convertTextures);
+                        const auto resolved =
+                            tryResolveTexture(texRef, *cfgDir, *meshSourceDir, !convertTextures);
                         if (resolved.has_value()) {
                             const bool isDds = toLower(resolved->extension().string()) == ".dds";
                             if (convertTextures && !isDds) {
@@ -1048,8 +1047,7 @@ int run(const CliOptions& opt) {
 
             const fs::path sourceDir = opt.input.parent_path();
             errors += convertO3DSingle(opt.input, outObj, opt.flipWinding, nullptr, nullptr,
-                                       nullptr, &sourceDir, &sourceDir, false,
-                                       opt.convertTextures);
+                                       nullptr, &sourceDir, &sourceDir, false, opt.convertTextures);
         } catch (const std::exception& e) {
             ++errors;
             std::cerr << "ERR " << opt.input << ": " << e.what() << "\n";
@@ -1075,9 +1073,9 @@ int run(const CliOptions& opt) {
                 fs::path outObj = outDir / rel;
                 outObj.replace_extension(".obj");
                 const fs::path sourceDir = inPath.parent_path();
-                errors += convertO3DSingle(inPath, outObj, opt.flipWinding, nullptr, nullptr,
-                                           nullptr, &sourceDir, &sourceDir, false,
-                                           opt.convertTextures);
+                errors +=
+                    convertO3DSingle(inPath, outObj, opt.flipWinding, nullptr, nullptr, nullptr,
+                                     &sourceDir, &sourceDir, false, opt.convertTextures);
             } catch (const std::exception& e) {
                 ++errors;
                 std::cerr << "ERR " << inPath << ": " << e.what() << "\n";

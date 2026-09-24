@@ -130,7 +130,7 @@ target_include_directories(uno3d_converter SYSTEM PRIVATE ${stb_SOURCE_DIR})
 
 if(MSVC)
     target_compile_options(OpenBus PRIVATE /W4 /permissive-)
-    target_compile_definitions(OpenBus PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(OpenBus PRIVATE _CRT_SECURE_NO_WARNINGS GLFW_INCLUDE_NONE)
     target_link_libraries(OpenBus PRIVATE windowscodecs dbghelp)
 else()
     target_compile_options(OpenBus PRIVATE -Wall -Wextra -Wpedantic)

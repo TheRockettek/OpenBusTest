@@ -2,8 +2,11 @@
 
 #include "CameraMath.h"
 
-#include <GLFW/glfw3.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <GL/gl.h>
+#include <GLFW/glfw3.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -15,7 +18,7 @@ constexpr int ROAD_BUMP_SEGMENTS = 12;
 constexpr int ROAD_RAMP_SEGMENTS = 6;
 constexpr int ROAD_INCLINE_SEGMENTS = 16;
 
-}  // namespace
+} // namespace
 
 void drawBox(double length, double width, double height, double red, double green, double blue) {
     const double x = length * 0.5;
@@ -190,8 +193,8 @@ void drawGround(const std::vector<RoadBump>& bumps) {
             for (int segment = 0; segment < ROAD_RAMP_SEGMENTS; ++segment) {
                 const double phase = (static_cast<double>(segment) + 0.5) / ROAD_RAMP_SEGMENTS;
                 drawRoadBox(downStartX + segmentLength * (segment + 0.5), bump.centerY,
-                            segmentLength, bump.width, bump.height * (1.0 - phase), 0.0,
-                            deckColor, deckSideColor);
+                            segmentLength, bump.width, bump.height * (1.0 - phase), 0.0, deckColor,
+                            deckSideColor);
             }
             if (bump.railHeight > 0.0 && bump.railWidth > 0.0) {
                 const double railY = bump.width * 0.5 - bump.railWidth * 0.5;
@@ -281,4 +284,4 @@ void drawCollisionWireframe(const BusSimulation& simulation) {
     glColor4d(1.0, 1.0, 1.0, 1.0);
 }
 
-}  // namespace openbus::rendering
+} // namespace openbus::rendering

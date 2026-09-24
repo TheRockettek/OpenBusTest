@@ -15,8 +15,8 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
@@ -69,8 +69,7 @@ bool readTgaImage(const std::filesystem::path& path, Image& image) {
         return false;
     }
     std::array<std::uint8_t, 18> header = {};
-    input.read(reinterpret_cast<char*>(header.data()),
-               static_cast<std::streamsize>(header.size()));
+    input.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
     const bool colorMapped = header[2] == 1 || header[2] == 9;
     const bool trueColor = header[2] == 2 || header[2] == 10;
     if (!input || (!colorMapped && !trueColor)) {
@@ -150,8 +149,7 @@ bool readTgaImage(const std::filesystem::path& path, Image& image) {
             const int sourceX = (header[17] & 0x10) != 0 ? image.width - x - 1 : x;
             const std::size_t sourceIndex =
                 (static_cast<std::size_t>(sourceY) * image.width + sourceX) * pixelBytes;
-            const std::size_t targetIndex =
-                (static_cast<std::size_t>(y) * image.width + x) * 4;
+            const std::size_t targetIndex = (static_cast<std::size_t>(y) * image.width + x) * 4;
             if (colorMapped) {
                 const std::size_t paletteIndex =
                     (static_cast<std::size_t>(source[sourceIndex]) |
@@ -165,9 +163,8 @@ bool readTgaImage(const std::filesystem::path& path, Image& image) {
                 image.rgba[targetIndex + 0] = colorMap[paletteOffset + 2];
                 image.rgba[targetIndex + 1] = colorMap[paletteOffset + 1];
                 image.rgba[targetIndex + 2] = colorMap[paletteOffset + 0];
-                image.rgba[targetIndex + 3] = colorMapEntryBytes == 4
-                                                 ? colorMap[paletteOffset + 3]
-                                                 : 255;
+                image.rgba[targetIndex + 3] =
+                    colorMapEntryBytes == 4 ? colorMap[paletteOffset + 3] : 255;
             } else {
                 image.rgba[targetIndex + 0] = source[sourceIndex + 2];
                 image.rgba[targetIndex + 1] = source[sourceIndex + 1];
@@ -185,19 +182,17 @@ bool readBmpImage(const std::filesystem::path& path, Image& image) {
         return false;
     }
     std::array<std::uint8_t, 54> header = {};
-    input.read(reinterpret_cast<char*>(header.data()),
-               static_cast<std::streamsize>(header.size()));
+    input.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
     if (!input || header[0] != 'B' || header[1] != 'M') {
         return false;
     }
     const std::uint32_t pixelOffset =
         header[10] | (header[11] << 8) | (header[12] << 16) | (header[13] << 24);
-    const std::int32_t width = static_cast<std::int32_t>(
-        header[18] | (header[19] << 8) | (header[20] << 16) | (header[21] << 24));
-    const std::int32_t height = static_cast<std::int32_t>(
-        header[22] | (header[23] << 8) | (header[24] << 16) | (header[25] << 24));
-    const std::uint16_t bitsPerPixel =
-        static_cast<std::uint16_t>(header[28] | (header[29] << 8));
+    const std::int32_t width = static_cast<std::int32_t>(header[18] | (header[19] << 8) |
+                                                         (header[20] << 16) | (header[21] << 24));
+    const std::int32_t height = static_cast<std::int32_t>(header[22] | (header[23] << 8) |
+                                                          (header[24] << 16) | (header[25] << 24));
+    const std::uint16_t bitsPerPixel = static_cast<std::uint16_t>(header[28] | (header[29] << 8));
     if (width <= 0 || height == 0 || (bitsPerPixel != 24 && bitsPerPixel != 32)) {
         return false;
     }
@@ -206,8 +201,7 @@ bool readBmpImage(const std::filesystem::path& path, Image& image) {
     const std::size_t rowStride = ((static_cast<std::size_t>(width) * channels + 3) / 4) * 4;
     std::vector<std::uint8_t> source(rowStride * absoluteHeight);
     input.seekg(pixelOffset);
-    input.read(reinterpret_cast<char*>(source.data()),
-               static_cast<std::streamsize>(source.size()));
+    input.read(reinterpret_cast<char*>(source.data()), static_cast<std::streamsize>(source.size()));
     if (!input) {
         return false;
     }
@@ -276,8 +270,7 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
                            static_cast<std::size_t>(image.height)) {
             return false;
         }
-        const std::size_t requiredSize =
-            128 + rowPitch * static_cast<std::size_t>(image.height);
+        const std::size_t requiredSize = 128 + rowPitch * static_cast<std::size_t>(image.height);
         if (data.size() < requiredSize) {
             return false;
         }
@@ -321,8 +314,7 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
     const int blocksY = (image.height + 3) / 4;
     const bool explicitAlpha = dxt2 || dxt3;
     const std::size_t blockSize = dxt5 || explicitAlpha ? 16 : 8;
-    const std::size_t requiredSize =
-        128 + static_cast<std::size_t>(blocksX) * blocksY * blockSize;
+    const std::size_t requiredSize = 128 + static_cast<std::size_t>(blocksX) * blocksY * blockSize;
     if (data.size() < requiredSize) {
         return false;
     }
@@ -344,13 +336,13 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
                 alphaValues[1] = alpha1;
                 if (alpha0 > alpha1) {
                     for (int index = 1; index <= 6; ++index) {
-                        alphaValues[index + 1] = static_cast<std::uint8_t>(
-                            ((7 - index) * alpha0 + index * alpha1) / 7);
+                        alphaValues[index + 1] =
+                            static_cast<std::uint8_t>(((7 - index) * alpha0 + index * alpha1) / 7);
                     }
                 } else {
                     for (int index = 1; index <= 4; ++index) {
-                        alphaValues[index + 1] = static_cast<std::uint8_t>(
-                            ((5 - index) * alpha0 + index * alpha1) / 5);
+                        alphaValues[index + 1] =
+                            static_cast<std::uint8_t>(((5 - index) * alpha0 + index * alpha1) / 5);
                     }
                     alphaValues[6] = 0;
                     alphaValues[7] = 255;
@@ -384,8 +376,8 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
                 colors[2][3] = colors[3][3] = 255;
             } else {
                 for (int channel = 0; channel < 3; ++channel) {
-                    colors[2][channel] = static_cast<std::uint8_t>(
-                        (colors[0][channel] + colors[1][channel]) / 2);
+                    colors[2][channel] =
+                        static_cast<std::uint8_t>((colors[0][channel] + colors[1][channel]) / 2);
                 }
                 colors[2][3] = 255;
                 colors[3] = {0, 0, 0, static_cast<std::uint8_t>(dxt1HasAlpha ? 0 : 255)};
@@ -399,8 +391,7 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
                     }
                     const std::size_t colorIndex = (indices >> (2 * (row * 4 + column))) & 0x3;
                     const std::size_t pixelIndex = static_cast<std::size_t>(row * 4 + column);
-                    const std::size_t target =
-                        (static_cast<std::size_t>(y) * image.width + x) * 4;
+                    const std::size_t target = (static_cast<std::size_t>(y) * image.width + x) * 4;
                     std::copy(colors[colorIndex].begin(), colors[colorIndex].end(),
                               image.rgba.begin() + target);
                     if (explicitAlpha) {
@@ -417,7 +408,7 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
     return true;
 }
 
-}  // namespace
+} // namespace
 
 bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
     TraceScope trace("texture", "readImage");
@@ -427,8 +418,7 @@ bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
         gameLog.Log("Reading image from path: " + path.string());
     }
     const std::string extension = lower(path.extension().string());
-    if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
-        extension == ".bmp") {
+    if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".bmp") {
         if (readStbImage(path, image)) {
             return true;
         }
@@ -489,7 +479,8 @@ bool TextureLoader::isSafeCompressedDds(const std::filesystem::path& path) {
         const std::size_t blocksY = (static_cast<std::size_t>(levelHeight) + 3) / 4;
         if (blocksX > std::numeric_limits<std::size_t>::max() / blocksY ||
             blocksX * blocksY > std::numeric_limits<std::size_t>::max() / blockSize ||
-            requiredSize > std::numeric_limits<std::size_t>::max() - blocksX * blocksY * blockSize) {
+            requiredSize >
+                std::numeric_limits<std::size_t>::max() - blocksX * blocksY * blockSize) {
             return false;
         }
         requiredSize += blocksX * blocksY * blockSize;
@@ -528,15 +519,13 @@ bool TextureLoader::isDdsTextureArray(const std::filesystem::path& path) {
     if (!input) {
         return false;
     }
-    const std::uint32_t arraySize = static_cast<std::uint32_t>(dx10[12]) |
-                                    (static_cast<std::uint32_t>(dx10[13]) << 8) |
-                                    (static_cast<std::uint32_t>(dx10[14]) << 16) |
-                                    (static_cast<std::uint32_t>(dx10[15]) << 24);
+    const std::uint32_t arraySize =
+        static_cast<std::uint32_t>(dx10[12]) | (static_cast<std::uint32_t>(dx10[13]) << 8) |
+        (static_cast<std::uint32_t>(dx10[14]) << 16) | (static_cast<std::uint32_t>(dx10[15]) << 24);
     return arraySize > 1;
 }
 
-bool TextureLoader::readDxt5CompressedDds(const std::filesystem::path& path,
-                                           CompressedDds& image) {
+bool TextureLoader::readDxt5CompressedDds(const std::filesystem::path& path, CompressedDds& image) {
     TraceScope trace("texture", "readDxt5CompressedDds");
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -591,4 +580,4 @@ bool TextureLoader::readDxt5CompressedDds(const std::filesystem::path& path,
     return true;
 }
 
-}  // namespace openbus::rendering
+} // namespace openbus::rendering

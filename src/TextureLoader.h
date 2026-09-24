@@ -1,7 +1,7 @@
 #pragma once
 
-#include <filesystem>
 #include <cstdint>
+#include <filesystem>
 #include <vector>
 
 namespace openbus::rendering {
@@ -24,8 +24,7 @@ class TextureLoader {
     static bool isSafeCompressedDds(const std::filesystem::path& path);
     static bool isDxt5Dds(const std::filesystem::path& path);
     static bool isDdsTextureArray(const std::filesystem::path& path);
-    static bool readDxt5CompressedDds(const std::filesystem::path& path,
-                                      CompressedDds& image);
+    static bool readDxt5CompressedDds(const std::filesystem::path& path, CompressedDds& image);
 };
 
-}  // namespace openbus::rendering
+} // namespace openbus::rendering

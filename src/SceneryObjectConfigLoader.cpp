@@ -6,17 +6,17 @@
 namespace {
 
 using openbus::config::Line;
-using openbus::config::Reader;
 using openbus::config::lower;
 using openbus::config::parseDouble;
 using openbus::config::parseInt;
+using openbus::config::Reader;
 
 bool readList(Reader& reader, const std::string& keyword, std::vector<std::string>& destination,
-             ConfigurationDiagnostics& diagnostics) {
+              ConfigurationDiagnostics& diagnostics) {
     Line countLine;
     int count = 0;
-    if (!reader.readPayload(countLine, diagnostics, keyword) ||
-        !parseInt(countLine.text, count) || count < 0) {
+    if (!reader.readPayload(countLine, diagnostics, keyword) || !parseInt(countLine.text, count) ||
+        count < 0) {
         diagnostics.error(countLine.number, keyword, "expected a non-negative entry count");
         return false;
     }
@@ -42,7 +42,7 @@ bool readDoubles(Reader& reader, const std::string& keyword, std::size_t count,
     return true;
 }
 
-}  // namespace
+} // namespace
 
 SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPath) {
     SceneryObjectConfig result;

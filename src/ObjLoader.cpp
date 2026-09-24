@@ -28,24 +28,21 @@ int parseInt(const std::string& value, int fallback) {
     }
 }
 
-std::vector<ObjIndex> parseFace(const std::string& value, int positionCount,
-                                int texCoordCount) {
+std::vector<ObjIndex> parseFace(const std::string& value, int positionCount, int texCoordCount) {
     std::vector<ObjIndex> result;
     std::istringstream stream(value);
     std::string token;
     while (stream >> token) {
         ObjIndex index;
         const std::size_t firstSlash = token.find('/');
-        const std::size_t secondSlash = firstSlash == std::string::npos
-                                            ? std::string::npos
-                                            : token.find('/', firstSlash + 1);
+        const std::size_t secondSlash =
+            firstSlash == std::string::npos ? std::string::npos : token.find('/', firstSlash + 1);
         const std::string positionText = token.substr(0, firstSlash);
         index.position = parseInt(positionText, 0);
         if (firstSlash != std::string::npos) {
-            const std::string texCoordText =
-                token.substr(firstSlash + 1, secondSlash == std::string::npos
-                                                 ? std::string::npos
-                                                 : secondSlash - firstSlash - 1);
+            const std::string texCoordText = token.substr(
+                firstSlash + 1, secondSlash == std::string::npos ? std::string::npos
+                                                                 : secondSlash - firstSlash - 1);
             index.texCoord = parseInt(texCoordText, 0);
         }
         if (index.position < 0) {
@@ -59,7 +56,7 @@ std::vector<ObjIndex> parseFace(const std::string& value, int positionCount,
     return result;
 }
 
-}  // namespace
+} // namespace
 
 std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path) {
     TraceScope trace("obj", "parseObj");
@@ -155,4 +152,4 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path) {
     return result;
 }
 
-}  // namespace openbus::rendering
+} // namespace openbus::rendering

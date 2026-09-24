@@ -1,6 +1,7 @@
 #include "ModelConfigLoader.h"
 
 #include "ConfigurationParser.h"
+#include "PerfTrace.h"
 #include "Variables.h"
 
 #include <algorithm>
@@ -14,20 +15,20 @@
 namespace {
 
 using openbus::config::Line;
-using openbus::config::Reader;
 using openbus::config::lower;
 using openbus::config::parseDouble;
 using openbus::config::parseInt;
+using openbus::config::Reader;
 using openbus::config::trim;
 
 std::string kindName(ModelConfigKind kind) {
     switch (kind) {
-        case ModelConfigKind::Vehicle:
-            return "Vehicle";
-        case ModelConfigKind::Bus:
-            return "Bus";
-        case ModelConfigKind::SceneryObject:
-            return "SceneryObject";
+    case ModelConfigKind::Vehicle:
+        return "Vehicle";
+    case ModelConfigKind::Bus:
+        return "Bus";
+    case ModelConfigKind::SceneryObject:
+        return "SceneryObject";
     }
     return "Model";
 }
@@ -35,27 +36,62 @@ std::string kindName(ModelConfigKind kind) {
 bool isKnownKeyword(const std::string& keyword) {
     // Keep this list synchronized with the dispatch table below so unsupported
     // records produce diagnostics instead of being silently ignored.
-    static const std::unordered_set<std::string> keywords = {
-        "absheight",          "alphascale",       "animparent",          "boundingbox",
-        "collision_mesh",     "ctc",              "ctctexture",          "fixed",
-        "illumination_interior", "interiorlight", "isshadow",            "light_enh",
-        "light_enh_2",        "lod",              "matl",                "matl_alpha",
-        "matl_bumpmap",       "matl_change",      "matl_envmap",         "matl_freetex",
-        "matl_item",          "matl_lightmap",    "matl_nightmap",       "matl_nozcheck",
-        "matl_nozwrite",      "matl_texadress_border", "matl_texadress_clamp",
-        "matl_texadress_mirror", "matl_texadress_mirroronce", "matl_transmap", "mesh",
-        "mesh_ident",         "mouseevent",       "newanim",              "nocollision",
-        "rendertype",         "scripttexture",    "spotlight",            "tcoordtransx",
-        "tcoordtransy",       "tex_detail_factor", "texcoordtransx",      "texcoordtransy",
-        "texttexture",        "texttexture_enh", "usescripttexture",     "usetexttexture",
-        "vfdmaxmin",          "viewpoint",        "visible"};
+    static const std::unordered_set<std::string> keywords = {"absheight",
+                                                             "alphascale",
+                                                             "animparent",
+                                                             "boundingbox",
+                                                             "collision_mesh",
+                                                             "ctc",
+                                                             "ctctexture",
+                                                             "fixed",
+                                                             "illumination_interior",
+                                                             "interiorlight",
+                                                             "isshadow",
+                                                             "light_enh",
+                                                             "light_enh_2",
+                                                             "lod",
+                                                             "matl",
+                                                             "matl_alpha",
+                                                             "matl_bumpmap",
+                                                             "matl_change",
+                                                             "matl_envmap",
+                                                             "matl_freetex",
+                                                             "matl_item",
+                                                             "matl_lightmap",
+                                                             "matl_nightmap",
+                                                             "matl_nozcheck",
+                                                             "matl_nozwrite",
+                                                             "matl_texadress_border",
+                                                             "matl_texadress_clamp",
+                                                             "matl_texadress_mirror",
+                                                             "matl_texadress_mirroronce",
+                                                             "matl_transmap",
+                                                             "mesh",
+                                                             "mesh_ident",
+                                                             "mouseevent",
+                                                             "newanim",
+                                                             "nocollision",
+                                                             "rendertype",
+                                                             "scripttexture",
+                                                             "spotlight",
+                                                             "tcoordtransx",
+                                                             "tcoordtransy",
+                                                             "tex_detail_factor",
+                                                             "texcoordtransx",
+                                                             "texcoordtransy",
+                                                             "texttexture",
+                                                             "texttexture_enh",
+                                                             "usescripttexture",
+                                                             "usetexttexture",
+                                                             "vfdmaxmin",
+                                                             "viewpoint",
+                                                             "visible"};
     return keywords.find(keyword) != keywords.end();
 }
 
 bool validForKind(const std::string& keyword, ModelConfigKind kind) {
     // Some CFG records are legal only for bus, vehicle, or scenery models.
-    if ((keyword == "animparent" || keyword == "mesh_ident") &&
-        kind != ModelConfigKind::Bus) {
+    if ((keyword == "animparent" || keyword == "mesh_ident") && kind != ModelConfigKind::Bus) {
         return false;
     }
     if ((keyword == "illumination_interior" || keyword == "interiorlight" ||
@@ -184,7 +220,7 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
                     if (!parseDouble(remainingCoordinates[0], secondCoordinate) ||
                         !parseDouble(remainingCoordinates[1], thirdCoordinate)) {
                         diagnostics.error(possibleOrigin.number, "origin_from_mesh",
-                                           "expected numeric coordinates");
+                                          "expected numeric coordinates");
                         return false;
                     }
                     animation.origin = {secondCoordinate, -firstCoordinate, thirdCoordinate};
@@ -264,11 +300,12 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
     return true;
 }
 
-}  // namespace
+} // namespace
 
 ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                             const std::filesystem::path& modelRoot, ModelConfigKind kind,
                             Variables& variables) {
+    openbus::rendering::TraceScope trace("config", "loadModelConfig");
     ModelConfig result;
     openbus::config::Reader reader(configPath);
     if (!reader.isOpen()) {
@@ -304,8 +341,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         const auto requirePart = [&]() -> ModelPart* {
             ModelPart* current = part();
             if (current == nullptr) {
-                result.diagnostics.error(line.number, line.keyword(),
-                                         "keyword must follow [mesh]");
+                result.diagnostics.error(line.number, line.keyword(), "keyword must follow [mesh]");
             }
             return current;
         };
@@ -340,8 +376,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 result.diagnostics.error(line.number, "LOD", "threshold must be greater than zero");
                 currentLodIndex = -1;
             } else {
-                if (!result.lodThresholds.empty() &&
-                    threshold <= result.lodThresholds.back()) {
+                if (!result.lodThresholds.empty() && threshold <= result.lodThresholds.back()) {
                     result.diagnostics.error(line.number, "LOD",
                                              "thresholds must increase in file order");
                 }
@@ -381,7 +416,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             if (current != nullptr && reader.readPayload(value, result.diagnostics, "mesh_ident")) {
                 const std::string identifier = trim(value.text);
                 if (identifier.empty()) {
-                    result.diagnostics.error(value.number, "mesh_ident", "identifier cannot be empty");
+                    result.diagnostics.error(value.number, "mesh_ident",
+                                             "identifier cannot be empty");
                 } else if (!meshIdentifiers.insert(identifier).second) {
                     result.diagnostics.error(value.number, "mesh_ident",
                                              "duplicate mesh identifier: " + identifier);
@@ -399,7 +435,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             if (current != nullptr && reader.readPayload(value, result.diagnostics, "animparent")) {
                 current->animationParent = trim(value.text);
                 if (current->animationParent.empty()) {
-                    result.diagnostics.error(value.number, "animparent", "parent identifier cannot be empty");
+                    result.diagnostics.error(value.number, "animparent",
+                                             "parent identifier cannot be empty");
                 }
             }
             continue;
@@ -408,9 +445,11 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (keyword == "viewpoint") {
             ModelPart* current = requirePart();
             int viewpoint = 0;
-            if (current != nullptr && readIntValue(reader, "viewpoint", viewpoint, result.diagnostics)) {
+            if (current != nullptr &&
+                readIntValue(reader, "viewpoint", viewpoint, result.diagnostics)) {
                 if (viewpoint < 0 || viewpoint > 7) {
-                    result.diagnostics.error(line.number, "viewpoint", "value must be between 0 and 7");
+                    result.diagnostics.error(line.number, "viewpoint",
+                                             "value must be between 0 and 7");
                 }
                 current->viewpoint = viewpoint;
             }
@@ -435,8 +474,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (keyword == "visible") {
             ModelPart* current = requirePart();
             std::vector<std::string> values;
-            if (current != nullptr && readValues(reader, line.number, "visible", 2, values,
-                                                 result.diagnostics)) {
+            if (current != nullptr &&
+                readValues(reader, line.number, "visible", 2, values, result.diagnostics)) {
                 int value = 0;
                 if (!parseInt(values[1], value)) {
                     result.diagnostics.error(line.number, "visible", "expected an integer value");
@@ -453,14 +492,15 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (keyword == "illumination_interior") {
             ModelPart* current = requirePart();
             std::vector<std::string> values;
-            if (current != nullptr && readValues(reader, line.number, keyword, 4, values,
-                                                 result.diagnostics)) {
+            if (current != nullptr &&
+                readValues(reader, line.number, keyword, 4, values, result.diagnostics)) {
                 // -1 means that an illumination slot is unused; other values
                 // identify the corresponding light group.
                 for (std::size_t index = 0; index < values.size(); ++index) {
                     int value = -1;
                     if (!parseInt(values[index], value)) {
-                        result.diagnostics.error(line.number, keyword, "expected integer light indexes");
+                        result.diagnostics.error(line.number, keyword,
+                                                 "expected integer light indexes");
                         break;
                     }
                     if (value < -1) {
@@ -532,8 +572,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (keyword == "matl") {
             ModelPart* current = requirePart();
             std::vector<std::string> values;
-            if (current != nullptr && readValues(reader, line.number, keyword, 2, values,
-                                                 result.diagnostics)) {
+            if (current != nullptr &&
+                readValues(reader, line.number, keyword, 2, values, result.diagnostics)) {
                 const std::string textureName = trim(values[0]);
                 // Material modifiers that follow are associated with this key.
                 currentMaterialKey = lower(std::filesystem::path(textureName).filename().string());
@@ -551,7 +591,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (keyword == "matl_alpha") {
             ModelMaterialState* current = requireMaterial();
             int alphaMode = 0;
-            if (current != nullptr && readIntValue(reader, keyword, alphaMode, result.diagnostics)) {
+            if (current != nullptr &&
+                readIntValue(reader, keyword, alphaMode, result.diagnostics)) {
                 if (alphaMode < 0 || alphaMode > 2) {
                     result.diagnostics.error(line.number, keyword, "mode must be 0, 1, or 2");
                 }
@@ -582,8 +623,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (keyword == "matl_envmap") {
             ModelMaterialState* current = requireMaterial();
             std::vector<std::string> values;
-            if (current != nullptr && readValues(reader, line.number, keyword, 2, values,
-                                                 result.diagnostics)) {
+            if (current != nullptr &&
+                readValues(reader, line.number, keyword, 2, values, result.diagnostics)) {
                 current->environmentTextureName = trim(values[0]);
                 if (!parseDouble(values[1], current->environmentStrength)) {
                     result.diagnostics.error(line.number, keyword, "expected numeric strength");
@@ -592,8 +633,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             continue;
         }
         // [matl_bumpmap]: texture plus mode; [matl_transmap]/[matl_nightmap]: one texture.
-        if (keyword == "matl_bumpmap" || keyword == "matl_transmap" ||
-            keyword == "matl_nightmap") {
+        if (keyword == "matl_bumpmap" || keyword == "matl_transmap" || keyword == "matl_nightmap") {
             ModelMaterialState* current = requireMaterial();
             if (current != nullptr) {
                 const std::size_t count = keyword == "matl_bumpmap" ? 2 : 1;
@@ -640,8 +680,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     }
                     const std::string activationVariable = trim(values[2]);
                     if (textureName.empty() || activationVariable.empty()) {
-                        result.diagnostics.error(line.number, keyword,
-                                                 "texture name and activation variable are required");
+                        result.diagnostics.error(
+                            line.number, keyword,
+                            "texture name and activation variable are required");
                         continue;
                     }
                     currentMaterialKey =
@@ -653,8 +694,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                         state.textureName = textureName;
                         state.texturePath = textureName;
                     }
-                    state.textureChanges.push_back({{}, textureName, layer,
-                                                    activationVariable});
+                    state.textureChanges.push_back({{}, textureName, layer, activationVariable});
                     declareIfVariable(activationVariable, variables);
                 }
             }
@@ -753,7 +793,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
 
     // Parent references can only be checked after all mesh identifiers are known.
     for (const ModelPart& part : result.parts) {
-        if (!part.animationParent.empty() && meshIdentifiers.find(part.animationParent) == meshIdentifiers.end()) {
+        if (!part.animationParent.empty() &&
+            meshIdentifiers.find(part.animationParent) == meshIdentifiers.end()) {
             result.diagnostics.error(0, "animparent",
                                      "unknown parent mesh identifier: " + part.animationParent);
         }

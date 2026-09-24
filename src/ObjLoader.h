@@ -51,4 +51,4 @@ class ObjLoader {
     static std::shared_ptr<ParsedObj> parse(const std::filesystem::path& path);
 };
 
-}  // namespace openbus::rendering
+} // namespace openbus::rendering

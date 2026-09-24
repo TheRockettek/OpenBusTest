@@ -1,11 +1,10 @@
 #include "Variables.h"
 
-#include <mutex>
-#include <shared_mutex>
-
 #include <algorithm>
 #include <cctype>
 #include <ctime>
+#include <mutex>
+#include <shared_mutex>
 
 namespace {
 

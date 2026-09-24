@@ -130,8 +130,7 @@ bool Reader::readPayload(Line& line, ConfigurationDiagnostics& diagnostics,
         return false;
     }
     if (line.isKeyword()) {
-        diagnostics.error(line.number, ownerKeyword,
-                          "expected a value before " + line.text);
+        diagnostics.error(line.number, ownerKeyword, "expected a value before " + line.text);
         pushBack(std::move(line));
         return false;
     }
@@ -139,8 +138,7 @@ bool Reader::readPayload(Line& line, ConfigurationDiagnostics& diagnostics,
 }
 
 bool Reader::readPayloads(std::size_t count, std::vector<std::string>& values,
-                          ConfigurationDiagnostics& diagnostics,
-                          const std::string& ownerKeyword) {
+                          ConfigurationDiagnostics& diagnostics, const std::string& ownerKeyword) {
     values.clear();
     values.reserve(count);
     for (std::size_t index = 0; index < count; ++index) {
@@ -153,4 +151,4 @@ bool Reader::readPayloads(std::size_t count, std::vector<std::string>& values,
     return true;
 }
 
-}  // namespace openbus::config
+} // namespace openbus::config

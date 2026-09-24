@@ -19,4 +19,4 @@ void drawWheel(double radius, double halfWidth, double red = 0.04, double green 
 void drawCenterOfGravityMarker(double size);
 void drawCollisionWireframe(const BusSimulation& simulation);
 
-}  // namespace openbus::rendering
+} // namespace openbus::rendering

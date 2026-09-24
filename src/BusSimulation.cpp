@@ -2,6 +2,7 @@
 
 #include "BusConfiguration.h"
 #include "Logger.h"
+#include "PerfTrace.h"
 #include "RoadFeatures.h"
 
 #include <algorithm>
@@ -358,9 +359,9 @@ struct BusSimulation::Impl {
             }
             return total / configuration.axles.size();
         }();
-        const dReal staticCompression = std::clamp(
-            configuration.mass * std::abs(GRAVITY) / (corners.size() * averageSpringRate), 0.0,
-            SUSP_MAX_TRAVEL * 0.9);
+        const dReal staticCompression = std::clamp(configuration.mass * std::abs(GRAVITY) /
+                                                       (corners.size() * averageSpringRate),
+                                                   0.0, SUSP_MAX_TRAVEL * 0.9);
         dBodySetPosition(chassis, 0.0, 0.0,
                          configuration.centerOfGravityHeight +
                              (configuration.mass - chassisMass) / configuration.mass * 0.5);
@@ -368,7 +369,7 @@ struct BusSimulation::Impl {
                                  configuration.collisionWidth, configuration.collisionHeight);
         dGeomSetBody(chassisGeom, chassis);
         dGeomSetOffsetPosition(chassisGeom, configuration.collisionOffsetX,
-                       configuration.collisionOffsetY, configuration.collisionOffsetZ);
+                               configuration.collisionOffsetY, configuration.collisionOffsetZ);
         dBodySetAutoDisableFlag(chassis, 0);
         dBodySetMaxAngularSpeed(chassis, MAX_CHASSIS_ANGULAR_SPEED);
 
@@ -436,6 +437,7 @@ struct BusSimulation::Impl {
     }
 
     void refreshWheelTelemetry() {
+        openbus::rendering::TraceScope trace("physics", "BusSimulation::refreshWheelTelemetry");
         const dReal* chassisPosition = dBodyGetPosition(chassis);
         const dReal* chassisRotation = dBodyGetRotation(chassis);
         const dReal* chassisVelocity = dBodyGetLinearVel(chassis);
@@ -495,6 +497,7 @@ struct BusSimulation::Impl {
     }
 
     void applyCornerForces(double throttle, double steering, double brake) {
+        openbus::rendering::TraceScope trace("physics", "BusSimulation::applyCornerForces");
         refreshWheelTelemetry();
         const dReal* velocity = dBodyGetLinearVel(chassis);
         const dReal* rotation = dBodyGetRotation(chassis);
@@ -550,8 +553,7 @@ struct BusSimulation::Impl {
             const dReal supportForce = std::max(0.0, springForce + antiRollForce);
             dBodyAddForce(corners[index].suspensionBody, 0.0, 0.0, -supportForce);
             dBodyAddForceAtRelPos(chassis, 0.0, 0.0, supportForce, corners[index].x,
-                                  corners[index].y,
-                                  suspensionAnchorZ());
+                                  corners[index].y, suspensionAnchorZ());
             corners[index].normalLoad = supportForce;
 
             const dReal targetSteering = front ? steeringAngle : 0.0;
@@ -625,6 +627,7 @@ struct BusSimulation::Impl {
         }
     }
     void fixedUpdate(double throttle, double steering, double brake) {
+        openbus::rendering::TraceScope trace("physics", "BusSimulation::fixedUpdate");
         applyCornerForces(throttle, steering, brake);
         dSpaceCollide(ode.space, this, &nearCallback);
         dWorldStep(ode.world, fixedStep);
@@ -632,11 +635,11 @@ struct BusSimulation::Impl {
         refreshWheelTelemetry();
         simulationTime += fixedStep;
     }
-
 };
 
 BusSimulation::BusSimulation(BusConfiguration configuration, double physicsHz, int maxCatchUpSteps)
     : impl_(new Impl(std::move(configuration), physicsHz, maxCatchUpSteps)) {
+    openbus::rendering::TraceScope trace("startup", "BusSimulation::BusSimulation");
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }
 
@@ -647,23 +650,37 @@ BusSimulation::~BusSimulation() {
 }
 
 void BusSimulation::update(double elapsedSeconds, double throttle, double steering, double brake) {
-    impl_->accumulator += std::clamp(elapsedSeconds, 0.0, MAX_FRAME_SECONDS);
-    impl_->lastSteps = 0;
-    impl_->dropped = false;
-    while (impl_->accumulator >= impl_->fixedStep && impl_->lastSteps < impl_->maxCatchUpSteps) {
-        impl_->fixedUpdate(throttle, steering, brake);
-        impl_->accumulator -= impl_->fixedStep;
-        ++impl_->lastSteps;
+    openbus::rendering::TraceScope trace("physics", "BusSimulation::update");
+    {
+        openbus::rendering::TraceScope phase("physics", "BusSimulation::update.accumulate");
+        impl_->accumulator += std::clamp(elapsedSeconds, 0.0, MAX_FRAME_SECONDS);
+        impl_->lastSteps = 0;
+        impl_->dropped = false;
     }
-    if (impl_->accumulator >= impl_->fixedStep) {
-        impl_->accumulator = std::fmod(impl_->accumulator, impl_->fixedStep);
-        impl_->dropped = true;
-        if (!impl_->dropReported) {
-            simulationLog.Log("Dropped accumulated simulation time after exceeding catch-up limit. Dropped frames: " + std::to_string(impl_->lastSteps));
-            impl_->dropReported = true;
+    {
+        openbus::rendering::TraceScope phase("physics", "BusSimulation::update.fixedSteps");
+        while (impl_->accumulator >= impl_->fixedStep &&
+               impl_->lastSteps < impl_->maxCatchUpSteps) {
+            impl_->fixedUpdate(throttle, steering, brake);
+            impl_->accumulator -= impl_->fixedStep;
+            ++impl_->lastSteps;
         }
-    } else {
-        impl_->dropReported = false;
+    }
+    {
+        openbus::rendering::TraceScope phase("physics", "BusSimulation::update.catchUpPolicy");
+        if (impl_->accumulator >= impl_->fixedStep) {
+            impl_->dropped = true;
+            if (!impl_->dropReported) {
+                simulationLog.Log("Dropped accumulated simulation time after exceeding catch-up "
+                                  "limit. Dropped frames: " +
+                                  std::to_string(impl_->accumulator));
+                impl_->dropReported = true;
+            }
+
+            impl_->accumulator = std::fmod(impl_->accumulator, impl_->fixedStep);
+        } else {
+            impl_->dropReported = false;
+        }
     }
 }
 
@@ -721,8 +738,8 @@ BodyPose BusSimulation::chassisPose() const {
 }
 
 ChassisCollisionBox BusSimulation::chassisCollisionBox() const {
-    return {impl_->configuration.collisionLength, impl_->configuration.collisionWidth,
-            impl_->configuration.collisionHeight, impl_->configuration.collisionOffsetX,
+    return {impl_->configuration.collisionLength,  impl_->configuration.collisionWidth,
+            impl_->configuration.collisionHeight,  impl_->configuration.collisionOffsetX,
             impl_->configuration.collisionOffsetY, impl_->configuration.collisionOffsetZ};
 }
 
@@ -785,8 +802,8 @@ double BusSimulation::wheelLocalZ(std::size_t index) const {
     if (index >= impl_->corners.size()) {
         throw std::out_of_range("Wheel index is outside the bus configuration");
     }
-        return impl_->configuration.wheelRadius - impl_->configuration.centerOfGravityHeight -
-            SUSP_REST + impl_->corners[index].springCompression;
+    return impl_->configuration.wheelRadius - impl_->configuration.centerOfGravityHeight -
+           SUSP_REST + impl_->corners[index].springCompression;
 }
 
 double BusSimulation::simulationTime() const {

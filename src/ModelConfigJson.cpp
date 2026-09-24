@@ -12,31 +12,30 @@ void writeJsonString(std::ostream& output, const std::string& value) {
     output << '"';
     for (const char character : value) {
         switch (character) {
-            case '"':
-                output << "\\\"";
-                break;
-            case '\\':
-                output << "\\\\";
-                break;
-            case '\n':
-                output << "\\n";
-                break;
-            case '\r':
-                output << "\\r";
-                break;
-            case '\t':
-                output << "\\t";
-                break;
-            default:
-                output << character;
-                break;
+        case '"':
+            output << "\\\"";
+            break;
+        case '\\':
+            output << "\\\\";
+            break;
+        case '\n':
+            output << "\\n";
+            break;
+        case '\r':
+            output << "\\r";
+            break;
+        case '\t':
+            output << "\\t";
+            break;
+        default:
+            output << character;
+            break;
         }
     }
     output << '"';
 }
 
-void writeModelAnimationsJson(std::ostream& output,
-                              const std::vector<ModelAnimation>& animations) {
+void writeModelAnimationsJson(std::ostream& output, const std::vector<ModelAnimation>& animations) {
     output << '[';
     for (std::size_t index = 0; index < animations.size(); ++index) {
         if (index != 0) {
@@ -52,10 +51,9 @@ void writeModelAnimationsJson(std::ostream& output,
     output << ']';
 }
 
-}  // namespace
+} // namespace
 
-void writeModelConfigurationJson(std::ostream& output,
-                                 const std::filesystem::path& configPath,
+void writeModelConfigurationJson(std::ostream& output, const std::filesystem::path& configPath,
                                  const ModelConfig& configuration) {
     output << std::setprecision(17)
            << "{\n"
@@ -78,10 +76,11 @@ void writeModelConfigurationJson(std::ostream& output,
         const ModelPart& part = configuration.parts[index];
         const ModelPart* parent = nullptr;
         if (!part.animationParent.empty()) {
-            const auto parentIterator = std::find_if(
-                configuration.parts.begin(), configuration.parts.end(), [&](const ModelPart& candidate) {
-                    return candidate.meshIdentifier == part.animationParent;
-                });
+            const auto parentIterator =
+                std::find_if(configuration.parts.begin(), configuration.parts.end(),
+                             [&](const ModelPart& candidate) {
+                                 return candidate.meshIdentifier == part.animationParent;
+                             });
             if (parentIterator != configuration.parts.end()) {
                 parent = &*parentIterator;
             }
@@ -94,9 +93,11 @@ void writeModelConfigurationJson(std::ostream& output,
         output << ",\n      \"texture_name\": ";
         writeJsonString(output, part.textureName);
         output << ",\n      \"color\": [" << part.color[0] << ',' << part.color[1] << ','
-               << part.color[2] << "],\n"
+               << part.color[2]
+               << "],\n"
                   "      \"viewpoint\": "
-               << part.viewpoint << ",\n"
+               << part.viewpoint
+               << ",\n"
                   "      \"render_type\": "
                << part.renderType << ",\n      \"mesh_identifier\": ";
         writeJsonString(output, part.meshIdentifier);
@@ -104,10 +105,12 @@ void writeModelConfigurationJson(std::ostream& output,
         writeJsonString(output, part.animationParent);
         output << ",\n      \"visibility\": {\"variable\": ";
         writeJsonString(output, part.visibleVariable);
-        output << ",\"value\": " << part.visibleValue << "},\n"
+        output << ",\"value\": " << part.visibleValue
+               << "},\n"
                   "      \"interior_light_indexes\": ["
                << part.interiorLightIndexes[0] << ',' << part.interiorLightIndexes[1] << ','
-               << part.interiorLightIndexes[2] << ',' << part.interiorLightIndexes[3] << "],\n"
+               << part.interiorLightIndexes[2] << ',' << part.interiorLightIndexes[3]
+               << "],\n"
                   "      \"lod_index\": "
                << part.lodIndex << ",\n      \"animations\": ";
         writeModelAnimationsJson(output, part.animations);
@@ -125,8 +128,8 @@ void writeModelConfigurationJson(std::ostream& output,
         writeJsonString(output, part.wheelAnimation.steeringVariable);
         output << ",\"origin\": [" << part.wheelAnimation.origin[0] << ','
                << part.wheelAnimation.origin[1] << ',' << part.wheelAnimation.origin[2]
-               << "],\"has_origin\": "
-               << (part.wheelAnimation.hasOrigin ? "true" : "false") << "},\n"
+               << "],\"has_origin\": " << (part.wheelAnimation.hasOrigin ? "true" : "false")
+               << "},\n"
                   "      \"materials\": [";
 
         std::vector<std::string> materialKeys;
@@ -139,7 +142,8 @@ void writeModelConfigurationJson(std::ostream& output,
             if (materialIndex != 0) {
                 output << ',';
             }
-            const ModelMaterialState& material = part.materialStates.at(materialKeys[materialIndex]);
+            const ModelMaterialState& material =
+                part.materialStates.at(materialKeys[materialIndex]);
             output << "{\"key\":";
             writeJsonString(output, materialKeys[materialIndex]);
             output << ",\"texture_name\":";
@@ -166,8 +170,8 @@ void writeModelConfigurationJson(std::ostream& output,
         const ConfigurationDiagnostic& diagnostic = configuration.diagnostics.entries[index];
         output << "{\"severity\":";
         writeJsonString(output, diagnostic.severity == ConfigurationDiagnostic::Severity::Error
-                                  ? "error"
-                                  : "warning");
+                                    ? "error"
+                                    : "warning");
         output << ",\"line\":" << diagnostic.line << ",\"keyword\":";
         writeJsonString(output, diagnostic.keyword);
         output << ",\"message\":";

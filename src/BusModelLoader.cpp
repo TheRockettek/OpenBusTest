@@ -1,6 +1,7 @@
 #include "BusModelLoader.h"
 
 #include "BusConfigLoader.h"
+#include "PerfTrace.h"
 #include "Variables.h"
 
 #include <algorithm>
@@ -10,6 +11,7 @@ namespace openbus::rendering {
 
 BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
                                 const std::filesystem::path& modelRoot, Variables& variables) {
+    openbus::rendering::TraceScope trace("config", "loadBusModel");
     const ModelConfig configuration = loadBusModelConfig(configPath, modelRoot, variables);
     BusModelLoadResult result;
     result.lodThresholds = configuration.lodThresholds;
@@ -45,8 +47,8 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
             state.alphaScaleVariable = materialEntry.second.alphaScaleVariable;
             state.textureChanges.reserve(materialEntry.second.textureChanges.size());
             for (const auto& change : materialEntry.second.textureChanges) {
-                state.textureChanges.push_back({change.texturePath, change.textureName, change.layer,
-                                                change.activationVariable});
+                state.textureChanges.push_back({change.texturePath, change.textureName,
+                                                change.layer, change.activationVariable});
             }
             part.materialStates.emplace(materialEntry.first, std::move(state));
         }
@@ -67,4 +69,4 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
     return result;
 }
 
-}  // namespace openbus::rendering
+} // namespace openbus::rendering

@@ -20,7 +20,8 @@ struct LogEntry {
 
 class LoggerState {
   public:
-    LoggerState() : logFile("game.log", std::ios::out | std::ios::trunc), worker(&LoggerState::run, this) {}
+    LoggerState()
+        : logFile("game.log", std::ios::out | std::ios::trunc), worker(&LoggerState::run, this) {}
 
     ~LoggerState() {
         {

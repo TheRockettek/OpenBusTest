@@ -46,4 +46,4 @@ std::string lower(std::string value);
 bool parseInt(const std::string& value, int& result);
 bool parseDouble(const std::string& value, double& result);
 
-}  // namespace openbus::config
+} // namespace openbus::config

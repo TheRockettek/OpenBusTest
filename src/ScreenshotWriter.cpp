@@ -1,7 +1,10 @@
 #include "ScreenshotWriter.h"
 
-#include <GLFW/glfw3.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <GL/gl.h>
+#include <GLFW/glfw3.h>
 #include <array>
 #include <cstdint>
 #include <fstream>
@@ -50,11 +53,11 @@ bool saveFramebufferBmp(const std::filesystem::path& path, int width, int height
         for (int x = 0; x < width; ++x) {
             const std::size_t index = (static_cast<std::size_t>(y) * width + x) * 4;
             const std::array<std::uint8_t, 3> pixel = {pixels[index + 2], pixels[index + 1],
-                                                        pixels[index]};
+                                                       pixels[index]};
             output.write(reinterpret_cast<const char*>(pixel.data()), pixel.size());
         }
     }
     return output.good();
 }
 
-}  // namespace openbus::rendering
+} // namespace openbus::rendering
