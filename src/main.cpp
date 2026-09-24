@@ -41,19 +41,6 @@ int main() {
         BusSimulation simulation(configuration);
         Renderer renderer(1280, 720, "OpenBus", vehicle,
                           {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
-        std::ofstream diagnostics("OpenBus_physics.json", std::ios::trunc);
-        if (!diagnostics) {
-            applicationLog.Log("Failed to open OpenBus_physics.json");
-            throw std::runtime_error("Failed to open OpenBus_physics.json for diagnostics");
-        }
-
-        applicationLog.Log("Diagnostics files opened");
-        diagnostics << "{\n"
-                       "  \"format_version\": 2,\n"
-                       "  \"sample_rate_hz\": 5,\n"
-                       "  \"samples\": [\n";
-        diagnostics.flush();
-
         double previousTime = glfwGetTime();
         bool captureOnStartup = std::getenv("OPENBUS_CAPTURE_VIEWS") != nullptr;
         bool pendingCaptureRequest = false;
@@ -85,8 +72,6 @@ int main() {
             }
             renderer.endFrame();
         }
-        diagnostics << "\n  ]\n}\n";
-        diagnostics.flush();
         applicationLog.Log("OpenBus shut down cleanly");
     } catch (const std::exception& error) {
         applicationLog.Log(std::string("OpenBus failed: ") + error.what());

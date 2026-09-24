@@ -249,6 +249,7 @@ bool parseAxle(Reader& reader, VehicleConfig& result, const Line& keywordLine) {
         }
     }
 
+    // TODO: Validate all axle dimensions and suspension values before accepting the record.
     if (!hasPosition || !hasMaxWidth || !hasMinWidth || !hasWheelDiameter || !hasSpring ||
         !hasMaxForce || !hasDamper || !hasDriven || maxWidth <= 0.0 || wheelDiameter <= 0.0) {
         result.diagnostics.error(keywordLine.number, "newachse",

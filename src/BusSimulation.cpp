@@ -7,9 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <iomanip>
 #include <ode/ode.h>
-#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -137,9 +135,6 @@ struct BusSimulation::Impl {
     bool dropped = false;
     bool dropReported = false;
     double simulationTime = 0.0;
-    double lastThrottle = 0.0;
-    double lastSteering = 0.0;
-    double lastBrake = 0.0;
 
     dReal suspensionAnchorZ() const {
         return configuration.wheelRadius + SUSP_REST - configuration.centerOfGravityHeight;
@@ -630,9 +625,6 @@ struct BusSimulation::Impl {
         }
     }
     void fixedUpdate(double throttle, double steering, double brake) {
-        lastThrottle = throttle;
-        lastSteering = steering;
-        lastBrake = brake;
         applyCornerForces(throttle, steering, brake);
         dSpaceCollide(ode.space, this, &nearCallback);
         dWorldStep(ode.world, fixedStep);
@@ -641,121 +633,6 @@ struct BusSimulation::Impl {
         simulationTime += fixedStep;
     }
 
-    void writeDiagnosticsJson(std::ostream& output, bool firstSample,
-                              const std::vector<KeyEvent>& keyEvents) const {
-        const dReal* position = dBodyGetPosition(chassis);
-        const dReal* rotation = dBodyGetRotation(chassis);
-        const dReal* linearVelocity = dBodyGetLinearVel(chassis);
-        const dReal* angularVelocity = dBodyGetAngularVel(chassis);
-        const dReal bodyYaw = std::atan2(rotation[4], rotation[0]);
-        const dReal bodySpeed = std::sqrt(linearVelocity[0] * linearVelocity[0] +
-                                          linearVelocity[1] * linearVelocity[1]);
-        const dReal yawRate = rotation[2] * angularVelocity[0] + rotation[6] * angularVelocity[1] +
-                              rotation[10] * angularVelocity[2];
-
-        auto worldPoint = [&](dReal localX, dReal localY, dReal localZ) {
-            return std::array<dReal, 3>{
-                position[0] + rotation[0] * localX + rotation[1] * localY + rotation[2] * localZ,
-                position[1] + rotation[4] * localX + rotation[5] * localY + rotation[6] * localZ,
-                position[2] + rotation[8] * localX + rotation[9] * localY + rotation[10] * localZ};
-        };
-
-        auto writeVector = [&](const std::array<dReal, 3>& vector) {
-            output << "{\"x\":" << vector[0] << ",\"y\":" << vector[1] << ",\"z\":" << vector[2]
-                   << '}';
-        };
-
-        auto writePointVelocity = [&](const std::array<dReal, 3>& point) {
-            const dReal offsetX = point[0] - position[0];
-            const dReal offsetY = point[1] - position[1];
-            const dReal offsetZ = point[2] - position[2];
-            const std::array<dReal, 3> pointVelocity = {
-                linearVelocity[0] + angularVelocity[1] * offsetZ - angularVelocity[2] * offsetY,
-                linearVelocity[1] + angularVelocity[2] * offsetX - angularVelocity[0] * offsetZ,
-                linearVelocity[2] + angularVelocity[0] * offsetY - angularVelocity[1] * offsetX};
-            output << ",\"velocity\":";
-            writeVector(pointVelocity);
-        };
-
-        if (!firstSample) {
-            output << ",\n";
-        }
-        output << "  {\n"
-               << "    \"simulation_time_s\":" << simulationTime << ",\n"
-               << "    \"timing\":{\"physics_hz\":" << 1.0 / fixedStep
-               << ",\"physics_steps\":" << lastSteps
-               << ",\"dropped_time\":" << (dropped ? "true" : "false") << "},\n"
-               << "    \"controls\":{\"throttle\":" << lastThrottle
-               << ",\"steering\":" << lastSteering << ",\"brake\":" << lastBrake << "},\n"
-               << "    \"key_events\":[";
-        for (std::size_t index = 0; index < keyEvents.size(); ++index) {
-            if (index != 0) {
-                output << ',';
-            }
-            output << "{\"key\":\"" << keyEvents[index].key
-                   << "\",\"pressed\":" << (keyEvents[index].pressed ? "true" : "false")
-                   << ",\"wall_time_s\":" << keyEvents[index].wallTimeSeconds << '}';
-        }
-        output << "],\n"
-               << "    \"vehicle\":{\"mass_kg\":" << configuration.mass
-               << ",\"length_m\":" << configuration.length << ",\"width_m\":" << configuration.width
-               << ",\"articulated\":" << (configuration.articulated ? "true" : "false") << "},\n"
-               << "    \"chassis\":{\"position\":";
-        writeVector({position[0], position[1], position[2]});
-        writePointVelocity({position[0], position[1], position[2]});
-        output << ",\"yaw_rad\":" << bodyYaw << ",\"speed_mps\":" << bodySpeed
-               << ",\"yaw_rate_rps\":" << yawRate << "},\n"
-               << "    \"axles\":[";
-
-        for (std::size_t axleIndex = 0; axleIndex < configuration.axles.size(); ++axleIndex) {
-            const BusAxle& axle = configuration.axles[axleIndex];
-            if (axleIndex != 0) {
-                output << ',';
-            }
-            const std::array<dReal, 3> axlePoint =
-                worldPoint(axle.position, 0.0, suspensionAnchorZ());
-            output << "\n      {\"index\":" << axleIndex << ",\"position\":";
-            writeVector(axlePoint);
-            writePointVelocity(axlePoint);
-            output << ",\"track_width_m\":" << axle.trackWidth
-                   << ",\"steerable\":" << (axle.steerable ? "true" : "false")
-                   << ",\"driven\":" << (axle.driven ? "true" : "false") << ",\"wheels\":[";
-            for (std::size_t sideIndex = 0; sideIndex < 2; ++sideIndex) {
-                const std::size_t cornerIndex = axleIndex * 2 + sideIndex;
-                const dReal wheelYaw =
-                    bodyYaw + dJointGetHingeAngle(corners[cornerIndex].steeringJoint);
-                const dReal* wheelPosition = dBodyGetPosition(corners[cornerIndex].wheelBody);
-                const std::array<dReal, 3> wheelPoint =
-                    std::array<dReal, 3>{wheelPosition[0], wheelPosition[1], wheelPosition[2]};
-                if (sideIndex != 0) {
-                    output << ',';
-                }
-                output << "\n        {\"index\":" << cornerIndex << ",\"side\":\""
-                       << (sideIndex == 0 ? "left" : "right") << "\",\"position\":";
-                writeVector(wheelPoint);
-                writePointVelocity(wheelPoint);
-                output << ",\"yaw_rad\":" << wheelYaw
-                       << ",\"suspension_compression_m\":" << corners[cornerIndex].springCompression
-                       << ",\"wheel_angular_velocity_rps\":" << corners[cornerIndex].wheelOmega
-                       << ",\"wheel_rpm\":" << corners[cornerIndex].wheelOmega * 60.0 / (2.0 * PI)
-                       << ",\"wheel_surface_speed_mps\":" << corners[cornerIndex].wheelSurfaceSpeed
-                       << ",\"point_longitudinal_speed_mps\":"
-                       << corners[cornerIndex].pointLongitudinalSpeed
-                       << ",\"longitudinal_slip_ratio\":"
-                       << corners[cornerIndex].longitudinalSlipRatio
-                       << ",\"drive_torque_nm\":" << corners[cornerIndex].driveTorque
-                       << ",\"brake_torque_nm\":" << corners[cornerIndex].brakeTorque
-                       << ",\"normal_load_n\":" << corners[cornerIndex].normalLoad
-                       << ",\"longitudinal_force_n\":" << corners[cornerIndex].longitudinalForce
-                       << ",\"lateral_force_n\":" << corners[cornerIndex].lateralForce
-                       << ",\"friction_utilization\":" << corners[cornerIndex].frictionUtilization
-                       << ",\"wheelspin\":" << (corners[cornerIndex].wheelspin ? "true" : "false")
-                       << ",\"skid\":" << (corners[cornerIndex].skid ? "true" : "false") << '}';
-            }
-            output << "\n      ]}";
-        }
-        output << "\n    ]\n  }";
-    }
 };
 
 BusSimulation::BusSimulation(BusConfiguration configuration, double physicsHz, int maxCatchUpSteps)
@@ -790,8 +667,7 @@ void BusSimulation::update(double elapsedSeconds, double throttle, double steeri
     }
 }
 
-void BusSimulation::step(double seconds, double throttle, double steering, double brake) {
-    (void)seconds;
+void BusSimulation::step(double throttle, double steering, double brake) {
     impl_->fixedUpdate(throttle, steering, brake);
 }
 

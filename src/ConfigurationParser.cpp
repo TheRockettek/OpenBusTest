@@ -2,7 +2,9 @@
 
 #include <cctype>
 #include <cerrno>
+#include <cmath>
 #include <cstdlib>
+#include <limits>
 
 namespace openbus::config {
 
@@ -34,7 +36,8 @@ bool parseInt(const std::string& value, int& result) {
     char* end = nullptr;
     errno = 0;
     const long parsed = std::strtol(normalized.c_str(), &end, 10);
-    if (errno != 0 || end == normalized.c_str() || *end != '\0') {
+    if (errno != 0 || end == normalized.c_str() || *end != '\0' ||
+        parsed < std::numeric_limits<int>::min() || parsed > std::numeric_limits<int>::max()) {
         return false;
     }
     result = static_cast<int>(parsed);
@@ -51,7 +54,7 @@ bool parseDouble(const std::string& value, double& result) {
     char* end = nullptr;
     errno = 0;
     const double parsed = std::strtod(normalized.c_str(), &end);
-    if (errno != 0 || end == normalized.c_str() || *end != '\0') {
+    if (errno != 0 || end == normalized.c_str() || *end != '\0' || !std::isfinite(parsed)) {
         return false;
     }
     result = parsed;

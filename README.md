@@ -57,14 +57,7 @@ Run the prototype:
 ```
 
 The executable opens a simple OpenGL preview window while the physics runs at
-the configured fixed rate. While running, it writes a structured diagnostics
-file to `OpenBus_physics.json`, sampled five times per second. The JSON contains
-timing and control inputs, chassis position/velocity/yaw, and nested axle and
-wheel positions, velocities, steering angles, suspension compression, wheel
-angular speed, slip ratio, tyre forces, friction utilization, wheelspin, and
-skid state.
-Key press and release transitions for `W`, `A`, `S`, and `D` are buffered into
-the next sample under `key_events`, including their wall-clock timestamps.
+the configured fixed rate.
 
 ## Current physics model
 

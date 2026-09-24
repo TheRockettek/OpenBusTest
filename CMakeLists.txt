@@ -102,9 +102,17 @@ add_executable(OpenBus
     src/ConfigurationParser.cpp
     src/VehicleConfigLoader.cpp
     src/ModelConfigLoader.cpp
+    src/ModelConfigJson.cpp
     src/BusConfigLoader.cpp
+    src/BusModelLoader.cpp
+    src/CameraMath.cpp
+    src/RenderPrimitives.cpp
     src/SceneryObjectConfigLoader.cpp
+    src/PerfTrace.cpp
     src/Renderer.cpp
+    src/ScreenshotWriter.cpp
+    src/TextureLoader.cpp
+    src/ObjLoader.cpp
 )
 
 target_include_directories(OpenBus PRIVATE src)
@@ -117,6 +125,8 @@ target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} glfw OpenGL::GL)
 add_executable(uno3d_converter
     uno3d/o3d_to_obj.cpp
 )
+
+target_include_directories(uno3d_converter SYSTEM PRIVATE ${stb_SOURCE_DIR})
 
 if(MSVC)
     target_compile_options(OpenBus PRIVATE /W4 /permissive-)

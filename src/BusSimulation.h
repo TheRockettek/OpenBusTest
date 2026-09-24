@@ -2,8 +2,6 @@
 
 #include "BusConfiguration.h"
 
-#include <ostream>
-
 class BusSimulation {
   public:
     explicit BusSimulation(BusConfiguration configuration =
@@ -16,7 +14,7 @@ class BusSimulation {
 
     // Accumulates wall-clock time and advances ODE in fixed-size steps.
     void update(double elapsedSeconds, double throttle, double steering = 0.0, double brake = 0.0);
-    void step(double seconds, double throttle, double steering = 0.0, double brake = 0.0);
+    void step(double throttle, double steering = 0.0, double brake = 0.0);
     double positionX() const;
     double positionY() const;
     double positionZ() const;

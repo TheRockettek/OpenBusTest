@@ -1,6 +1,13 @@
 #include "Renderer.h"
 #include "BusConfigLoader.h"
 #include "BusConfiguration.h"
+#include "BusModelLoader.h"
+#include "CameraMath.h"
+#include "ObjLoader.h"
+#include "PerfTrace.h"
+#include "RenderPrimitives.h"
+#include "ScreenshotWriter.h"
+#include "TextureLoader.h"
 #include "Variables.h"
 
 #include "BusSimulation.h"
@@ -13,14 +20,10 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <wincodec.h>
 #include <windows.h>
-#include <wrl/client.h>
 #endif
 #include <GL/gl.h>
 #include <gli/gli.hpp>
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -84,123 +87,6 @@ Logger wheelLog = Logger("Wheel");
 
 namespace {
 
-bool parseEnabledFlag(const char* value) {
-    // Environment flags accept the same common true spellings for diagnostics
-    // and optional performance tracing.
-    if (value == nullptr) {
-        return false;
-    }
-    std::string lowered = value;
-    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-    });
-    return lowered == "1" || lowered == "true" || lowered == "on" || lowered == "yes";
-}
-
-struct TraceEvent {
-    char phase = 'B';
-    const char* category = "";
-    const char* name = "";
-    long long timestampUs = 0;
-    unsigned int threadId = 0;
-};
-
-class PerfTraceState {
-  public:
-    PerfTraceState()
-        : enabled(parseEnabledFlag(std::getenv("OPENBUS_TRACE"))),
-          start(std::chrono::steady_clock::now()) {}
-
-    bool isEnabled() const {
-        return enabled;
-    }
-
-    void push(char phase, const char* category, const char* name) {
-        if (!enabled) {
-            return;
-        }
-        TraceEvent event;
-        event.phase = phase;
-        event.category = category;
-        event.name = name;
-        event.timestampUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                                std::chrono::steady_clock::now() - start)
-                                .count();
-        event.threadId = static_cast<unsigned int>(
-            std::hash<std::thread::id>{}(std::this_thread::get_id()) & 0xFFFFFFFFU);
-        std::lock_guard<std::mutex> lock(mutex);
-        events.push_back(event);
-    }
-
-    ~PerfTraceState() {
-        // Trace output is written once at shutdown so worker-thread events remain
-        // cheap during rendering.
-        if (!enabled) {
-            return;
-        }
-        std::filesystem::path outputPath = "openbus_trace.json";
-        if (const char* configuredPath = std::getenv("OPENBUS_TRACE_FILE")) {
-            if (*configuredPath != '\0') {
-                outputPath = configuredPath;
-            }
-        }
-        std::vector<TraceEvent> snapshot;
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            snapshot = events;
-        }
-        std::ofstream output(outputPath, std::ios::trunc);
-        if (!output) {
-            return;
-        }
-        output << "{\n  \"traceEvents\": [\n";
-        for (std::size_t index = 0; index < snapshot.size(); ++index) {
-            const TraceEvent& event = snapshot[index];
-            output << "    {\"name\":\"" << event.name << "\",\"cat\":\""
-                   << event.category << "\",\"ph\":\"" << event.phase
-                   << "\",\"ts\":" << event.timestampUs
-                   << ",\"pid\":1,\"tid\":" << event.threadId << "}";
-            if (index + 1 < snapshot.size()) {
-                output << ",";
-            }
-            output << "\n";
-        }
-        output << "  ],\n  \"displayTimeUnit\": \"ms\"\n}\n";
-    }
-
-  private:
-    bool enabled = false;
-    std::chrono::steady_clock::time_point start;
-    std::mutex mutex;
-    std::vector<TraceEvent> events;
-};
-
-PerfTraceState& perfTrace() {
-    static PerfTraceState trace;
-    return trace;
-}
-
-class TraceScope {
-  public:
-    TraceScope(const char* category, const char* name)
-        : category(category), name(name), active(perfTrace().isEnabled()) {
-        if (active) {
-            perfTrace().push('B', category, name);
-        }
-    }
-
-    ~TraceScope() {
-        if (active) {
-            perfTrace().push('E', category, name);
-        }
-    }
-
-  private:
-    const char* category;
-    const char* name;
-    bool active;
-};
-
 enum class RenderViewContext {
     PlayerExterior = 1,
     PlayerInterior = 2,
@@ -212,10 +98,6 @@ constexpr int viewpointMask(RenderViewContext context) {
 }
 
 constexpr double MAN_DL05_MODEL_OFFSET_Z = -1.035;
-constexpr int ROAD_BUMP_SEGMENTS = 12;
-constexpr int ROAD_RAMP_SEGMENTS = 6;
-constexpr int ROAD_INCLINE_SEGMENTS = 16;
-
 using GenBuffersProc = void (*)(GLsizei, GLuint*);
 using BindBufferProc = void (*)(GLenum, GLuint);
 using BufferDataProc = void (*)(GLenum, std::ptrdiff_t, const void*, GLenum);
@@ -252,408 +134,29 @@ bool loadBufferFunctions() {
     }
     return available;
 }
-
-void drawBox(double length, double width, double height, double red, double green, double blue) {
-    const double x = length * 0.5;
-    const double y = width * 0.5;
-    const double z = height * 0.5;
-    glColor3d(red, green, blue);
-    glBegin(GL_LINES);
-    glVertex3d(-x, -y, -z);
-    glVertex3d(x, -y, -z);
-    glVertex3d(x, -y, -z);
-    glVertex3d(x, y, -z);
-    glVertex3d(x, y, -z);
-    glVertex3d(-x, y, -z);
-    glVertex3d(-x, y, -z);
-    glVertex3d(-x, -y, -z);
-    glVertex3d(-x, -y, z);
-    glVertex3d(x, -y, z);
-    glVertex3d(x, -y, z);
-    glVertex3d(x, y, z);
-    glVertex3d(x, y, z);
-    glVertex3d(-x, y, z);
-    glVertex3d(-x, y, z);
-    glVertex3d(-x, -y, z);
-    glVertex3d(-x, -y, -z);
-    glVertex3d(-x, -y, z);
-    glVertex3d(x, -y, -z);
-    glVertex3d(x, -y, z);
-    glVertex3d(x, y, -z);
-    glVertex3d(x, y, z);
-    glVertex3d(-x, y, -z);
-    glVertex3d(-x, y, z);
-    glEnd();
-}
-
-void drawRoadBox(double centerX, double centerY, double length, double width, double height,
-                 double bottomZ, const std::array<double, 3>& topColor,
-                 const std::array<double, 3>& sideColor) {
-    const double halfLength = length * 0.5;
-    const double halfWidth = width * 0.5;
-    glPushMatrix();
-    glTranslated(centerX, centerY, bottomZ);
-    glColor3d(topColor[0], topColor[1], topColor[2]);
-    glBegin(GL_QUADS);
-    glVertex3d(-halfLength, -halfWidth, height);
-    glVertex3d(halfLength, -halfWidth, height);
-    glVertex3d(halfLength, halfWidth, height);
-    glVertex3d(-halfLength, halfWidth, height);
-    glColor3d(sideColor[0], sideColor[1], sideColor[2]);
-    glVertex3d(-halfLength, -halfWidth, 0.0);
-    glVertex3d(halfLength, -halfWidth, 0.0);
-    glVertex3d(halfLength, -halfWidth, height);
-    glVertex3d(-halfLength, -halfWidth, height);
-    glVertex3d(halfLength, halfWidth, 0.0);
-    glVertex3d(-halfLength, halfWidth, 0.0);
-    glVertex3d(-halfLength, halfWidth, height);
-    glVertex3d(halfLength, halfWidth, height);
-    glEnd();
-    glPopMatrix();
-
-    glPushMatrix();
-    glTranslated(centerX, centerY, bottomZ + height * 0.5);
-    drawBox(length, width, height, 0.0, 0.85, 0.95);
-    glPopMatrix();
-}
-
-void drawRoadIncline(const RoadBump& bump) {
-    const double halfWidth = bump.width * 0.5;
-    const double startX = bump.centerX - bump.length * 0.5;
-    const double segmentLength = bump.length / ROAD_INCLINE_SEGMENTS;
-    const auto heightAt = [&](double x) { return roadFeatureHeightAt(bump, x - bump.centerX); };
-
-    glBegin(GL_QUADS);
-    for (int segment = 0; segment < ROAD_INCLINE_SEGMENTS; ++segment) {
-        const double minX = startX + segment * segmentLength;
-        const double maxX = minX + segmentLength;
-        const double minHeight = heightAt(minX);
-        const double maxHeight = heightAt(maxX);
-        glColor3d(0.42, 0.50, 0.30);
-        glVertex3d(minX, bump.centerY - halfWidth, minHeight);
-        glVertex3d(maxX, bump.centerY - halfWidth, maxHeight);
-        glVertex3d(maxX, bump.centerY + halfWidth, maxHeight);
-        glVertex3d(minX, bump.centerY + halfWidth, minHeight);
-        glColor3d(0.18, 0.25, 0.12);
-        glVertex3d(minX, bump.centerY - halfWidth, 0.0);
-        glVertex3d(maxX, bump.centerY - halfWidth, 0.0);
-        glVertex3d(maxX, bump.centerY - halfWidth, maxHeight);
-        glVertex3d(minX, bump.centerY - halfWidth, minHeight);
-        glVertex3d(maxX, bump.centerY + halfWidth, 0.0);
-        glVertex3d(minX, bump.centerY + halfWidth, 0.0);
-        glVertex3d(minX, bump.centerY + halfWidth, minHeight);
-        glVertex3d(maxX, bump.centerY + halfWidth, maxHeight);
-    }
-    const double endX = startX + bump.length;
-    const double endHeight = heightAt(endX);
-    glColor3d(0.18, 0.25, 0.12);
-    glVertex3d(endX, bump.centerY - halfWidth, 0.0);
-    glVertex3d(endX, bump.centerY + halfWidth, 0.0);
-    glVertex3d(endX, bump.centerY + halfWidth, endHeight);
-    glVertex3d(endX, bump.centerY - halfWidth, endHeight);
-    glEnd();
-
-    glColor3d(0.0, 0.85, 0.95);
-    glBegin(GL_LINE_STRIP);
-    for (int segment = 0; segment <= ROAD_INCLINE_SEGMENTS; ++segment) {
-        const double x = startX + segment * segmentLength;
-        glVertex3d(x, bump.centerY - halfWidth, heightAt(x) + 0.005);
-    }
-    glEnd();
-    glBegin(GL_LINE_STRIP);
-    for (int segment = 0; segment <= ROAD_INCLINE_SEGMENTS; ++segment) {
-        const double x = startX + segment * segmentLength;
-        glVertex3d(x, bump.centerY + halfWidth, heightAt(x) + 0.005);
-    }
-    glEnd();
-    glBegin(GL_LINES);
-    for (int segment = 0; segment <= ROAD_INCLINE_SEGMENTS; segment += 8) {
-        const double x = startX + segment * segmentLength;
-        const double height = heightAt(x) + 0.005;
-        glVertex3d(x, bump.centerY - halfWidth, height);
-        glVertex3d(x, bump.centerY + halfWidth, height);
-        glVertex3d(x, bump.centerY - halfWidth, 0.0);
-        glVertex3d(x, bump.centerY - halfWidth, height);
-        glVertex3d(x, bump.centerY + halfWidth, 0.0);
-        glVertex3d(x, bump.centerY + halfWidth, height);
-    }
-    glEnd();
-}
-
-void drawGround(const std::vector<RoadBump>& bumps) {
-    glColor3d(0.18, 0.22, 0.18);
-    glBegin(GL_QUADS);
-    glVertex3d(-100.0, -100.0, 0.0);
-    glVertex3d(100.0, -100.0, 0.0);
-    glVertex3d(100.0, 100.0, 0.0);
-    glVertex3d(-100.0, 100.0, 0.0);
-    glEnd();
-
-    glLineWidth(1.0f);
-    glBegin(GL_LINES);
-    for (int line = -100; line <= 100; line += 2) {
-        const double coordinate = static_cast<double>(line);
-        const bool major = line % 10 == 0;
-        if (major) {
-            glColor3d(0.38, 0.43, 0.36);
-        } else {
-            glColor3d(0.25, 0.30, 0.25);
-        }
-        glVertex3d(coordinate, -100.0, 0.02);
-        glVertex3d(coordinate, 100.0, 0.02);
-        glVertex3d(-100.0, coordinate, 0.02);
-        glVertex3d(100.0, coordinate, 0.02);
-    }
-    glEnd();
-
-    for (const RoadBump& bump : bumps) {
-        if (bump.type == RoadFeatureType::Barrier) {
-            drawRoadBox(bump.centerX, bump.centerY, bump.length, bump.width, bump.height, 0.0,
-                        {0.85, 0.22, 0.08}, {0.42, 0.08, 0.03});
-            continue;
-        }
-        if (bump.type == RoadFeatureType::Bridge) {
-            const double deckLength = std::clamp(bump.flatLength, 0.0, bump.length);
-            const double rampLength = (bump.length - deckLength) * 0.5;
-            const double segmentLength = rampLength / ROAD_RAMP_SEGMENTS;
-            const double startX = bump.centerX - bump.length * 0.5;
-            const std::array<double, 3> deckColor = {0.36, 0.42, 0.48};
-            const std::array<double, 3> deckSideColor = {0.16, 0.20, 0.24};
-            for (int segment = 0; segment < ROAD_RAMP_SEGMENTS; ++segment) {
-                const double phase = (static_cast<double>(segment) + 0.5) / ROAD_RAMP_SEGMENTS;
-                drawRoadBox(startX + segmentLength * (segment + 0.5), bump.centerY, segmentLength,
-                            bump.width, bump.height * phase, 0.0, deckColor, deckSideColor);
-            }
-            drawRoadBox(bump.centerX, bump.centerY, deckLength, bump.width, bump.height, 0.0,
-                        deckColor, deckSideColor);
-            const double downStartX = bump.centerX + bump.length * 0.5 - rampLength;
-            for (int segment = 0; segment < ROAD_RAMP_SEGMENTS; ++segment) {
-                const double phase = (static_cast<double>(segment) + 0.5) / ROAD_RAMP_SEGMENTS;
-                drawRoadBox(downStartX + segmentLength * (segment + 0.5), bump.centerY,
-                            segmentLength, bump.width, bump.height * (1.0 - phase), 0.0, deckColor,
-                            deckSideColor);
-            }
-            if (bump.railHeight > 0.0 && bump.railWidth > 0.0) {
-                const double railY = bump.width * 0.5 - bump.railWidth * 0.5;
-                const std::array<double, 3> railColor = {0.72, 0.76, 0.80};
-                const std::array<double, 3> railSideColor = {0.30, 0.34, 0.38};
-                drawRoadBox(bump.centerX, bump.centerY + railY, bump.length, bump.railWidth,
-                            bump.railHeight, bump.height, railColor, railSideColor);
-                drawRoadBox(bump.centerX, bump.centerY - railY, bump.length, bump.railWidth,
-                            bump.railHeight, bump.height, railColor, railSideColor);
-            }
-            continue;
-        }
-        if (bump.type == RoadFeatureType::Incline) {
-            drawRoadIncline(bump);
-            continue;
-        }
-        const double halfWidth = bump.width * 0.5;
-        const double segmentLength = bump.length / ROAD_BUMP_SEGMENTS;
-        for (int segment = 0; segment < ROAD_BUMP_SEGMENTS; ++segment) {
-            const double phase = (static_cast<double>(segment) + 0.5) / ROAD_BUMP_SEGMENTS;
-            const double height = bump.height * (phase <= 0.5 ? phase * 2.0 : (1.0 - phase) * 2.0);
-            const double minX = bump.centerX - bump.length * 0.5 + segment * segmentLength;
-            const double maxX = minX + segmentLength;
-            const double minY = bump.centerY - halfWidth;
-            const double maxY = bump.centerY + halfWidth;
-            drawRoadBox((minX + maxX) * 0.5, bump.centerY, maxX - minX, maxY - minY, height, 0.0,
-                        {0.72, 0.46, 0.18}, {0.48, 0.28, 0.10});
-        }
-    }
-}
-
-void drawWheel(double radius, double halfWidth, double red = 0.04, double green = 0.04,
-               double blue = 0.04) {
-    constexpr int segments = 16;
-    // Match dCreateCylinder's local Z axis before applying the ODE pose.
-    glColor3d(red, green, blue);
-    glBegin(GL_LINES);
-    for (int segment = 0; segment < segments; ++segment) {
-        const double first = 2.0 * 3.141592653589793 * segment / segments;
-        const double second = 2.0 * 3.141592653589793 * (segment + 1) / segments;
-        for (const double z : {-halfWidth, halfWidth}) {
-            glVertex3d(radius * std::cos(first), radius * std::sin(first), z);
-            glVertex3d(radius * std::cos(second), radius * std::sin(second), z);
-        }
-        glVertex3d(radius * std::cos(first), radius * std::sin(first), -halfWidth);
-        glVertex3d(radius * std::cos(first), radius * std::sin(first), halfWidth);
-    }
-    glEnd();
-}
-
-void drawCenterOfGravityMarker(double size) {
-    glColor3d(0.95, 0.10, 0.10);
-    glLineWidth(3.0f);
-    glBegin(GL_LINES);
-    glVertex3d(-size, 0.0, 0.0);
-    glVertex3d(size, 0.0, 0.0);
-    glVertex3d(0.0, -size, 0.0);
-    glVertex3d(0.0, size, 0.0);
-    glVertex3d(0.0, 0.0, -size);
-    glVertex3d(0.0, 0.0, size);
-    glEnd();
-    glLineWidth(1.0f);
-}
-
-void setPerspective(double width, double height, double fieldOfView) {
-    const double aspect = width / height;
-    const double nearPlane = 0.1;
-    const double farPlane = 500.0;
-    const double fov = fieldOfView * 3.141592653589793 / 180.0;
-    const double top = nearPlane * std::tan(fov * 0.5);
-    const double right = top * aspect;
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glFrustum(-right, right, -top, top, nearPlane, farPlane);
-}
-
-void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ) {
-    double forwardX = targetX - eyeX;
-    double forwardY = targetY - eyeY;
-    double forwardZ = targetZ - eyeZ;
-    const double forwardLength =
-        std::sqrt(forwardX * forwardX + forwardY * forwardY + forwardZ * forwardZ);
-    forwardX /= forwardLength;
-    forwardY /= forwardLength;
-    forwardZ /= forwardLength;
-
-    double sideX = forwardY;
-    double sideY = -forwardX;
-    const double sideLength = std::sqrt(sideX * sideX + sideY * sideY);
-    sideX /= sideLength;
-    sideY /= sideLength;
-    const double upX = sideY * forwardZ;
-    const double upY = -sideX * forwardZ;
-    const double upZ = sideX * forwardY - sideY * forwardX;
-
-    const double matrix[16] = {sideX, upX, -forwardX, 0.0, sideY, upY, -forwardY, 0.0,
-                               0.0,   upZ, -forwardZ, 0.0, 0.0,   0.0, 0.0,       1.0};
-    glMatrixMode(GL_MODELVIEW);
-    glLoadMatrixd(matrix);
-    glTranslated(-eyeX, -eyeY, -eyeZ);
-}
-
-void applyPose(const BodyPose& pose) {
-    const std::array<double, 16> matrix = {pose.rotation[0],
-                                           pose.rotation[3],
-                                           pose.rotation[6],
-                                           0.0,
-                                           pose.rotation[1],
-                                           pose.rotation[4],
-                                           pose.rotation[7],
-                                           0.0,
-                                           pose.rotation[2],
-                                           pose.rotation[5],
-                                           pose.rotation[8],
-                                           0.0,
-                                           0.0,
-                                           0.0,
-                                           0.0,
-                                           1.0};
-    glTranslated(pose.position[0], pose.position[1], pose.position[2]);
-    glMultMatrixd(matrix.data());
-}
-
-std::array<double, 3> transformLocalPoint(const BodyPose& pose,
-                                          const std::array<double, 3>& local) {
-    return {pose.position[0] + pose.rotation[0] * local[0] + pose.rotation[1] * local[1] +
-                pose.rotation[2] * local[2],
-            pose.position[1] + pose.rotation[3] * local[0] + pose.rotation[4] * local[1] +
-                pose.rotation[5] * local[2],
-            pose.position[2] + pose.rotation[6] * local[0] + pose.rotation[7] * local[1] +
-                pose.rotation[8] * local[2]};
-}
-
-void drawCollisionWireframe(const BusSimulation& simulation) {
-    glDisable(GL_TEXTURE_2D);
-    glDisable(GL_BLEND);
-    glDisable(GL_ALPHA_TEST);
-    glDepthMask(GL_FALSE);
-    glLineWidth(2.0f);
-
-    const BodyPose chassis = simulation.chassisPose();
-    const ChassisCollisionBox collision = simulation.chassisCollisionBox();
-    glPushMatrix();
-    applyPose(chassis);
-    glTranslated(collision.offsetX, collision.offsetY, collision.offsetZ);
-    drawBox(collision.length, collision.width, collision.height, 0.0, 0.85, 0.95);
-    glPopMatrix();
-
-    for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
-        glPushMatrix();
-        applyPose(simulation.wheelPose(index));
-        drawWheel(simulation.wheelRadius(), simulation.wheelHalfWidth(), 0.0, 0.85, 0.95);
-        glPopMatrix();
-    }
-
-    glLineWidth(1.0f);
-    glDepthMask(GL_TRUE);
-    glColor4d(1.0, 1.0, 1.0, 1.0);
-}
-
-bool saveFramebufferBmp(const std::filesystem::path& path, int width, int height) {
-    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-
-    std::array<std::uint8_t, 54> header = {};
-    const std::uint32_t imageSize = static_cast<std::uint32_t>(width * height * 3);
-    const std::uint32_t fileSize = 54 + imageSize;
-    header[0] = 'B';
-    header[1] = 'M';
-    header[2] = static_cast<std::uint8_t>(fileSize);
-    header[3] = static_cast<std::uint8_t>(fileSize >> 8);
-    header[4] = static_cast<std::uint8_t>(fileSize >> 16);
-    header[5] = static_cast<std::uint8_t>(fileSize >> 24);
-    header[10] = 54;
-    header[14] = 40;
-    header[18] = static_cast<std::uint8_t>(width);
-    header[19] = static_cast<std::uint8_t>(width >> 8);
-    header[20] = static_cast<std::uint8_t>(width >> 16);
-    header[21] = static_cast<std::uint8_t>(width >> 24);
-    header[22] = static_cast<std::uint8_t>(height);
-    header[23] = static_cast<std::uint8_t>(height >> 8);
-    header[24] = static_cast<std::uint8_t>(height >> 16);
-    header[25] = static_cast<std::uint8_t>(height >> 24);
-    header[26] = 1;
-    header[28] = 24;
-    header[34] = static_cast<std::uint8_t>(imageSize);
-    header[35] = static_cast<std::uint8_t>(imageSize >> 8);
-    header[36] = static_cast<std::uint8_t>(imageSize >> 16);
-    header[37] = static_cast<std::uint8_t>(imageSize >> 24);
-
-    std::ofstream output(path, std::ios::binary);
-    if (!output) {
-        return false;
-    }
-    output.write(reinterpret_cast<const char*>(header.data()), header.size());
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            const std::size_t index = (static_cast<std::size_t>(y) * width + x) * 4;
-            const std::array<std::uint8_t, 3> pixel = {pixels[index + 2], pixels[index + 1],
-                                                        pixels[index]};
-            output.write(reinterpret_cast<const char*>(pixel.data()), pixel.size());
-        }
-    }
-    return output.good();
-}
 } // namespace
 
+using openbus::rendering::TraceScope;
+using openbus::rendering::parseEnabledFlag;
+using openbus::rendering::applyPose;
+using openbus::rendering::drawBox;
+using openbus::rendering::drawCenterOfGravityMarker;
+using openbus::rendering::drawGround;
+using openbus::rendering::drawWheel;
+using openbus::rendering::lookAt;
+using openbus::rendering::setPerspective;
+using openbus::rendering::transformLocalPoint;
+using ObjIndex = openbus::rendering::ObjIndex;
+using ObjPosition = openbus::rendering::ObjPosition;
+using ObjTexCoord = openbus::rendering::ObjTexCoord;
+using ObjTriangle = openbus::rendering::ObjTriangle;
+using ParsedObj = openbus::rendering::ParsedObj;
+using Image = openbus::rendering::Image;
+using CompressedDds = openbus::rendering::CompressedDds;
+
 struct BusModel {
+    // TODO: Split model parsing, texture loading, and rendering into focused components.
     ModelLoadingPolicy loadingPolicy;
-    struct Image {
-        int width = 0;
-        int height = 0;
-        std::vector<std::uint8_t> rgba;
-    };
-
-    struct CompressedDds {
-        int width = 0;
-        int height = 0;
-        std::vector<std::vector<std::uint8_t>> levels;
-    };
-
     struct TextureRequest {
         // Decode work runs asynchronously; the mutex protects completion and
         // decoded payload ownership while the render thread uploads to GL.
@@ -684,86 +187,14 @@ struct BusModel {
         bool uploadAttempted = false;
     };
 
-    struct ObjPosition {
-        double x;
-        double y;
-        double z;
-    };
-
-    struct ObjTexCoord {
-        double u;
-        double v;
-    };
-
-    struct ObjIndex {
-        int position = 0;
-        int texCoord = 0;
-    };
-
-    struct ObjTriangle {
-        std::array<ObjIndex, 3> indices;
-        std::string material;
-    };
-
-    struct ObjMaterial {
-        std::filesystem::path texturePath;
-        std::string textureName;
-        std::array<double, 3> color = {0.65, 0.65, 0.65};
-    };
-
-    struct ParsedObj {
-        std::vector<ObjPosition> positions;
-        std::vector<ObjTexCoord> texCoords;
-        std::vector<ObjTriangle> triangles;
-        std::unordered_map<std::string, ObjMaterial> materials;
-        std::array<double, 3> boundsCenter = {};
-        std::array<double, 3> boundsSize = {};
-        double boundsRadius = 0.0;
-    };
-
     struct ObjRequest {
-        std::shared_future<std::shared_ptr<ParsedObj>> future;
+        std::shared_future<std::shared_ptr<openbus::rendering::ParsedObj>> future;
     };
 
-    struct MaterialState {
-        std::filesystem::path texturePath;
-        std::string textureName;
-        std::string environmentTextureName;
-        double environmentStrength = 0.0;
-        int alphaMode = 0;
-        bool noZwrite = false;
-        std::string alphaScaleVariable;
-        struct TextureChange {
-            std::filesystem::path texturePath;
-            std::string textureName;
-            int layer = 0;
-            std::string activationVariable;
-        };
-        std::vector<TextureChange> textureChanges;
-    };
+    using MaterialState = openbus::rendering::BusModelMaterialState;
+    using WheelAnimation = openbus::rendering::WheelAnimation;
 
-    struct WheelAnimation {
-        std::string rotationVariable;
-        std::string suspensionVariable;
-        std::string steeringVariable;
-        std::array<double, 3> origin = {};
-        bool hasOrigin = false;
-    };
-
-    struct Part {
-        std::filesystem::path objPath;
-        std::filesystem::path texturePath;
-        std::string textureName;
-        std::array<double, 3> color = {0.65, 0.65, 0.65};
-        int viewpoint = 0;
-        int renderType = 2;
-        std::string visibleVariable;
-        int visibleValue = 0;
-        std::string meshIdentifier;
-        std::string animationParent;
-        std::unordered_map<std::string, MaterialState> materialStates;
-        int lodIndex = -1;
-        WheelAnimation wheelAnimation;
+    struct Part : openbus::rendering::BusModelPart {
         std::shared_ptr<ObjRequest> objRequest;
     };
 
@@ -1118,6 +549,7 @@ struct BusModel {
                          [](const TransparentBatch& first, const TransparentBatch& second) {
                              return first.renderType < second.renderType;
                          });
+        // TODO: Sort transparent batches back-to-front within each render type.
         std::stable_sort(noDepthOpaqueBatches.begin(), noDepthOpaqueBatches.end(),
                          [](const TransparentBatch& first, const TransparentBatch& second) {
                              return first.renderType < second.renderType;
@@ -1420,7 +852,6 @@ struct BusModel {
         if (!areObjectsLoaded()) {
             return false;
         }
-        bool hasAnyTexture = false;
         std::unordered_set<const TextureCacheEntry*> trackedTextures;
         const auto texturesLoadedInParts = [&](const std::vector<DisplayPart>& parts) {
             for (const DisplayPart& displayPart : parts) {
@@ -1428,7 +859,6 @@ struct BusModel {
                     if (batch.texturePath.empty() && batch.textureName.empty()) {
                         continue;
                     }
-                    hasAnyTexture = true;
                     if (!batch.textureCacheEntry) {
                         return false;
                     }
@@ -1452,7 +882,7 @@ struct BusModel {
                 return false;
             }
         }
-        return hasAnyTexture;
+        return true;
     }
 
     bool isCaptureReady() const {
@@ -1499,604 +929,6 @@ struct BusModel {
     static bool isWheelRubberTexture(const std::string& textureName) {
         const std::string stem = lower(std::filesystem::path(textureName).stem().string());
         return stem == "e4_wheel_tyre" || stem == "e4_wheel_tread";
-    }
-
-    static bool readImage(const std::filesystem::path& path, Image& image) {
-        TraceScope trace("texture", "readImage");
-        static const bool verboseTextureReadLogs =
-            parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_TEXTURE_READ"));
-        if (verboseTextureReadLogs) {
-            gameLog.Log("Reading image from path: " + path.string());
-        }
-        const std::string extension = lower(path.extension().string());
-#ifdef _WIN32
-        if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
-            extension == ".bmp") {
-            if (readStbImage(path, image)) {
-                return true;
-            }
-        }
-#endif
-        if (extension == ".dds") {
-            return readDdsImage(path, image);
-        }
-        if (extension == ".tga") {
-            std::ifstream input(path, std::ios::binary);
-            if (!input) {
-                return false;
-            }
-            std::array<std::uint8_t, 18> header = {};
-            input.read(reinterpret_cast<char*>(header.data()),
-                       static_cast<std::streamsize>(header.size()));
-            const bool colorMapped = header[2] == 1 || header[2] == 9;
-            const bool trueColor = header[2] == 2 || header[2] == 10;
-            if (!input || (!colorMapped && !trueColor)) {
-                return false;
-            }
-            input.seekg(header[0], std::ios::cur);
-            image.width = header[12] | (header[13] << 8);
-            image.height = header[14] | (header[15] << 8);
-            if (image.width <= 0 || image.height <= 0) {
-                return false;
-            }
-            const int pixelBytes = (header[16] + 7) / 8;
-            if ((trueColor && (header[16] != 24 && header[16] != 32)) ||
-                (colorMapped && (header[16] != 8 && header[16] != 16))) {
-                return false;
-            }
-            const int colorMapEntryBytes = (header[7] + 7) / 8;
-            const std::size_t colorMapLength = header[5] | (header[6] << 8);
-            const std::size_t colorMapFirst = header[3] | (header[4] << 8);
-            std::vector<std::uint8_t> colorMap;
-            if (colorMapped) {
-                if ((header[7] != 24 && header[7] != 32) || colorMapLength == 0) {
-                    return false;
-                }
-                colorMap.resize(colorMapLength * colorMapEntryBytes);
-                input.read(reinterpret_cast<char*>(colorMap.data()),
-                           static_cast<std::streamsize>(colorMap.size()));
-                if (!input) {
-                    return false;
-                }
-
-            }
-            const std::size_t pixelCount = static_cast<std::size_t>(image.width) * image.height;
-            std::vector<std::uint8_t> source(pixelCount * pixelBytes);
-            if (header[2] == 1 || header[2] == 2) {
-                input.read(reinterpret_cast<char*>(source.data()),
-                           static_cast<std::streamsize>(source.size()));
-                if (!input) {
-                    return false;
-                }
-            } else {
-                std::size_t pixelIndex = 0;
-                while (pixelIndex < pixelCount && input) {
-                    std::uint8_t packetHeader = 0;
-                    input.read(reinterpret_cast<char*>(&packetHeader), 1);
-                    const std::size_t packetCount =
-                        static_cast<std::size_t>(packetHeader & 0x7F) + 1;
-                    if (pixelIndex + packetCount > pixelCount) {
-                        return false;
-                    }
-                    if ((packetHeader & 0x80) != 0) {
-                        std::array<std::uint8_t, 4> pixel = {};
-                        input.read(reinterpret_cast<char*>(pixel.data()), pixelBytes);
-                        if (!input) {
-                            return false;
-                        }
-                        for (std::size_t count = 0; count < packetCount; ++count) {
-                            std::copy_n(pixel.data(), pixelBytes,
-                                        source.data() + (pixelIndex + count) * pixelBytes);
-                        }
-                    } else {
-                        input.read(reinterpret_cast<char*>(source.data() + pixelIndex * pixelBytes),
-                                   static_cast<std::streamsize>(packetCount * pixelBytes));
-                        if (!input) {
-                            return false;
-                        }
-                    }
-                    pixelIndex += packetCount;
-                }
-                if (pixelIndex != pixelCount) {
-                    return false;
-                }
-            }
-            image.rgba.resize(pixelCount * 4);
-            const bool topOrigin = (header[17] & 0x20) != 0;
-            for (int y = 0; y < image.height; ++y) {
-                const int sourceY = topOrigin ? y : image.height - y - 1;
-                for (int x = 0; x < image.width; ++x) {
-                    const int sourceX = (header[17] & 0x10) != 0 ? image.width - x - 1 : x;
-                    const std::size_t sourceIndex =
-                        (static_cast<std::size_t>(sourceY) * image.width + sourceX) * pixelBytes;
-                    const std::size_t targetIndex =
-                        (static_cast<std::size_t>(y) * image.width + x) * 4;
-                    if (colorMapped) {
-                        const std::size_t paletteIndex =
-                            (static_cast<std::size_t>(source[sourceIndex]) |
-                             (pixelBytes == 2 ? static_cast<std::size_t>(source[sourceIndex + 1]) << 8
-                                              : 0)) -
-                            colorMapFirst;
-                        if (paletteIndex >= colorMapLength) {
-                            return false;
-                        }
-                        const std::size_t paletteOffset = paletteIndex * colorMapEntryBytes;
-                        image.rgba[targetIndex + 0] = colorMap[paletteOffset + 2];
-                        image.rgba[targetIndex + 1] = colorMap[paletteOffset + 1];
-                        image.rgba[targetIndex + 2] = colorMap[paletteOffset + 0];
-                        image.rgba[targetIndex + 3] = colorMapEntryBytes == 4
-                                                         ? colorMap[paletteOffset + 3]
-                                                         : 255;
-                    } else {
-                        image.rgba[targetIndex + 0] = source[sourceIndex + 2];
-                        image.rgba[targetIndex + 1] = source[sourceIndex + 1];
-                        image.rgba[targetIndex + 2] = source[sourceIndex + 0];
-                        image.rgba[targetIndex + 3] = pixelBytes == 4
-                                                         ? source[sourceIndex + 3]
-                                                         : 255;
-                    }
-                }
-            }
-            return true;
-        }
-
-        if (extension != ".bmp") {
-            return false;
-        }
-
-        std::ifstream input(path, std::ios::binary);
-
-        if (!input) {
-            return false;
-        }
-        std::array<std::uint8_t, 54> header = {};
-        input.read(reinterpret_cast<char*>(header.data()),
-                   static_cast<std::streamsize>(header.size()));
-        if (!input || header[0] != 'B' || header[1] != 'M') {
-            return false;
-        }
-        const std::uint32_t pixelOffset =
-            header[10] | (header[11] << 8) | (header[12] << 16) | (header[13] << 24);
-        const std::int32_t width = static_cast<std::int32_t>(
-            header[18] | (header[19] << 8) | (header[20] << 16) | (header[21] << 24));
-        const std::int32_t height = static_cast<std::int32_t>(
-            header[22] | (header[23] << 8) | (header[24] << 16) | (header[25] << 24));
-        const std::uint16_t bitsPerPixel =
-            static_cast<std::uint16_t>(header[28] | (header[29] << 8));
-        if (width <= 0 || height == 0 || (bitsPerPixel != 24 && bitsPerPixel != 32)) {
-            return false;
-        }
-        const int absoluteHeight = std::abs(height);
-        const int channels = bitsPerPixel / 8;
-        const std::size_t rowStride = ((static_cast<std::size_t>(width) * channels + 3) / 4) * 4;
-        std::vector<std::uint8_t> source(rowStride * absoluteHeight);
-        input.seekg(pixelOffset);
-        input.read(reinterpret_cast<char*>(source.data()),
-                   static_cast<std::streamsize>(source.size()));
-        if (!input) {
-            return false;
-        }
-        image.width = width;
-        image.height = absoluteHeight;
-        image.rgba.resize(static_cast<std::size_t>(width) * absoluteHeight * 4);
-        for (int y = 0; y < absoluteHeight; ++y) {
-            const int sourceY = height > 0 ? absoluteHeight - y - 1 : y;
-            for (int x = 0; x < width; ++x) {
-                const std::size_t sourceIndex = static_cast<std::size_t>(sourceY) * rowStride +
-                                                static_cast<std::size_t>(x) * channels;
-                const std::size_t targetIndex = (static_cast<std::size_t>(y) * width + x) * 4;
-                image.rgba[targetIndex + 0] = source[sourceIndex + 2];
-                image.rgba[targetIndex + 1] = source[sourceIndex + 1];
-                image.rgba[targetIndex + 2] = source[sourceIndex + 0];
-                image.rgba[targetIndex + 3] = channels == 4 ? source[sourceIndex + 3] : 255;
-            }
-        }
-        gameLog.Log("Successfully read image with width: " + std::to_string(image.width) +
-                    " and height: " + std::to_string(image.height));
-        return true;
-    }
-
-    static bool readStbImage(const std::filesystem::path& path, Image& image) {
-        int width = 0;
-        int height = 0;
-        stbi_uc* pixels = stbi_load(path.string().c_str(), &width, &height, nullptr, 4);
-        if (pixels == nullptr || width <= 0 || height <= 0) {
-            if (pixels != nullptr) {
-                stbi_image_free(pixels);
-            }
-            return false;
-        }
-        image.width = width;
-        image.height = height;
-        image.rgba.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4);
-        stbi_image_free(pixels);
-        return true;
-    }
-
-#ifdef _WIN32
-    static bool readWicImage(const std::filesystem::path& path, Image& image) {
-        using Microsoft::WRL::ComPtr;
-        ComPtr<IWICImagingFactory> factory;
-        if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                                    IID_PPV_ARGS(&factory)))) {
-            return false;
-        }
-        ComPtr<IWICBitmapDecoder> decoder;
-        if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-                                                      WICDecodeMetadataCacheOnLoad, &decoder))) {
-            return false;
-        }
-        ComPtr<IWICBitmapFrameDecode> frame;
-        if (FAILED(decoder->GetFrame(0, &frame))) {
-            return false;
-        }
-        ComPtr<IWICFormatConverter> converter;
-        if (FAILED(factory->CreateFormatConverter(&converter)) ||
-            FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA,
-                                         WICBitmapDitherTypeNone, nullptr, 0.0,
-                                         WICBitmapPaletteTypeCustom))) {
-            return false;
-        }
-        UINT width = 0;
-        UINT height = 0;
-        if (FAILED(converter->GetSize(&width, &height)) || width == 0 || height == 0) {
-            return false;
-        }
-        image.width = static_cast<int>(width);
-        image.height = static_cast<int>(height);
-        image.rgba.resize(static_cast<std::size_t>(width) * height * 4);
-        return SUCCEEDED(converter->CopyPixels(
-            nullptr, width * 4, static_cast<UINT>(image.rgba.size()), image.rgba.data()));
-    }
-#endif
-
-    static std::uint16_t readU16(const std::vector<std::uint8_t>& data, std::size_t offset) {
-        return static_cast<std::uint16_t>(data[offset]) |
-               (static_cast<std::uint16_t>(data[offset + 1]) << 8);
-    }
-
-    static std::uint32_t readU32(const std::vector<std::uint8_t>& data, std::size_t offset) {
-        return static_cast<std::uint32_t>(data[offset]) |
-               (static_cast<std::uint32_t>(data[offset + 1]) << 8) |
-               (static_cast<std::uint32_t>(data[offset + 2]) << 16) |
-               (static_cast<std::uint32_t>(data[offset + 3]) << 24);
-    }
-
-    static bool isSafeCompressedDds(const std::filesystem::path& path) {
-        TraceScope trace("texture", "isSafeCompressedDds");
-        std::ifstream input(path, std::ios::binary);
-        if (!input) {
-            return false;
-        }
-        std::array<std::uint8_t, 128> header = {};
-        input.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
-        if (!input || std::string(header.begin(), header.begin() + 4) != "DDS ") {
-            return false;
-        }
-        const auto readHeaderU32 = [&header](std::size_t offset) {
-            return static_cast<std::uint32_t>(header[offset]) |
-                   (static_cast<std::uint32_t>(header[offset + 1]) << 8) |
-                   (static_cast<std::uint32_t>(header[offset + 2]) << 16) |
-                   (static_cast<std::uint32_t>(header[offset + 3]) << 24);
-        };
-        const std::uint32_t width = readHeaderU32(16);
-        const std::uint32_t height = readHeaderU32(12);
-        const std::string fourCC(header.begin() + 84, header.begin() + 88);
-        if (fourCC == "DX10") {
-            input.seekg(0, std::ios::end);
-            const std::streamoff fileSize = input.tellg();
-            return width > 0 && height > 0 && fileSize >= 148;
-        }
-        const std::size_t blockSize = fourCC == "DXT1" ? 8 : (fourCC == "DXT3" || fourCC == "DXT5" ? 16 : 0);
-        if (width == 0 || height == 0 || blockSize == 0) {
-            return false;
-        }
-        const std::uint32_t flags = readHeaderU32(8);
-        const std::uint32_t declaredLevels = readHeaderU32(28);
-        const std::size_t levelCount = (flags & 0x20000U) != 0 ? declaredLevels : 1;
-        if (levelCount == 0 || levelCount > 32) {
-            return false;
-        }
-
-        std::size_t requiredSize = 128;
-        std::uint32_t levelWidth = width;
-        std::uint32_t levelHeight = height;
-        for (std::size_t level = 0; level < levelCount; ++level) {
-            const std::size_t blocksX = (static_cast<std::size_t>(levelWidth) + 3) / 4;
-            const std::size_t blocksY = (static_cast<std::size_t>(levelHeight) + 3) / 4;
-            if (blocksX > (std::numeric_limits<std::size_t>::max() / blocksY) ||
-                blocksX * blocksY > std::numeric_limits<std::size_t>::max() / blockSize ||
-                requiredSize > std::numeric_limits<std::size_t>::max() - blocksX * blocksY * blockSize) {
-                return false;
-            }
-            requiredSize += blocksX * blocksY * blockSize;
-            levelWidth = std::max(1U, levelWidth / 2);
-            levelHeight = std::max(1U, levelHeight / 2);
-        }
-        input.seekg(0, std::ios::end);
-        const std::streamoff fileSize = input.tellg();
-        return fileSize >= 0 && static_cast<std::uintmax_t>(fileSize) >= requiredSize;
-    }
-
-    static void decode565(std::uint16_t value, std::uint8_t* color) {
-        color[0] = static_cast<std::uint8_t>(((value >> 11) & 0x1F) * 255 / 31);
-        color[1] = static_cast<std::uint8_t>(((value >> 5) & 0x3F) * 255 / 63);
-        color[2] = static_cast<std::uint8_t>((value & 0x1F) * 255 / 31);
-        color[3] = 255;
-    }
-
-    static bool readDdsImage(const std::filesystem::path& path, Image& image) {
-        TraceScope trace("texture", "readDdsImage");
-        std::ifstream input(path, std::ios::binary);
-        if (!input) {
-            return false;
-        }
-        input.seekg(0, std::ios::end);
-        const std::streamoff length = input.tellg();
-        input.seekg(0, std::ios::beg);
-        if (length < 128) {
-            return false;
-        }
-        std::vector<std::uint8_t> data(static_cast<std::size_t>(length));
-        input.read(reinterpret_cast<char*>(data.data()), length);
-        if (!input || std::string(data.begin(), data.begin() + 4) != "DDS ") {
-            return false;
-        }
-        image.width = static_cast<int>(readU32(data, 16));
-        image.height = static_cast<int>(readU32(data, 12));
-        const std::uint32_t pixelFormatFlags = readU32(data, 80);
-        const std::string fourCC(data.begin() + 84, data.begin() + 88);
-        const bool dxt1 = fourCC == "DXT1";
-        const bool dxt2 = fourCC == "DXT2";
-        const bool dxt3 = fourCC == "DXT3";
-        const bool dxt5 = fourCC == "DXT5";
-        const std::uint32_t rgbBitCount = readU32(data, 88);
-        const std::uint32_t redMask = readU32(data, 92);
-        const std::uint32_t greenMask = readU32(data, 96);
-        const std::uint32_t blueMask = readU32(data, 100);
-        const std::uint32_t alphaMask = readU32(data, 104);
-        const bool dxt1HasAlpha = dxt1 && (pixelFormatFlags & 0x1U) != 0;
-        if (image.width <= 0 || image.height <= 0) {
-            return false;
-        }
-        if (!dxt1 && !dxt2 && !dxt3 && !dxt5) {
-            if ((pixelFormatFlags & 0x40U) == 0 || (rgbBitCount != 24 && rgbBitCount != 32)) {
-                return false;
-            }
-            const std::size_t bytesPerPixel = rgbBitCount / 8;
-            const std::size_t minimumRowPitch =
-                static_cast<std::size_t>(image.width) * bytesPerPixel;
-            const std::size_t rowPitch = std::max<std::size_t>(readU32(data, 20), minimumRowPitch);
-            if (rowPitch > (std::numeric_limits<std::size_t>::max() - 128) /
-                               static_cast<std::size_t>(image.height)) {
-                return false;
-            }
-            const std::size_t requiredSize =
-                128 + rowPitch * static_cast<std::size_t>(image.height);
-            if (data.size() < requiredSize) {
-                return false;
-            }
-            const auto decodeChannel = [](std::uint32_t pixel, std::uint32_t mask,
-                                          std::uint8_t fallback) {
-                if (mask == 0) {
-                    return fallback;
-                }
-                unsigned shift = 0;
-                while ((mask & 1U) == 0) {
-                    mask >>= 1;
-                    ++shift;
-                }
-                const std::uint32_t component = (pixel >> shift) & mask;
-                return static_cast<std::uint8_t>(
-                    (static_cast<std::uint64_t>(component) * 255 + mask / 2) / mask);
-            };
-            image.rgba.resize(static_cast<std::size_t>(image.width) * image.height * 4);
-            for (int y = 0; y < image.height; ++y) {
-                const std::size_t rowOffset = 128 + static_cast<std::size_t>(y) * rowPitch;
-                for (int x = 0; x < image.width; ++x) {
-                    const std::size_t sourceOffset =
-                        rowOffset + static_cast<std::size_t>(x) * bytesPerPixel;
-                    std::uint32_t pixel =
-                        data[sourceOffset] |
-                        (static_cast<std::uint32_t>(data[sourceOffset + 1]) << 8) |
-                        (static_cast<std::uint32_t>(data[sourceOffset + 2]) << 16);
-                    if (bytesPerPixel == 4) {
-                        pixel |= static_cast<std::uint32_t>(data[sourceOffset + 3]) << 24;
-                    }
-                    const std::size_t targetOffset =
-                        (static_cast<std::size_t>(y) * image.width + x) * 4;
-                    image.rgba[targetOffset + 0] = decodeChannel(pixel, redMask, 0);
-                    image.rgba[targetOffset + 1] = decodeChannel(pixel, greenMask, 0);
-                    image.rgba[targetOffset + 2] = decodeChannel(pixel, blueMask, 0);
-                    image.rgba[targetOffset + 3] = decodeChannel(pixel, alphaMask, 255);
-                }
-            }
-            return true;
-        }
-        const int blocksX = (image.width + 3) / 4;
-        const int blocksY = (image.height + 3) / 4;
-        const bool explicitAlpha = dxt2 || dxt3;
-        const std::size_t blockSize = dxt5 || explicitAlpha ? 16 : 8;
-        const std::size_t requiredSize =
-            128 + static_cast<std::size_t>(blocksX) * blocksY * blockSize;
-        if (data.size() < requiredSize) {
-            return false;
-        }
-        image.rgba.resize(static_cast<std::size_t>(image.width) * image.height * 4);
-        std::size_t sourceOffset = 128;
-        for (int blockY = 0; blockY < blocksY; ++blockY) {
-            for (int blockX = 0; blockX < blocksX; ++blockX) {
-                std::array<std::uint8_t, 8> alphaValues = {};
-                std::uint64_t alphaIndices = 0;
-                if (explicitAlpha) {
-                    for (int byte = 0; byte < 8; ++byte) {
-                        alphaIndices |= static_cast<std::uint64_t>(data[sourceOffset + byte])
-                                        << (8 * byte);
-                    }
-                } else if (dxt5) {
-                    const std::uint8_t alpha0 = data[sourceOffset];
-                    const std::uint8_t alpha1 = data[sourceOffset + 1];
-                    alphaValues[0] = alpha0;
-                    alphaValues[1] = alpha1;
-                    if (alpha0 > alpha1) {
-                        for (int index = 1; index <= 6; ++index) {
-                            alphaValues[index + 1] = static_cast<std::uint8_t>(
-                                ((7 - index) * alpha0 + index * alpha1) / 7);
-                        }
-                    } else {
-                        for (int index = 1; index <= 4; ++index) {
-                            alphaValues[index + 1] = static_cast<std::uint8_t>(
-                                ((5 - index) * alpha0 + index * alpha1) / 5);
-                        }
-                        alphaValues[6] = 0;
-                        alphaValues[7] = 255;
-                    }
-                    for (int byte = 0; byte < 6; ++byte) {
-                        alphaIndices |= static_cast<std::uint64_t>(data[sourceOffset + 2 + byte])
-                                        << (8 * byte);
-                    }
-                }
-                const std::size_t colorOffset = sourceOffset + (dxt5 || explicitAlpha ? 8 : 0);
-                const std::uint16_t color0 = readU16(data, colorOffset);
-                const std::uint16_t color1 = readU16(data, colorOffset + 2);
-                const std::uint32_t indices = readU32(data, colorOffset + 4);
-                sourceOffset += blockSize;
-                std::array<std::array<std::uint8_t, 4>, 4> colors = {};
-                decode565(color0, colors[0].data());
-                decode565(color1, colors[1].data());
-                if (color0 > color1 || dxt5 || explicitAlpha) {
-                    for (int channel = 0; channel < 3; ++channel) {
-                        colors[2][channel] = static_cast<std::uint8_t>(
-                            (2 * colors[0][channel] + colors[1][channel]) / 3);
-                        colors[3][channel] = static_cast<std::uint8_t>(
-                            (colors[0][channel] + 2 * colors[1][channel]) / 3);
-                    }
-                    colors[2][3] = colors[3][3] = 255;
-                } else {
-                    for (int channel = 0; channel < 3; ++channel) {
-                        colors[2][channel] = static_cast<std::uint8_t>(
-                            (colors[0][channel] + colors[1][channel]) / 2);
-                    }
-                    colors[2][3] = 255;
-                    colors[3] = {0, 0, 0, static_cast<std::uint8_t>(dxt1HasAlpha ? 0 : 255)};
-                }
-                for (int row = 0; row < 4; ++row) {
-                    for (int column = 0; column < 4; ++column) {
-                        const int x = blockX * 4 + column;
-                        const int y = blockY * 4 + row;
-                        if (x >= image.width || y >= image.height) {
-                            continue;
-                        }
-                        const std::size_t colorIndex = (indices >> (2 * (row * 4 + column))) & 0x3;
-                        const std::size_t pixelIndex = static_cast<std::size_t>(row * 4 + column);
-                        const std::size_t target =
-                            (static_cast<std::size_t>(y) * image.width + x) * 4;
-                        std::copy(colors[colorIndex].begin(), colors[colorIndex].end(),
-                                  image.rgba.begin() + target);
-                        if (explicitAlpha) {
-                            image.rgba[target + 3] = static_cast<std::uint8_t>(
-                                ((alphaIndices >> (4 * pixelIndex)) & 0xF) * 17);
-                        } else if (dxt5) {
-                            image.rgba[target + 3] =
-                                alphaValues[(alphaIndices >> (3 * pixelIndex)) & 0x7];
-                        }
-                    }
-                }
-            }
-        }
-        return true;
-    }
-
-    static bool isDxt5Dds(const std::filesystem::path& path) {
-        TraceScope trace("texture", "isDxt5Dds");
-        std::ifstream input(path, std::ios::binary);
-        if (!input) {
-            return false;
-        }
-        std::array<char, 4> fourCC = {};
-        input.seekg(84);
-        input.read(fourCC.data(), static_cast<std::streamsize>(fourCC.size()));
-        return input && std::string(fourCC.data(), fourCC.size()) == "DXT5";
-    }
-
-    static bool isDdsTextureArray(const std::filesystem::path& path) {
-        std::ifstream input(path, std::ios::binary);
-        if (!input) {
-            return false;
-        }
-        std::array<std::uint8_t, 128> header = {};
-        input.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
-        if (!input || std::string(header.data() + 84, header.data() + 88) != "DX10") {
-            return false;
-        }
-        std::array<std::uint8_t, 20> dx10 = {};
-        input.read(reinterpret_cast<char*>(dx10.data()), static_cast<std::streamsize>(dx10.size()));
-        if (!input) {
-            return false;
-        }
-        const std::uint32_t arraySize = static_cast<std::uint32_t>(dx10[12]) |
-                                        (static_cast<std::uint32_t>(dx10[13]) << 8) |
-                                        (static_cast<std::uint32_t>(dx10[14]) << 16) |
-                                        (static_cast<std::uint32_t>(dx10[15]) << 24);
-        return arraySize > 1;
-    }
-
-    static bool readDxt5CompressedDds(const std::filesystem::path& path,
-                                      BusModel::CompressedDds& image) {
-        TraceScope trace("texture", "readDxt5CompressedDds");
-        std::ifstream input(path, std::ios::binary);
-        if (!input) {
-            return false;
-        }
-        input.seekg(0, std::ios::end);
-        const std::streamoff length = input.tellg();
-        input.seekg(0, std::ios::beg);
-        if (length < 128) {
-            return false;
-        }
-        std::vector<std::uint8_t> data(static_cast<std::size_t>(length));
-        input.read(reinterpret_cast<char*>(data.data()), length);
-        if (!input || std::string(data.begin(), data.begin() + 4) != "DDS " ||
-            std::string(data.begin() + 84, data.begin() + 88) != "DXT5") {
-            return false;
-        }
-
-        const std::uint32_t width = readU32(data, 16);
-        const std::uint32_t height = readU32(data, 12);
-        const std::uint32_t flags = readU32(data, 8);
-        const std::uint32_t declaredLevels = readU32(data, 28);
-        const std::size_t levelCount = (flags & 0x20000U) != 0 ? declaredLevels : 1;
-        if (width == 0 || height == 0 || levelCount == 0 || levelCount > 32 ||
-            width > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
-            height > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
-            return false;
-        }
-
-        image.width = static_cast<int>(width);
-        image.height = static_cast<int>(height);
-        image.levels.clear();
-        image.levels.reserve(levelCount);
-        std::size_t sourceOffset = 128;
-        std::uint32_t levelWidth = width;
-        std::uint32_t levelHeight = height;
-        for (std::size_t level = 0; level < levelCount; ++level) {
-            const std::size_t blocksX = (static_cast<std::size_t>(levelWidth) + 3) / 4;
-            const std::size_t blocksY = (static_cast<std::size_t>(levelHeight) + 3) / 4;
-            if (blocksX > std::numeric_limits<std::size_t>::max() / blocksY ||
-                blocksX * blocksY > std::numeric_limits<std::size_t>::max() / 16) {
-                return false;
-            }
-            const std::size_t levelSize = blocksX * blocksY * 16;
-            if (sourceOffset > data.size() || levelSize > data.size() - sourceOffset) {
-                return false;
-            }
-            image.levels.emplace_back(data.begin() + sourceOffset,
-                                      data.begin() + sourceOffset + levelSize);
-            sourceOffset += levelSize;
-            levelWidth = std::max(1U, levelWidth / 2);
-            levelHeight = std::max(1U, levelHeight / 2);
-        }
-        return true;
     }
 
     GLuint uploadTexture(const std::filesystem::path& path, Image image) {
@@ -2233,37 +1065,6 @@ struct BusModel {
             gameLog.Log("Uploaded DXT5 texture from path: " + path.generic_string());
         }
         return texture;
-    }
-
-    static std::vector<ObjIndex> parseFace(const std::string& value, int positionCount,
-                                           int texCoordCount) {
-        std::vector<ObjIndex> result;
-        std::istringstream stream(value);
-        std::string token;
-        while (stream >> token) {
-            ObjIndex index;
-            const std::size_t firstSlash = token.find('/');
-            const std::size_t secondSlash = firstSlash == std::string::npos
-                                                ? std::string::npos
-                                                : token.find('/', firstSlash + 1);
-            const std::string positionText = token.substr(0, firstSlash);
-            index.position = parseInt(positionText, 0);
-            if (firstSlash != std::string::npos) {
-                const std::string texCoordText =
-                    token.substr(firstSlash + 1, secondSlash == std::string::npos
-                                                     ? std::string::npos
-                                                     : secondSlash - firstSlash - 1);
-                index.texCoord = parseInt(texCoordText, 0);
-            }
-            if (index.position < 0) {
-                index.position += positionCount + 1;
-            }
-            if (index.texCoord < 0) {
-                index.texCoord += texCoordCount + 1;
-            }
-            result.push_back(index);
-        }
-        return result;
     }
 
     std::filesystem::path findTexture(const std::filesystem::path& root, const std::string& name) {
@@ -2475,6 +1276,7 @@ struct BusModel {
                              .stem()
                              .generic_string());
         if (!alias.empty()) {
+            // TODO: Scope aliases by normalized texture root/path to avoid stem collisions.
             const auto aliasFound = textureAliases.find(alias);
             if (aliasFound != textureAliases.end()) {
                 textureCache.emplace(key, aliasFound->second);
@@ -2501,9 +1303,26 @@ struct BusModel {
             }
             entry->request->started = true;
         }
-        entry->request->task = std::async(std::launch::async, [this, request = entry->request] {
-                                 loadTextureRequest(request);
-                             }).share();
+        try {
+            entry->request->task =
+                std::async(std::launch::async, [this, request = entry->request] {
+                    try {
+                        loadTextureRequest(request);
+                    } catch (const std::exception& error) {
+                        gameLog.Log("Texture worker failed: " + std::string(error.what()));
+                        std::lock_guard<std::mutex> lock(request->mutex);
+                        request->complete = true;
+                    } catch (...) {
+                        gameLog.Log("Texture worker failed with an unknown error");
+                        std::lock_guard<std::mutex> lock(request->mutex);
+                        request->complete = true;
+                    }
+                }).share();
+        } catch (const std::exception& error) {
+            gameLog.Log("Failed to start texture worker: " + std::string(error.what()));
+            std::lock_guard<std::mutex> lock(entry->request->mutex);
+            entry->request->complete = true;
+        }
     }
 
     void ensureTexture(Batch& batch, bool visible = true) {
@@ -2549,7 +1368,8 @@ struct BusModel {
                         *batch.textureCacheEntry->request->compressedDds);
                     if (batch.textureCacheEntry->texture == 0) {
                         Image fallbackImage;
-                        if (readImage(batch.texturePath, fallbackImage)) {
+                        if (openbus::rendering::TextureLoader::readImage(batch.texturePath,
+                                                                          fallbackImage)) {
                             batch.textureCacheEntry->texture = uploadTexture(
                                 batch.texturePath, std::move(fallbackImage));
                         }
@@ -2601,100 +1421,6 @@ struct BusModel {
         }
     }
 
-    static std::shared_ptr<ParsedObj> parseObj(const std::filesystem::path& path) {
-        TraceScope trace("obj", "parseObj");
-        auto result = std::make_shared<ParsedObj>();
-        std::ifstream input(path);
-        if (!input) {
-            return {};
-        }
-        std::filesystem::path materialLibrary;
-        std::string currentMaterial;
-        std::string line;
-        while (std::getline(input, line)) {
-            std::istringstream stream(line);
-            std::string type;
-            stream >> type;
-            if (type == "v") {
-                ObjPosition position = {};
-                stream >> position.x >> position.y >> position.z;
-                result->positions.push_back(position);
-            } else if (type == "vt") {
-                ObjTexCoord texCoord = {};
-                stream >> texCoord.u >> texCoord.v;
-                result->texCoords.push_back(texCoord);
-            } else if (type == "mtllib") {
-                std::string materialPath;
-                stream >> materialPath;
-                std::replace(materialPath.begin(), materialPath.end(), '\\', '/');
-                materialLibrary = path.parent_path() / materialPath;
-            } else if (type == "usemtl") {
-                stream >> currentMaterial;
-            } else if (type == "f") {
-                const std::size_t typeEnd = line.find(' ');
-                if (typeEnd == std::string::npos) {
-                    continue;
-                }
-                const std::vector<ObjIndex> face =
-                    parseFace(line.substr(typeEnd + 1), static_cast<int>(result->positions.size()),
-                              static_cast<int>(result->texCoords.size()));
-                for (std::size_t index = 2; index < face.size(); ++index) {
-                    result->triangles.push_back(
-                        {{{face[0], face[index - 1], face[index]}}, currentMaterial});
-                }
-            }
-        }
-        if (result->triangles.empty()) {
-            return {};
-        }
-        std::array<double, 3> boundsMin = {std::numeric_limits<double>::max(),
-                                           std::numeric_limits<double>::max(),
-                                           std::numeric_limits<double>::max()};
-        std::array<double, 3> boundsMax = {std::numeric_limits<double>::lowest(),
-                                           std::numeric_limits<double>::lowest(),
-                                           std::numeric_limits<double>::lowest()};
-        for (const ObjPosition& position : result->positions) {
-            const std::array<double, 3> converted = {position.z, -position.x, position.y};
-            for (int axis = 0; axis < 3; ++axis) {
-                boundsMin[axis] = std::min(boundsMin[axis], converted[axis]);
-                boundsMax[axis] = std::max(boundsMax[axis], converted[axis]);
-            }
-        }
-        for (int axis = 0; axis < 3; ++axis) {
-            result->boundsCenter[axis] = (boundsMin[axis] + boundsMax[axis]) * 0.5;
-            result->boundsSize[axis] = boundsMax[axis] - boundsMin[axis];
-        }
-        for (const ObjPosition& position : result->positions) {
-            const double x = position.z - result->boundsCenter[0];
-            const double y = -position.x - result->boundsCenter[1];
-            const double z = position.y - result->boundsCenter[2];
-            result->boundsRadius = std::max(result->boundsRadius, std::sqrt(x * x + y * y + z * z));
-        }
-        if (!materialLibrary.empty()) {
-            std::ifstream materialInput(materialLibrary);
-            std::string materialLine;
-            std::string materialName;
-            while (std::getline(materialInput, materialLine)) {
-                std::istringstream materialStream(materialLine);
-                std::string materialType;
-                materialStream >> materialType;
-                if (materialType == "newmtl") {
-                    materialStream >> materialName;
-                    result->materials[materialName] = {};
-                } else if (materialType == "map_Kd" && !materialName.empty()) {
-                    std::string textureName;
-                    std::getline(materialStream, textureName);
-                    result->materials[materialName].textureName = trim(textureName);
-                } else if (materialType == "Kd" && !materialName.empty()) {
-                    materialStream >> result->materials[materialName].color[0] >>
-                        result->materials[materialName].color[1] >>
-                        result->materials[materialName].color[2];
-                }
-            }
-        }
-        return result;
-    }
-
     std::shared_future<std::shared_ptr<ParsedObj>> parsedObjFuture(
         const std::filesystem::path& path) {
         const std::string key =
@@ -2705,7 +1431,7 @@ struct BusModel {
             return cached->second;
         }
         std::shared_future<std::shared_ptr<ParsedObj>> future =
-            std::async(std::launch::async, &BusModel::parseObj, path).share();
+            std::async(std::launch::async, &openbus::rendering::ObjLoader::parse, path).share();
         parsedObjCache.emplace(key, future);
         return future;
     }
@@ -3130,9 +1856,9 @@ struct BusModel {
     }
 
     void load(const std::filesystem::path& configPath, const std::filesystem::path& modelRoot) {
-        const ModelConfig configuration = loadBusModelConfig(configPath, modelRoot, variables);
-        lodThresholds = configuration.lodThresholds;
-        for (const ConfigurationDiagnostic& diagnostic : configuration.diagnostics.entries) {
+        auto result = openbus::rendering::loadBusModel(configPath, modelRoot, variables);
+        lodThresholds = std::move(result.lodThresholds);
+        for (const ConfigurationDiagnostic& diagnostic : result.diagnostics.entries) {
             const std::string severity =
                 diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error" : "warning";
             gameLog.Log("CFG " + severity + " line " + std::to_string(diagnostic.line) +
@@ -3140,55 +1866,11 @@ struct BusModel {
         }
 
         std::vector<Part> parts;
-        parts.reserve(configuration.parts.size());
-        for (const ModelPart& source : configuration.parts) {
-            if (source.objPath.empty()) {
-                continue;
-            }
+        parts.reserve(result.parts.size());
+        for (auto& source : result.parts) {
             Part part;
-            part.objPath = source.objPath;
-            part.textureName = source.textureName;
-            part.viewpoint = source.viewpoint;
-            part.renderType = source.renderType;
-            part.visibleVariable = source.visibleVariable;
-            part.visibleValue = source.visibleValue;
-            part.meshIdentifier = source.meshIdentifier;
-            part.animationParent = source.animationParent;
-            part.lodIndex = source.lodIndex;
-            part.wheelAnimation.rotationVariable = source.wheelAnimation.rotationVariable;
-            part.wheelAnimation.suspensionVariable = source.wheelAnimation.suspensionVariable;
-            part.wheelAnimation.steeringVariable = source.wheelAnimation.steeringVariable;
-            part.wheelAnimation.origin = source.wheelAnimation.origin;
-            part.wheelAnimation.hasOrigin = source.wheelAnimation.hasOrigin;
-            for (const auto& materialEntry : source.materialStates) {
-                MaterialState state;
-                state.texturePath = materialEntry.second.texturePath;
-                state.textureName = materialEntry.second.textureName;
-                state.environmentTextureName = materialEntry.second.environmentTextureName;
-                state.environmentStrength = materialEntry.second.environmentStrength;
-                state.alphaMode = materialEntry.second.alphaMode;
-                state.noZwrite = materialEntry.second.noZwrite;
-                state.alphaScaleVariable = materialEntry.second.alphaScaleVariable;
-                                state.textureChanges.reserve(materialEntry.second.textureChanges.size());
-                                for (const auto& change : materialEntry.second.textureChanges) {
-                                    state.textureChanges.push_back({change.texturePath, change.textureName,
-                                                                    change.layer, change.activationVariable});
-                                }
-                part.materialStates.emplace(materialEntry.first, std::move(state));
-            }
+            static_cast<openbus::rendering::BusModelPart&>(part) = std::move(source);
             parts.push_back(std::move(part));
-        }
-        for (Part& part : parts) {
-            if (part.animationParent.empty()) {
-                continue;
-            }
-            const auto parent =
-                std::find_if(parts.begin(), parts.end(), [&](const Part& candidate) {
-                    return candidate.meshIdentifier == part.animationParent;
-                });
-            if (parent != parts.end() && !parent->wheelAnimation.rotationVariable.empty()) {
-                part.wheelAnimation = parent->wheelAnimation;
-            }
         }
         pendingParts = std::move(parts);
         loaded = !pendingParts.empty();
@@ -3242,10 +1924,12 @@ void BusModel::loadTextureRequest(const std::shared_ptr<TextureRequest>& request
     std::shared_ptr<gli::texture> compressedTexture;
     std::shared_ptr<CompressedDds> compressedDds;
     if (!resolved.empty() && lower(resolved.extension().string()) == ".dds" &&
-        isSafeCompressedDds(resolved)) {
-        if (isDxt5Dds(resolved) && !isDdsTextureArray(resolved)) {
+        openbus::rendering::TextureLoader::isSafeCompressedDds(resolved)) {
+        if (openbus::rendering::TextureLoader::isDxt5Dds(resolved) &&
+            !openbus::rendering::TextureLoader::isDdsTextureArray(resolved)) {
             compressedDds = std::make_shared<CompressedDds>();
-            textureLoaded = readDxt5CompressedDds(resolved, *compressedDds);
+            textureLoaded = openbus::rendering::TextureLoader::readDxt5CompressedDds(
+                resolved, *compressedDds);
             if (!textureLoaded) {
                 compressedDds.reset();
             }
@@ -3264,7 +1948,8 @@ void BusModel::loadTextureRequest(const std::shared_ptr<TextureRequest>& request
         }
     }
     if (!textureLoaded) {
-        textureLoaded = !resolved.empty() && readImage(resolved, image);
+        textureLoaded = !resolved.empty() &&
+                openbus::rendering::TextureLoader::readImage(resolved, image);
     }
 #ifdef _WIN32
     if (SUCCEEDED(comResult)) {
@@ -3689,7 +2374,7 @@ void Renderer::captureViews(const BusSimulation& simulation,
         draw(simulation);
         glFinish();
         const std::filesystem::path path = directory / (std::string(view.name) + ".bmp");
-        if (!saveFramebufferBmp(path, width, height)) {
+        if (!openbus::rendering::saveFramebufferBmp(path, width, height)) {
             gameLog.Log("Failed to save screenshot: " + path.string());
         } else {
             gameLog.Log("Saved screenshot: " + path.string());

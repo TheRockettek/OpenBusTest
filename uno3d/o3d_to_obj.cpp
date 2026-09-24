@@ -20,6 +20,11 @@
 #include <utility>
 #include <vector>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -426,7 +431,8 @@ std::vector<int> findAllMaterialIdsByTexture(const Mesh& mesh, const std::string
 }
 
 std::optional<fs::path> tryResolveTexture(const std::string& textureRef, const fs::path& cfgDir,
-                                          const fs::path& meshDir) {
+                                          const fs::path& meshDir,
+                                          bool preferCompressedSibling = true) {
     if (textureRef.empty()) {
         return std::nullopt;
     }
@@ -453,11 +459,39 @@ std::optional<fs::path> tryResolveTexture(const std::string& textureRef, const f
     for (const auto& p : candidates) {
         std::error_code ec;
         if (fs::exists(p, ec) && fs::is_regular_file(p, ec)) {
-            return p;
+            if (!preferCompressedSibling || toLower(p.extension().string()) == ".dds") {
+                return p;
+            }
+            fs::path compressed = p;
+            compressed.replace_extension(".dds");
+            return fs::exists(compressed, ec) && fs::is_regular_file(compressed, ec)
+                       ? compressed
+                       : p;
         }
     }
 
     return std::nullopt;
+}
+
+bool convertTextureToPng(const fs::path& source, const fs::path& destination) {
+    if (destination.has_parent_path() && !destination.parent_path().empty()) {
+        fs::create_directories(destination.parent_path());
+    }
+
+    int width = 0;
+    int height = 0;
+    stbi_uc* pixels = stbi_load(source.string().c_str(), &width, &height, nullptr, 4);
+    if (pixels == nullptr || width <= 0 || height <= 0) {
+        if (pixels != nullptr) {
+            stbi_image_free(pixels);
+        }
+        return false;
+    }
+
+    const int written = stbi_write_png(destination.string().c_str(), width, height, 4, pixels,
+                                       width * 4);
+    stbi_image_free(pixels);
+    return written != 0;
 }
 
 void writeObjMtl(const Mesh& mesh, const fs::path& outObj, bool flipWinding,
@@ -526,11 +560,20 @@ void writeObjMtl(const Mesh& mesh, const fs::path& outObj, bool flipWinding,
                 if (!texRef.empty()) {
                     std::string mapKdPath = texRef;
 
-                    if (copyTextures && cfgDir && meshSourceDir) {
-                        const auto resolved = tryResolveTexture(texRef, *cfgDir, *meshSourceDir);
+                    if ((copyTextures || convertTextures) && cfgDir && meshSourceDir) {
+                        const auto resolved = tryResolveTexture(
+                            texRef, *cfgDir, *meshSourceDir, !convertTextures);
                         if (resolved.has_value()) {
                             const bool isDds = toLower(resolved->extension().string()) == ".dds";
-                            if (!isDds) {
+                            if (convertTextures && !isDds) {
+                                fs::path dstTex = outMtl.parent_path() / resolved->filename();
+                                dstTex.replace_extension(".png");
+                                if (!convertTextureToPng(*resolved, dstTex)) {
+                                    throw std::runtime_error("Failed to convert texture: " +
+                                                             resolved->string());
+                                }
+                                mapKdPath = dstTex.filename().generic_string();
+                            } else if (copyTextures && !isDds) {
                                 const fs::path dstTex = outMtl.parent_path() / resolved->filename();
                                 std::error_code ec;
                                 fs::create_directories(dstTex.parent_path(), ec);
@@ -542,11 +585,6 @@ void writeObjMtl(const Mesh& mesh, const fs::path& outObj, bool flipWinding,
                     }
 
                     std::replace(mapKdPath.begin(), mapKdPath.end(), '\\', '/');
-                    if (convertTextures) {
-                        const fs::path texPath(mapKdPath);
-                        mapKdPath =
-                            (texPath.parent_path() / texPath.stem()).generic_string() + ".png";
-                    }
                     mtl << "map_Kd " << mapKdPath << "\n";
                 }
             } else {
@@ -935,7 +973,7 @@ void printUsage(const char* exeName) {
                  ".o3d files\n"
               << "  --flip-winding       Flip triangle winding in generated OBJ\n"
               << "  --convert-textures   Rewrite all texture references in MTL "
-                 "to use .png extension if it not a .dds file\n"
+                 "to convert non-DDS textures to PNG and reference the converted files\n"
               << "  -h, --help           Show this message\n";
 }
 
@@ -1008,8 +1046,10 @@ int run(const CliOptions& opt) {
                 outObj.replace_extension(".obj");
             }
 
+            const fs::path sourceDir = opt.input.parent_path();
             errors += convertO3DSingle(opt.input, outObj, opt.flipWinding, nullptr, nullptr,
-                                       nullptr, nullptr, nullptr, false, opt.convertTextures);
+                                       nullptr, &sourceDir, &sourceDir, false,
+                                       opt.convertTextures);
         } catch (const std::exception& e) {
             ++errors;
             std::cerr << "ERR " << opt.input << ": " << e.what() << "\n";
@@ -1034,8 +1074,10 @@ int run(const CliOptions& opt) {
                 fs::path rel = fs::relative(inPath, opt.input);
                 fs::path outObj = outDir / rel;
                 outObj.replace_extension(".obj");
+                const fs::path sourceDir = inPath.parent_path();
                 errors += convertO3DSingle(inPath, outObj, opt.flipWinding, nullptr, nullptr,
-                                           nullptr, nullptr, nullptr, false, opt.convertTextures);
+                                           nullptr, &sourceDir, &sourceDir, false,
+                                           opt.convertTextures);
             } catch (const std::exception& e) {
                 ++errors;
                 std::cerr << "ERR " << inPath << ": " << e.what() << "\n";
