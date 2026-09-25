@@ -283,6 +283,7 @@ struct BusModel {
     void loadTextureRequest(const std::shared_ptr<TextureRequest>& request);
 
     void updateMaterialChange(Batch& batch) {
+        TraceScope phase("texture", "updateMaterialChange");
         // Select the last active material change, then reset only the texture
         // request state so the new texture is resolved and uploaded.
         const MaterialState::TextureChange* selected = nullptr;
@@ -430,23 +431,26 @@ struct BusModel {
         // upload are deliberately split between the worker and draw paths.
         textureUploadStart = std::chrono::steady_clock::now();
 
-        glDisable(GL_TEXTURE_2D);
-        glDisable(GL_BLEND);
-        glDisable(GL_ALPHA_TEST);
-        glDepthMask(GL_TRUE);
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_POLYGON_OFFSET_FILL);
-        glPolygonOffset(-1.0f, -1.0f);
-        GLdouble modelView[16] = {};
-        GLdouble projection[16] = {};
-        glGetDoublev(GL_MODELVIEW_MATRIX, modelView);
-        glGetDoublev(GL_PROJECTION_MATRIX, projection);
+        const auto& modelView = openbus::rendering::modelViewMatrix();
         std::array<std::array<double, 4>, 6> frustumPlanes = {};
         std::array<double, 6> frustumPlaneLengths = {};
 
         {
+            TraceScope phase("render", "BusModel::draw.setup");
+
+            glDisable(GL_TEXTURE_2D);
+            glDisable(GL_BLEND);
+            glDisable(GL_ALPHA_TEST);
+            glDepthMask(GL_TRUE);
+            glEnable(GL_DEPTH_TEST);
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(-1.0f, -1.0f);
+        }
+
+        {
             if (frustumCulling) {
                 TraceScope phase("render", "BusModel::draw.frustumSetup");
+                const auto& projection = openbus::rendering::projectionMatrix();
                 const std::array<std::array<double, 4>, 6> planeSigns = {{{{1.0, 0.0, 0.0, 1.0}},
                                                                           {{-1.0, 0.0, 0.0, 1.0}},
                                                                           {{0.0, 1.0, 0.0, 1.0}},
@@ -472,7 +476,7 @@ struct BusModel {
         }
 
         const auto visible = [&](const DisplayPart& part) {
-            TraceScope phase("render", "BusModel::draw.visible");
+            // TraceScope phase("render", "BusModel::draw.visible");
             if (!part.visibleVariable.empty() &&
                 variables.get(part.visibleVariable) != static_cast<double>(part.visibleValue)) {
                 return false;
@@ -513,7 +517,7 @@ struct BusModel {
             return true;
         };
         const auto viewDepth = [&](const DisplayPart& part) {
-            TraceScope phase("render", "BusModel::draw.viewDepth");
+            // TraceScope phase("render", "BusModel::draw.viewDepth");
             const double local[4] = {part.center[0], part.center[1], part.center[2] + modelOffsetZ,
                                      1.0};
             double eyeZ = 0.0;
@@ -729,10 +733,8 @@ struct BusModel {
     }
 
     bool hasConfiguredWheels(std::size_t expectedWheelCount) const {
-        if (wheelModels.size() < expectedWheelCount) {
-            return false;
-        }
-        return std::all_of(wheelModels.begin(), wheelModels.end(),
+        static_cast<void>(expectedWheelCount);
+        return std::any_of(wheelModels.begin(), wheelModels.end(),
                            [](const WheelModel& wheel) { return !wheel.parts.empty(); });
     }
 
@@ -862,6 +864,16 @@ struct BusModel {
                 }
                 glPopMatrix();
             }
+        }
+        for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
+            if (usedWheelIndices[index]) {
+                continue;
+            }
+            const BodyPose pose = simulation.wheelPose(index);
+            glPushMatrix();
+            applyPose(pose);
+            drawWheel(simulation.wheelRadius(), simulation.wheelHalfWidth());
+            glPopMatrix();
         }
         pglBindBuffer(GL_ARRAY_BUFFER, 0);
         glDepthMask(GL_TRUE);
@@ -1309,6 +1321,7 @@ struct BusModel {
     }
 
     std::shared_ptr<TextureCacheEntry> textureEntry(Batch& batch) {
+        TraceScope phase("texture", "textureEntry");
         const std::string key = textureCacheKey(batch);
         const auto found = textureCache.find(key);
         if (found != textureCache.end()) {
@@ -1370,6 +1383,7 @@ struct BusModel {
     }
 
     void ensureTexture(Batch& batch, bool visible = true) {
+        TraceScope phase("texture", "ensureTexture");
         updateMaterialChange(batch);
         if (batch.textureLoadAttempted) {
             return;
@@ -2242,7 +2256,9 @@ void Renderer::draw(const BusSimulation& simulation) {
     {
         TraceScope phase("render", "Renderer::draw.ground");
         glPushMatrix();
-        drawGround(simulation.roadBumps());
+        if (!captureMode_) {
+            drawGround(simulation.roadBumps());
+        }
         glPopMatrix();
     }
 
@@ -2341,10 +2357,10 @@ void Renderer::captureViews(const BusSimulation& simulation,
         double pitch;
         double distance;
     };
-    const std::array<CaptureView, 4> views = {{{"top", 0.0, 1.25, 28.0},
-                                               {"front", 0.0, 0.25, 18.0},
-                                               {"left", 1.5707963267948966, 0.25, 18.0},
-                                               {"right", -1.5707963267948966, 0.25, 18.0}}};
+    const std::array<CaptureView, 4> views = {{{"three-quarter", 0.55, 0.08, 11.0},
+                                               {"front", 0.0, 0.08, 10.5},
+                                               {"left", 1.5707963267948966, 0.08, 10.5},
+                                               {"right", -1.5707963267948966, 0.08, 10.5}}};
     for (const CaptureView& view : views) {
         cameraYaw_ = view.yaw;
         cameraPitch_ = view.pitch;

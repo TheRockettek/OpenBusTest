@@ -73,6 +73,7 @@ bool isKnownKeyword(const std::string& keyword) {
                                                              "nocollision",
                                                              "rendertype",
                                                              "scripttexture",
+                                                             "smoke",
                                                              "spotlight",
                                                              "tcoordtransx",
                                                              "tcoordtransy",
@@ -114,6 +115,17 @@ bool validForKind(const std::string& keyword, ModelConfigKind kind) {
         return false;
     }
     return true;
+}
+
+bool isSeparatorLine(const std::string& text) {
+    if (text.empty()) {
+        return false;
+    }
+    const char separator = text.front();
+    if (separator != '-' && separator != '=' && separator != '+' && separator != '*') {
+        return false;
+    }
+    return text.find_first_not_of(separator) == std::string::npos;
 }
 
 bool readValues(Reader& reader, std::size_t line, const std::string& keyword, std::size_t count,
@@ -195,7 +207,7 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
             reader.pushBack(std::move(field));
             break;
         }
-        if (field.text == "--") {
+        if (field.text == "--" || isSeparatorLine(field.text)) {
             break;
         }
         if (!field.text.empty() && (field.text.front() == '#' || field.text.front() == '\'')) {
@@ -278,7 +290,7 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
             hasTransform = true;
             continue;
         }
-        diagnostics.warning(field.number, "newanim", "unrecognized animation field: " + field.text);
+        break;
     }
     if (!hasTransform) {
         diagnostics.error(keywordLine.number, "newanim", "animation has no anim_rot or anim_trans");
@@ -316,6 +328,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
     std::size_t currentPartIndex = static_cast<std::size_t>(-1);
     std::string currentMaterialKey;
     int currentLodIndex = -1;
+    std::array<int, 4> pendingInteriorLightIndexes = {-1, -1, -1, -1};
+    bool hasPendingInteriorLightIndexes = false;
     std::unordered_set<std::string> meshIdentifiers;
     Line line;
     while (reader.next(line)) {
@@ -366,23 +380,14 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         // subsequent records in the configuration stream.
         // LOD records change the default LOD for following meshes and reset the
         // current mesh/material context.
-        // [lod]: one positive threshold; subsequent meshes use the new LOD index.
+        // [lod]: one threshold; subsequent meshes use the new LOD index.
         if (keyword == "lod") {
             double threshold = 0.0;
             if (!readDoubleValue(reader, "LOD", threshold, result.diagnostics)) {
                 continue;
             }
-            if (threshold <= 0.0) {
-                result.diagnostics.error(line.number, "LOD", "threshold must be greater than zero");
-                currentLodIndex = -1;
-            } else {
-                if (!result.lodThresholds.empty() && threshold <= result.lodThresholds.back()) {
-                    result.diagnostics.error(line.number, "LOD",
-                                             "thresholds must increase in file order");
-                }
-                currentLodIndex = static_cast<int>(result.lodThresholds.size());
-                result.lodThresholds.push_back(threshold);
-            }
+            currentLodIndex = static_cast<int>(result.lodThresholds.size());
+            result.lodThresholds.push_back(threshold);
             currentPartIndex = static_cast<std::size_t>(-1);
             currentMaterialKey.clear();
             continue;
@@ -404,6 +409,10 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             newPart.objPath = objPath;
             newPart.sourceMeshPath = meshValue;
             newPart.lodIndex = currentLodIndex;
+            if (hasPendingInteriorLightIndexes) {
+                newPart.interiorLightIndexes = pendingInteriorLightIndexes;
+                hasPendingInteriorLightIndexes = false;
+            }
             result.parts.push_back(std::move(newPart));
             currentPartIndex = result.parts.size() - 1;
             currentMaterialKey.clear();
@@ -490,12 +499,11 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         // [illumination_interior]: four integer light-group indexes; -1 disables a slot.
         if (keyword == "illumination_interior") {
-            ModelPart* current = requirePart();
             std::vector<std::string> values;
-            if (current != nullptr &&
-                readValues(reader, line.number, keyword, 4, values, result.diagnostics)) {
+            if (readValues(reader, line.number, keyword, 4, values, result.diagnostics)) {
                 // -1 means that an illumination slot is unused; other values
                 // identify the corresponding light group.
+                std::array<int, 4> indexes = {-1, -1, -1, -1};
                 for (std::size_t index = 0; index < values.size(); ++index) {
                     int value = -1;
                     if (!parseInt(values[index], value)) {
@@ -507,7 +515,13 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                         result.diagnostics.error(line.number, keyword,
                                                  "light indexes must be -1 or greater");
                     }
-                    current->interiorLightIndexes[index] = value;
+                    indexes[index] = value;
+                }
+                if (ModelPart* current = part(); current != nullptr) {
+                    current->interiorLightIndexes = indexes;
+                } else {
+                    pendingInteriorLightIndexes = indexes;
+                    hasPendingInteriorLightIndexes = true;
                 }
             }
             continue;
@@ -525,15 +539,24 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
-        // [light_enh]: 13 fields; [light_enh_2]: 24 fields. Each has a fixed
+        // [light_enh]: 13 fields; [light_enh_2]: 23 or 24 fields. Each has a fixed
         // controller-variable field, while the remaining light data is preserved
         // by consuming the record but is not yet represented in the model.
         if (keyword == "light_enh" || keyword == "light_enh_2") {
             if (requirePart() != nullptr) {
-                // These layouts have different widths and fixed variable positions.
-                const std::size_t count = keyword == "light_enh" ? 13 : 24;
                 std::vector<std::string> values;
+                const std::size_t count = keyword == "light_enh" ? 13 : 23;
                 if (readValues(reader, line.number, keyword, count, values, result.diagnostics)) {
+                    if (keyword == "light_enh_2") {
+                        Line optionalTexture;
+                        if (reader.next(optionalTexture)) {
+                            if (optionalTexture.isKeyword()) {
+                                reader.pushBack(std::move(optionalTexture));
+                            } else {
+                                values.push_back(std::move(optionalTexture.text));
+                            }
+                        }
+                    }
                     declareIfVariable(values[keyword == "light_enh" ? 7 : 17], variables);
                 }
             }
@@ -546,6 +569,14 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 // Validate the complete record even though spotlight fields are
                 // not yet represented in the runtime model.
                 readValues(reader, line.number, keyword, 12, values, result.diagnostics);
+            }
+            continue;
+        }
+        // [smoke]: nineteen position, direction, controller, and appearance fields.
+        if (keyword == "smoke") {
+            if (requirePart() != nullptr) {
+                std::vector<std::string> values;
+                readValues(reader, line.number, keyword, 19, values, result.diagnostics);
             }
             continue;
         }

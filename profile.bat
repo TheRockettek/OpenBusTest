@@ -3,7 +3,7 @@ setlocal
 
 taskkill.exe /F /IM OpenBus.exe
 
-set "OPENBUS_VEHICLE=e400"
+@REM set "OPENBUS_VEHICLE=e400"
 set "OPENBUS_VSYNC=off"
 set "OPENBUS_TRACE=1"
 set "OPENBUS_TRACE_COLLAPSED=1"
