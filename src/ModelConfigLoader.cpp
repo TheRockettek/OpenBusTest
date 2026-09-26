@@ -785,13 +785,10 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             ModelMaterialState* current = requireMaterial();
             if (current != nullptr) {
                 const TextureAddressMode mode =
-                    keyword == "matl_texadress_border"
-                        ? TextureAddressMode::Border
-                        : keyword == "matl_texadress_clamp"
-                              ? TextureAddressMode::Clamp
-                              : keyword == "matl_texadress_mirror"
-                                    ? TextureAddressMode::Mirror
-                                    : TextureAddressMode::MirrorOnce;
+                    keyword == "matl_texadress_border"   ? TextureAddressMode::Border
+                    : keyword == "matl_texadress_clamp"  ? TextureAddressMode::Clamp
+                    : keyword == "matl_texadress_mirror" ? TextureAddressMode::Mirror
+                                                         : TextureAddressMode::MirrorOnce;
                 current->textureAddressS = mode;
                 current->textureAddressT = mode;
             }
@@ -899,8 +896,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             const std::filesystem::path texturePath =
                 state.textureName.empty() ? state.texturePath
                                           : std::filesystem::path(state.textureName);
-            const std::string key = lower(texturePath.filename().string()) + "#" +
-                                    std::to_string(index);
+            const std::string key =
+                lower(texturePath.filename().string()) + "#" + std::to_string(index);
             part.materialStates[key] = state;
         }
     }

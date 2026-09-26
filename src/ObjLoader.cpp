@@ -149,15 +149,15 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path) {
             materialStream >> materialType;
             if (materialType == "newmtl") {
                 materialStream >> materialName;
-                    ObjMaterial material;
-                    if (materialName.rfind("matl_", 0) == 0) {
-                        try {
-                            material.materialIndex = std::stoi(materialName.substr(5));
-                        } catch (const std::exception&) {
-                            material.materialIndex = -1;
-                        }
+                ObjMaterial material;
+                if (materialName.rfind("matl_", 0) == 0) {
+                    try {
+                        material.materialIndex = std::stoi(materialName.substr(5));
+                    } catch (const std::exception&) {
+                        material.materialIndex = -1;
                     }
-                    result->materials[materialName] = material;
+                }
+                result->materials[materialName] = material;
             } else if (materialType == "map_Kd" && !materialName.empty()) {
                 std::string textureName;
                 std::getline(materialStream, textureName);

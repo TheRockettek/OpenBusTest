@@ -66,14 +66,14 @@ int main() {
         BusSimulation simulation(configuration);
 
         Renderer renderer(1280, 720, "OpenBus");
-        BusModel* playerBusModel = renderer.AddBusModel(vehicle, {0, 0, 20}, {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+        BusModel* playerBusModel = renderer.AddBusModel(
+            vehicle, {0, 0, 20}, {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
         renderer.SetPlayerBusModel(playerBusModel);
 
         double previousTime = glfwGetTime();
         bool captureOnStartup = std::getenv("OPENBUS_CAPTURE_VIEWS") != nullptr;
         bool pendingCaptureRequest = captureOnStartup;
         std::vector<KeyEvent> pendingKeyEvents;
-
 
         while (!renderer.shouldClose()) {
             openbus::rendering::TraceScope frameTrace("frame", "main");
@@ -87,7 +87,8 @@ int main() {
             renderer.beginFrame();
 
             const std::vector<KeyEvent> frameKeyEvents = renderer.consumeKeyEvents();
-            pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(), frameKeyEvents.end());
+            pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(),
+                                    frameKeyEvents.end());
             simulation.update(elapsed, renderer.throttle(), renderer.steering(), renderer.brake());
             renderer.draw(simulation);
 

@@ -34,7 +34,7 @@ class Renderer {
     void requestClose();
     BusModel* AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {});
     BusModel* AddBusModel(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
-                ModelLoadingPolicy loadingPolicy = {});
+                          ModelLoadingPolicy loadingPolicy = {});
     void SetPlayerBusModel(BusModel* model);
     void beginFrame();
     void draw(const BusSimulation& simulation);

@@ -337,8 +337,7 @@ struct BusSimulation::Impl {
                 throw std::invalid_argument("Bus axle geometry is outside the chassis");
             }
             corners.push_back({axle.position, axle.trackWidth * 0.5, axle.wheelDiameter * 0.5});
-            corners.push_back(
-                {axle.position, -axle.trackWidth * 0.5, axle.wheelDiameter * 0.5});
+            corners.push_back({axle.position, -axle.trackWidth * 0.5, axle.wheelDiameter * 0.5});
         }
         ground = dCreatePlane(ode.space, 0.0, 0.0, 1.0, 0.0);
         for (const RoadBump& bump : defaultRoadBumps()) {
@@ -407,8 +406,8 @@ struct BusSimulation::Impl {
             dRFromAxisAndAngle(wheelRotation, 1.0, 0.0, 0.0, -PI * 0.5);
             dBodySetRotation(corner.wheelBody, wheelRotation);
 
-            corner.wheelGeom = dCreateCylinder(ode.space, corner.wheelRadius,
-                                               configuration.wheelHalfWidth * 2.0);
+            corner.wheelGeom =
+                dCreateCylinder(ode.space, corner.wheelRadius, configuration.wheelHalfWidth * 2.0);
             dGeomSetBody(corner.wheelGeom, corner.wheelBody);
 
             corner.suspensionJoint = dJointCreateSlider(ode.world, nullptr);
@@ -522,8 +521,7 @@ struct BusSimulation::Impl {
             }
             return corners.front().wheelRadius;
         }();
-        const dReal wheelRpm =
-            std::abs(longitudinalSpeed) / (2.0 * PI * engineWheelRadius) * 60.0;
+        const dReal wheelRpm = std::abs(longitudinalSpeed) / (2.0 * PI * engineWheelRadius) * 60.0;
         const dReal ratio = GEAR_RATIOS[currentGear] * FINAL_DRIVE;
         const dReal engineRpm = std::clamp(wheelRpm * ratio, ENGINE_IDLE_RPM, ENGINE_REDLINE);
         if (shiftTimer <= 0.0 && engineRpm > UPSHIFT_RPM && currentGear + 1 < NUM_GEARS) {

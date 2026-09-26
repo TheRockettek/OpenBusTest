@@ -289,21 +289,17 @@ struct BusModel {
         TraceScope phase("texture", "updateMaterialChange");
         static const bool verboseMaterialChangeLogs =
             parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_MATERIAL_CHANGES"));
+
         // Select the last active material change, then reset only the texture
         // request state so the new texture is resolved and uploaded.
         const MaterialState::TextureChange* selected = nullptr;
         for (const MaterialState::TextureChange& change : batch.textureChanges) {
             const double activationValue = variables.get(change.activationVariable);
-            if (verboseMaterialChangeLogs && activationValue != 0.0) {
-                gameLog.Log("Material change active: base=" + batch.baseTextureName +
-                            " variable=" + change.activationVariable +
-                            " value=" + std::to_string(activationValue) +
-                            " replacement=" + change.textureName);
-            }
             if (activationValue != 0.0) {
                 selected = &change;
             }
         }
+
         const std::filesystem::path texturePath =
             selected == nullptr ? batch.baseTexturePath : selected->texturePath;
         const std::string textureName =
@@ -313,7 +309,9 @@ struct BusModel {
             batch.textureArray
                 ? std::clamp(requestedLayer, 0, static_cast<int>(batch.textureArrayLayers) - 1)
                 : 0;
-        const bool sameRequestedTexture = textureName == batch.textureName && (texturePath == batch.texturePath || batch.textureLoadAttempted);
+        const bool sameRequestedTexture =
+            textureName == batch.textureName &&
+            (texturePath == batch.texturePath || batch.textureLoadAttempted);
         if (sameRequestedTexture && layer == batch.textureLayer) {
             return;
         }
@@ -1506,8 +1504,8 @@ struct BusModel {
                         Image fallbackImage;
                         if (openbus::rendering::TextureLoader::readImage(
                                 entry->request->resolvedPath, fallbackImage)) {
-                            entry->texture =
-                                uploadTexture(entry->request->resolvedPath, std::move(fallbackImage));
+                            entry->texture = uploadTexture(entry->request->resolvedPath,
+                                                           std::move(fallbackImage));
                         }
                     }
                 } else if (entry->request->compressedTexture) {
@@ -1515,8 +1513,8 @@ struct BusModel {
                         entry->request->resolvedPath, *entry->request->compressedTexture,
                         entry->textureArray, entry->textureArrayLayers);
                 } else if (entry->request->image) {
-                    entry->texture = uploadTexture(entry->request->resolvedPath,
-                                                   *entry->request->image);
+                    entry->texture =
+                        uploadTexture(entry->request->resolvedPath, *entry->request->image);
                 }
             }
         }
@@ -1529,8 +1527,7 @@ struct BusModel {
         if (batch.environmentTexture == 0 || !batch.hasNormals || alpha <= 0.0) {
             return;
         }
-        const double reflectionStrength =
-            std::clamp(alpha * batch.environmentStrength, 0.0, 1.0);
+        const double reflectionStrength = std::clamp(alpha * batch.environmentStrength, 0.0, 1.0);
         if (reflectionStrength <= 0.0) {
             return;
         }
@@ -1543,8 +1540,7 @@ struct BusModel {
         glBindTexture(GL_TEXTURE_2D, batch.environmentTexture);
         glDisableClientState(GL_TEXTURE_COORD_ARRAY);
         glEnableClientState(GL_NORMAL_ARRAY);
-        glNormalPointer(GL_FLOAT, sizeof(Vertex),
-                        reinterpret_cast<const void*>(6 * sizeof(float)));
+        glNormalPointer(GL_FLOAT, sizeof(Vertex), reinterpret_cast<const void*>(6 * sizeof(float)));
         glEnable(GL_NORMALIZE);
         glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
         glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
@@ -1637,7 +1633,8 @@ struct BusModel {
                 wheelModels.begin(), wheelModels.end(), [&](const WheelModel& candidate) {
                     const bool sameAnimation =
                         wheelAnimation.rotationVariable == candidate.animation.rotationVariable &&
-                        wheelAnimation.suspensionVariable == candidate.animation.suspensionVariable &&
+                        wheelAnimation.suspensionVariable ==
+                            candidate.animation.suspensionVariable &&
                         wheelAnimation.steeringVariable == candidate.animation.steeringVariable &&
                         std::abs(wheelAnimation.origin[0] - candidate.animation.origin[0]) < 0.5 &&
                         std::abs(wheelAnimation.origin[1] - candidate.animation.origin[1]) < 0.5 &&
@@ -1680,8 +1677,7 @@ struct BusModel {
                 TraceScope vertexTrace("obj", "loadObj.buildVertices");
                 for (const ObjTriangle* triangle : source) {
                     std::array<double, 3> fallbackNormal = {0.0, 0.0, 1.0};
-                    if (triangle->indices[0].position > 0 &&
-                        triangle->indices[1].position > 0 &&
+                    if (triangle->indices[0].position > 0 && triangle->indices[1].position > 0 &&
                         triangle->indices[2].position > 0 &&
                         triangle->indices[0].position <= static_cast<int>(positions.size()) &&
                         triangle->indices[1].position <= static_cast<int>(positions.size()) &&
@@ -1692,16 +1688,14 @@ struct BusModel {
                             positions[static_cast<std::size_t>(triangle->indices[1].position - 1)]);
                         const std::array<double, 3> third = convertPosition(
                             positions[static_cast<std::size_t>(triangle->indices[2].position - 1)]);
-                        const std::array<double, 3> edgeA = {second[0] - first[0],
-                                                             second[1] - first[1],
-                                                             second[2] - first[2]};
-                        const std::array<double, 3> edgeB = {third[0] - first[0],
-                                                             third[1] - first[1],
-                                                             third[2] - first[2]};
-                        fallbackNormal = normalizeVector(
-                            {edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
-                             edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
-                             edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]});
+                        const std::array<double, 3> edgeA = {
+                            second[0] - first[0], second[1] - first[1], second[2] - first[2]};
+                        const std::array<double, 3> edgeB = {
+                            third[0] - first[0], third[1] - first[1], third[2] - first[2]};
+                        fallbackNormal =
+                            normalizeVector({edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+                                             edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+                                             edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]});
                     }
                     for (const ObjIndex& index : triangle->indices) {
                         if (index.position <= 0 ||
@@ -1711,12 +1705,11 @@ struct BusModel {
                         const ObjPosition& position =
                             positions[static_cast<std::size_t>(index.position - 1)];
                         std::array<double, 3> normal = fallbackNormal;
-                        if (index.normal > 0 &&
-                            index.normal <= static_cast<int>(normals.size())) {
+                        if (index.normal > 0 && index.normal <= static_cast<int>(normals.size())) {
                             const ObjNormal& sourceNormal =
                                 normals[static_cast<std::size_t>(index.normal - 1)];
-                            normal = normalizeVector(
-                                {-sourceNormal.z, sourceNormal.x, -sourceNormal.y});
+                            normal =
+                                normalizeVector({-sourceNormal.z, sourceNormal.x, -sourceNormal.y});
                         }
                         const ObjTexCoord* texCoord = nullptr;
                         if (index.texCoord > 0 &&
@@ -1784,9 +1777,9 @@ struct BusModel {
                                          &entry.second);
         }
         for (const MaterialState& state : part.materialStatesInOrder) {
-            const std::filesystem::path statePath =
-                state.textureName.empty() ? state.texturePath
-                                          : std::filesystem::path(state.textureName);
+            const std::filesystem::path statePath = state.textureName.empty()
+                                                        ? state.texturePath
+                                                        : std::filesystem::path(state.textureName);
             std::vector<const MaterialState*>& states =
                 materialStatesByStemOccurrence[lower(statePath.stem().string())];
             if (state.materialIndex >= 0) {
@@ -1803,8 +1796,9 @@ struct BusModel {
         for (const auto& entry : materials) {
             if (entry.second.materialIndex >= 0) {
                 const std::filesystem::path materialPath =
-                    entry.second.textureName.empty() ? entry.second.texturePath
-                                                     : std::filesystem::path(entry.second.textureName);
+                    entry.second.textureName.empty()
+                        ? entry.second.texturePath
+                        : std::filesystem::path(entry.second.textureName);
                 indexedMaterials.push_back(
                     {entry.second.materialIndex, lower(materialPath.stem().string())});
             }
@@ -1851,11 +1845,10 @@ struct BusModel {
                         material->second.textureName.empty()
                             ? material->second.texturePath
                             : std::filesystem::path(material->second.textureName);
-                    const auto states = materialStatesByStemOccurrence.find(
-                        lower(materialPath.stem().string()));
+                    const auto states =
+                        materialStatesByStemOccurrence.find(lower(materialPath.stem().string()));
                     if (occurrence != materialOccurrenceByIndex.end() &&
-                        states != materialStatesByStemOccurrence.end() &&
-                        occurrence->second >= 0 &&
+                        states != materialStatesByStemOccurrence.end() && occurrence->second >= 0 &&
                         static_cast<std::size_t>(occurrence->second) < states->second.size() &&
                         states->second[static_cast<std::size_t>(occurrence->second)] != nullptr) {
                         state = *states->second[static_cast<std::size_t>(occurrence->second)];
@@ -2198,8 +2191,7 @@ void Renderer::scrollCallback(GLFWwindow* window, double, double yOffset) {
     renderer->cameraDistance_ = std::clamp(renderer->cameraDistance_ - yOffset * 2.0, 6.0, 80.0);
 }
 
-Renderer::Renderer(int width, int height, const char* title)
-    : window_(nullptr) {
+Renderer::Renderer(int width, int height, const char* title) : window_(nullptr) {
     TraceScope trace("startup", "Renderer::Renderer");
     if (!glfwInit()) {
         gameLog.Log("Failed to initialize GLFW");

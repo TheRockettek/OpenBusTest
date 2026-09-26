@@ -19,8 +19,7 @@ Matrix4 multiply(const Matrix4& left, const Matrix4& right) {
     for (int column = 0; column < 4; ++column) {
         for (int row = 0; row < 4; ++row) {
             for (int inner = 0; inner < 4; ++inner) {
-                result[row + column * 4] +=
-                    left[row + inner * 4] * right[inner + column * 4];
+                result[row + column * 4] += left[row + inner * 4] * right[inner + column * 4];
             }
         }
     }
@@ -87,8 +86,8 @@ void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double target
 
     const Matrix4 rotation = {sideX, upX, -forwardX, 0.0, sideY, upY, -forwardY, 0.0,
                               0.0,   upZ, -forwardZ, 0.0, 0.0,   0.0, 0.0,       1.0};
-    const Matrix4 translation = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
-                                0.0, 0.0, 1.0, 0.0, -eyeX, -eyeY, -eyeZ, 1.0};
+    const Matrix4 translation = {1.0, 0.0, 0.0, 0.0, 0.0,   1.0,   0.0,   0.0,
+                                 0.0, 0.0, 1.0, 0.0, -eyeX, -eyeY, -eyeZ, 1.0};
     cachedModelViewMatrix = multiply(rotation, translation);
     glMatrixMode(GL_MODELVIEW);
     glLoadMatrixd(rotation.data());
@@ -102,10 +101,22 @@ void applyPose(const BodyPose& pose) {
                             pose.position[0], pose.position[1], pose.position[2], 1.0};
     cachedModelViewMatrix = multiply(cachedModelViewMatrix, matrix);
     glTranslated(pose.position[0], pose.position[1], pose.position[2]);
-    const Matrix4 rotationMatrix = {pose.rotation[0], pose.rotation[3], pose.rotation[6], 0.0,
-                                    pose.rotation[1], pose.rotation[4], pose.rotation[7], 0.0,
-                                    pose.rotation[2], pose.rotation[5], pose.rotation[8], 0.0,
-                                    0.0, 0.0, 0.0, 1.0};
+    const Matrix4 rotationMatrix = {pose.rotation[0],
+                                    pose.rotation[3],
+                                    pose.rotation[6],
+                                    0.0,
+                                    pose.rotation[1],
+                                    pose.rotation[4],
+                                    pose.rotation[7],
+                                    0.0,
+                                    pose.rotation[2],
+                                    pose.rotation[5],
+                                    pose.rotation[8],
+                                    0.0,
+                                    0.0,
+                                    0.0,
+                                    0.0,
+                                    1.0};
     glMultMatrixd(rotationMatrix.data());
 }
 

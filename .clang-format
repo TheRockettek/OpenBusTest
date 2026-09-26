@@ -15,6 +15,6 @@ NamespaceIndentation: None
 PointerAlignment: Left
 ReferenceAlignment: Left
 SpaceBeforeParens: ControlStatements
-SortIncludes: CaseSensitive
+SortIncludes: Never
 IncludeBlocks: Regroup
 ...
