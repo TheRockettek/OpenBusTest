@@ -2,8 +2,8 @@
 
 #ifdef _WIN32
 
-#include <DbgHelp.h>
 #include <Windows.h>
+#include <DbgHelp.h>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -100,6 +100,65 @@ void installCrashHandler() {
 
 #else
 
+#if defined(__unix__) || defined(__APPLE__)
+
+#include <execinfo.h>
+#include <csignal>
+#include <cstdlib>
+#include <exception>
+#include <fcntl.h>
+#include <signal.h>
+#include <unistd.h>
+
+namespace {
+
+volatile sig_atomic_t crashReportInProgress = 0;
+
+void handlePosixSignal(int signalNumber) {
+    if (crashReportInProgress != 0) {
+        _Exit(128 + signalNumber);
+    }
+    crashReportInProgress = 1;
+
+    const int descriptor = open("game.crash", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (descriptor >= 0) {
+        const char header[] = "OpenBus fatal signal; stack trace:\n";
+        write(descriptor, header, sizeof(header) - 1);
+        void* frames[64] = {};
+        const int frameCount = backtrace(frames, 64);
+        backtrace_symbols_fd(frames, frameCount, descriptor);
+        close(descriptor);
+    }
+    _Exit(128 + signalNumber);
+}
+
+void handleTerminate() {
+    const char message[] = "OpenBus terminated unexpectedly\n";
+    const int descriptor = open("game.crash", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (descriptor >= 0) {
+        write(descriptor, message, sizeof(message) - 1);
+        close(descriptor);
+    }
+    _Exit(EXIT_FAILURE);
+}
+
+} // namespace
+
+void installCrashHandler() {
+    std::signal(SIGABRT, handlePosixSignal);
+    std::signal(SIGFPE, handlePosixSignal);
+    std::signal(SIGILL, handlePosixSignal);
+    std::signal(SIGSEGV, handlePosixSignal);
+#ifdef SIGBUS
+    std::signal(SIGBUS, handlePosixSignal);
+#endif
+    std::set_terminate(handleTerminate);
+}
+
+#else
+
 void installCrashHandler() {}
+
+#endif
 
 #endif

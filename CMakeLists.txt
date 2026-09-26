@@ -21,7 +21,13 @@ include(FetchContent)
 find_package(ODE CONFIG QUIET)
 find_package(glfw3 CONFIG QUIET)
 
-if(NOT TARGET glfw)
+if(TARGET glfw3::glfw AND NOT TARGET glfw)
+    add_library(OpenBus::GLFW ALIAS glfw3::glfw)
+elseif(TARGET glfw AND NOT TARGET OpenBus::GLFW)
+    add_library(OpenBus::GLFW ALIAS glfw)
+endif()
+
+if(NOT TARGET OpenBus::GLFW)
     message(STATUS
         "glfw3 was not found via CMake package config; fetching GLFW from GitHub.")
     FetchContent_Declare(glfw
@@ -33,6 +39,7 @@ if(NOT TARGET glfw)
     set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(glfw)
+    add_library(OpenBus::GLFW ALIAS glfw)
 endif()
 
 FetchContent_Declare(gli
@@ -80,8 +87,8 @@ else()
 
     if(NOT ODE_INCLUDE_DIR OR NOT ODE_LIBRARY)
         message(FATAL_ERROR
-            "ODE was not found. Install it with vcpkg (vcpkg install ode:x64-windows) "
-            "or set CMAKE_PREFIX_PATH to an ODE installation.")
+            "ODE was not found. Install the ODE development package or set "
+            "CMAKE_PREFIX_PATH to an ODE installation.")
     endif()
 
     add_library(OpenBus::ODE UNKNOWN IMPORTED)
@@ -120,7 +127,7 @@ target_include_directories(OpenBus SYSTEM PRIVATE
     ${gli_SOURCE_DIR}
     ${gli_SOURCE_DIR}/external/glm
     ${stb_SOURCE_DIR})
-target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} glfw OpenGL::GL)
+target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} OpenBus::GLFW OpenGL::GL)
 
 add_executable(OpenBusPhysicsProbe
     tests/BusSimulationSteeringProbe.cpp

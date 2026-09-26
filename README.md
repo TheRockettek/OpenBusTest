@@ -19,6 +19,15 @@ On Windows with vcpkg:
 vcpkg install ode:x64-windows glfw3:x64-windows
 ```
 
+On Debian or Ubuntu, install the native development packages:
+
+```bash
+sudo apt install build-essential cmake libode-dev libglfw3-dev libglu1-mesa-dev
+```
+
+The Linux build uses the system GLFW/ODE packages when available and falls
+back to downloading GLFW during CMake configuration when GLFW is not found.
+
 If `glfw3` is not available through `CMAKE_PREFIX_PATH`, the build now falls
 back to downloading GLFW 3.4 during CMake configure. This still requires
 internet access at configure time.
@@ -32,6 +41,16 @@ reused:
 cmake -S . -B build-ode -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build build-ode --config Release
 ```
+
+On Linux, use a native build directory and the provided shell helpers:
+
+```bash
+chmod +x run.sh profile.sh screenshot.sh convert.sh
+./run.sh
+```
+
+The helpers use `build-linux` by default. Set `BUILD_DIR` to choose another
+build directory, and set `OPENBUS_VEHICLE=e400` to run the E400 model.
 
 ## Linting
 
@@ -58,6 +77,10 @@ Run the prototype:
 
 The executable opens a simple OpenGL preview window while the physics runs at
 the configured fixed rate.
+
+The Linux build writes a `game.crash` stack trace for fatal POSIX signals and
+unexpected termination. Build with debug symbols when detailed function names
+are needed, for example with `-DCMAKE_BUILD_TYPE=Debug`.
 
 ## Current physics model
 
