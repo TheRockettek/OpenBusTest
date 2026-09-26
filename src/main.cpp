@@ -19,8 +19,10 @@ int main() {
     installCrashHandler();
     Logger applicationLog("Application");
     try {
-        const BusVehicle vehicle = busVehicleFromEnvironment();
         applicationLog.Log("Starting OpenBus");
+        const BusVehicle vehicle = busVehicleFromEnvironment();
+
+        // Resolve configuration paths for the bus and model.
         std::filesystem::path busConfigPath;
         std::filesystem::path modelConfigPath;
         {
@@ -28,16 +30,19 @@ int main() {
             busConfigPath = busConfigurationPathFor(vehicle);
             modelConfigPath = modelConfigurationPathForBus(busConfigPath);
         }
+
         BusConfiguration configuration;
         {
             openbus::rendering::TraceScope trace("config", "main.loadBusConfiguration");
             configuration = loadBusConfiguration(busConfigPath);
         }
+
         ModelConfig modelConfiguration;
         {
             openbus::rendering::TraceScope trace("config", "main.loadBusModelConfiguration");
             modelConfiguration = loadBusModelConfiguration(busConfigPath);
         }
+
         {
             openbus::rendering::TraceScope trace("config", "main.writeConfigurationSnapshots");
             std::ofstream configurationOutput("OpenBus_configuration.json", std::ios::trunc);
@@ -57,15 +62,22 @@ int main() {
                                         modelConfiguration);
             modelConfigurationOutput.flush();
         }
+
         BusSimulation simulation(configuration);
-        Renderer renderer(1280, 720, "OpenBus", vehicle,
-                          {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+
+        Renderer renderer(1280, 720, "OpenBus");
+        BusModel* playerBusModel = renderer.AddBusModel(vehicle, {0, 0, 20}, {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+        renderer.SetPlayerBusModel(playerBusModel);
+
         double previousTime = glfwGetTime();
         bool captureOnStartup = std::getenv("OPENBUS_CAPTURE_VIEWS") != nullptr;
-        bool pendingCaptureRequest = false;
+        bool pendingCaptureRequest = captureOnStartup;
         std::vector<KeyEvent> pendingKeyEvents;
+
+
         while (!renderer.shouldClose()) {
             openbus::rendering::TraceScope frameTrace("frame", "main");
+
             // Each frame updates input-backed variables first, advances physics,
             // then renders using the resulting simulation and variable state.
             const double currentTime = glfwGetTime();
@@ -73,23 +85,23 @@ int main() {
             previousTime = currentTime;
 
             renderer.beginFrame();
+
             const std::vector<KeyEvent> frameKeyEvents = renderer.consumeKeyEvents();
-            pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(),
-                                    frameKeyEvents.end());
+            pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(), frameKeyEvents.end());
             simulation.update(elapsed, renderer.throttle(), renderer.steering(), renderer.brake());
             renderer.draw(simulation);
-            if (captureOnStartup) {
-                pendingCaptureRequest = true;
-            }
+
             if (renderer.consumeCaptureRequest()) {
                 pendingCaptureRequest = true;
             }
+
             if (pendingCaptureRequest && renderer.isCaptureReady()) {
                 pendingCaptureRequest = false;
                 captureOnStartup = false;
                 renderer.captureViews(simulation, "screenshots");
-                exit(0);
+                renderer.requestClose();
             }
+
             renderer.endFrame();
         }
         applicationLog.Log("OpenBus shut down cleanly");

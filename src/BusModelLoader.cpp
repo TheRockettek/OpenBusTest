@@ -18,7 +18,7 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
     result.diagnostics = configuration.diagnostics;
     result.parts.reserve(configuration.parts.size());
     for (const ModelPart& source : configuration.parts) {
-        if (source.objPath.empty()) {
+        if (source.objPath.empty() || source.isShadow) {
             continue;
         }
         BusModelPart part;
@@ -36,21 +36,41 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
         part.wheelAnimation.steeringVariable = source.wheelAnimation.steeringVariable;
         part.wheelAnimation.origin = source.wheelAnimation.origin;
         part.wheelAnimation.hasOrigin = source.wheelAnimation.hasOrigin;
-        for (const auto& materialEntry : source.materialStates) {
+        const auto copyMaterialState = [](const ModelMaterialState& sourceState) {
             BusModelMaterialState state;
-            state.texturePath = materialEntry.second.texturePath;
-            state.textureName = materialEntry.second.textureName;
-            state.environmentTextureName = materialEntry.second.environmentTextureName;
-            state.environmentStrength = materialEntry.second.environmentStrength;
-            state.alphaMode = materialEntry.second.alphaMode;
-            state.noZwrite = materialEntry.second.noZwrite;
-            state.alphaScaleVariable = materialEntry.second.alphaScaleVariable;
-            state.textureChanges.reserve(materialEntry.second.textureChanges.size());
-            for (const auto& change : materialEntry.second.textureChanges) {
+            state.texturePath = sourceState.texturePath;
+            state.textureName = sourceState.textureName;
+            state.materialIndex = sourceState.materialIndex;
+            state.environmentTextureName = sourceState.environmentTextureName;
+            state.environmentStrength = sourceState.environmentStrength;
+            state.alphaMode = sourceState.alphaMode;
+            state.noZwrite = sourceState.noZwrite;
+            state.noZcheck = sourceState.noZcheck;
+            state.alphaScaleVariable = sourceState.alphaScaleVariable;
+            state.transmapTextureName = sourceState.transmapTextureName;
+            state.nightmapTextureName = sourceState.nightmapTextureName;
+            state.lightmapTextureName = sourceState.lightmapTextureName;
+            state.lightmapStrengthVariable = sourceState.lightmapStrengthVariable;
+            state.texcoordTransXVariable = sourceState.texcoordTransXVariable;
+            state.texcoordTransYVariable = sourceState.texcoordTransYVariable;
+            state.bumpmapTextureName = sourceState.bumpmapTextureName;
+            state.bumpmapStrength = sourceState.bumpmapStrength;
+            state.textureAddressS = sourceState.textureAddressS;
+            state.textureAddressT = sourceState.textureAddressT;
+            state.textureChanges.reserve(sourceState.textureChanges.size());
+            for (const auto& change : sourceState.textureChanges) {
                 state.textureChanges.push_back({change.texturePath, change.textureName,
                                                 change.layer, change.activationVariable});
             }
-            part.materialStates.emplace(materialEntry.first, std::move(state));
+            return state;
+        };
+        for (const auto& materialEntry : source.materialStates) {
+            part.materialStates.emplace(materialEntry.first,
+                                        copyMaterialState(materialEntry.second));
+        }
+        part.materialStatesInOrder.reserve(source.materialStatesInOrder.size());
+        for (const ModelMaterialState& materialState : source.materialStatesInOrder) {
+            part.materialStatesInOrder.push_back(copyMaterialState(materialState));
         }
         result.parts.push_back(std::move(part));
     }

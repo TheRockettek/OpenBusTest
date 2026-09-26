@@ -18,6 +18,8 @@
 
 namespace {
 
+constexpr double DEFAULT_WHEEL_HALF_WIDTH = 0.145;
+
 BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source) {
     const std::array<double, 6>& boundingBox = source.boundingBox;
     BusConfiguration configuration{};
@@ -138,13 +140,14 @@ BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath) {
         throw std::runtime_error("Bus configuration has no positive [schwerpunkt]: " +
                                  configPath.string());
     }
-    if (!source.hasWheelHalfWidth || source.wheelHalfWidth <= 0.0) {
+    if (!source.hasWheelHalfWidth) {
+        source.wheelHalfWidth = DEFAULT_WHEEL_HALF_WIDTH;
+    } else if (source.wheelHalfWidth <= 0.0) {
         throw std::runtime_error("Bus configuration has no positive [openbus_wheel_half_width]: " +
                                  configPath.string());
     }
     if (!source.hasArticulated) {
-        throw std::runtime_error("Bus configuration has no [openbus_articulated] value: " +
-                                 configPath.string());
+        source.articulated = false;
     }
     if (source.axles.empty()) {
         throw std::runtime_error("Bus configuration contains no valid [newachse] entries: " +

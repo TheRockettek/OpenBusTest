@@ -25,6 +25,7 @@ class BusSimulation {
     ChassisCollisionBox chassisCollisionBox() const;
     BodyPose wheelPose(std::size_t index) const;
     double wheelRadius() const;
+    double wheelRadius(std::size_t index) const;
     double wheelHalfWidth() const;
     double speed() const;
     double physicsHz() const;

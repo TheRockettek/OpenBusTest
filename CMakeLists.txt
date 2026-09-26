@@ -122,6 +122,17 @@ target_include_directories(OpenBus SYSTEM PRIVATE
     ${stb_SOURCE_DIR})
 target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} glfw OpenGL::GL)
 
+add_executable(OpenBusPhysicsProbe
+    tests/BusSimulationSteeringProbe.cpp
+    src/BusSimulation.cpp
+    src/Logger.cpp
+    src/PerfTrace.cpp
+    src/RoadFeatures.cpp
+)
+
+target_include_directories(OpenBusPhysicsProbe PRIVATE src)
+target_link_libraries(OpenBusPhysicsProbe PRIVATE ${OPENBUS_ODE_TARGET})
+
 add_executable(uno3d_converter
     uno3d/o3d_to_obj.cpp
 )

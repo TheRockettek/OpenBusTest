@@ -24,11 +24,23 @@ struct WheelAnimation {
 struct BusModelMaterialState {
     std::filesystem::path texturePath;
     std::string textureName;
+    int materialIndex = -1;
     std::string environmentTextureName;
     double environmentStrength = 0.0;
     int alphaMode = 0;
     bool noZwrite = false;
+    bool noZcheck = false;
     std::string alphaScaleVariable;
+    std::string transmapTextureName;
+    std::string nightmapTextureName;
+    std::string lightmapTextureName;
+    std::string lightmapStrengthVariable;
+    std::string texcoordTransXVariable;
+    std::string texcoordTransYVariable;
+    std::string bumpmapTextureName;
+    double bumpmapStrength = 0.0;
+    TextureAddressMode textureAddressS = TextureAddressMode::Repeat;
+    TextureAddressMode textureAddressT = TextureAddressMode::Repeat;
     struct TextureChange {
         std::filesystem::path texturePath;
         std::string textureName;
@@ -50,6 +62,7 @@ struct BusModelPart {
     std::string meshIdentifier;
     std::string animationParent;
     std::unordered_map<std::string, BusModelMaterialState> materialStates;
+    std::vector<BusModelMaterialState> materialStatesInOrder;
     int lodIndex = -1;
     WheelAnimation wheelAnimation;
 };

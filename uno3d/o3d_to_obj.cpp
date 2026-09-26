@@ -521,7 +521,7 @@ void writeObjMtl(const Mesh& mesh, const fs::path& outObj, bool flipWinding,
     std::vector<std::string> materialNames;
     materialNames.reserve(mesh.materials.size());
     for (size_t i = 0; i < mesh.materials.size(); ++i) {
-        materialNames.push_back(sanitizeMaterialName(textureForMat(i), i));
+        materialNames.push_back("matl_" + std::to_string(i));
     }
 
     uint16_t maxMat = 0;

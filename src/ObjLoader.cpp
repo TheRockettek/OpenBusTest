@@ -28,7 +28,8 @@ int parseInt(const std::string& value, int fallback) {
     }
 }
 
-std::vector<ObjIndex> parseFace(const std::string& value, int positionCount, int texCoordCount) {
+std::vector<ObjIndex> parseFace(const std::string& value, int positionCount, int texCoordCount,
+                                int normalCount) {
     std::vector<ObjIndex> result;
     std::istringstream stream(value);
     std::string token;
@@ -45,11 +46,17 @@ std::vector<ObjIndex> parseFace(const std::string& value, int positionCount, int
                                                                  : secondSlash - firstSlash - 1);
             index.texCoord = parseInt(texCoordText, 0);
         }
+        if (secondSlash != std::string::npos) {
+            index.normal = parseInt(token.substr(secondSlash + 1), 0);
+        }
         if (index.position < 0) {
             index.position += positionCount + 1;
         }
         if (index.texCoord < 0) {
             index.texCoord += texCoordCount + 1;
+        }
+        if (index.normal < 0) {
+            index.normal += normalCount + 1;
         }
         result.push_back(index);
     }
@@ -76,6 +83,10 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path) {
             ObjPosition position = {};
             stream >> position.x >> position.y >> position.z;
             result->positions.push_back(position);
+        } else if (type == "vn") {
+            ObjNormal normal = {};
+            stream >> normal.x >> normal.y >> normal.z;
+            result->normals.push_back(normal);
         } else if (type == "vt") {
             ObjTexCoord texCoord = {};
             stream >> texCoord.u >> texCoord.v;
@@ -94,7 +105,8 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path) {
             }
             const std::vector<ObjIndex> face =
                 parseFace(line.substr(typeEnd + 1), static_cast<int>(result->positions.size()),
-                          static_cast<int>(result->texCoords.size()));
+                          static_cast<int>(result->texCoords.size()),
+                          static_cast<int>(result->normals.size()));
             for (std::size_t index = 2; index < face.size(); ++index) {
                 result->triangles.push_back(
                     {{{face[0], face[index - 1], face[index]}}, currentMaterial});
@@ -137,7 +149,15 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path) {
             materialStream >> materialType;
             if (materialType == "newmtl") {
                 materialStream >> materialName;
-                result->materials[materialName] = {};
+                    ObjMaterial material;
+                    if (materialName.rfind("matl_", 0) == 0) {
+                        try {
+                            material.materialIndex = std::stoi(materialName.substr(5));
+                        } catch (const std::exception&) {
+                            material.materialIndex = -1;
+                        }
+                    }
+                    result->materials[materialName] = material;
             } else if (materialType == "map_Kd" && !materialName.empty()) {
                 std::string textureName;
                 std::getline(materialStream, textureName);
@@ -146,6 +166,22 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path) {
                 materialStream >> result->materials[materialName].color[0] >>
                     result->materials[materialName].color[1] >>
                     result->materials[materialName].color[2];
+            } else if (materialType == "Ks" && !materialName.empty()) {
+                materialStream >> result->materials[materialName].specular[0] >>
+                    result->materials[materialName].specular[1] >>
+                    result->materials[materialName].specular[2];
+            } else if (materialType == "Ke" && !materialName.empty()) {
+                materialStream >> result->materials[materialName].emission[0] >>
+                    result->materials[materialName].emission[1] >>
+                    result->materials[materialName].emission[2];
+            } else if (materialType == "Ns" && !materialName.empty()) {
+                materialStream >> result->materials[materialName].specularPower;
+            } else if (materialType == "d" && !materialName.empty()) {
+                materialStream >> result->materials[materialName].alpha;
+            } else if (materialType == "Tr" && !materialName.empty()) {
+                double transparency = 0.0;
+                materialStream >> transparency;
+                result->materials[materialName].alpha = 1.0 - transparency;
             }
         }
     }

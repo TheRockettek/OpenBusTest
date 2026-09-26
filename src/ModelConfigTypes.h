@@ -10,14 +10,28 @@
 
 enum class ModelConfigKind { Vehicle, Bus, SceneryObject };
 
+enum class TextureAddressMode { Repeat, Clamp, Border, Mirror, MirrorOnce };
+
 struct ModelMaterialState {
     std::filesystem::path texturePath;
     std::string textureName;
+    int materialIndex = -1;
     std::string environmentTextureName;
     double environmentStrength = 0.0;
     int alphaMode = 0;
     bool noZwrite = false;
+    bool noZcheck = false;
     std::string alphaScaleVariable;
+    std::string transmapTextureName;
+    std::string nightmapTextureName;
+    std::string lightmapTextureName;
+    std::string lightmapStrengthVariable;
+    std::string texcoordTransXVariable;
+    std::string texcoordTransYVariable;
+    std::string bumpmapTextureName;
+    double bumpmapStrength = 0.0;
+    TextureAddressMode textureAddressS = TextureAddressMode::Repeat;
+    TextureAddressMode textureAddressT = TextureAddressMode::Repeat;
     struct TextureChange {
         std::filesystem::path texturePath;
         std::string textureName;
@@ -48,12 +62,14 @@ struct ModelPart {
     std::array<double, 3> color = {0.65, 0.65, 0.65};
     int viewpoint = 0;
     int renderType = 2;
+    bool isShadow = false;
     std::string meshIdentifier;
     std::string animationParent;
     std::string visibleVariable;
     int visibleValue = 0;
     std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
     std::unordered_map<std::string, ModelMaterialState> materialStates;
+    std::vector<ModelMaterialState> materialStatesInOrder;
     int lodIndex = -1;
     std::vector<ModelAnimation> animations;
     ModelWheelAnimation wheelAnimation;

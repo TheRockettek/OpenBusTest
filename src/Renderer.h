@@ -24,14 +24,18 @@ struct ModelLoadingPolicy {
 
 class Renderer {
   public:
-    Renderer(int width, int height, const char* title, BusVehicle vehicle = BusVehicle::ManDl05,
-             ModelLoadingPolicy loadingPolicy = {});
+    Renderer(int width, int height, const char* title);
     ~Renderer();
 
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
     bool shouldClose() const;
+    void requestClose();
+    BusModel* AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {});
+    BusModel* AddBusModel(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
+                ModelLoadingPolicy loadingPolicy = {});
+    void SetPlayerBusModel(BusModel* model);
     void beginFrame();
     void draw(const BusSimulation& simulation);
     void endFrame();
@@ -71,5 +75,6 @@ class Renderer {
     bool captureMode_ = false;
     std::vector<KeyEvent> keyEvents_;
     std::vector<VehicleCamera> vehicleCameras_;
-    std::unique_ptr<BusModel> busModel_;
+    std::vector<std::unique_ptr<BusModel>> busModels_;
+    BusModel* playerBusModel_ = nullptr;
 };

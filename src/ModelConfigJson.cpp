@@ -51,6 +51,22 @@ void writeModelAnimationsJson(std::ostream& output, const std::vector<ModelAnima
     output << ']';
 }
 
+const char* textureAddressModeName(TextureAddressMode mode) {
+    switch (mode) {
+    case TextureAddressMode::Clamp:
+        return "clamp";
+    case TextureAddressMode::Border:
+        return "border";
+    case TextureAddressMode::Mirror:
+        return "mirror";
+    case TextureAddressMode::MirrorOnce:
+        return "mirror_once";
+    case TextureAddressMode::Repeat:
+    default:
+        return "repeat";
+    }
+}
+
 } // namespace
 
 void writeModelConfigurationJson(std::ostream& output, const std::filesystem::path& configPath,
@@ -99,7 +115,8 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
                << part.viewpoint
                << ",\n"
                   "      \"render_type\": "
-               << part.renderType << ",\n      \"mesh_identifier\": ";
+               << part.renderType << ",\n      \"is_shadow\": "
+               << (part.isShadow ? "true" : "false") << ",\n      \"mesh_identifier\": ";
         writeJsonString(output, part.meshIdentifier);
         output << ",\n      \"animation_parent\": ";
         writeJsonString(output, part.animationParent);
@@ -148,6 +165,7 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
             writeJsonString(output, materialKeys[materialIndex]);
             output << ",\"texture_name\":";
             writeJsonString(output, material.textureName);
+            output << ",\"material_index\":" << material.materialIndex;
             output << ",\"texture_path\":";
             writeJsonString(output, material.texturePath.generic_string());
             output << ",\"environment_texture\":";
@@ -155,8 +173,28 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
             output << ",\"environment_strength\":" << material.environmentStrength
                    << ",\"alpha_mode\":" << material.alphaMode
                    << ",\"no_zwrite\":" << (material.noZwrite ? "true" : "false")
-                   << ",\"alpha_scale_variable\":";
+                     << ",\"no_zcheck\":" << (material.noZcheck ? "true" : "false")
+                     << ",\"alpha_scale_variable\":";
             writeJsonString(output, material.alphaScaleVariable);
+                 output << ",\"transmap_texture\":";
+                 writeJsonString(output, material.transmapTextureName);
+                 output << ",\"nightmap_texture\":";
+                 writeJsonString(output, material.nightmapTextureName);
+                 output << ",\"lightmap_texture\":";
+                 writeJsonString(output, material.lightmapTextureName);
+                 output << ",\"lightmap_strength_variable\":";
+                 writeJsonString(output, material.lightmapStrengthVariable);
+                 output << ",\"texcoord_trans_x_variable\":";
+                 writeJsonString(output, material.texcoordTransXVariable);
+                 output << ",\"texcoord_trans_y_variable\":";
+                 writeJsonString(output, material.texcoordTransYVariable);
+                 output << ",\"bumpmap_texture\":";
+                 writeJsonString(output, material.bumpmapTextureName);
+                 output << ",\"bumpmap_strength\":" << material.bumpmapStrength
+                     << ",\"texture_address_s\":";
+                 writeJsonString(output, textureAddressModeName(material.textureAddressS));
+                 output << ",\"texture_address_t\":";
+                 writeJsonString(output, textureAddressModeName(material.textureAddressT));
             output << '}';
         }
         output << "]\n    }";

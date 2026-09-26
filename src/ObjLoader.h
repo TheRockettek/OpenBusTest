@@ -15,6 +15,8 @@ struct ObjPosition {
     double z;
 };
 
+using ObjNormal = ObjPosition;
+
 struct ObjTexCoord {
     double u;
     double v;
@@ -23,6 +25,7 @@ struct ObjTexCoord {
 struct ObjIndex {
     int position = 0;
     int texCoord = 0;
+    int normal = 0;
 };
 
 struct ObjTriangle {
@@ -31,13 +34,19 @@ struct ObjTriangle {
 };
 
 struct ObjMaterial {
+    int materialIndex = -1;
     std::filesystem::path texturePath;
     std::string textureName;
     std::array<double, 3> color = {0.65, 0.65, 0.65};
+    std::array<double, 3> specular = {};
+    std::array<double, 3> emission = {};
+    double specularPower = 8.0;
+    double alpha = 1.0;
 };
 
 struct ParsedObj {
     std::vector<ObjPosition> positions;
+    std::vector<ObjNormal> normals;
     std::vector<ObjTexCoord> texCoords;
     std::vector<ObjTriangle> triangles;
     std::unordered_map<std::string, ObjMaterial> materials;

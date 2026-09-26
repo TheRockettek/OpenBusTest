@@ -327,6 +327,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
 
     std::size_t currentPartIndex = static_cast<std::size_t>(-1);
     std::string currentMaterialKey;
+    std::size_t currentMaterialIndex = static_cast<std::size_t>(-1);
     int currentLodIndex = -1;
     std::array<int, 4> pendingInteriorLightIndexes = {-1, -1, -1, -1};
     bool hasPendingInteriorLightIndexes = false;
@@ -361,7 +362,14 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         };
         const auto material = [&]() -> ModelMaterialState* {
             ModelPart* current = part();
-            if (current == nullptr || currentMaterialKey.empty()) {
+            if (current == nullptr) {
+                return nullptr;
+            }
+            if (currentMaterialIndex != static_cast<std::size_t>(-1) &&
+                currentMaterialIndex < current->materialStatesInOrder.size()) {
+                return &current->materialStatesInOrder[currentMaterialIndex];
+            }
+            if (currentMaterialKey.empty()) {
                 return nullptr;
             }
             const auto found = current->materialStates.find(currentMaterialKey);
@@ -390,6 +398,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             result.lodThresholds.push_back(threshold);
             currentPartIndex = static_cast<std::size_t>(-1);
             currentMaterialKey.clear();
+            currentMaterialIndex = static_cast<std::size_t>(-1);
             continue;
         }
         // [mesh]: one source .o3d path; it is mapped to the converted .obj path.
@@ -416,6 +425,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             result.parts.push_back(std::move(newPart));
             currentPartIndex = result.parts.size() - 1;
             currentMaterialKey.clear();
+            currentMaterialIndex = static_cast<std::size_t>(-1);
             continue;
         }
         // [mesh_ident]: one unique identifier used by later [animparent] records.
@@ -607,10 +617,17 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 readValues(reader, line.number, keyword, 2, values, result.diagnostics)) {
                 const std::string textureName = trim(values[0]);
                 // Material modifiers that follow are associated with this key.
-                currentMaterialKey = lower(std::filesystem::path(textureName).filename().string());
+                currentMaterialIndex = current->materialStatesInOrder.size();
+                currentMaterialKey = lower(std::filesystem::path(textureName).filename().string()) +
+                                     "#" + std::to_string(currentMaterialIndex);
                 ModelMaterialState state;
                 state.textureName = textureName;
                 state.texturePath = textureName;
+                if (!parseInt(values[1], state.materialIndex) || state.materialIndex < 0) {
+                    result.diagnostics.error(line.number, keyword,
+                                             "expected a non-negative material index");
+                }
+                current->materialStatesInOrder.push_back(state);
                 current->materialStates[currentMaterialKey] = std::move(state);
                 if (current->textureName.empty()) {
                     current->textureName = textureName;
@@ -650,6 +667,13 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
+        if (keyword == "matl_nozcheck") {
+            ModelMaterialState* current = requireMaterial();
+            if (current != nullptr) {
+                current->noZcheck = true;
+            }
+            continue;
+        }
         // [matl_envmap]: environment texture name followed by reflection strength.
         if (keyword == "matl_envmap") {
             ModelMaterialState* current = requireMaterial();
@@ -669,7 +693,19 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             if (current != nullptr) {
                 const std::size_t count = keyword == "matl_bumpmap" ? 2 : 1;
                 std::vector<std::string> values;
-                readValues(reader, line.number, keyword, count, values, result.diagnostics);
+                if (readValues(reader, line.number, keyword, count, values, result.diagnostics)) {
+                    if (keyword == "matl_bumpmap") {
+                        current->bumpmapTextureName = trim(values[0]);
+                        if (!parseDouble(values[1], current->bumpmapStrength)) {
+                            result.diagnostics.error(line.number, keyword,
+                                                     "expected numeric strength");
+                        }
+                    } else if (keyword == "matl_transmap") {
+                        current->transmapTextureName = trim(values[0]);
+                    } else {
+                        current->nightmapTextureName = trim(values[0]);
+                    }
+                }
             }
             continue;
         }
@@ -680,12 +716,18 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             if (current != nullptr) {
                 Line texture;
                 if (reader.readPayload(texture, result.diagnostics, keyword)) {
+                    if (keyword == "matl_lightmap") {
+                        current->lightmapTextureName = trim(texture.text);
+                    }
                     Line variable;
                     // Push keywords back because the optional variable may be absent.
                     if (reader.next(variable)) {
                         if (variable.isKeyword()) {
                             reader.pushBack(std::move(variable));
                         } else if (variable.text != "--") {
+                            if (keyword == "matl_lightmap") {
+                                current->lightmapStrengthVariable = trim(variable.text);
+                            }
                             declareIfVariable(variable.text, variables);
                         }
                     } else if (keyword == "matl_freetex") {
@@ -718,6 +760,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     }
                     currentMaterialKey =
                         lower(std::filesystem::path(textureName).filename().string());
+                    currentMaterialIndex = static_cast<std::size_t>(-1);
                     ModelMaterialState& state = current->materialStates[currentMaterialKey];
                     // A material change is retained as runtime data; activation
                     // variables are evaluated when the renderer draws the part.
@@ -733,17 +776,38 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         // These material flags have no payload; their presence changes renderer state
         // or is accepted for compatibility with the source format.
-        if (keyword == "matl_item" || keyword == "matl_nozcheck" ||
-            keyword == "matl_texadress_border" || keyword == "matl_texadress_clamp" ||
-            keyword == "matl_texadress_mirror" || keyword == "matl_texadress_mirroronce") {
+        if (keyword == "matl_item") {
             requireMaterial();
+            continue;
+        }
+        if (keyword == "matl_texadress_border" || keyword == "matl_texadress_clamp" ||
+            keyword == "matl_texadress_mirror" || keyword == "matl_texadress_mirroronce") {
+            ModelMaterialState* current = requireMaterial();
+            if (current != nullptr) {
+                const TextureAddressMode mode =
+                    keyword == "matl_texadress_border"
+                        ? TextureAddressMode::Border
+                        : keyword == "matl_texadress_clamp"
+                              ? TextureAddressMode::Clamp
+                              : keyword == "matl_texadress_mirror"
+                                    ? TextureAddressMode::Mirror
+                                    : TextureAddressMode::MirrorOnce;
+                current->textureAddressS = mode;
+                current->textureAddressT = mode;
+            }
             continue;
         }
         // [texcoordtransx]/[texcoordtransy]: one script variable for UV translation.
         if (keyword == "texcoordtransx" || keyword == "texcoordtransy") {
-            if (requireMaterial() != nullptr) {
+            ModelMaterialState* current = requireMaterial();
+            if (current != nullptr) {
                 Line value;
                 if (reader.readPayload(value, result.diagnostics, keyword)) {
+                    if (keyword == "texcoordtransx") {
+                        current->texcoordTransXVariable = trim(value.text);
+                    } else {
+                        current->texcoordTransYVariable = trim(value.text);
+                    }
                     declareIfVariable(value.text, variables);
                 }
             }
@@ -757,8 +821,15 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
-        // [fixed]/[absheight]/[isshadow]: marker records with no payload consumed here.
-        if (keyword == "fixed" || keyword == "absheight" || keyword == "isshadow") {
+        if (keyword == "isshadow") {
+            ModelPart* current = requirePart();
+            if (current != nullptr) {
+                current->isShadow = true;
+            }
+            continue;
+        }
+        // [fixed]/[absheight]: marker records with no payload consumed here.
+        if (keyword == "fixed" || keyword == "absheight") {
             requirePart();
             continue;
         }
@@ -819,6 +890,18 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 }
             }
             continue;
+        }
+    }
+
+    for (ModelPart& part : result.parts) {
+        for (std::size_t index = 0; index < part.materialStatesInOrder.size(); ++index) {
+            const ModelMaterialState& state = part.materialStatesInOrder[index];
+            const std::filesystem::path texturePath =
+                state.textureName.empty() ? state.texturePath
+                                          : std::filesystem::path(state.textureName);
+            const std::string key = lower(texturePath.filename().string()) + "#" +
+                                    std::to_string(index);
+            part.materialStates[key] = state;
         }
     }
 

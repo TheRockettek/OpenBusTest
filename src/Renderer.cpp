@@ -150,6 +150,7 @@ using openbus::rendering::setPerspective;
 using openbus::rendering::TraceScope;
 using openbus::rendering::transformLocalPoint;
 using ObjIndex = openbus::rendering::ObjIndex;
+using ObjNormal = openbus::rendering::ObjNormal;
 using ObjPosition = openbus::rendering::ObjPosition;
 using ObjTexCoord = openbus::rendering::ObjTexCoord;
 using ObjTriangle = openbus::rendering::ObjTriangle;
@@ -202,7 +203,7 @@ struct BusModel {
     };
 
     struct Vertex {
-        float x, y, z, u, v, layer;
+        float x, y, z, u, v, layer, nx, ny, nz;
     };
 
     struct Batch {
@@ -219,8 +220,10 @@ struct BusModel {
         GLuint environmentTexture = 0;
         double environmentStrength = 0.0;
         bool environmentLoadAttempted = false;
+        std::shared_ptr<TextureCacheEntry> environmentTextureCacheEntry;
         std::array<double, 3> color = {0.65, 0.65, 0.65};
         bool textured = false;
+        bool hasNormals = false;
         bool textureLoadAttempted = false;
         bool textureLoadStarted = false;
         std::shared_ptr<TextureRequest> textureRequest;
@@ -301,8 +304,10 @@ struct BusModel {
             batch.textureArray
                 ? std::clamp(requestedLayer, 0, static_cast<int>(batch.textureArrayLayers) - 1)
                 : 0;
-        if (texturePath == batch.texturePath && textureName == batch.textureName &&
-            layer == batch.textureLayer) {
+        const bool sameRequestedTexture = textureName == batch.textureName &&
+                                          (texturePath == batch.texturePath ||
+                                           batch.textureLoadAttempted);
+        if (sameRequestedTexture && layer == batch.textureLayer) {
             return;
         }
         batch.texturePath = texturePath;
@@ -548,8 +553,9 @@ struct BusModel {
                     });
                 for (Batch& batch : part.batches) {
                     if (batch.alphaMode != 0 || batch.noZwrite) {
-                        ensureTexture(batch);
-                        transparentBatches.push_back({&batch, viewDepth(part), part.renderType});
+                            ensureTexture(batch);
+                            transparentBatches.push_back(
+                                {&batch, viewDepth(part), part.renderType});
                     }
                 }
                 if (hasOpaqueBatch) {
@@ -628,7 +634,7 @@ struct BusModel {
                     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
                     glDisableClientState(GL_TEXTURE_COORD_ARRAY);
                     glDisableClientState(GL_VERTEX_ARRAY);
-                    // drawEnvironmentMap(batch);
+                    drawEnvironmentMap(batch, alpha);
                 }
             }
         }
@@ -664,7 +670,7 @@ struct BusModel {
                 glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
                 glDisableClientState(GL_TEXTURE_COORD_ARRAY);
                 glDisableClientState(GL_VERTEX_ARRAY);
-                // drawEnvironmentMap(batch);
+                drawEnvironmentMap(batch, alpha);
             }
         }
         glDepthMask(GL_FALSE);
@@ -683,6 +689,11 @@ struct BusModel {
                     glEnable(GL_POLYGON_OFFSET_FILL);
                     glPolygonOffset(-1.0f, -1.0f);
                 } else if (batch.alphaMode == 2) {
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    glDisable(GL_ALPHA_TEST);
+                    glDisable(GL_POLYGON_OFFSET_FILL);
+                } else if (batch.noZwrite) {
                     glEnable(GL_BLEND);
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                     glDisable(GL_ALPHA_TEST);
@@ -713,12 +724,13 @@ struct BusModel {
                 glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
                 glDisableClientState(GL_TEXTURE_COORD_ARRAY);
                 glDisableClientState(GL_VERTEX_ARRAY);
-                // drawEnvironmentMap(batch);
+                drawEnvironmentMap(batch, alpha);
             }
         }
         {
             TraceScope phase("render", "BusModel::draw.cleanup");
             glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+            glDisableClientState(GL_NORMAL_ARRAY);
             glDisableClientState(GL_VERTEX_ARRAY);
             pglBindBuffer(GL_ARRAY_BUFFER, 0);
             glDepthMask(GL_TRUE);
@@ -872,7 +884,7 @@ struct BusModel {
             const BodyPose pose = simulation.wheelPose(index);
             glPushMatrix();
             applyPose(pose);
-            drawWheel(simulation.wheelRadius(), simulation.wheelHalfWidth());
+            drawWheel(simulation.wheelRadius(index), simulation.wheelHalfWidth());
             glPopMatrix();
         }
         pglBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -1446,8 +1458,9 @@ struct BusModel {
         batch.textureArrayLayers = batch.textureCacheEntry->textureArrayLayers;
         batch.textureLoadAttempted = true;
         batch.textured = batch.texture != 0;
-        if (batch.texturePath.empty()) {
-            textureLog.Log("decode-failed: " + batch.textureName);
+        if (batch.texturePath.empty() || batch.texture == 0) {
+            textureLog.Log("decode-failed: " + batch.textureName +
+                           " resolved=" + batch.texturePath.generic_string());
         }
         // if (!batch.environmentLoadAttempted && !batch.environmentTextureName.empty() &&
         //     batch.environmentStrength > 0.0) {
@@ -1460,6 +1473,97 @@ struct BusModel {
         // }
     }
 
+    void ensureEnvironmentTexture(Batch& batch, bool visible = true) {
+        TraceScope phase("texture", "ensureEnvironmentTexture");
+        if (batch.environmentLoadAttempted || batch.environmentTextureName.empty() ||
+            batch.environmentStrength <= 0.0) {
+            return;
+        }
+        if (!batch.environmentTextureCacheEntry) {
+            Batch request;
+            request.textureRoot = batch.textureRoot;
+            request.textureName = batch.environmentTextureName;
+            batch.environmentTextureCacheEntry = textureEntry(request);
+        }
+        const std::shared_ptr<TextureCacheEntry>& entry = batch.environmentTextureCacheEntry;
+        startTextureRequest(entry);
+        bool requestComplete = false;
+        {
+            std::lock_guard<std::mutex> lock(entry->request->mutex);
+            requestComplete = entry->request->complete;
+        }
+        if (!requestComplete || !visible) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(entry->request->mutex);
+        if (!entry->uploadAttempted) {
+            entry->uploadAttempted = true;
+            if (!entry->request->resolvedPath.empty()) {
+                if (entry->request->compressedDds) {
+                    entry->texture = uploadCompressedDds(entry->request->resolvedPath,
+                                                         *entry->request->compressedDds);
+                    if (entry->texture == 0) {
+                        Image fallbackImage;
+                        if (openbus::rendering::TextureLoader::readImage(
+                                entry->request->resolvedPath, fallbackImage)) {
+                            entry->texture =
+                                uploadTexture(entry->request->resolvedPath, std::move(fallbackImage));
+                        }
+                    }
+                } else if (entry->request->compressedTexture) {
+                    entry->texture = uploadCompressedTexture(
+                        entry->request->resolvedPath, *entry->request->compressedTexture,
+                        entry->textureArray, entry->textureArrayLayers);
+                } else if (entry->request->image) {
+                    entry->texture = uploadTexture(entry->request->resolvedPath,
+                                                   *entry->request->image);
+                }
+            }
+        }
+        batch.environmentTexture = entry->texture;
+        batch.environmentLoadAttempted = true;
+    }
+
+    void drawEnvironmentMap(Batch& batch, double alpha) {
+        ensureEnvironmentTexture(batch);
+        if (batch.environmentTexture == 0 || !batch.hasNormals || alpha <= 0.0) {
+            return;
+        }
+        const double reflectionStrength =
+            std::clamp(alpha * batch.environmentStrength, 0.0, 1.0);
+        if (reflectionStrength <= 0.0) {
+            return;
+        }
+
+        const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+        const GLboolean normalizeEnabled = glIsEnabled(GL_NORMALIZE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, batch.environmentTexture);
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+        glEnableClientState(GL_NORMAL_ARRAY);
+        glNormalPointer(GL_FLOAT, sizeof(Vertex),
+                        reinterpret_cast<const void*>(6 * sizeof(float)));
+        glEnable(GL_NORMALIZE);
+        glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
+        glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
+        glEnable(GL_TEXTURE_GEN_S);
+        glEnable(GL_TEXTURE_GEN_T);
+        glColor4d(1.0, 1.0, 1.0, reflectionStrength);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
+        glDisable(GL_TEXTURE_GEN_S);
+        glDisable(GL_TEXTURE_GEN_T);
+        glDisableClientState(GL_NORMAL_ARRAY);
+        if (!normalizeEnabled) {
+            glDisable(GL_NORMALIZE);
+        }
+        if (!blendEnabled) {
+            glDisable(GL_BLEND);
+        }
+        glColor4d(1.0, 1.0, 1.0, 1.0);
+    }
+
     void preloadTextures() {
         const auto preload = [&](std::vector<DisplayPart>& parts) {
             for (DisplayPart& part : parts) {
@@ -1467,6 +1571,8 @@ struct BusModel {
                     if (!batch.texturePath.empty() || !batch.textureName.empty()) {
                         ensureTexture(batch, loadingPolicy.textureMode == AssetLoadingMode::Eager);
                     }
+                    ensureEnvironmentTexture(batch,
+                                             loadingPolicy.textureMode == AssetLoadingMode::Eager);
                 }
             }
         };
@@ -1493,6 +1599,10 @@ struct BusModel {
 
     void loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed) {
         TraceScope trace("obj", "loadObj");
+        const std::string sourceStem = lower(part.objPath.stem().string());
+        if (sourceStem == "shadow") {
+            return;
+        }
         static const bool verboseObjLoadLogs =
             parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_OBJ_LOAD"));
         if (verboseObjLoadLogs) {
@@ -1502,6 +1612,7 @@ struct BusModel {
             return;
         }
         const auto& positions = parsed->positions;
+        const auto& normals = parsed->normals;
         const auto& texCoords = parsed->texCoords;
         const auto& triangles = parsed->triangles;
         const auto& materials = parsed->materials;
@@ -1522,7 +1633,9 @@ struct BusModel {
                         wheelAnimation.rotationVariable == candidate.animation.rotationVariable &&
                         wheelAnimation.suspensionVariable ==
                             candidate.animation.suspensionVariable &&
-                        wheelAnimation.steeringVariable == candidate.animation.steeringVariable;
+                        wheelAnimation.steeringVariable == candidate.animation.steeringVariable &&
+                        wheelAnimation.hasOrigin == candidate.animation.hasOrigin &&
+                        wheelAnimation.origin == candidate.animation.origin;
                     if (sameAnimation) {
                         return true;
                     }
@@ -1543,9 +1656,47 @@ struct BusModel {
             TraceScope batchTrace("obj", "loadObj.makeBatch");
             std::vector<Vertex> vertices;
             vertices.reserve(source.size() * 3);
+            const auto convertPosition = [](const ObjPosition& position) {
+                return std::array<double, 3>{position.z, -position.x, position.y};
+            };
+            const auto normalizeVector = [](std::array<double, 3> value) {
+                const double length =
+                    std::sqrt(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
+                if (length <= 1.0e-8) {
+                    return std::array<double, 3>{0.0, 0.0, 1.0};
+                }
+                for (double& component : value) {
+                    component /= length;
+                }
+                return value;
+            };
             {
                 TraceScope vertexTrace("obj", "loadObj.buildVertices");
                 for (const ObjTriangle* triangle : source) {
+                    std::array<double, 3> fallbackNormal = {0.0, 0.0, 1.0};
+                    if (triangle->indices[0].position > 0 &&
+                        triangle->indices[1].position > 0 &&
+                        triangle->indices[2].position > 0 &&
+                        triangle->indices[0].position <= static_cast<int>(positions.size()) &&
+                        triangle->indices[1].position <= static_cast<int>(positions.size()) &&
+                        triangle->indices[2].position <= static_cast<int>(positions.size())) {
+                        const std::array<double, 3> first = convertPosition(
+                            positions[static_cast<std::size_t>(triangle->indices[0].position - 1)]);
+                        const std::array<double, 3> second = convertPosition(
+                            positions[static_cast<std::size_t>(triangle->indices[1].position - 1)]);
+                        const std::array<double, 3> third = convertPosition(
+                            positions[static_cast<std::size_t>(triangle->indices[2].position - 1)]);
+                        const std::array<double, 3> edgeA = {second[0] - first[0],
+                                                             second[1] - first[1],
+                                                             second[2] - first[2]};
+                        const std::array<double, 3> edgeB = {third[0] - first[0],
+                                                             third[1] - first[1],
+                                                             third[2] - first[2]};
+                        fallbackNormal = normalizeVector(
+                            {edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+                             edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+                             edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]});
+                    }
                     for (const ObjIndex& index : triangle->indices) {
                         if (index.position <= 0 ||
                             index.position > static_cast<int>(positions.size())) {
@@ -1553,6 +1704,14 @@ struct BusModel {
                         }
                         const ObjPosition& position =
                             positions[static_cast<std::size_t>(index.position - 1)];
+                        std::array<double, 3> normal = fallbackNormal;
+                        if (index.normal > 0 &&
+                            index.normal <= static_cast<int>(normals.size())) {
+                            const ObjNormal& sourceNormal =
+                                normals[static_cast<std::size_t>(index.normal - 1)];
+                            normal = normalizeVector(
+                                {-sourceNormal.z, sourceNormal.x, -sourceNormal.y});
+                        }
                         const ObjTexCoord* texCoord = nullptr;
                         if (index.texCoord > 0 &&
                             index.texCoord <= static_cast<int>(texCoords.size())) {
@@ -1562,7 +1721,9 @@ struct BusModel {
                             {static_cast<float>(position.z), static_cast<float>(-position.x),
                              static_cast<float>(position.y),
                              texCoord ? static_cast<float>(texCoord->u) : 0.0f,
-                             texCoord ? static_cast<float>(1.0 - texCoord->v) : 0.0f, 0.0f});
+                             texCoord ? static_cast<float>(1.0 - texCoord->v) : 0.0f, 0.0f,
+                             static_cast<float>(normal[0]), static_cast<float>(normal[1]),
+                             static_cast<float>(normal[2])});
                     }
                 }
             }
@@ -1578,6 +1739,7 @@ struct BusModel {
             batch.environmentTextureName = environmentTextureName;
             batch.environmentStrength = environmentStrength;
             batch.color = color;
+            batch.hasNormals = true;
             batch.alphaMode = alphaMode;
             batch.noZwrite = noZwrite;
             batch.alphaScaleVariable = alphaScaleVariable;
@@ -1605,6 +1767,8 @@ struct BusModel {
         std::vector<std::string> groupOrder;
         std::unordered_map<std::string, const MaterialState*> materialStatesByFilename;
         std::unordered_map<std::string, const MaterialState*> materialStatesByStem;
+        std::unordered_map<std::string, std::vector<const MaterialState*>>
+            materialStatesByStemOccurrence;
         materialStatesByFilename.reserve(part.materialStates.size());
         materialStatesByStem.reserve(part.materialStates.size());
         for (const auto& entry : part.materialStates) {
@@ -1612,6 +1776,40 @@ struct BusModel {
                 lower(std::filesystem::path(entry.first).filename().string()), &entry.second);
             materialStatesByStem.emplace(lower(std::filesystem::path(entry.first).stem().string()),
                                          &entry.second);
+        }
+        for (const MaterialState& state : part.materialStatesInOrder) {
+            const std::filesystem::path statePath =
+                state.textureName.empty() ? state.texturePath
+                                          : std::filesystem::path(state.textureName);
+            std::vector<const MaterialState*>& states =
+                materialStatesByStemOccurrence[lower(statePath.stem().string())];
+            if (state.materialIndex >= 0) {
+                if (states.size() <= static_cast<std::size_t>(state.materialIndex)) {
+                    states.resize(static_cast<std::size_t>(state.materialIndex) + 1, nullptr);
+                }
+                states[static_cast<std::size_t>(state.materialIndex)] = &state;
+            } else {
+                states.push_back(&state);
+            }
+        }
+        std::vector<std::pair<int, std::string>> indexedMaterials;
+        indexedMaterials.reserve(materials.size());
+        for (const auto& entry : materials) {
+            if (entry.second.materialIndex >= 0) {
+                const std::filesystem::path materialPath =
+                    entry.second.textureName.empty() ? entry.second.texturePath
+                                                     : std::filesystem::path(entry.second.textureName);
+                indexedMaterials.push_back(
+                    {entry.second.materialIndex, lower(materialPath.stem().string())});
+            }
+        }
+        std::sort(indexedMaterials.begin(), indexedMaterials.end(),
+                  [](const auto& first, const auto& second) { return first.first < second.first; });
+        std::unordered_map<std::string, int> textureOccurrences;
+        std::unordered_map<int, int> materialOccurrenceByIndex;
+        for (const auto& indexedMaterial : indexedMaterials) {
+            const int occurrence = textureOccurrences[indexedMaterial.second]++;
+            materialOccurrenceByIndex[indexedMaterial.first] = occurrence;
         }
         const std::filesystem::path fallbackTexturePath = part.texturePath;
         const std::string fallbackTextureName = part.textureName;
@@ -1638,30 +1836,51 @@ struct BusModel {
                     groupOrder.push_back(key);
                 }
                 MaterialState state;
+                bool matchedMaterialState = false;
+                if (material != materials.end() && !part.materialStatesInOrder.empty() &&
+                    material->second.materialIndex >= 0) {
+                    const auto occurrence =
+                        materialOccurrenceByIndex.find(material->second.materialIndex);
+                    const std::filesystem::path materialPath =
+                        material->second.textureName.empty()
+                            ? material->second.texturePath
+                            : std::filesystem::path(material->second.textureName);
+                    const auto states = materialStatesByStemOccurrence.find(
+                        lower(materialPath.stem().string()));
+                    if (occurrence != materialOccurrenceByIndex.end() &&
+                        states != materialStatesByStemOccurrence.end() &&
+                        occurrence->second >= 0 &&
+                        static_cast<std::size_t>(occurrence->second) < states->second.size() &&
+                        states->second[static_cast<std::size_t>(occurrence->second)] != nullptr) {
+                        state = *states->second[static_cast<std::size_t>(occurrence->second)];
+                    }
+                    matchedMaterialState = true;
+                }
                 if (!textureName.empty() || !texturePath.empty()) {
                     const std::filesystem::path statePath =
                         textureName.empty() ? texturePath : std::filesystem::path(textureName);
                     const std::string stateKey = lower(statePath.filename().string());
-                    const auto exactState = materialStatesByFilename.find(stateKey);
-                    if (exactState != materialStatesByFilename.end()) {
-                        state = *exactState->second;
-                    } else {
-                        const std::string stateStem = lower(statePath.stem().string());
-                        const auto matchingState = materialStatesByStem.find(stateStem);
-                        if (matchingState != materialStatesByStem.end()) {
-                            state = *matchingState->second;
+                    if (!matchedMaterialState) {
+                        const auto exactState = materialStatesByFilename.find(stateKey);
+                        if (exactState != materialStatesByFilename.end()) {
+                            state = *exactState->second;
                         } else {
-                            const auto matchingMaterial =
-                                materialStatesByStem.find(lower(triangle.material));
-                            if (matchingMaterial != materialStatesByStem.end()) {
-                                state = *matchingMaterial->second;
+                            const std::string stateStem = lower(statePath.stem().string());
+                            const auto matchingState = materialStatesByStem.find(stateStem);
+                            if (matchingState != materialStatesByStem.end()) {
+                                state = *matchingState->second;
+                            } else {
+                                const auto matchingMaterial =
+                                    materialStatesByStem.find(lower(triangle.material));
+                                if (matchingMaterial != materialStatesByStem.end()) {
+                                    state = *matchingMaterial->second;
+                                }
                             }
                         }
                     }
                 }
                 if (!state.textureName.empty()) {
                     textureName = state.textureName;
-                    color = {1.0, 1.0, 1.0};
                 }
                 if (state.alphaMode == 0) {
                     state.noZwrite = false;
@@ -1973,8 +2192,7 @@ void Renderer::scrollCallback(GLFWwindow* window, double, double yOffset) {
     renderer->cameraDistance_ = std::clamp(renderer->cameraDistance_ - yOffset * 2.0, 6.0, 80.0);
 }
 
-Renderer::Renderer(int width, int height, const char* title, BusVehicle vehicle,
-                   ModelLoadingPolicy loadingPolicy)
+Renderer::Renderer(int width, int height, const char* title)
     : window_(nullptr) {
     TraceScope trace("startup", "Renderer::Renderer");
     if (!glfwInit()) {
@@ -2004,39 +2222,58 @@ Renderer::Renderer(int width, int height, const char* title, BusVehicle vehicle,
     }
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.45f, 0.65f, 0.88f, 1.0f);
-    const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigurationPathFor(vehicle));
-    for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
-        if (camera.kind == VehicleCameraKind::Driver ||
-            camera.kind == VehicleCameraKind::Passenger) {
-            vehicleCameras_.push_back(camera);
-        }
-    }
-    if (!vehicleCameras_.empty()) {
-        int driverIndex = 0;
-        int selectedCamera = -1;
-        for (std::size_t index = 0; index < vehicleCameras_.size(); ++index) {
-            if (vehicleCameras_[index].kind != VehicleCameraKind::Driver) {
-                continue;
-            }
-            if (driverIndex == vehicleConfiguration.standardDriverCamera) {
-                selectedCamera = static_cast<int>(index);
-                break;
-            }
-            ++driverIndex;
-        }
-        cameraView_ = selectedCamera >= 0 ? selectedCamera + 1 : 1;
-    }
-    busModel_ = std::make_unique<BusModel>(vehicle, loadingPolicy);
     gameLog.Log("Renderer initialized");
 }
 
 Renderer::~Renderer() {
     gameLog.Log("Renderer shutting down");
-    busModel_.reset();
+    playerBusModel_ = nullptr;
+    busModels_.clear();
     if (window_) {
         glfwDestroyWindow(window_);
     }
     glfwTerminate();
+}
+
+BusModel* Renderer::AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy) {
+    if (vehicleCameras_.empty()) {
+        const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigurationPathFor(vehicle));
+        for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
+            if (camera.kind == VehicleCameraKind::Driver ||
+                camera.kind == VehicleCameraKind::Passenger) {
+                vehicleCameras_.push_back(camera);
+            }
+        }
+        if (!vehicleCameras_.empty()) {
+            int driverIndex = 0;
+            int selectedCamera = -1;
+            for (std::size_t index = 0; index < vehicleCameras_.size(); ++index) {
+                if (vehicleCameras_[index].kind != VehicleCameraKind::Driver) {
+                    continue;
+                }
+                if (driverIndex == vehicleConfiguration.standardDriverCamera) {
+                    selectedCamera = static_cast<int>(index);
+                    break;
+                }
+                ++driverIndex;
+            }
+            cameraView_ = selectedCamera >= 0 ? selectedCamera + 1 : 1;
+        }
+    }
+    auto model = std::make_unique<BusModel>(vehicle, loadingPolicy);
+    BusModel* result = model.get();
+    busModels_.push_back(std::move(model));
+    return result;
+}
+
+BusModel* Renderer::AddBusModel(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
+                                ModelLoadingPolicy loadingPolicy) {
+    static_cast<void>(spawnPosition);
+    return AddBusModel(vehicle, loadingPolicy);
+}
+
+void Renderer::SetPlayerBusModel(BusModel* model) {
+    playerBusModel_ = model;
 }
 
 bool Renderer::isExteriorView() const {
@@ -2077,6 +2314,12 @@ double Renderer::currentFieldOfView() const {
 
 bool Renderer::shouldClose() const {
     return glfwWindowShouldClose(window_) != 0;
+}
+
+void Renderer::requestClose() {
+    if (window_ != nullptr) {
+        glfwSetWindowShouldClose(window_, GLFW_TRUE);
+    }
 }
 
 void Renderer::beginFrame() {
@@ -2130,8 +2373,8 @@ void Renderer::beginFrame() {
     double cursorX = 0.0;
     double cursorY = 0.0;
     glfwGetCursorPos(window_, &cursorX, &cursorY);
-    if (busModel_) {
-        busModel_->updateFrameVariables(timegap, currentTime, cursorX, cursorY);
+    if (playerBusModel_) {
+        playerBusModel_->updateFrameVariables(timegap, currentTime, cursorX, cursorY);
     }
     const bool middleMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
     if (middleMouse && !draggingCamera_) {
@@ -2180,7 +2423,8 @@ void Renderer::draw(const BusSimulation& simulation) {
             constexpr double DEGREES_TO_RADIANS = 3.141592653589793 / 180.0;
             const double pan = -camera->pan * DEGREES_TO_RADIANS + viewLookYaw_;
             const double tilt = camera->tilt * DEGREES_TO_RADIANS + viewLookPitch_;
-            const double modelOffsetZ = busModel_ != nullptr ? busModel_->modelOffsetZ : 0.0;
+            const double modelOffsetZ =
+                playerBusModel_ != nullptr ? playerBusModel_->modelOffsetZ : 0.0;
             const std::array<double, 3> centerLocal = {camera->position[1], -camera->position[0],
                                                        camera->position[2] + modelOffsetZ};
             const std::array<double, 3> direction = {
@@ -2267,10 +2511,10 @@ void Renderer::draw(const BusSimulation& simulation) {
 
     {
         TraceScope phase("render", "Renderer::draw.model");
-        if (busModel_ && busModel_->loaded && !busModel_->displayLists.empty()) {
+        if (playerBusModel_ && playerBusModel_->loaded && !playerBusModel_->displayLists.empty()) {
             glPushMatrix();
             applyPose(chassis);
-            busModel_->draw(context);
+            playerBusModel_->draw(context);
             glPopMatrix();
         } else {
             glPushMatrix();
@@ -2281,9 +2525,9 @@ void Renderer::draw(const BusSimulation& simulation) {
         }
     }
 
-    if (busModel_ && glfwGetTime() - lastStatsTitleTime_ > 0.25) {
+    if (playerBusModel_ && glfwGetTime() - lastStatsTitleTime_ > 0.25) {
         std::ostringstream title;
-        title << "OpenBus - " << busModel_->renderedTriangles() << " triangles";
+        title << "OpenBus - " << playerBusModel_->renderedTriangles() << " triangles";
         glfwSetWindowTitle(window_, title.str().c_str());
         lastStatsTitleTime_ = glfwGetTime();
     }
@@ -2313,14 +2557,14 @@ void Renderer::draw(const BusSimulation& simulation) {
 
     {
         TraceScope phase("render", "Renderer::draw.wheels");
-        if (busModel_ && busModel_->hasConfiguredWheels(simulation.wheelCount())) {
-            busModel_->drawConfiguredWheels(simulation, chassis, isExteriorView());
+        if (playerBusModel_ && playerBusModel_->hasConfiguredWheels(simulation.wheelCount())) {
+            playerBusModel_->drawConfiguredWheels(simulation, chassis, isExteriorView());
         } else {
             for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
                 const BodyPose wheel = simulation.wheelPose(index);
                 glPushMatrix();
                 applyPose(wheel);
-                drawWheel(simulation.wheelRadius(), simulation.wheelHalfWidth());
+                drawWheel(simulation.wheelRadius(index), simulation.wheelHalfWidth());
                 glPopMatrix();
             }
         }
@@ -2394,7 +2638,7 @@ bool Renderer::consumeCaptureRequest() {
 }
 
 bool Renderer::isCaptureReady() const {
-    return busModel_ && busModel_->isCaptureReady();
+    return playerBusModel_ && playerBusModel_->isCaptureReady();
 }
 
 double Renderer::throttle() const {
