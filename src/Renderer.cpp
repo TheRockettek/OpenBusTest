@@ -287,11 +287,20 @@ struct BusModel {
 
     void updateMaterialChange(Batch& batch) {
         TraceScope phase("texture", "updateMaterialChange");
+        static const bool verboseMaterialChangeLogs =
+            parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_MATERIAL_CHANGES"));
         // Select the last active material change, then reset only the texture
         // request state so the new texture is resolved and uploaded.
         const MaterialState::TextureChange* selected = nullptr;
         for (const MaterialState::TextureChange& change : batch.textureChanges) {
-            if (variables.get(change.activationVariable) != 0.0) {
+            const double activationValue = variables.get(change.activationVariable);
+            if (verboseMaterialChangeLogs && activationValue != 0.0) {
+                gameLog.Log("Material change active: base=" + batch.baseTextureName +
+                            " variable=" + change.activationVariable +
+                            " value=" + std::to_string(activationValue) +
+                            " replacement=" + change.textureName);
+            }
+            if (activationValue != 0.0) {
                 selected = &change;
             }
         }
@@ -304,11 +313,12 @@ struct BusModel {
             batch.textureArray
                 ? std::clamp(requestedLayer, 0, static_cast<int>(batch.textureArrayLayers) - 1)
                 : 0;
-        const bool sameRequestedTexture = textureName == batch.textureName &&
-                                          (texturePath == batch.texturePath ||
-                                           batch.textureLoadAttempted);
+        const bool sameRequestedTexture = textureName == batch.textureName && (texturePath == batch.texturePath || batch.textureLoadAttempted);
         if (sameRequestedTexture && layer == batch.textureLayer) {
             return;
+        }
+        if (verboseMaterialChangeLogs) {
+            gameLog.Log("Material change reset: " + batch.textureName + " -> " + textureName);
         }
         batch.texturePath = texturePath;
         batch.textureName = textureName;
@@ -382,7 +392,7 @@ struct BusModel {
             modelOffsetZ = -1.02;
         } else {
             relativeConfig = std::filesystem::path("MAN_DL05") / "Model" / "DL05.cfg";
-            relativeModelRoot = std::filesystem::path("MAN_DL05") / "Model" / "DL05";
+            relativeModelRoot = std::filesystem::path("MAN_DL05") / "Model" / "DL05_obj";
         }
         const auto resolveAssetPath = [](const std::filesystem::path& relative) {
             const std::array<std::filesystem::path, 4> candidates = {
@@ -553,9 +563,7 @@ struct BusModel {
                     });
                 for (Batch& batch : part.batches) {
                     if (batch.alphaMode != 0 || batch.noZwrite) {
-                            ensureTexture(batch);
-                            transparentBatches.push_back(
-                                {&batch, viewDepth(part), part.renderType});
+                        transparentBatches.push_back({&batch, viewDepth(part), part.renderType});
                     }
                 }
                 if (hasOpaqueBatch) {
@@ -796,26 +804,15 @@ struct BusModel {
                              std::to_string(pose.position[2]) + ")");
             }
             const std::array<double, 3> meshOrigin = wheel.animation.origin;
-            double visualWheelWidth = 0.0;
             double visualWheelDiameter = 0.0;
             for (const DisplayPart& part : wheel.parts) {
-                visualWheelWidth = std::max(visualWheelWidth, part.size[1]);
                 visualWheelDiameter =
                     std::max(visualWheelDiameter, std::max(part.size[0], part.size[2]));
             }
             const BusAxle axle = simulation.axle(simulationIndex / 2);
-            const double outerHalfTrack =
-                axle.maxWidth > 0.0 ? axle.maxWidth * 0.5 : axle.trackWidth * 0.5;
-            const double innerHalfTrack =
-                axle.minWidth > 0.0 ? axle.minWidth * 0.5 : axle.trackWidth * 0.5;
-            const double currentCenter = axle.trackWidth * 0.5;
-            double desiredCenter = currentCenter;
-            if (!axle.steerable && visualWheelWidth > 0.0) {
-                desiredCenter = outerHalfTrack - visualWheelWidth * 0.5;
-                desiredCenter = std::max(desiredCenter, innerHalfTrack + visualWheelWidth * 0.5);
-            }
             const double sideSign = simulationIndex % 2 == 0 ? 1.0 : -1.0;
-            const double lateralOffset = sideSign * (desiredCenter - currentCenter);
+            const double currentCenter = sideSign * axle.trackWidth * 0.5;
+            const double lateralOffset = wheel.animation.origin[1] - currentCenter;
             const double diameterScale = visualWheelDiameter > 0.0 && axle.wheelDiameter > 0.0
                                              ? axle.wheelDiameter / visualWheelDiameter
                                              : 1.0;
@@ -1395,6 +1392,9 @@ struct BusModel {
     }
 
     void ensureTexture(Batch& batch, bool visible = true) {
+        if (batch.textureLoadAttempted && batch.textureChanges.empty()) {
+            return;
+        }
         TraceScope phase("texture", "ensureTexture");
         updateMaterialChange(batch);
         if (batch.textureLoadAttempted) {
@@ -1474,11 +1474,11 @@ struct BusModel {
     }
 
     void ensureEnvironmentTexture(Batch& batch, bool visible = true) {
-        TraceScope phase("texture", "ensureEnvironmentTexture");
         if (batch.environmentLoadAttempted || batch.environmentTextureName.empty() ||
             batch.environmentStrength <= 0.0) {
             return;
         }
+        TraceScope phase("texture", "ensureEnvironmentTexture");
         if (!batch.environmentTextureCacheEntry) {
             Batch request;
             request.textureRoot = batch.textureRoot;
@@ -1621,6 +1621,12 @@ struct BusModel {
         const double boundsRadius = parsed->boundsRadius;
 
         WheelAnimation wheelAnimation = part.wheelAnimation;
+        if (verboseObjLoadLogs && !wheelAnimation.rotationVariable.empty()) {
+            gameLog.Log("Wheel OBJ animation: " + part.objPath.filename().string() +
+                        " rotation=" + wheelAnimation.rotationVariable +
+                        " suspension=" + wheelAnimation.suspensionVariable +
+                        " steering=" + wheelAnimation.steeringVariable);
+        }
         if (!wheelAnimation.rotationVariable.empty() && !wheelAnimation.hasOrigin) {
             wheelAnimation.origin = boundsCenter;
             wheelAnimation.hasOrigin = true;
@@ -1631,11 +1637,11 @@ struct BusModel {
                 wheelModels.begin(), wheelModels.end(), [&](const WheelModel& candidate) {
                     const bool sameAnimation =
                         wheelAnimation.rotationVariable == candidate.animation.rotationVariable &&
-                        wheelAnimation.suspensionVariable ==
-                            candidate.animation.suspensionVariable &&
+                        wheelAnimation.suspensionVariable == candidate.animation.suspensionVariable &&
                         wheelAnimation.steeringVariable == candidate.animation.steeringVariable &&
-                        wheelAnimation.hasOrigin == candidate.animation.hasOrigin &&
-                        wheelAnimation.origin == candidate.animation.origin;
+                        std::abs(wheelAnimation.origin[0] - candidate.animation.origin[0]) < 0.5 &&
+                        std::abs(wheelAnimation.origin[1] - candidate.animation.origin[1]) < 0.5 &&
+                        std::abs(wheelAnimation.origin[2] - candidate.animation.origin[2]) < 0.5;
                     if (sameAnimation) {
                         return true;
                     }

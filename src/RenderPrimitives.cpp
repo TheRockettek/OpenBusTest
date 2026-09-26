@@ -148,26 +148,33 @@ void drawRoadIncline(const RoadBump& bump) {
 }
 
 void drawGround(const std::vector<RoadBump>& bumps) {
-    glColor3d(0.18, 0.22, 0.18);
-    glBegin(GL_QUADS);
-    glVertex3d(-100.0, -100.0, 0.0);
-    glVertex3d(100.0, -100.0, 0.0);
-    glVertex3d(100.0, 100.0, 0.0);
-    glVertex3d(-100.0, 100.0, 0.0);
-    glEnd();
+    static GLuint groundGridList = 0;
+    if (groundGridList == 0) {
+        groundGridList = glGenLists(1);
+        glNewList(groundGridList, GL_COMPILE);
+        glColor3d(0.18, 0.22, 0.18);
+        glBegin(GL_QUADS);
+        glVertex3d(-100.0, -100.0, 0.0);
+        glVertex3d(100.0, -100.0, 0.0);
+        glVertex3d(100.0, 100.0, 0.0);
+        glVertex3d(-100.0, 100.0, 0.0);
+        glEnd();
 
-    glLineWidth(1.0f);
-    glBegin(GL_LINES);
-    for (int line = -100; line <= 100; line += 2) {
-        const double coordinate = static_cast<double>(line);
-        const bool major = line % 10 == 0;
-        glColor3d(major ? 0.38 : 0.25, major ? 0.43 : 0.30, major ? 0.36 : 0.25);
-        glVertex3d(coordinate, -100.0, 0.02);
-        glVertex3d(coordinate, 100.0, 0.02);
-        glVertex3d(-100.0, coordinate, 0.02);
-        glVertex3d(100.0, coordinate, 0.02);
+        glLineWidth(1.0f);
+        glBegin(GL_LINES);
+        for (int line = -100; line <= 100; line += 2) {
+            const double coordinate = static_cast<double>(line);
+            const bool major = line % 10 == 0;
+            glColor3d(major ? 0.38 : 0.25, major ? 0.43 : 0.30, major ? 0.36 : 0.25);
+            glVertex3d(coordinate, -100.0, 0.02);
+            glVertex3d(coordinate, 100.0, 0.02);
+            glVertex3d(-100.0, coordinate, 0.02);
+            glVertex3d(100.0, coordinate, 0.02);
+        }
+        glEnd();
+        glEndList();
     }
-    glEnd();
+    glCallList(groundGridList);
 
     for (const RoadBump& bump : bumps) {
         if (bump.type == RoadFeatureType::Barrier) {
