@@ -153,8 +153,16 @@ BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath) {
         throw std::runtime_error("Bus configuration contains no valid [newachse] entries: " +
                                  configPath.string());
     }
-    // TODO: Decide whether model diagnostics with errors should fail configuration loading.
     const ModelConfig model = loadBusModelConfiguration(configPath);
+    if (model.diagnostics.hasErrors()) {
+        for (const ConfigurationDiagnostic& diagnostic : model.diagnostics.entries) {
+            if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error) {
+                throw std::runtime_error("Invalid bus model configuration " + configPath.string() +
+                                         " at line " + std::to_string(diagnostic.line) + ": " +
+                                         diagnostic.message);
+            }
+        }
+    }
     applyModelSteering(source, model);
     return configurationFromVehicleConfig(source);
 }

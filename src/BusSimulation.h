@@ -2,6 +2,8 @@
 
 #include "BusConfiguration.h"
 
+#include <memory>
+
 class BusSimulation {
   public:
     explicit BusSimulation(
@@ -40,5 +42,5 @@ class BusSimulation {
 
   private:
     struct Impl;
-    Impl* impl_;
+    std::unique_ptr<Impl> impl_;
 };

@@ -18,8 +18,8 @@ bool saveFramebufferBmp(const std::filesystem::path& path, int width, int height
     glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
 
     std::array<std::uint8_t, 54> header = {};
-    // TODO: Account for four-byte BMP row padding when writing screenshots.
-    const std::uint32_t imageSize = static_cast<std::uint32_t>(width * height * 3);
+    const std::size_t rowSize = (static_cast<std::size_t>(width) * 3 + 3) & ~std::size_t(3);
+    const std::uint32_t imageSize = static_cast<std::uint32_t>(rowSize * height);
     const std::uint32_t fileSize = 54 + imageSize;
     header[0] = 'B';
     header[1] = 'M';
@@ -49,6 +49,7 @@ bool saveFramebufferBmp(const std::filesystem::path& path, int width, int height
         return false;
     }
     output.write(reinterpret_cast<const char*>(header.data()), header.size());
+    const std::array<std::uint8_t, 3> padding = {};
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             const std::size_t index = (static_cast<std::size_t>(y) * width + x) * 4;
@@ -56,6 +57,7 @@ bool saveFramebufferBmp(const std::filesystem::path& path, int width, int height
                                                        pixels[index]};
             output.write(reinterpret_cast<const char*>(pixel.data()), pixel.size());
         }
+        output.write(reinterpret_cast<const char*>(padding.data()), rowSize - width * 3);
     }
     return output.good();
 }

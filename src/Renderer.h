@@ -12,6 +12,10 @@ struct GLFWwindow;
 struct BusModel;
 class BusSimulation;
 
+namespace openbus::rendering {
+class AssetRequestManager;
+}
+
 enum class AssetLoadingMode {
     Eager,
     Deferred,
@@ -57,6 +61,7 @@ class Renderer {
     GLFWwindow* window_;
     double cameraYaw_ = -2.3;
     double cameraPitch_ = 0.45;
+    double fieldOfViewOffset_ = 0.0;
     double viewLookYaw_ = 0.0;
     double viewLookPitch_ = 0.0;
     double lastStatsTitleTime_ = 0.0;
@@ -66,6 +71,8 @@ class Renderer {
     double previousCursorX_ = 0.0;
     double previousCursorY_ = 0.0;
     bool draggingCamera_ = false;
+    double previousFovCursorY_ = 0.0;
+    bool draggingFov_ = false;
     std::array<bool, 4> previousKeyStates_ = {};
     std::array<bool, 10> previousViewKeyStates_ = {};
     std::array<bool, 2> previousCameraNavigationStates_ = {};
@@ -75,6 +82,7 @@ class Renderer {
     bool captureMode_ = false;
     std::vector<KeyEvent> keyEvents_;
     std::vector<VehicleCamera> vehicleCameras_;
+    std::unique_ptr<openbus::rendering::AssetRequestManager> assetRequestManager_;
     std::vector<std::unique_ptr<BusModel>> busModels_;
     BusModel* playerBusModel_ = nullptr;
 };

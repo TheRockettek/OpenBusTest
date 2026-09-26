@@ -117,9 +117,12 @@ add_executable(OpenBus
     src/SceneryObjectConfigLoader.cpp
     src/PerfTrace.cpp
     src/Renderer.cpp
+    src/AssetRequestManager.cpp
     src/ScreenshotWriter.cpp
+    src/TextureAssetLoader.cpp
     src/TextureLoader.cpp
     src/ObjLoader.cpp
+    src/OpenGLFunctions.cpp
 )
 
 target_include_directories(OpenBus PRIVATE src)

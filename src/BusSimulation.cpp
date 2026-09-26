@@ -661,7 +661,7 @@ struct BusSimulation::Impl {
 };
 
 BusSimulation::BusSimulation(BusConfiguration configuration, double physicsHz, int maxCatchUpSteps)
-    : impl_(new Impl(std::move(configuration), physicsHz, maxCatchUpSteps)) {
+    : impl_(std::make_unique<Impl>(std::move(configuration), physicsHz, maxCatchUpSteps)) {
     openbus::rendering::TraceScope trace("startup", "BusSimulation::BusSimulation");
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }
@@ -669,7 +669,6 @@ BusSimulation::BusSimulation(BusConfiguration configuration, double physicsHz, i
 BusSimulation::~BusSimulation() {
     simulationLog.Log("Bus simulation stopped at " + std::to_string(impl_->simulationTime) +
                       " seconds");
-    delete impl_;
 }
 
 void BusSimulation::update(double elapsedSeconds, double throttle, double steering, double brake) {

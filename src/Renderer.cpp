@@ -1,5 +1,6 @@
 #include "Renderer.h"
 
+#include "AssetRequestManager.h"
 #include "BusConfigLoader.h"
 #include "BusConfiguration.h"
 #include "BusModelLoader.h"
@@ -7,10 +8,12 @@
 #include "CameraMath.h"
 #include "Logger.h"
 #include "ObjLoader.h"
+#include "OpenGLFunctions.h"
 #include "PerfTrace.h"
 #include "RenderPrimitives.h"
 #include "RoadFeatures.h"
 #include "ScreenshotWriter.h"
+#include "TextureAssetLoader.h"
 #include "TextureLoader.h"
 #include "Variables.h"
 
@@ -101,45 +104,10 @@ constexpr int viewpointMask(RenderViewContext context) {
 }
 
 constexpr double MAN_DL05_MODEL_OFFSET_Z = -1.035;
-using GenBuffersProc = void (*)(GLsizei, GLuint*);
-using BindBufferProc = void (*)(GLenum, GLuint);
-using BufferDataProc = void (*)(GLenum, std::ptrdiff_t, const void*, GLenum);
-using DeleteBuffersProc = void (*)(GLsizei, const GLuint*);
-using CompressedTexImage2DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei,
-                                          const void*);
-using CompressedTexImage3DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLsizei, GLint,
-                                          GLsizei, const void*);
-using ActiveTextureProc = void (*)(GLenum);
-GenBuffersProc pglGenBuffers = nullptr;
-BindBufferProc pglBindBuffer = nullptr;
-BufferDataProc pglBufferData = nullptr;
-DeleteBuffersProc pglDeleteBuffers = nullptr;
-CompressedTexImage2DProc pglCompressedTexImage2D = nullptr;
-CompressedTexImage3DProc pglCompressedTexImage3D = nullptr;
-ActiveTextureProc pglActiveTexture = nullptr;
-
-bool loadBufferFunctions() {
-    // VBO and compressed-texture entry points are loaded after the GLFW context
-    // exists because legacy OpenGL headers do not expose them portably.
-    pglGenBuffers = reinterpret_cast<GenBuffersProc>(glfwGetProcAddress("glGenBuffers"));
-    pglBindBuffer = reinterpret_cast<BindBufferProc>(glfwGetProcAddress("glBindBuffer"));
-    pglBufferData = reinterpret_cast<BufferDataProc>(glfwGetProcAddress("glBufferData"));
-    pglDeleteBuffers = reinterpret_cast<DeleteBuffersProc>(glfwGetProcAddress("glDeleteBuffers"));
-    pglCompressedTexImage2D =
-        reinterpret_cast<CompressedTexImage2DProc>(glfwGetProcAddress("glCompressedTexImage2D"));
-    pglCompressedTexImage3D =
-        reinterpret_cast<CompressedTexImage3DProc>(glfwGetProcAddress("glCompressedTexImage3D"));
-    pglActiveTexture = reinterpret_cast<ActiveTextureProc>(glfwGetProcAddress("glActiveTexture"));
-    const bool available = pglGenBuffers && pglBindBuffer && pglBufferData && pglDeleteBuffers &&
-                           pglCompressedTexImage2D && pglActiveTexture;
-    if (!available) {
-        gameLog.Log("Failed to load required OpenGL VBO functions");
-    }
-    return available;
-}
 } // namespace
 
 using openbus::rendering::applyPose;
+using AssetRequestManager = openbus::rendering::AssetRequestManager;
 using openbus::rendering::drawBox;
 using openbus::rendering::drawCenterOfGravityMarker;
 using openbus::rendering::drawGround;
@@ -159,37 +127,9 @@ using Image = openbus::rendering::Image;
 using CompressedDds = openbus::rendering::CompressedDds;
 
 struct BusModel {
-    // TODO: Split model parsing, texture loading, and rendering into focused components.
     ModelLoadingPolicy loadingPolicy;
-    struct TextureRequest {
-        // Decode work runs asynchronously; the mutex protects completion and
-        // decoded payload ownership while the render thread uploads to GL.
-        std::filesystem::path root;
-        std::filesystem::path path;
-        std::string name;
-        std::filesystem::path resolvedPath;
-        std::shared_ptr<Image> image;
-        std::shared_ptr<gli::texture> compressedTexture;
-        std::shared_ptr<CompressedDds> compressedDds;
-        bool complete = false;
-        bool started = false;
-        std::mutex mutex;
-        std::shared_future<void> task;
-    };
-
-    struct DecodedTexture {
-        std::shared_ptr<Image> image;
-        std::shared_ptr<gli::texture> compressedTexture;
-        std::shared_ptr<CompressedDds> compressedDds;
-    };
-
-    struct TextureCacheEntry {
-        std::shared_ptr<TextureRequest> request;
-        GLuint texture = 0;
-        bool textureArray = false;
-        std::size_t textureArrayLayers = 1;
-        bool uploadAttempted = false;
-    };
+    using TextureRequest = AssetRequestManager::TextureRequest;
+    using TextureCacheEntry = AssetRequestManager::TextureCacheEntry;
 
     struct ObjRequest {
         std::shared_future<std::shared_ptr<openbus::rendering::ParsedObj>> future;
@@ -263,13 +203,7 @@ struct BusModel {
     std::vector<WheelModel> wheelModels;
     Variables variables;
     std::vector<Part> pendingParts;
-    std::vector<GLuint> textures;
-    std::unordered_map<std::string, std::shared_ptr<TextureCacheEntry>> textureCache;
-    std::unordered_map<std::string, std::shared_ptr<TextureCacheEntry>> textureAliases;
-    std::mutex decodedTextureMutex;
-    std::unordered_map<std::string, std::shared_ptr<DecodedTexture>> decodedTextureCache;
-    std::mutex parsedObjMutex;
-    std::unordered_map<std::string, std::shared_future<std::shared_ptr<ParsedObj>>> parsedObjCache;
+    AssetRequestManager* assets;
     mutable std::unordered_set<std::size_t> loggedWheelBindings;
     double modelOffsetZ = MAN_DL05_MODEL_OFFSET_Z;
     double textureScale = 1;
@@ -282,8 +216,6 @@ struct BusModel {
     bool loggedAllObjectsLoaded = false;
     int activeLod = -1;
     std::chrono::steady_clock::time_point textureUploadStart;
-
-    void loadTextureRequest(const std::shared_ptr<TextureRequest>& request);
 
     void updateMaterialChange(Batch& batch) {
         TraceScope phase("texture", "updateMaterialChange");
@@ -354,18 +286,15 @@ struct BusModel {
     }
 
     void joinTextureWorkers() {
-        for (const auto& cache : textureCache) {
-            if (cache.second->request && cache.second->request->task.valid()) {
-                cache.second->request->task.wait();
-            }
-        }
+        assets->join();
     }
 
 #ifdef _WIN32
     bool comInitialized = false;
 #endif
 
-    explicit BusModel(BusVehicle vehicle, ModelLoadingPolicy policy) : loadingPolicy(policy) {
+    explicit BusModel(BusVehicle vehicle, ModelLoadingPolicy policy, AssetRequestManager& manager)
+        : loadingPolicy(policy), assets(&manager) {
         if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
             try {
                 textureScale = std::clamp(std::stod(scale), 0.25, 1.0);
@@ -424,9 +353,6 @@ struct BusModel {
         deleteBuffers(displayLists);
         for (const WheelModel& wheel : wheelModels) {
             deleteBuffers(wheel.parts);
-        }
-        if (!textures.empty()) {
-            glDeleteTextures(static_cast<GLsizei>(textures.size()), textures.data());
         }
 #ifdef _WIN32
         if (comInitialized) {
@@ -577,12 +503,17 @@ struct BusModel {
                       });
             std::stable_sort(transparentBatches.begin(), transparentBatches.end(),
                              [](const TransparentBatch& first, const TransparentBatch& second) {
-                                 return first.renderType < second.renderType;
+                                 if (first.renderType != second.renderType) {
+                                     return first.renderType < second.renderType;
+                                 }
+                                 return first.depth > second.depth;
                              });
-            // TODO: Sort transparent batches back-to-front within each render type.
             std::stable_sort(noDepthOpaqueBatches.begin(), noDepthOpaqueBatches.end(),
                              [](const TransparentBatch& first, const TransparentBatch& second) {
-                                 return first.renderType < second.renderType;
+                                 if (first.renderType != second.renderType) {
+                                     return first.renderType < second.renderType;
+                                 }
+                                 return first.depth > second.depth;
                              });
             lastRenderedTriangles = 0;
             for (DisplayPart* part : opaqueParts) {
@@ -1037,7 +968,7 @@ struct BusModel {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, image.rgba.data());
-        textures.push_back(texture);
+        assets->trackTexture(texture);
         return texture;
     }
 
@@ -1078,7 +1009,7 @@ struct BusModel {
                     static_cast<GLsizei>(image.size(level)), image.data(0, 0, level));
             }
         }
-        textures.push_back(texture);
+        assets->trackTexture(texture);
         static const bool verboseTextureUploadLogs =
             parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
         if (verboseTextureUploadLogs) {
@@ -1122,7 +1053,7 @@ struct BusModel {
             levelWidth = std::max(1, levelWidth / 2);
             levelHeight = std::max(1, levelHeight / 2);
         }
-        textures.push_back(texture);
+        assets->trackTexture(texture);
         static const bool verboseTextureUploadLogs =
             parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
         if (verboseTextureUploadLogs) {
@@ -1131,7 +1062,8 @@ struct BusModel {
         return texture;
     }
 
-    std::filesystem::path findTexture(const std::filesystem::path& root, const std::string& name) {
+    static std::filesystem::path findTexture(const std::filesystem::path& root,
+                                              const std::string& name) {
         TraceScope trace("texture", "findTexture");
         const std::string cleaned = trim(name);
         if (cleaned.empty()) {
@@ -1321,72 +1253,18 @@ struct BusModel {
         return cacheResult({});
     }
 
-    std::string textureCacheKey(const Batch& batch) const {
-        const std::filesystem::path identity =
-            batch.texturePath.empty() ? batch.textureRoot / batch.textureName : batch.texturePath;
-        return lower(std::filesystem::absolute(identity).lexically_normal().generic_string());
-    }
-
     std::shared_ptr<TextureCacheEntry> textureEntry(Batch& batch) {
         TraceScope phase("texture", "textureEntry");
-        const std::string key = textureCacheKey(batch);
-        const auto found = textureCache.find(key);
-        if (found != textureCache.end()) {
-            return found->second;
-        }
-        const std::string alias =
-            lower(std::filesystem::path(batch.texturePath.empty() ? batch.textureName
-                                                                  : batch.texturePath.string())
-                      .stem()
-                      .generic_string());
-        if (!alias.empty()) {
-            // TODO: Scope aliases by normalized texture root/path to avoid stem collisions.
-            const auto aliasFound = textureAliases.find(alias);
-            if (aliasFound != textureAliases.end()) {
-                textureCache.emplace(key, aliasFound->second);
-                return aliasFound->second;
-            }
-        }
-        auto entry = std::make_shared<TextureCacheEntry>();
-        entry->request = std::make_shared<TextureRequest>();
-        entry->request->root = batch.textureRoot;
-        entry->request->path = batch.texturePath;
-        entry->request->name = batch.textureName;
-        textureCache.emplace(key, entry);
-        if (!alias.empty()) {
-            textureAliases.emplace(alias, entry);
-        }
-        return entry;
+        return assets->requestTexture(
+            batch.textureRoot, batch.texturePath, batch.textureName,
+            [](const std::filesystem::path& root, const std::filesystem::path& path,
+               const std::string& name) {
+                return BusModel::findTexture(root, name.empty() ? path.string() : name);
+            });
     }
 
     void startTextureRequest(const std::shared_ptr<TextureCacheEntry>& entry) {
-        {
-            std::lock_guard<std::mutex> lock(entry->request->mutex);
-            if (entry->request->started) {
-                return;
-            }
-            entry->request->started = true;
-        }
-        try {
-            entry->request->task =
-                std::async(std::launch::async, [this, request = entry->request] {
-                    try {
-                        loadTextureRequest(request);
-                    } catch (const std::exception& error) {
-                        gameLog.Log("Texture worker failed: " + std::string(error.what()));
-                        std::lock_guard<std::mutex> lock(request->mutex);
-                        request->complete = true;
-                    } catch (...) {
-                        gameLog.Log("Texture worker failed with an unknown error");
-                        std::lock_guard<std::mutex> lock(request->mutex);
-                        request->complete = true;
-                    }
-                }).share();
-        } catch (const std::exception& error) {
-            gameLog.Log("Failed to start texture worker: " + std::string(error.what()));
-            std::lock_guard<std::mutex> lock(entry->request->mutex);
-            entry->request->complete = true;
-        }
+        assets->startTextureRequest(entry);
     }
 
     void ensureTexture(Batch& batch, bool visible = true) {
@@ -1580,17 +1458,7 @@ struct BusModel {
 
     std::shared_future<std::shared_ptr<ParsedObj>>
     parsedObjFuture(const std::filesystem::path& path) {
-        const std::string key =
-            lower(std::filesystem::absolute(path).lexically_normal().generic_string());
-        std::lock_guard<std::mutex> lock(parsedObjMutex);
-        const auto cached = parsedObjCache.find(key);
-        if (cached != parsedObjCache.end()) {
-            return cached->second;
-        }
-        std::shared_future<std::shared_ptr<ParsedObj>> future =
-            std::async(std::launch::async, &openbus::rendering::ObjLoader::parse, path).share();
-        parsedObjCache.emplace(key, future);
-        return future;
+        return assets->requestObj(path);
     }
 
     void loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed) {
@@ -2088,110 +1956,21 @@ struct BusModel {
     }
 };
 
-void BusModel::loadTextureRequest(const std::shared_ptr<TextureRequest>& request) {
-    TraceScope trace("texture", "loadTextureRequest");
-#ifdef _WIN32
-    const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-#endif
-    std::filesystem::path resolved;
-    const std::string logicalName = request->name.empty() ? request->path.string() : request->name;
-    if (!logicalName.empty() && !std::filesystem::path(logicalName).is_absolute()) {
-        resolved = findTexture(request->root, logicalName);
-    }
-    if (resolved.empty() && !request->path.empty()) {
-        const std::filesystem::path candidate = request->path;
-        if (candidate.is_absolute() && std::filesystem::exists(candidate)) {
-            resolved = candidate;
-        } else if (request->name.empty() && std::filesystem::exists(candidate)) {
-            resolved = candidate;
-        }
-    }
-    const std::string resolvedKey =
-        resolved.empty()
-            ? std::string()
-            : lower(std::filesystem::absolute(resolved).lexically_normal().generic_string());
-    if (!resolvedKey.empty()) {
-        std::shared_ptr<DecodedTexture> cachedTexture;
-        {
-            std::lock_guard<std::mutex> lock(decodedTextureMutex);
-            const auto cached = decodedTextureCache.find(resolvedKey);
-            if (cached != decodedTextureCache.end()) {
-                cachedTexture = cached->second;
-            }
-        }
-        if (cachedTexture) {
-            std::lock_guard<std::mutex> requestLock(request->mutex);
-            request->resolvedPath = resolved;
-            request->image = cachedTexture->image;
-            request->compressedTexture = cachedTexture->compressedTexture;
-            request->compressedDds = cachedTexture->compressedDds;
-            request->complete = true;
-            return;
-        }
-    }
-    Image image;
-    bool textureLoaded = false;
-    std::shared_ptr<gli::texture> compressedTexture;
-    std::shared_ptr<CompressedDds> compressedDds;
-    if (!resolved.empty() && lower(resolved.extension().string()) == ".dds" &&
-        openbus::rendering::TextureLoader::isSafeCompressedDds(resolved)) {
-        if (openbus::rendering::TextureLoader::isDxt5Dds(resolved) &&
-            !openbus::rendering::TextureLoader::isDdsTextureArray(resolved)) {
-            compressedDds = std::make_shared<CompressedDds>();
-            textureLoaded =
-                openbus::rendering::TextureLoader::readDxt5CompressedDds(resolved, *compressedDds);
-            if (!textureLoaded) {
-                compressedDds.reset();
-            }
-        } else {
-            try {
-                gli::texture loadedTexture = gli::load(resolved.string());
-                if (!loadedTexture.empty() && gli::is_compressed(loadedTexture.format())) {
-                    compressedTexture = std::make_shared<gli::texture>(std::move(loadedTexture));
-                    textureLoaded = true;
-                }
-            } catch (const std::exception& error) {
-                gameLog.Log("GLI failed to load compressed texture " + resolved.generic_string() +
-                            ": " + error.what());
-            }
-        }
-    }
-    if (!textureLoaded) {
-        textureLoaded =
-            !resolved.empty() && openbus::rendering::TextureLoader::readImage(resolved, image);
-    }
-#ifdef _WIN32
-    if (SUCCEEDED(comResult)) {
-        CoUninitialize();
-    }
-#endif
-    std::lock_guard<std::mutex> lock(request->mutex);
-    if (textureLoaded) {
-        request->resolvedPath = std::move(resolved);
-        request->image = std::make_shared<Image>(std::move(image));
-        request->compressedTexture = std::move(compressedTexture);
-        request->compressedDds = std::move(compressedDds);
-        if (!resolvedKey.empty()) {
-            auto decoded = std::make_shared<DecodedTexture>();
-            decoded->image = request->image;
-            decoded->compressedTexture = request->compressedTexture;
-            decoded->compressedDds = request->compressedDds;
-            std::lock_guard<std::mutex> cacheLock(decodedTextureMutex);
-            decodedTextureCache.emplace(resolvedKey, std::move(decoded));
-        }
-    }
-    request->complete = true;
-}
-
 void Renderer::scrollCallback(GLFWwindow* window, double, double yOffset) {
     auto* renderer = static_cast<Renderer*>(glfwGetWindowUserPointer(window));
     if (renderer == nullptr) {
         return;
     }
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+        renderer->fieldOfViewOffset_ =
+            std::clamp(renderer->fieldOfViewOffset_ - yOffset * 2.0, -40.0, 60.0);
+        return;
+    }
     renderer->cameraDistance_ = std::clamp(renderer->cameraDistance_ - yOffset * 2.0, 6.0, 80.0);
 }
 
-Renderer::Renderer(int width, int height, const char* title) : window_(nullptr) {
+Renderer::Renderer(int width, int height, const char* title)
+    : window_(nullptr), assetRequestManager_(std::make_unique<AssetRequestManager>()) {
     TraceScope trace("startup", "Renderer::Renderer");
     if (!glfwInit()) {
         gameLog.Log("Failed to initialize GLFW");
@@ -2212,7 +1991,7 @@ Renderer::Renderer(int width, int height, const char* title) : window_(nullptr) 
                                                           std::string(vsyncSetting) != "false");
     glfwSwapInterval(vsyncEnabled ? 1 : 0);
     gameLog.Log(std::string("VSync ") + (vsyncEnabled ? "enabled" : "disabled"));
-    if (!loadBufferFunctions()) {
+    if (!loadOpenGLFunctions()) {
         glfwDestroyWindow(window_);
         window_ = nullptr;
         glfwTerminate();
@@ -2226,7 +2005,9 @@ Renderer::Renderer(int width, int height, const char* title) : window_(nullptr) 
 Renderer::~Renderer() {
     gameLog.Log("Renderer shutting down");
     playerBusModel_ = nullptr;
+    assetRequestManager_->join();
     busModels_.clear();
+    assetRequestManager_.reset();
     if (window_) {
         glfwDestroyWindow(window_);
     }
@@ -2258,7 +2039,7 @@ BusModel* Renderer::AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPo
             cameraView_ = selectedCamera >= 0 ? selectedCamera + 1 : 1;
         }
     }
-    auto model = std::make_unique<BusModel>(vehicle, loadingPolicy);
+    auto model = std::make_unique<BusModel>(vehicle, loadingPolicy, *assetRequestManager_);
     BusModel* result = model.get();
     busModels_.push_back(std::move(model));
     return result;
@@ -2307,7 +2088,9 @@ void Renderer::selectVehicleCamera(int direction) {
 
 double Renderer::currentFieldOfView() const {
     const VehicleCamera* camera = currentVehicleCamera();
-    return camera != nullptr && camera->fieldOfView > 0.0 ? camera->fieldOfView : 60.0;
+    const double baseFieldOfView =
+        camera != nullptr && camera->fieldOfView > 0.0 ? camera->fieldOfView : 60.0;
+    return std::clamp(baseFieldOfView + fieldOfViewOffset_, 20.0, 120.0);
 }
 
 bool Renderer::shouldClose() const {
@@ -2374,6 +2157,15 @@ void Renderer::beginFrame() {
     if (playerBusModel_) {
         playerBusModel_->updateFrameVariables(timegap, currentTime, cursorX, cursorY);
     }
+    const bool rightMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    if (rightMouse && !draggingFov_) {
+        previousFovCursorY_ = cursorY;
+    } else if (rightMouse) {
+        fieldOfViewOffset_ =
+            std::clamp(fieldOfViewOffset_ + (cursorY - previousFovCursorY_) * 0.15, -40.0, 60.0);
+    }
+    draggingFov_ = rightMouse;
+    previousFovCursorY_ = cursorY;
     const bool middleMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
     if (middleMouse && !draggingCamera_) {
         previousCursorX_ = cursorX;

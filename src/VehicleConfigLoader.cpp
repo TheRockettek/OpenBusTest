@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -250,12 +251,18 @@ bool parseAxle(Reader& reader, VehicleConfig& result, const Line& keywordLine) {
         }
     }
 
-    // TODO: Validate all axle dimensions and suspension values before accepting the record.
+    const bool validFiniteValues = std::isfinite(position) && std::isfinite(maxWidth) &&
+                                   std::isfinite(minWidth) && std::isfinite(wheelDiameter) &&
+                                   std::isfinite(spring) && std::isfinite(maxForce) &&
+                                   std::isfinite(damper);
     if (!hasPosition || !hasMaxWidth || !hasMinWidth || !hasWheelDiameter || !hasSpring ||
-        !hasMaxForce || !hasDamper || !hasDriven || maxWidth <= 0.0 || wheelDiameter <= 0.0) {
+        !hasMaxForce || !hasDamper || !hasDriven || !validFiniteValues || maxWidth <= 0.0 ||
+        minWidth < 0.0 || minWidth > maxWidth || wheelDiameter <= 0.0 || spring <= 0.0 ||
+        maxForce <= 0.0 || damper < 0.0) {
         result.diagnostics.error(
             keywordLine.number, "newachse",
-            "axle requires position, widths, wheel, suspension, and drive values");
+            "axle requires finite values, positive width/wheel/spring/force, min width no "
+            "greater than max width, and non-negative damping");
         return false;
     }
     result.axles.push_back({position, maxWidth, maxWidth, minWidth, wheelDiameter, spring * 1000.0,
