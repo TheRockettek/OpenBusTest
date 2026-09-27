@@ -124,14 +124,25 @@ add_executable(OpenBus
     src/TextureLoader.cpp
     src/ObjLoader.cpp
     src/OpenGLFunctions.cpp
+    src/ScriptRuntime.cpp
+    src/osc/osc.cpp
 )
 
 target_include_directories(OpenBus PRIVATE src)
+target_include_directories(OpenBus PRIVATE src/osc)
+add_library(OpenBusLua SHARED IMPORTED)
+set_target_properties(OpenBusLua PROPERTIES
+    IMPORTED_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.lib"
+    IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.dll")
+add_custom_command(TARGET OpenBus POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.dll"
+        "$<TARGET_FILE_DIR:OpenBus>/lua51.dll")
 target_include_directories(OpenBus SYSTEM PRIVATE
     ${gli_SOURCE_DIR}
     ${gli_SOURCE_DIR}/external/glm
     ${stb_SOURCE_DIR})
-target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} OpenBus::GLFW OpenGL::GL)
+target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} OpenBus::GLFW OpenGL::GL OpenBusLua)
 
 add_executable(OpenBusPhysicsProbe
     tests/BusSimulationSteeringProbe.cpp
@@ -152,6 +163,8 @@ target_include_directories(uno3d_converter SYSTEM PRIVATE ${stb_SOURCE_DIR})
 
 if(MSVC)
     target_compile_options(OpenBus PRIVATE /W4 /permissive-)
+    target_compile_options(OpenBus PRIVATE $<$<CONFIG:Release>:/Zi>)
+    target_link_options(OpenBus PRIVATE $<$<CONFIG:Release>:/DEBUG>)
     target_compile_definitions(OpenBus PRIVATE _CRT_SECURE_NO_WARNINGS GLFW_INCLUDE_NONE)
     target_link_libraries(OpenBus PRIVATE windowscodecs dbghelp)
 else()

@@ -15,6 +15,7 @@ enum class BusVehicle {
     ManDl05,
     SpE400Mmc,
 };
+using VehicleType = BusVehicle;
 
 struct BusAxle {
     double position;
@@ -82,3 +83,5 @@ struct ChassisCollisionBox {
     double offsetY;
     double offsetZ;
 };
+using Axle = BusAxle;
+using VehicleConfiguration = BusConfiguration;

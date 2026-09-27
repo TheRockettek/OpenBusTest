@@ -66,9 +66,9 @@ int main() {
         BusSimulation simulation(configuration);
 
         Renderer renderer(1280, 720, "OpenBus");
-        BusModel* playerBusModel = renderer.AddBusModel(
+        Vehicle* playerVehicle = renderer.AddVehicle(
             vehicle, {0, 0, 20}, {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
-        renderer.SetPlayerBusModel(playerBusModel);
+        renderer.SetPlayerVehicle(playerVehicle);
 
         double previousTime = glfwGetTime();
         bool captureOnStartup = std::getenv("OPENBUS_CAPTURE_VIEWS") != nullptr;

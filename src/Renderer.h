@@ -2,6 +2,7 @@
 
 #include "BusTypes.h"
 #include "VehicleConfigLoader.h"
+#include "Variables.h"
 
 #include <array>
 #include <filesystem>
@@ -9,7 +10,7 @@
 #include <vector>
 
 struct GLFWwindow;
-struct BusModel;
+struct Vehicle;
 class BusSimulation;
 
 namespace openbus::rendering {
@@ -36,10 +37,20 @@ class Renderer {
 
     bool shouldClose() const;
     void requestClose();
-    BusModel* AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {});
-    BusModel* AddBusModel(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
-                          ModelLoadingPolicy loadingPolicy = {});
-    void SetPlayerBusModel(BusModel* model);
+    Vehicle* AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {});
+    Vehicle* AddVehicle(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
+                        ModelLoadingPolicy loadingPolicy = {});
+    Vehicle* AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {}) {
+        return AddVehicle(vehicle, loadingPolicy);
+    }
+    Vehicle* AddBusModel(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
+                         ModelLoadingPolicy loadingPolicy = {}) {
+        return AddVehicle(vehicle, spawnPosition, loadingPolicy);
+    }
+    void SetPlayerVehicle(Vehicle* vehicle);
+    void SetPlayerBusModel(Vehicle* vehicle) {
+        SetPlayerVehicle(vehicle);
+    }
     void beginFrame();
     void draw(const BusSimulation& simulation);
     void endFrame();
@@ -82,7 +93,8 @@ class Renderer {
     bool captureMode_ = false;
     std::vector<KeyEvent> keyEvents_;
     std::vector<VehicleCamera> vehicleCameras_;
+    SimulationState simulationState_;
     std::unique_ptr<openbus::rendering::AssetRequestManager> assetRequestManager_;
-    std::vector<std::unique_ptr<BusModel>> busModels_;
-    BusModel* playerBusModel_ = nullptr;
+    std::vector<std::unique_ptr<Vehicle>> vehicles_;
+    Vehicle* playerVehicle_ = nullptr;
 };

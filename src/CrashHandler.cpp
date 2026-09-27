@@ -15,8 +15,26 @@ namespace {
 
 std::atomic_flag reportInProgress = ATOMIC_FLAG_INIT;
 
+const char* exceptionName(DWORD code) {
+    switch (code) {
+    case EXCEPTION_ACCESS_VIOLATION:
+        return "access violation";
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+        return "illegal instruction";
+    case EXCEPTION_STACK_OVERFLOW:
+        return "stack overflow";
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+        return "integer divide by zero";
+    case EXCEPTION_FLT_DIVIDE_BY_ZERO:
+        return "floating-point divide by zero";
+    default:
+        return "unknown exception";
+    }
+}
+
 void writeCrashReport(const char* reason, DWORD exceptionCode = 0,
-                      void* exceptionAddress = nullptr) {
+                      void* exceptionAddress = nullptr,
+                      const EXCEPTION_POINTERS* exceptionInfo = nullptr) {
     if (reportInProgress.test_and_set()) {
         return;
     }
@@ -29,30 +47,71 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0,
     report << "OpenBus crash report\n"
            << "Reason: " << reason << "\n";
     if (exceptionCode != 0) {
-        report << "Exception code: 0x" << std::hex << exceptionCode << std::dec << "\n";
+        report << "Exception: " << exceptionName(exceptionCode) << " (0x" << std::hex
+               << exceptionCode << std::dec << ")\n";
     }
     if (exceptionAddress != nullptr) {
         report << "Exception address: " << exceptionAddress << "\n";
+    }
+    if (exceptionInfo != nullptr && exceptionInfo->ExceptionRecord != nullptr &&
+        exceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        exceptionInfo->ExceptionRecord->NumberParameters >= 2) {
+        const ULONG_PTR operation = exceptionInfo->ExceptionRecord->ExceptionInformation[0];
+        const ULONG_PTR target = exceptionInfo->ExceptionRecord->ExceptionInformation[1];
+        report << "Access: " << (operation == 0 ? "read" : operation == 1 ? "write" : "execute")
+               << " at " << reinterpret_cast<const void*>(target) << "\n";
     }
 
     HANDLE process = GetCurrentProcess();
     SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
     if (SymInitialize(process, nullptr, TRUE)) {
-        void* frames[64] = {};
-        const USHORT frameCount = CaptureStackBackTrace(2, 64, frames, nullptr);
+        CONTEXT context = {};
+        STACKFRAME64 frame = {};
+        DWORD machineType = IMAGE_FILE_MACHINE_AMD64;
+        if (exceptionInfo != nullptr && exceptionInfo->ContextRecord != nullptr) {
+            context = *exceptionInfo->ContextRecord;
+            frame.AddrPC.Offset = context.Rip;
+            frame.AddrFrame.Offset = context.Rbp;
+            frame.AddrStack.Offset = context.Rsp;
+        } else {
+            RtlCaptureContext(&context);
+            frame.AddrPC.Offset = context.Rip;
+            frame.AddrFrame.Offset = context.Rbp;
+            frame.AddrStack.Offset = context.Rsp;
+        }
+        frame.AddrPC.Mode = AddrModeFlat;
+        frame.AddrFrame.Mode = AddrModeFlat;
+        frame.AddrStack.Mode = AddrModeFlat;
         report << "Stack trace:\n";
-        for (USHORT index = 0; index < frameCount; ++index) {
-            const DWORD64 address = reinterpret_cast<DWORD64>(frames[index]);
+        for (int index = 0; index < 64; ++index) {
+            const DWORD64 address = frame.AddrPC.Offset;
+            if (address == 0) {
+                break;
+            }
             alignas(SYMBOL_INFO) char symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME] = {};
             auto* symbol = reinterpret_cast<PSYMBOL_INFO>(symbolBuffer);
             symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
             symbol->MaxNameLen = MAX_SYM_NAME;
             DWORD64 displacement = 0;
+            IMAGEHLP_LINE64 line = {};
+            line.SizeOfStruct = sizeof(line);
+            DWORD lineDisplacement = 0;
+            IMAGEHLP_MODULE64 module = {};
+            module.SizeOfStruct = sizeof(module);
+            const bool hasModule = SymGetModuleInfo64(process, address, &module) != FALSE;
             if (SymFromAddr(process, address, &displacement, symbol)) {
-                report << "  #" << index << " " << symbol->Name << "+0x" << std::hex << displacement
-                       << std::dec << "\n";
+                report << "  #" << index << " " << (hasModule ? module.ModuleName : "?") << "!"
+                       << symbol->Name << "+0x" << std::hex << displacement << std::dec;
+                if (SymGetLineFromAddr64(process, address, &lineDisplacement, &line)) {
+                    report << " (" << line.FileName << ":" << line.LineNumber << ")";
+                }
+                report << "\n";
             } else {
                 report << "  #" << index << " 0x" << std::hex << address << std::dec << "\n";
+            }
+            if (!StackWalk64(machineType, process, GetCurrentThread(), &frame, &context, nullptr,
+                             SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) {
+                break;
             }
         }
         SymCleanup(process);
@@ -69,7 +128,7 @@ LONG WINAPI handleUnhandledException(EXCEPTION_POINTERS* exceptionInfo) {
     const DWORD code = exceptionInfo != nullptr && exceptionInfo->ExceptionRecord != nullptr
                            ? exceptionInfo->ExceptionRecord->ExceptionCode
                            : 0;
-    writeCrashReport("unhandled Windows exception", code, address);
+    writeCrashReport("unhandled Windows exception", code, address, exceptionInfo);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 

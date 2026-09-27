@@ -13,6 +13,7 @@
 #include "PerfTrace.h"
 #include "RenderPrimitives.h"
 #include "RoadFeatures.h"
+#include "ScriptRuntime.h"
 #include "ScreenshotWriter.h"
 #include "TextureAssetLoader.h"
 #include "TextureLoader.h"
@@ -135,7 +136,7 @@ using ParsedObj = openbus::rendering::ParsedObj;
 using Image = openbus::rendering::Image;
 using CompressedDds = openbus::rendering::CompressedDds;
 
-struct BusModel {
+struct Vehicle {
     ModelLoadingPolicy loadingPolicy;
     using TextureRequest = AssetRequestManager::TextureRequest;
     using TextureCacheEntry = AssetRequestManager::TextureCacheEntry;
@@ -210,7 +211,8 @@ struct BusModel {
 
     std::vector<DisplayPart> displayLists;
     std::vector<WheelModel> wheelModels;
-    Variables variables;
+    VehicleState variables;
+    std::unique_ptr<ScriptRuntime> scripts;
     std::vector<Part> pendingParts;
     AssetRequestManager* assets;
     mutable std::unordered_set<std::size_t> loggedWheelBindings;
@@ -256,10 +258,6 @@ struct BusModel {
         if (sameRequestedTexture && layer == batch.textureLayer) {
             return;
         }
-        if (verboseMaterialChangeLogs) {
-            gameLog.Log("Material change reset: " + batch.textureName + " -> " + textureName);
-        }
-        batch.texturePath = texturePath;
         batch.textureName = textureName;
         batch.textureCacheEntry.reset();
         batch.textureRequest.reset();
@@ -289,9 +287,13 @@ struct BusModel {
         return std::clamp(variables.get(batch.alphaScaleVariable), 0.0, 1.0);
     }
 
-    void updateFrameVariables(double timegap, double getTime, double mouseX, double mouseY) {
+    void updateFrameVariables(double timegap, double getTime, double mouseX, double mouseY,
+                              bool isAiVehicle) {
         // Frame-scoped values are refreshed before simulation and rendering run.
         variables.updateFrame(timegap, getTime, mouseX, mouseY);
+        if (scripts) {
+            scripts->update(isAiVehicle);
+        }
     }
 
     void joinTextureWorkers() {
@@ -302,8 +304,9 @@ struct BusModel {
     bool comInitialized = false;
 #endif
 
-    explicit BusModel(BusVehicle vehicle, ModelLoadingPolicy policy, AssetRequestManager& manager)
-        : loadingPolicy(policy), assets(&manager) {
+    explicit Vehicle(BusVehicle vehicle, ModelLoadingPolicy policy, AssetRequestManager& manager,
+                     SimulationState& simulationState)
+        : loadingPolicy(policy), variables(simulationState), assets(&manager) {
         if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
             try {
                 textureScale = std::clamp(std::stod(scale), 0.25, 1.0);
@@ -344,11 +347,20 @@ struct BusModel {
         };
         gameLog.Log("Loading bus model with config: " + resolveAssetPath(relativeConfig).string() +
                     " and model root: " + resolveAssetPath(relativeModelRoot).string());
+        const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigurationPathFor(vehicle));
+        scripts = std::make_unique<ScriptRuntime>(vehicleConfiguration, variables, simulationState);
+        for (const std::string& error : scripts->errors()) {
+            gameLog.Log("Lua script error: " + error);
+        }
         load(resolveAssetPath(relativeConfig), resolveAssetPath(relativeModelRoot));
+        scripts->initialize();
+        for (const std::string& error : scripts->errors()) {
+            gameLog.Log("Lua initialization error: " + error);
+        }
         spawn();
     }
 
-    ~BusModel() {
+    ~Vehicle() {
         joinTextureWorkers();
         const auto deleteBuffers = [](const std::vector<DisplayPart>& parts) {
             for (const DisplayPart& part : parts) {
@@ -372,7 +384,7 @@ struct BusModel {
 
     void drawBatch(Batch& batch, double alpha, bool forceUntextured = false,
                    const std::array<double, 3>* overrideColor = nullptr) {
-        TraceScope trace("render", "BusModel::drawBatch");
+        TraceScope trace("render", "Vehicle::drawBatch");
         if (alpha <= 0.0) {
             return;
         }
@@ -399,7 +411,7 @@ struct BusModel {
     }
 
     void draw(RenderViewContext context) {
-        TraceScope trace("render", "BusModel::draw");
+        TraceScope trace("render", "Vehicle::draw");
         if (!loaded) {
             return;
         }
@@ -412,7 +424,7 @@ struct BusModel {
         std::array<double, 6> frustumPlaneLengths = {};
 
         {
-            TraceScope phase("render", "BusModel::draw.setup");
+            TraceScope phase("render", "Vehicle::draw.setup");
 
             glDisable(GL_BLEND);
             glDepthMask(GL_TRUE);
@@ -423,7 +435,7 @@ struct BusModel {
 
         {
             if (frustumCulling) {
-                TraceScope phase("render", "BusModel::draw.frustumSetup");
+                TraceScope phase("render", "Vehicle::draw.frustumSetup");
                 const auto& projection = openbus::rendering::projectionMatrix();
                 const std::array<std::array<double, 4>, 6> planeSigns = {{{{1.0, 0.0, 0.0, 1.0}},
                                                                           {{-1.0, 0.0, 0.0, 1.0}},
@@ -450,7 +462,7 @@ struct BusModel {
         }
 
         const auto visible = [&](const DisplayPart& part) {
-            // TraceScope phase("render", "BusModel::draw.visible");
+            // TraceScope phase("render", "Vehicle::draw.visible");
             if (!part.visibleVariable.empty() &&
                 variables.get(part.visibleVariable) != static_cast<double>(part.visibleValue)) {
                 return false;
@@ -491,7 +503,7 @@ struct BusModel {
             return true;
         };
         const auto viewDepth = [&](const DisplayPart& part) {
-            // TraceScope phase("render", "BusModel::draw.viewDepth");
+            // TraceScope phase("render", "Vehicle::draw.viewDepth");
             const double local[4] = {part.center[0], part.center[1], part.center[2] + modelOffsetZ,
                                      1.0};
             double eyeZ = 0.0;
@@ -509,7 +521,7 @@ struct BusModel {
         std::vector<TransparentBatch> noDepthOpaqueBatches;
         std::vector<TransparentBatch> transparentBatches;
         {
-            TraceScope phase("render", "BusModel::draw.classifyParts");
+            TraceScope phase("render", "Vehicle::draw.classifyParts");
             for (DisplayPart& part : displayLists) {
                 const bool viewpointMatches =
                     part.viewpoint == 0 || (part.viewpoint & viewpointMask(context)) != 0;
@@ -531,7 +543,7 @@ struct BusModel {
             }
         }
         {
-            TraceScope phase("render", "BusModel::draw.sortBatches");
+            TraceScope phase("render", "Vehicle::draw.sortBatches");
             std::sort(opaqueParts.begin(), opaqueParts.end(),
                       [&](const DisplayPart* first, const DisplayPart* second) {
                           return viewDepth(*first) < viewDepth(*second);
@@ -561,7 +573,7 @@ struct BusModel {
         pushMatrix();
         translate(0.0, 0.0, modelOffsetZ);
         {
-            TraceScope phase("render", "BusModel::draw.opaquePass");
+            TraceScope phase("render", "Vehicle::draw.opaquePass");
             for (DisplayPart* part : opaqueParts) {
                 for (Batch& batch : part->batches) {
                     const double alpha = alphaScale(batch);
@@ -579,7 +591,7 @@ struct BusModel {
         glDepthMask(GL_FALSE);
         glDisable(GL_BLEND);
         {
-            TraceScope phase("render", "BusModel::draw.noDepthPass");
+            TraceScope phase("render", "Vehicle::draw.noDepthPass");
             for (const TransparentBatch& noDepthOpaque : noDepthOpaqueBatches) {
                 Batch& batch = *noDepthOpaque.batch;
                 const double alpha = alphaScale(batch);
@@ -592,7 +604,7 @@ struct BusModel {
         }
         glDepthMask(GL_FALSE);
         {
-            TraceScope phase("render", "BusModel::draw.transparentPass");
+            TraceScope phase("render", "Vehicle::draw.transparentPass");
             for (const TransparentBatch& transparent : transparentBatches) {
                 Batch& batch = *transparent.batch;
                 const double alpha = alphaScale(batch);
@@ -620,7 +632,7 @@ struct BusModel {
             }
         }
         {
-            TraceScope phase("render", "BusModel::draw.cleanup");
+            TraceScope phase("render", "Vehicle::draw.cleanup");
             pglBindBuffer(GL_ARRAY_BUFFER, 0);
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
@@ -1173,7 +1185,7 @@ struct BusModel {
             batch.textureRoot, batch.texturePath, batch.textureName,
             [](const std::filesystem::path& root, const std::filesystem::path& path,
                const std::string& name) {
-                return BusModel::findTexture(root, name.empty() ? path.string() : name);
+                return Vehicle::findTexture(root, name.empty() ? path.string() : name);
             });
     }
 
@@ -1315,7 +1327,7 @@ struct BusModel {
     }
 
     void drawEnvironmentMap(Batch& batch, double alpha) {
-        TraceScope trace("render", "BusModel::drawEnvironmentMap");
+        TraceScope trace("render", "Vehicle::drawEnvironmentMap");
         ensureEnvironmentTexture(batch);
         if (batch.environmentTexture == 0 || !batch.hasNormals || alpha <= 0.0) {
             return;
@@ -1912,9 +1924,9 @@ Renderer::Renderer(int width, int height, const char* title)
 
 Renderer::~Renderer() {
     gameLog.Log("Renderer shutting down");
-    playerBusModel_ = nullptr;
+    playerVehicle_ = nullptr;
     assetRequestManager_->join();
-    busModels_.clear();
+    vehicles_.clear();
     openbus::rendering::shutdownCoreRenderer();
     assetRequestManager_.reset();
     if (window_) {
@@ -1923,7 +1935,7 @@ Renderer::~Renderer() {
     glfwTerminate();
 }
 
-BusModel* Renderer::AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy) {
+Vehicle* Renderer::AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy) {
     if (vehicleCameras_.empty()) {
         const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigurationPathFor(vehicle));
         for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
@@ -1948,20 +1960,21 @@ BusModel* Renderer::AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPo
             cameraView_ = selectedCamera >= 0 ? selectedCamera + 1 : 1;
         }
     }
-    auto model = std::make_unique<BusModel>(vehicle, loadingPolicy, *assetRequestManager_);
-    BusModel* result = model.get();
-    busModels_.push_back(std::move(model));
+    auto model =
+        std::make_unique<Vehicle>(vehicle, loadingPolicy, *assetRequestManager_, simulationState_);
+    Vehicle* result = model.get();
+    vehicles_.push_back(std::move(model));
     return result;
 }
 
-BusModel* Renderer::AddBusModel(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
-                                ModelLoadingPolicy loadingPolicy) {
+Vehicle* Renderer::AddVehicle(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
+                              ModelLoadingPolicy loadingPolicy) {
     static_cast<void>(spawnPosition);
-    return AddBusModel(vehicle, loadingPolicy);
+    return AddVehicle(vehicle, loadingPolicy);
 }
 
-void Renderer::SetPlayerBusModel(BusModel* model) {
-    playerBusModel_ = model;
+void Renderer::SetPlayerVehicle(Vehicle* model) {
+    playerVehicle_ = model;
 }
 
 bool Renderer::isExteriorView() const {
@@ -2063,8 +2076,10 @@ void Renderer::beginFrame() {
     double cursorX = 0.0;
     double cursorY = 0.0;
     glfwGetCursorPos(window_, &cursorX, &cursorY);
-    if (playerBusModel_) {
-        playerBusModel_->updateFrameVariables(timegap, currentTime, cursorX, cursorY);
+    simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
+    for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+        vehicle->updateFrameVariables(timegap, currentTime, cursorX, cursorY,
+                                      vehicle.get() != playerVehicle_);
     }
     const bool rightMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
     if (rightMouse && !draggingFov_) {
@@ -2123,7 +2138,7 @@ void Renderer::draw(const BusSimulation& simulation) {
             const double pan = -camera->pan * DEGREES_TO_RADIANS + viewLookYaw_;
             const double tilt = camera->tilt * DEGREES_TO_RADIANS + viewLookPitch_;
             const double modelOffsetZ =
-                playerBusModel_ != nullptr ? playerBusModel_->modelOffsetZ : 0.0;
+                playerVehicle_ != nullptr ? playerVehicle_->modelOffsetZ : 0.0;
             const std::array<double, 3> centerLocal = {camera->position[1], -camera->position[0],
                                                        camera->position[2] + modelOffsetZ};
             const std::array<double, 3> direction = {
@@ -2208,10 +2223,10 @@ void Renderer::draw(const BusSimulation& simulation) {
 
     {
         TraceScope phase("render", "Renderer::draw.model");
-        if (playerBusModel_ && playerBusModel_->loaded && !playerBusModel_->displayLists.empty()) {
+        if (playerVehicle_ && playerVehicle_->loaded && !playerVehicle_->displayLists.empty()) {
             pushMatrix();
             applyPose(chassis);
-            playerBusModel_->draw(context);
+            playerVehicle_->draw(context);
             popMatrix();
         } else {
             pushMatrix();
@@ -2222,9 +2237,9 @@ void Renderer::draw(const BusSimulation& simulation) {
         }
     }
 
-    if (playerBusModel_ && glfwGetTime() - lastStatsTitleTime_ > 0.25) {
+    if (playerVehicle_ && glfwGetTime() - lastStatsTitleTime_ > 0.25) {
         std::ostringstream title;
-        title << "OpenBus - " << playerBusModel_->renderedTriangles() << " triangles";
+        title << "OpenBus - " << playerVehicle_->renderedTriangles() << " triangles";
         glfwSetWindowTitle(window_, title.str().c_str());
         lastStatsTitleTime_ = glfwGetTime();
     }
@@ -2261,8 +2276,8 @@ void Renderer::draw(const BusSimulation& simulation) {
 
     {
         TraceScope phase("render", "Renderer::draw.wheels");
-        if (playerBusModel_ && playerBusModel_->hasConfiguredWheels(simulation.wheelCount())) {
-            playerBusModel_->drawConfiguredWheels(simulation, chassis, isExteriorView());
+        if (playerVehicle_ && playerVehicle_->hasConfiguredWheels(simulation.wheelCount())) {
+            playerVehicle_->drawConfiguredWheels(simulation, chassis, isExteriorView());
         } else {
             for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
                 const BodyPose wheel = simulation.wheelPose(index);
@@ -2342,7 +2357,7 @@ bool Renderer::consumeCaptureRequest() {
 }
 
 bool Renderer::isCaptureReady() const {
-    return playerBusModel_ && playerBusModel_->isCaptureReady();
+    return playerVehicle_ && playerVehicle_->isCaptureReady();
 }
 
 double Renderer::throttle() const {

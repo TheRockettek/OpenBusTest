@@ -3,6 +3,7 @@
 #include "ConfigurationParser.h"
 #include "ModelConfigLoader.h"
 #include "PerfTrace.h"
+#include "osc/OscConverter.h"
 
 #include <algorithm>
 #include <array>
@@ -161,6 +162,41 @@ void loadReferencedDefinitions(const std::filesystem::path& configPath, VehicleC
     }
     for (const std::string& path : result.constantFiles) {
         loadConstantFile(configPath, path, result);
+    }
+}
+
+void convertVehicleScripts(const std::filesystem::path& configPath, VehicleConfig& result) {
+    for (const std::string& referencedPath : result.scripts) {
+        const std::filesystem::path sourcePath = resolveReferencedPath(configPath, referencedPath);
+        if (sourcePath.extension() != ".osc" && sourcePath.extension() != ".OSC") {
+            continue;
+        }
+
+        std::filesystem::path generatedPath;
+        std::error_code sourceError;
+        const bool sourceExists = std::filesystem::exists(sourcePath, sourceError);
+        if (!sourceExists || sourceError) {
+            result.diagnostics.error(0, "script", "unable to open " + sourcePath.string());
+            continue;
+        }
+
+        try {
+            generatedPath = generatedLuaPath(sourcePath);
+        } catch (const std::exception& exception) {
+            result.diagnostics.error(0, "script",
+                                     "unable to hash " + sourcePath.string() + ": " +
+                                         exception.what());
+            continue;
+        }
+        if (std::filesystem::exists(generatedPath)) {
+            continue;
+        }
+
+        std::string error;
+        if (!convertOscToLua(sourcePath, generatedPath, error)) {
+            result.diagnostics.error(0, "script",
+                                     "unable to convert " + sourcePath.string() + ": " + error);
+        }
     }
 }
 
@@ -508,6 +544,7 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                                  "must follow at least one [add_camera_driver]");
     }
     loadReferencedDefinitions(configPath, result);
+    convertVehicleScripts(configPath, result);
     return result;
 }
 
