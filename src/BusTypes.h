@@ -47,6 +47,7 @@ struct BusConfiguration {
     double centerOfGravityHeight;
     bool articulated;
     std::vector<BusAxle> axles;
+    double inverseMinimumTurnRadius = 0.0;
 };
 
 enum class RoadFeatureType {

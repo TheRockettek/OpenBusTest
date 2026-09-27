@@ -15,9 +15,9 @@ bool loadTextureAsset(const std::filesystem::path& path, TextureAsset& asset) {
         return false;
     }
     std::string extension = path.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-    });
+    std::transform(
+        extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
     if (extension == ".dds" && TextureLoader::isSafeCompressedDds(path)) {
         if (TextureLoader::isDxt5Dds(path) && !TextureLoader::isDdsTextureArray(path)) {
             auto compressedDds = std::make_shared<CompressedDds>();

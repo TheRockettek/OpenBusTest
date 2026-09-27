@@ -1,12 +1,8 @@
 #include "RenderPrimitives.h"
 
 #include "CameraMath.h"
+#include "CoreRenderer.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-#include <GL/gl.h>
-#include <GLFW/glfw3.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -18,70 +14,87 @@ constexpr int ROAD_BUMP_SEGMENTS = 12;
 constexpr int ROAD_RAMP_SEGMENTS = 6;
 constexpr int ROAD_INCLINE_SEGMENTS = 16;
 
+PrimitiveVertex vertex(double x, double y, double z, const std::array<double, 3>& color) {
+    return {static_cast<float>(x),        static_cast<float>(y),
+            static_cast<float>(z),        static_cast<float>(color[0]),
+            static_cast<float>(color[1]), static_cast<float>(color[2])};
+}
+
+void drawColoredBox(double length, double width, double height, double centerX, double centerY,
+                    double bottomZ, const std::array<double, 3>& topColor,
+                    const std::array<double, 3>& sideColor) {
+    const double halfLength = length * 0.5;
+    const double halfWidth = width * 0.5;
+    const std::array<std::array<double, 3>, 8> corners = {{{-halfLength, -halfWidth, 0.0},
+                                                           {halfLength, -halfWidth, 0.0},
+                                                           {halfLength, halfWidth, 0.0},
+                                                           {-halfLength, halfWidth, 0.0},
+                                                           {-halfLength, -halfWidth, height},
+                                                           {halfLength, -halfWidth, height},
+                                                           {halfLength, halfWidth, height},
+                                                           {-halfLength, halfWidth, height}}};
+    const std::array<std::array<int, 4>, 6> faces = {
+        {{4, 5, 6, 7}, {0, 1, 5, 4}, {1, 2, 6, 5}, {2, 3, 7, 6}, {3, 0, 4, 7}, {0, 3, 2, 1}}};
+    std::vector<PrimitiveVertex> vertices;
+    vertices.reserve(36);
+    for (std::size_t faceIndex = 0; faceIndex < faces.size(); ++faceIndex) {
+        const auto& color = faceIndex == 0 ? topColor : sideColor;
+        const auto& face = faces[faceIndex];
+        for (int index : {face[0], face[1], face[2], face[0], face[2], face[3]}) {
+            const auto& point = corners[static_cast<std::size_t>(index)];
+            vertices.push_back(
+                vertex(point[0] + centerX, point[1] + centerY, point[2] + bottomZ, color));
+        }
+    }
+    drawPrimitives(vertices, GL_TRIANGLES);
+}
+
+void drawLineList(const std::vector<PrimitiveVertex>& vertices, float lineWidth = 1.0f) {
+    drawPrimitives(vertices, GL_LINES, lineWidth);
+}
+
 } // namespace
 
 void drawBox(double length, double width, double height, double red, double green, double blue) {
-    const double x = length * 0.5;
-    const double y = width * 0.5;
-    const double z = height * 0.5;
-    glColor3d(red, green, blue);
-    glBegin(GL_LINES);
-    glVertex3d(-x, -y, -z);
-    glVertex3d(x, -y, -z);
-    glVertex3d(x, -y, -z);
-    glVertex3d(x, y, -z);
-    glVertex3d(x, y, -z);
-    glVertex3d(-x, y, -z);
-    glVertex3d(-x, y, -z);
-    glVertex3d(-x, -y, -z);
-    glVertex3d(-x, -y, z);
-    glVertex3d(x, -y, z);
-    glVertex3d(x, -y, z);
-    glVertex3d(x, y, z);
-    glVertex3d(x, y, z);
-    glVertex3d(-x, y, z);
-    glVertex3d(-x, y, z);
-    glVertex3d(-x, -y, z);
-    glVertex3d(-x, -y, -z);
-    glVertex3d(-x, -y, z);
-    glVertex3d(x, -y, -z);
-    glVertex3d(x, -y, z);
-    glVertex3d(x, y, -z);
-    glVertex3d(x, y, z);
-    glVertex3d(-x, y, -z);
-    glVertex3d(-x, y, z);
-    glEnd();
+    const double halfLength = length * 0.5;
+    const double halfWidth = width * 0.5;
+    const double halfHeight = height * 0.5;
+    const std::array<double, 3> color = {red, green, blue};
+    const std::array<std::array<double, 3>, 8> corners = {{{-halfLength, -halfWidth, -halfHeight},
+                                                           {halfLength, -halfWidth, -halfHeight},
+                                                           {halfLength, halfWidth, -halfHeight},
+                                                           {-halfLength, halfWidth, -halfHeight},
+                                                           {-halfLength, -halfWidth, halfHeight},
+                                                           {halfLength, -halfWidth, halfHeight},
+                                                           {halfLength, halfWidth, halfHeight},
+                                                           {-halfLength, halfWidth, halfHeight}}};
+    const std::array<std::array<int, 2>, 12> edges = {{{0, 1},
+                                                       {1, 2},
+                                                       {2, 3},
+                                                       {3, 0},
+                                                       {4, 5},
+                                                       {5, 6},
+                                                       {6, 7},
+                                                       {7, 4},
+                                                       {0, 4},
+                                                       {1, 5},
+                                                       {2, 6},
+                                                       {3, 7}}};
+    std::vector<PrimitiveVertex> vertices;
+    vertices.reserve(edges.size() * 2);
+    for (const auto& edge : edges) {
+        for (int index : edge) {
+            const auto& point = corners[static_cast<std::size_t>(index)];
+            vertices.push_back(vertex(point[0], point[1], point[2], color));
+        }
+    }
+    drawLineList(vertices);
 }
 
 void drawRoadBox(double centerX, double centerY, double length, double width, double height,
                  double bottomZ, const std::array<double, 3>& topColor,
                  const std::array<double, 3>& sideColor) {
-    const double halfLength = length * 0.5;
-    const double halfWidth = width * 0.5;
-    glPushMatrix();
-    glTranslated(centerX, centerY, bottomZ);
-    glColor3d(topColor[0], topColor[1], topColor[2]);
-    glBegin(GL_QUADS);
-    glVertex3d(-halfLength, -halfWidth, height);
-    glVertex3d(halfLength, -halfWidth, height);
-    glVertex3d(halfLength, halfWidth, height);
-    glVertex3d(-halfLength, halfWidth, height);
-    glColor3d(sideColor[0], sideColor[1], sideColor[2]);
-    glVertex3d(-halfLength, -halfWidth, 0.0);
-    glVertex3d(halfLength, -halfWidth, 0.0);
-    glVertex3d(halfLength, -halfWidth, height);
-    glVertex3d(-halfLength, -halfWidth, height);
-    glVertex3d(halfLength, halfWidth, 0.0);
-    glVertex3d(-halfLength, halfWidth, 0.0);
-    glVertex3d(-halfLength, halfWidth, height);
-    glVertex3d(halfLength, halfWidth, height);
-    glEnd();
-    glPopMatrix();
-
-    glPushMatrix();
-    glTranslated(centerX, centerY, bottomZ + height * 0.5);
-    drawBox(length, width, height, 0.0, 0.85, 0.95);
-    glPopMatrix();
+    drawColoredBox(length, width, height, centerX, centerY, bottomZ, topColor, sideColor);
 }
 
 void drawRoadIncline(const RoadBump& bump) {
@@ -89,92 +102,72 @@ void drawRoadIncline(const RoadBump& bump) {
     const double startX = bump.centerX - bump.length * 0.5;
     const double segmentLength = bump.length / ROAD_INCLINE_SEGMENTS;
     const auto heightAt = [&](double x) { return roadFeatureHeightAt(bump, x - bump.centerX); };
-
-    glBegin(GL_QUADS);
+    const std::array<double, 3> topColor = {0.42, 0.50, 0.30};
+    const std::array<double, 3> sideColor = {0.18, 0.25, 0.12};
+    const std::array<double, 3> railColor = {0.0, 0.85, 0.95};
+    std::vector<PrimitiveVertex> surfaces;
+    std::vector<PrimitiveVertex> lines;
     for (int segment = 0; segment < ROAD_INCLINE_SEGMENTS; ++segment) {
         const double minX = startX + segment * segmentLength;
         const double maxX = minX + segmentLength;
         const double minHeight = heightAt(minX);
         const double maxHeight = heightAt(maxX);
-        glColor3d(0.42, 0.50, 0.30);
-        glVertex3d(minX, bump.centerY - halfWidth, minHeight);
-        glVertex3d(maxX, bump.centerY - halfWidth, maxHeight);
-        glVertex3d(maxX, bump.centerY + halfWidth, maxHeight);
-        glVertex3d(minX, bump.centerY + halfWidth, minHeight);
-        glColor3d(0.18, 0.25, 0.12);
-        glVertex3d(minX, bump.centerY - halfWidth, 0.0);
-        glVertex3d(maxX, bump.centerY - halfWidth, 0.0);
-        glVertex3d(maxX, bump.centerY - halfWidth, maxHeight);
-        glVertex3d(minX, bump.centerY - halfWidth, minHeight);
-        glVertex3d(maxX, bump.centerY + halfWidth, 0.0);
-        glVertex3d(minX, bump.centerY + halfWidth, 0.0);
-        glVertex3d(minX, bump.centerY + halfWidth, minHeight);
-        glVertex3d(maxX, bump.centerY + halfWidth, maxHeight);
+        const auto addQuad = [&](const std::array<double, 3>& color, double x0, double y0,
+                                 double z0, double x1, double y1, double z1, double x2, double y2,
+                                 double z2, double x3, double y3, double z3) {
+            surfaces.push_back(vertex(x0, y0, z0, color));
+            surfaces.push_back(vertex(x1, y1, z1, color));
+            surfaces.push_back(vertex(x2, y2, z2, color));
+            surfaces.push_back(vertex(x0, y0, z0, color));
+            surfaces.push_back(vertex(x2, y2, z2, color));
+            surfaces.push_back(vertex(x3, y3, z3, color));
+        };
+        addQuad(topColor, minX, bump.centerY - halfWidth, minHeight, maxX, bump.centerY - halfWidth,
+                maxHeight, maxX, bump.centerY + halfWidth, maxHeight, minX,
+                bump.centerY + halfWidth, minHeight);
+        addQuad(sideColor, minX, bump.centerY - halfWidth, 0.0, maxX, bump.centerY - halfWidth, 0.0,
+                maxX, bump.centerY - halfWidth, maxHeight, minX, bump.centerY - halfWidth,
+                minHeight);
+        addQuad(sideColor, maxX, bump.centerY + halfWidth, 0.0, minX, bump.centerY + halfWidth, 0.0,
+                minX, bump.centerY + halfWidth, minHeight, maxX, bump.centerY + halfWidth,
+                maxHeight);
+        lines.push_back(vertex(minX, bump.centerY - halfWidth, minHeight + 0.005, railColor));
+        lines.push_back(vertex(maxX, bump.centerY - halfWidth, maxHeight + 0.005, railColor));
+        lines.push_back(vertex(minX, bump.centerY + halfWidth, minHeight + 0.005, railColor));
+        lines.push_back(vertex(maxX, bump.centerY + halfWidth, maxHeight + 0.005, railColor));
     }
     const double endX = startX + bump.length;
     const double endHeight = heightAt(endX);
-    glColor3d(0.18, 0.25, 0.12);
-    glVertex3d(endX, bump.centerY - halfWidth, 0.0);
-    glVertex3d(endX, bump.centerY + halfWidth, 0.0);
-    glVertex3d(endX, bump.centerY + halfWidth, endHeight);
-    glVertex3d(endX, bump.centerY - halfWidth, endHeight);
-    glEnd();
-
-    glColor3d(0.0, 0.85, 0.95);
-    glBegin(GL_LINE_STRIP);
-    for (int segment = 0; segment <= ROAD_INCLINE_SEGMENTS; ++segment) {
-        const double x = startX + segment * segmentLength;
-        glVertex3d(x, bump.centerY - halfWidth, heightAt(x) + 0.005);
-    }
-    glEnd();
-    glBegin(GL_LINE_STRIP);
-    for (int segment = 0; segment <= ROAD_INCLINE_SEGMENTS; ++segment) {
-        const double x = startX + segment * segmentLength;
-        glVertex3d(x, bump.centerY + halfWidth, heightAt(x) + 0.005);
-    }
-    glEnd();
-    glBegin(GL_LINES);
-    for (int segment = 0; segment <= ROAD_INCLINE_SEGMENTS; segment += 8) {
-        const double x = startX + segment * segmentLength;
-        const double height = heightAt(x) + 0.005;
-        glVertex3d(x, bump.centerY - halfWidth, height);
-        glVertex3d(x, bump.centerY + halfWidth, height);
-        glVertex3d(x, bump.centerY - halfWidth, 0.0);
-        glVertex3d(x, bump.centerY - halfWidth, height);
-        glVertex3d(x, bump.centerY + halfWidth, 0.0);
-        glVertex3d(x, bump.centerY + halfWidth, height);
-    }
-    glEnd();
+    drawPrimitives(surfaces, GL_TRIANGLES);
+    drawLineList(lines);
+    drawLineList({vertex(endX, bump.centerY - halfWidth, 0.0, sideColor),
+                  vertex(endX, bump.centerY + halfWidth, 0.0, sideColor),
+                  vertex(endX, bump.centerY + halfWidth, endHeight, sideColor),
+                  vertex(endX, bump.centerY - halfWidth, endHeight, sideColor)});
 }
 
 void drawGround(const std::vector<RoadBump>& bumps) {
-    static GLuint groundGridList = 0;
-    if (groundGridList == 0) {
-        groundGridList = glGenLists(1);
-        glNewList(groundGridList, GL_COMPILE);
-        glColor3d(0.18, 0.22, 0.18);
-        glBegin(GL_QUADS);
-        glVertex3d(-100.0, -100.0, 0.0);
-        glVertex3d(100.0, -100.0, 0.0);
-        glVertex3d(100.0, 100.0, 0.0);
-        glVertex3d(-100.0, 100.0, 0.0);
-        glEnd();
-
-        glLineWidth(1.0f);
-        glBegin(GL_LINES);
+    static std::vector<PrimitiveVertex> ground;
+    static std::vector<PrimitiveVertex> gridLines;
+    if (ground.empty()) {
+        const std::array<double, 3> groundColor = {0.18, 0.22, 0.18};
+        const std::array<double, 3> minorColor = {0.25, 0.30, 0.25};
+        const std::array<double, 3> majorColor = {0.38, 0.43, 0.36};
+        ground = {
+            vertex(-100.0, -100.0, 0.0, groundColor), vertex(100.0, -100.0, 0.0, groundColor),
+            vertex(100.0, 100.0, 0.0, groundColor),   vertex(-100.0, -100.0, 0.0, groundColor),
+            vertex(100.0, 100.0, 0.0, groundColor),   vertex(-100.0, 100.0, 0.0, groundColor)};
         for (int line = -100; line <= 100; line += 2) {
             const double coordinate = static_cast<double>(line);
-            const bool major = line % 10 == 0;
-            glColor3d(major ? 0.38 : 0.25, major ? 0.43 : 0.30, major ? 0.36 : 0.25);
-            glVertex3d(coordinate, -100.0, 0.02);
-            glVertex3d(coordinate, 100.0, 0.02);
-            glVertex3d(-100.0, coordinate, 0.02);
-            glVertex3d(100.0, coordinate, 0.02);
+            const auto& color = line % 10 == 0 ? majorColor : minorColor;
+            gridLines.push_back(vertex(coordinate, -100.0, 0.02, color));
+            gridLines.push_back(vertex(coordinate, 100.0, 0.02, color));
+            gridLines.push_back(vertex(-100.0, coordinate, 0.02, color));
+            gridLines.push_back(vertex(100.0, coordinate, 0.02, color));
         }
-        glEnd();
-        glEndList();
     }
-    glCallList(groundGridList);
+    drawPrimitives(ground, GL_TRIANGLES);
+    drawLineList(gridLines);
 
     for (const RoadBump& bump : bumps) {
         if (bump.type == RoadFeatureType::Barrier) {
@@ -225,70 +218,59 @@ void drawGround(const std::vector<RoadBump>& bumps) {
             const double height = bump.height * (phase <= 0.5 ? phase * 2.0 : (1.0 - phase) * 2.0);
             const double minX = bump.centerX - bump.length * 0.5 + segment * segmentLength;
             const double maxX = minX + segmentLength;
-            const double minY = bump.centerY - halfWidth;
-            const double maxY = bump.centerY + halfWidth;
-            drawRoadBox((minX + maxX) * 0.5, bump.centerY, maxX - minX, maxY - minY, height, 0.0,
-                        {0.72, 0.46, 0.18}, {0.48, 0.28, 0.10});
+            drawRoadBox((minX + maxX) * 0.5, bump.centerY, maxX - minX, halfWidth * 2.0, height,
+                        0.0, {0.72, 0.46, 0.18}, {0.48, 0.28, 0.10});
         }
     }
 }
 
 void drawWheel(double radius, double halfWidth, double red, double green, double blue) {
     constexpr int segments = 16;
-    glColor3d(red, green, blue);
-    glBegin(GL_LINES);
+    const std::array<double, 3> color = {red, green, blue};
+    std::vector<PrimitiveVertex> vertices;
+    vertices.reserve(segments * 6);
     for (int segment = 0; segment < segments; ++segment) {
         const double first = 2.0 * 3.141592653589793 * segment / segments;
         const double second = 2.0 * 3.141592653589793 * (segment + 1) / segments;
         for (const double z : {-halfWidth, halfWidth}) {
-            glVertex3d(radius * std::cos(first), radius * std::sin(first), z);
-            glVertex3d(radius * std::cos(second), radius * std::sin(second), z);
+            vertices.push_back(
+                vertex(radius * std::cos(first), radius * std::sin(first), z, color));
+            vertices.push_back(
+                vertex(radius * std::cos(second), radius * std::sin(second), z, color));
         }
-        glVertex3d(radius * std::cos(first), radius * std::sin(first), -halfWidth);
-        glVertex3d(radius * std::cos(first), radius * std::sin(first), halfWidth);
+        vertices.push_back(
+            vertex(radius * std::cos(first), radius * std::sin(first), -halfWidth, color));
+        vertices.push_back(
+            vertex(radius * std::cos(first), radius * std::sin(first), halfWidth, color));
     }
-    glEnd();
+    drawLineList(vertices);
 }
 
 void drawCenterOfGravityMarker(double size) {
-    glColor3d(0.95, 0.10, 0.10);
-    glLineWidth(3.0f);
-    glBegin(GL_LINES);
-    glVertex3d(-size, 0.0, 0.0);
-    glVertex3d(size, 0.0, 0.0);
-    glVertex3d(0.0, -size, 0.0);
-    glVertex3d(0.0, size, 0.0);
-    glVertex3d(0.0, 0.0, -size);
-    glVertex3d(0.0, 0.0, size);
-    glEnd();
-    glLineWidth(1.0f);
+    const std::array<double, 3> color = {0.95, 0.10, 0.10};
+    drawLineList({vertex(-size, 0.0, 0.0, color), vertex(size, 0.0, 0.0, color),
+                  vertex(0.0, -size, 0.0, color), vertex(0.0, size, 0.0, color),
+                  vertex(0.0, 0.0, -size, color), vertex(0.0, 0.0, size, color)},
+                 3.0f);
 }
 
 void drawCollisionWireframe(const BusSimulation& simulation) {
-    glDisable(GL_TEXTURE_2D);
-    glDisable(GL_BLEND);
-    glDisable(GL_ALPHA_TEST);
     glDepthMask(GL_FALSE);
-    glLineWidth(2.0f);
-
     const BodyPose chassis = simulation.chassisPose();
     const ChassisCollisionBox collision = simulation.chassisCollisionBox();
-    glPushMatrix();
+    pushMatrix();
     applyPose(chassis);
-    glTranslated(collision.offsetX, collision.offsetY, collision.offsetZ);
+    translate(collision.offsetX, collision.offsetY, collision.offsetZ);
     drawBox(collision.length, collision.width, collision.height, 0.0, 0.85, 0.95);
-    glPopMatrix();
+    popMatrix();
 
     for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
-        glPushMatrix();
+        pushMatrix();
         applyPose(simulation.wheelPose(index));
         drawWheel(simulation.wheelRadius(), simulation.wheelHalfWidth(), 0.0, 0.85, 0.95);
-        glPopMatrix();
+        popMatrix();
     }
-
-    glLineWidth(1.0f);
     glDepthMask(GL_TRUE);
-    glColor4d(1.0, 1.0, 1.0, 1.0);
 }
 
 } // namespace openbus::rendering

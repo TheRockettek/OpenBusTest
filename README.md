@@ -158,8 +158,7 @@ derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
   debugging. Opaque parts are front-to-back and transparent parts
   back-to-front; this is not hardware occlusion-query culling.
 - Model geometry is uploaded to OpenGL vertex buffer objects (VBOs) and drawn
-  with `glDrawArrays`; compatibility-profile VBO entry points are loaded at
-  runtime.
+  with shader-backed `glDrawArrays` calls in an OpenGL 3.3 core profile.
 - Window and door glass remains material-driven in the VBO path; the temporary
   flat glass fallback is no longer used for normal model materials.
 - Normal MAN DL05 wheel meshes are removed from the static model pass and

@@ -22,24 +22,27 @@ constexpr double DEFAULT_WHEEL_HALF_WIDTH = 0.145;
 
 BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source) {
     const std::array<double, 6>& boundingBox = source.boundingBox;
+
     BusConfiguration configuration{};
-    configuration.mass = source.massTonnes * 1000.0;
-    configuration.length = boundingBox[1];
-    configuration.width = boundingBox[0];
+    configuration.articulated = source.articulated;
+    configuration.axles = source.axles;
+    configuration.bodyHalfHeight = boundingBox[2] * 0.5;
     configuration.bodyHalfLength = boundingBox[1] * 0.5;
     configuration.bodyHalfWidth = boundingBox[0] * 0.5;
-    configuration.bodyHalfHeight = boundingBox[2] * 0.5;
-    configuration.wheelRadius = source.axles.front().wheelDiameter * 0.5;
-    configuration.wheelHalfWidth = source.wheelHalfWidth;
-    configuration.collisionLength = boundingBox[1];
-    configuration.collisionWidth = boundingBox[0];
+    configuration.centerOfGravityHeight = source.centerOfGravityHeight;
     configuration.collisionHeight = boundingBox[2];
+    configuration.collisionLength = boundingBox[1];
     configuration.collisionOffsetX = boundingBox[3];
     configuration.collisionOffsetY = boundingBox[4];
     configuration.collisionOffsetZ = boundingBox[5] - source.centerOfGravityHeight;
-    configuration.centerOfGravityHeight = source.centerOfGravityHeight;
-    configuration.articulated = source.articulated;
-    configuration.axles = source.axles;
+    configuration.collisionWidth = boundingBox[0];
+    configuration.inverseMinimumTurnRadius = source.inverseMinimumTurnRadius;
+    configuration.length = boundingBox[1];
+    configuration.mass = source.massTonnes * 1000.0;
+    configuration.wheelHalfWidth = source.wheelHalfWidth;
+    configuration.wheelRadius = source.axles.front().wheelDiameter * 0.5;
+    configuration.width = boundingBox[0];
+
     return configuration;
 }
 
@@ -62,12 +65,14 @@ std::optional<std::size_t> steeringAxleIndex(const std::string& variable) {
                                                   normalized.substr(sideSeparator + 1) != "r") {
         return {};
     }
+
     int index = -1;
     if (!openbus::config::parseInt(normalized.substr(prefixLength, sideSeparator - prefixLength),
                                    index) ||
         index < 0) {
         return {};
     }
+
     return static_cast<std::size_t>(index);
 }
 

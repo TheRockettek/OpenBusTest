@@ -55,8 +55,8 @@ std::string AssetRequestManager::textureAliasKey(const std::filesystem::path& ro
     return normalizedRoot + "|" + lower(identity.stem().generic_string());
 }
 
-std::shared_future<std::shared_ptr<ParsedObj>> AssetRequestManager::requestObj(
-    const std::filesystem::path& path) {
+std::shared_future<std::shared_ptr<ParsedObj>>
+AssetRequestManager::requestObj(const std::filesystem::path& path) {
     const std::string key = normalizedPathKey(path);
     std::lock_guard<std::mutex> lock(parsedObjMutex_);
     const auto cached = parsedObjCache_.find(key);
@@ -69,9 +69,10 @@ std::shared_future<std::shared_ptr<ParsedObj>> AssetRequestManager::requestObj(
     return future;
 }
 
-std::shared_ptr<AssetRequestManager::TextureCacheEntry> AssetRequestManager::requestTexture(
-    const std::filesystem::path& root, const std::filesystem::path& path,
-    const std::string& name, TextureResolver resolver) {
+std::shared_ptr<AssetRequestManager::TextureCacheEntry>
+AssetRequestManager::requestTexture(const std::filesystem::path& root,
+                                    const std::filesystem::path& path, const std::string& name,
+                                    TextureResolver resolver) {
     const std::string key = textureKey(root, path, name);
     std::lock_guard<std::mutex> lock(textureMutex_);
     const auto found = textureCache_.find(key);
@@ -99,8 +100,7 @@ std::shared_ptr<AssetRequestManager::TextureCacheEntry> AssetRequestManager::req
     return entry;
 }
 
-void AssetRequestManager::startTextureRequest(
-    const std::shared_ptr<TextureCacheEntry>& entry) {
+void AssetRequestManager::startTextureRequest(const std::shared_ptr<TextureCacheEntry>& entry) {
     {
         std::lock_guard<std::mutex> lock(entry->request->mutex);
         if (entry->request->started) {
@@ -109,19 +109,20 @@ void AssetRequestManager::startTextureRequest(
         entry->request->started = true;
     }
     try {
-        entry->request->task = std::async(std::launch::async, [this, request = entry->request] {
-            try {
-                loadTextureRequest(request);
-            } catch (const std::exception& error) {
-                gameLog.Log("Texture worker failed: " + std::string(error.what()));
-                std::lock_guard<std::mutex> lock(request->mutex);
-                request->complete = true;
-            } catch (...) {
-                gameLog.Log("Texture worker failed with an unknown error");
-                std::lock_guard<std::mutex> lock(request->mutex);
-                request->complete = true;
-            }
-        }).share();
+        entry->request->task =
+            std::async(std::launch::async, [this, request = entry->request] {
+                try {
+                    loadTextureRequest(request);
+                } catch (const std::exception& error) {
+                    gameLog.Log("Texture worker failed: " + std::string(error.what()));
+                    std::lock_guard<std::mutex> lock(request->mutex);
+                    request->complete = true;
+                } catch (...) {
+                    gameLog.Log("Texture worker failed with an unknown error");
+                    std::lock_guard<std::mutex> lock(request->mutex);
+                    request->complete = true;
+                }
+            }).share();
     } catch (const std::exception& error) {
         gameLog.Log("Failed to start texture worker: " + std::string(error.what()));
         std::lock_guard<std::mutex> lock(entry->request->mutex);
@@ -129,8 +130,7 @@ void AssetRequestManager::startTextureRequest(
     }
 }
 
-void AssetRequestManager::loadTextureRequest(
-    const std::shared_ptr<TextureRequest>& request) {
+void AssetRequestManager::loadTextureRequest(const std::shared_ptr<TextureRequest>& request) {
 #ifdef _WIN32
     const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 #endif

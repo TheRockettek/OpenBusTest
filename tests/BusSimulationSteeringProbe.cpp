@@ -19,6 +19,7 @@ BusConfiguration testConfiguration() {
     configuration.collisionWidth = 2.5;
     configuration.collisionHeight = 3.66;
     configuration.centerOfGravityHeight = 0.9;
+    configuration.inverseMinimumTurnRadius = 0.13;
     configuration.axles = {{4.05, 2.402, 2.402, 1.734, 0.951, 308000.0, 82000.0,
                             20000.0, true, false},
                            {-1.733, 2.402, 2.402, 1.18, 0.951, 314000.0, 115000.0,

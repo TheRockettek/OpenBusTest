@@ -1,11 +1,7 @@
 #include "CameraMath.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-#include <GL/gl.h>
-#include <GLFW/glfw3.h>
 #include <cmath>
+#include <vector>
 
 namespace openbus::rendering {
 
@@ -13,6 +9,7 @@ namespace {
 
 Matrix4 cachedModelViewMatrix = {};
 Matrix4 cachedProjectionMatrix = {};
+std::vector<Matrix4> modelViewStack;
 
 Matrix4 multiply(const Matrix4& left, const Matrix4& right) {
     Matrix4 result = {};
@@ -59,10 +56,6 @@ void setPerspective(double width, double height, double fieldOfView) {
                               0.0,
                               -(2.0 * farPlane * nearPlane) / (farPlane - nearPlane),
                               0.0};
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glFrustum(-right, right, -top, top, nearPlane, farPlane);
-    glMatrixMode(GL_MODELVIEW);
 }
 
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ) {
@@ -89,9 +82,6 @@ void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double target
     const Matrix4 translation = {1.0, 0.0, 0.0, 0.0, 0.0,   1.0,   0.0,   0.0,
                                  0.0, 0.0, 1.0, 0.0, -eyeX, -eyeY, -eyeZ, 1.0};
     cachedModelViewMatrix = multiply(rotation, translation);
-    glMatrixMode(GL_MODELVIEW);
-    glLoadMatrixd(rotation.data());
-    glTranslated(-eyeX, -eyeY, -eyeZ);
 }
 
 void applyPose(const BodyPose& pose) {
@@ -100,26 +90,52 @@ void applyPose(const BodyPose& pose) {
                             pose.rotation[2], pose.rotation[5], pose.rotation[8], 0.0,
                             pose.position[0], pose.position[1], pose.position[2], 1.0};
     cachedModelViewMatrix = multiply(cachedModelViewMatrix, matrix);
-    glTranslated(pose.position[0], pose.position[1], pose.position[2]);
-    const Matrix4 rotationMatrix = {pose.rotation[0],
-                                    pose.rotation[3],
-                                    pose.rotation[6],
-                                    0.0,
-                                    pose.rotation[1],
-                                    pose.rotation[4],
-                                    pose.rotation[7],
-                                    0.0,
-                                    pose.rotation[2],
-                                    pose.rotation[5],
-                                    pose.rotation[8],
-                                    0.0,
-                                    0.0,
-                                    0.0,
-                                    0.0,
-                                    1.0};
-    glMultMatrixd(rotationMatrix.data());
 }
 
+void pushMatrix() {
+    modelViewStack.push_back(cachedModelViewMatrix);
+}
+
+void popMatrix() {
+    if (modelViewStack.empty()) {
+        return;
+    }
+    cachedModelViewMatrix = modelViewStack.back();
+    modelViewStack.pop_back();
+}
+
+void translate(double x, double y, double z) {
+    cachedModelViewMatrix =
+        multiply(cachedModelViewMatrix,
+                 Matrix4{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, x, y, z, 1.0});
+}
+
+void rotate(double angleDegrees, double x, double y, double z) {
+    const double length = std::sqrt(x * x + y * y + z * z);
+    if (length <= 1.0e-12) {
+        return;
+    }
+    x /= length;
+    y /= length;
+    z /= length;
+    const double angle = angleDegrees * 3.141592653589793 / 180.0;
+    const double cosine = std::cos(angle);
+    const double sine = std::sin(angle);
+    const double inverseCosine = 1.0 - cosine;
+    cachedModelViewMatrix =
+        multiply(cachedModelViewMatrix,
+                 Matrix4{cosine + x * x * inverseCosine, y * x * inverseCosine + z * sine,
+                         z * x * inverseCosine - y * sine, 0.0, x * y * inverseCosine - z * sine,
+                         cosine + y * y * inverseCosine, z * y * inverseCosine + x * sine, 0.0,
+                         x * z * inverseCosine + y * sine, y * z * inverseCosine - x * sine,
+                         cosine + z * z * inverseCosine, 0.0, 0.0, 0.0, 0.0, 1.0});
+}
+
+void scale(double x, double y, double z) {
+    cachedModelViewMatrix =
+        multiply(cachedModelViewMatrix,
+                 Matrix4{x, 0.0, 0.0, 0.0, 0.0, y, 0.0, 0.0, 0.0, 0.0, z, 0.0, 0.0, 0.0, 0.0, 1.0});
+}
 std::array<double, 3> transformLocalPoint(const BodyPose& pose,
                                           const std::array<double, 3>& local) {
     return {pose.position[0] + pose.rotation[0] * local[0] + pose.rotation[1] * local[1] +

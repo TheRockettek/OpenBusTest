@@ -16,7 +16,7 @@ namespace openbus::rendering {
 
 class AssetRequestManager {
   public:
-        using TextureHandle = unsigned int;
+    using TextureHandle = unsigned int;
     using TextureResolver = std::function<std::filesystem::path(
         const std::filesystem::path&, const std::filesystem::path&, const std::string&)>;
 
@@ -49,11 +49,11 @@ class AssetRequestManager {
     AssetRequestManager(const AssetRequestManager&) = delete;
     AssetRequestManager& operator=(const AssetRequestManager&) = delete;
 
-    std::shared_future<std::shared_ptr<ParsedObj>> requestObj(
-        const std::filesystem::path& path);
-    std::shared_ptr<TextureCacheEntry> requestTexture(
-        const std::filesystem::path& root, const std::filesystem::path& path,
-        const std::string& name, TextureResolver resolver);
+    std::shared_future<std::shared_ptr<ParsedObj>> requestObj(const std::filesystem::path& path);
+    std::shared_ptr<TextureCacheEntry> requestTexture(const std::filesystem::path& root,
+                                                      const std::filesystem::path& path,
+                                                      const std::string& name,
+                                                      TextureResolver resolver);
     void startTextureRequest(const std::shared_ptr<TextureCacheEntry>& entry);
     void trackTexture(TextureHandle texture);
     void join();
@@ -67,11 +67,9 @@ class AssetRequestManager {
 
     static std::string normalizedPathKey(const std::filesystem::path& path);
     static std::string textureKey(const std::filesystem::path& root,
-                                  const std::filesystem::path& path,
-                                  const std::string& name);
+                                  const std::filesystem::path& path, const std::string& name);
     static std::string textureAliasKey(const std::filesystem::path& root,
-                                       const std::filesystem::path& path,
-                                       const std::string& name);
+                                       const std::filesystem::path& path, const std::string& name);
     void loadTextureRequest(const std::shared_ptr<TextureRequest>& request);
 
     std::mutex parsedObjMutex_;

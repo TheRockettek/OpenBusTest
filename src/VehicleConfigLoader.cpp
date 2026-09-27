@@ -466,7 +466,11 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
         if (keyword == "rollwiderstand" || keyword == "rot_pnt_long" ||
             keyword == "inv_min_turnradius" || keyword == "ai_deltaheight") {
             std::vector<double> values;
-            readDoubleRecord(reader, keyword, 1, values, result.diagnostics);
+            if (readDoubleRecord(reader, keyword, 1, values, result.diagnostics) &&
+                keyword == "inv_min_turnradius") {
+                result.inverseMinimumTurnRadius = values[0];
+                result.hasInverseMinimumTurnRadius = true;
+            }
             continue;
         }
 

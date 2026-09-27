@@ -132,6 +132,7 @@ struct BusSimulation::Impl {
     int maxCatchUpSteps;
     double accumulator = 0.0;
     double steeringAngle = 0.0;
+    dReal maxSteerAngle = MAX_STEER_ANGLE;
     int currentGear = 0;
     double shiftTimer = 0.0;
     int lastSteps = 0;
@@ -331,6 +332,23 @@ struct BusSimulation::Impl {
             simulationLog.Log("Bus configuration has no axles");
             throw std::invalid_argument("A bus must define at least one axle");
         }
+        if (configuration.inverseMinimumTurnRadius > 0.0) {
+            const auto steeringAxle =
+                std::find_if(configuration.axles.begin(), configuration.axles.end(),
+                             [](const BusAxle& axle) { return axle.steerable; });
+            if (steeringAxle != configuration.axles.end()) {
+                double wheelbase = 0.0;
+                for (const BusAxle& axle : configuration.axles) {
+                    if (!axle.steerable) {
+                        wheelbase =
+                            std::max(wheelbase, std::abs(steeringAxle->position - axle.position));
+                    }
+                }
+                if (wheelbase > 0.0) {
+                    maxSteerAngle = std::atan(configuration.inverseMinimumTurnRadius * wheelbase);
+                }
+            }
+        }
         for (const BusAxle& axle : configuration.axles) {
             if (axle.trackWidth <= 0.0 || std::abs(axle.position) > configuration.bodyHalfLength) {
                 simulationLog.Log("Bus axle geometry is outside the chassis");
@@ -425,9 +443,9 @@ struct BusSimulation::Impl {
             dJointSetHingeAxis(corner.steeringJoint, 0.0, 0.0, 1.0);
             const bool steerable = configuration.axles[axleIndex].steerable;
             dJointSetHingeParam(corner.steeringJoint, dParamLoStop,
-                                steerable ? -MAX_STEER_ANGLE : 0.0);
+                                steerable ? -maxSteerAngle : 0.0);
             dJointSetHingeParam(corner.steeringJoint, dParamHiStop,
-                                steerable ? MAX_STEER_ANGLE : 0.0);
+                                steerable ? maxSteerAngle : 0.0);
 
             corner.wheelJoint = dJointCreateHinge(ode.world, nullptr);
             dJointAttach(corner.wheelJoint, corner.steeringBody, corner.wheelBody);
@@ -509,7 +527,7 @@ struct BusSimulation::Impl {
         const dReal yawRate = rotation[2] * angularVelocity[0] + rotation[6] * angularVelocity[1] +
                               rotation[10] * angularVelocity[2];
         const dReal steerTarget =
-            std::clamp(static_cast<dReal>(steering), -1.0, 1.0) * MAX_STEER_ANGLE;
+            std::clamp(static_cast<dReal>(steering), -1.0, 1.0) * maxSteerAngle;
         const dReal maxSteerDelta = STEER_SPEED * static_cast<dReal>(fixedStep);
         steeringAngle += std::clamp(steerTarget - steeringAngle, -maxSteerDelta, maxSteerDelta);
 

@@ -113,6 +113,7 @@ add_executable(OpenBus
     src/BusConfigLoader.cpp
     src/BusModelLoader.cpp
     src/CameraMath.cpp
+    src/CoreRenderer.cpp
     src/RenderPrimitives.cpp
     src/SceneryObjectConfigLoader.cpp
     src/PerfTrace.cpp

@@ -6,6 +6,7 @@
 #include "BusModelLoader.h"
 #include "BusSimulation.h"
 #include "CameraMath.h"
+#include "CoreRenderer.h"
 #include "Logger.h"
 #include "ObjLoader.h"
 #include "OpenGLFunctions.h"
@@ -104,19 +105,27 @@ constexpr int viewpointMask(RenderViewContext context) {
 }
 
 constexpr double MAN_DL05_MODEL_OFFSET_Z = -1.035;
+constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
 } // namespace
 
 using openbus::rendering::applyPose;
 using AssetRequestManager = openbus::rendering::AssetRequestManager;
 using openbus::rendering::drawBox;
 using openbus::rendering::drawCenterOfGravityMarker;
+using openbus::rendering::drawEnvironmentBatch;
 using openbus::rendering::drawGround;
+using openbus::rendering::drawModelBatch;
 using openbus::rendering::drawWheel;
 using openbus::rendering::lookAt;
 using openbus::rendering::parseEnabledFlag;
+using openbus::rendering::popMatrix;
+using openbus::rendering::pushMatrix;
+using openbus::rendering::rotate;
+using openbus::rendering::scale;
 using openbus::rendering::setPerspective;
 using openbus::rendering::TraceScope;
 using openbus::rendering::transformLocalPoint;
+using openbus::rendering::translate;
 using ObjIndex = openbus::rendering::ObjIndex;
 using ObjNormal = openbus::rendering::ObjNormal;
 using ObjPosition = openbus::rendering::ObjPosition;
@@ -361,6 +370,34 @@ struct BusModel {
 #endif
     }
 
+    void drawBatch(Batch& batch, double alpha, bool forceUntextured = false,
+                   const std::array<double, 3>* overrideColor = nullptr) {
+        TraceScope trace("render", "BusModel::drawBatch");
+        if (alpha <= 0.0) {
+            return;
+        }
+        if (batch.alphaMode == 2 || batch.noZwrite) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
+        } else if (batch.alphaMode == 1) {
+            glDisable(GL_BLEND);
+            glDepthMask(GL_FALSE);
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(-1.0f, -1.0f);
+        } else {
+            glDisable(GL_BLEND);
+            glDepthMask(GL_TRUE);
+        }
+        ensureTexture(batch);
+        const std::array<double, 3>& color =
+            overrideColor == nullptr ? batch.color : *overrideColor;
+        const bool textured = batch.textured && !forceUntextured;
+        drawModelBatch(batch.buffer, batch.vertexCount, textured ? batch.texture : 0,
+                       textured && batch.textureArray, textured, color, alpha,
+                       forceUntextured ? 0 : batch.alphaMode);
+    }
+
     void draw(RenderViewContext context) {
         TraceScope trace("render", "BusModel::draw");
         if (!loaded) {
@@ -377,9 +414,7 @@ struct BusModel {
         {
             TraceScope phase("render", "BusModel::draw.setup");
 
-            glDisable(GL_TEXTURE_2D);
             glDisable(GL_BLEND);
-            glDisable(GL_ALPHA_TEST);
             glDepthMask(GL_TRUE);
             glEnable(GL_DEPTH_TEST);
             glEnable(GL_POLYGON_OFFSET_FILL);
@@ -523,8 +558,8 @@ struct BusModel {
                 lastRenderedTriangles += transparent.batch->vertexCount / 3;
             }
         }
-        glPushMatrix();
-        glTranslated(0.0, 0.0, modelOffsetZ);
+        pushMatrix();
+        translate(0.0, 0.0, modelOffsetZ);
         {
             TraceScope phase("render", "BusModel::draw.opaquePass");
             for (DisplayPart* part : opaqueParts) {
@@ -536,48 +571,13 @@ struct BusModel {
                     if (batch.alphaMode != 0 || batch.noZwrite) {
                         continue;
                     }
-                    if (batch.alphaMode == 2 || batch.noZwrite) {
-                        glEnable(GL_BLEND);
-                        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                        glDepthMask(GL_TRUE);
-                    } else if (batch.alphaMode == 1) {
-                        glDisable(GL_BLEND);
-                        glEnable(GL_ALPHA_TEST);
-                        glAlphaFunc(GL_GREATER, 0.5f);
-                        glDepthMask(GL_FALSE);
-                    } else {
-                        glDisable(GL_BLEND);
-                        glDisable(GL_ALPHA_TEST);
-                        glDepthMask(GL_TRUE);
-                    }
-                    ensureTexture(batch);
-                    if (batch.textured) {
-                        glEnable(GL_TEXTURE_2D);
-                        glBindTexture(batch.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
-                                      batch.texture);
-                        glColor4d(1.0, 1.0, 1.0, alpha);
-                    } else {
-                        glDisable(GL_TEXTURE_2D);
-                        glColor4d(batch.color[0], batch.color[1], batch.color[2], alpha);
-                    }
-                    pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-                    glEnableClientState(GL_VERTEX_ARRAY);
-                    glVertexPointer(3, GL_FLOAT, sizeof(Vertex), reinterpret_cast<const void*>(0));
-                    if (batch.textured) {
-                        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-                        glTexCoordPointer(batch.textureArray ? 3 : 2, GL_FLOAT, sizeof(Vertex),
-                                          reinterpret_cast<const void*>(3 * sizeof(float)));
-                    }
-                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
-                    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-                    glDisableClientState(GL_VERTEX_ARRAY);
+                    drawBatch(batch, alpha);
                     drawEnvironmentMap(batch, alpha);
                 }
             }
         }
         glDepthMask(GL_FALSE);
         glDisable(GL_BLEND);
-        glDisable(GL_ALPHA_TEST);
         {
             TraceScope phase("render", "BusModel::draw.noDepthPass");
             for (const TransparentBatch& noDepthOpaque : noDepthOpaqueBatches) {
@@ -586,27 +586,7 @@ struct BusModel {
                 if (alpha <= 0.0) {
                     continue;
                 }
-                ensureTexture(batch);
-                if (batch.textured) {
-                    glEnable(GL_TEXTURE_2D);
-                    glBindTexture(batch.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
-                                  batch.texture);
-                    glColor4d(1.0, 1.0, 1.0, alpha);
-                } else {
-                    glDisable(GL_TEXTURE_2D);
-                    glColor4d(batch.color[0], batch.color[1], batch.color[2], alpha);
-                }
-                pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-                glEnableClientState(GL_VERTEX_ARRAY);
-                glVertexPointer(3, GL_FLOAT, sizeof(Vertex), nullptr);
-                if (batch.textured) {
-                    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-                    glTexCoordPointer(batch.textureArray ? 3 : 2, GL_FLOAT, sizeof(Vertex),
-                                      reinterpret_cast<const void*>(3 * sizeof(float)));
-                }
-                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
-                glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-                glDisableClientState(GL_VERTEX_ARRAY);
+                drawBatch(batch, alpha);
                 drawEnvironmentMap(batch, alpha);
             }
         }
@@ -621,64 +601,33 @@ struct BusModel {
                 }
                 if (batch.alphaMode == 1) {
                     glDisable(GL_BLEND);
-                    glEnable(GL_ALPHA_TEST);
-                    glAlphaFunc(GL_GREATER, 0.5f);
                     glEnable(GL_POLYGON_OFFSET_FILL);
                     glPolygonOffset(-1.0f, -1.0f);
                 } else if (batch.alphaMode == 2) {
                     glEnable(GL_BLEND);
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    glDisable(GL_ALPHA_TEST);
                     glDisable(GL_POLYGON_OFFSET_FILL);
                 } else if (batch.noZwrite) {
                     glEnable(GL_BLEND);
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    glDisable(GL_ALPHA_TEST);
                     glDisable(GL_POLYGON_OFFSET_FILL);
                 } else {
                     glDisable(GL_BLEND);
-                    glDisable(GL_ALPHA_TEST);
                     glDisable(GL_POLYGON_OFFSET_FILL);
                 }
-                ensureTexture(batch);
-                if (batch.textured) {
-                    glEnable(GL_TEXTURE_2D);
-                    glBindTexture(batch.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
-                                  batch.texture);
-                    glColor4d(1.0, 1.0, 1.0, alpha);
-                } else {
-                    glDisable(GL_TEXTURE_2D);
-                    glColor4d(batch.color[0], batch.color[1], batch.color[2], alpha);
-                }
-                pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-                glEnableClientState(GL_VERTEX_ARRAY);
-                glVertexPointer(3, GL_FLOAT, sizeof(Vertex), nullptr);
-                if (batch.textured) {
-                    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-                    glTexCoordPointer(batch.textureArray ? 3 : 2, GL_FLOAT, sizeof(Vertex),
-                                      reinterpret_cast<const void*>(3 * sizeof(float)));
-                }
-                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
-                glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-                glDisableClientState(GL_VERTEX_ARRAY);
+                drawBatch(batch, alpha);
                 drawEnvironmentMap(batch, alpha);
             }
         }
         {
             TraceScope phase("render", "BusModel::draw.cleanup");
-            glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-            glDisableClientState(GL_NORMAL_ARRAY);
-            glDisableClientState(GL_VERTEX_ARRAY);
             pglBindBuffer(GL_ARRAY_BUFFER, 0);
             glDepthMask(GL_TRUE);
-            glDisable(GL_TEXTURE_2D);
             glDisable(GL_BLEND);
-            glDisable(GL_ALPHA_TEST);
             glDisable(GL_POLYGON_OFFSET_FILL);
             glDepthMask(GL_TRUE);
-            glColor4d(1.0, 1.0, 1.0, 1.0);
         }
-        glPopMatrix();
+        popMatrix();
     }
 
     bool hasConfiguredWheels(std::size_t expectedWheelCount) const {
@@ -751,56 +700,21 @@ struct BusModel {
                 if ((outsideView && !visibleOutside) || (!outsideView && !visibleInside)) {
                     continue;
                 }
-                glPushMatrix();
+                pushMatrix();
                 applyPose(pose);
-                glRotated(90.0, 1.0, 0.0, 0.0);
-                glTranslated(0.0, lateralOffset, 0.0);
-                glScaled(diameterScale, diameterScale, diameterScale);
-                glTranslated(-meshOrigin[0], -meshOrigin[1], -meshOrigin[2]);
+                rotate(90.0, 1.0, 0.0, 0.0);
+                translate(0.0, lateralOffset, 0.0);
+                scale(diameterScale, diameterScale, diameterScale);
+                translate(-meshOrigin[0], -meshOrigin[1], -meshOrigin[2]);
                 for (Batch& batch : part.batches) {
-                    ensureTexture(batch);
-                    if (batch.alphaMode == 2 || batch.noZwrite) {
-                        glEnable(GL_BLEND);
-                        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                        glDepthMask(GL_FALSE);
-                    } else if (batch.alphaMode == 1) {
-                        glDisable(GL_BLEND);
-                        glEnable(GL_ALPHA_TEST);
-                        glAlphaFunc(GL_GREATER, 0.5f);
-                        glDepthMask(GL_FALSE);
+                    if (isWheelRubberTexture(batch.textureName)) {
+                        const std::array<double, 3> rubberColor = {0.20, 0.20, 0.20};
+                        drawBatch(batch, alphaScale(batch), true, &rubberColor);
                     } else {
-                        glDisable(GL_BLEND);
-                        glDisable(GL_ALPHA_TEST);
-                        glDepthMask(GL_TRUE);
+                        drawBatch(batch, alphaScale(batch));
                     }
-                    if (batch.textured && !isWheelRubberTexture(batch.textureName)) {
-                        glEnable(GL_TEXTURE_2D);
-                        glBindTexture(batch.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D,
-                                      batch.texture);
-                        glColor3d(1.0, 1.0, 1.0);
-                    } else {
-                        glDisable(GL_TEXTURE_2D);
-                        if (isWheelRubberTexture(batch.textureName)) {
-                            glColor3d(0.20, 0.20, 0.20);
-                        } else {
-                            glColor3d(batch.color[0], batch.color[1], batch.color[2]);
-                        }
-                    }
-                    pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-                    glEnableClientState(GL_VERTEX_ARRAY);
-                    glVertexPointer(3, GL_FLOAT, sizeof(Vertex), nullptr);
-                    if (batch.textured) {
-                        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-                        glTexCoordPointer(batch.textureArray ? 3 : 2, GL_FLOAT, sizeof(Vertex),
-                                          reinterpret_cast<const void*>(3 * sizeof(float)));
-                    } else {
-                        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-                    }
-                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
-                    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-                    glDisableClientState(GL_VERTEX_ARRAY);
                 }
-                glPopMatrix();
+                popMatrix();
             }
         }
         for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
@@ -808,17 +722,14 @@ struct BusModel {
                 continue;
             }
             const BodyPose pose = simulation.wheelPose(index);
-            glPushMatrix();
+            pushMatrix();
             applyPose(pose);
             drawWheel(simulation.wheelRadius(index), simulation.wheelHalfWidth());
-            glPopMatrix();
+            popMatrix();
         }
         pglBindBuffer(GL_ARRAY_BUFFER, 0);
         glDepthMask(GL_TRUE);
-        glDisable(GL_TEXTURE_2D);
         glDisable(GL_BLEND);
-        glDisable(GL_ALPHA_TEST);
-        glColor4d(1.0, 1.0, 1.0, 1.0);
     }
 
     std::size_t renderedTriangles() const {
@@ -968,6 +879,7 @@ struct BusModel {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, image.rgba.data());
+        openbus::rendering::invalidateTextureBindings();
         assets->trackTexture(texture);
         return texture;
     }
@@ -1009,6 +921,7 @@ struct BusModel {
                     static_cast<GLsizei>(image.size(level)), image.data(0, 0, level));
             }
         }
+        openbus::rendering::invalidateTextureBindings();
         assets->trackTexture(texture);
         static const bool verboseTextureUploadLogs =
             parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
@@ -1053,6 +966,7 @@ struct BusModel {
             levelWidth = std::max(1, levelWidth / 2);
             levelHeight = std::max(1, levelHeight / 2);
         }
+        openbus::rendering::invalidateTextureBindings();
         assets->trackTexture(texture);
         static const bool verboseTextureUploadLogs =
             parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
@@ -1063,7 +977,7 @@ struct BusModel {
     }
 
     static std::filesystem::path findTexture(const std::filesystem::path& root,
-                                              const std::string& name) {
+                                             const std::string& name) {
         TraceScope trace("texture", "findTexture");
         const std::string cleaned = trim(name);
         if (cleaned.empty()) {
@@ -1401,41 +1315,23 @@ struct BusModel {
     }
 
     void drawEnvironmentMap(Batch& batch, double alpha) {
+        TraceScope trace("render", "BusModel::drawEnvironmentMap");
         ensureEnvironmentTexture(batch);
         if (batch.environmentTexture == 0 || !batch.hasNormals || alpha <= 0.0) {
             return;
         }
-        const double reflectionStrength = std::clamp(alpha * batch.environmentStrength, 0.0, 1.0);
+        const double reflectionStrength =
+            std::clamp(alpha * batch.environmentStrength * ENVIRONMENT_MAP_OPACITY, 0.0, 1.0);
         if (reflectionStrength <= 0.0) {
             return;
         }
 
-        const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
-        const GLboolean normalizeEnabled = glIsEnabled(GL_NORMALIZE);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glEnable(GL_TEXTURE_2D);
-        glBindTexture(GL_TEXTURE_2D, batch.environmentTexture);
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-        glEnableClientState(GL_NORMAL_ARRAY);
-        glNormalPointer(GL_FLOAT, sizeof(Vertex), reinterpret_cast<const void*>(6 * sizeof(float)));
-        glEnable(GL_NORMALIZE);
-        glTexGeni(GL_S, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
-        glTexGeni(GL_T, GL_TEXTURE_GEN_MODE, GL_SPHERE_MAP);
-        glEnable(GL_TEXTURE_GEN_S);
-        glEnable(GL_TEXTURE_GEN_T);
-        glColor4d(1.0, 1.0, 1.0, reflectionStrength);
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(batch.vertexCount));
-        glDisable(GL_TEXTURE_GEN_S);
-        glDisable(GL_TEXTURE_GEN_T);
-        glDisableClientState(GL_NORMAL_ARRAY);
-        if (!normalizeEnabled) {
-            glDisable(GL_NORMALIZE);
-        }
-        if (!blendEnabled) {
-            glDisable(GL_BLEND);
-        }
-        glColor4d(1.0, 1.0, 1.0, 1.0);
+        glDepthMask(GL_FALSE);
+        drawEnvironmentBatch(batch.buffer, batch.vertexCount, batch.environmentTexture,
+                             reflectionStrength);
+        glDisable(GL_BLEND);
     }
 
     void preloadTextures() {
@@ -1976,6 +1872,12 @@ Renderer::Renderer(int width, int height, const char* title)
         gameLog.Log("Failed to initialize GLFW");
         throw std::runtime_error("Failed to initialize GLFW");
     }
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+#endif
     window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!window_) {
         gameLog.Log("Failed to create OpenGL window");
@@ -1997,6 +1899,12 @@ Renderer::Renderer(int width, int height, const char* title)
         glfwTerminate();
         throw std::runtime_error("OpenGL VBO functions are unavailable");
     }
+    if (!openbus::rendering::initializeCoreRenderer()) {
+        glfwDestroyWindow(window_);
+        window_ = nullptr;
+        glfwTerminate();
+        throw std::runtime_error("Failed to initialize core OpenGL renderer");
+    }
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.45f, 0.65f, 0.88f, 1.0f);
     gameLog.Log("Renderer initialized");
@@ -2007,6 +1915,7 @@ Renderer::~Renderer() {
     playerBusModel_ = nullptr;
     assetRequestManager_->join();
     busModels_.clear();
+    openbus::rendering::shutdownCoreRenderer();
     assetRequestManager_.reset();
     if (window_) {
         glfwDestroyWindow(window_);
@@ -2289,11 +2198,9 @@ void Renderer::draw(const BusSimulation& simulation) {
 
     {
         TraceScope phase("render", "Renderer::draw.ground");
-        glPushMatrix();
         if (!captureMode_) {
             drawGround(simulation.roadBumps());
         }
-        glPopMatrix();
     }
 
     const RenderViewContext context =
@@ -2302,16 +2209,16 @@ void Renderer::draw(const BusSimulation& simulation) {
     {
         TraceScope phase("render", "Renderer::draw.model");
         if (playerBusModel_ && playerBusModel_->loaded && !playerBusModel_->displayLists.empty()) {
-            glPushMatrix();
+            pushMatrix();
             applyPose(chassis);
             playerBusModel_->draw(context);
-            glPopMatrix();
+            popMatrix();
         } else {
-            glPushMatrix();
+            pushMatrix();
             applyPose(chassis);
-            glTranslated(collision.offsetX, collision.offsetY, collision.offsetZ);
+            translate(collision.offsetX, collision.offsetY, collision.offsetZ);
             drawBox(collision.length, collision.width, collision.height, 0.85, 0.70, 0.08);
-            glPopMatrix();
+            popMatrix();
         }
     }
 
@@ -2326,23 +2233,30 @@ void Renderer::draw(const BusSimulation& simulation) {
         TraceScope phase("render", "Renderer::draw.overlays");
         // Render center of gravity marker
         const std::array<double, 3> centerOfGravity = simulation.centerOfGravity();
-        glPushMatrix();
-        glTranslated(centerOfGravity[0], centerOfGravity[1], centerOfGravity[2]);
+        pushMatrix();
+        translate(centerOfGravity[0], centerOfGravity[1], centerOfGravity[2]);
         drawCenterOfGravityMarker(0.35);
-        glPopMatrix();
+        popMatrix();
 
         // Render axle lines
-        glPushMatrix();
-        glColor3d(0.20, 0.20, 0.20);
+        const std::array<double, 3> axleColor = {0.20, 0.20, 0.20};
+        std::vector<openbus::rendering::PrimitiveVertex> axleLines;
+        axleLines.reserve(simulation.axleCount() * 2);
         for (std::size_t axleIndex = 0; axleIndex < simulation.axleCount(); ++axleIndex) {
             const BodyPose leftWheel = simulation.wheelPose(axleIndex * 2);
             const BodyPose rightWheel = simulation.wheelPose(axleIndex * 2 + 1);
-            glBegin(GL_LINES);
-            glVertex3dv(rightWheel.position.data());
-            glVertex3dv(leftWheel.position.data());
-            glEnd();
+            axleLines.push_back({static_cast<float>(rightWheel.position[0]),
+                                 static_cast<float>(rightWheel.position[1]),
+                                 static_cast<float>(rightWheel.position[2]),
+                                 static_cast<float>(axleColor[0]), static_cast<float>(axleColor[1]),
+                                 static_cast<float>(axleColor[2])});
+            axleLines.push_back({static_cast<float>(leftWheel.position[0]),
+                                 static_cast<float>(leftWheel.position[1]),
+                                 static_cast<float>(leftWheel.position[2]),
+                                 static_cast<float>(axleColor[0]), static_cast<float>(axleColor[1]),
+                                 static_cast<float>(axleColor[2])});
         }
-        glPopMatrix();
+        openbus::rendering::drawPrimitives(axleLines, GL_LINES);
     }
 
     {
@@ -2352,10 +2266,10 @@ void Renderer::draw(const BusSimulation& simulation) {
         } else {
             for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
                 const BodyPose wheel = simulation.wheelPose(index);
-                glPushMatrix();
+                pushMatrix();
                 applyPose(wheel);
                 drawWheel(simulation.wheelRadius(index), simulation.wheelHalfWidth());
-                glPopMatrix();
+                popMatrix();
             }
         }
     }
