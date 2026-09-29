@@ -1,0 +1,329 @@
+System Variables
+
+Timegap
+Duration of the previous frame in seconds.
+
+GetTime
+How long OMSI has been running in seconds.
+
+NoSound
+0: Sound enabled; 1: Sound disabled.
+
+Pause
+0: Unpaused; 1: Paused.
+
+(If this game is paused then OMSI isn't executing script frames, so when will this ever be true?)
+
+Time
+Time of day (seconds since midnight).
+
+Day, Month & Year
+Calendar date.
+
+DayOfYear
+1 on 1st January.
+
+A couple of default sound cubes use this to mute themselves at certain times of year.
+
+mouse_x & mouse_y
+Position of the cursor on the screen (pixels) for mouse drag interactions.
+
+PrecipType
+What kind of water is falling from the sky?
+
+0 = No precipitation;
+1 = Rain;
+2 = Snow.
+The default buses use this to ensure the sound of raindrops hitting the roof only plays when it is raining.
+
+PrecipRate
+Rate of precipitation; varies between 0 (no precipitation) to 1 (maximum precipitation). The rate of raindrop accumulation on the windows will depend on this variable.
+
+coll_pos_x, coll_pos_y & coll_pos_z
+Location of collision (metres, relative to vehicle origin) in the frame where the system trigger collision is triggered.
+
+coll_energy
+Collision "energy" (newton‐metres‽) in the frame where the system trigger collision is triggered.
+
+Weather_Temperature
+Ambient temperature (℃) of the environment.
+
+Weather_AbsHum
+Absolute Humidity (gm−3) of the environment.
+
+AutoClutch
+0: Automatic Clutch setting disabled, 1: enabled.
+
+wearlifespan
+Not used, see the predefined local variable of the same name.
+
+SunAlt
+Sun elevation (° above horizon). See also: Envir_Brightness
+
+
+Predefined Local Variables
+
+Vehicle Floats:
+
+Envir_Brightness 🔒
+StreetCond 🔒
+Spot_Select
+Colorscheme 🔒
+M_Wheel
+n_Wheel 🔒
+Throttle, Brake & Clutch 🔒
+Brakeforce
+Velocity 🔒
+Velocity_Ground 🔒
+tank_percent
+kmcounter_km & kmcounter_m 🔒
+relrange 🔒
+Driver_Seat_VertTransl 🔒
+Wheel_Rotation_#_L & _R 🔒
+Wheel_RotationSpeed_#_L & _R 🔒
+Axle_Suspension_#_L & _R 🔒
+Axle_Steering_#_L & _R 🔒
+Axle_Springfactor_#_L & _R
+Axle_Brakeforce_#_L & _R
+Axle_SurfaceID_#_L & _R 🔒
+Debug_0–5
+A_Trans_X, A_Trans_Y & A_Trans_Z 🔒
+AI 🔒
+AI_Blinker_L & AI_Blinker_R ↔
+AI_Light ↔
+AI_Interiorlight ↔
+AI_Brakelight 🔒
+AI_Engine 🔒
+AI_target_index 🔒
+target_index_int
+AI_Scheduled_AtStation ↔
+AI_Scheduled_AtStation_Side 🔒
+PAX_Entry#_Open
+PAX_Exit#_Open
+PAX_Entry#_Req
+PAX_Exit#_Req
+GivenTicket
+humans_count 🔒
+FF_Vib_Period
+FF_Vib_Amp
+Snd_OutsideVol
+Snd_Microphone
+Snd_Radio
+Cabinair_Temp
+Cabinair_absHum
+Cabinair_relHum 🔒
+PrecipRate 🔒
+PrecipType 🔒
+Dirt_Norm 🔒
+DirtRate 🔒
+schedule_active 🔒
+train_frontcoupling 🔒
+train_backcoupling 🔒
+train_me_reverse 🔒
+TrafficPriority
+TrafficPriorityWarningNeeded
+wearlifespan 🔒
+articulation_0_alpha & articulation_0_beta 🔒
+boogie_#_wheel_at_limit 🔒
+boogie_#_invradius 🔒
+contactshoe_#_rail_pos_x & _y 🔒
+contactshoe_#_rail_index 🔒
+contactshoe_#_volt_rail 🔒
+contactshoe_#_volt_veh 🔒
+contactshoe_#_freq 🔒
+
+Vehicle Strings:
+ident 🔒
+number 🔒
+act_route
+act_busstop 🔒
+SetLineTo 🔒
+yard 🔒
+file_schedule 🔒
+
+Scenery Floats:
+
+NightlightA 🔒
+InUse 🔒
+TrafficLightPhase 🔒
+TrafficLightApproach 🔒
+Colorscheme 🔒
+Signal 🔒
+NextSignal 🔒
+Refresh_Strings
+Switch
+
+Human Floats:
+
+LastMovedDist 🔒
+PAX_State 🔒
+HeightOfSeat 🔒
+Colorscheme 🔒
+
+System Triggers
+
+collision
+int_haltewunsch
+railbond_#
+ai_scheduled_settarget
+ai_scheduled_setbusstop
+malfunction_gettime
+malfunction_reset
+veh_tank
+
+System Macros
+
+SceneryObjects:
+
+GetArrBusLine
+f0 Arrival Index
+
+GetArrBusTerminus
+f0 Arrival Index
+
+GetArrBusTimeDiff
+f0 Arrival Index
+
+Vehicles:
+
+GetTerminusIndex
+f0 Terminus Code
+
+GetTerminusCode
+f0 Terminus Index
+
+GetTerminusString
+f2 Terminus Index
+f0 String Index
+
+GetBusstopIndex
+$0 Busstop Ident
+
+GetBusstopString
+f2 Busstop Index
+f0 String Index
+
+GetRouteIndex
+f0 Route Code
+
+GetRouteTerminusIndex
+f0 Route Index
+
+GetBusstopCount
+f0 Route Index
+
+GetRouteBusstopIdent
+f2 Route Index
+f0 Route‐Busstop Index
+
+GetTTLineString
+GetTTTerminusIndex
+GetTTBusstopCount
+GetTTBusstopIndex
+GetTTDelay
+GetTTBusstopName
+
+GetTTBusstopArr
+f0 Timetable Busstop Index
+
+GetTTBusstopDep
+f0 Timetable Busstop Index
+
+GiveChangeCoin
+f0 Coin Index
+
+GetTicketName
+f0 Ticket Index
+
+GetTicketValue
+f0 Ticket Index
+
+GetHumanCountOnPathLink
+f0 PathLink Index
+
+NrSpecRandom
+f0 Seed
+
+GetHeightAbovePoint
+f3 X
+f2 Y
+f0 Z
+
+GetDepotStringGlobal
+f0 String Index
+
+GetHumanCountOnSeat
+f0 PassPos Index
+
+ScriptTextures:
+STNewTex
+f0 Script‐Texture Index
+
+STLock
+f0 Script‐Texture Index
+
+STUnlock
+f0 Script‐Texture Index
+
+STFilter
+f0 Script‐Texture Index
+
+STSetColor
+f5 Script‐Texture Index
+f4 Alpha
+f3 Red
+f2 Green
+f0 Blue
+
+STDrawPixel
+f3 Script‐Texture Index
+f2 X
+f0 Y
+
+STDrawRect
+f5 Script‐Texture Index
+f4 X1
+f3 Y1
+f2 X2
+f0 Y2
+
+STTextOut
+f7 Script‐Texture Index
+f6 X
+f5 Y
+f4 Font Index
+f3 Full Colour
+f0 Letter Spacing
+$0 Text
+
+GetFontIndex
+f0 Font Name
+
+TextLength
+f0 Font Index
+$0 Text
+
+STReadPixel
+f3 Script‐Texture Index
+f2 X
+f0 Y
+
+STCopyColor
+f2 Origin ScriptTexture index
+f0 Destination ScriptTexture index
+
+STLoadTex
+f0 ScriptTexture Index
+$0 Texture File Path
+
+STGetR
+f0 ScriptTextureIndex
+
+STGetG
+f0 ScriptTextureIndex
+
+STGetB
+f0 ScriptTextureIndex
+
+STGetA
+f0 ScriptTextureIndex
