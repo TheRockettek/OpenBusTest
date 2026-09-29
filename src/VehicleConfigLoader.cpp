@@ -148,7 +148,7 @@ void loadConstantFile(const std::filesystem::path& configPath, const std::string
                 result.diagnostics.error(nameLine.number, "newcurve",
                                          "curve requires a name and at least one point");
             } else {
-                result.curves.push_back(std::move(curve));
+                result.curves.try_emplace(curve.name, std::move(curve));
             }
         }
     }

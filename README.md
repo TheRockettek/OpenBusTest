@@ -78,9 +78,13 @@ Run the prototype:
 The executable opens a simple OpenGL preview window while the physics runs at
 the configured fixed rate.
 
-The Linux build writes a `game.crash` stack trace for fatal POSIX signals and
-unexpected termination. Build with debug symbols when detailed function names
-are needed, for example with `-DCMAKE_BUILD_TYPE=Debug`.
+The Windows build writes a symbolized `game.crash` report with exception
+details, registers, module names, and source lines when matching PDB files are
+available. It also writes `game.crash.dmp`, which can be opened in Visual
+Studio or WinDbg with the matching executable and PDB. The Linux build writes
+a `game.crash` stack trace for fatal POSIX signals and unexpected termination.
+Build with debug symbols when detailed function names are needed, for example
+with `-DCMAKE_BUILD_TYPE=Debug`.
 
 ## Current physics model
 

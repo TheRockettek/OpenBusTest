@@ -62,7 +62,7 @@ struct VehicleConfig {
     std::vector<std::string> floatVariables;
     std::vector<std::string> stringVariables;
     std::unordered_map<std::string, double> constants;
-    std::vector<ConstantCurve> curves;
+    std::unordered_map<std::string, ConstantCurve> curves;
     ConfigurationDiagnostics diagnostics;
 };
 

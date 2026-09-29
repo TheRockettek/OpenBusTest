@@ -2,6 +2,8 @@
 
 #ifdef _WIN32
 
+#include "Logger.h"
+
 #include <Windows.h>
 #include <DbgHelp.h>
 #include <atomic>
@@ -10,6 +12,8 @@
 #include <exception>
 #include <fstream>
 #include <mutex>
+
+Logger crashLog = Logger("Crash");
 
 namespace {
 
@@ -38,6 +42,8 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* excepti
         return;
     }
 
+    crashLog.Log("Crash detected: " + std::string(reason));
+
     std::ofstream report("game.crash", std::ios::out | std::ios::trunc);
     if (!report.is_open()) {
         return;
@@ -64,8 +70,30 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* excepti
                << " at " << reinterpret_cast<const void*>(target) << "\n";
     }
 
+    if (exceptionInfo != nullptr && exceptionInfo->ExceptionRecord != nullptr) {
+        const EXCEPTION_RECORD& record = *exceptionInfo->ExceptionRecord;
+        report << "Exception flags: 0x" << std::hex << record.ExceptionFlags << std::dec << "\n";
+        report << "Exception parameters: " << record.NumberParameters << "\n";
+        for (ULONG index = 0; index < record.NumberParameters; ++index) {
+            report << "  parameter[" << index << "]: 0x" << std::hex
+                   << record.ExceptionInformation[index] << std::dec << "\n";
+        }
+    }
+
+    if (exceptionInfo != nullptr && exceptionInfo->ContextRecord != nullptr) {
+        const CONTEXT& context = *exceptionInfo->ContextRecord;
+        report << "Thread ID: " << GetCurrentThreadId() << "\n"
+               << "Registers: RIP=0x" << std::hex << context.Rip << " RSP=0x" << context.Rsp
+               << " RBP=0x" << context.Rbp << " RAX=0x" << context.Rax << " RBX=0x" << context.Rbx
+               << " RCX=0x" << context.Rcx << " RDX=0x" << context.Rdx << " RSI=0x" << context.Rsi
+               << " RDI=0x" << context.Rdi << " R8=0x" << context.R8 << " R9=0x" << context.R9
+               << " R10=0x" << context.R10 << " R11=0x" << context.R11 << " R12=0x" << context.R12
+               << " R13=0x" << context.R13 << " R14=0x" << context.R14 << " R15=0x" << context.R15
+               << std::dec << "\n";
+    }
+
     HANDLE process = GetCurrentProcess();
-    SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
+    SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
     if (SymInitialize(process, nullptr, TRUE)) {
         CONTEXT context = {};
         STACKFRAME64 frame = {};
@@ -101,26 +129,45 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* excepti
             IMAGEHLP_MODULE64 module = {};
             module.SizeOfStruct = sizeof(module);
             const bool hasModule = SymGetModuleInfo64(process, address, &module) != FALSE;
+            report << "  #" << index << " 0x" << std::hex << address << std::dec;
             if (SymFromAddr(process, address, &displacement, symbol)) {
-                report << "  #" << index << " " << (hasModule ? module.ModuleName : "?") << "!"
+                report << " " << (hasModule ? module.ModuleName : "?") << "!"
                        << symbol->Name << "+0x" << std::hex << displacement << std::dec;
                 if (SymGetLineFromAddr64(process, address, &lineDisplacement, &line)) {
                     report << " (" << line.FileName << ":" << line.LineNumber << ")";
                 }
-                report << "\n";
-            } else {
-                report << "  #" << index << " 0x" << std::hex << address << std::dec << "\n";
             }
+            if (hasModule) {
+                report << " [" << module.ImageName << "]";
+            }
+            report << "\n";
+            const DWORD64 previousAddress = frame.AddrPC.Offset;
             if (!StackWalk64(machineType, process, GetCurrentThread(), &frame, &context, nullptr,
-                             SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) {
+                             SymFunctionTableAccess64, SymGetModuleBase64, nullptr) ||
+                frame.AddrPC.Offset == previousAddress) {
                 break;
             }
         }
         SymCleanup(process);
     } else {
-        report << "Stack trace unavailable (SymInitialize failed).\n";
+             report << "Stack trace unavailable (SymInitialize failed, error " << GetLastError()
+                 << ").\n";
     }
     report.flush();
+
+    HANDLE dumpFile = CreateFileW(L"game.crash.dmp", GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                                  CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (dumpFile != INVALID_HANDLE_VALUE) {
+        MINIDUMP_EXCEPTION_INFORMATION dumpException = {};
+        dumpException.ThreadId = GetCurrentThreadId();
+        dumpException.ExceptionPointers = const_cast<EXCEPTION_POINTERS*>(exceptionInfo);
+        dumpException.ClientPointers = FALSE;
+        const MINIDUMP_TYPE dumpType = static_cast<MINIDUMP_TYPE>(
+            MiniDumpWithIndirectlyReferencedMemory | MiniDumpScanMemory | MiniDumpWithThreadInfo);
+        MiniDumpWriteDump(process, GetCurrentProcessId(), dumpFile, dumpType,
+                          exceptionInfo != nullptr ? &dumpException : nullptr, nullptr, nullptr);
+        CloseHandle(dumpFile);
+    }
 }
 
 LONG WINAPI handleUnhandledException(EXCEPTION_POINTERS* exceptionInfo) {

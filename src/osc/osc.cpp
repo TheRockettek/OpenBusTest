@@ -1259,6 +1259,281 @@ class Emitter {
     }
 };
 
+class BytecodeCompiler {
+    std::vector<Token> tokens_;
+    std::size_t position_ = 0;
+    OscProgram& output_;
+    std::string error_;
+
+    Token& peek() {
+        return tokens_[position_];
+    }
+
+    Token consume() {
+        return tokens_[position_++];
+    }
+
+    void unsupported(const Token& token, const std::string& detail) {
+        if (error_.empty()) {
+            error_ = detail + " at line " + std::to_string(token.line);
+        }
+    }
+
+    static void emit(std::vector<OscInstruction>& code, OscOpcode opcode) {
+        code.push_back({opcode, 0.0, 0, {}});
+    }
+
+    static void emitName(std::vector<OscInstruction>& code, OscOpcode opcode,
+                         const std::string& name) {
+        code.push_back({opcode, 0.0, 0, name});
+    }
+
+    static std::size_t emitJump(std::vector<OscInstruction>& code, OscOpcode opcode) {
+        code.push_back({opcode, 0.0, 0, {}});
+        return code.size() - 1;
+    }
+
+    void compileCommand(const Token& token, std::vector<OscInstruction>& code) {
+        const std::string& command = token.val;
+        if (command.size() < 5 || command[1] != '.' || command[3] != '.') {
+            unsupported(token, "unsupported OSC command (" + command + ")");
+            return;
+        }
+
+        const char type = static_cast<char>(std::toupper(static_cast<unsigned char>(command[0])));
+        const char sub = command[2];
+        const char subUpper = static_cast<char>(std::toupper(static_cast<unsigned char>(sub)));
+        const std::string name = lower_name(command.substr(4));
+
+        if (type == 'L' && subUpper == 'L') {
+            emitName(code, OscOpcode::LoadLocal, name);
+        } else if (type == 'L' && subUpper == 'S') {
+            emitName(code, OscOpcode::LoadSystem, name);
+        } else if (type == 'L' && sub == '$') {
+            emitName(code, OscOpcode::LoadLocalString, name);
+        } else if (type == 'S' && subUpper == 'L') {
+            emitName(code, OscOpcode::StoreLocal, name);
+        } else if (type == 'S' && sub == '$') {
+            emitName(code, OscOpcode::StoreLocalString, name);
+        } else if (type == 'C') {
+            emitName(code, OscOpcode::LoadConstant, name);
+        } else if (type == 'F') {
+            emitName(code, OscOpcode::CallCurve, name);
+        } else if (type == 'M' && subUpper == 'L') {
+            emitName(code, OscOpcode::CallFunction, "macro_" + sanitize(name));
+        } else if (type == 'M' && subUpper == 'V') {
+            emitName(code, OscOpcode::CallSystemMacro, sanitize(name));
+        } else if (type == 'T' && subUpper == 'L') {
+            emitName(code, OscOpcode::SoundTrigger, name);
+        } else if (type == 'T' && subUpper == 'F') {
+            emitName(code, OscOpcode::SoundTriggerFile, name);
+        } else {
+            unsupported(token, "unsupported OSC command (" + command + ")");
+        }
+    }
+
+    void compileIdentifier(const Token& token, std::vector<OscInstruction>& code) {
+        const std::string& op = token.val;
+        if (op.size() == 2 && op[0] == 'l' && op[1] >= '0' && op[1] <= '7') {
+            code.push_back({OscOpcode::LoadRegister, 0.0, op[1] - '0', {}});
+        } else if (op.size() == 2 && op[0] == 's' && op[1] >= '0' && op[1] <= '7') {
+            code.push_back({OscOpcode::StoreRegister, 0.0, op[1] - '0', {}});
+        } else if (op == "pi") {
+            code.push_back({OscOpcode::PushNumber, 3.14159265358979323846, 0, {}});
+        } else if (op == "d") {
+            emit(code, OscOpcode::Duplicate);
+        } else if (op == "+") {
+            emit(code, OscOpcode::Add);
+        } else if (op == "-") {
+            emit(code, OscOpcode::Subtract);
+        } else if (op == "*") {
+            emit(code, OscOpcode::Multiply);
+        } else if (op == "/") {
+            emit(code, OscOpcode::Divide);
+        } else if (op == "%") {
+            emit(code, OscOpcode::Modulo);
+        } else if (op == "/-/") {
+            emit(code, OscOpcode::Negate);
+        } else if (op == "!") {
+            emit(code, OscOpcode::LogicalNot);
+        } else if (op == "=") {
+            emit(code, OscOpcode::Equal);
+        } else if (op == "!=") {
+            emit(code, OscOpcode::NotEqual);
+        } else if (op == "<") {
+            emit(code, OscOpcode::Less);
+        } else if (op == ">") {
+            emit(code, OscOpcode::Greater);
+        } else if (op == "<=") {
+            emit(code, OscOpcode::LessEqual);
+        } else if (op == ">=") {
+            emit(code, OscOpcode::GreaterEqual);
+        } else if (op == "&&") {
+            emit(code, OscOpcode::LogicalAnd);
+        } else if (op == "||") {
+            emit(code, OscOpcode::LogicalOr);
+        } else if (op == "abs") {
+            emit(code, OscOpcode::Absolute);
+        } else if (op == "min") {
+            emit(code, OscOpcode::Minimum);
+        } else if (op == "max") {
+            emit(code, OscOpcode::Maximum);
+        } else if (op == "trunc") {
+            emit(code, OscOpcode::Floor);
+        } else if (op == "sqrt") {
+            emit(code, OscOpcode::SquareRoot);
+        } else if (op == "arcsin") {
+            emit(code, OscOpcode::ArcSine);
+        } else if (op == "exp") {
+            emit(code, OscOpcode::Exponential);
+        } else if (op == "sin") {
+            emit(code, OscOpcode::Sine);
+        } else if (op == "cos") {
+            emit(code, OscOpcode::Cosine);
+        } else if (op == "tan") {
+            emit(code, OscOpcode::Tangent);
+        } else if (op == "arctan") {
+            emit(code, OscOpcode::ArcTangent);
+        } else if (op == "ceiling") {
+            emit(code, OscOpcode::Ceiling);
+        } else if (op == "sqr") {
+            emit(code, OscOpcode::Square);
+        } else if (op == "sgn") {
+            emit(code, OscOpcode::Sign);
+        } else if (op == "random") {
+            emit(code, OscOpcode::Random);
+        } else if (op == "$d") {
+            emit(code, OscOpcode::StringDuplicate);
+        } else if (op == "$+") {
+            emit(code, OscOpcode::StringConcat);
+        } else if (op == "$*") {
+            emit(code, OscOpcode::StringRepeat);
+        } else if (op == "$length") {
+            emit(code, OscOpcode::StringLength);
+        } else if (op == "$cutBegin") {
+            emit(code, OscOpcode::StringCutBegin);
+        } else if (op == "$cutEnd") {
+            emit(code, OscOpcode::StringCutEnd);
+        } else if (op == "$SetLengthL") {
+            emit(code, OscOpcode::StringSetLengthLeft);
+        } else if (op == "$SetLengthR") {
+            emit(code, OscOpcode::StringSetLengthRight);
+        } else if (op == "$SetLengthC") {
+            emit(code, OscOpcode::StringSetLengthCenter);
+        } else if (op == "$IntToStr") {
+            emit(code, OscOpcode::IntegerToString);
+        } else if (op == "$IntToStrEnh") {
+            emit(code, OscOpcode::IntegerToStringEnhanced);
+        } else if (op == "$StrToFloat") {
+            emit(code, OscOpcode::StringToFloat);
+        } else if (op == "$RemoveSpaces") {
+            emit(code, OscOpcode::RemoveSpaces);
+        } else if (op == "$=") {
+            emit(code, OscOpcode::StringEqual);
+        } else if (op == "$<") {
+            emit(code, OscOpcode::StringLess);
+        } else if (op == "$>") {
+            emit(code, OscOpcode::StringGreater);
+        } else if (op == "$<=") {
+            emit(code, OscOpcode::StringLessEqual);
+        } else if (op == "$>=") {
+            emit(code, OscOpcode::StringGreaterEqual);
+        } else if (op == "$" ) {
+            emit(code, OscOpcode::StringNoOp);
+        } else if (op == "$msg") {
+            emit(code, OscOpcode::DebugString);
+        } else if (op == "%stackdump%") {
+            emit(code, OscOpcode::StackDump);
+        } else {
+            unsupported(token, "unsupported OSC operator " + op);
+        }
+    }
+
+    bool is(const char* keyword) const {
+        return tokens_[position_].type == TT::BlockKW && tokens_[position_].val == keyword;
+    }
+
+    void compileBody(std::vector<OscInstruction>& code) {
+        while (!error_.empty() == false && peek().type != TT::Eof) {
+            if (is("end") || is("else") || is("endif")) {
+                return;
+            }
+            const Token token = consume();
+            if (token.type == TT::Comment) {
+                continue;
+            }
+            if (token.type == TT::Number) {
+                code.push_back({OscOpcode::PushNumber, std::stod(token.val), 0, {}});
+            } else if (token.type == TT::String) {
+                code.push_back({OscOpcode::PushString, 0.0, 0, token.val});
+            } else if (token.type == TT::Command) {
+                compileCommand(token, code);
+            } else if (token.type == TT::Ident) {
+                compileIdentifier(token, code);
+            } else if (token.type == TT::BlockKW && token.val == "if") {
+                const std::size_t falseJump = emitJump(code, OscOpcode::JumpIfFalse);
+                compileBody(code);
+                if (is("else")) {
+                    consume();
+                    const std::size_t endJump = emitJump(code, OscOpcode::Jump);
+                    code[falseJump].index = static_cast<int>(code.size());
+                    compileBody(code);
+                    if (is("endif")) {
+                        consume();
+                    } else {
+                        unsupported(token, "missing {endif}");
+                    }
+                    code[endJump].index = static_cast<int>(code.size());
+                } else if (is("endif")) {
+                    consume();
+                    code[falseJump].index = static_cast<int>(code.size());
+                } else {
+                    unsupported(token, "missing {endif}");
+                }
+            } else {
+                unsupported(token, "unsupported OSC token");
+            }
+        }
+    }
+
+    void compileBlock(const Token& header) {
+        std::vector<OscInstruction> code;
+        compileBody(code);
+        if (is("end")) {
+            consume();
+        } else if (error_.empty()) {
+            unsupported(header, "missing {end}");
+        }
+        output_.functions[func_name(header.val)] = std::move(code);
+    }
+
+  public:
+    BytecodeCompiler(std::vector<Token> tokens, OscProgram& output)
+        : tokens_(std::move(tokens)), output_(output) {}
+
+    bool compile(std::string& error) {
+        while (peek().type != TT::Eof && error_.empty()) {
+            const Token token = consume();
+            if (token.type == TT::Comment) {
+                continue;
+            }
+            if (token.type == TT::BlockKW &&
+                (token.val == "frame" || token.val == "frame_ai" || token.val == "init" ||
+                 (token.val.size() > 6 && token.val.substr(0, 6) == "macro:") ||
+                 (token.val.size() > 8 && token.val.substr(0, 8) == "trigger:"))) {
+                compileBlock(token);
+            } else {
+                unsupported(token, "unsupported top-level OSC content");
+            }
+        }
+        if (!error_.empty()) {
+            error = error_;
+            return false;
+        }
+        return true;
+    }
+};
+
 // ============================================================
 // MAIN
 // ============================================================
@@ -1309,6 +1584,19 @@ bool convertOscToLua(const std::filesystem::path& inputPath,
             return false;
         }
         return true;
+    } catch (const std::exception& exception) {
+        error = exception.what();
+        return false;
+    }
+}
+
+bool compileOscToBytecode(const std::filesystem::path& inputPath, OscProgram& output,
+                          std::string& error) {
+    try {
+        output.functions.clear();
+        Tokenizer tokenizer(read_file(inputPath));
+        BytecodeCompiler compiler(tokenizer.tokenize(), output);
+        return compiler.compile(error);
     } catch (const std::exception& exception) {
         error = exception.what();
         return false;

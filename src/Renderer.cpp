@@ -853,7 +853,6 @@ struct Vehicle {
         }
         {
             TraceScope phase("render", "Vehicle::draw.cleanup");
-            pglBindBuffer(GL_ARRAY_BUFFER, 0);
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
             glDisable(GL_POLYGON_OFFSET_FILL);
@@ -1005,7 +1004,6 @@ struct Vehicle {
             drawWheel(simulation.wheelRadius(index), simulation.wheelHalfWidth());
             popMatrix();
         }
-        pglBindBuffer(GL_ARRAY_BUFFER, 0);
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
     }
@@ -1933,7 +1931,6 @@ struct Vehicle {
                 pglBufferData(GL_ARRAY_BUFFER,
                               static_cast<std::ptrdiff_t>(batch.vertices.size() * sizeof(Vertex)),
                               batch.vertices.data(), GL_STATIC_DRAW);
-                pglBindBuffer(GL_ARRAY_BUFFER, 0);
             }
             destination->back().batches.push_back(std::move(batch));
         };
