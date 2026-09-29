@@ -25,6 +25,17 @@ struct Uniforms {
     GLint useTextureArray = -1;
     GLint color = -1;
     GLint alphaMode = -1;
+    GLint lightmap = -1;
+    GLint nightmap = -1;
+    GLint transmap = -1;
+    GLint freeTexture = -1;
+    GLint useLightmap = -1;
+    GLint useNightmap = -1;
+    GLint useTransmap = -1;
+    GLint useFreeTexture = -1;
+    GLint lightmapStrength = -1;
+    GLint nightmapStrength = -1;
+    GLint texcoordOffset = -1;
     GLint environment = -1;
     GLint environmentAlpha = -1;
 };
@@ -54,12 +65,13 @@ layout(location = 1) in vec3 aTexCoord;
 layout(location = 2) in vec3 aNormal;
 uniform mat4 uProjection;
 uniform mat4 uModelView;
+uniform vec2 uTexcoordOffset;
 out vec3 vTexCoord;
 out vec3 vNormal;
 out vec3 vViewPosition;
 void main() {
     vec4 viewPosition = uModelView * vec4(aPosition, 1.0);
-    vTexCoord = aTexCoord;
+    vTexCoord = vec3(aTexCoord.xy + uTexcoordOffset, aTexCoord.z);
     vNormal = mat3(uModelView) * aNormal;
     vViewPosition = viewPosition.xyz;
     gl_Position = uProjection * viewPosition;
@@ -73,17 +85,40 @@ in vec3 vNormal;
 in vec3 vViewPosition;
 uniform sampler2D uTexture;
 uniform sampler2DArray uTextureArray;
+uniform sampler2D uLightmap;
+uniform sampler2D uNightmap;
+uniform sampler2D uTransmap;
+uniform sampler2D uFreeTexture;
 uniform bool uUseTexture;
 uniform bool uUseTextureArray;
+uniform bool uUseLightmap;
+uniform bool uUseNightmap;
+uniform bool uUseTransmap;
+uniform bool uUseFreeTexture;
+uniform float uLightmapStrength;
+uniform float uNightmapStrength;
 uniform vec4 uColor;
 uniform int uAlphaMode;
 out vec4 fragmentColor;
 void main() {
     vec4 color = uColor;
-    if (uUseTextureArray) {
+    if (uUseFreeTexture) {
+        color *= texture(uFreeTexture, vTexCoord.xy);
+    } else if (uUseTextureArray) {
         color *= texture(uTextureArray, vTexCoord);
     } else if (uUseTexture) {
         color *= texture(uTexture, vTexCoord.xy);
+    }
+    if (uUseLightmap) {
+        vec4 lightmap = texture(uLightmap, vTexCoord.xy);
+        color.rgb = mix(color.rgb, color.rgb * lightmap.rgb, uLightmapStrength);
+    }
+    if (uUseNightmap) {
+        vec4 nightmap = texture(uNightmap, vTexCoord.xy);
+        color.rgb = mix(color.rgb, color.rgb * nightmap.rgb, uNightmapStrength);
+    }
+    if (uUseTransmap) {
+        color.a *= texture(uTransmap, vTexCoord.xy).r;
     }
     if (uAlphaMode == 1 && color.a < 0.5) {
         discard;
@@ -197,6 +232,17 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.useTextureArray = pglGetUniformLocation(program, "uUseTextureArray");
         uniforms.color = pglGetUniformLocation(program, "uColor");
         uniforms.alphaMode = pglGetUniformLocation(program, "uAlphaMode");
+        uniforms.lightmap = pglGetUniformLocation(program, "uLightmap");
+        uniforms.nightmap = pglGetUniformLocation(program, "uNightmap");
+        uniforms.transmap = pglGetUniformLocation(program, "uTransmap");
+        uniforms.freeTexture = pglGetUniformLocation(program, "uFreeTexture");
+        uniforms.useLightmap = pglGetUniformLocation(program, "uUseLightmap");
+        uniforms.useNightmap = pglGetUniformLocation(program, "uUseNightmap");
+        uniforms.useTransmap = pglGetUniformLocation(program, "uUseTransmap");
+        uniforms.useFreeTexture = pglGetUniformLocation(program, "uUseFreeTexture");
+        uniforms.lightmapStrength = pglGetUniformLocation(program, "uLightmapStrength");
+        uniforms.nightmapStrength = pglGetUniformLocation(program, "uNightmapStrength");
+        uniforms.texcoordOffset = pglGetUniformLocation(program, "uTexcoordOffset");
     }
     return uniforms;
 }
@@ -293,6 +339,10 @@ bool initializeCoreRenderer() {
         useProgram(modelProgram);
         pglUniform1i(modelUniforms.texture, 0);
         pglUniform1i(modelUniforms.textureArray, 0);
+        pglUniform1i(modelUniforms.lightmap, 1);
+        pglUniform1i(modelUniforms.nightmap, 2);
+        pglUniform1i(modelUniforms.transmap, 3);
+        pglUniform1i(modelUniforms.freeTexture, 4);
         useProgram(environmentProgram);
         pglUniform1i(environmentUniforms.environment, 0);
         useProgram(primitiveProgram);
@@ -347,22 +397,39 @@ void invalidateTextureBindings() {
     boundTextureArray = std::numeric_limits<GLuint>::max();
 }
 
-void drawModelBatch(GLuint buffer, std::size_t vertexCount, GLuint texture, bool textureArray,
-                    bool textured, const std::array<double, 3>& color, double alpha,
-                    int alphaMode) {
+void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
+                    const std::array<double, 3>& color, double alpha, int alphaMode) {
     TraceScope trace("render", "CoreRenderer::drawModelBatch");
     if (modelProgram == 0 || buffer == 0 || vertexCount == 0) {
         return;
     }
     useProgram(modelProgram);
     uploadMatrices(modelUniforms);
-    pglUniform1i(modelUniforms.useTexture, textured ? 1 : 0);
-    pglUniform1i(modelUniforms.useTextureArray, textured && textureArray ? 1 : 0);
+    pglUniform1i(modelUniforms.useTexture, material.textured ? 1 : 0);
+    pglUniform1i(modelUniforms.useTextureArray, material.textured && material.textureArray ? 1 : 0);
     pglUniform1i(modelUniforms.alphaMode, alphaMode);
+    pglUniform1i(modelUniforms.useLightmap, material.useLightmap ? 1 : 0);
+    pglUniform1i(modelUniforms.useNightmap, material.useNightmap ? 1 : 0);
+    pglUniform1i(modelUniforms.useTransmap, material.useTransmap ? 1 : 0);
+    pglUniform1i(modelUniforms.useFreeTexture, material.useFreeTexture ? 1 : 0);
+    pglUniform1f(modelUniforms.lightmapStrength, material.lightmapStrength);
+    pglUniform1f(modelUniforms.nightmapStrength, material.nightmapStrength);
+    pglUniform2f(modelUniforms.texcoordOffset, material.texcoordOffsetX,
+                 material.texcoordOffsetY);
     pglUniform4f(modelUniforms.color, static_cast<GLfloat>(color[0]),
                  static_cast<GLfloat>(color[1]), static_cast<GLfloat>(color[2]),
                  static_cast<GLfloat>(alpha));
-    bindTexture(textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D, texture);
+    pglActiveTexture(GL_TEXTURE0);
+    bindTexture(material.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D, material.texture);
+    pglActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, material.lightmap);
+    pglActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, material.nightmap);
+    pglActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, material.transmap);
+    pglActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, material.freeTexture);
+    pglActiveTexture(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
 }

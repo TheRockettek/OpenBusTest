@@ -124,7 +124,7 @@ std::filesystem::path modelConfigurationPathForBus(const std::filesystem::path& 
 ModelConfig loadBusModelConfiguration(const std::filesystem::path& busConfigPath) {
     openbus::rendering::TraceScope trace("config", "loadBusModelConfiguration");
     const std::filesystem::path modelConfigPath = modelConfigurationPathForBus(busConfigPath);
-    Variables variables;
+    openbus::scripting::Vehicle variables;
     return loadModelConfig(modelConfigPath, modelConfigPath.parent_path(), ModelConfigKind::Bus,
                            variables);
 }

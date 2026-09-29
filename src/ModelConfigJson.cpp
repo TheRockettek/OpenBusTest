@@ -46,7 +46,14 @@ void writeModelAnimationsJson(std::ostream& output, const std::vector<ModelAnima
         writeJsonString(output, animation.type);
         output << ",\"variable\":";
         writeJsonString(output, animation.variable);
-        output << ",\"scale\":" << animation.scale << '}';
+         output << ",\"scale\":" << animation.scale << ",\"maxspeed\":" << animation.maxSpeed
+             << ",\"delay\":" << animation.delay << ",\"offset\":" << animation.offset
+             << ",\"origin\":[" << animation.origin[0] << ','
+             << animation.origin[1] << ',' << animation.origin[2] << "],\"origin_rotation\":["
+             << animation.originRotation[0] << ',' << animation.originRotation[1] << ','
+             << animation.originRotation[2] << "],\"has_origin\":"
+             << (animation.hasOrigin ? "true" : "false") << ",\"origin_from_mesh\":"
+             << (animation.originFromMesh ? "true" : "false") << '}';
     }
     output << ']';
 }
@@ -144,7 +151,10 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
         writeJsonString(output, part.wheelAnimation.suspensionVariable);
         output << ",\"steering_variable\": ";
         writeJsonString(output, part.wheelAnimation.steeringVariable);
-        output << ",\"origin\": [" << part.wheelAnimation.origin[0] << ','
+         output << ",\"rotation_scale\":" << part.wheelAnimation.rotationScale
+             << ",\"suspension_scale\":" << part.wheelAnimation.suspensionScale
+             << ",\"steering_scale\":" << part.wheelAnimation.steeringScale
+             << ",\"origin\":[" << part.wheelAnimation.origin[0] << ','
                << part.wheelAnimation.origin[1] << ',' << part.wheelAnimation.origin[2]
                << "],\"has_origin\": " << (part.wheelAnimation.hasOrigin ? "true" : "false")
                << "},\n"
@@ -185,6 +195,8 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
             writeJsonString(output, material.lightmapTextureName);
             output << ",\"lightmap_strength_variable\":";
             writeJsonString(output, material.lightmapStrengthVariable);
+            output << ",\"free_texture_variable\":";
+            writeJsonString(output, material.freeTextureVariable);
             output << ",\"texcoord_trans_x_variable\":";
             writeJsonString(output, material.texcoordTransXVariable);
             output << ",\"texcoord_trans_y_variable\":";

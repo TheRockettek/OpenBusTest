@@ -150,10 +150,17 @@ add_executable(OpenBusPhysicsProbe
     src/Logger.cpp
     src/PerfTrace.cpp
     src/RoadFeatures.cpp
+    src/Variables.cpp
 )
 
 target_include_directories(OpenBusPhysicsProbe PRIVATE src)
 target_link_libraries(OpenBusPhysicsProbe PRIVATE ${OPENBUS_ODE_TARGET})
+
+add_executable(OpenBusVariablesProbe
+    tests/VariablesProbe.cpp
+    src/Variables.cpp
+)
+target_include_directories(OpenBusVariablesProbe PRIVATE src)
 
 add_executable(uno3d_converter
     uno3d/o3d_to_obj.cpp

@@ -26,6 +26,7 @@ struct ModelMaterialState {
     std::string nightmapTextureName;
     std::string lightmapTextureName;
     std::string lightmapStrengthVariable;
+    std::string freeTextureVariable;
     std::string texcoordTransXVariable;
     std::string texcoordTransYVariable;
     std::string bumpmapTextureName;
@@ -43,9 +44,13 @@ struct ModelMaterialState {
 
 struct ModelWheelAnimation {
     std::string rotationVariable;
+    double rotationScale = 0.0;
     std::string suspensionVariable;
+    double suspensionScale = 0.0;
     std::string steeringVariable;
+    double steeringScale = 0.0;
     std::array<double, 3> origin = {};
+    std::array<double, 3> originRotation = {};
     bool hasOrigin = false;
 };
 
@@ -53,6 +58,17 @@ struct ModelAnimation {
     std::string type;
     std::string variable;
     double scale = 0.0;
+    double maxSpeed = 0.0;
+    double delay = 0.0;
+    double offset = 0.0;
+    std::array<double, 3> origin = {};
+    std::array<double, 3> originRotation = {};
+    bool hasOrigin = false;
+    bool originFromMesh = false;
+    std::array<double, 9> meshRotation = {1.0, 0.0, 0.0,
+                                          0.0, 1.0, 0.0,
+                                          0.0, 0.0, 1.0};
+    bool hasMeshRotation = false;
 };
 
 struct ModelPart {

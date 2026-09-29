@@ -2,7 +2,6 @@
 
 #include "AssetRequestManager.h"
 #include "BusConfigLoader.h"
-#include "BusConfiguration.h"
 #include "BusModelLoader.h"
 #include "BusSimulation.h"
 #include "CameraMath.h"
@@ -68,6 +67,10 @@
 #define GL_TEXTURE_2D_ARRAY 0x8C1A
 #endif
 
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
 #ifndef GL_TEXTURE0
 #define GL_TEXTURE0 0x84C0
 #define GL_TEXTURE1 0x84C1
@@ -107,6 +110,58 @@ constexpr int viewpointMask(RenderViewContext context) {
 
 constexpr double MAN_DL05_MODEL_OFFSET_Z = -1.035;
 constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
+
+std::array<double, 3> rotateAnimationAxis(const std::array<double, 3>& axis,
+                                          const std::array<double, 3>& originRotation) {
+    std::array<double, 3> result = axis;
+    const auto rotateVector = [](std::array<double, 3>& vector, double angleDegrees,
+                                 double x, double y, double z) {
+        const double length = std::sqrt(x * x + y * y + z * z);
+        if (length <= 1.0e-12) {
+            return;
+        }
+        x /= length;
+        y /= length;
+        z /= length;
+        const double angle = angleDegrees * 3.141592653589793 / 180.0;
+        const double cosine = std::cos(angle);
+        const double sine = std::sin(angle);
+        const double dot = x * vector[0] + y * vector[1] + z * vector[2];
+        const std::array<double, 3> cross = {
+            y * vector[2] - z * vector[1], z * vector[0] - x * vector[2],
+            x * vector[1] - y * vector[0]};
+        vector = {vector[0] * cosine + cross[0] * sine + x * dot * (1.0 - cosine),
+                  vector[1] * cosine + cross[1] * sine + y * dot * (1.0 - cosine),
+                  vector[2] * cosine + cross[2] * sine + z * dot * (1.0 - cosine)};
+    };
+    rotateVector(result, -originRotation[0], 0.0, -1.0, 0.0);
+    rotateVector(result, -originRotation[1], 0.0, 0.0, 1.0);
+    rotateVector(result, -originRotation[2], 1.0, 0.0, 0.0);
+    return result;
+}
+
+std::array<double, 3> applyMeshRotation(const std::array<double, 3>& renderAxis,
+                                        const std::array<double, 9>& meshRotation) {
+    const std::array<double, 3> sourceAxis = {-renderAxis[1], renderAxis[2], renderAxis[0]};
+    const std::array<double, 3> rotatedSourceAxis = {
+        meshRotation[0] * sourceAxis[0] + meshRotation[3] * sourceAxis[1] +
+            meshRotation[6] * sourceAxis[2],
+        meshRotation[1] * sourceAxis[0] + meshRotation[4] * sourceAxis[1] +
+            meshRotation[7] * sourceAxis[2],
+        meshRotation[2] * sourceAxis[0] + meshRotation[5] * sourceAxis[1] +
+            meshRotation[8] * sourceAxis[2]};
+    std::array<double, 3> result = {rotatedSourceAxis[2], -rotatedSourceAxis[0],
+                                    rotatedSourceAxis[1]};
+    const double length = std::sqrt(result[0] * result[0] + result[1] * result[1] +
+                                    result[2] * result[2]);
+    if (length > 1.0e-12) {
+        for (double& component : result) {
+            component /= length;
+        }
+    }
+    return result;
+}
+
 } // namespace
 
 using openbus::rendering::applyPose;
@@ -156,6 +211,13 @@ struct Vehicle {
         float x, y, z, u, v, layer, nx, ny, nz;
     };
 
+    struct AuxiliaryTexture {
+        std::string name;
+        GLuint texture = 0;
+        bool loadAttempted = false;
+        std::shared_ptr<TextureCacheEntry> cacheEntry;
+    };
+
     struct Batch {
         GLuint buffer = 0;
         GLuint texture = 0;
@@ -178,6 +240,17 @@ struct Vehicle {
         bool textureLoadStarted = false;
         std::shared_ptr<TextureRequest> textureRequest;
         std::shared_ptr<TextureCacheEntry> textureCacheEntry;
+        AuxiliaryTexture lightmap;
+        AuxiliaryTexture nightmap;
+        AuxiliaryTexture transmap;
+        std::string lightmapStrengthVariable;
+        std::string freeTextureVariable;
+        std::string texcoordTransXVariable;
+        std::string texcoordTransYVariable;
+        GLuint freeTexture = 0;
+        int freeTextureIndex = -1;
+        int freeTextureWidth = 0;
+        int freeTextureHeight = 0;
         int alphaMode = 0;
         bool noZwrite = false;
         std::string alphaScaleVariable;
@@ -189,6 +262,13 @@ struct Vehicle {
     };
 
     struct DisplayPart {
+        struct AnimationState {
+            double currentAmount = 0.0;
+            double targetAmount = 0.0;
+            double delayRemaining = 0.0;
+            bool initialized = false;
+        };
+
         // Geometry metadata is immutable after loading; visibility is still
         // evaluated from live variables during each draw.
         std::vector<Batch> batches;
@@ -202,6 +282,8 @@ struct Vehicle {
         std::array<double, 3> size;
         double radius;
         std::size_t triangleCount;
+        std::vector<ModelAnimation> animations;
+        std::vector<AnimationState> animationStates;
     };
 
     struct WheelModel {
@@ -211,7 +293,7 @@ struct Vehicle {
 
     std::vector<DisplayPart> displayLists;
     std::vector<WheelModel> wheelModels;
-    VehicleState variables;
+    openbus::scripting::Vehicle variables;
     std::unique_ptr<ScriptRuntime> scripts;
     std::vector<Part> pendingParts;
     AssetRequestManager* assets;
@@ -226,6 +308,7 @@ struct Vehicle {
     bool hasLoadedInitialView = false;
     bool loggedAllObjectsLoaded = false;
     int activeLod = -1;
+    double animationTimeStep = 0.0;
     std::chrono::steady_clock::time_point textureUploadStart;
 
     void updateMaterialChange(Batch& batch) {
@@ -287,13 +370,109 @@ struct Vehicle {
         return std::clamp(variables.get(batch.alphaScaleVariable), 0.0, 1.0);
     }
 
-    void updateFrameVariables(double timegap, double getTime, double mouseX, double mouseY,
-                              bool isAiVehicle) {
-        // Frame-scoped values are refreshed before simulation and rendering run.
-        variables.updateFrame(timegap, getTime, mouseX, mouseY);
-        if (scripts) {
-            scripts->update(isAiVehicle);
+    void updateAnimationStates() {
+        const double timeStep = std::clamp(animationTimeStep, 0.0, 0.25);
+        for (DisplayPart& part : displayLists) {
+            if (part.animationStates.size() != part.animations.size()) {
+                part.animationStates.resize(part.animations.size());
+            }
+            for (std::size_t index = 0; index < part.animations.size(); ++index) {
+                const ModelAnimation& animation = part.animations[index];
+                DisplayPart::AnimationState& state = part.animationStates[index];
+                const double targetAmount =
+                    variables.get(animation.variable) * animation.scale + animation.offset;
+                if (!state.initialized) {
+                    state.currentAmount = targetAmount;
+                    state.targetAmount = targetAmount;
+                    state.initialized = true;
+                    continue;
+                }
+                if (targetAmount != state.targetAmount) {
+                    state.targetAmount = targetAmount;
+                    state.delayRemaining = std::max(0.0, animation.delay * 0.001);
+                }
+                if (state.delayRemaining > 0.0) {
+                    state.delayRemaining = std::max(0.0, state.delayRemaining - timeStep);
+                    continue;
+                }
+                if (animation.maxSpeed > 0.0) {
+                    const double maximumStep = animation.maxSpeed * timeStep;
+                    state.currentAmount += std::clamp(
+                        state.targetAmount - state.currentAmount, -maximumStep, maximumStep);
+                } else {
+                    state.currentAmount = state.targetAmount;
+                }
+            }
         }
+    }
+
+    void applyAnimations(const DisplayPart& part) const {
+        static const bool verboseAnimationLogs =
+            parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_ANIMATIONS"));
+        for (std::size_t index = 0; index < part.animations.size(); ++index) {
+            const ModelAnimation& animation = part.animations[index];
+            const double value = variables.get(animation.variable);
+            const double amount = index < part.animationStates.size()
+                                      ? part.animationStates[index].currentAmount
+                                      : value * animation.scale + animation.offset;
+            if (verboseAnimationLogs && animation.variable == "SteeringWheelPos") {
+                gameLog.Log("Applying SteeringWheelPos value=" + std::to_string(value) +
+                            " amount=" + std::to_string(amount));
+            }
+            if (amount == 0.0) {
+                continue;
+            }
+            const auto rotateIntoAnimationAxis = [&]() {
+                rotate(-animation.originRotation[0], 0.0, -1.0, 0.0);
+                rotate(-animation.originRotation[1], 0.0, 0.0, 1.0);
+                rotate(-animation.originRotation[2], 1.0, 0.0, 0.0);
+            };
+            const auto undoAnimationAxisRotation = [&]() {
+                rotate(animation.originRotation[2], 1.0, 0.0, 0.0);
+                rotate(animation.originRotation[1], 0.0, 0.0, 1.0);
+                rotate(animation.originRotation[0], 0.0, -1.0, 0.0);
+            };
+            if (animation.hasOrigin) {
+                translate(animation.origin[0], animation.origin[1], animation.origin[2]);
+            }
+            if (animation.type == "anim_rot") {
+                std::array<double, 3> axis =
+                    rotateAnimationAxis({1.0, 0.0, 0.0}, animation.originRotation);
+                if (animation.hasMeshRotation) {
+                    axis = applyMeshRotation(axis, animation.meshRotation);
+                }
+                rotate(-amount, axis[0], axis[1], axis[2]);
+            } else if (animation.type == "anim_trans") {
+                rotateIntoAnimationAxis();
+                translate(0.0, -amount, 0.0);
+                undoAnimationAxisRotation();
+            }
+            if (animation.hasOrigin) {
+                translate(-animation.origin[0], -animation.origin[1], -animation.origin[2]);
+            }
+        }
+    }
+
+    void updateFrameVariables(bool isAiVehicle, double timeStep) {
+        // Frame-scoped values are refreshed before simulation and rendering run.
+        variables.updateFrame();
+        variables.set("AI", isAiVehicle ? 1.0 : 0.0);
+        animationTimeStep = timeStep;
+    }
+
+    void updateScripts(bool isAiVehicle) {
+        if (scripts) {
+            const std::size_t scriptErrorCount = scripts->errors().size();
+            scripts->update(isAiVehicle);
+            for (std::size_t index = scriptErrorCount; index < scripts->errors().size(); ++index) {
+                gameLog.Log("Lua frame error: " + scripts->errors()[index]);
+            }
+        }
+    }
+
+    void updateSimulationVariables(const BusSimulation& simulation, double throttle,
+                                   double steering, double brake) {
+        simulation.updateVariables(variables, throttle, steering, brake);
     }
 
     void joinTextureWorkers() {
@@ -306,7 +485,7 @@ struct Vehicle {
 
     explicit Vehicle(BusVehicle vehicle, ModelLoadingPolicy policy, AssetRequestManager& manager,
                      SimulationState& simulationState)
-        : loadingPolicy(policy), variables(simulationState), assets(&manager) {
+        : loadingPolicy(policy), variables(), assets(&manager) {
         if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
             try {
                 textureScale = std::clamp(std::stod(scale), 0.25, 1.0);
@@ -326,8 +505,8 @@ struct Vehicle {
         if (vehicle == BusVehicle::SpE400Mmc) {
             relativeConfig = std::filesystem::path("SP_E400MMC") / "Model" / "Configuration Files" /
                              "E400MMC_ADL_10.9m_Voith_LowHeight.cfg";
-            relativeModelRoot = std::filesystem::path("SP_E400MMC") / "Model" / "Converted" /
-                                "E400MMC_ADL_10.9m_Voith_LowHeight_obj";
+            relativeModelRoot = std::filesystem::path("SP_E400MMC") / "Model" /
+                                "SP_E400MMC_obj";
             modelOffsetZ = -1.02;
         } else {
             relativeConfig = std::filesystem::path("MAN_DL05") / "Model" / "DL05.cfg";
@@ -402,11 +581,38 @@ struct Vehicle {
             glDepthMask(GL_TRUE);
         }
         ensureTexture(batch);
+        ensureAuxiliaryTexture(batch, batch.lightmap);
+        ensureAuxiliaryTexture(batch, batch.nightmap);
+        ensureAuxiliaryTexture(batch, batch.transmap);
+        updateFreeTexture(batch);
         const std::array<double, 3>& color =
             overrideColor == nullptr ? batch.color : *overrideColor;
-        const bool textured = batch.textured && !forceUntextured;
-        drawModelBatch(batch.buffer, batch.vertexCount, textured ? batch.texture : 0,
-                       textured && batch.textureArray, textured, color, alpha,
+        openbus::rendering::ModelMaterial material;
+        material.texture = batch.texture;
+        material.textureArray = batch.textureArray;
+        material.textured = batch.textured && !forceUntextured;
+        material.lightmap = batch.lightmap.texture;
+        material.nightmap = batch.nightmap.texture;
+        material.transmap = batch.transmap.texture;
+        material.freeTexture = batch.freeTexture;
+        material.useLightmap = !forceUntextured && material.lightmap != 0;
+        material.useNightmap = !forceUntextured && material.nightmap != 0;
+        material.useTransmap = !forceUntextured && material.transmap != 0;
+        material.useFreeTexture = !forceUntextured && material.freeTexture != 0;
+        material.lightmapStrength = static_cast<float>(
+            batch.lightmapStrengthVariable.empty()
+                ? 1.0
+                : std::clamp(variables.get(batch.lightmapStrengthVariable), 0.0, 1.0));
+        const double nightlight = std::max(variables.get("NightlightA"),
+                                           1.0 - variables.get("Envir_Brightness"));
+        material.nightmapStrength = static_cast<float>(std::clamp(nightlight, 0.0, 1.0));
+        material.texcoordOffsetX = static_cast<float>(
+            batch.texcoordTransXVariable.empty() ? 0.0
+                                                  : variables.get(batch.texcoordTransXVariable));
+        material.texcoordOffsetY = static_cast<float>(
+            batch.texcoordTransYVariable.empty() ? 0.0
+                                                  : variables.get(batch.texcoordTransYVariable));
+        drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
                        forceUntextured ? 0 : batch.alphaMode);
     }
 
@@ -415,6 +621,7 @@ struct Vehicle {
         if (!loaded) {
             return;
         }
+        updateAnimationStates();
         // Texture uploads must happen on the OpenGL thread, so decoding and GL
         // upload are deliberately split between the worker and draw paths.
         textureUploadStart = std::chrono::steady_clock::now();
@@ -514,6 +721,7 @@ struct Vehicle {
         };
         struct TransparentBatch {
             Batch* batch;
+            DisplayPart* part;
             double depth;
             int renderType;
         };
@@ -534,7 +742,8 @@ struct Vehicle {
                     });
                 for (Batch& batch : part.batches) {
                     if (batch.alphaMode != 0 || batch.noZwrite) {
-                        transparentBatches.push_back({&batch, viewDepth(part), part.renderType});
+                        transparentBatches.push_back(
+                            {&batch, &part, viewDepth(part), part.renderType});
                     }
                 }
                 if (hasOpaqueBatch) {
@@ -575,6 +784,8 @@ struct Vehicle {
         {
             TraceScope phase("render", "Vehicle::draw.opaquePass");
             for (DisplayPart* part : opaqueParts) {
+                pushMatrix();
+                applyAnimations(*part);
                 for (Batch& batch : part->batches) {
                     const double alpha = alphaScale(batch);
                     if (alpha <= 0.0) {
@@ -586,6 +797,7 @@ struct Vehicle {
                     drawBatch(batch, alpha);
                     drawEnvironmentMap(batch, alpha);
                 }
+                popMatrix();
             }
         }
         glDepthMask(GL_FALSE);
@@ -594,12 +806,16 @@ struct Vehicle {
             TraceScope phase("render", "Vehicle::draw.noDepthPass");
             for (const TransparentBatch& noDepthOpaque : noDepthOpaqueBatches) {
                 Batch& batch = *noDepthOpaque.batch;
+                pushMatrix();
+                applyAnimations(*noDepthOpaque.part);
                 const double alpha = alphaScale(batch);
                 if (alpha <= 0.0) {
+                    popMatrix();
                     continue;
                 }
                 drawBatch(batch, alpha);
                 drawEnvironmentMap(batch, alpha);
+                popMatrix();
             }
         }
         glDepthMask(GL_FALSE);
@@ -607,8 +823,11 @@ struct Vehicle {
             TraceScope phase("render", "Vehicle::draw.transparentPass");
             for (const TransparentBatch& transparent : transparentBatches) {
                 Batch& batch = *transparent.batch;
+                pushMatrix();
+                applyAnimations(*transparent.part);
                 const double alpha = alphaScale(batch);
                 if (alpha <= 0.0) {
+                    popMatrix();
                     continue;
                 }
                 if (batch.alphaMode == 1) {
@@ -629,6 +848,7 @@ struct Vehicle {
                 }
                 drawBatch(batch, alpha);
                 drawEnvironmentMap(batch, alpha);
+                popMatrix();
             }
         }
         {
@@ -646,6 +866,51 @@ struct Vehicle {
         static_cast<void>(expectedWheelCount);
         return std::any_of(wheelModels.begin(), wheelModels.end(),
                            [](const WheelModel& wheel) { return !wheel.parts.empty(); });
+    }
+
+    void applyWheelVariableCorrections(const WheelAnimation& animation,
+                                       const BusSimulation& simulation,
+                                       std::size_t simulationIndex) const {
+        constexpr double RADIANS_TO_DEGREES = 57.29577951308232;
+        const auto steeringVariableMatchesAxle = [&](const std::string& variable) {
+            const std::string normalized = lower(variable);
+            constexpr const char* prefix = "axle_steering_";
+            constexpr std::size_t prefixLength = 14;
+            if (normalized.rfind(prefix, 0) != 0) {
+                return true;
+            }
+            const std::size_t separator = normalized.find('_', prefixLength);
+            if (separator == std::string::npos) {
+                return true;
+            }
+            const int variableAxle = parseInt(
+                normalized.substr(prefixLength, separator - prefixLength), -1);
+            return variableAxle < 0 || static_cast<std::size_t>(variableAxle) == simulationIndex / 2;
+        };
+        if (!animation.steeringVariable.empty() &&
+            steeringVariableMatchesAxle(animation.steeringVariable)) {
+            const double requested = variables.get(animation.steeringVariable);
+            const double physical = simulation.wheelSteeringAngle(simulationIndex);
+            const double scale = animation.steeringScale == 0.0
+                                     ? RADIANS_TO_DEGREES
+                                     : animation.steeringScale;
+            rotate((requested - physical) * scale, 0.0, 0.0, 1.0);
+        }
+        if (!animation.rotationVariable.empty()) {
+            const double requested = variables.get(animation.rotationVariable);
+            const double scale = animation.rotationScale == 0.0
+                                     ? RADIANS_TO_DEGREES
+                                     : animation.rotationScale;
+            rotate(-requested * scale, 0.0, 1.0, 0.0);
+        }
+        if (!animation.suspensionVariable.empty()) {
+            const double requested = variables.get(animation.suspensionVariable);
+            const double physical = simulation.wheelSuspensionCompression(simulationIndex);
+            const double scale = animation.suspensionScale == 0.0
+                                     ? 1.0
+                                     : animation.suspensionScale;
+            translate(0.0, 0.0, (requested - physical) * scale);
+        }
     }
 
     void drawConfiguredWheels(const BusSimulation& simulation, const BodyPose& chassis,
@@ -679,7 +944,7 @@ struct Vehicle {
                 continue;
             }
             usedWheelIndices[simulationIndex] = true;
-            const BodyPose pose = simulation.wheelPose(simulationIndex);
+            const BodyPose pose = simulation.wheelMountPose(simulationIndex);
             if (loggedWheelBindings.insert(modelIndex).second) {
                 wheelLog.Log("cfgWheel=" + std::to_string(modelIndex) +
                              " odeWheel=" + std::to_string(simulationIndex) + " origin=(" +
@@ -715,6 +980,7 @@ struct Vehicle {
                 pushMatrix();
                 applyPose(pose);
                 rotate(90.0, 1.0, 0.0, 0.0);
+                applyWheelVariableCorrections(wheel.animation, simulation, simulationIndex);
                 translate(0.0, lateralOffset, 0.0);
                 scale(diameterScale, diameterScale, diameterScale);
                 translate(-meshOrigin[0], -meshOrigin[1], -meshOrigin[2]);
@@ -760,19 +1026,35 @@ struct Vehicle {
         const auto texturesLoadedInParts = [&](const std::vector<DisplayPart>& parts) {
             for (const DisplayPart& displayPart : parts) {
                 for (const Batch& batch : displayPart.batches) {
-                    if (batch.texturePath.empty() && batch.textureName.empty()) {
-                        continue;
+                    if (!batch.texturePath.empty() || !batch.textureName.empty()) {
+                        if (!batch.textureCacheEntry) {
+                            return false;
+                        }
+                        const TextureCacheEntry* entry = batch.textureCacheEntry.get();
+                        if (trackedTextures.insert(entry).second) {
+                            std::lock_guard<std::mutex> lock(entry->request->mutex);
+                            if (!entry->request->complete) {
+                                return false;
+                            }
+                        }
                     }
-                    if (!batch.textureCacheEntry) {
-                        return false;
-                    }
-                    const TextureCacheEntry* entry = batch.textureCacheEntry.get();
-                    if (!trackedTextures.insert(entry).second) {
-                        continue;
-                    }
-                    std::lock_guard<std::mutex> lock(entry->request->mutex);
-                    if (!entry->request->complete) {
-                        return false;
+                    for (const AuxiliaryTexture* auxiliary :
+                         {&batch.lightmap, &batch.nightmap, &batch.transmap}) {
+                        if (auxiliary->name.empty()) {
+                            continue;
+                        }
+                        if (!auxiliary->cacheEntry) {
+                            return false;
+                        }
+                        const TextureCacheEntry* auxiliaryEntry = auxiliary->cacheEntry.get();
+                        if (!trackedTextures.insert(auxiliaryEntry).second) {
+                            continue;
+                        }
+                        std::lock_guard<std::mutex> auxiliaryLock(
+                            auxiliaryEntry->request->mutex);
+                        if (!auxiliaryEntry->request->complete) {
+                            return false;
+                        }
                     }
                 }
             }
@@ -1189,6 +1471,83 @@ struct Vehicle {
             });
     }
 
+    void ensureAuxiliaryTexture(Batch& batch, AuxiliaryTexture& auxiliary) {
+        if (auxiliary.name.empty() || auxiliary.loadAttempted) {
+            return;
+        }
+        if (!auxiliary.cacheEntry) {
+            auxiliary.cacheEntry = assets->requestTexture(
+                batch.textureRoot, {}, auxiliary.name,
+                [](const std::filesystem::path& root, const std::filesystem::path& path,
+                   const std::string& name) {
+                    return Vehicle::findTexture(root, name.empty() ? path.string() : name);
+                });
+        }
+        startTextureRequest(auxiliary.cacheEntry);
+        const std::shared_ptr<TextureRequest>& request = auxiliary.cacheEntry->request;
+        bool requestComplete = false;
+        {
+            std::lock_guard<std::mutex> lock(request->mutex);
+            requestComplete = request->complete;
+        }
+        if (!requestComplete) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(request->mutex);
+        if (!auxiliary.cacheEntry->uploadAttempted) {
+            auxiliary.cacheEntry->uploadAttempted = true;
+            if (!request->resolvedPath.empty()) {
+                if (request->compressedDds) {
+                    auxiliary.cacheEntry->texture =
+                        uploadCompressedDds(request->resolvedPath, *request->compressedDds);
+                } else if (request->compressedTexture) {
+                    auxiliary.cacheEntry->texture = uploadCompressedTexture(
+                        request->resolvedPath, *request->compressedTexture,
+                        auxiliary.cacheEntry->textureArray,
+                        auxiliary.cacheEntry->textureArrayLayers);
+                } else if (request->image) {
+                    auxiliary.cacheEntry->texture =
+                        uploadTexture(request->resolvedPath, *request->image);
+                }
+            }
+        }
+        auxiliary.texture = auxiliary.cacheEntry->texture;
+        auxiliary.loadAttempted = true;
+    }
+
+    void updateFreeTexture(Batch& batch) {
+        if (batch.freeTextureVariable.empty() || !scripts) {
+            return;
+        }
+        const int index = static_cast<int>(std::lround(variables.get(batch.freeTextureVariable)));
+        ScriptRuntime::ScriptTextureSnapshot snapshot;
+        if (index < 0 || !scripts->copyScriptTexture(index, snapshot) || snapshot.width <= 0 ||
+            snapshot.height <= 0 || snapshot.pixels.empty()) {
+            return;
+        }
+        if (batch.freeTexture == 0) {
+            glGenTextures(1, &batch.freeTexture);
+            assets->trackTexture(batch.freeTexture);
+        }
+        glBindTexture(GL_TEXTURE_2D, batch.freeTexture);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        if (batch.freeTextureWidth != snapshot.width || batch.freeTextureHeight != snapshot.height) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, snapshot.width, snapshot.height, 0, GL_RGBA,
+                         GL_UNSIGNED_BYTE, snapshot.pixels.data());
+            batch.freeTextureWidth = snapshot.width;
+            batch.freeTextureHeight = snapshot.height;
+        } else {
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, snapshot.width, snapshot.height, GL_RGBA,
+                            GL_UNSIGNED_BYTE, snapshot.pixels.data());
+        }
+        openbus::rendering::invalidateTextureBindings();
+        batch.freeTextureIndex = index;
+    }
+
     void startTextureRequest(const std::shared_ptr<TextureCacheEntry>& entry) {
         assets->startTextureRequest(entry);
     }
@@ -1355,6 +1714,9 @@ struct Vehicle {
                     }
                     ensureEnvironmentTexture(batch,
                                              loadingPolicy.textureMode == AssetLoadingMode::Eager);
+                    ensureAuxiliaryTexture(batch, batch.lightmap);
+                    ensureAuxiliaryTexture(batch, batch.nightmap);
+                    ensureAuxiliaryTexture(batch, batch.transmap);
                 }
             }
         };
@@ -1392,6 +1754,42 @@ struct Vehicle {
         const auto& boundsSize = parsed->boundsSize;
         const double boundsRadius = parsed->boundsRadius;
 
+        std::vector<ModelAnimation> animations = part.animations;
+        for (ModelAnimation& animation : animations) {
+            if (animation.originFromMesh) {
+                if (parsed->hasTransform) {
+                    // The converter preserves OBJ vertices and stores this transform as
+                    // metadata. Only its source-space translation supplies the mesh pivot;
+                    // applying its orientation again would double-transform the mesh.
+                    if (!animation.hasOrigin) {
+                        animation.origin = {parsed->transform[14], -parsed->transform[12],
+                                            parsed->transform[13]};
+                        animation.hasOrigin = true;
+                    }
+                    animation.meshRotation = {
+                        parsed->transform[0], parsed->transform[1], parsed->transform[2],
+                        parsed->transform[4], parsed->transform[5], parsed->transform[6],
+                        parsed->transform[8], parsed->transform[9], parsed->transform[10]};
+                    animation.hasMeshRotation = true;
+                } else if (!animation.hasOrigin) {
+                    animation.origin = boundsCenter;
+                    animation.hasOrigin = true;
+                }
+            }
+        }
+        if (verboseObjLoadLogs && !animations.empty()) {
+            for (const ModelAnimation& animation : animations) {
+                gameLog.Log("Model animation: " + part.objPath.filename().string() +
+                            " type=" + animation.type + " variable=" + animation.variable +
+                            " scale=" + std::to_string(animation.scale) +
+                            " origin=(" + std::to_string(animation.origin[0]) + ',' +
+                            std::to_string(animation.origin[1]) + ',' +
+                            std::to_string(animation.origin[2]) + ") hasOrigin=" +
+                            (animation.hasOrigin ? "true" : "false") +
+                            " value=" + std::to_string(variables.get(animation.variable)));
+            }
+        }
+
         WheelAnimation wheelAnimation = part.wheelAnimation;
         if (verboseObjLoadLogs && !wheelAnimation.rotationVariable.empty()) {
             gameLog.Log("Wheel OBJ animation: " + part.objPath.filename().string() +
@@ -1411,10 +1809,10 @@ struct Vehicle {
                         wheelAnimation.rotationVariable == candidate.animation.rotationVariable &&
                         wheelAnimation.suspensionVariable ==
                             candidate.animation.suspensionVariable &&
-                        wheelAnimation.steeringVariable == candidate.animation.steeringVariable &&
-                        std::abs(wheelAnimation.origin[0] - candidate.animation.origin[0]) < 0.5 &&
-                        std::abs(wheelAnimation.origin[1] - candidate.animation.origin[1]) < 0.5 &&
-                        std::abs(wheelAnimation.origin[2] - candidate.animation.origin[2]) < 0.5;
+                        wheelAnimation.steeringVariable == candidate.animation.steeringVariable; //&&
+                        // std::abs(wheelAnimation.origin[0] - candidate.animation.origin[0]) < 0.5 &&
+                        // std::abs(wheelAnimation.origin[1] - candidate.animation.origin[1]) < 0.5 &&
+                        // std::abs(wheelAnimation.origin[2] - candidate.animation.origin[2]) < 0.5;
                     if (sameAnimation) {
                         return true;
                     }
@@ -1431,7 +1829,8 @@ struct Vehicle {
                              const std::string& textureName, const std::array<double, 3>& color,
                              const std::string& environmentTextureName, double environmentStrength,
                              int alphaMode, bool noZwrite, const std::string& alphaScaleVariable,
-                             const std::vector<MaterialState::TextureChange>& textureChanges) {
+                             const std::vector<MaterialState::TextureChange>& textureChanges,
+                             const MaterialState& materialState) {
             TraceScope batchTrace("obj", "loadObj.makeBatch");
             std::vector<Vertex> vertices;
             vertices.reserve(source.size() * 3);
@@ -1484,8 +1883,8 @@ struct Vehicle {
                         if (index.normal > 0 && index.normal <= static_cast<int>(normals.size())) {
                             const ObjNormal& sourceNormal =
                                 normals[static_cast<std::size_t>(index.normal - 1)];
-                            normal =
-                                normalizeVector({-sourceNormal.z, sourceNormal.x, -sourceNormal.y});
+                            normal = normalizeVector({-sourceNormal.z, sourceNormal.x,
+                                                      -sourceNormal.y});
                         }
                         const ObjTexCoord* texCoord = nullptr;
                         if (index.texCoord > 0 &&
@@ -1513,6 +1912,13 @@ struct Vehicle {
             batch.textureName = textureName;
             batch.environmentTextureName = environmentTextureName;
             batch.environmentStrength = environmentStrength;
+            batch.lightmap.name = materialState.lightmapTextureName;
+            batch.nightmap.name = materialState.nightmapTextureName;
+            batch.transmap.name = materialState.transmapTextureName;
+            batch.lightmapStrengthVariable = materialState.lightmapStrengthVariable;
+            batch.freeTextureVariable = materialState.freeTextureVariable;
+            batch.texcoordTransXVariable = materialState.texcoordTransXVariable;
+            batch.texcoordTransYVariable = materialState.texcoordTransYVariable;
             batch.color = color;
             batch.hasNormals = true;
             batch.alphaMode = alphaMode;
@@ -1671,22 +2077,24 @@ struct Vehicle {
                     hasTransparentMaterial || state.alphaMode != 0 || state.noZwrite;
             }
         }
-        destination->push_back({{},
-                                part.viewpoint,
-                                part.renderType,
-                                hasTransparentMaterial,
-                                part.lodIndex,
-                                part.visibleVariable,
-                                part.visibleValue,
-                                boundsCenter,
-                                boundsSize,
-                                boundsRadius,
-                                renderedTriangleCount});
+        DisplayPart displayPart;
+        displayPart.viewpoint = part.viewpoint;
+        displayPart.renderType = part.renderType;
+        displayPart.transparent = hasTransparentMaterial;
+        displayPart.lodIndex = part.lodIndex;
+        displayPart.visibleVariable = part.visibleVariable;
+        displayPart.visibleValue = part.visibleValue;
+        displayPart.center = boundsCenter;
+        displayPart.size = boundsSize;
+        displayPart.radius = boundsRadius;
+        displayPart.triangleCount = renderedTriangleCount;
+        displayPart.animations = std::move(animations);
+        destination->push_back(std::move(displayPart));
         for (const std::string& key : groupOrder) {
             const MaterialState& state = groupStates[key];
             makeBatch(groups[key], groupTextures[key], groupTextureNames[key], groupColors[key],
                       groupEnvironmentNames[key], groupEnvironmentStrengths[key], state.alphaMode,
-                      state.noZwrite, state.alphaScaleVariable, state.textureChanges);
+                      state.noZwrite, state.alphaScaleVariable, state.textureChanges, state);
         }
     }
 
@@ -1977,6 +2385,14 @@ void Renderer::SetPlayerVehicle(Vehicle* model) {
     playerVehicle_ = model;
 }
 
+void Renderer::updatePlayerVariables(const BusSimulation& simulation, double throttle,
+                                     double steering, double brake) {
+    if (playerVehicle_ != nullptr) {
+        playerVehicle_->updateSimulationVariables(simulation, throttle, steering, brake);
+        playerVehicle_->updateScripts(false);
+    }
+}
+
 bool Renderer::isExteriorView() const {
     if (cameraView_ == 0) {
         return true;
@@ -2078,15 +2494,23 @@ void Renderer::beginFrame() {
     glfwGetCursorPos(window_, &cursorX, &cursorY);
     simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
     for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-        vehicle->updateFrameVariables(timegap, currentTime, cursorX, cursorY,
-                                      vehicle.get() != playerVehicle_);
+        const bool isAiVehicle = vehicle.get() != playerVehicle_;
+            vehicle->updateFrameVariables(isAiVehicle, timegap);
+        if (isAiVehicle) {
+            vehicle->updateScripts(true);
+        }
     }
     const bool rightMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
     if (rightMouse && !draggingFov_) {
         previousFovCursorY_ = cursorY;
     } else if (rightMouse) {
-        fieldOfViewOffset_ =
-            std::clamp(fieldOfViewOffset_ + (cursorY - previousFovCursorY_) * 0.15, -40.0, 60.0);
+        const double cursorDeltaY = cursorY - previousFovCursorY_;
+        if (cameraView_ == 0) {
+            cameraDistance_ = std::clamp(cameraDistance_ + cursorDeltaY * 0.1, 0.0, 80.0);
+        } else {
+            fieldOfViewOffset_ =
+                std::clamp(fieldOfViewOffset_ + cursorDeltaY * 0.15, -40.0, 60.0);
+        }
     }
     draggingFov_ = rightMouse;
     previousFovCursorY_ = cursorY;

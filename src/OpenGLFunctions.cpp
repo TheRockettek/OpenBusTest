@@ -39,6 +39,7 @@ GetUniformLocationProc pglGetUniformLocation = nullptr;
 UniformMatrix4fvProc pglUniformMatrix4fv = nullptr;
 Uniform1iProc pglUniform1i = nullptr;
 Uniform1fProc pglUniform1f = nullptr;
+Uniform2fProc pglUniform2f = nullptr;
 Uniform3fProc pglUniform3f = nullptr;
 Uniform4fProc pglUniform4f = nullptr;
 
@@ -86,6 +87,7 @@ bool loadOpenGLFunctions() {
         reinterpret_cast<UniformMatrix4fvProc>(glfwGetProcAddress("glUniformMatrix4fv"));
     pglUniform1i = reinterpret_cast<Uniform1iProc>(glfwGetProcAddress("glUniform1i"));
     pglUniform1f = reinterpret_cast<Uniform1fProc>(glfwGetProcAddress("glUniform1f"));
+    pglUniform2f = reinterpret_cast<Uniform2fProc>(glfwGetProcAddress("glUniform2f"));
     pglUniform3f = reinterpret_cast<Uniform3fProc>(glfwGetProcAddress("glUniform3f"));
     pglUniform4f = reinterpret_cast<Uniform4fProc>(glfwGetProcAddress("glUniform4f"));
     const bool available =
@@ -96,7 +98,7 @@ bool loadOpenGLFunctions() {
         pglGetShaderiv && pglGetShaderInfoLog && pglDeleteShader && pglCreateProgram &&
         pglAttachShader && pglLinkProgram && pglGetProgramiv && pglGetProgramInfoLog &&
         pglDeleteProgram && pglUseProgram && pglGetUniformLocation && pglUniformMatrix4fv &&
-        pglUniform1i && pglUniform1f && pglUniform3f && pglUniform4f;
+        pglUniform1i && pglUniform1f && pglUniform2f && pglUniform3f && pglUniform4f;
     if (!available) {
         gameLog.Log("Failed to load required OpenGL VBO functions");
     }

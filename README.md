@@ -146,6 +146,8 @@ derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
 - Default camera: the driver camera selected by `[set_camera_std]`
 - Hold middle mouse and drag: orbit outside view `0`, or look around the
   selected non-third-person viewport
+- Hold right mouse and drag vertically: adjust FOV in configured views, or
+  move closer/farther in the outside orbit view
 - Scroll up/down: zoom in/out
 - VSync is enabled by default; set `OPENBUS_VSYNC=0`, `off`, or `false` before
   launching to run above the display refresh cadence

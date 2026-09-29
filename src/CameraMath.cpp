@@ -131,6 +131,10 @@ void rotate(double angleDegrees, double x, double y, double z) {
                          cosine + z * z * inverseCosine, 0.0, 0.0, 0.0, 0.0, 1.0});
 }
 
+void multiplyMatrix(const Matrix4& matrix) {
+    cachedModelViewMatrix = multiply(cachedModelViewMatrix, matrix);
+}
+
 void scale(double x, double y, double z) {
     cachedModelViewMatrix =
         multiply(cachedModelViewMatrix,

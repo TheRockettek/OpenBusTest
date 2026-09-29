@@ -16,6 +16,7 @@ extern "C" {
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <iostream>
 #include <random>
 #include <sstream>
 #include <unordered_map>
@@ -28,6 +29,14 @@ std::string lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
         return static_cast<char>(std::tolower(character));
     });
+    return value;
+}
+
+std::string scriptName(std::string value) {
+    for (char& character : value) {
+        const unsigned char byte = static_cast<unsigned char>(character);
+        character = std::isalnum(byte) ? static_cast<char>(std::tolower(byte)) : '_';
+    }
     return value;
 }
 
@@ -50,7 +59,8 @@ struct ScriptRuntime::Impl {
 
     lua_State* state = nullptr;
     VehicleConfig configuration;
-    VehicleState& localState;
+    std::string scriptIdentity;
+    Variables& localState;
     SimulationState& sharedState;
     ScriptEnvironment scriptEnvironment;
     std::vector<std::string> errors;
@@ -58,22 +68,54 @@ struct ScriptRuntime::Impl {
     std::vector<std::string> stringStack;
     std::unordered_map<int, ScriptTexture> scriptTextures;
 
-    Impl(const VehicleConfig& source, VehicleState& local, SimulationState& shared)
-        : configuration(source), localState(local), sharedState(shared) {
+    Impl(const VehicleConfig& source, Variables& local, SimulationState& shared)
+        : configuration(source),
+          scriptIdentity(source.sourcePath.empty() ? "unknown"
+                                                   : source.sourcePath.filename().string()),
+          localState(local), sharedState(shared) {
         state = luaL_newstate();
         if (!state) {
             errors.push_back("unable to create Lua state");
             return;
         }
+        lua_atpanic(state, &Impl::panicHandler);
         for (const std::string& variable : configuration.floatVariables) {
             localState.declare(variable);
         }
         for (const std::string& variable : configuration.stringVariables) {
-            localStrings.emplace(lower(variable), std::string());
+            localState.declareString(variable);
+        }
+        for (const char* variable : {"ident", "number", "act_route", "act_busstop", "SetLineTo",
+                                     "yard", "file_schedule"}) {
+            localState.declareString(variable);
         }
         luaL_openlibs(state);
         registerFunctions();
         loadScripts();
+    }
+
+    void log(const std::string& message) const {
+        luaLogger.Log("[" + scriptIdentity + "] " + message);
+    }
+
+    void log(lua_State* lua, const std::string& message) const {
+        lua_Debug debug{};
+        std::string location = scriptIdentity;
+        if (lua_getstack(lua, 1, &debug) != 0 && lua_getinfo(lua, "Sl", &debug) != 0 &&
+            debug.currentline > 0) {
+            location += ":" + std::to_string(debug.currentline);
+        }
+        luaLogger.Log("[" + location + "] " + message);
+    }
+
+    static int panicHandler(lua_State* lua) {
+        const char* message = lua_tostring(lua, -1);
+        const std::string detail = message ? message : "non-string Lua error object";
+        const std::string output =
+            "Lua panic: " + detail + " (stack=" + std::to_string(lua_gettop(lua)) + ")";
+        luaLogger.Log(output);
+        std::cerr << output << '\n';
+        return 0;
     }
 
     ~Impl() {
@@ -95,58 +137,68 @@ struct ScriptRuntime::Impl {
     }
 
     static int getLocal(lua_State* lua) {
-        // luaLogger.Log("get_local_var(" + std::string(luaL_checkstring(lua, 1)) + ")");
         Impl* runtime = runtimeFor(lua);
-        lua_pushnumber(lua, runtime->localState.get(luaL_checkstring(lua, 1)));
+        const char* name = luaL_checkstring(lua, 1);
+        const double value = runtime->localState.getNormalized(name);
+        // runtime->log(lua, "get_local_var(" + std::string(name) + "): " + std::to_string(value));
+        lua_pushnumber(lua, value);
         return 1;
     }
 
     static int setLocal(lua_State* lua) {
-        // luaLogger.Log("set_local_var(" + std::string(luaL_checkstring(lua, 1)) + ", " + std::to_string(numericArgument(lua, 2)) + ")");
         Impl* runtime = runtimeFor(lua);
-        runtime->localState.set(luaL_checkstring(lua, 1), numericArgument(lua, 2));
+        const char* name = luaL_checkstring(lua, 1);
+        const double value = numericArgument(lua, 2);
+        // runtime->log(lua, "set_local_var(" + std::string(name) + ", " + std::to_string(value) +
+        // ")");
+        runtime->localState.setNormalized(name, value);
         return 0;
     }
 
     static int getLocalString(lua_State* lua) {
-        // luaLogger.Log("get_local_str(" + std::string(luaL_checkstring(lua, 1)) + ")");
         Impl* runtime = runtimeFor(lua);
-        lua_pushstring(lua, runtime->localStrings[lower(luaL_checkstring(lua, 1))].c_str());
+        // runtime->log(lua, "get_local_str(" + std::string(luaL_checkstring(lua, 1)) + ")");
+        const std::string value = runtime->localState.getStringNormalized(luaL_checkstring(lua, 1));
+        lua_pushstring(lua, value.c_str());
         return 1;
     }
 
     static int setLocalString(lua_State* lua) {
-        // luaLogger.Log("set_local_str(" + std::string(luaL_checkstring(lua, 1)) + ", " + std::string(luaL_checkstring(lua, 2)) + ")");
         Impl* runtime = runtimeFor(lua);
-        runtime->localStrings[lower(luaL_checkstring(lua, 1))] = luaL_checkstring(lua, 2);
+        // runtime->log(lua, "set_local_str(" + std::string(luaL_checkstring(lua, 1)) + ", " +
+        // std::string(luaL_checkstring(lua, 2)) + ")");
+        runtime->localState.setStringNormalized(luaL_checkstring(lua, 1), luaL_checkstring(lua, 2));
         return 0;
     }
 
     static int getSystem(lua_State* lua) {
-        // luaLogger.Log("get_sys_var(" + std::string(luaL_checkstring(lua, 1)) + ")");
         Impl* runtime = runtimeFor(lua);
-        lua_pushnumber(lua, runtime->sharedState.sharedVariables().get(luaL_checkstring(lua, 1)));
+        // runtime->log(lua, "get_sys_var(" + std::string(luaL_checkstring(lua, 1)) + ")");
+        lua_pushnumber(lua, runtime->sharedState.sharedVariables().getNormalized(luaL_checkstring(lua, 1)));
         return 1;
     }
 
     static int setSystem(lua_State* lua) {
-        // luaLogger.Log("set_sys_var(" + std::string(luaL_checkstring(lua, 1)) + ", " + std::to_string(numericArgument(lua, 2)) + ")");
         Impl* runtime = runtimeFor(lua);
-        runtime->sharedState.sharedVariables().set(luaL_checkstring(lua, 1), numericArgument(lua, 2));
+        // runtime->log(lua, "set_sys_var(" + std::string(luaL_checkstring(lua, 1)) + ", " +
+        // std::to_string(numericArgument(lua, 2)) + ")");
+        runtime->sharedState.sharedVariables().setNormalized(luaL_checkstring(lua, 1),
+                                     numericArgument(lua, 2));
         return 0;
     }
 
     static int getConstant(lua_State* lua) {
-        // luaLogger.Log("get_const(" + std::string(luaL_checkstring(lua, 1)) + ")");
         Impl* runtime = runtimeFor(lua);
+        // runtime->log(lua, "get_const(" + std::string(luaL_checkstring(lua, 1)) + ")");
         const auto found = runtime->configuration.constants.find(luaL_checkstring(lua, 1));
         lua_pushnumber(lua, found == runtime->configuration.constants.end() ? 0.0 : found->second);
         return 1;
     }
 
     static int callFunction(lua_State* lua) {
-        // luaLogger.Log("call_func(" + std::string(luaL_checkstring(lua, 1)) + ", " + std::to_string(numericArgument(lua, 2)) + ")");
         Impl* runtime = runtimeFor(lua);
+        // runtime->log(lua, "call_func(" + std::string(luaL_checkstring(lua, 1)) + ", " +
+        // std::to_string(numericArgument(lua, 2)) + ")");
         const std::string name = luaL_checkstring(lua, 1);
         const double value = numericArgument(lua, 2);
         for (const ConstantCurve& curve : runtime->configuration.curves) {
@@ -174,14 +226,15 @@ struct ScriptRuntime::Impl {
     }
 
     static int pushFloat(lua_State* lua) {
-        // luaLogger.Log("_pushf(" + std::to_string(numericArgument(lua, 1)) + ")");
-        runtimeFor(lua)->floatStack.push_back(numericArgument(lua, 1));
+        Impl* runtime = runtimeFor(lua);
+        // // runtime->log(lua, "_pushf(" + std::to_string(numericArgument(lua, 1)) + ")");
+        runtime->floatStack.push_back(numericArgument(lua, 1));
         return 0;
     }
 
     static int popFloat(lua_State* lua) {
-        // luaLogger.Log("_popf()");
         Impl* runtime = runtimeFor(lua);
+        // // runtime->log(lua, "_popf()");
         if (runtime->floatStack.empty()) {
             lua_pushnumber(lua, 0.0);
         } else {
@@ -192,20 +245,21 @@ struct ScriptRuntime::Impl {
     }
 
     static int peekFloat(lua_State* lua) {
-        // luaLogger.Log("_peekf(" + std::to_string(runtimeFor(lua)->floatStack.empty() ? 0.0: runtimeFor(lua)->floatStack.back()));
         Impl* runtime = runtimeFor(lua);
+        // // runtime->log(lua, "_peekf(" + std::to_string(runtime->floatStack.empty() ? 0.0 :
+        // runtime->floatStack.back()) + ")");
         lua_pushnumber(lua, runtime->floatStack.empty() ? 0.0 : runtime->floatStack.back());
         return 1;
     }
 
     static int pushString(lua_State* lua) {
-        // luaLogger.Log("_pushs(" + std::string(luaL_checkstring(lua, 1)) + ")");
-        runtimeFor(lua)->stringStack.emplace_back(luaL_checkstring(lua, 1));
+        Impl* runtime = runtimeFor(lua);
+        // // runtime->log(lua, "_pushs(" + std::string(luaL_checkstring(lua, 1)) + ")");
+        runtime->stringStack.emplace_back(luaL_checkstring(lua, 1));
         return 0;
     }
 
     static int popString(lua_State* lua) {
-        // luaLogger.Log("_pops()");
         Impl* runtime = runtimeFor(lua);
         if (runtime->stringStack.empty()) {
             lua_pushliteral(lua, "");
@@ -225,17 +279,21 @@ struct ScriptRuntime::Impl {
     }
 
     static int soundTrigger(lua_State* lua) {
-        luaLogger.Log("sound_trigger(" + std::string(luaL_checkstring(lua, 1)) + ")");
+        Impl* runtime = runtimeFor(lua);
+        runtime->log(lua, "sound_trigger(" + std::string(luaL_checkstring(lua, 1)) + ")");
         return 0;
     }
 
     static int soundTriggerFile(lua_State* lua) {
-        luaLogger.Log("sound_trigger_file(" + std::string(luaL_checkstring(lua, 1)) + ", " + std::string(luaL_checkstring(lua, 2)) + ")");
+        Impl* runtime = runtimeFor(lua);
+        runtime->log(lua, "sound_trigger_file(" + std::string(luaL_checkstring(lua, 1)) + ", " +
+                              std::string(luaL_checkstring(lua, 2)) + ")");
         return 0;
     }
 
     static int debug(lua_State* lua) {
-        luaLogger.Log("omsi_debug(" + std::string(luaL_checkstring(lua, 1)) + ")");
+        Impl* runtime = runtimeFor(lua);
+        runtime->log(lua, "omsi_debug(" + std::string(luaL_checkstring(lua, 1)) + ")");
         return 0;
     }
 
@@ -250,12 +308,14 @@ struct ScriptRuntime::Impl {
     }
 
     static int returnSystemFloat(lua_State* lua, double value) {
-        runtimeFor(lua)->floatStack.push_back(value);
+        Impl* runtime = runtimeFor(lua);
+        runtime->floatStack.push_back(value);
         return 0;
     }
 
     static int returnSystemString(lua_State* lua, const char* value = "") {
-        runtimeFor(lua)->stringStack.emplace_back(value);
+        Impl* runtime = runtimeFor(lua);
+        runtime->stringStack.emplace_back(value);
         return 0;
     }
 
@@ -347,8 +407,7 @@ struct ScriptRuntime::Impl {
         return runtime->scriptTextures[index];
     }
 
-    static void resizeScriptTexture(ScriptTexture& texture, int requiredWidth,
-                                    int requiredHeight) {
+    static void resizeScriptTexture(ScriptTexture& texture, int requiredWidth, int requiredHeight) {
         if (requiredWidth <= texture.width && requiredHeight <= texture.height) {
             return;
         }
@@ -419,10 +478,14 @@ struct ScriptRuntime::Impl {
 
     static int safeScriptTextureColor(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const std::uint8_t blue = static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
-        const std::uint8_t green = static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
-        const std::uint8_t red = static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
-        const std::uint8_t alpha = static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
+        const std::uint8_t blue =
+            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
+        const std::uint8_t green =
+            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
+        const std::uint8_t red =
+            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
+        const std::uint8_t alpha =
+            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
         const int index = static_cast<int>(popSystemFloat(runtime));
         scriptTexture(runtime, index).color = {alpha, red, green, blue};
         return 0;
@@ -537,6 +600,12 @@ struct ScriptRuntime::Impl {
         lua_setglobal(state, name);
     }
 
+    void registerSystemMacro(const char* name, lua_CFunction function) {
+        if (localState.supportsSystemMacro(name)) {
+            registerFunction((std::string("sys_macro_") + name).c_str(), function);
+        }
+    }
+
     void registerFunctions() {
         registerFunction("get_local_var", getLocal);
         registerFunction("set_local_var", setLocal);
@@ -556,51 +625,51 @@ struct ScriptRuntime::Impl {
         registerFunction("sound_trigger_file", soundTriggerFile);
         registerFunction("omsi_debug", debug);
 
-        registerFunction("sys_macro_getterminusindex", safeMissingIndex);
-        registerFunction("sys_macro_getterminuscode", safeNumericLookup);
-        registerFunction("sys_macro_getterminusstring", safeStringLookup);
-        registerFunction("sys_macro_getbusstopindex", safeMissingIndex);
-        registerFunction("sys_macro_getbusstopstring", safeStringLookup);
-        registerFunction("sys_macro_getrouteindex", safeMissingIndex);
-        registerFunction("sys_macro_getrouteterminusindex", safeNumericLookup);
-        registerFunction("sys_macro_getbusstopcount", safeNumericLookup);
-        registerFunction("sys_macro_getroutebusstopident", safeRouteBusstopIdent);
-        registerFunction("sys_macro_getttlinestring", safeCurrentLineNumber);
-        registerFunction("sys_macro_getttterminusindex", safeNumericLookup);
-        registerFunction("sys_macro_getttbusstopcount", safeNumericLookup);
-        registerFunction("sys_macro_getttbusstopindex", safeNumericLookup);
-        registerFunction("sys_macro_getttdelay", safeNumericLookup);
-        registerFunction("sys_macro_getttbusstopname", safeTicketName);
-        registerFunction("sys_macro_getttbusstoparr", safeNumericLookup);
-        registerFunction("sys_macro_getttbusstopdep", safeNumericLookup);
-        registerFunction("sys_macro_givechangecoin", safeGiveChangeCoin);
-        registerFunction("sys_macro_getticketname", safeTicketName);
-        registerFunction("sys_macro_getticketvalue", safeNumericLookup);
-        registerFunction("sys_macro_gethumancountonpathlink", safeNumericLookup);
-        registerFunction("sys_macro_nrspecrandom", safeNrSpecRandom);
-        registerFunction("sys_macro_getheightabovepoint", safeGetHeightAbovePoint);
-        registerFunction("sys_macro_getdepotstringglobal", safeTicketName);
-        registerFunction("sys_macro_gethumancountonseat", safeNumericLookup);
-        registerFunction("sys_macro_getarrbusline", safeArrivalString);
-        registerFunction("sys_macro_getarrbusterminus", safeArrivalString);
-        registerFunction("sys_macro_getarrbustimediff", safeArrivalTime);
-        registerFunction("sys_macro_stnewtex", safeScriptTextureNew);
-        registerFunction("sys_macro_stlock", safeScriptTextureLock);
-        registerFunction("sys_macro_stunlock", safeScriptTextureUnlock);
-        registerFunction("sys_macro_stfilter", safeScriptTextureFilter);
-        registerFunction("sys_macro_stsetcolor", safeScriptTextureColor);
-        registerFunction("sys_macro_stdrawpixel", safeScriptTexturePixel);
-        registerFunction("sys_macro_stdrawrect", safeScriptTextureRect);
-        registerFunction("sys_macro_sttextout", safeScriptTextureText);
-        registerFunction("sys_macro_streadpixel", safeScriptTextureReadPixel);
-        registerFunction("sys_macro_stcopycolor", safeScriptTextureCopyColor);
-        registerFunction("sys_macro_stloadtex", safeScriptTextureLoad);
-        registerFunction("sys_macro_stgetr", safeScriptTextureRed);
-        registerFunction("sys_macro_stgetg", safeScriptTextureGreen);
-        registerFunction("sys_macro_stgetb", safeScriptTextureBlue);
-        registerFunction("sys_macro_stgeta", safeScriptTextureAlpha);
-        registerFunction("sys_macro_getfontindex", safeFontIndex);
-        registerFunction("sys_macro_textlength", safeTextLength);
+        registerSystemMacro("getterminusindex", safeMissingIndex);
+        registerSystemMacro("getterminuscode", safeNumericLookup);
+        registerSystemMacro("getterminusstring", safeStringLookup);
+        registerSystemMacro("getbusstopindex", safeMissingIndex);
+        registerSystemMacro("getbusstopstring", safeStringLookup);
+        registerSystemMacro("getrouteindex", safeMissingIndex);
+        registerSystemMacro("getrouteterminusindex", safeNumericLookup);
+        registerSystemMacro("getbusstopcount", safeNumericLookup);
+        registerSystemMacro("getroutebusstopident", safeRouteBusstopIdent);
+        registerSystemMacro("getttlinestring", safeCurrentLineNumber);
+        registerSystemMacro("getttterminusindex", safeNumericLookup);
+        registerSystemMacro("getttbusstopcount", safeNumericLookup);
+        registerSystemMacro("getttbusstopindex", safeNumericLookup);
+        registerSystemMacro("getttdelay", safeNumericLookup);
+        registerSystemMacro("getttbusstopname", safeTicketName);
+        registerSystemMacro("getttbusstoparr", safeNumericLookup);
+        registerSystemMacro("getttbusstopdep", safeNumericLookup);
+        registerSystemMacro("givechangecoin", safeGiveChangeCoin);
+        registerSystemMacro("getticketname", safeTicketName);
+        registerSystemMacro("getticketvalue", safeNumericLookup);
+        registerSystemMacro("gethumancountonpathlink", safeNumericLookup);
+        registerSystemMacro("nrspecrandom", safeNrSpecRandom);
+        registerSystemMacro("getheightabovepoint", safeGetHeightAbovePoint);
+        registerSystemMacro("getdepotstringglobal", safeTicketName);
+        registerSystemMacro("gethumancountonseat", safeNumericLookup);
+        registerSystemMacro("getarrbusline", safeArrivalString);
+        registerSystemMacro("getarrbusterminus", safeArrivalString);
+        registerSystemMacro("getarrbustimediff", safeArrivalTime);
+        registerSystemMacro("stnewtex", safeScriptTextureNew);
+        registerSystemMacro("stlock", safeScriptTextureLock);
+        registerSystemMacro("stunlock", safeScriptTextureUnlock);
+        registerSystemMacro("stfilter", safeScriptTextureFilter);
+        registerSystemMacro("stsetcolor", safeScriptTextureColor);
+        registerSystemMacro("stdrawpixel", safeScriptTexturePixel);
+        registerSystemMacro("stdrawrect", safeScriptTextureRect);
+        registerSystemMacro("sttextout", safeScriptTextureText);
+        registerSystemMacro("streadpixel", safeScriptTextureReadPixel);
+        registerSystemMacro("stcopycolor", safeScriptTextureCopyColor);
+        registerSystemMacro("stloadtex", safeScriptTextureLoad);
+        registerSystemMacro("stgetr", safeScriptTextureRed);
+        registerSystemMacro("stgetg", safeScriptTextureGreen);
+        registerSystemMacro("stgetb", safeScriptTextureBlue);
+        registerSystemMacro("stgeta", safeScriptTextureAlpha);
+        registerSystemMacro("getfontindex", safeFontIndex);
+        registerSystemMacro("textlength", safeTextLength);
     }
 
     void loadScripts() {
@@ -641,8 +710,7 @@ struct ScriptRuntime::Impl {
             }
             ++loadedScriptCount;
         }
-        luaLogger.Log("Loaded " + std::to_string(loadedScriptCount) +
-                      " Lua scripts before init()");
+        log("Loaded " + std::to_string(loadedScriptCount) + " Lua scripts before init()");
     }
 
     bool invoke(const char* functionName) {
@@ -659,7 +727,7 @@ struct ScriptRuntime::Impl {
                 lua_pop(state, 1);
             }
         } else {
-            luaLogger.Log(std::string(functionName) + " not found");
+            log(std::string(functionName) + " not found");
             lua_pop(state, 1);
         }
         lua_pop(state, 1);
@@ -679,19 +747,31 @@ struct ScriptRuntime::Impl {
             lua_pop(state, 1);
             lua_getfield(state, -1, "frame");
         }
-        if (lua_isfunction(state, -1) && lua_pcall(state, 0, 0, 0) != 0) {
-            errors.push_back(std::string(functionName) + ": " + lua_tostring(state, -1));
-            lua_pop(state, 1);
-        } else if (!lua_isfunction(state, -1)) {
+        const bool hasFunction = lua_isfunction(state, -1) != 0;
+        if (hasFunction) {
+            if (lua_pcall(state, 0, 0, 0) != 0) {
+                errors.push_back(std::string(functionName) + ": " + lua_tostring(state, -1));
+                lua_pop(state, 1);
+            }
+        } else {
             lua_pop(state, 1);
         }
         lua_pop(state, 1);
     }
 
-    std::unordered_map<std::string, std::string> localStrings;
+    bool copyScriptTexture(int index, ScriptRuntime::ScriptTextureSnapshot& snapshot) const {
+        const auto found = scriptTextures.find(index);
+        if (found == scriptTextures.end()) {
+            return false;
+        }
+        snapshot.width = found->second.width;
+        snapshot.height = found->second.height;
+        snapshot.pixels = found->second.pixels;
+        return true;
+    }
 };
 
-ScriptRuntime::ScriptRuntime(const VehicleConfig& configuration, VehicleState& localState,
+ScriptRuntime::ScriptRuntime(const VehicleConfig& configuration, Variables& localState,
                              SimulationState& sharedState)
     : impl_(std::make_unique<Impl>(configuration, localState, sharedState)) {}
 
@@ -719,6 +799,19 @@ void ScriptRuntime::invokeEntryPoint(const std::string& functionName) {
         impl_->stringStack.clear();
         impl_->invoke(functionName.c_str());
     }
+}
+
+void ScriptRuntime::invokeSystemTrigger(const std::string& triggerName) {
+    if (impl_ && impl_->state && impl_->localState.supportsSystemTrigger(triggerName)) {
+        impl_->floatStack.clear();
+        impl_->stringStack.clear();
+        const std::string functionName = "trigger_" + scriptName(triggerName);
+        impl_->invoke(functionName.c_str());
+    }
+}
+
+bool ScriptRuntime::copyScriptTexture(int index, ScriptTextureSnapshot& snapshot) const {
+    return impl_ && impl_->copyScriptTexture(index, snapshot);
 }
 
 void ScriptRuntime::update(bool isAiVehicle) {

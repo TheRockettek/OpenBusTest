@@ -198,9 +198,7 @@ std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
 bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
                        Variables& variables, ConfigurationDiagnostics& diagnostics) {
     // [newanim] is a variable-length block terminated by the next keyword or '--'.
-    ModelWheelAnimation animation;
-    std::string animationVariable;
-    bool hasTransform = false;
+    ModelAnimation animation;
     Line field;
     while (reader.next(field)) {
         if (field.isKeyword()) {
@@ -215,6 +213,7 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
         }
         const std::string name = lower(field.text);
         if (name == "origin_from_mesh") {
+            animation.originFromMesh = true;
             Line possibleOrigin;
             if (reader.next(possibleOrigin)) {
                 double firstCoordinate = 0.0;
@@ -268,15 +267,33 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
                 diagnostics.error(value.number, name, "expected a numeric value");
                 return false;
             }
+            if (name == "origin_rot_x") {
+                animation.originRotation[0] = ignored;
+            } else if (name == "origin_rot_y") {
+                animation.originRotation[1] = ignored;
+            } else if (name == "origin_rot_z") {
+                animation.originRotation[2] = ignored;
+            } else if (name == "maxspeed") {
+                animation.maxSpeed = ignored;
+            } else if (name == "delay") {
+                animation.delay = ignored;
+            } else if (name == "offset") {
+                animation.offset = ignored;
+            }
             continue;
         }
         if (name == "anim_rot" || name == "anim_trans") {
+            if (!animation.type.empty()) {
+                diagnostics.error(field.number, name,
+                                  "only one anim_rot or anim_trans is allowed per newanim");
+                return false;
+            }
             std::vector<std::string> values;
             if (!readValues(reader, field.number, name, 2, values, diagnostics)) {
                 return false;
             }
-            animationVariable = trim(values[0]);
-            if (animationVariable.empty()) {
+            animation.variable = trim(values[0]);
+            if (animation.variable.empty()) {
                 diagnostics.error(field.number, name, "animation variable cannot be empty");
                 return false;
             }
@@ -285,29 +302,33 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
                 diagnostics.error(field.number, name, "expected a numeric scale");
                 return false;
             }
-            part.animations.push_back({name, animationVariable, scale});
-            variables.declare(animationVariable);
-            hasTransform = true;
+            animation.type = name;
+            animation.scale = scale;
+            variables.declare(animation.variable);
             continue;
         }
         break;
     }
-    if (!hasTransform) {
+    if (animation.type.empty()) {
         diagnostics.error(keywordLine.number, "newanim", "animation has no anim_rot or anim_trans");
         return false;
     }
 
-    const std::string variable = lower(animationVariable);
+    part.animations.push_back(animation);
+    const std::string variable = lower(animation.variable);
     if (variable.rfind("wheel_rotation_", 0) == 0) {
-        part.wheelAnimation.rotationVariable = animationVariable;
+        part.wheelAnimation.rotationVariable = animation.variable;
+        part.wheelAnimation.rotationScale = animation.scale;
         if (animation.hasOrigin) {
             part.wheelAnimation.origin = animation.origin;
             part.wheelAnimation.hasOrigin = true;
         }
     } else if (variable.rfind("axle_suspension_", 0) == 0) {
-        part.wheelAnimation.suspensionVariable = animationVariable;
+        part.wheelAnimation.suspensionVariable = animation.variable;
+        part.wheelAnimation.suspensionScale = animation.scale;
     } else if (variable.rfind("axle_steering_", 0) == 0) {
-        part.wheelAnimation.steeringVariable = animationVariable;
+        part.wheelAnimation.steeringVariable = animation.variable;
+        part.wheelAnimation.steeringScale = animation.scale;
     }
     return true;
 }
@@ -727,6 +748,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                         } else if (variable.text != "--") {
                             if (keyword == "matl_lightmap") {
                                 current->lightmapStrengthVariable = trim(variable.text);
+                            } else {
+                                current->freeTextureVariable = trim(variable.text);
                             }
                             declareIfVariable(variable.text, variables);
                         }

@@ -9,14 +9,19 @@
 #include <unordered_map>
 #include <vector>
 
-class Variables;
+namespace openbus::scripting {
+class Vehicle;
+}
 
 namespace openbus::rendering {
 
 struct WheelAnimation {
     std::string rotationVariable;
+    double rotationScale = 0.0;
     std::string suspensionVariable;
+    double suspensionScale = 0.0;
     std::string steeringVariable;
+    double steeringScale = 0.0;
     std::array<double, 3> origin = {};
     bool hasOrigin = false;
 };
@@ -35,6 +40,7 @@ struct BusModelMaterialState {
     std::string nightmapTextureName;
     std::string lightmapTextureName;
     std::string lightmapStrengthVariable;
+    std::string freeTextureVariable;
     std::string texcoordTransXVariable;
     std::string texcoordTransYVariable;
     std::string bumpmapTextureName;
@@ -63,6 +69,7 @@ struct BusModelPart {
     std::string animationParent;
     std::unordered_map<std::string, BusModelMaterialState> materialStates;
     std::vector<BusModelMaterialState> materialStatesInOrder;
+    std::vector<ModelAnimation> animations;
     int lodIndex = -1;
     WheelAnimation wheelAnimation;
 };
@@ -74,6 +81,7 @@ struct BusModelLoadResult {
 };
 
 BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
-                                const std::filesystem::path& modelRoot, Variables& variables);
+                                const std::filesystem::path& modelRoot,
+                                openbus::scripting::Vehicle& variables);
 
 } // namespace openbus::rendering

@@ -50,6 +50,7 @@ using GetUniformLocationProc = GLint (*)(GLuint, const char*);
 using UniformMatrix4fvProc = void (*)(GLint, GLsizei, GLboolean, const GLfloat*);
 using Uniform1iProc = void (*)(GLint, GLint);
 using Uniform1fProc = void (*)(GLint, GLfloat);
+using Uniform2fProc = void (*)(GLint, GLfloat, GLfloat);
 using Uniform3fProc = void (*)(GLint, GLfloat, GLfloat, GLfloat);
 using Uniform4fProc = void (*)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
 
@@ -83,6 +84,7 @@ extern GetUniformLocationProc pglGetUniformLocation;
 extern UniformMatrix4fvProc pglUniformMatrix4fv;
 extern Uniform1iProc pglUniform1i;
 extern Uniform1fProc pglUniform1f;
+extern Uniform2fProc pglUniform2f;
 extern Uniform3fProc pglUniform3f;
 extern Uniform4fProc pglUniform4f;
 

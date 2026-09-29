@@ -32,8 +32,7 @@ const char* exceptionName(DWORD code) {
     }
 }
 
-void writeCrashReport(const char* reason, DWORD exceptionCode = 0,
-                      void* exceptionAddress = nullptr,
+void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* exceptionAddress = nullptr,
                       const EXCEPTION_POINTERS* exceptionInfo = nullptr) {
     if (reportInProgress.test_and_set()) {
         return;
@@ -58,7 +57,10 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0,
         exceptionInfo->ExceptionRecord->NumberParameters >= 2) {
         const ULONG_PTR operation = exceptionInfo->ExceptionRecord->ExceptionInformation[0];
         const ULONG_PTR target = exceptionInfo->ExceptionRecord->ExceptionInformation[1];
-        report << "Access: " << (operation == 0 ? "read" : operation == 1 ? "write" : "execute")
+        report << "Access: "
+               << (operation == 0   ? "read"
+                   : operation == 1 ? "write"
+                                    : "execute")
                << " at " << reinterpret_cast<const void*>(target) << "\n";
     }
 

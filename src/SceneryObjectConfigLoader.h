@@ -7,7 +7,9 @@
 #include <string>
 #include <vector>
 
-class Variables;
+namespace openbus::scripting {
+class SceneryObject;
+}
 
 struct SceneryObjectConfig {
     std::filesystem::path sourcePath;
@@ -27,4 +29,5 @@ struct SceneryObjectConfig {
 SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPath);
 
 ModelConfig loadSceneryObjectConfig(const std::filesystem::path& configPath,
-                                    const std::filesystem::path& modelRoot, Variables& variables);
+                                    const std::filesystem::path& modelRoot,
+                                    openbus::scripting::SceneryObject& variables);

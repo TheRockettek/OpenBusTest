@@ -15,6 +15,7 @@ void pushMatrix();
 void popMatrix();
 void translate(double x, double y, double z);
 void rotate(double angleDegrees, double x, double y, double z);
+void multiplyMatrix(const Matrix4& matrix);
 void scale(double x, double y, double z);
 const Matrix4& modelViewMatrix();
 const Matrix4& projectionMatrix();

@@ -2,6 +2,7 @@
 
 #include "ConfigurationParser.h"
 #include "ModelConfigLoader.h"
+#include "Variables.h"
 
 namespace {
 
@@ -162,6 +163,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
 }
 
 ModelConfig loadSceneryObjectConfig(const std::filesystem::path& configPath,
-                                    const std::filesystem::path& modelRoot, Variables& variables) {
+                                    const std::filesystem::path& modelRoot,
+                                    openbus::scripting::SceneryObject& variables) {
     return loadModelConfig(configPath, modelRoot, ModelConfigKind::SceneryObject, variables);
 }

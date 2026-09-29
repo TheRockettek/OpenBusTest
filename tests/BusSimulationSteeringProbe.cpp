@@ -1,4 +1,5 @@
 #include "BusSimulation.h"
+#include "Variables.h"
 
 #include <cmath>
 #include <iostream>
@@ -37,11 +38,17 @@ double steeringHeading(const BodyPose& pose) {
 
 int main() {
     BusSimulation simulation(testConfiguration());
+    const BodyPose rearStartPose = simulation.wheelPose(2);
     for (int step = 0; step < 180; ++step) {
         simulation.step(0.0, 0.0, 0.0);
     }
     for (int step = 0; step < 100; ++step) {
         simulation.step(0.6, 1.0, 0.0);
+    }
+    const BodyPose rearDrivenPose = simulation.wheelPose(2);
+    double rearPoseChange = 0.0;
+    for (std::size_t index = 0; index < rearStartPose.rotation.size(); ++index) {
+        rearPoseChange += std::abs(rearDrivenPose.rotation[index] - rearStartPose.rotation[index]);
     }
     double previousHeading = steeringHeading(simulation.wheelPose(0));
     int headingDirectionChanges = 0;
@@ -63,9 +70,25 @@ int main() {
     const double leftHeading = steeringHeading(simulation.wheelPose(0));
     const double rightHeading = steeringHeading(simulation.wheelPose(1));
     const double leftHeight = simulation.wheelPose(0).position[2];
+    openbus::scripting::Vehicle variables;
+    simulation.updateVariables(variables, 0.6, -1.0, 0.0);
+    if (!variables.has("Axle_Steering_0_L") ||
+        std::abs(variables.get("Axle_Steering_0_L")) < 1.0e-3) {
+        std::cerr << "Axle_Steering_0_L was not populated from the steering joint\n";
+        return 1;
+    }
+    if (std::abs(variables.get("Wheel_Rotation_1_L")) < 1.0e-3 ||
+        std::abs(variables.get("Wheel_Rotation_1_R")) < 1.0e-3) {
+        std::cerr << "Rear wheel rotation variables were not populated\n";
+        return 1;
+    }
     std::cout << "target=" << simulation.steeringAngle() << " left=" << leftHeading
               << " right=" << rightHeading
               << " leftHeight=" << leftHeight
+              << " axleSteering0L=" << variables.get("Axle_Steering_0_L")
+              << " wheelRotation1L=" << variables.get("Wheel_Rotation_1_L")
+              << " wheelRotation1R=" << variables.get("Wheel_Rotation_1_R")
+              << " rearPoseChange=" << rearPoseChange
               << " headingDirectionChanges=" << headingDirectionChanges << '\n';
     return 0;
 }

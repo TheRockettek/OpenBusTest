@@ -3,6 +3,7 @@
 #include "ConfigurationParser.h"
 #include "ModelConfigLoader.h"
 #include "PerfTrace.h"
+#include "Variables.h"
 #include "osc/OscConverter.h"
 
 #include <algorithm>
@@ -114,7 +115,7 @@ void loadConstantFile(const std::filesystem::path& configPath, const std::string
                 result.diagnostics.error(line.number, "const", "expected a name and numeric value");
                 continue;
             }
-            result.constants[trim(nameLine.text)] = value;
+            result.constants[lower(trim(nameLine.text))] = value;
             continue;
         }
         if (keyword == "newcurve") {
@@ -123,7 +124,7 @@ void loadConstantFile(const std::filesystem::path& configPath, const std::string
                 continue;
             }
             ConstantCurve curve;
-            curve.name = trim(nameLine.text);
+            curve.name = lower(trim(nameLine.text));
             while (reader.next(line)) {
                 if (!line.isKeyword()) {
                     continue;
@@ -183,9 +184,8 @@ void convertVehicleScripts(const std::filesystem::path& configPath, VehicleConfi
         try {
             generatedPath = generatedLuaPath(sourcePath);
         } catch (const std::exception& exception) {
-            result.diagnostics.error(0, "script",
-                                     "unable to hash " + sourcePath.string() + ": " +
-                                         exception.what());
+            result.diagnostics.error(
+                0, "script", "unable to hash " + sourcePath.string() + ": " + exception.what());
             continue;
         }
         if (std::filesystem::exists(generatedPath)) {
@@ -549,6 +549,7 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
 }
 
 ModelConfig loadVehicleModelConfig(const std::filesystem::path& configPath,
-                                   const std::filesystem::path& modelRoot, Variables& variables) {
+                                   const std::filesystem::path& modelRoot,
+                                   openbus::scripting::Vehicle& variables) {
     return loadModelConfig(configPath, modelRoot, ModelConfigKind::Vehicle, variables);
 }

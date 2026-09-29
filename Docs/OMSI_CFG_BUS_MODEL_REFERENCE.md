@@ -229,6 +229,71 @@ translation along the corresponding texture axis.
 
 ## 4. Animation and hierarchy
 
+### Coordinate convention used by OpenBus
+
+OMSI model CFG coordinates use `x` for lateral position, `y` for longitudinal
+position, and `z` for height. OpenBus simulation/render coordinates use `X` for
+longitudinal position, `Y` for lateral position, and `Z` for height. CFG
+positions are therefore converted as:
+
+```text
+render X = CFG y
+render Y = -CFG x
+render Z = CFG z
+```
+
+Converted OBJ vertices use the equivalent importer mapping:
+
+```text
+render X = OBJ z
+render Y = -OBJ x
+render Z = OBJ y
+```
+
+The negative lateral sign is intentional. It is the reflection needed to keep
+the original model winding and the renderer's culling convention consistent.
+
+The converter writes O3D vertex positions unchanged and emits the O3D section
+transform as `# openbus_transform` metadata. OpenBus therefore converts the
+OBJ positions once using the mapping above. For `origin_from_mesh`, the
+metadata translation supplies the pivot; its orientation is not applied again
+to the already-converted vertices.
+
+For `[newanim]` origin rotations, the converted axes are:
+
+```text
+origin_rot_x -> render -Y
+origin_rot_y -> render +Z
+origin_rot_z -> render +X
+```
+
+Generic `anim_rot` starts with the OMSI animation frame's source `Z` axis,
+which maps to render `+X`. The `origin_rot_*` values then orient that frame.
+The converted mesh transform is applied to the resulting axis, so the E400
+steering-wheel block's `origin_rot_z 90` preserves its authored source `Z`
+axis and the transform's third column supplies the tilted render axle. The
+converted basis reverses the rotation handedness, so the signed animation
+scale remains part of the model data. Wheel rolling is a separate special
+case and uses render `+Y` after the wheel mount basis is applied.
+
+Origin rotations are applied in `x`, `y`, `z` order, followed by the animation
+transform, then undone in reverse order. The animation scale and sign are part
+of the model data and must be preserved; for example, the DL05/E400 wheel
+records use different signs for `Wheel_Rotation_*`.
+
+Wheel meshes have one additional fixed basis: the ODE wheel body is initialized
+with a `-90` degree rotation around `X`, and the renderer cancels that basis
+before applying wheel animation variables. Rolling is excluded from the mount
+pose and is applied from `Wheel_Rotation_*` around render `+Y` using the
+magnitude of the CFG scale. The source O3D scale sign is not applied again
+after the shared OBJ coordinate reflection; doing so reverses converted E400
+wheels. Wheel models
+are matched to physics wheels by their converted origin, not by file order;
+the physics index convention is even index `+Y` (left) and odd index `-Y`
+(right). Custom steering variables may animate any wheel. A variable named
+`Axle_Steering_N_L/R` is applied only to physical axle `N`, preventing legacy
+cross-axle records from steering the wrong wheel.
+
 ### `[newanim]`
 
 Starts an animation record. A common sequence is:

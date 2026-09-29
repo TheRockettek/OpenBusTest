@@ -40,18 +40,23 @@ class Renderer {
     Vehicle* AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {});
     Vehicle* AddVehicle(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
                         ModelLoadingPolicy loadingPolicy = {});
-    Vehicle* AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {}) {
+
+                        Vehicle* AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {}) {
         return AddVehicle(vehicle, loadingPolicy);
     }
     Vehicle* AddBusModel(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
                          ModelLoadingPolicy loadingPolicy = {}) {
         return AddVehicle(vehicle, spawnPosition, loadingPolicy);
     }
+
     void SetPlayerVehicle(Vehicle* vehicle);
     void SetPlayerBusModel(Vehicle* vehicle) {
         SetPlayerVehicle(vehicle);
     }
+
     void beginFrame();
+    void updatePlayerVariables(const BusSimulation& simulation, double throttle, double steering,
+                               double brake);
     void draw(const BusSimulation& simulation);
     void endFrame();
     void captureViews(const BusSimulation& simulation, const std::filesystem::path& directory);

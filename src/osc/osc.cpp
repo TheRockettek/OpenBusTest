@@ -285,6 +285,14 @@ static std::string sanitize(const std::string& s) {
     return r;
 }
 
+static std::string lower_name(const std::string& name) {
+    std::string result = name;
+    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return result;
+}
+
 static std::string func_name(const std::string& kw) {
     if (kw == "frame")
         return "frame";
@@ -348,7 +356,7 @@ class Emitter {
             emit_push_float(out, depth, pf[i]);
         if (!pf.empty()) {
             if (pending_negated)
-                emit_push_float(out, depth, "(" + pf.back() + "==0) and 1 or 0");
+                emit_push_float(out, depth, "compare(" + pf.back() + ",0) and 1 or 0");
             else
                 emit_push_float(out, depth, pf.back());
             pf.clear();
@@ -379,7 +387,7 @@ class Emitter {
     // always refers unambiguously to the new top.
     void push_float(std::string& /*out*/, int /*depth*/, const std::string& expr) {
         if (pending_negated && !pf.empty()) {
-            pf.back() = "(" + pf.back() + "==0) and 1 or 0";
+            pf.back() = "compare(" + pf.back() + ",0) and 1 or 0";
             pending_negated = false;
         }
         pf.push_back(expr);
@@ -396,7 +404,7 @@ class Emitter {
     // Materialise any negation on pf.back() into the string itself.
     void materialise_neg() {
         if (pending_negated && !pf.empty()) {
-            pf.back() = "(" + pf.back() + "==0) and 1 or 0";
+            pf.back() = "compare(" + pf.back() + ",0) and 1 or 0";
             pending_negated = false;
         }
     }
@@ -409,6 +417,19 @@ class Emitter {
             std::string b = std::move(pf.back());
             pf.pop_back();
             pf.back() = "(" + pf.back() + infix + b + ")";
+        } else {
+            flush_pending(out, depth);
+            out += fallback;
+        }
+    }
+
+    void fold_comparison(std::string& out, int depth, const std::string& infix,
+                         const std::string& fallback) {
+        if (pf.size() >= 2) {
+            materialise_neg();
+            std::string b = std::move(pf.back());
+            pf.pop_back();
+            pf.back() = "((" + pf.back() + infix + b + ") and 1 or 0)";
         } else {
             flush_pending(out, depth);
             out += fallback;
@@ -501,7 +522,7 @@ class Emitter {
 
         std::string mname;
         if (hdr.val.size() > 6 && hdr.val.substr(0, 6) == "macro:")
-            mname = hdr.val.substr(6);
+            mname = lower_name(hdr.val.substr(6));
 
         // 1. Builtin override: inline the pre-written Lua body
         if (!mname.empty() && builtin_overrides.count(mname)) {
@@ -636,11 +657,11 @@ class Emitter {
 
         case 'L': // Load
             if (subU == 'L')
-                push_float(out, depth, "get_local_var(\"" + name + "\")");
+                push_float(out, depth, "get_local_var(\"" + lower_name(name) + "\")");
             else if (subU == 'S')
-                push_float(out, depth, "get_sys_var(\"" + name + "\")");
+                push_float(out, depth, "get_sys_var(\"" + lower_name(name) + "\")");
             else if (sub == '$')
-                push_str_val(out, depth, "get_local_str(\"" + name + "\")");
+                push_str_val(out, depth, "get_local_str(\"" + lower_name(name) + "\")");
             else {
                 flush_pending(out, depth);
                 out += ind(depth) + "-- UNKNOWN LOAD sub-type '" + std::string(1, sub) + "': (" +
@@ -650,23 +671,25 @@ class Emitter {
 
         case 'S': // Store
             if (subU == 'L') {
+                const std::string normalizedName = lower_name(name);
                 if (!pf.empty()) {
                     std::string expr =
-                        pending_negated ? "(" + pf.back() + "==0) and 1 or 0" : pf.back();
-                    out += ind(depth) + "set_local_var(\"" + name + "\", " + expr + ")\n";
+                        pending_negated ? "compare(" + pf.back() + ",0) and 1 or 0" : pf.back();
+                    out += ind(depth) + "set_local_var(\"" + normalizedName + "\", " + expr + ")\n";
                 } else {
                     flush_pending(out, depth);
                     out +=
-                        ind(depth) + "set_local_var(\"" + name + "\", " + peek_float_expr() + ")\n";
+                        ind(depth) + "set_local_var(\"" + normalizedName + "\", " + peek_float_expr() + ")\n";
                 }
             } else if (sub == '$') {
+                const std::string normalizedName = lower_name(name);
                 if (pending_str) {
                     out +=
-                        ind(depth) + "set_local_str(\"" + name + "\", " + pending_str_expr + ")\n";
+                        ind(depth) + "set_local_str(\"" + normalizedName + "\", " + pending_str_expr + ")\n";
                 } else {
                     flush_pending(out, depth);
                     out +=
-                        ind(depth) + "set_local_str(\"" + name + "\", " + peek_str_expr() + ")\n";
+                        ind(depth) + "set_local_str(\"" + normalizedName + "\", " + peek_str_expr() + ")\n";
                 }
             } else {
                 flush_pending(out, depth);
@@ -688,14 +711,14 @@ class Emitter {
         case 'T': // Sound trigger
             flush_pending(out, depth);
             if (subU == 'L')
-                out += ind(depth) + "sound_trigger(\"" + name + "\")\n";
+                out += ind(depth) + "sound_trigger(\"" + lower_name(name) + "\")\n";
             else if (subU == 'F') {
                 if (pending_str)
-                    out += ind(depth) + "sound_trigger_file(\"" + name + "\", " +
+                    out += ind(depth) + "sound_trigger_file(\"" + lower_name(name) + "\", " +
                            take_pending_str() + ")\n";
                 else {
                     flush_pending(out, depth);
-                    out += ind(depth) + "sound_trigger_file(\"" + name + "\", " + pop_str_expr() +
+                    out += ind(depth) + "sound_trigger_file(\"" + lower_name(name) + "\", " + pop_str_expr() +
                            ")\n";
                 }
             } else
@@ -703,17 +726,17 @@ class Emitter {
             break;
 
         case 'C': // Constant load
-            push_float(out, depth, "get_const(\"" + name + "\")");
+            push_float(out, depth, "get_const(\"" + lower_name(name) + "\")");
             break;
 
         case 'F': // Function/curve call  (pops x, pushes y)
             if (!pf.empty()) {
                 materialise_neg();
-                pf.back() = "call_func(\"" + name + "\", " + pf.back() + ")";
+                pf.back() = "call_func(\"" + lower_name(name) + "\", " + pf.back() + ")";
             } else {
                 flush_pending(out, depth);
                 emit_push_float(out, depth,
-                                "call_func(\"" + name + "\", " + pop_float_expr() + ")");
+                                "call_func(\"" + lower_name(name) + "\", " + pop_float_expr() + ")");
             }
             break;
 
@@ -748,7 +771,7 @@ class Emitter {
                 pending_negated = !pending_negated;
             } else {
                 flush_pending(out, depth);
-                emit_push_float(out, depth, "((" + pop_float_expr() + "==0) and 1 or 0)");
+                emit_push_float(out, depth, "(compare(" + pop_float_expr() + ",0) and 1 or 0)");
             }
             return;
         }
@@ -785,11 +808,12 @@ class Emitter {
                 materialise_neg();
                 std::string b = std::move(pf.back());
                 pf.pop_back();
-                pf.back() = "(" + b + "~=0 and " + pf.back() + "/" + b + " or 0)";
+                pf.back() = "(compare(" + b + ",1) and " + pf.back() + "/" + b + " or 0)";
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "do local b=" + pop_float_expr() +
-                       "; local a=" + pop_float_expr() + "; _pushf((b~=0 and a/b or 0)) end\n";
+                       "; local a=" + pop_float_expr() +
+                       "; _pushf((compare(b,1) and a/b or 0)) end\n";
             }
             return;
         }
@@ -799,13 +823,13 @@ class Emitter {
                 std::string b = std::move(pf.back());
                 pf.pop_back();
                 const std::string a = pf.back();
-                pf.back() =
-                    "(" + b + "~=0 and (" + a + "-math.floor(" + a + "/" + b + ")*" + b + ") or 0)";
+                pf.back() = "(compare(" + b + ",1) and (" + a + "-math.floor(" + a + "/" + b +
+                            ")*" + b + ") or 0)";
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "do local b=" + pop_float_expr() +
                        "; local a=" + pop_float_expr() + "\n";
-                out += ind(depth) + "  _pushf((b~=0 and (a-math.floor(a/b)*b) or 0)) end\n";
+                out += ind(depth) + "  _pushf((compare(b,1) and (a-math.floor(a/b)*b) or 0)) end\n";
             }
             return;
         }
@@ -911,12 +935,12 @@ class Emitter {
                 materialise_neg();
                 std::string b = std::move(pf.back());
                 pf.pop_back();
-                pf.back() = "((" + pf.back() + "~=0 and " + b + "~=0) and 1 or 0)";
+                pf.back() = "((compare(" + pf.back() + ",1) and compare(" + b + ",1)) and 1 or 0)";
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "do local b=" + pop_float_expr() +
                        "; local a=" + pop_float_expr() +
-                       "; _pushf((a~=0 and b~=0) and 1 or 0) end\n";
+                       "; _pushf((compare(a,1) and compare(b,1)) and 1 or 0) end\n";
             }
             return;
         }
@@ -925,44 +949,44 @@ class Emitter {
                 materialise_neg();
                 std::string b = std::move(pf.back());
                 pf.pop_back();
-                pf.back() = "((" + pf.back() + "~=0 or " + b + "~=0) and 1 or 0)";
+                pf.back() = "((compare(" + pf.back() + ",1) or compare(" + b + ",1)) and 1 or 0)";
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "do local b=" + pop_float_expr() +
                        "; local a=" + pop_float_expr() +
-                       "; _pushf((a~=0 or b~=0) and 1 or 0) end\n";
+                       "; _pushf((compare(a,1) or compare(b,1)) and 1 or 0) end\n";
             }
             return;
         }
         // ---- numeric comparison (a = stack1, b = stack0)
         if (op == "=") {
-            fold_infix(out, depth, "==",
-                       ind(depth) + "do local b=" + pop_float_expr() +
-                           "; local a=" + pop_float_expr() + "; _pushf(a==b and 1 or 0) end\n");
+            fold_comparison(out, depth, "==",
+                            ind(depth) + "do local b=" + pop_float_expr() + "; local a=" +
+                                pop_float_expr() + "; _pushf(a==b and 1 or 0) end\n");
             return;
         }
         if (op == "<") {
-            fold_infix(out, depth, "<",
-                       ind(depth) + "do local b=" + pop_float_expr() +
-                           "; local a=" + pop_float_expr() + "; _pushf(a<b and 1 or 0) end\n");
+            fold_comparison(out, depth, "<",
+                            ind(depth) + "do local b=" + pop_float_expr() +
+                                "; local a=" + pop_float_expr() + "; _pushf(a<b and 1 or 0) end\n");
             return;
         }
         if (op == ">") {
-            fold_infix(out, depth, ">",
-                       ind(depth) + "do local b=" + pop_float_expr() +
-                           "; local a=" + pop_float_expr() + "; _pushf(a>b and 1 or 0) end\n");
+            fold_comparison(out, depth, ">",
+                            ind(depth) + "do local b=" + pop_float_expr() +
+                                "; local a=" + pop_float_expr() + "; _pushf(a>b and 1 or 0) end\n");
             return;
         }
         if (op == "<=") {
-            fold_infix(out, depth, "<=",
-                       ind(depth) + "do local b=" + pop_float_expr() +
-                           "; local a=" + pop_float_expr() + "; _pushf(a<=b and 1 or 0) end\n");
+            fold_comparison(out, depth, "<=",
+                            ind(depth) + "do local b=" + pop_float_expr() + "; local a=" +
+                                pop_float_expr() + "; _pushf(a<=b and 1 or 0) end\n");
             return;
         }
         if (op == ">=") {
-            fold_infix(out, depth, ">=",
-                       ind(depth) + "do local b=" + pop_float_expr() +
-                           "; local a=" + pop_float_expr() + "; _pushf(a>=b and 1 or 0) end\n");
+            fold_comparison(out, depth, ">=",
+                            ind(depth) + "do local b=" + pop_float_expr() + "; local a=" +
+                                pop_float_expr() + "; _pushf(a>=b and 1 or 0) end\n");
             return;
         }
 
@@ -1024,33 +1048,33 @@ class Emitter {
         // $SetLengthL/R/C  NOTE: does NOT pop the float from the stack (per spec)
         if (op == "$SetLengthL") {
             flush_pending(out, depth);
-            out += ind(depth) + "do local n=math.floor(" + peek_float_expr() +
-                 "); local s=_pops()\n";
-             out += ind(depth) + "  if     #s>n then _pushs(string.sub(s,1,n))\n";
-             out += ind(depth) + "  elseif #s<n then _pushs(s..string.rep(\" \",n-#s))\n";
-             out += ind(depth) + "  else _pushs(s) end end\n";
+            out +=
+                ind(depth) + "do local n=math.floor(" + peek_float_expr() + "); local s=_pops()\n";
+            out += ind(depth) + "  if     #s>n then _pushs(string.sub(s,1,n))\n";
+            out += ind(depth) + "  elseif #s<n then _pushs(s..string.rep(\" \",n-#s))\n";
+            out += ind(depth) + "  else _pushs(s) end end\n";
             return;
         }
         if (op == "$SetLengthR") {
             flush_pending(out, depth);
-            out += ind(depth) + "do local n=math.floor(" + peek_float_expr() +
-                 "); local s=_pops()\n";
-             out += ind(depth) + "  if     #s>n then _pushs(string.sub(s,#s-n+1))\n";
-             out += ind(depth) + "  elseif #s<n then _pushs(string.rep(\" \",n-#s)..s)\n";
-             out += ind(depth) + "  else _pushs(s) end end\n";
+            out +=
+                ind(depth) + "do local n=math.floor(" + peek_float_expr() + "); local s=_pops()\n";
+            out += ind(depth) + "  if     #s>n then _pushs(string.sub(s,#s-n+1))\n";
+            out += ind(depth) + "  elseif #s<n then _pushs(string.rep(\" \",n-#s)..s)\n";
+            out += ind(depth) + "  else _pushs(s) end end\n";
             return;
         }
         if (op == "$SetLengthC") {
             flush_pending(out, depth);
-            out += ind(depth) + "do local n=math.floor(" + peek_float_expr() +
-                 "); local s=_pops()\n";
+            out +=
+                ind(depth) + "do local n=math.floor(" + peek_float_expr() + "); local s=_pops()\n";
             out += ind(depth) + "  if #s>n then\n";
             out += ind(depth) + "    local cut=#s-n; local l=math.floor(cut/2)\n";
-             out += ind(depth) + "    _pushs(string.sub(s,l+1,l+n))\n";
+            out += ind(depth) + "    _pushs(string.sub(s,l+1,l+n))\n";
             out += ind(depth) + "  elseif #s<n then\n";
             out += ind(depth) + "    local pad=n-#s; local l=math.floor(pad/2)\n";
-             out += ind(depth) + "    _pushs(string.rep(\" \",l)..s..string.rep(\" \",pad-l))\n";
-             out += ind(depth) + "  else _pushs(s) end end\n";
+            out += ind(depth) + "    _pushs(string.rep(\" \",l)..s..string.rep(\" \",pad-l))\n";
+            out += ind(depth) + "  else _pushs(s) end end\n";
             return;
         }
         if (op == "$IntToStr") {
@@ -1086,7 +1110,8 @@ class Emitter {
         }
         if (op == "$RemoveSpaces") {
             flush_pending(out, depth);
-            out += ind(depth) + "do local s=_pops(); _pushs(s:gsub(\"^%s+\",\"\"):gsub(\"%s+$\",\"\")) end\n";
+            out += ind(depth) +
+                   "do local s=_pops(); _pushs(s:gsub(\"^%s+\",\"\"):gsub(\"%s+$\",\"\")) end\n";
             return;
         }
 
@@ -1136,11 +1161,18 @@ class Emitter {
         if (!pf.empty()) {
             bool negated = pending_negated;
             std::string expr = take_pending_float();
-            std::string cmp = negated ? "==0" : "~=0";
-            out += ind(depth) + "if " + expr + cmp + " then\n";
+            const std::string condition = "_osc_condition";
+            out += ind(depth) + "local " + condition + "=" + expr + "\n";
+            if (negated) {
+                out += ind(depth) + "if not compare(" + condition + ",1) then\n";
+            } else {
+                out += ind(depth) + "if compare(" + condition + ",1) then\n";
+            }
         } else {
             flush_pending(out, depth);
-            out += ind(depth) + "if " + pop_float_expr() + "~=0 then\n";
+            const std::string expr = pop_float_expr();
+            out += ind(depth) + "local _osc_condition=" + expr + "\n";
+            out += ind(depth) + "if compare(_osc_condition,1) then\n";
         }
         emit_body(out, depth + 1);
 
@@ -1160,7 +1192,7 @@ class Emitter {
         : toks(std::move(t)), builtin_overrides(get_builtin_overrides()) {}
 
     void add_override(const std::string& macro_name) {
-        overrides.insert(macro_name);
+        overrides.insert(lower_name(macro_name));
     }
 
     std::string emit() {
@@ -1180,6 +1212,11 @@ class Emitter {
         out += "-- Host must provide: get_local_var, set_local_var, get_sys_var,\n";
         out += "--   get_local_str, set_local_str, get_const, call_func,\n";
         out += "--   sound_trigger, sound_trigger_file, sys_macro_*, omsi_debug\n";
+        out += "\n";
+        out += "local function compare(a,b)\n";
+        out += "  if type(a)==\"boolean\" then return (a and 1 or 0)==b end\n";
+        out += "  return (a~=0)==(b~=0)\n";
+        out += "end\n";
         out += "\n";
         out += "-- Shared registers  (s0-s7 / l0-l7)\n";
         out += "local _r0,_r1,_r2,_r3,_r4,_r5,_r6,_r7 = 0,0,0,0,0,0,0,0\n";

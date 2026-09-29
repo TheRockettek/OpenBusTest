@@ -10,7 +10,8 @@
 namespace openbus::rendering {
 
 BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
-                                const std::filesystem::path& modelRoot, Variables& variables) {
+                                const std::filesystem::path& modelRoot,
+                                openbus::scripting::Vehicle& variables) {
     openbus::rendering::TraceScope trace("config", "loadBusModel");
     const ModelConfig configuration = loadBusModelConfig(configPath, modelRoot, variables);
     BusModelLoadResult result;
@@ -30,10 +31,14 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
         part.visibleValue = source.visibleValue;
         part.meshIdentifier = source.meshIdentifier;
         part.animationParent = source.animationParent;
+        part.animations = source.animations;
         part.lodIndex = source.lodIndex;
         part.wheelAnimation.rotationVariable = source.wheelAnimation.rotationVariable;
+        part.wheelAnimation.rotationScale = source.wheelAnimation.rotationScale;
         part.wheelAnimation.suspensionVariable = source.wheelAnimation.suspensionVariable;
+        part.wheelAnimation.suspensionScale = source.wheelAnimation.suspensionScale;
         part.wheelAnimation.steeringVariable = source.wheelAnimation.steeringVariable;
+        part.wheelAnimation.steeringScale = source.wheelAnimation.steeringScale;
         part.wheelAnimation.origin = source.wheelAnimation.origin;
         part.wheelAnimation.hasOrigin = source.wheelAnimation.hasOrigin;
         const auto copyMaterialState = [](const ModelMaterialState& sourceState) {
@@ -51,6 +56,7 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
             state.nightmapTextureName = sourceState.nightmapTextureName;
             state.lightmapTextureName = sourceState.lightmapTextureName;
             state.lightmapStrengthVariable = sourceState.lightmapStrengthVariable;
+            state.freeTextureVariable = sourceState.freeTextureVariable;
             state.texcoordTransXVariable = sourceState.texcoordTransXVariable;
             state.texcoordTransYVariable = sourceState.texcoordTransYVariable;
             state.bumpmapTextureName = sourceState.bumpmapTextureName;
@@ -82,8 +88,15 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
             result.parts.begin(), result.parts.end(), [&](const BusModelPart& candidate) {
                 return candidate.meshIdentifier == part.animationParent;
             });
-        if (parent != result.parts.end() && !parent->wheelAnimation.rotationVariable.empty()) {
-            part.wheelAnimation = parent->wheelAnimation;
+        if (parent != result.parts.end()) {
+            if (!parent->wheelAnimation.rotationVariable.empty()) {
+                part.wheelAnimation = parent->wheelAnimation;
+            }
+            if (!parent->animations.empty()) {
+                std::vector<ModelAnimation> animations = parent->animations;
+                animations.insert(animations.end(), part.animations.begin(), part.animations.end());
+                part.animations = std::move(animations);
+            }
         }
     }
     return result;

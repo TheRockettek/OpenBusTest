@@ -8,6 +8,24 @@
 #include <limits>
 #include <sstream>
 
+namespace {
+
+bool parseTransformComment(const std::string& line, std::array<double, 16>& transform) {
+    constexpr const char* prefix = "# openbus_transform";
+    if (line.rfind(prefix, 0) != 0) {
+        return false;
+    }
+    std::istringstream values(line.substr(std::char_traits<char>::length(prefix)));
+    for (double& value : transform) {
+        if (!(values >> value)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
 namespace openbus::rendering {
 namespace {
 
@@ -76,6 +94,10 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path) {
     std::string currentMaterial;
     std::string line;
     while (std::getline(input, line)) {
+        if (parseTransformComment(line, result->transform)) {
+            result->hasTransform = true;
+            continue;
+        }
         std::istringstream stream(line);
         std::string type;
         stream >> type;

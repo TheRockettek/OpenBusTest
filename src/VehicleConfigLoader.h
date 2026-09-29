@@ -68,7 +68,10 @@ struct VehicleConfig {
 
 VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, VehicleFileKind kind);
 
-class Variables;
+namespace openbus::scripting {
+class Vehicle;
+}
 
 ModelConfig loadVehicleModelConfig(const std::filesystem::path& configPath,
-                                   const std::filesystem::path& modelRoot, Variables& variables);
+                                   const std::filesystem::path& modelRoot,
+                                   openbus::scripting::Vehicle& variables);

@@ -1,18 +1,25 @@
 #pragma once
 
+#include "Variables.h"
 #include "VehicleConfigLoader.h"
 
 #include <filesystem>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 class SimulationState;
-class VehicleState;
 
 class ScriptRuntime {
   public:
-    ScriptRuntime(const VehicleConfig& configuration, VehicleState& localState,
+  struct ScriptTextureSnapshot {
+    int width = 0;
+    int height = 0;
+    std::vector<std::uint8_t> pixels;
+  };
+
+    ScriptRuntime(const VehicleConfig& configuration, Variables& localState,
                   SimulationState& sharedState);
     ~ScriptRuntime();
 
@@ -24,6 +31,8 @@ class ScriptRuntime {
     void initialize();
     void update(bool isAiVehicle);
     void invokeEntryPoint(const std::string& functionName);
+    void invokeSystemTrigger(const std::string& triggerName);
+    bool copyScriptTexture(int index, ScriptTextureSnapshot& snapshot) const;
 
   private:
     struct Impl;

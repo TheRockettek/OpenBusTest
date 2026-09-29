@@ -4,6 +4,7 @@
 #include "Logger.h"
 #include "PerfTrace.h"
 #include "RoadFeatures.h"
+#include "Variables.h"
 
 #include <algorithm>
 #include <array>
@@ -104,6 +105,7 @@ struct BusSimulation::Impl {
         dJointID steeringJoint = nullptr;
         dJointID wheelJoint = nullptr;
         dReal wheelOmega = 0.0;
+        dReal wheelRotation = 0.0;
         dReal wheelSurfaceSpeed = 0.0;
         dReal pointLongitudinalSpeed = 0.0;
         dReal longitudinalSlipRatio = 0.0;
@@ -674,6 +676,9 @@ struct BusSimulation::Impl {
         dWorldStep(ode.world, fixedStep);
         dJointGroupEmpty(ode.contacts);
         refreshWheelTelemetry();
+        for (Corner& corner : corners) {
+            corner.wheelRotation += corner.wheelOmega * fixedStep;
+        }
         simulationTime += fixedStep;
     }
 };
@@ -726,6 +731,26 @@ void BusSimulation::update(double elapsedSeconds, double throttle, double steeri
 
 void BusSimulation::step(double throttle, double steering, double brake) {
     impl_->fixedUpdate(throttle, steering, brake);
+}
+
+void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, double throttle,
+                                    double steering, double brake) const {
+    variables.set("Throttle", std::clamp(throttle, -1.0, 1.0));
+    variables.set("Brake", std::clamp(brake, 0.0, 1.0));
+    variables.set("Velocity", speed());
+    variables.set("Velocity_Ground", speed());
+    variables.set("Steering", std::clamp(steering, -1.0, 1.0));
+    variables.set("SteeringAngle", steeringAngle());
+    for (std::size_t index = 0; index < impl_->corners.size(); ++index) {
+        const std::size_t axleIndex = index / 2;
+        const char* side = index % 2 == 0 ? "L" : "R";
+        const std::string prefix = "_" + std::to_string(axleIndex) + "_" + side;
+        variables.set("Wheel_Rotation" + prefix, impl_->corners[index].wheelRotation);
+        variables.set("Wheel_RotationSpeed" + prefix, impl_->corners[index].wheelOmega);
+        variables.set("Axle_Suspension" + prefix, impl_->corners[index].springCompression);
+        variables.set("Axle_Steering_" + std::to_string(axleIndex) + "_" + side,
+                      dJointGetHingeAngle(impl_->corners[index].steeringJoint));
+    }
 }
 
 double BusSimulation::positionX() const {
@@ -792,6 +817,54 @@ BodyPose BusSimulation::wheelPose(std::size_t index) const {
     return {{position[0], position[1], position[2]},
             {rotation[0], rotation[1], rotation[2], rotation[4], rotation[5], rotation[6],
              rotation[8], rotation[9], rotation[10]}};
+}
+
+BodyPose BusSimulation::wheelMountPose(std::size_t index) const {
+    if (index >= impl_->corners.size()) {
+        throw std::out_of_range("Wheel index is outside the bus configuration");
+    }
+    const dReal* position = dBodyGetPosition(impl_->corners[index].wheelBody);
+    const dReal* steeringRotation = dBodyGetRotation(impl_->corners[index].steeringBody);
+    // The steering body carries steering, while the wheel mesh basis is fixed
+    // at -90 degrees around X. Rolling belongs to wheelBody and is excluded.
+    constexpr dReal fixedWheelRotation[3][3] = {
+        {1.0, 0.0, 0.0},
+        {0.0, 0.0, 1.0},
+        {0.0, -1.0, 0.0},
+    };
+    dReal rotation[3][3] = {};
+    for (int row = 0; row < 3; ++row) {
+        for (int column = 0; column < 3; ++column) {
+            for (int inner = 0; inner < 3; ++inner) {
+                rotation[row][column] +=
+                    steeringRotation[row * 4 + inner] * fixedWheelRotation[inner][column];
+            }
+        }
+    }
+    return {{position[0], position[1], position[2]},
+            {rotation[0][0], rotation[0][1], rotation[0][2], rotation[1][0], rotation[1][1],
+             rotation[1][2], rotation[2][0], rotation[2][1], rotation[2][2]}};
+}
+
+double BusSimulation::wheelSteeringAngle(std::size_t index) const {
+    if (index >= impl_->corners.size()) {
+        throw std::out_of_range("Wheel index is outside the bus configuration");
+    }
+    return dJointGetHingeAngle(impl_->corners[index].steeringJoint);
+}
+
+double BusSimulation::wheelRotation(std::size_t index) const {
+    if (index >= impl_->corners.size()) {
+        throw std::out_of_range("Wheel index is outside the bus configuration");
+    }
+    return impl_->corners[index].wheelRotation;
+}
+
+double BusSimulation::wheelSuspensionCompression(std::size_t index) const {
+    if (index >= impl_->corners.size()) {
+        throw std::out_of_range("Wheel index is outside the bus configuration");
+    }
+    return impl_->corners[index].springCompression;
 }
 
 double BusSimulation::wheelRadius() const {

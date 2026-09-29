@@ -90,6 +90,8 @@ int main() {
             pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(),
                                     frameKeyEvents.end());
             simulation.update(elapsed, renderer.throttle(), renderer.steering(), renderer.brake());
+            renderer.updatePlayerVariables(simulation, renderer.throttle(), renderer.steering(),
+                                           renderer.brake());
             renderer.draw(simulation);
 
             if (renderer.consumeCaptureRequest()) {

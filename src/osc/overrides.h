@@ -26,7 +26,7 @@ inline std::map<std::string, std::string> get_builtin_overrides() {
     // Converts the top string-stack character to lowercase (A-Z + umlauts).
     // Pushes 1 onto _fs if the character was changed, else 0.
     // ------------------------------------------------------------------
-    m["Matrix_CharToLowerCase"] = R"LUA(
+    m["matrix_chartolowercase"] = R"LUA(
   local _char_lower = {
     A="a", B="b", C="c", D="d", E="e", F="f", G="g", H="h",
     I="i", J="j", K="k", L="l", M="m", N="n", O="o", P="p",
@@ -54,7 +54,7 @@ inline std::map<std::string, std::string> get_builtin_overrides() {
     // Converts the top string-stack character to uppercase (a-z + umlauts).
     // Pushes 1 onto _fs if the character was changed, else 0.
     // ------------------------------------------------------------------
-    m["Matrix_CharToUpperCase"] = R"LUA(
+    m["matrix_chartouppercase"] = R"LUA(
   local _char_upper = {
     a="A", b="B", c="C", d="D", e="E", f="F", g="G", h="H",
     i="I", j="J", k="K", l="L", m="M", n="N", o="O", p="P",
@@ -83,7 +83,7 @@ inline std::map<std::string, std::string> get_builtin_overrides() {
     // (Central European, Windows-1252) accented characters.
     // Calls the base lowercase first, then applies CE-specific mappings.
     // ------------------------------------------------------------------
-    m["Matrix_CharToLowerCaseCE"] = R"LUA(
+    m["matrix_chartolowercasece"] = R"LUA(
   -- CE extra mappings (Windows-1252 code points)
   local _char_lower_ce = {
     -- Accented Latin capitals (CP-1252 / ISO-8859-2 range)
@@ -96,7 +96,7 @@ inline std::map<std::string, std::string> get_builtin_overrides() {
     ["\xDB"]="\xFB", ["\xDD"]="\xFD", ["\xDE"]="\xFE",
   }
   -- First apply the base ASCII + umlaut conversion
-  macro_Matrix_CharToLowerCase()
+  macro_matrix_chartolowercase()
   -- Then apply CE-specific mapping if base didn't match (result flag is top of _fs)
   do
     local changed = _popf()

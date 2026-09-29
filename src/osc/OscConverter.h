@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <string>
 
-inline constexpr char kOscConverterVersion[] = "3";
+inline constexpr char kOscConverterVersion[] = "10";
 
 std::filesystem::path generatedLuaPath(const std::filesystem::path& inputPath);
 
