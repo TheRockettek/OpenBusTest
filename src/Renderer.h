@@ -5,6 +5,7 @@
 #include "Variables.h"
 
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -74,6 +75,9 @@ class Renderer {
     void selectVehicleCamera(int direction);
     void updateScripts();
     double currentFieldOfView() const;
+    void renderReflectionViews(const BusSimulation& simulation);
+    void initializeReflectionTargets();
+    void destroyReflectionTargets();
 
     GLFWwindow* window_;
     double cameraYaw_ = -2.3;
@@ -94,14 +98,26 @@ class Renderer {
     std::array<bool, 10> previousViewKeyStates_ = {};
     std::array<bool, 2> previousCameraNavigationStates_ = {};
     bool previousCaptureKeyState_ = false;
+    bool renderingReflection_ = false;
     bool hasPreviousVariableTime_ = false;
     bool captureRequested_ = false;
     bool captureMode_ = false;
+    int reflectionSize_ = 256;
+    int reflectionFrameInterval_ = 1;
+    std::uint64_t reflectionFrameCounter_ = 0;
     double frameTimeStep_ = 0.0;
     double scriptRateHz_ = 0.0;
     double scriptAccumulator_ = 0.0;
     std::vector<KeyEvent> keyEvents_;
     std::vector<VehicleCamera> vehicleCameras_;
+    struct ReflectionTarget {
+        unsigned int framebuffer = 0;
+        unsigned int texture = 0;
+        unsigned int depthTexture = 0;
+        int width = 0;
+        int height = 0;
+    };
+    std::vector<ReflectionTarget> reflectionTargets_;
     SimulationState simulationState_;
     std::unique_ptr<openbus::rendering::AssetRequestManager> assetRequestManager_;
     std::vector<std::unique_ptr<Vehicle>> vehicles_;

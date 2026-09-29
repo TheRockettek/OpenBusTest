@@ -6,9 +6,9 @@ taskkill.exe /F /IM OpenBus.exe
 set "OPENBUS_VEHICLE=e400"
 set "OPENBUS_VSYNC=off"
 set "OPENBUS_TRACE=1"
-set "OPENBUS_TRACE_COLLAPSED=1"
 set "OPENBUS_TRACE_FILE=openbus_trace.json"
-set "OPENBUS_TRACE_COLLAPSED_FILE=openbus_trace.collapsed"
+set "OPENBUS_TRACE_MAX_EVENTS=250000"
+set "OPENBUS_TRACE_MIN_US=1"
 set "OPENBUS_SCRIPT_BACKEND=native"
 set "OPENBUS_SCRIPT_HZ=0"
 

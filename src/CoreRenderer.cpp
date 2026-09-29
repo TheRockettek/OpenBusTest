@@ -36,6 +36,7 @@ struct Uniforms {
     GLint lightmapStrength = -1;
     GLint nightmapStrength = -1;
     GLint texcoordOffset = -1;
+    GLint flipTextureY = -1;
     GLint environment = -1;
     GLint environmentAlpha = -1;
 };
@@ -66,12 +67,15 @@ layout(location = 2) in vec3 aNormal;
 uniform mat4 uProjection;
 uniform mat4 uModelView;
 uniform vec2 uTexcoordOffset;
+uniform bool uFlipTextureY;
 out vec3 vTexCoord;
 out vec3 vNormal;
 out vec3 vViewPosition;
 void main() {
     vec4 viewPosition = uModelView * vec4(aPosition, 1.0);
-    vTexCoord = vec3(aTexCoord.xy + uTexcoordOffset, aTexCoord.z);
+    float textureY = uFlipTextureY ? 1.0 - aTexCoord.y : aTexCoord.y;
+    vTexCoord = vec3(aTexCoord.x + uTexcoordOffset.x, textureY + uTexcoordOffset.y,
+                     aTexCoord.z);
     vNormal = mat3(uModelView) * aNormal;
     vViewPosition = viewPosition.xyz;
     gl_Position = uProjection * viewPosition;
@@ -243,6 +247,7 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.lightmapStrength = pglGetUniformLocation(program, "uLightmapStrength");
         uniforms.nightmapStrength = pglGetUniformLocation(program, "uNightmapStrength");
         uniforms.texcoordOffset = pglGetUniformLocation(program, "uTexcoordOffset");
+        uniforms.flipTextureY = pglGetUniformLocation(program, "uFlipTextureY");
     }
     return uniforms;
 }
@@ -415,6 +420,7 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     pglUniform1f(modelUniforms.lightmapStrength, material.lightmapStrength);
     pglUniform1f(modelUniforms.nightmapStrength, material.nightmapStrength);
     pglUniform2f(modelUniforms.texcoordOffset, material.texcoordOffsetX, material.texcoordOffsetY);
+    pglUniform1i(modelUniforms.flipTextureY, material.flipTextureY ? 1 : 0);
     pglUniform4f(modelUniforms.color, static_cast<GLfloat>(color[0]),
                  static_cast<GLfloat>(color[1]), static_cast<GLfloat>(color[2]),
                  static_cast<GLfloat>(alpha));

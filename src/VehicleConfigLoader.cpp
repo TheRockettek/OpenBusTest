@@ -213,9 +213,6 @@ bool parseCamera(Reader& reader, const std::string& keyword, VehicleCameraKind k
     camera.fieldOfView = values[4];
     camera.pan = values[5];
     camera.tilt = values[6];
-    if (kind == VehicleCameraKind::Reflexion2) {
-        camera.culling = values[7];
-    }
     return true;
 }
 

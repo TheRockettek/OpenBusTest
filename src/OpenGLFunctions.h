@@ -53,6 +53,11 @@ using Uniform1fProc = void (*)(GLint, GLfloat);
 using Uniform2fProc = void (*)(GLint, GLfloat, GLfloat);
 using Uniform3fProc = void (*)(GLint, GLfloat, GLfloat, GLfloat);
 using Uniform4fProc = void (*)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
+using GenFramebuffersProc = void (*)(GLsizei, GLuint*);
+using BindFramebufferProc = void (*)(GLenum, GLuint);
+using DeleteFramebuffersProc = void (*)(GLsizei, const GLuint*);
+using FramebufferTexture2DProc = void (*)(GLenum, GLenum, GLenum, GLuint, GLint);
+using CheckFramebufferStatusProc = GLenum (*)(GLenum);
 
 extern GenBuffersProc pglGenBuffers;
 extern BindBufferProc pglBindBuffer;
@@ -87,5 +92,10 @@ extern Uniform1fProc pglUniform1f;
 extern Uniform2fProc pglUniform2f;
 extern Uniform3fProc pglUniform3f;
 extern Uniform4fProc pglUniform4f;
+extern GenFramebuffersProc pglGenFramebuffers;
+extern BindFramebufferProc pglBindFramebuffer;
+extern DeleteFramebuffersProc pglDeleteFramebuffers;
+extern FramebufferTexture2DProc pglFramebufferTexture2D;
+extern CheckFramebufferStatusProc pglCheckFramebufferStatus;
 
 bool loadOpenGLFunctions();

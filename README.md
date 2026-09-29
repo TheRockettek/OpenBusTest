@@ -155,10 +155,23 @@ derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
 - Scroll up/down: zoom in/out
 - VSync is enabled by default; set `OPENBUS_VSYNC=0`, `off`, or `false` before
   launching to run above the display refresh cadence
+- Reflection mirrors render at `256x256` by default. Set
+  `OPENBUS_REFLECTION_SIZE=256`, `512`, or `1024` to choose the square mirror
+  target resolution.
+- Mirrors update every frame by default. Set `OPENBUS_REFLECTION_INTERVAL=4`
+  to update them once every four rendered frames; values below `1` are treated
+  as `1`.
 - Scripts normally follow the render rate. Set `OPENBUS_SCRIPT_HZ=30` to run
   vehicle scripts at 30 Hz while rendering continues at the display rate;
   fixed-rate script ticks receive `Timegap=1/30` and catch up for short frame
   hitches with a bounded tick budget.
+- Profiling retains at most `1,000,000` events by default. Set
+  `OPENBUS_TRACE_MAX_EVENTS=250000` or another positive value to lower the
+  memory ceiling. Trace events are flushed incrementally to the JSON file while
+  profiling runs, rather than being held until shutdown.
+- Trace scopes shorter than `1` microsecond are omitted by default. Set
+  `OPENBUS_TRACE_MIN_US=5` to omit scopes shorter than five microseconds;
+  values below `1` are treated as `1`.
 - Optional texture downscaling: set `OPENBUS_TEXTURE_SCALE=0.5` before
   launching to upload half-resolution textures; valid range is `0.25`-`1.0`
   JPEG files. To create BC3 DDS siblings with AMD Compressonator, run

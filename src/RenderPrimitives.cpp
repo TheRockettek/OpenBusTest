@@ -20,9 +20,10 @@ PrimitiveVertex vertex(double x, double y, double z, const std::array<double, 3>
             static_cast<float>(color[1]), static_cast<float>(color[2])};
 }
 
-void drawColoredBox(double length, double width, double height, double centerX, double centerY,
-                    double bottomZ, const std::array<double, 3>& topColor,
-                    const std::array<double, 3>& sideColor) {
+void appendColoredBox(std::vector<PrimitiveVertex>& vertices, double length, double width,
+                      double height, double centerX, double centerY, double bottomZ,
+                      const std::array<double, 3>& topColor,
+                      const std::array<double, 3>& sideColor) {
     const double halfLength = length * 0.5;
     const double halfWidth = width * 0.5;
     const std::array<std::array<double, 3>, 8> corners = {{{-halfLength, -halfWidth, 0.0},
@@ -35,8 +36,6 @@ void drawColoredBox(double length, double width, double height, double centerX, 
                                                            {-halfLength, halfWidth, height}}};
     const std::array<std::array<int, 4>, 6> faces = {
         {{4, 5, 6, 7}, {0, 1, 5, 4}, {1, 2, 6, 5}, {2, 3, 7, 6}, {3, 0, 4, 7}, {0, 3, 2, 1}}};
-    std::vector<PrimitiveVertex> vertices;
-    vertices.reserve(36);
     for (std::size_t faceIndex = 0; faceIndex < faces.size(); ++faceIndex) {
         const auto& color = faceIndex == 0 ? topColor : sideColor;
         const auto& face = faces[faceIndex];
@@ -46,6 +45,15 @@ void drawColoredBox(double length, double width, double height, double centerX, 
                 vertex(point[0] + centerX, point[1] + centerY, point[2] + bottomZ, color));
         }
     }
+}
+
+void drawColoredBox(double length, double width, double height, double centerX, double centerY,
+                   double bottomZ, const std::array<double, 3>& topColor,
+                   const std::array<double, 3>& sideColor) {
+    std::vector<PrimitiveVertex> vertices;
+    vertices.reserve(36);
+    appendColoredBox(vertices, length, width, height, centerX, centerY, bottomZ, topColor,
+                     sideColor);
     drawPrimitives(vertices, GL_TRIANGLES);
 }
 
@@ -97,7 +105,8 @@ void drawRoadBox(double centerX, double centerY, double length, double width, do
     drawColoredBox(length, width, height, centerX, centerY, bottomZ, topColor, sideColor);
 }
 
-void drawRoadIncline(const RoadBump& bump) {
+void appendRoadIncline(std::vector<PrimitiveVertex>& surfaces,
+                       std::vector<PrimitiveVertex>& lines, const RoadBump& bump) {
     const double halfWidth = bump.width * 0.5;
     const double startX = bump.centerX - bump.length * 0.5;
     const double segmentLength = bump.length / ROAD_INCLINE_SEGMENTS;
@@ -105,8 +114,6 @@ void drawRoadIncline(const RoadBump& bump) {
     const std::array<double, 3> topColor = {0.42, 0.50, 0.30};
     const std::array<double, 3> sideColor = {0.18, 0.25, 0.12};
     const std::array<double, 3> railColor = {0.0, 0.85, 0.95};
-    std::vector<PrimitiveVertex> surfaces;
-    std::vector<PrimitiveVertex> lines;
     for (int segment = 0; segment < ROAD_INCLINE_SEGMENTS; ++segment) {
         const double minX = startX + segment * segmentLength;
         const double maxX = minX + segmentLength;
@@ -138,12 +145,18 @@ void drawRoadIncline(const RoadBump& bump) {
     }
     const double endX = startX + bump.length;
     const double endHeight = heightAt(endX);
+    lines.push_back(vertex(endX, bump.centerY - halfWidth, 0.0, sideColor));
+    lines.push_back(vertex(endX, bump.centerY + halfWidth, 0.0, sideColor));
+    lines.push_back(vertex(endX, bump.centerY + halfWidth, endHeight, sideColor));
+    lines.push_back(vertex(endX, bump.centerY - halfWidth, endHeight, sideColor));
+}
+
+void drawRoadIncline(const RoadBump& bump) {
+    std::vector<PrimitiveVertex> surfaces;
+    std::vector<PrimitiveVertex> lines;
+    appendRoadIncline(surfaces, lines, bump);
     drawPrimitives(surfaces, GL_TRIANGLES);
     drawLineList(lines);
-    drawLineList({vertex(endX, bump.centerY - halfWidth, 0.0, sideColor),
-                  vertex(endX, bump.centerY + halfWidth, 0.0, sideColor),
-                  vertex(endX, bump.centerY + halfWidth, endHeight, sideColor),
-                  vertex(endX, bump.centerY - halfWidth, endHeight, sideColor)});
 }
 
 void drawGround(const std::vector<RoadBump>& bumps) {
@@ -169,10 +182,22 @@ void drawGround(const std::vector<RoadBump>& bumps) {
     drawPrimitives(ground, GL_TRIANGLES);
     drawLineList(gridLines);
 
+    std::vector<PrimitiveVertex> surfaces;
+    std::vector<PrimitiveVertex> lines;
+    surfaces.reserve(bumps.size() * 36);
+    lines.reserve(bumps.size() * 8);
+    const auto addBox = [&](double length, double width, double height, double centerX,
+                            double centerY, double bottomZ,
+                            const std::array<double, 3>& topColor,
+                            const std::array<double, 3>& sideColor) {
+        appendColoredBox(surfaces, length, width, height, centerX, centerY, bottomZ, topColor,
+                         sideColor);
+    };
+
     for (const RoadBump& bump : bumps) {
         if (bump.type == RoadFeatureType::Barrier) {
-            drawRoadBox(bump.centerX, bump.centerY, bump.length, bump.width, bump.height, 0.0,
-                        {0.85, 0.22, 0.08}, {0.42, 0.08, 0.03});
+            addBox(bump.length, bump.width, bump.height, bump.centerX, bump.centerY, 0.0,
+                   {0.85, 0.22, 0.08}, {0.42, 0.08, 0.03});
             continue;
         }
         if (bump.type == RoadFeatureType::Bridge) {
@@ -184,31 +209,32 @@ void drawGround(const std::vector<RoadBump>& bumps) {
             const std::array<double, 3> deckSideColor = {0.16, 0.20, 0.24};
             for (int segment = 0; segment < ROAD_RAMP_SEGMENTS; ++segment) {
                 const double phase = (static_cast<double>(segment) + 0.5) / ROAD_RAMP_SEGMENTS;
-                drawRoadBox(startX + segmentLength * (segment + 0.5), bump.centerY, segmentLength,
-                            bump.width, bump.height * phase, 0.0, deckColor, deckSideColor);
+                  addBox(segmentLength, bump.width, bump.height * phase,
+                      startX + segmentLength * (segment + 0.5), bump.centerY, 0.0, deckColor,
+                      deckSideColor);
             }
-            drawRoadBox(bump.centerX, bump.centerY, deckLength, bump.width, bump.height, 0.0,
-                        deckColor, deckSideColor);
+                 addBox(deckLength, bump.width, bump.height, bump.centerX, bump.centerY, 0.0,
+                     deckColor, deckSideColor);
             const double downStartX = bump.centerX + bump.length * 0.5 - rampLength;
             for (int segment = 0; segment < ROAD_RAMP_SEGMENTS; ++segment) {
                 const double phase = (static_cast<double>(segment) + 0.5) / ROAD_RAMP_SEGMENTS;
-                drawRoadBox(downStartX + segmentLength * (segment + 0.5), bump.centerY,
-                            segmentLength, bump.width, bump.height * (1.0 - phase), 0.0, deckColor,
-                            deckSideColor);
+                  addBox(segmentLength, bump.width, bump.height * (1.0 - phase),
+                      downStartX + segmentLength * (segment + 0.5), bump.centerY, 0.0, deckColor,
+                      deckSideColor);
             }
             if (bump.railHeight > 0.0 && bump.railWidth > 0.0) {
                 const double railY = bump.width * 0.5 - bump.railWidth * 0.5;
                 const std::array<double, 3> railColor = {0.72, 0.76, 0.80};
                 const std::array<double, 3> railSideColor = {0.30, 0.34, 0.38};
-                drawRoadBox(bump.centerX, bump.centerY + railY, bump.length, bump.railWidth,
-                            bump.railHeight, bump.height, railColor, railSideColor);
-                drawRoadBox(bump.centerX, bump.centerY - railY, bump.length, bump.railWidth,
-                            bump.railHeight, bump.height, railColor, railSideColor);
+                  addBox(bump.length, bump.railWidth, bump.railHeight, bump.centerX,
+                      bump.centerY + railY, bump.height, railColor, railSideColor);
+                  addBox(bump.length, bump.railWidth, bump.railHeight, bump.centerX,
+                      bump.centerY - railY, bump.height, railColor, railSideColor);
             }
             continue;
         }
         if (bump.type == RoadFeatureType::Incline) {
-            drawRoadIncline(bump);
+            appendRoadIncline(surfaces, lines, bump);
             continue;
         }
         const double halfWidth = bump.width * 0.5;
@@ -218,10 +244,12 @@ void drawGround(const std::vector<RoadBump>& bumps) {
             const double height = bump.height * (phase <= 0.5 ? phase * 2.0 : (1.0 - phase) * 2.0);
             const double minX = bump.centerX - bump.length * 0.5 + segment * segmentLength;
             const double maxX = minX + segmentLength;
-            drawRoadBox((minX + maxX) * 0.5, bump.centerY, maxX - minX, halfWidth * 2.0, height,
-                        0.0, {0.72, 0.46, 0.18}, {0.48, 0.28, 0.10});
+            addBox(maxX - minX, halfWidth * 2.0, height, (minX + maxX) * 0.5, bump.centerY, 0.0,
+                   {0.72, 0.46, 0.18}, {0.48, 0.28, 0.10});
         }
     }
+    drawPrimitives(surfaces, GL_TRIANGLES);
+    drawLineList(lines);
 }
 
 void drawWheel(double radius, double halfWidth, double red, double green, double blue) {

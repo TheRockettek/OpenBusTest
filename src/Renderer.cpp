@@ -49,6 +49,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -65,6 +66,14 @@
 
 #ifndef GL_TEXTURE_2D_ARRAY
 #define GL_TEXTURE_2D_ARRAY 0x8C1A
+#endif
+
+#ifndef GL_FRAMEBUFFER
+#define GL_FRAMEBUFFER 0x8D40
+#define GL_COLOR_ATTACHMENT0 0x8CE0
+#define GL_DEPTH_ATTACHMENT 0x8D00
+#define GL_FRAMEBUFFER_COMPLETE 0x8CD5
+#define GL_DEPTH_COMPONENT24 0x81A6
 #endif
 
 #ifndef GL_CLAMP_TO_EDGE
@@ -113,6 +122,43 @@ constexpr int viewpointMask(RenderViewContext context) {
 constexpr double MAN_DL05_MODEL_OFFSET_Z = -1.035;
 constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
 constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 8;
+
+int reflectionSizeFromEnvironment() {
+    const char* value = std::getenv("OPENBUS_REFLECTION_SIZE");
+    if (value == nullptr) {
+        return 256;
+    }
+    const int size = std::atoi(value);
+    return size == 256 || size == 512 || size == 1024 ? size : 256;
+}
+
+int reflectionIntervalFromEnvironment() {
+    const char* value = std::getenv("OPENBUS_REFLECTION_INTERVAL");
+    if (value == nullptr) {
+        return 1;
+    }
+    return std::max(1, std::atoi(value));
+}
+
+std::unordered_map<int, GLuint> activeReflectionTextures;
+bool activeReflectionPass = false;
+
+int reflectionTextureIndex(const std::string& textureName) {
+    std::string stem = std::filesystem::path(textureName).stem().string();
+    std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    constexpr std::string_view prefix = "reflexion";
+    if (stem.rfind(prefix, 0) != 0 || stem.size() == prefix.size()) {
+        return -1;
+    }
+    try {
+        const int index = std::stoi(stem.substr(prefix.size()));
+        return index >= 0 ? index : -1;
+    } catch (const std::exception&) {
+        return -1;
+    }
+}
 
 Matrix4 identityMatrix() {
     return {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
@@ -323,6 +369,7 @@ struct Vehicle {
         int freeTextureHeight = 0;
         int alphaMode = 0;
         bool noZwrite = false;
+        bool noZcheck = false;
         std::string alphaScaleVariable;
         int baseTextureLayer = 0;
         int textureLayer = 0;
@@ -709,6 +756,9 @@ struct Vehicle {
             glDisable(GL_BLEND);
             glDepthMask(GL_TRUE);
         }
+        if (batch.noZcheck) {
+            glDisable(GL_DEPTH_TEST);
+        }
         ensureTexture(batch);
         ensureAuxiliaryTexture(batch, batch.lightmap);
         ensureAuxiliaryTexture(batch, batch.nightmap);
@@ -741,8 +791,20 @@ struct Vehicle {
         material.texcoordOffsetY = static_cast<float>(
             batch.texcoordTransYVariable.empty() ? 0.0
                                                  : variables.get(batch.texcoordTransYVariable));
+        const int reflectionIndex = reflectionTextureIndex(
+            batch.textureName.empty() ? batch.texturePath.string() : batch.textureName);
+        const auto reflectionTexture = activeReflectionTextures.find(reflectionIndex);
+        if (!activeReflectionPass && reflectionTexture != activeReflectionTextures.end()) {
+            material.texture = reflectionTexture->second;
+            material.textureArray = false;
+            material.textured = true;
+            material.flipTextureY = true;
+        }
         drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
                        forceUntextured ? 0 : batch.alphaMode);
+        if (batch.noZcheck) {
+            glEnable(GL_DEPTH_TEST);
+        }
     }
 
     void draw(RenderViewContext context) {
@@ -970,7 +1032,9 @@ struct Vehicle {
                 } else if (batch.alphaMode == 2) {
                     glEnable(GL_BLEND);
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    glDisable(GL_POLYGON_OFFSET_FILL);
+                    glDepthFunc(GL_LEQUAL);
+                    glEnable(GL_POLYGON_OFFSET_FILL);
+                    glPolygonOffset(-1.0f, -1.0f);
                 } else if (batch.noZwrite) {
                     glEnable(GL_BLEND);
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -987,6 +1051,7 @@ struct Vehicle {
         {
             TraceScope phase("render", "Vehicle::draw.cleanup");
             glDepthMask(GL_TRUE);
+            glDepthFunc(GL_LESS);
             glDisable(GL_BLEND);
             glDisable(GL_POLYGON_OFFSET_FILL);
             setBackFaceCulling(false);
@@ -1979,7 +2044,8 @@ struct Vehicle {
                              const std::filesystem::path& texturePath,
                              const std::string& textureName, const std::array<double, 3>& color,
                              const std::string& environmentTextureName, double environmentStrength,
-                             int alphaMode, bool noZwrite, const std::string& alphaScaleVariable,
+                             int alphaMode, bool noZwrite, bool noZcheck,
+                             const std::string& alphaScaleVariable,
                              const std::vector<MaterialState::TextureChange>& textureChanges,
                              const MaterialState& materialState) {
             TraceScope batchTrace("obj", "loadObj.makeBatch");
@@ -2074,6 +2140,7 @@ struct Vehicle {
             batch.hasNormals = true;
             batch.alphaMode = alphaMode;
             batch.noZwrite = noZwrite;
+            batch.noZcheck = noZcheck;
             batch.alphaScaleVariable = alphaScaleVariable;
             batch.textureChanges = textureChanges;
             batch.vertexCount = batch.vertices.size();
@@ -2224,7 +2291,8 @@ struct Vehicle {
                 groupColors[key] = color;
                 groupStates[key] = state;
                 hasTransparentMaterial =
-                    hasTransparentMaterial || state.alphaMode != 0 || state.noZwrite;
+                    hasTransparentMaterial || state.alphaMode != 0 || state.noZwrite ||
+                    state.noZcheck;
             }
         }
         DisplayPart displayPart;
@@ -2247,7 +2315,8 @@ struct Vehicle {
             const MaterialState& state = groupStates[key];
             makeBatch(groups[key], groupTextures[key], groupTextureNames[key], groupColors[key],
                       groupEnvironmentNames[key], groupEnvironmentStrengths[key], state.alphaMode,
-                      state.noZwrite, state.alphaScaleVariable, state.textureChanges, state);
+                      state.noZwrite, state.noZcheck, state.alphaScaleVariable,
+                      state.textureChanges, state);
         }
     }
 
@@ -2492,11 +2561,17 @@ Renderer::Renderer(int width, int height, const char* title)
     }
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.45f, 0.65f, 0.88f, 1.0f);
+    reflectionSize_ = reflectionSizeFromEnvironment();
+    reflectionFrameInterval_ = reflectionIntervalFromEnvironment();
+    gameLog.Log("Reflection targets: " + std::to_string(reflectionSize_) + "x" +
+                std::to_string(reflectionSize_) + ", every " +
+                std::to_string(reflectionFrameInterval_) + " frame(s)");
     gameLog.Log("Renderer initialized");
 }
 
 Renderer::~Renderer() {
     gameLog.Log("Renderer shutting down");
+    destroyReflectionTargets();
     playerVehicle_ = nullptr;
     assetRequestManager_->join();
     vehicles_.clear();
@@ -2513,7 +2588,9 @@ Vehicle* Renderer::AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPoli
         const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigurationPathFor(vehicle));
         for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
             if (camera.kind == VehicleCameraKind::Driver ||
-                camera.kind == VehicleCameraKind::Passenger) {
+                camera.kind == VehicleCameraKind::Passenger ||
+                camera.kind == VehicleCameraKind::Reflexion ||
+                camera.kind == VehicleCameraKind::Reflexion2) {
                 vehicleCameras_.push_back(camera);
             }
         }
@@ -2532,6 +2609,7 @@ Vehicle* Renderer::AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPoli
             }
             cameraView_ = selectedCamera >= 0 ? selectedCamera + 1 : 1;
         }
+        initializeReflectionTargets();
     }
     auto model =
         std::make_unique<Vehicle>(vehicle, loadingPolicy, *assetRequestManager_, simulationState_);
@@ -2620,6 +2698,124 @@ double Renderer::currentFieldOfView() const {
     const double baseFieldOfView =
         camera != nullptr && camera->fieldOfView > 0.0 ? camera->fieldOfView : 60.0;
     return std::clamp(baseFieldOfView + fieldOfViewOffset_, 20.0, 120.0);
+}
+
+void Renderer::initializeReflectionTargets() {
+    std::size_t reflectionCount = 0;
+    for (const VehicleCamera& camera : vehicleCameras_) {
+        if (camera.kind == VehicleCameraKind::Reflexion ||
+            camera.kind == VehicleCameraKind::Reflexion2) {
+            ++reflectionCount;
+        }
+    }
+    if (reflectionCount == 0 || !reflectionTargets_.empty()) {
+        return;
+    }
+
+    const int reflectionSize = reflectionSize_;
+    reflectionTargets_.resize(reflectionCount);
+    for (std::size_t index = 0; index < reflectionTargets_.size(); ++index) {
+        ReflectionTarget& target = reflectionTargets_[index];
+        target.width = reflectionSize;
+        target.height = reflectionSize;
+        glGenTextures(1, &target.texture);
+        glBindTexture(GL_TEXTURE_2D, target.texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, reflectionSize, reflectionSize, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, nullptr);
+
+        glGenTextures(1, &target.depthTexture);
+        glBindTexture(GL_TEXTURE_2D, target.depthTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, reflectionSize, reflectionSize, 0,
+                     GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+
+        pglGenFramebuffers(1, &target.framebuffer);
+        pglBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
+        pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                                target.texture, 0);
+        pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                                target.depthTexture, 0);
+        if (pglCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            gameLog.Log("Reflection framebuffer is incomplete at index " +
+                        std::to_string(index));
+        }
+        activeReflectionTextures[static_cast<int>(index)] = target.texture;
+    }
+    pglBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void Renderer::destroyReflectionTargets() {
+    activeReflectionTextures.clear();
+    for (const ReflectionTarget& target : reflectionTargets_) {
+        if (target.texture != 0) {
+            glDeleteTextures(1, &target.texture);
+        }
+        if (target.depthTexture != 0) {
+            glDeleteTextures(1, &target.depthTexture);
+        }
+        if (target.framebuffer != 0) {
+            pglDeleteFramebuffers(1, &target.framebuffer);
+        }
+    }
+    reflectionTargets_.clear();
+}
+
+void Renderer::renderReflectionViews(const BusSimulation& simulation) {
+    if (renderingReflection_ || reflectionTargets_.empty()) {
+        return;
+    }
+    ++reflectionFrameCounter_;
+    if (reflectionFrameCounter_ % static_cast<std::uint64_t>(reflectionFrameInterval_) != 0) {
+        return;
+    }
+
+    GLint viewport[4] = {};
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    const int previousCameraView = cameraView_;
+    const double previousFovOffset = fieldOfViewOffset_;
+    const double previousLookYaw = viewLookYaw_;
+    const double previousLookPitch = viewLookPitch_;
+    std::size_t reflectionIndex = 0;
+    renderingReflection_ = true;
+    activeReflectionPass = true;
+    for (std::size_t cameraIndex = 0; cameraIndex < vehicleCameras_.size(); ++cameraIndex) {
+        const VehicleCamera& camera = vehicleCameras_[cameraIndex];
+        if (camera.kind != VehicleCameraKind::Reflexion &&
+            camera.kind != VehicleCameraKind::Reflexion2) {
+            continue;
+        }
+        if (reflectionIndex >= reflectionTargets_.size()) {
+            break;
+        }
+        const ReflectionTarget& target = reflectionTargets_[reflectionIndex];
+        pglBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
+        glViewport(0, 0, target.width, target.height);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        cameraView_ = static_cast<int>(cameraIndex + 1);
+        fieldOfViewOffset_ = 0.0;
+        viewLookYaw_ = 0.0;
+        viewLookPitch_ = 0.0;
+        setPerspective(static_cast<double>(target.width), static_cast<double>(target.height),
+                       currentFieldOfView());
+        draw(simulation);
+        ++reflectionIndex;
+    }
+    renderingReflection_ = false;
+    activeReflectionPass = false;
+    pglBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    cameraView_ = previousCameraView;
+    fieldOfViewOffset_ = previousFovOffset;
+    viewLookYaw_ = previousLookYaw;
+    viewLookPitch_ = previousLookPitch;
+    setPerspective(static_cast<double>(viewport[2]), static_cast<double>(viewport[3]),
+                   currentFieldOfView());
 }
 
 bool Renderer::shouldClose() const {
@@ -2729,6 +2925,7 @@ void Renderer::beginFrame() {
 
 void Renderer::draw(const BusSimulation& simulation) {
     TraceScope trace("frame", "Renderer::draw");
+    renderReflectionViews(simulation);
     const BodyPose chassis = simulation.chassisPose();
     const ChassisCollisionBox collision = simulation.chassisCollisionBox();
     {

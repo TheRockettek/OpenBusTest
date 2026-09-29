@@ -21,7 +21,6 @@ struct VehicleCamera {
     double fieldOfView = 0.0;
     double pan = 0.0;
     double tilt = 0.0;
-    double culling = 0.0;
 };
 
 struct ConstantCurvePoint {

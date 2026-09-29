@@ -58,6 +58,7 @@ struct ModelMaterial {
     bool useNightmap = false;
     bool useTransmap = false;
     bool useFreeTexture = false;
+    bool flipTextureY = false;
     float lightmapStrength = 0.0f;
     float nightmapStrength = 0.0f;
     float texcoordOffsetX = 0.0f;
