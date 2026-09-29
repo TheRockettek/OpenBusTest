@@ -436,12 +436,23 @@ struct Vehicle {
                 translate(animation.origin[0], animation.origin[1], animation.origin[2]);
             }
             if (animation.type == "anim_rot") {
-                std::array<double, 3> axis =
-                    rotateAnimationAxis({1.0, 0.0, 0.0}, animation.originRotation);
-                if (animation.hasMeshRotation) {
+                const bool hasAuthoredAxisRotation =
+                    std::abs(animation.originRotation[0]) > 1.0e-12 ||
+                    std::abs(animation.originRotation[1]) > 1.0e-12 ||
+                    std::abs(animation.originRotation[2]) > 1.0e-12;
+                if (animation.hasMeshRotation && hasAuthoredAxisRotation) {
+                    std::array<double, 3> axis = rotateAnimationAxis({1.0, 0.0, 0.0}, animation.originRotation);
                     axis = applyMeshRotation(axis, animation.meshRotation);
+                    rotate(-amount, axis[0], axis[1], axis[2]);
+                } else {
+                    rotate(animation.originRotation[0], 0.0, -1.0, 0.0);
+                    rotate(animation.originRotation[1], 0.0, 0.0, 1.0);
+                    rotate(animation.originRotation[2], 1.0, 0.0, 0.0);
+                    rotate(amount, 0.0, -1.0, 0.0);
+                    rotate(-animation.originRotation[2], 1.0, 0.0, 0.0);
+                    rotate(-animation.originRotation[1], 0.0, 0.0, 1.0);
+                    rotate(-animation.originRotation[0], 0.0, -1.0, 0.0);
                 }
-                rotate(-amount, axis[0], axis[1], axis[2]);
             } else if (animation.type == "anim_trans") {
                 rotateIntoAnimationAxis();
                 translate(0.0, -amount, 0.0);

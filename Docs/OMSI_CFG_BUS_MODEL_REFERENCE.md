@@ -273,8 +273,21 @@ The converted mesh transform is applied to the resulting axis, so the E400
 steering-wheel block's `origin_rot_z 90` preserves its authored source `Z`
 axis and the transform's third column supplies the tilted render axle. The
 converted basis reverses the rotation handedness, so the signed animation
-scale remains part of the model data. Wheel rolling is a separate special
+scale remains part of the model data.
+
+When an `anim_rot` has no nonzero `origin_rot_*` value, OpenBus uses the
+original model's default `+X` rotation axis. After OBJ conversion this is
+render `-Y`, so the fallback is not the same as the generic animation-frame
+`+X` axis above. When an authored origin rotation is present, the converted
+mesh transform is applied to the authored axis instead. This distinction is
+important for parts such as pedals, whose model-local rotation axis can differ
+from the default animation-frame axis. Wheel rolling is a separate special
 case and uses render `+Y` after the wheel mount basis is applied.
+
+For `anim_trans`, OpenBus first enters the converted animation frame using the
+`origin_rot_*` values, translates along that frame's local negative `Y`, and
+then restores the surrounding model frame. The translation scale and sign
+remain part of the model data.
 
 Origin rotations are applied in `x`, `y`, `z` order, followed by the animation
 transform, then undone in reverse order. The animation scale and sign are part
