@@ -13,11 +13,11 @@ class SimulationState;
 
 class ScriptRuntime {
   public:
-  struct ScriptTextureSnapshot {
-    int width = 0;
-    int height = 0;
-    std::vector<std::uint8_t> pixels;
-  };
+    struct ScriptTextureSnapshot {
+        int width = 0;
+        int height = 0;
+        std::vector<std::uint8_t> pixels;
+    };
 
     ScriptRuntime(const VehicleConfig& configuration, Variables& localState,
                   SimulationState& sharedState);

@@ -155,9 +155,12 @@ struct ScriptRuntime::Impl {
         } else if (name == "stlock" || name == "stunlock" || name == "stfilter") {
             const int index = static_cast<int>(nativePopFloat());
             ScriptTexture& texture = scriptTextures[index];
-            if (name == "stlock") texture.locked = true;
-            if (name == "stunlock") texture.locked = false;
-            if (name == "stfilter" && !texture.locked) texture.filtered = true;
+            if (name == "stlock")
+                texture.locked = true;
+            if (name == "stunlock")
+                texture.locked = false;
+            if (name == "stfilter" && !texture.locked)
+                texture.filtered = true;
         } else if (name == "stsetcolor") {
             const auto channel = [this] {
                 return static_cast<std::uint8_t>(std::clamp(nativePopFloat(), 0.0, 255.0));
@@ -186,7 +189,10 @@ struct ScriptRuntime::Impl {
             popStrings(1);
         } else if (name == "stgetr" || name == "stgetg" || name == "stgetb" || name == "stgeta") {
             const int index = static_cast<int>(nativePopFloat());
-            const std::size_t channel = name == "stgeta" ? 0 : name == "stgetr" ? 1 : name == "stgetg" ? 2 : 3;
+            const std::size_t channel = name == "stgeta"   ? 0
+                                        : name == "stgetr" ? 1
+                                        : name == "stgetg" ? 2
+                                                           : 3;
             pushNumber(scriptTextures[index].color[channel]);
         } else if (name == "getfontindex") {
             popStrings(1);
@@ -244,14 +250,17 @@ struct ScriptRuntime::Impl {
                     localState.setStringNormalized(instruction.name, nativePopString());
                     break;
                 case OscOpcode::LoadSystem:
-                    floatStack.push_back(sharedState.sharedVariables().getNormalized(instruction.name));
+                    floatStack.push_back(
+                        sharedState.sharedVariables().getNormalized(instruction.name));
                     break;
                 case OscOpcode::StoreSystem:
-                    sharedState.sharedVariables().setNormalized(instruction.name, nativePeekFloat());
+                    sharedState.sharedVariables().setNormalized(instruction.name,
+                                                                nativePeekFloat());
                     break;
                 case OscOpcode::LoadConstant: {
                     const auto constant = configuration.constants.find(instruction.name);
-                    floatStack.push_back(constant == configuration.constants.end() ? 0.0 : constant->second);
+                    floatStack.push_back(
+                        constant == configuration.constants.end() ? 0.0 : constant->second);
                     break;
                 }
                 case OscOpcode::CallCurve: {
@@ -281,10 +290,12 @@ struct ScriptRuntime::Impl {
                     break;
                 }
                 case OscOpcode::LoadRegister:
-                    floatStack.push_back(nativeRegisters[static_cast<std::size_t>(instruction.index)]);
+                    floatStack.push_back(
+                        nativeRegisters[static_cast<std::size_t>(instruction.index)]);
                     break;
                 case OscOpcode::StoreRegister:
-                    nativeRegisters[static_cast<std::size_t>(instruction.index)] = nativePeekFloat();
+                    nativeRegisters[static_cast<std::size_t>(instruction.index)] =
+                        nativePeekFloat();
                     break;
                 case OscOpcode::Duplicate:
                     floatStack.push_back(nativePeekFloat());
@@ -299,7 +310,9 @@ struct ScriptRuntime::Impl {
                     binary([](double left, double right) { return left * right; });
                     break;
                 case OscOpcode::Divide:
-                    binary([](double left, double right) { return right == 0.0 ? 0.0 : left / right; });
+                    binary([](double left, double right) {
+                        return right == 0.0 ? 0.0 : left / right;
+                    });
                     break;
                 case OscOpcode::Modulo:
                     binary([](double left, double right) {
@@ -356,16 +369,20 @@ struct ScriptRuntime::Impl {
                     floatStack.push_back(std::ceil(nativePopFloat()));
                     break;
                 case OscOpcode::Sine:
-                    floatStack.push_back(std::sin(nativePopFloat() * 3.14159265358979323846 / 180.0));
+                    floatStack.push_back(
+                        std::sin(nativePopFloat() * 3.14159265358979323846 / 180.0));
                     break;
                 case OscOpcode::Cosine:
-                    floatStack.push_back(std::cos(nativePopFloat() * 3.14159265358979323846 / 180.0));
+                    floatStack.push_back(
+                        std::cos(nativePopFloat() * 3.14159265358979323846 / 180.0));
                     break;
                 case OscOpcode::Tangent:
-                    floatStack.push_back(std::tan(nativePopFloat() * 3.14159265358979323846 / 180.0));
+                    floatStack.push_back(
+                        std::tan(nativePopFloat() * 3.14159265358979323846 / 180.0));
                     break;
                 case OscOpcode::ArcTangent:
-                    floatStack.push_back(std::atan(nativePopFloat()) * 180.0 / 3.14159265358979323846);
+                    floatStack.push_back(std::atan(nativePopFloat()) * 180.0 /
+                                         3.14159265358979323846);
                     break;
                 case OscOpcode::SquareRoot:
                     floatStack.push_back(std::sqrt(std::max(0.0, nativePopFloat())));
@@ -388,8 +405,10 @@ struct ScriptRuntime::Impl {
                     break;
                 }
                 case OscOpcode::Random: {
-                    const int limit = std::max(0, static_cast<int>(std::floor(nativePopFloat())) - 1);
-                    floatStack.push_back(limit == 0 ? 0.0 : static_cast<double>(std::rand() % (limit + 1)));
+                    const int limit =
+                        std::max(0, static_cast<int>(std::floor(nativePopFloat())) - 1);
+                    floatStack.push_back(
+                        limit == 0 ? 0.0 : static_cast<double>(std::rand() % (limit + 1)));
                     break;
                 }
                 case OscOpcode::StringDuplicate:
@@ -419,7 +438,8 @@ struct ScriptRuntime::Impl {
                 case OscOpcode::StringCutBegin: {
                     const int count = std::max(0, static_cast<int>(std::floor(nativePopFloat())));
                     const std::string value = nativePopString();
-                    stringStack.push_back(count < static_cast<int>(value.size()) ? value.substr(count) : "");
+                    stringStack.push_back(
+                        count < static_cast<int>(value.size()) ? value.substr(count) : "");
                     break;
                 }
                 case OscOpcode::StringCutEnd: {
@@ -445,20 +465,22 @@ struct ScriptRuntime::Impl {
                             stringStack.push_back(value.substr(0, length));
                         }
                     } else if (static_cast<int>(value.size()) < length) {
-                        const std::string padding(static_cast<std::size_t>(length) - value.size(), ' ');
-                        stringStack.push_back(instruction.opcode == OscOpcode::StringSetLengthRight
-                                                  ? padding + value
-                                                  : instruction.opcode == OscOpcode::StringSetLengthCenter
-                                                        ? padding.substr(0, padding.size() / 2) + value +
-                                                              padding.substr(padding.size() / 2)
-                                                        : value + padding);
+                        const std::string padding(static_cast<std::size_t>(length) - value.size(),
+                                                  ' ');
+                        stringStack.push_back(
+                            instruction.opcode == OscOpcode::StringSetLengthRight ? padding + value
+                            : instruction.opcode == OscOpcode::StringSetLengthCenter
+                                ? padding.substr(0, padding.size() / 2) + value +
+                                      padding.substr(padding.size() / 2)
+                                : value + padding);
                     } else {
                         stringStack.push_back(value);
                     }
                     break;
                 }
                 case OscOpcode::IntegerToString:
-                    stringStack.push_back(std::to_string(static_cast<long long>(std::floor(nativePeekFloat()))));
+                    stringStack.push_back(
+                        std::to_string(static_cast<long long>(std::floor(nativePeekFloat()))));
                     break;
                 case OscOpcode::IntegerToStringEnhanced: {
                     const std::string format = nativePopString();
@@ -495,7 +517,8 @@ struct ScriptRuntime::Impl {
                     std::string value = nativePopString();
                     const auto first = value.find_first_not_of(" \t\r\n");
                     const auto last = value.find_last_not_of(" \t\r\n");
-                    stringStack.push_back(first == std::string::npos ? "" : value.substr(first, last - first + 1));
+                    stringStack.push_back(
+                        first == std::string::npos ? "" : value.substr(first, last - first + 1));
                     break;
                 }
                 case OscOpcode::StringEqual:
@@ -506,11 +529,16 @@ struct ScriptRuntime::Impl {
                     const std::string right = nativePopString();
                     const std::string left = nativePopString();
                     bool result = false;
-                    if (instruction.opcode == OscOpcode::StringEqual) result = left == right;
-                    if (instruction.opcode == OscOpcode::StringLess) result = left < right;
-                    if (instruction.opcode == OscOpcode::StringGreater) result = left > right;
-                    if (instruction.opcode == OscOpcode::StringLessEqual) result = left <= right;
-                    if (instruction.opcode == OscOpcode::StringGreaterEqual) result = left >= right;
+                    if (instruction.opcode == OscOpcode::StringEqual)
+                        result = left == right;
+                    if (instruction.opcode == OscOpcode::StringLess)
+                        result = left < right;
+                    if (instruction.opcode == OscOpcode::StringGreater)
+                        result = left > right;
+                    if (instruction.opcode == OscOpcode::StringLessEqual)
+                        result = left <= right;
+                    if (instruction.opcode == OscOpcode::StringGreaterEqual)
+                        result = left >= right;
                     floatStack.push_back(result ? 1.0 : 0.0);
                     break;
                 }
@@ -561,12 +589,13 @@ struct ScriptRuntime::Impl {
         for (const std::string& referencedPath : configuration.scripts) {
             std::string normalized = referencedPath;
             std::replace(normalized.begin(), normalized.end(), '\\', '/');
-            const std::filesystem::path sourcePath = configuration.sourcePath.parent_path() / normalized;
+            const std::filesystem::path sourcePath =
+                configuration.sourcePath.parent_path() / normalized;
             OscProgram program;
             std::string error;
             if (!compileOscToBytecode(sourcePath, program, error)) {
-                scriptRuntimeLogger.Log("Native OSC backend falling back to Lua for " + sourcePath.string() +
-                              ": " + error);
+                scriptRuntimeLogger.Log("Native OSC backend falling back to Lua for " +
+                                        sourcePath.string() + ": " + error);
                 nativePrograms.clear();
                 return false;
             }
@@ -692,7 +721,8 @@ struct ScriptRuntime::Impl {
     static int getSystem(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
         // runtime->log(lua, "get_sys_var(" + std::string(luaL_checkstring(lua, 1)) + ")");
-        lua_pushnumber(lua, runtime->sharedState.sharedVariables().getNormalized(luaL_checkstring(lua, 1)));
+        lua_pushnumber(
+            lua, runtime->sharedState.sharedVariables().getNormalized(luaL_checkstring(lua, 1)));
         return 1;
     }
 
@@ -701,7 +731,7 @@ struct ScriptRuntime::Impl {
         // runtime->log(lua, "set_sys_var(" + std::string(luaL_checkstring(lua, 1)) + ", " +
         // std::to_string(numericArgument(lua, 2)) + ")");
         runtime->sharedState.sharedVariables().setNormalized(luaL_checkstring(lua, 1),
-                                     numericArgument(lua, 2));
+                                                             numericArgument(lua, 2));
         return 0;
     }
 
@@ -1108,16 +1138,16 @@ struct ScriptRuntime::Impl {
     }
 
     static int tracedLuaFunction(lua_State* lua) {
-        const auto* binding = static_cast<const LuaFunctionBinding*>(
-            lua_touserdata(lua, lua_upvalueindex(2)));
+        const auto* binding =
+            static_cast<const LuaFunctionBinding*>(lua_touserdata(lua, lua_upvalueindex(2)));
         openbus::rendering::TraceScope trace("lua_callback", binding->name.c_str());
         return binding->function(lua);
     }
 
     static int genericSystemMacro(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const auto* binding = static_cast<const LuaFunctionBinding*>(
-            lua_touserdata(lua, lua_upvalueindex(2)));
+        const auto* binding =
+            static_cast<const LuaFunctionBinding*>(lua_touserdata(lua, lua_upvalueindex(2)));
         runtime->executeSystemMacro(binding->name.substr(10));
         return 0;
     }
@@ -1275,7 +1305,8 @@ struct ScriptRuntime::Impl {
     void invokeFrame(bool isAiVehicle) {
         openbus::rendering::TraceScope trace("lua", "frame");
 
-        // scriptRuntimeLogger.Log("invokeFrame(" + std::string(isAiVehicle ? "true" : "false") + ")");
+        // scriptRuntimeLogger.Log("invokeFrame(" + std::string(isAiVehicle ? "true" : "false") +
+        // ")");
         lua_rawgeti(state, LUA_REGISTRYINDEX, scriptEnvironment.reference);
         const char* functionName = "frame";
         lua_getfield(state, -1, "frame_ai");

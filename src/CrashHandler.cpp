@@ -131,8 +131,8 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* excepti
             const bool hasModule = SymGetModuleInfo64(process, address, &module) != FALSE;
             report << "  #" << index << " 0x" << std::hex << address << std::dec;
             if (SymFromAddr(process, address, &displacement, symbol)) {
-                report << " " << (hasModule ? module.ModuleName : "?") << "!"
-                       << symbol->Name << "+0x" << std::hex << displacement << std::dec;
+                report << " " << (hasModule ? module.ModuleName : "?") << "!" << symbol->Name
+                       << "+0x" << std::hex << displacement << std::dec;
                 if (SymGetLineFromAddr64(process, address, &lineDisplacement, &line)) {
                     report << " (" << line.FileName << ":" << line.LineNumber << ")";
                 }
@@ -150,8 +150,8 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* excepti
         }
         SymCleanup(process);
     } else {
-             report << "Stack trace unavailable (SymInitialize failed, error " << GetLastError()
-                 << ").\n";
+        report << "Stack trace unavailable (SymInitialize failed, error " << GetLastError()
+               << ").\n";
     }
     report.flush();
 

@@ -114,8 +114,8 @@ constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
 std::array<double, 3> rotateAnimationAxis(const std::array<double, 3>& axis,
                                           const std::array<double, 3>& originRotation) {
     std::array<double, 3> result = axis;
-    const auto rotateVector = [](std::array<double, 3>& vector, double angleDegrees,
-                                 double x, double y, double z) {
+    const auto rotateVector = [](std::array<double, 3>& vector, double angleDegrees, double x,
+                                 double y, double z) {
         const double length = std::sqrt(x * x + y * y + z * z);
         if (length <= 1.0e-12) {
             return;
@@ -127,9 +127,9 @@ std::array<double, 3> rotateAnimationAxis(const std::array<double, 3>& axis,
         const double cosine = std::cos(angle);
         const double sine = std::sin(angle);
         const double dot = x * vector[0] + y * vector[1] + z * vector[2];
-        const std::array<double, 3> cross = {
-            y * vector[2] - z * vector[1], z * vector[0] - x * vector[2],
-            x * vector[1] - y * vector[0]};
+        const std::array<double, 3> cross = {y * vector[2] - z * vector[1],
+                                             z * vector[0] - x * vector[2],
+                                             x * vector[1] - y * vector[0]};
         vector = {vector[0] * cosine + cross[0] * sine + x * dot * (1.0 - cosine),
                   vector[1] * cosine + cross[1] * sine + y * dot * (1.0 - cosine),
                   vector[2] * cosine + cross[2] * sine + z * dot * (1.0 - cosine)};
@@ -152,8 +152,8 @@ std::array<double, 3> applyMeshRotation(const std::array<double, 3>& renderAxis,
             meshRotation[8] * sourceAxis[2]};
     std::array<double, 3> result = {rotatedSourceAxis[2], -rotatedSourceAxis[0],
                                     rotatedSourceAxis[1]};
-    const double length = std::sqrt(result[0] * result[0] + result[1] * result[1] +
-                                    result[2] * result[2]);
+    const double length =
+        std::sqrt(result[0] * result[0] + result[1] * result[1] + result[2] * result[2]);
     if (length > 1.0e-12) {
         for (double& component : result) {
             component /= length;
@@ -397,8 +397,8 @@ struct Vehicle {
                 }
                 if (animation.maxSpeed > 0.0) {
                     const double maximumStep = animation.maxSpeed * timeStep;
-                    state.currentAmount += std::clamp(
-                        state.targetAmount - state.currentAmount, -maximumStep, maximumStep);
+                    state.currentAmount += std::clamp(state.targetAmount - state.currentAmount,
+                                                      -maximumStep, maximumStep);
                 } else {
                     state.currentAmount = state.targetAmount;
                 }
@@ -441,7 +441,8 @@ struct Vehicle {
                     std::abs(animation.originRotation[1]) > 1.0e-12 ||
                     std::abs(animation.originRotation[2]) > 1.0e-12;
                 if (animation.hasMeshRotation && hasAuthoredAxisRotation) {
-                    std::array<double, 3> axis = rotateAnimationAxis({1.0, 0.0, 0.0}, animation.originRotation);
+                    std::array<double, 3> axis =
+                        rotateAnimationAxis({1.0, 0.0, 0.0}, animation.originRotation);
                     axis = applyMeshRotation(axis, animation.meshRotation);
                     rotate(-amount, axis[0], axis[1], axis[2]);
                 } else {
@@ -516,8 +517,7 @@ struct Vehicle {
         if (vehicle == BusVehicle::SpE400Mmc) {
             relativeConfig = std::filesystem::path("SP_E400MMC") / "Model" / "Configuration Files" /
                              "E400MMC_ADL_10.9m_Voith_LowHeight.cfg";
-            relativeModelRoot = std::filesystem::path("SP_E400MMC") / "Model" /
-                                "SP_E400MMC_obj";
+            relativeModelRoot = std::filesystem::path("SP_E400MMC") / "Model" / "SP_E400MMC_obj";
             modelOffsetZ = -1.02;
         } else {
             relativeConfig = std::filesystem::path("MAN_DL05") / "Model" / "DL05.cfg";
@@ -614,15 +614,15 @@ struct Vehicle {
             batch.lightmapStrengthVariable.empty()
                 ? 1.0
                 : std::clamp(variables.get(batch.lightmapStrengthVariable), 0.0, 1.0));
-        const double nightlight = std::max(variables.get("NightlightA"),
-                                           1.0 - variables.get("Envir_Brightness"));
+        const double nightlight =
+            std::max(variables.get("NightlightA"), 1.0 - variables.get("Envir_Brightness"));
         material.nightmapStrength = static_cast<float>(std::clamp(nightlight, 0.0, 1.0));
         material.texcoordOffsetX = static_cast<float>(
             batch.texcoordTransXVariable.empty() ? 0.0
-                                                  : variables.get(batch.texcoordTransXVariable));
+                                                 : variables.get(batch.texcoordTransXVariable));
         material.texcoordOffsetY = static_cast<float>(
             batch.texcoordTransYVariable.empty() ? 0.0
-                                                  : variables.get(batch.texcoordTransYVariable));
+                                                 : variables.get(batch.texcoordTransYVariable));
         drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
                        forceUntextured ? 0 : batch.alphaMode);
     }
@@ -893,32 +893,29 @@ struct Vehicle {
             if (separator == std::string::npos) {
                 return true;
             }
-            const int variableAxle = parseInt(
-                normalized.substr(prefixLength, separator - prefixLength), -1);
-            return variableAxle < 0 || static_cast<std::size_t>(variableAxle) == simulationIndex / 2;
+            const int variableAxle =
+                parseInt(normalized.substr(prefixLength, separator - prefixLength), -1);
+            return variableAxle < 0 ||
+                   static_cast<std::size_t>(variableAxle) == simulationIndex / 2;
         };
         if (!animation.steeringVariable.empty() &&
             steeringVariableMatchesAxle(animation.steeringVariable)) {
             const double requested = variables.get(animation.steeringVariable);
             const double physical = simulation.wheelSteeringAngle(simulationIndex);
-            const double scale = animation.steeringScale == 0.0
-                                     ? RADIANS_TO_DEGREES
-                                     : animation.steeringScale;
+            const double scale =
+                animation.steeringScale == 0.0 ? RADIANS_TO_DEGREES : animation.steeringScale;
             rotate((requested - physical) * scale, 0.0, 0.0, 1.0);
         }
         if (!animation.rotationVariable.empty()) {
             const double requested = variables.get(animation.rotationVariable);
-            const double scale = animation.rotationScale == 0.0
-                                     ? RADIANS_TO_DEGREES
-                                     : animation.rotationScale;
+            const double scale =
+                animation.rotationScale == 0.0 ? RADIANS_TO_DEGREES : animation.rotationScale;
             rotate(-requested * scale, 0.0, 1.0, 0.0);
         }
         if (!animation.suspensionVariable.empty()) {
             const double requested = variables.get(animation.suspensionVariable);
             const double physical = simulation.wheelSuspensionCompression(simulationIndex);
-            const double scale = animation.suspensionScale == 0.0
-                                     ? 1.0
-                                     : animation.suspensionScale;
+            const double scale = animation.suspensionScale == 0.0 ? 1.0 : animation.suspensionScale;
             translate(0.0, 0.0, (requested - physical) * scale);
         }
     }
@@ -1059,8 +1056,7 @@ struct Vehicle {
                         if (!trackedTextures.insert(auxiliaryEntry).second) {
                             continue;
                         }
-                        std::lock_guard<std::mutex> auxiliaryLock(
-                            auxiliaryEntry->request->mutex);
+                        std::lock_guard<std::mutex> auxiliaryLock(auxiliaryEntry->request->mutex);
                         if (!auxiliaryEntry->request->complete) {
                             return false;
                         }
@@ -1510,10 +1506,10 @@ struct Vehicle {
                     auxiliary.cacheEntry->texture =
                         uploadCompressedDds(request->resolvedPath, *request->compressedDds);
                 } else if (request->compressedTexture) {
-                    auxiliary.cacheEntry->texture = uploadCompressedTexture(
-                        request->resolvedPath, *request->compressedTexture,
-                        auxiliary.cacheEntry->textureArray,
-                        auxiliary.cacheEntry->textureArrayLayers);
+                    auxiliary.cacheEntry->texture =
+                        uploadCompressedTexture(request->resolvedPath, *request->compressedTexture,
+                                                auxiliary.cacheEntry->textureArray,
+                                                auxiliary.cacheEntry->textureArrayLayers);
                 } else if (request->image) {
                     auxiliary.cacheEntry->texture =
                         uploadTexture(request->resolvedPath, *request->image);
@@ -1544,7 +1540,8 @@ struct Vehicle {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        if (batch.freeTextureWidth != snapshot.width || batch.freeTextureHeight != snapshot.height) {
+        if (batch.freeTextureWidth != snapshot.width ||
+            batch.freeTextureHeight != snapshot.height) {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, snapshot.width, snapshot.height, 0, GL_RGBA,
                          GL_UNSIGNED_BYTE, snapshot.pixels.data());
             batch.freeTextureWidth = snapshot.width;
@@ -1790,11 +1787,11 @@ struct Vehicle {
             for (const ModelAnimation& animation : animations) {
                 gameLog.Log("Model animation: " + part.objPath.filename().string() +
                             " type=" + animation.type + " variable=" + animation.variable +
-                            " scale=" + std::to_string(animation.scale) +
-                            " origin=(" + std::to_string(animation.origin[0]) + ',' +
+                            " scale=" + std::to_string(animation.scale) + " origin=(" +
+                            std::to_string(animation.origin[0]) + ',' +
                             std::to_string(animation.origin[1]) + ',' +
-                            std::to_string(animation.origin[2]) + ") hasOrigin=" +
-                            (animation.hasOrigin ? "true" : "false") +
+                            std::to_string(animation.origin[2]) +
+                            ") hasOrigin=" + (animation.hasOrigin ? "true" : "false") +
                             " value=" + std::to_string(variables.get(animation.variable)));
             }
         }
@@ -1818,10 +1815,11 @@ struct Vehicle {
                         wheelAnimation.rotationVariable == candidate.animation.rotationVariable &&
                         wheelAnimation.suspensionVariable ==
                             candidate.animation.suspensionVariable &&
-                        wheelAnimation.steeringVariable == candidate.animation.steeringVariable; //&&
-                        // std::abs(wheelAnimation.origin[0] - candidate.animation.origin[0]) < 0.5 &&
-                        // std::abs(wheelAnimation.origin[1] - candidate.animation.origin[1]) < 0.5 &&
-                        // std::abs(wheelAnimation.origin[2] - candidate.animation.origin[2]) < 0.5;
+                        wheelAnimation.steeringVariable ==
+                            candidate.animation.steeringVariable; //&&
+                    // std::abs(wheelAnimation.origin[0] - candidate.animation.origin[0]) < 0.5 &&
+                    // std::abs(wheelAnimation.origin[1] - candidate.animation.origin[1]) < 0.5 &&
+                    // std::abs(wheelAnimation.origin[2] - candidate.animation.origin[2]) < 0.5;
                     if (sameAnimation) {
                         return true;
                     }
@@ -1892,8 +1890,8 @@ struct Vehicle {
                         if (index.normal > 0 && index.normal <= static_cast<int>(normals.size())) {
                             const ObjNormal& sourceNormal =
                                 normals[static_cast<std::size_t>(index.normal - 1)];
-                            normal = normalizeVector({-sourceNormal.z, sourceNormal.x,
-                                                      -sourceNormal.y});
+                            normal =
+                                normalizeVector({-sourceNormal.z, sourceNormal.x, -sourceNormal.y});
                         }
                         const ObjTexCoord* texCoord = nullptr;
                         if (index.texCoord > 0 &&
@@ -2503,7 +2501,7 @@ void Renderer::beginFrame() {
     simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
     for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
         const bool isAiVehicle = vehicle.get() != playerVehicle_;
-            vehicle->updateFrameVariables(isAiVehicle, timegap);
+        vehicle->updateFrameVariables(isAiVehicle, timegap);
         if (isAiVehicle) {
             vehicle->updateScripts(true);
         }
@@ -2516,8 +2514,7 @@ void Renderer::beginFrame() {
         if (cameraView_ == 0) {
             cameraDistance_ = std::clamp(cameraDistance_ + cursorDeltaY * 0.1, 0.0, 80.0);
         } else {
-            fieldOfViewOffset_ =
-                std::clamp(fieldOfViewOffset_ + cursorDeltaY * 0.15, -40.0, 60.0);
+            fieldOfViewOffset_ = std::clamp(fieldOfViewOffset_ + cursorDeltaY * 0.15, -40.0, 60.0);
         }
     }
     draggingFov_ = rightMouse;

@@ -678,18 +678,18 @@ class Emitter {
                     out += ind(depth) + "set_local_var(\"" + normalizedName + "\", " + expr + ")\n";
                 } else {
                     flush_pending(out, depth);
-                    out +=
-                        ind(depth) + "set_local_var(\"" + normalizedName + "\", " + peek_float_expr() + ")\n";
+                    out += ind(depth) + "set_local_var(\"" + normalizedName + "\", " +
+                           peek_float_expr() + ")\n";
                 }
             } else if (sub == '$') {
                 const std::string normalizedName = lower_name(name);
                 if (pending_str) {
-                    out +=
-                        ind(depth) + "set_local_str(\"" + normalizedName + "\", " + pending_str_expr + ")\n";
+                    out += ind(depth) + "set_local_str(\"" + normalizedName + "\", " +
+                           pending_str_expr + ")\n";
                 } else {
                     flush_pending(out, depth);
-                    out +=
-                        ind(depth) + "set_local_str(\"" + normalizedName + "\", " + peek_str_expr() + ")\n";
+                    out += ind(depth) + "set_local_str(\"" + normalizedName + "\", " +
+                           peek_str_expr() + ")\n";
                 }
             } else {
                 flush_pending(out, depth);
@@ -718,8 +718,8 @@ class Emitter {
                            take_pending_str() + ")\n";
                 else {
                     flush_pending(out, depth);
-                    out += ind(depth) + "sound_trigger_file(\"" + lower_name(name) + "\", " + pop_str_expr() +
-                           ")\n";
+                    out += ind(depth) + "sound_trigger_file(\"" + lower_name(name) + "\", " +
+                           pop_str_expr() + ")\n";
                 }
             } else
                 out += ind(depth) + "-- UNKNOWN TRIGGER sub-type: (" + cmd + ")\n";
@@ -736,7 +736,8 @@ class Emitter {
             } else {
                 flush_pending(out, depth);
                 emit_push_float(out, depth,
-                                "call_func(\"" + lower_name(name) + "\", " + pop_float_expr() + ")");
+                                "call_func(\"" + lower_name(name) + "\", " + pop_float_expr() +
+                                    ")");
             }
             break;
 
@@ -1438,7 +1439,7 @@ class BytecodeCompiler {
             emit(code, OscOpcode::StringLessEqual);
         } else if (op == "$>=") {
             emit(code, OscOpcode::StringGreaterEqual);
-        } else if (op == "$" ) {
+        } else if (op == "$") {
             emit(code, OscOpcode::StringNoOp);
         } else if (op == "$msg") {
             emit(code, OscOpcode::DebugString);

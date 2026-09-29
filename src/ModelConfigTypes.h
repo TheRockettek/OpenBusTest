@@ -65,9 +65,7 @@ struct ModelAnimation {
     std::array<double, 3> originRotation = {};
     bool hasOrigin = false;
     bool originFromMesh = false;
-    std::array<double, 9> meshRotation = {1.0, 0.0, 0.0,
-                                          0.0, 1.0, 0.0,
-                                          0.0, 0.0, 1.0};
+    std::array<double, 9> meshRotation = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
     bool hasMeshRotation = false;
 };
 

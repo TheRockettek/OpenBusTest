@@ -41,7 +41,7 @@ class Renderer {
     Vehicle* AddVehicle(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
                         ModelLoadingPolicy loadingPolicy = {});
 
-                        Vehicle* AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {}) {
+    Vehicle* AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {}) {
         return AddVehicle(vehicle, loadingPolicy);
     }
     Vehicle* AddBusModel(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,

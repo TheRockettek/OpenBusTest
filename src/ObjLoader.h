@@ -50,10 +50,8 @@ struct ParsedObj {
     std::vector<ObjTexCoord> texCoords;
     std::vector<ObjTriangle> triangles;
     std::unordered_map<std::string, ObjMaterial> materials;
-    std::array<double, 16> transform = {1.0, 0.0, 0.0, 0.0,
-                                        0.0, 1.0, 0.0, 0.0,
-                                        0.0, 0.0, 1.0, 0.0,
-                                        0.0, 0.0, 0.0, 1.0};
+    std::array<double, 16> transform = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                                        0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
     bool hasTransform = false;
     std::array<double, 3> boundsCenter = {};
     std::array<double, 3> boundsSize = {};

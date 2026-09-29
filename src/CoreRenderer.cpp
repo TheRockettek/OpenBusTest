@@ -414,8 +414,7 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     pglUniform1i(modelUniforms.useFreeTexture, material.useFreeTexture ? 1 : 0);
     pglUniform1f(modelUniforms.lightmapStrength, material.lightmapStrength);
     pglUniform1f(modelUniforms.nightmapStrength, material.nightmapStrength);
-    pglUniform2f(modelUniforms.texcoordOffset, material.texcoordOffsetX,
-                 material.texcoordOffsetY);
+    pglUniform2f(modelUniforms.texcoordOffset, material.texcoordOffsetX, material.texcoordOffsetY);
     pglUniform4f(modelUniforms.color, static_cast<GLfloat>(color[0]),
                  static_cast<GLfloat>(color[1]), static_cast<GLfloat>(color[2]),
                  static_cast<GLfloat>(alpha));
