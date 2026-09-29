@@ -96,6 +96,8 @@ Logger gameLog = Logger("Game");
 Logger textureLog = Logger("Texture");
 Logger wheelLog = Logger("Wheel");
 
+using Matrix4 = openbus::rendering::Matrix4;
+
 namespace {
 
 enum class RenderViewContext {
@@ -110,39 +112,97 @@ constexpr int viewpointMask(RenderViewContext context) {
 
 constexpr double MAN_DL05_MODEL_OFFSET_Z = -1.035;
 constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
+constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 8;
 
-std::array<double, 3> rotateAnimationAxis(const std::array<double, 3>& axis,
-                                          const std::array<double, 3>& originRotation) {
-    std::array<double, 3> result = axis;
-    const auto rotateVector = [](std::array<double, 3>& vector, double angleDegrees, double x,
-                                 double y, double z) {
-        const double length = std::sqrt(x * x + y * y + z * z);
-        if (length <= 1.0e-12) {
-            return;
+Matrix4 identityMatrix() {
+    return {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+}
+
+Matrix4 multiplyMatrix4(const Matrix4& left, const Matrix4& right) {
+    Matrix4 result = {};
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            for (int inner = 0; inner < 4; ++inner) {
+                result[row + column * 4] += left[row + inner * 4] * right[inner + column * 4];
+            }
         }
-        x /= length;
-        y /= length;
-        z /= length;
-        const double angle = angleDegrees * 3.141592653589793 / 180.0;
-        const double cosine = std::cos(angle);
-        const double sine = std::sin(angle);
-        const double dot = x * vector[0] + y * vector[1] + z * vector[2];
-        const std::array<double, 3> cross = {y * vector[2] - z * vector[1],
-                                             z * vector[0] - x * vector[2],
-                                             x * vector[1] - y * vector[0]};
-        vector = {vector[0] * cosine + cross[0] * sine + x * dot * (1.0 - cosine),
-                  vector[1] * cosine + cross[1] * sine + y * dot * (1.0 - cosine),
-                  vector[2] * cosine + cross[2] * sine + z * dot * (1.0 - cosine)};
-    };
-    rotateVector(result, -originRotation[0], 0.0, -1.0, 0.0);
-    rotateVector(result, -originRotation[1], 0.0, 0.0, 1.0);
-    rotateVector(result, -originRotation[2], 1.0, 0.0, 0.0);
+    }
     return result;
 }
 
-std::array<double, 3> applyMeshRotation(const std::array<double, 3>& renderAxis,
-                                        const std::array<double, 9>& meshRotation) {
-    const std::array<double, 3> sourceAxis = {-renderAxis[1], renderAxis[2], renderAxis[0]};
+Matrix4 translationMatrix(const std::array<double, 3>& value) {
+    Matrix4 result = identityMatrix();
+    result[12] = value[0];
+    result[13] = value[1];
+    result[14] = value[2];
+    return result;
+}
+
+Matrix4 rotationMatrix(double angleDegrees, double x, double y, double z) {
+    const double length = std::sqrt(x * x + y * y + z * z);
+    if (length <= 1.0e-12) {
+        return identityMatrix();
+    }
+    x /= length;
+    y /= length;
+    z /= length;
+    const double angle = angleDegrees * 3.141592653589793 / 180.0;
+    const double cosine = std::cos(angle);
+    const double sine = std::sin(angle);
+    const double inverseCosine = 1.0 - cosine;
+    return {cosine + x * x * inverseCosine,
+            y * x * inverseCosine + z * sine,
+            z * x * inverseCosine - y * sine,
+            0.0,
+            x * y * inverseCosine - z * sine,
+            cosine + y * y * inverseCosine,
+            z * y * inverseCosine + x * sine,
+            0.0,
+            x * z * inverseCosine + y * sine,
+            y * z * inverseCosine - x * sine,
+            cosine + z * z * inverseCosine,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0};
+}
+
+bool invertAffineMatrix(const Matrix4& matrix, Matrix4& inverse) {
+    const double a = matrix[0];
+    const double b = matrix[4];
+    const double c = matrix[8];
+    const double d = matrix[1];
+    const double e = matrix[5];
+    const double f = matrix[9];
+    const double g = matrix[2];
+    const double h = matrix[6];
+    const double i = matrix[10];
+    const double determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if (std::abs(determinant) <= 1.0e-12) {
+        inverse = identityMatrix();
+        return false;
+    }
+    const double scale = 1.0 / determinant;
+    inverse = identityMatrix();
+    inverse[0] = (e * i - f * h) * scale;
+    inverse[4] = (c * h - b * i) * scale;
+    inverse[8] = (b * f - c * e) * scale;
+    inverse[1] = (f * g - d * i) * scale;
+    inverse[5] = (a * i - c * g) * scale;
+    inverse[9] = (c * d - a * f) * scale;
+    inverse[2] = (d * h - e * g) * scale;
+    inverse[6] = (b * g - a * h) * scale;
+    inverse[10] = (a * e - b * d) * scale;
+    inverse[12] = -(inverse[0] * matrix[12] + inverse[4] * matrix[13] + inverse[8] * matrix[14]);
+    inverse[13] = -(inverse[1] * matrix[12] + inverse[5] * matrix[13] + inverse[9] * matrix[14]);
+    inverse[14] = -(inverse[2] * matrix[12] + inverse[6] * matrix[13] + inverse[10] * matrix[14]);
+    return true;
+}
+
+std::array<double, 3> applyMeshAxis(const std::array<double, 3>& renderAxis,
+                                    const std::array<double, 9>& meshRotation) {
+    const std::array<double, 3> sourceAxis = {-renderAxis[1], renderAxis[0], renderAxis[2]};
     const std::array<double, 3> rotatedSourceAxis = {
         meshRotation[0] * sourceAxis[0] + meshRotation[3] * sourceAxis[1] +
             meshRotation[6] * sourceAxis[2],
@@ -150,15 +210,24 @@ std::array<double, 3> applyMeshRotation(const std::array<double, 3>& renderAxis,
             meshRotation[7] * sourceAxis[2],
         meshRotation[2] * sourceAxis[0] + meshRotation[5] * sourceAxis[1] +
             meshRotation[8] * sourceAxis[2]};
-    std::array<double, 3> result = {rotatedSourceAxis[2], -rotatedSourceAxis[0],
-                                    rotatedSourceAxis[1]};
-    const double length =
-        std::sqrt(result[0] * result[0] + result[1] * result[1] + result[2] * result[2]);
-    if (length > 1.0e-12) {
-        for (double& component : result) {
-            component /= length;
-        }
+    return {rotatedSourceAxis[1], -rotatedSourceAxis[0], rotatedSourceAxis[2]};
+}
+
+Matrix4 makeMeshTransform(const std::array<double, 9>& meshRotation,
+                          const std::array<double, 3>& origin) {
+    Matrix4 result = identityMatrix();
+    const std::array<std::array<double, 3>, 3> axes = {std::array<double, 3>{1.0, 0.0, 0.0},
+                                                       std::array<double, 3>{0.0, 1.0, 0.0},
+                                                       std::array<double, 3>{0.0, 0.0, 1.0}};
+    for (int column = 0; column < 3; ++column) {
+        const std::array<double, 3> transformed = applyMeshAxis(axes[column], meshRotation);
+        result[column * 4] = transformed[0];
+        result[column * 4 + 1] = transformed[1];
+        result[column * 4 + 2] = transformed[2];
     }
+    result[12] = origin[0];
+    result[13] = origin[1];
+    result[14] = origin[2];
     return result;
 }
 
@@ -173,6 +242,7 @@ using openbus::rendering::drawGround;
 using openbus::rendering::drawModelBatch;
 using openbus::rendering::drawWheel;
 using openbus::rendering::lookAt;
+using openbus::rendering::multiplyMatrix;
 using openbus::rendering::parseEnabledFlag;
 using openbus::rendering::popMatrix;
 using openbus::rendering::pushMatrix;
@@ -265,7 +335,6 @@ struct Vehicle {
         struct AnimationState {
             double currentAmount = 0.0;
             double targetAmount = 0.0;
-            double delayRemaining = 0.0;
             bool initialized = false;
         };
 
@@ -278,6 +347,9 @@ struct Vehicle {
         int lodIndex;
         std::string visibleVariable;
         int visibleValue = 0;
+        std::string meshIdentifier;
+        std::string animationParent;
+        bool backFaceCulling = false;
         std::array<double, 3> center;
         std::array<double, 3> size;
         double radius;
@@ -379,6 +451,12 @@ struct Vehicle {
             for (std::size_t index = 0; index < part.animations.size(); ++index) {
                 const ModelAnimation& animation = part.animations[index];
                 DisplayPart::AnimationState& state = part.animationStates[index];
+                if (animation.type.empty()) {
+                    state.currentAmount = 0.0;
+                    state.targetAmount = 0.0;
+                    state.initialized = true;
+                    continue;
+                }
                 const double targetAmount =
                     variables.get(animation.variable) * animation.scale + animation.offset;
                 if (!state.initialized) {
@@ -389,79 +467,119 @@ struct Vehicle {
                 }
                 if (targetAmount != state.targetAmount) {
                     state.targetAmount = targetAmount;
-                    state.delayRemaining = std::max(0.0, animation.delay * 0.001);
                 }
-                if (state.delayRemaining > 0.0) {
-                    state.delayRemaining = std::max(0.0, state.delayRemaining - timeStep);
-                    continue;
+                double nextAmount = state.targetAmount;
+                if (animation.delay > 0.0) {
+                    const double interpolation = std::min(1.0, animation.delay * timeStep);
+                    nextAmount = state.currentAmount +
+                                 (state.targetAmount - state.currentAmount) * interpolation;
                 }
                 if (animation.maxSpeed > 0.0) {
                     const double maximumStep = animation.maxSpeed * timeStep;
-                    state.currentAmount += std::clamp(state.targetAmount - state.currentAmount,
-                                                      -maximumStep, maximumStep);
+                    state.currentAmount +=
+                        std::clamp(nextAmount - state.currentAmount, -maximumStep, maximumStep);
                 } else {
-                    state.currentAmount = state.targetAmount;
+                    state.currentAmount = nextAmount;
                 }
             }
         }
     }
 
-    void applyAnimations(const DisplayPart& part) const {
-        static const bool verboseAnimationLogs =
-            parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_ANIMATIONS"));
+    Matrix4 animationOriginMatrix(const ModelAnimation& animation) const {
+        Matrix4 origin = identityMatrix();
+        for (const ModelAnimationOrigin& operation : animation.originOperations) {
+            Matrix4 operationMatrix = identityMatrix();
+            switch (operation.type) {
+            case ModelAnimationOriginType::Translation:
+                operationMatrix = translationMatrix(operation.value);
+                break;
+            case ModelAnimationOriginType::RotationX:
+                operationMatrix = rotationMatrix(-operation.value[0], 0.0, -1.0, 0.0);
+                break;
+            case ModelAnimationOriginType::RotationY:
+                operationMatrix = rotationMatrix(-operation.value[0], 1.0, 0.0, 0.0);
+                break;
+            case ModelAnimationOriginType::RotationZ:
+                operationMatrix = rotationMatrix(-operation.value[0], 0.0, 0.0, 1.0);
+                break;
+            case ModelAnimationOriginType::FromMesh:
+                if (animation.hasMeshTransform) {
+                    operationMatrix = animation.meshTransform;
+                }
+                break;
+            }
+            origin = multiplyMatrix4(origin, operationMatrix);
+        }
+        if (animation.originOperations.empty() && animation.hasOrigin) {
+            origin = translationMatrix(animation.origin);
+        }
+        return origin;
+    }
+
+    Matrix4 animationTransform(const ModelAnimation& animation, double amount) const {
+        const Matrix4 origin = animationOriginMatrix(animation);
+        Matrix4 inverseOrigin = identityMatrix();
+        invertAffineMatrix(origin, inverseOrigin);
+        const Matrix4 local = animation.type == "anim_rot" ? rotationMatrix(-amount, 0.0, -1.0, 0.0)
+                              : animation.type == "anim_trans"
+                                  ? translationMatrix({0.0, -amount, 0.0})
+                                  : identityMatrix();
+        return multiplyMatrix4(multiplyMatrix4(origin, local), inverseOrigin);
+    }
+
+    Matrix4 animationTransformForPart(const DisplayPart& part,
+                                      std::vector<const DisplayPart*>& active) const {
+        Matrix4 local = identityMatrix();
         for (std::size_t index = 0; index < part.animations.size(); ++index) {
             const ModelAnimation& animation = part.animations[index];
             const double value = variables.get(animation.variable);
             const double amount = index < part.animationStates.size()
                                       ? part.animationStates[index].currentAmount
                                       : value * animation.scale + animation.offset;
-            if (verboseAnimationLogs && animation.variable == "SteeringWheelPos") {
-                gameLog.Log("Applying SteeringWheelPos value=" + std::to_string(value) +
-                            " amount=" + std::to_string(amount));
-            }
-            if (amount == 0.0) {
-                continue;
-            }
-            const auto rotateIntoAnimationAxis = [&]() {
-                rotate(-animation.originRotation[0], 0.0, -1.0, 0.0);
-                rotate(-animation.originRotation[1], 0.0, 0.0, 1.0);
-                rotate(-animation.originRotation[2], 1.0, 0.0, 0.0);
-            };
-            const auto undoAnimationAxisRotation = [&]() {
-                rotate(animation.originRotation[2], 1.0, 0.0, 0.0);
-                rotate(animation.originRotation[1], 0.0, 0.0, 1.0);
-                rotate(animation.originRotation[0], 0.0, -1.0, 0.0);
-            };
-            if (animation.hasOrigin) {
-                translate(animation.origin[0], animation.origin[1], animation.origin[2]);
-            }
-            if (animation.type == "anim_rot") {
-                const bool hasAuthoredAxisRotation =
-                    std::abs(animation.originRotation[0]) > 1.0e-12 ||
-                    std::abs(animation.originRotation[1]) > 1.0e-12 ||
-                    std::abs(animation.originRotation[2]) > 1.0e-12;
-                if (animation.hasMeshRotation && hasAuthoredAxisRotation) {
-                    std::array<double, 3> axis =
-                        rotateAnimationAxis({1.0, 0.0, 0.0}, animation.originRotation);
-                    axis = applyMeshRotation(axis, animation.meshRotation);
-                    rotate(-amount, axis[0], axis[1], axis[2]);
-                } else {
-                    rotate(animation.originRotation[0], 0.0, -1.0, 0.0);
-                    rotate(animation.originRotation[1], 0.0, 0.0, 1.0);
-                    rotate(animation.originRotation[2], 1.0, 0.0, 0.0);
-                    rotate(amount, 0.0, -1.0, 0.0);
-                    rotate(-animation.originRotation[2], 1.0, 0.0, 0.0);
-                    rotate(-animation.originRotation[1], 0.0, 0.0, 1.0);
-                    rotate(-animation.originRotation[0], 0.0, -1.0, 0.0);
+            local = multiplyMatrix4(animationTransform(animation, amount), local);
+        }
+        if (part.animationParent.empty() ||
+            std::find(active.begin(), active.end(), &part) != active.end()) {
+            return local;
+        }
+        const DisplayPart* parent = nullptr;
+        const auto findParent = [&](const std::vector<DisplayPart>& parts) {
+            const auto found =
+                std::find_if(parts.begin(), parts.end(), [&](const DisplayPart& candidate) {
+                    return candidate.meshIdentifier == part.animationParent;
+                });
+            return found == parts.end() ? nullptr : &*found;
+        };
+        parent = findParent(displayLists);
+        if (parent == nullptr) {
+            for (const WheelModel& wheel : wheelModels) {
+                parent = findParent(wheel.parts);
+                if (parent != nullptr) {
+                    break;
                 }
-            } else if (animation.type == "anim_trans") {
-                rotateIntoAnimationAxis();
-                translate(0.0, -amount, 0.0);
-                undoAnimationAxisRotation();
             }
-            if (animation.hasOrigin) {
-                translate(-animation.origin[0], -animation.origin[1], -animation.origin[2]);
-            }
+        }
+        if (parent == nullptr) {
+            return local;
+        }
+        active.push_back(&part);
+        const Matrix4 parentTransform = animationTransformForPart(*parent, active);
+        active.pop_back();
+        return multiplyMatrix4(parentTransform, local);
+    }
+
+    void applyAnimations(const DisplayPart& part) const {
+        std::vector<const DisplayPart*> active;
+        multiplyMatrix(animationTransformForPart(part, active));
+    }
+
+    static void setBackFaceCulling(bool enabled) {
+        glFrontFace(GL_CW);
+        glCullFace(GL_BACK);
+        if (enabled) {
+            glEnable(GL_CULL_FACE);
+        } else {
+            glDisable(GL_CULL_FACE);
         }
     }
 
@@ -647,6 +765,7 @@ struct Vehicle {
             glDisable(GL_BLEND);
             glDepthMask(GL_TRUE);
             glEnable(GL_DEPTH_TEST);
+            setBackFaceCulling(false);
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(-1.0f, -1.0f);
         }
@@ -797,6 +916,7 @@ struct Vehicle {
             for (DisplayPart* part : opaqueParts) {
                 pushMatrix();
                 applyAnimations(*part);
+                setBackFaceCulling(part->backFaceCulling);
                 for (Batch& batch : part->batches) {
                     const double alpha = alphaScale(batch);
                     if (alpha <= 0.0) {
@@ -819,6 +939,7 @@ struct Vehicle {
                 Batch& batch = *noDepthOpaque.batch;
                 pushMatrix();
                 applyAnimations(*noDepthOpaque.part);
+                setBackFaceCulling(noDepthOpaque.part->backFaceCulling);
                 const double alpha = alphaScale(batch);
                 if (alpha <= 0.0) {
                     popMatrix();
@@ -836,6 +957,7 @@ struct Vehicle {
                 Batch& batch = *transparent.batch;
                 pushMatrix();
                 applyAnimations(*transparent.part);
+                setBackFaceCulling(transparent.part->backFaceCulling);
                 const double alpha = alphaScale(batch);
                 if (alpha <= 0.0) {
                     popMatrix();
@@ -867,6 +989,7 @@ struct Vehicle {
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
             glDisable(GL_POLYGON_OFFSET_FILL);
+            setBackFaceCulling(false);
             glDepthMask(GL_TRUE);
         }
         popMatrix();
@@ -992,6 +1115,7 @@ struct Vehicle {
                 scale(diameterScale, diameterScale, diameterScale);
                 translate(-meshOrigin[0], -meshOrigin[1], -meshOrigin[2]);
                 for (Batch& batch : part.batches) {
+                    setBackFaceCulling(part.backFaceCulling);
                     if (isWheelRubberTexture(batch.textureName)) {
                         const std::array<double, 3> rubberColor = {0.20, 0.20, 0.20};
                         drawBatch(batch, alphaScale(batch), true, &rubberColor);
@@ -1002,6 +1126,7 @@ struct Vehicle {
                 popMatrix();
             }
         }
+        setBackFaceCulling(false);
         for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
             if (usedWheelIndices[index]) {
                 continue;
@@ -1012,6 +1137,7 @@ struct Vehicle {
             drawWheel(simulation.wheelRadius(index), simulation.wheelHalfWidth());
             popMatrix();
         }
+        setBackFaceCulling(false);
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
     }
@@ -1768,8 +1894,8 @@ struct Vehicle {
                     // metadata. Only its source-space translation supplies the mesh pivot;
                     // applying its orientation again would double-transform the mesh.
                     if (!animation.hasOrigin) {
-                        animation.origin = {parsed->transform[14], -parsed->transform[12],
-                                            parsed->transform[13]};
+                        animation.origin = {parsed->transform[13], -parsed->transform[12],
+                                            parsed->transform[14]};
                         animation.hasOrigin = true;
                     }
                     animation.meshRotation = {
@@ -1777,6 +1903,10 @@ struct Vehicle {
                         parsed->transform[4], parsed->transform[5], parsed->transform[6],
                         parsed->transform[8], parsed->transform[9], parsed->transform[10]};
                     animation.hasMeshRotation = true;
+                    const std::array<double, 3> meshOrigin = {
+                        parsed->transform[13], -parsed->transform[12], parsed->transform[14]};
+                    animation.meshTransform = makeMeshTransform(animation.meshRotation, meshOrigin);
+                    animation.hasMeshTransform = true;
                 } else if (!animation.hasOrigin) {
                     animation.origin = boundsCenter;
                     animation.hasOrigin = true;
@@ -1804,8 +1934,18 @@ struct Vehicle {
                         " steering=" + wheelAnimation.steeringVariable);
         }
         if (!wheelAnimation.rotationVariable.empty() && !wheelAnimation.hasOrigin) {
-            wheelAnimation.origin = boundsCenter;
-            wheelAnimation.hasOrigin = true;
+            const auto rotationAnimation = std::find_if(
+                animations.begin(), animations.end(), [&](const ModelAnimation& animation) {
+                    return animation.variable == wheelAnimation.rotationVariable &&
+                           animation.hasOrigin;
+                });
+            if (rotationAnimation != animations.end()) {
+                wheelAnimation.origin = rotationAnimation->origin;
+                wheelAnimation.hasOrigin = true;
+            } else {
+                wheelAnimation.origin = boundsCenter;
+                wheelAnimation.hasOrigin = true;
+            }
         }
         std::vector<DisplayPart>* destination = &displayLists;
         if (!wheelAnimation.rotationVariable.empty()) {
@@ -1815,11 +1955,15 @@ struct Vehicle {
                         wheelAnimation.rotationVariable == candidate.animation.rotationVariable &&
                         wheelAnimation.suspensionVariable ==
                             candidate.animation.suspensionVariable &&
-                        wheelAnimation.steeringVariable ==
-                            candidate.animation.steeringVariable; //&&
-                    // std::abs(wheelAnimation.origin[0] - candidate.animation.origin[0]) < 0.5 &&
-                    // std::abs(wheelAnimation.origin[1] - candidate.animation.origin[1]) < 0.5 &&
-                    // std::abs(wheelAnimation.origin[2] - candidate.animation.origin[2]) < 0.5;
+                        wheelAnimation.steeringVariable == candidate.animation.steeringVariable &&
+                        wheelAnimation.hasOrigin == candidate.animation.hasOrigin &&
+                        (!wheelAnimation.hasOrigin ||
+                         (std::abs(wheelAnimation.origin[0] - candidate.animation.origin[0]) <
+                              1e-6 &&
+                          std::abs(wheelAnimation.origin[1] - candidate.animation.origin[1]) <
+                              1e-6 &&
+                          std::abs(wheelAnimation.origin[2] - candidate.animation.origin[2]) <
+                              1e-6));
                     if (sameAnimation) {
                         return true;
                     }
@@ -1842,7 +1986,7 @@ struct Vehicle {
             std::vector<Vertex> vertices;
             vertices.reserve(source.size() * 3);
             const auto convertPosition = [](const ObjPosition& position) {
-                return std::array<double, 3>{position.z, -position.x, position.y};
+                return std::array<double, 3>{position.y, -position.x, position.z};
             };
             const auto normalizeVector = [](std::array<double, 3> value) {
                 const double length =
@@ -1891,7 +2035,7 @@ struct Vehicle {
                             const ObjNormal& sourceNormal =
                                 normals[static_cast<std::size_t>(index.normal - 1)];
                             normal =
-                                normalizeVector({-sourceNormal.z, sourceNormal.x, -sourceNormal.y});
+                                normalizeVector({sourceNormal.y, -sourceNormal.x, sourceNormal.z});
                         }
                         const ObjTexCoord* texCoord = nullptr;
                         if (index.texCoord > 0 &&
@@ -1899,8 +2043,8 @@ struct Vehicle {
                             texCoord = &texCoords[static_cast<std::size_t>(index.texCoord - 1)];
                         }
                         vertices.push_back(
-                            {static_cast<float>(position.z), static_cast<float>(-position.x),
-                             static_cast<float>(position.y),
+                            {static_cast<float>(position.y), static_cast<float>(-position.x),
+                             static_cast<float>(position.z),
                              texCoord ? static_cast<float>(texCoord->u) : 0.0f,
                              texCoord ? static_cast<float>(1.0 - texCoord->v) : 0.0f, 0.0f,
                              static_cast<float>(normal[0]), static_cast<float>(normal[1]),
@@ -2090,6 +2234,9 @@ struct Vehicle {
         displayPart.lodIndex = part.lodIndex;
         displayPart.visibleVariable = part.visibleVariable;
         displayPart.visibleValue = part.visibleValue;
+        displayPart.meshIdentifier = part.meshIdentifier;
+        displayPart.animationParent = part.animationParent;
+        displayPart.backFaceCulling = parsed->backFaceCulling;
         displayPart.center = boundsCenter;
         displayPart.size = boundsSize;
         displayPart.radius = boundsRadius;
@@ -2294,6 +2441,18 @@ void Renderer::scrollCallback(GLFWwindow* window, double, double yOffset) {
 Renderer::Renderer(int width, int height, const char* title)
     : window_(nullptr), assetRequestManager_(std::make_unique<AssetRequestManager>()) {
     TraceScope trace("startup", "Renderer::Renderer");
+    if (const char* scriptRate = std::getenv("OPENBUS_SCRIPT_HZ")) {
+        try {
+            scriptRateHz_ = std::clamp(std::stod(scriptRate), 0.0, 1000.0);
+        } catch (const std::exception&) {
+            scriptRateHz_ = 0.0;
+        }
+    }
+    if (scriptRateHz_ > 0.0) {
+        gameLog.Log("Script rate limited to " + std::to_string(scriptRateHz_) + " Hz");
+    } else {
+        gameLog.Log("Scripts follow the render rate");
+    }
     if (!glfwInit()) {
         gameLog.Log("Failed to initialize GLFW");
         throw std::runtime_error("Failed to initialize GLFW");
@@ -2395,7 +2554,33 @@ void Renderer::updatePlayerVariables(const BusSimulation& simulation, double thr
                                      double steering, double brake) {
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(simulation, throttle, steering, brake);
-        playerVehicle_->updateScripts(false);
+    }
+    updateScripts();
+}
+
+void Renderer::updateScripts() {
+    const double renderTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
+    if (scriptRateHz_ <= 0.0) {
+        simulationState_.sharedVariables().set("Timegap", renderTimeStep);
+        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+            vehicle->updateScripts(vehicle.get() != playerVehicle_);
+        }
+        return;
+    }
+
+    const double scriptTimeStep = 1.0 / scriptRateHz_;
+    scriptAccumulator_ += renderTimeStep;
+    int ticks = 0;
+    while (scriptAccumulator_ >= scriptTimeStep && ticks < MAX_SCRIPT_CATCH_UP_TICKS) {
+        scriptAccumulator_ -= scriptTimeStep;
+        simulationState_.sharedVariables().set("Timegap", scriptTimeStep);
+        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+            vehicle->updateScripts(vehicle.get() != playerVehicle_);
+        }
+        ++ticks;
+    }
+    if (ticks == MAX_SCRIPT_CATCH_UP_TICKS && scriptAccumulator_ >= scriptTimeStep) {
+        scriptAccumulator_ = std::fmod(scriptAccumulator_, scriptTimeStep);
     }
 }
 
@@ -2455,6 +2640,7 @@ void Renderer::beginFrame() {
         hasPreviousVariableTime_ ? std::max(0.0, currentTime - previousVariableTime_) : 0.0;
     previousVariableTime_ = currentTime;
     hasPreviousVariableTime_ = true;
+    frameTimeStep_ = timegap;
     const std::array<int, 4> keys = {GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D};
     const std::array<const char*, 4> keyNames = {"W", "A", "S", "D"};
     for (std::size_t index = 0; index < keys.size(); ++index) {
@@ -2502,9 +2688,6 @@ void Renderer::beginFrame() {
     for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
         const bool isAiVehicle = vehicle.get() != playerVehicle_;
         vehicle->updateFrameVariables(isAiVehicle, timegap);
-        if (isAiVehicle) {
-            vehicle->updateScripts(true);
-        }
     }
     const bool rightMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
     if (rightMouse && !draggingFov_) {
@@ -2551,8 +2734,8 @@ void Renderer::draw(const BusSimulation& simulation) {
     {
         TraceScope phase("render", "Renderer::draw.camera");
         if (cameraView_ == 0) {
-            const std::array<double, 3> target = transformLocalPoint(
-                chassis, {collision.offsetX, collision.offsetY, collision.offsetZ});
+            const std::array<double, 3> target =
+                transformLocalPoint(chassis, simulation.outsideCameraCenter());
             const double targetX = target[0];
             const double targetY = target[1];
             const double targetZ = target[2];
@@ -2762,8 +2945,8 @@ void Renderer::captureViews(const BusSimulation& simulation,
         setPerspective(static_cast<double>(width), static_cast<double>(height), 60.0);
         draw(simulation);
         glFinish();
-        const std::filesystem::path path = directory / (std::string(view.name) + ".bmp");
-        if (!openbus::rendering::saveFramebufferBmp(path, width, height)) {
+        const std::filesystem::path path = directory / (std::string(view.name) + ".png");
+        if (!openbus::rendering::saveFramebufferPng(path, width, height)) {
             gameLog.Log("Failed to save screenshot: " + path.string());
         } else {
             gameLog.Log("Saved screenshot: " + path.string());

@@ -54,6 +54,13 @@ struct ModelWheelAnimation {
     bool hasOrigin = false;
 };
 
+enum class ModelAnimationOriginType { Translation, RotationX, RotationY, RotationZ, FromMesh };
+
+struct ModelAnimationOrigin {
+    ModelAnimationOriginType type = ModelAnimationOriginType::Translation;
+    std::array<double, 3> value = {};
+};
+
 struct ModelAnimation {
     std::string type;
     std::string variable;
@@ -65,8 +72,12 @@ struct ModelAnimation {
     std::array<double, 3> originRotation = {};
     bool hasOrigin = false;
     bool originFromMesh = false;
+    std::vector<ModelAnimationOrigin> originOperations;
     std::array<double, 9> meshRotation = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
     bool hasMeshRotation = false;
+    std::array<double, 16> meshTransform = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                                            0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+    bool hasMeshTransform = false;
 };
 
 struct ModelPart {

@@ -250,49 +250,56 @@ render Y = -OBJ x
 render Z = OBJ y
 ```
 
-The negative lateral sign is intentional. It is the reflection needed to keep
-the original model winding and the renderer's culling convention consistent.
+Here `OBJ x/y/z` are the values written by the converter from the O3D file:
+O3D `x` is right/lateral, O3D `y` is up/vertical, and O3D `z` is
+forward/longitudinal. The negative lateral sign is intentional and is part of
+the handedness conversion.
 
 The converter writes O3D vertex positions unchanged and emits the O3D section
 transform as `# openbus_transform` metadata. OpenBus therefore converts the
-OBJ positions once using the mapping above. For `origin_from_mesh`, the
-metadata translation supplies the pivot; its orientation is not applied again
-to the already-converted vertices.
+OBJ positions once using the net mapping above. The metadata matrix is not a
+second mesh placement transform. It is retained as the mesh pivot for
+`origin_from_mesh`; its converted translation and orientation are applied only
+when evaluating an animation origin.
+
+Mirrored mesh handling is separate from coordinate conversion. OpenBus compares
+each face cross product with its summed vertex normals and with those normals
+after the converted pivot rotation. If a converted pivot has a positive
+determinant, the transformed-normal explanation does not account for the
+disagreement, and at least 90% of the counted faces oppose their normals, the
+OBJ triangle winding is reversed. Clockwise back-face culling is enabled only
+for these mirrored meshes; ordinary meshes are left unculled so their authored
+winding is preserved.
 
 For `[newanim]` origin rotations, the converted axes are:
 
 ```text
 origin_rot_x -> render -Y
-origin_rot_y -> render +Z
-origin_rot_z -> render +X
+origin_rot_y -> render +X
+origin_rot_z -> render +Z
 ```
 
-Generic `anim_rot` starts with the OMSI animation frame's source `Z` axis,
-which maps to render `+X`. The `origin_rot_*` values then orient that frame.
-The converted mesh transform is applied to the resulting axis, so the E400
-steering-wheel block's `origin_rot_z 90` preserves its authored source `Z`
-axis and the transform's third column supplies the tilted render axle. The
-converted basis reverses the rotation handedness, so the signed animation
-scale remains part of the model data.
+Each `[newanim]` appends one animation record in configuration order. Its
+`origin_trans`, `origin_rot_x`, `origin_rot_y`, `origin_rot_z`, and
+`origin_from_mesh` commands are also retained and composed in the order in
+which they appear. A record may contain only origin commands: it is valid and
+remains an identity animation step, rather than being rejected for lacking
+`anim_rot` or `anim_trans`.
 
-When an `anim_rot` has no nonzero `origin_rot_*` value, OpenBus uses the
-original model's default `+X` rotation axis. After OBJ conversion this is
-render `-Y`, so the fallback is not the same as the generic animation-frame
-`+X` axis above. When an authored origin rotation is present, the converted
-mesh transform is applied to the authored axis instead. This distinction is
-important for parts such as pedals, whose model-local rotation axis can differ
-from the default animation-frame axis. Wheel rolling is a separate special
-case and uses render `+Y` after the wheel mount basis is applied.
+When present, `anim_rot` and `anim_trans` operate on the animation frame's
+local source X axis. Under OpenBus's handedness conversion that source X axis
+is render `-Y`; rotation and translation are evaluated from the converted
+origin matrix and then composed with the other `[newanim]` records. The first
+record in the file acts first, so later records wrap the existing result.
+Signed animation scales are preserved.
 
-For `anim_trans`, OpenBus first enters the converted animation frame using the
-`origin_rot_*` values, translates along that frame's local negative `Y`, and
-then restores the surrounding model frame. The translation scale and sign
-remain part of the model data.
+`origin_from_mesh` uses the converted pivot metadata. It does not move the
+already-converted mesh a second time. `origin_trans` uses the normal CFG
+coordinate conversion above.
 
-Origin rotations are applied in `x`, `y`, `z` order, followed by the animation
-transform, then undone in reverse order. The animation scale and sign are part
-of the model data and must be preserved; for example, the DL05/E400 wheel
-records use different signs for `Wheel_Rotation_*`.
+`delay` is a rate, not a millisecond duration: each frame closes the remaining
+amount by `delay * Timegap`, capped at one. `maxspeed` then limits the change
+per second. `offset` is added to the controller value before smoothing.
 
 Wheel meshes have one additional fixed basis: the ODE wheel body is initialized
 with a `-90` degree rotation around `X`, and the renderer cancels that basis
@@ -309,7 +316,8 @@ cross-axle records from steering the wrong wheel.
 
 ### `[newanim]`
 
-Starts an animation record. A common sequence is:
+Appends an ordered animation record. A record may contain only origin commands,
+or it may also contain one driven operation. A common sequence is:
 
 ```text
 [newanim]
@@ -322,14 +330,21 @@ anim_trans
 ```
 
 Other records use `anim_rot` for rotation. The origin mode, rotation axis,
-animation type, controller variable, and scale must be kept in their original
-order.
+animation type, controller variable, and scale are processed in their original
+order. The animation type and controller are optional; origin-only records are
+valid.
+
+`delay` is a rate-based smoothing value, `maxspeed` is a per-second limit, and
+`offset` is added to the driven value.
 
 ### `[animparent]`
 
 One parent attachment/name. The current mesh inherits the parent transform,
 which is how doors, panels, wheels, and engine-bay parts follow another
-animated component.
+animated component. OpenBus requires the referenced `[mesh_ident]` to have
+already been declared and resolves parents across both body and wheel/detail
+mesh collections. Parent and child animation transforms compose in the same
+ordered matrix path.
 
 ### `[alphascale]`
 

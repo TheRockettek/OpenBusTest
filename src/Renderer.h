@@ -72,6 +72,7 @@ class Renderer {
     bool isExteriorView() const;
     const VehicleCamera* currentVehicleCamera() const;
     void selectVehicleCamera(int direction);
+    void updateScripts();
     double currentFieldOfView() const;
 
     GLFWwindow* window_;
@@ -96,6 +97,9 @@ class Renderer {
     bool hasPreviousVariableTime_ = false;
     bool captureRequested_ = false;
     bool captureMode_ = false;
+    double frameTimeStep_ = 0.0;
+    double scriptRateHz_ = 0.0;
+    double scriptAccumulator_ = 0.0;
     std::vector<KeyEvent> keyEvents_;
     std::vector<VehicleCamera> vehicleCameras_;
     SimulationState simulationState_;

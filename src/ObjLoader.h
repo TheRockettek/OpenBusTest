@@ -53,6 +53,7 @@ struct ParsedObj {
     std::array<double, 16> transform = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
                                         0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
     bool hasTransform = false;
+    bool backFaceCulling = false;
     std::array<double, 3> boundsCenter = {};
     std::array<double, 3> boundsSize = {};
     double boundsRadius = 0.0;

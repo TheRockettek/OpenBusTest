@@ -4,7 +4,6 @@
 #include "PerfTrace.h"
 #include "Variables.h"
 
-#include <algorithm>
 #include <utility>
 
 namespace openbus::rendering {
@@ -79,25 +78,6 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
             part.materialStatesInOrder.push_back(copyMaterialState(materialState));
         }
         result.parts.push_back(std::move(part));
-    }
-    for (BusModelPart& part : result.parts) {
-        if (part.animationParent.empty()) {
-            continue;
-        }
-        const auto parent = std::find_if(
-            result.parts.begin(), result.parts.end(), [&](const BusModelPart& candidate) {
-                return candidate.meshIdentifier == part.animationParent;
-            });
-        if (parent != result.parts.end()) {
-            if (!parent->wheelAnimation.rotationVariable.empty()) {
-                part.wheelAnimation = parent->wheelAnimation;
-            }
-            if (!parent->animations.empty()) {
-                std::vector<ModelAnimation> animations = parent->animations;
-                animations.insert(animations.end(), part.animations.begin(), part.animations.end());
-                part.animations = std::move(animations);
-            }
-        }
     }
     return result;
 }

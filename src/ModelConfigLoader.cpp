@@ -198,6 +198,7 @@ std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
 bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
                        Variables& variables, ConfigurationDiagnostics& diagnostics) {
     // [newanim] is a variable-length block terminated by the next keyword or '--'.
+    static_cast<void>(keywordLine);
     ModelAnimation animation;
     Line field;
     while (reader.next(field)) {
@@ -214,30 +215,7 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
         const std::string name = lower(field.text);
         if (name == "origin_from_mesh") {
             animation.originFromMesh = true;
-            Line possibleOrigin;
-            if (reader.next(possibleOrigin)) {
-                double firstCoordinate = 0.0;
-                if (possibleOrigin.isKeyword() ||
-                    !parseDouble(possibleOrigin.text, firstCoordinate)) {
-                    reader.pushBack(std::move(possibleOrigin));
-                } else {
-                    std::vector<std::string> remainingCoordinates;
-                    if (!readValues(reader, possibleOrigin.number, "origin_from_mesh", 2,
-                                    remainingCoordinates, diagnostics)) {
-                        return false;
-                    }
-                    double secondCoordinate = 0.0;
-                    double thirdCoordinate = 0.0;
-                    if (!parseDouble(remainingCoordinates[0], secondCoordinate) ||
-                        !parseDouble(remainingCoordinates[1], thirdCoordinate)) {
-                        diagnostics.error(possibleOrigin.number, "origin_from_mesh",
-                                          "expected numeric coordinates");
-                        return false;
-                    }
-                    animation.origin = {secondCoordinate, -firstCoordinate, thirdCoordinate};
-                    animation.hasOrigin = true;
-                }
-            }
+            animation.originOperations.push_back({ModelAnimationOriginType::FromMesh, {}});
             continue;
         }
         if (name == "origin_trans") {
@@ -254,6 +232,8 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
             }
             animation.origin = {sourceOrigin[1], -sourceOrigin[0], sourceOrigin[2]};
             animation.hasOrigin = true;
+            animation.originOperations.push_back(
+                {ModelAnimationOriginType::Translation, animation.origin});
             continue;
         }
         if (name == "origin_rot_x" || name == "origin_rot_y" || name == "origin_rot_z" ||
@@ -269,10 +249,16 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
             }
             if (name == "origin_rot_x") {
                 animation.originRotation[0] = ignored;
+                animation.originOperations.push_back(
+                    {ModelAnimationOriginType::RotationX, {ignored, 0.0, 0.0}});
             } else if (name == "origin_rot_y") {
                 animation.originRotation[1] = ignored;
+                animation.originOperations.push_back(
+                    {ModelAnimationOriginType::RotationY, {ignored, 0.0, 0.0}});
             } else if (name == "origin_rot_z") {
                 animation.originRotation[2] = ignored;
+                animation.originOperations.push_back(
+                    {ModelAnimationOriginType::RotationZ, {ignored, 0.0, 0.0}});
             } else if (name == "maxspeed") {
                 animation.maxSpeed = ignored;
             } else if (name == "delay") {
@@ -309,11 +295,6 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
         }
         break;
     }
-    if (animation.type.empty()) {
-        diagnostics.error(keywordLine.number, "newanim", "animation has no anim_rot or anim_trans");
-        return false;
-    }
-
     part.animations.push_back(animation);
     const std::string variable = lower(animation.variable);
     if (variable.rfind("wheel_rotation_", 0) == 0) {
@@ -477,6 +458,10 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 if (current->animationParent.empty()) {
                     result.diagnostics.error(value.number, "animparent",
                                              "parent identifier cannot be empty");
+                } else if (meshIdentifiers.find(current->animationParent) ==
+                           meshIdentifiers.end()) {
+                    result.diagnostics.error(value.number, "animparent",
+                                             "parent mesh identifier must be declared earlier");
                 }
             }
             continue;

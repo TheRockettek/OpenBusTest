@@ -19,11 +19,22 @@ automated tests in addition to screenshots.
   - `2`-`9`: additional views
   - Middle mouse drag: orbit/look around
   - Scroll: zoom
-- Capture format: lossless PNG at the native window size
+- Manual capture format: lossless PNG at the native window size
 - Naming convention: `<feature>-<view>-<condition>.png`
 
 Before each test, start a fresh process and wait until the model is fully
 visible. Record the executable build and asset revision with the capture set.
+
+The repository smoke path is `screenshot.bat`. With
+`OPENBUS_CAPTURE_VIEWS=1`, it captures four automated exterior PNG views to
+`screenshots\three-quarter.png`, `front.png`, `left.png`, and `right.png`.
+Set `OPENBUS_VEHICLE=e400` before launching to exercise the
+SP E400 MMC configuration and its larger `[newanim]`/`[animparent]` set.
+
+The automated capture is a smoke check for model orientation, mirrored-mesh
+winding, materials, wheel binding, and loading completeness. It does not
+replace interactive driver/passenger, LOD-distance, steering, motion, or
+close-up alpha tests listed below.
 
 ## Validation matrix
 

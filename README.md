@@ -155,6 +155,10 @@ derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
 - Scroll up/down: zoom in/out
 - VSync is enabled by default; set `OPENBUS_VSYNC=0`, `off`, or `false` before
   launching to run above the display refresh cadence
+- Scripts normally follow the render rate. Set `OPENBUS_SCRIPT_HZ=30` to run
+  vehicle scripts at 30 Hz while rendering continues at the display rate;
+  fixed-rate script ticks receive `Timegap=1/30` and catch up for short frame
+  hitches with a bounded tick budget.
 - Optional texture downscaling: set `OPENBUS_TEXTURE_SCALE=0.5` before
   launching to upload half-resolution textures; valid range is `0.25`-`1.0`
   JPEG files. To create BC3 DDS siblings with AMD Compressonator, run
@@ -171,6 +175,19 @@ derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
   rendered from the live ODE wheel poses, including suspension, steering, and
   wheel rotation; the wire wheel fallback is used only when an asset is absent.
 - The driver camera follows the ODE chassis position, pitch, roll, and heading
+- OMSI coordinates use `x=lateral`, `y=longitudinal`, `z=vertical`; OpenBus
+  converts them to engine `X=longitudinal`, `Y=lateral`, `Z=vertical` with the
+  expected lateral reflection. This applies to CFG positions, camera centers,
+  collision offsets, OBJ vertices, normals, and mesh pivots.
+- O3D pivot matrices are animation metadata, not additional mesh placement
+  transforms. Mirrored meshes are detected from pivot determinant and
+  face/normal agreement; only those meshes have winding correction and
+  clockwise back-face culling enabled.
+- `[newanim]` records and their origin commands are processed in configuration
+  order. Origin-only records are valid. `anim_rot`/`anim_trans` use the
+  converted local animation frame, `delay` is rate-based smoothing, and
+  `maxspeed` limits movement per second. `[animparent]` composes parent
+  transforms for body and wheel/detail meshes.
 - When `MAN_DL05/Model/DL05.cfg` is available, the highest-detail `[LOD] 0.25`
   model block is rendered with driver-viewpoint mesh filtering
 - OBJ texture coordinates follow the converter's existing V-axis conversion

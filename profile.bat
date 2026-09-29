@@ -10,5 +10,6 @@ set "OPENBUS_TRACE_COLLAPSED=1"
 set "OPENBUS_TRACE_FILE=openbus_trace.json"
 set "OPENBUS_TRACE_COLLAPSED_FILE=openbus_trace.collapsed"
 set "OPENBUS_SCRIPT_BACKEND=native"
+set "OPENBUS_SCRIPT_HZ=0"
 
 cmake -S . -B build-ode -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake && cmake --build build-ode --config Release && .\build-ode\Release\OpenBus.exe

@@ -6,7 +6,9 @@ del .\SP_E400MMC\Script\E400MMC\Scania\*.lua
 
 del .\MAN_DL05\Script\*.lua
 
-set "OPENBUS_VEHICLE=e400"
+set "OPENBUS_VEHICLE=DL05"
+@REM set "OPENBUS_VEHICLE=e400"
+set "OPENBUS_SCRIPT_HZ=0"
 set "OPENBUS_BUS_CONFIG="
 set "OPENBUS_VSYNC=off"
 set "OPENBUS_SCRIPT_BACKEND=native"

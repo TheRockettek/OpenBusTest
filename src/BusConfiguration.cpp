@@ -32,9 +32,13 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source) {
     configuration.centerOfGravityHeight = source.centerOfGravityHeight;
     configuration.collisionHeight = boundingBox[2];
     configuration.collisionLength = boundingBox[1];
-    configuration.collisionOffsetX = boundingBox[3];
-    configuration.collisionOffsetY = boundingBox[4];
+    configuration.collisionOffsetX = boundingBox[4];
+    configuration.collisionOffsetY = -boundingBox[3];
     configuration.collisionOffsetZ = boundingBox[5] - source.centerOfGravityHeight;
+    configuration.outsideCameraCenter = {source.outsideCameraCenter[1],
+                                         -source.outsideCameraCenter[0],
+                                         source.outsideCameraCenter[2]};
+    configuration.hasOutsideCameraCenter = source.hasOutsideCameraCenter;
     configuration.collisionWidth = boundingBox[0];
     configuration.inverseMinimumTurnRadius = source.inverseMinimumTurnRadius;
     configuration.length = boundingBox[1];

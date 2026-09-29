@@ -29,6 +29,7 @@ class BusSimulation {
     double yaw() const;
     double steeringAngle() const;
     std::array<double, 3> centerOfGravity() const;
+    std::array<double, 3> outsideCameraCenter() const;
     BodyPose chassisPose() const;
     ChassisCollisionBox chassisCollisionBox() const;
     BodyPose wheelPose(std::size_t index) const;

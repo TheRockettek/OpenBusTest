@@ -794,6 +794,14 @@ std::array<double, 3> BusSimulation::centerOfGravity() const {
     return {center[0] * inverseMass, center[1] * inverseMass, center[2] * inverseMass};
 }
 
+std::array<double, 3> BusSimulation::outsideCameraCenter() const {
+    if (impl_->configuration.hasOutsideCameraCenter) {
+        return impl_->configuration.outsideCameraCenter;
+    }
+    return {impl_->configuration.collisionOffsetX, impl_->configuration.collisionOffsetY,
+            impl_->configuration.collisionOffsetZ};
+}
+
 BodyPose BusSimulation::chassisPose() const {
     const dReal* position = dBodyGetPosition(impl_->chassis);
     const dReal* rotation = dBodyGetRotation(impl_->chassis);
