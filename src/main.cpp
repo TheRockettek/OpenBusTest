@@ -111,7 +111,11 @@ int main() {
     } catch (const std::exception& error) {
         applicationLog.Log(std::string("OpenBus failed: ") + error.what());
         std::cerr << "OpenBus failed: " << error.what() << '\n';
+        Logger::Flush();
+        openbus::rendering::Flush();
         return 1;
     }
+    Logger::Flush();
+    openbus::rendering::Flush();
     return 0;
 }

@@ -23,7 +23,7 @@ extern "C" {
 #include <sstream>
 #include <unordered_map>
 
-Logger luaLogger = Logger("Lua");
+Logger scriptRuntimeLogger = Logger("ScriptRuntime");
 
 namespace {
 
@@ -565,7 +565,7 @@ struct ScriptRuntime::Impl {
             OscProgram program;
             std::string error;
             if (!compileOscToBytecode(sourcePath, program, error)) {
-                luaLogger.Log("Native OSC backend falling back to Lua for " + sourcePath.string() +
+                scriptRuntimeLogger.Log("Native OSC backend falling back to Lua for " + sourcePath.string() +
                               ": " + error);
                 nativePrograms.clear();
                 return false;
@@ -613,7 +613,7 @@ struct ScriptRuntime::Impl {
     }
 
     void log(const std::string& message) const {
-        luaLogger.Log("[" + scriptIdentity + "] " + message);
+        scriptRuntimeLogger.Log("[" + scriptIdentity + "] " + message);
     }
 
     void log(lua_State* lua, const std::string& message) const {
@@ -623,7 +623,7 @@ struct ScriptRuntime::Impl {
             debug.currentline > 0) {
             location += ":" + std::to_string(debug.currentline);
         }
-        luaLogger.Log("[" + location + "] " + message);
+        scriptRuntimeLogger.Log("[" + location + "] " + message);
     }
 
     static int panicHandler(lua_State* lua) {
@@ -631,7 +631,7 @@ struct ScriptRuntime::Impl {
         const std::string detail = message ? message : "non-string Lua error object";
         const std::string output =
             "Lua panic: " + detail + " (stack=" + std::to_string(lua_gettop(lua)) + ")";
-        luaLogger.Log(output);
+        scriptRuntimeLogger.Log(output);
         std::cerr << output << '\n';
         return 0;
     }
@@ -788,7 +788,7 @@ struct ScriptRuntime::Impl {
     }
 
     static int peekString(lua_State* lua) {
-        // luaLogger.Log("_peeks()");
+        // scriptRuntimeLogger.Log("_peeks()");
         Impl* runtime = runtimeFor(lua);
         lua_pushstring(lua,
                        runtime->stringStack.empty() ? "" : runtime->stringStack.back().c_str());
@@ -1254,7 +1254,7 @@ struct ScriptRuntime::Impl {
     bool invoke(const char* functionName) {
         openbus::rendering::TraceScope trace("lua", functionName);
 
-        // luaLogger.Log(std::string(functionName) + "()");
+        // scriptRuntimeLogger.Log(std::string(functionName) + "()");
         bool invoked = false;
         lua_rawgeti(state, LUA_REGISTRYINDEX, scriptEnvironment.reference);
         lua_getfield(state, -1, functionName);
@@ -1275,7 +1275,7 @@ struct ScriptRuntime::Impl {
     void invokeFrame(bool isAiVehicle) {
         openbus::rendering::TraceScope trace("lua", "frame");
 
-        // luaLogger.Log("invokeFrame(" + std::string(isAiVehicle ? "true" : "false") + ")");
+        // scriptRuntimeLogger.Log("invokeFrame(" + std::string(isAiVehicle ? "true" : "false") + ")");
         lua_rawgeti(state, LUA_REGISTRYINDEX, scriptEnvironment.reference);
         const char* functionName = "frame";
         lua_getfield(state, -1, "frame_ai");

@@ -20,8 +20,8 @@ namespace {
 
 struct TraceEvent {
     char phase = 'B';
-    const char* category = "";
-    const char* name = "";
+    std::string category;
+    std::string name;
     long long timestampUs = 0;
     unsigned int threadId = 0;
     std::uint64_t sequence = 0;
@@ -45,8 +45,8 @@ class PerfTraceState {
         }
         TraceEvent event;
         event.phase = phase;
-        event.category = category;
-        event.name = name;
+        event.category = category != nullptr ? category : "";
+        event.name = name != nullptr ? name : "";
         event.timestampUs = std::chrono::duration_cast<std::chrono::microseconds>(
                                 std::chrono::steady_clock::now() - start)
                                 .count();
@@ -58,9 +58,16 @@ class PerfTraceState {
     }
 
     ~PerfTraceState() {
-        if (!enabled) {
+        flush();
+    }
+
+    void flush() {
+        std::lock_guard<std::mutex> flushLock(flushMutex);
+        if (flushed || !enabled) {
             return;
         }
+        flushed = true;
+
         std::filesystem::path outputPath = "openbus_trace.json";
         if (const char* configuredPath = std::getenv("OPENBUS_TRACE_FILE")) {
             if (*configuredPath != '\0') {
@@ -89,13 +96,11 @@ class PerfTraceState {
   private:
     static std::string frameName(const TraceEvent& event) {
         std::string frame;
-        if (event.category != nullptr && *event.category != '\0') {
+        if (!event.category.empty()) {
             frame = event.category;
             frame += ':';
         }
-        if (event.name != nullptr) {
-            frame += event.name;
-        }
+        frame += event.name;
         for (char& character : frame) {
             if (character == ';' || character == '\n' || character == '\r') {
                 character = '_';
@@ -189,8 +194,10 @@ class PerfTraceState {
     bool enabled = false;
     std::chrono::steady_clock::time_point start;
     std::mutex mutex;
+    std::mutex flushMutex;
     std::vector<TraceEvent> events;
     std::uint64_t nextSequence = 0;
+    bool flushed = false;
 };
 
 PerfTraceState& perfTrace() {
@@ -209,6 +216,10 @@ bool parseEnabledFlag(const char* value) {
         return static_cast<char>(std::tolower(character));
     });
     return lowered == "1" || lowered == "true" || lowered == "on" || lowered == "yes";
+}
+
+void Flush() {
+    perfTrace().flush();
 }
 
 TraceScope::TraceScope(const char* category, const char* name)

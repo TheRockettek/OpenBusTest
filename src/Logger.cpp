@@ -24,12 +24,21 @@ class LoggerState {
         : logFile("game.log", std::ios::out | std::ios::trunc), worker(&LoggerState::run, this) {}
 
     ~LoggerState() {
+        flush();
+    }
+
+    void flush() {
         {
             std::lock_guard<std::mutex> lock(mutex);
+            if (stopping) {
+                return;
+            }
             stopping = true;
         }
         condition.notify_one();
-        worker.join();
+        if (worker.joinable()) {
+            worker.join();
+        }
     }
 
     void enqueue(std::string message) {
@@ -78,6 +87,10 @@ LoggerState& loggerState() {
 } // namespace
 
 Logger::Logger(const std::string& moduleName) : moduleName_(moduleName) {}
+
+void Logger::Flush() {
+    loggerState().flush();
+}
 
 void Logger::Log(const std::string& message) {
     const auto elapsed = duration_cast<milliseconds>(system_clock::now() - startTime).count();

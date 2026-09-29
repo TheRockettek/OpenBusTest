@@ -3,6 +3,7 @@
 namespace openbus::rendering {
 
 bool parseEnabledFlag(const char* value);
+void Flush();
 
 class TraceScope {
   public:
