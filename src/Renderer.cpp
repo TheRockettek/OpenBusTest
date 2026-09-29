@@ -140,6 +140,11 @@ int reflectionIntervalFromEnvironment() {
     return std::max(1, std::atoi(value));
 }
 
+bool reflectionTransparentFromEnvironment() {
+    const char* value = std::getenv("OPENBUS_REFLECTION_TRANSPARENT");
+    return value == nullptr || openbus::rendering::parseEnabledFlag(value);
+}
+
 std::unordered_map<int, GLuint> activeReflectionTextures;
 bool activeReflectionPass = false;
 
@@ -791,14 +796,16 @@ struct Vehicle {
         material.texcoordOffsetY = static_cast<float>(
             batch.texcoordTransYVariable.empty() ? 0.0
                                                  : variables.get(batch.texcoordTransYVariable));
-        const int reflectionIndex = reflectionTextureIndex(
-            batch.textureName.empty() ? batch.texturePath.string() : batch.textureName);
-        const auto reflectionTexture = activeReflectionTextures.find(reflectionIndex);
-        if (!activeReflectionPass && reflectionTexture != activeReflectionTextures.end()) {
-            material.texture = reflectionTexture->second;
-            material.textureArray = false;
-            material.textured = true;
-            material.flipTextureY = true;
+        if (!activeReflectionPass) {
+            const int reflectionIndex = reflectionTextureIndex(
+                batch.textureName.empty() ? batch.texturePath.string() : batch.textureName);
+            const auto reflectionTexture = activeReflectionTextures.find(reflectionIndex);
+            if (reflectionTexture != activeReflectionTextures.end()) {
+                material.texture = reflectionTexture->second;
+                material.textureArray = false;
+                material.textured = true;
+                material.flipTextureY = true;
+            }
         }
         drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
                        forceUntextured ? 0 : batch.alphaMode);
@@ -812,7 +819,11 @@ struct Vehicle {
         if (!loaded) {
             return;
         }
-        updateAnimationStates();
+        const bool reflectionPass = activeReflectionPass;
+        const bool renderTransparent = !reflectionPass || reflectionTransparentFromEnvironment();
+        if (!reflectionPass) {
+            updateAnimationStates();
+        }
         // Texture uploads must happen on the OpenGL thread, so decoding and GL
         // upload are deliberately split between the worker and draw paths.
         textureUploadStart = std::chrono::steady_clock::now();
@@ -920,6 +931,11 @@ struct Vehicle {
         std::vector<DisplayPart*> opaqueParts;
         std::vector<TransparentBatch> noDepthOpaqueBatches;
         std::vector<TransparentBatch> transparentBatches;
+        opaqueParts.reserve(displayLists.size());
+        if (renderTransparent) {
+            transparentBatches.reserve(displayLists.size());
+            noDepthOpaqueBatches.reserve(displayLists.size());
+        }
         {
             TraceScope phase("render", "Vehicle::draw.classifyParts");
             for (DisplayPart& part : displayLists) {
@@ -933,7 +949,7 @@ struct Vehicle {
                         return batch.alphaMode == 0 && !batch.noZwrite;
                     });
                 for (Batch& batch : part.batches) {
-                    if (batch.alphaMode != 0 || batch.noZwrite) {
+                    if (renderTransparent && (batch.alphaMode != 0 || batch.noZwrite)) {
                         transparentBatches.push_back(
                             {&batch, &part, viewDepth(part), part.renderType});
                     }
@@ -988,64 +1004,72 @@ struct Vehicle {
                         continue;
                     }
                     drawBatch(batch, alpha);
-                    drawEnvironmentMap(batch, alpha);
+                    if (!reflectionPass) {
+                        drawEnvironmentMap(batch, alpha);
+                    }
                 }
                 popMatrix();
             }
         }
-        glDepthMask(GL_FALSE);
-        glDisable(GL_BLEND);
-        {
-            TraceScope phase("render", "Vehicle::draw.noDepthPass");
-            for (const TransparentBatch& noDepthOpaque : noDepthOpaqueBatches) {
-                Batch& batch = *noDepthOpaque.batch;
-                pushMatrix();
-                applyAnimations(*noDepthOpaque.part);
-                setBackFaceCulling(noDepthOpaque.part->backFaceCulling);
-                const double alpha = alphaScale(batch);
-                if (alpha <= 0.0) {
+        if (renderTransparent) {
+            glDepthMask(GL_FALSE);
+            glDisable(GL_BLEND);
+            {
+                TraceScope phase("render", "Vehicle::draw.noDepthPass");
+                for (const TransparentBatch& noDepthOpaque : noDepthOpaqueBatches) {
+                    Batch& batch = *noDepthOpaque.batch;
+                    pushMatrix();
+                    applyAnimations(*noDepthOpaque.part);
+                    setBackFaceCulling(noDepthOpaque.part->backFaceCulling);
+                    const double alpha = alphaScale(batch);
+                    if (alpha <= 0.0) {
+                        popMatrix();
+                        continue;
+                    }
+                    drawBatch(batch, alpha);
+                    if (!reflectionPass) {
+                        drawEnvironmentMap(batch, alpha);
+                    }
                     popMatrix();
-                    continue;
                 }
-                drawBatch(batch, alpha);
-                drawEnvironmentMap(batch, alpha);
-                popMatrix();
             }
-        }
-        glDepthMask(GL_FALSE);
-        {
-            TraceScope phase("render", "Vehicle::draw.transparentPass");
-            for (const TransparentBatch& transparent : transparentBatches) {
-                Batch& batch = *transparent.batch;
-                pushMatrix();
-                applyAnimations(*transparent.part);
-                setBackFaceCulling(transparent.part->backFaceCulling);
-                const double alpha = alphaScale(batch);
-                if (alpha <= 0.0) {
+            glDepthMask(GL_FALSE);
+            {
+                TraceScope phase("render", "Vehicle::draw.transparentPass");
+                for (const TransparentBatch& transparent : transparentBatches) {
+                    Batch& batch = *transparent.batch;
+                    pushMatrix();
+                    applyAnimations(*transparent.part);
+                    setBackFaceCulling(transparent.part->backFaceCulling);
+                    const double alpha = alphaScale(batch);
+                    if (alpha <= 0.0) {
+                        popMatrix();
+                        continue;
+                    }
+                    if (batch.alphaMode == 1) {
+                        glDisable(GL_BLEND);
+                        glEnable(GL_POLYGON_OFFSET_FILL);
+                        glPolygonOffset(-1.0f, -1.0f);
+                    } else if (batch.alphaMode == 2) {
+                        glEnable(GL_BLEND);
+                        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                        glDepthFunc(GL_LEQUAL);
+                        glEnable(GL_POLYGON_OFFSET_FILL);
+                        glPolygonOffset(-1.0f, -1.0f);
+                    } else if (batch.noZwrite) {
+                        glEnable(GL_BLEND);
+                        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                        glDisable(GL_POLYGON_OFFSET_FILL);
+                    } else {
+                        glDisable(GL_BLEND);
+                        glDisable(GL_POLYGON_OFFSET_FILL);
+                    }
+                    drawBatch(batch, alpha);
+                    if (!reflectionPass) {
+                        drawEnvironmentMap(batch, alpha);
+                    }
                     popMatrix();
-                    continue;
                 }
-                if (batch.alphaMode == 1) {
-                    glDisable(GL_BLEND);
-                    glEnable(GL_POLYGON_OFFSET_FILL);
-                    glPolygonOffset(-1.0f, -1.0f);
-                } else if (batch.alphaMode == 2) {
-                    glEnable(GL_BLEND);
-                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    glDepthFunc(GL_LEQUAL);
-                    glEnable(GL_POLYGON_OFFSET_FILL);
-                    glPolygonOffset(-1.0f, -1.0f);
-                } else if (batch.noZwrite) {
-                    glEnable(GL_BLEND);
-                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    glDisable(GL_POLYGON_OFFSET_FILL);
-                } else {
-                    glDisable(GL_BLEND);
-                    glDisable(GL_POLYGON_OFFSET_FILL);
-                }
-                drawBatch(batch, alpha);
-                drawEnvironmentMap(batch, alpha);
-                popMatrix();
             }
         }
         {
@@ -2144,6 +2168,47 @@ struct Vehicle {
             batch.alphaScaleVariable = alphaScaleVariable;
             batch.textureChanges = textureChanges;
             batch.vertexCount = batch.vertices.size();
+
+            const auto canMergeOpaqueBatches = [](const Batch& first, const Batch& second) {
+                return first.alphaMode == 0 && second.alphaMode == 0 && !first.noZwrite &&
+                       !second.noZwrite && !first.noZcheck && !second.noZcheck &&
+                       first.texturePath == second.texturePath &&
+                       first.textureRoot == second.textureRoot &&
+                       first.textureName == second.textureName &&
+                       first.environmentTextureName == second.environmentTextureName &&
+                       first.environmentStrength == second.environmentStrength &&
+                       first.color == second.color && first.textured == second.textured &&
+                       first.hasNormals == second.hasNormals &&
+                       first.lightmap.name == second.lightmap.name &&
+                       first.nightmap.name == second.nightmap.name &&
+                       first.transmap.name == second.transmap.name &&
+                       first.lightmapStrengthVariable == second.lightmapStrengthVariable &&
+                       first.freeTextureVariable == second.freeTextureVariable &&
+                       first.texcoordTransXVariable == second.texcoordTransXVariable &&
+                       first.texcoordTransYVariable == second.texcoordTransYVariable &&
+                       first.alphaScaleVariable == second.alphaScaleVariable &&
+                       first.baseTextureLayer == second.baseTextureLayer &&
+                       first.textureLayer == second.textureLayer && first.textureChanges.empty() &&
+                       second.textureChanges.empty();
+            };
+            std::vector<Batch>& batches = destination->back().batches;
+            const auto compatibleBatch =
+                std::find_if(batches.begin(), batches.end(), [&](const Batch& existing) {
+                    return canMergeOpaqueBatches(existing, batch);
+                });
+            if (compatibleBatch != batches.end()) {
+                Batch& merged = *compatibleBatch;
+                merged.vertices.insert(merged.vertices.end(), batch.vertices.begin(),
+                                       batch.vertices.end());
+                merged.vertexCount = merged.vertices.size();
+                TraceScope uploadTrace("obj", "loadObj.mergeBatch");
+                pglBindBuffer(GL_ARRAY_BUFFER, merged.buffer);
+                pglBufferData(
+                    GL_ARRAY_BUFFER,
+                    static_cast<std::ptrdiff_t>(merged.vertices.size() * sizeof(Vertex)),
+                    merged.vertices.data(), GL_STATIC_DRAW);
+                return;
+            }
             {
                 TraceScope uploadTrace("obj", "loadObj.uploadVbo");
                 pglGenBuffers(1, &batch.buffer);
@@ -2152,7 +2217,7 @@ struct Vehicle {
                               static_cast<std::ptrdiff_t>(batch.vertices.size() * sizeof(Vertex)),
                               batch.vertices.data(), GL_STATIC_DRAW);
             }
-            destination->back().batches.push_back(std::move(batch));
+            batches.push_back(std::move(batch));
         };
 
         std::unordered_map<std::string, std::vector<const ObjTriangle*>> groups;
@@ -3028,7 +3093,8 @@ void Renderer::draw(const BusSimulation& simulation) {
     }
 
     const RenderViewContext context =
-        isExteriorView() ? RenderViewContext::PlayerExterior : RenderViewContext::PlayerInterior;
+        (renderingReflection_ || isExteriorView()) ? RenderViewContext::PlayerExterior
+                                                   : RenderViewContext::PlayerInterior;
 
     {
         TraceScope phase("render", "Renderer::draw.model");
@@ -3046,7 +3112,7 @@ void Renderer::draw(const BusSimulation& simulation) {
         }
     }
 
-    if (playerVehicle_ && glfwGetTime() - lastStatsTitleTime_ > 0.25) {
+    if (!renderingReflection_ && playerVehicle_ && glfwGetTime() - lastStatsTitleTime_ > 0.25) {
         std::ostringstream title;
         title << "OpenBus - " << playerVehicle_->renderedTriangles() << " triangles";
         glfwSetWindowTitle(window_, title.str().c_str());
@@ -3055,38 +3121,43 @@ void Renderer::draw(const BusSimulation& simulation) {
 
     {
         TraceScope phase("render", "Renderer::draw.overlays");
-        // Render center of gravity marker
-        const std::array<double, 3> centerOfGravity = simulation.centerOfGravity();
-        pushMatrix();
-        translate(centerOfGravity[0], centerOfGravity[1], centerOfGravity[2]);
-        drawCenterOfGravityMarker(0.35);
-        popMatrix();
+        if (!renderingReflection_) {
+            // Render center of gravity marker
+            const std::array<double, 3> centerOfGravity = simulation.centerOfGravity();
+            pushMatrix();
+            translate(centerOfGravity[0], centerOfGravity[1], centerOfGravity[2]);
+            drawCenterOfGravityMarker(0.35);
+            popMatrix();
 
-        // Render axle lines
-        const std::array<double, 3> axleColor = {0.20, 0.20, 0.20};
-        std::vector<openbus::rendering::PrimitiveVertex> axleLines;
-        axleLines.reserve(simulation.axleCount() * 2);
-        for (std::size_t axleIndex = 0; axleIndex < simulation.axleCount(); ++axleIndex) {
-            const BodyPose leftWheel = simulation.wheelPose(axleIndex * 2);
-            const BodyPose rightWheel = simulation.wheelPose(axleIndex * 2 + 1);
-            axleLines.push_back({static_cast<float>(rightWheel.position[0]),
-                                 static_cast<float>(rightWheel.position[1]),
-                                 static_cast<float>(rightWheel.position[2]),
-                                 static_cast<float>(axleColor[0]), static_cast<float>(axleColor[1]),
-                                 static_cast<float>(axleColor[2])});
-            axleLines.push_back({static_cast<float>(leftWheel.position[0]),
-                                 static_cast<float>(leftWheel.position[1]),
-                                 static_cast<float>(leftWheel.position[2]),
-                                 static_cast<float>(axleColor[0]), static_cast<float>(axleColor[1]),
-                                 static_cast<float>(axleColor[2])});
+            // Render axle lines
+            const std::array<double, 3> axleColor = {0.20, 0.20, 0.20};
+            std::vector<openbus::rendering::PrimitiveVertex> axleLines;
+            axleLines.reserve(simulation.axleCount() * 2);
+            for (std::size_t axleIndex = 0; axleIndex < simulation.axleCount(); ++axleIndex) {
+                const BodyPose leftWheel = simulation.wheelPose(axleIndex * 2);
+                const BodyPose rightWheel = simulation.wheelPose(axleIndex * 2 + 1);
+                axleLines.push_back({static_cast<float>(rightWheel.position[0]),
+                                     static_cast<float>(rightWheel.position[1]),
+                                     static_cast<float>(rightWheel.position[2]),
+                                     static_cast<float>(axleColor[0]),
+                                     static_cast<float>(axleColor[1]),
+                                     static_cast<float>(axleColor[2])});
+                axleLines.push_back({static_cast<float>(leftWheel.position[0]),
+                                     static_cast<float>(leftWheel.position[1]),
+                                     static_cast<float>(leftWheel.position[2]),
+                                     static_cast<float>(axleColor[0]),
+                                     static_cast<float>(axleColor[1]),
+                                     static_cast<float>(axleColor[2])});
+            }
+            openbus::rendering::drawPrimitives(axleLines, GL_LINES);
         }
-        openbus::rendering::drawPrimitives(axleLines, GL_LINES);
     }
 
     {
         TraceScope phase("render", "Renderer::draw.wheels");
         if (playerVehicle_ && playerVehicle_->hasConfiguredWheels(simulation.wheelCount())) {
-            playerVehicle_->drawConfiguredWheels(simulation, chassis, isExteriorView());
+            playerVehicle_->drawConfiguredWheels(simulation, chassis,
+                                                 renderingReflection_ || isExteriorView());
         } else {
             for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
                 const BodyPose wheel = simulation.wheelPose(index);

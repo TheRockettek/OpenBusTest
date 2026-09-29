@@ -41,6 +41,23 @@ struct Uniforms {
     GLint environmentAlpha = -1;
 };
 
+struct ModelUniformState {
+    bool valid = false;
+    bool textured = false;
+    bool textureArray = false;
+    bool useLightmap = false;
+    bool useNightmap = false;
+    bool useTransmap = false;
+    bool useFreeTexture = false;
+    bool flipTextureY = false;
+    int alphaMode = 0;
+    float lightmapStrength = 0.0f;
+    float nightmapStrength = 0.0f;
+    float texcoordOffsetX = 0.0f;
+    float texcoordOffsetY = 0.0f;
+    std::array<float, 4> color = {};
+};
+
 GLuint modelProgram = 0;
 GLuint environmentProgram = 0;
 GLuint primitiveProgram = 0;
@@ -58,6 +75,7 @@ GLuint boundTextureArray = 0;
 GLuint matrixProgram = 0;
 Matrix4 cachedProjection = {};
 Matrix4 cachedModelView = {};
+ModelUniformState modelUniformState;
 
 const char* modelVertexShader = R"GLSL(
 #version 330 core
@@ -316,6 +334,67 @@ void bindTexture(GLenum target, GLuint texture) {
     cachedTexture = texture;
 }
 
+void uploadModelUniforms(const ModelMaterial& material, const std::array<double, 3>& color,
+                         double alpha, int alphaMode) {
+    const std::array<float, 4> colorValue = {static_cast<float>(color[0]),
+                                             static_cast<float>(color[1]),
+                                             static_cast<float>(color[2]),
+                                             static_cast<float>(alpha)};
+    const bool flagsChanged =
+        !modelUniformState.valid || modelUniformState.textured != material.textured ||
+        modelUniformState.textureArray != (material.textured && material.textureArray) ||
+        modelUniformState.useLightmap != material.useLightmap ||
+        modelUniformState.useNightmap != material.useNightmap ||
+        modelUniformState.useTransmap != material.useTransmap ||
+        modelUniformState.useFreeTexture != material.useFreeTexture;
+    if (flagsChanged) {
+        pglUniform1i(modelUniforms.useTexture, material.textured ? 1 : 0);
+        pglUniform1i(modelUniforms.useTextureArray,
+                     material.textured && material.textureArray ? 1 : 0);
+        pglUniform1i(modelUniforms.useLightmap, material.useLightmap ? 1 : 0);
+        pglUniform1i(modelUniforms.useNightmap, material.useNightmap ? 1 : 0);
+        pglUniform1i(modelUniforms.useTransmap, material.useTransmap ? 1 : 0);
+        pglUniform1i(modelUniforms.useFreeTexture, material.useFreeTexture ? 1 : 0);
+    }
+    if (!modelUniformState.valid || modelUniformState.alphaMode != alphaMode) {
+        pglUniform1i(modelUniforms.alphaMode, alphaMode);
+    }
+    if (!modelUniformState.valid ||
+        modelUniformState.lightmapStrength != material.lightmapStrength) {
+        pglUniform1f(modelUniforms.lightmapStrength, material.lightmapStrength);
+    }
+    if (!modelUniformState.valid || modelUniformState.nightmapStrength != material.nightmapStrength) {
+        pglUniform1f(modelUniforms.nightmapStrength, material.nightmapStrength);
+    }
+    if (!modelUniformState.valid ||
+        modelUniformState.texcoordOffsetX != material.texcoordOffsetX ||
+        modelUniformState.texcoordOffsetY != material.texcoordOffsetY) {
+        pglUniform2f(modelUniforms.texcoordOffset, material.texcoordOffsetX,
+                     material.texcoordOffsetY);
+    }
+    if (!modelUniformState.valid || modelUniformState.flipTextureY != material.flipTextureY) {
+        pglUniform1i(modelUniforms.flipTextureY, material.flipTextureY ? 1 : 0);
+    }
+    if (!modelUniformState.valid || modelUniformState.color != colorValue) {
+        pglUniform4f(modelUniforms.color, colorValue[0], colorValue[1], colorValue[2],
+                     colorValue[3]);
+    }
+    modelUniformState.valid = true;
+    modelUniformState.textured = material.textured;
+    modelUniformState.textureArray = material.textured && material.textureArray;
+    modelUniformState.useLightmap = material.useLightmap;
+    modelUniformState.useNightmap = material.useNightmap;
+    modelUniformState.useTransmap = material.useTransmap;
+    modelUniformState.useFreeTexture = material.useFreeTexture;
+    modelUniformState.flipTextureY = material.flipTextureY;
+    modelUniformState.alphaMode = alphaMode;
+    modelUniformState.lightmapStrength = material.lightmapStrength;
+    modelUniformState.nightmapStrength = material.nightmapStrength;
+    modelUniformState.texcoordOffsetX = material.texcoordOffsetX;
+    modelUniformState.texcoordOffsetY = material.texcoordOffsetY;
+    modelUniformState.color = colorValue;
+}
+
 } // namespace
 
 bool initializeCoreRenderer() {
@@ -356,6 +435,7 @@ bool initializeCoreRenderer() {
         currentArrayBuffer = 0;
         currentProgram = 0;
         matrixProgram = 0;
+        modelUniformState = {};
         boundTexture2D = 0;
         boundTextureArray = 0;
         return true;
@@ -369,6 +449,7 @@ void shutdownCoreRenderer() {
     currentVertexArray = 0;
     currentArrayBuffer = 0;
     matrixProgram = 0;
+    modelUniformState = {};
     boundTexture2D = 0;
     boundTextureArray = 0;
     if (primitiveBuffer != 0) {
@@ -410,20 +491,7 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     }
     useProgram(modelProgram);
     uploadMatrices(modelUniforms);
-    pglUniform1i(modelUniforms.useTexture, material.textured ? 1 : 0);
-    pglUniform1i(modelUniforms.useTextureArray, material.textured && material.textureArray ? 1 : 0);
-    pglUniform1i(modelUniforms.alphaMode, alphaMode);
-    pglUniform1i(modelUniforms.useLightmap, material.useLightmap ? 1 : 0);
-    pglUniform1i(modelUniforms.useNightmap, material.useNightmap ? 1 : 0);
-    pglUniform1i(modelUniforms.useTransmap, material.useTransmap ? 1 : 0);
-    pglUniform1i(modelUniforms.useFreeTexture, material.useFreeTexture ? 1 : 0);
-    pglUniform1f(modelUniforms.lightmapStrength, material.lightmapStrength);
-    pglUniform1f(modelUniforms.nightmapStrength, material.nightmapStrength);
-    pglUniform2f(modelUniforms.texcoordOffset, material.texcoordOffsetX, material.texcoordOffsetY);
-    pglUniform1i(modelUniforms.flipTextureY, material.flipTextureY ? 1 : 0);
-    pglUniform4f(modelUniforms.color, static_cast<GLfloat>(color[0]),
-                 static_cast<GLfloat>(color[1]), static_cast<GLfloat>(color[2]),
-                 static_cast<GLfloat>(alpha));
+    uploadModelUniforms(material, color, alpha, alphaMode);
     pglActiveTexture(GL_TEXTURE0);
     bindTexture(material.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D, material.texture);
     pglActiveTexture(GL_TEXTURE1);

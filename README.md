@@ -161,6 +161,9 @@ derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
 - Mirrors update every frame by default. Set `OPENBUS_REFLECTION_INTERVAL=4`
   to update them once every four rendered frames; values below `1` are treated
   as `1`.
+- Mirror transparency is rendered by default. Set
+  `OPENBUS_REFLECTION_TRANSPARENT=0` to render opaque geometry only and reduce
+  mirror workload when transparent details are not needed.
 - Scripts normally follow the render rate. Set `OPENBUS_SCRIPT_HZ=30` to run
   vehicle scripts at 30 Hz while rendering continues at the display rate;
   fixed-rate script ticks receive `Timegap=1/30` and catch up for short frame
