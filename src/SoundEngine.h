@@ -15,7 +15,7 @@ struct SoundTriggerDefinition {
     std::filesystem::path file;
     bool loop = false;
     int viewpoint = 0;
-  double maxDistance = 0.0;
+    double maxDistance = 0.0;
     std::vector<SoundCurvePoint> volumeCurve;
 };
 
@@ -29,7 +29,7 @@ class SoundEngine {
     void load(const std::filesystem::path& configPath);
     void setListenerDistance(double distance);
     void trigger(const std::string& name, const std::filesystem::path& overrideFile = {},
-           double controlValue = 0.0);
+                 double controlValue = 0.0);
 
   private:
     struct Backend;

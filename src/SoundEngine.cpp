@@ -179,8 +179,8 @@ struct SoundEngine::Backend {
                     const std::size_t sourceFrame = active->frame++;
                     const auto& clip = *active->clip;
                     const float left = clip.samples[sourceFrame * clip.channels];
-                    const float right = clip.channels > 1 ? clip.samples[sourceFrame * clip.channels + 1]
-                                                          : left;
+                    const float right =
+                        clip.channels > 1 ? clip.samples[sourceFrame * clip.channels + 1] : left;
                     output[frame * 2] += left * active->gain;
                     output[frame * 2 + 1] += right * active->gain;
                     ++active;
@@ -198,9 +198,9 @@ struct SoundEngine::Backend {
         loop = pw_thread_loop_new("openbus-audio", nullptr);
         context = pw_context_new(pw_thread_loop_get_loop(loop), nullptr, 0);
         core = pw_context_connect(context, nullptr, 0);
-        stream = pw_stream_new(core, "OpenBus", pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio",
-                                                                    PW_KEY_MEDIA_CATEGORY, "Playback",
-                                                                    PW_KEY_MEDIA_ROLE, "Game", nullptr));
+        stream = pw_stream_new(core, "OpenBus",
+                               pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY,
+                                                 "Playback", PW_KEY_MEDIA_ROLE, "Game", nullptr));
         static const pw_stream_events events = [] {
             pw_stream_events value = {};
             value.version = PW_VERSION_STREAM_EVENTS;
@@ -212,25 +212,29 @@ struct SoundEngine::Backend {
         std::uint8_t buffer[1024] = {};
         spa_pod_builder builder = SPA_POD_BUILDER_INIT(buffer, sizeof(buffer));
         const spa_pod* params[1] = {spa_pod_builder_add_object(
-            &builder, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat,
-            SPA_FORMAT_mediaType, SPA_POD_Id(SPA_MEDIA_TYPE_audio),
-            SPA_FORMAT_mediaSubtype, SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw),
-            SPA_FORMAT_AUDIO_format, SPA_POD_Id(SPA_AUDIO_FORMAT_F32),
-            SPA_FORMAT_AUDIO_rate, SPA_POD_Int(48000), SPA_FORMAT_AUDIO_channels, SPA_POD_Int(2))};
-        pw_stream_connect(stream, PW_DIRECTION_OUTPUT, PW_ID_ANY,
-                          static_cast<pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT |
-                                                       PW_STREAM_FLAG_MAP_BUFFERS),
-                          params, 1);
+            &builder, SPA_TYPE_OBJECT_Format, SPA_PARAM_EnumFormat, SPA_FORMAT_mediaType,
+            SPA_POD_Id(SPA_MEDIA_TYPE_audio), SPA_FORMAT_mediaSubtype,
+            SPA_POD_Id(SPA_MEDIA_SUBTYPE_raw), SPA_FORMAT_AUDIO_format,
+            SPA_POD_Id(SPA_AUDIO_FORMAT_F32), SPA_FORMAT_AUDIO_rate, SPA_POD_Int(48000),
+            SPA_FORMAT_AUDIO_channels, SPA_POD_Int(2))};
+        pw_stream_connect(
+            stream, PW_DIRECTION_OUTPUT, PW_ID_ANY,
+            static_cast<pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS),
+            params, 1);
     }
 
     ~Backend() {
         if (loop != nullptr) {
             pw_thread_loop_stop(loop);
         }
-        if (stream != nullptr) pw_stream_destroy(stream);
-        if (core != nullptr) pw_core_disconnect(core);
-        if (context != nullptr) pw_context_destroy(context);
-        if (loop != nullptr) pw_thread_loop_destroy(loop);
+        if (stream != nullptr)
+            pw_stream_destroy(stream);
+        if (core != nullptr)
+            pw_core_disconnect(core);
+        if (context != nullptr)
+            pw_context_destroy(context);
+        if (loop != nullptr)
+            pw_thread_loop_destroy(loop);
         pw_deinit();
     }
 
@@ -366,7 +370,7 @@ void SoundEngine::setListenerDistance(double distance) {
 }
 
 void SoundEngine::trigger(const std::string& name, const std::filesystem::path& overrideFile,
-                         double controlValue) {
+                          double controlValue) {
     const auto found = triggers_.find(normalized(name));
     if (found == triggers_.end() && overrideFile.empty()) {
         return;
@@ -397,10 +401,10 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
     if (gain <= 0.0) {
         return;
     }
-    const std::filesystem::path file = overrideFile.empty()
-                                           ? found->second.file
-                                           : (overrideFile.is_absolute() ? overrideFile
-                                                                          : basePath_ / overrideFile);
+    const std::filesystem::path file =
+        overrideFile.empty()
+            ? found->second.file
+            : (overrideFile.is_absolute() ? overrideFile : basePath_ / overrideFile);
 #ifdef _WIN32
     const std::wstring widePath = file.wstring();
     const DWORD flags = SND_FILENAME | SND_ASYNC | SND_NODEFAULT | (loop ? SND_LOOP : 0);

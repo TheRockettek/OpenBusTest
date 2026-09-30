@@ -20,9 +20,9 @@ class ScriptRuntime {
         std::vector<std::uint8_t> pixels;
     };
 
-    ScriptRuntime(const VehicleConfig& configuration, Variables& localState,
-                  SimulationState& sharedState,
-                  std::function<void(const std::string&, const std::string&, double)> soundTrigger = {});
+    ScriptRuntime(
+        const VehicleConfig& configuration, Variables& localState, SimulationState& sharedState,
+        std::function<void(const std::string&, const std::string&, double)> soundTrigger = {});
     ~ScriptRuntime();
 
     ScriptRuntime(const ScriptRuntime&) = delete;

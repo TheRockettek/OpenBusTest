@@ -187,8 +187,7 @@ Matrix4 multiplyMatrix4(const Matrix4& left, const Matrix4& right) {
     return result;
 }
 
-std::array<double, 4> transformPoint(const Matrix4& matrix,
-                                     const std::array<double, 4>& point) {
+std::array<double, 4> transformPoint(const Matrix4& matrix, const std::array<double, 4>& point) {
     std::array<double, 4> result = {};
     for (int row = 0; row < 4; ++row) {
         for (int column = 0; column < 4; ++column) {
@@ -207,13 +206,12 @@ struct ViewFrustum {
 };
 
 ViewFrustum buildViewFrustum(const Matrix4& projection) {
-    const std::array<std::array<double, 4>, 6> planeSigns = {
-        {{{1.0, 0.0, 0.0, 1.0}},
-         {{-1.0, 0.0, 0.0, 1.0}},
-         {{0.0, 1.0, 0.0, 1.0}},
-         {{0.0, -1.0, 0.0, 1.0}},
-         {{0.0, 0.0, 1.0, 1.0}},
-         {{0.0, 0.0, -1.0, 1.0}}}};
+    const std::array<std::array<double, 4>, 6> planeSigns = {{{{1.0, 0.0, 0.0, 1.0}},
+                                                              {{-1.0, 0.0, 0.0, 1.0}},
+                                                              {{0.0, 1.0, 0.0, 1.0}},
+                                                              {{0.0, -1.0, 0.0, 1.0}},
+                                                              {{0.0, 0.0, 1.0, 1.0}},
+                                                              {{0.0, 0.0, -1.0, 1.0}}}};
     ViewFrustum frustum;
     for (std::size_t plane = 0; plane < planeSigns.size(); ++plane) {
         double lengthSquared = 0.0;
@@ -237,8 +235,7 @@ bool sphereOutsideFrustum(const ViewFrustum& frustum, const std::array<double, 4
     for (std::size_t plane = 0; plane < frustum.planes.size(); ++plane) {
         const double planeDistance = frustum.planes[plane][0] * eye[0] +
                                      frustum.planes[plane][1] * eye[1] +
-                                     frustum.planes[plane][2] * eye[2] +
-                                     frustum.planes[plane][3];
+                                     frustum.planes[plane][2] * eye[2] + frustum.planes[plane][3];
         if (planeDistance < -radius * frustum.planeLengths[plane]) {
             return true;
         }
@@ -828,66 +825,69 @@ struct Vehicle {
                     (part.viewpoint != 0 && (part.viewpoint & viewpointMask(context)) == 0)) {
                     continue;
                 }
-            const std::vector<int>& partReflectionIndices =
-                reflectionTextureIndicesForPart(part);
-            if (partReflectionIndices.empty()) {
-                continue;
-            }
-            const std::array<double, 3> center = animatedPartCenter(part);
-            const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
-            const std::array<double, 4> eye = transformPoint(modelView, local);
-            if (frustumCulling && sphereOutsideFrustum(frustum, eye, part.radius)) {
-                continue;
-            }
-            const Matrix4 animation = animationTransformForPart(part);
-            const std::array<double, 3> halfSize = {std::max(part.size[0] * 0.5, 0.0),
-                                                    std::max(part.size[1] * 0.5, 0.0),
-                                                    std::max(part.size[2] * 0.5, 0.0)};
-            double minimumNdcX = std::numeric_limits<double>::max();
-            double maximumNdcX = std::numeric_limits<double>::lowest();
-            double minimumNdcY = std::numeric_limits<double>::max();
-            double maximumNdcY = std::numeric_limits<double>::lowest();
-            bool hasProjectedCorner = false;
-            bool intersectsNearPlane = false;
-
-            for (int corner = 0; corner < 8; ++corner) {
-                const std::array<double, 4> cornerLocal = {
-                    part.center[0] + ((corner & 1) == 0 ? -halfSize[0] : halfSize[0]),
-                    part.center[1] + ((corner & 2) == 0 ? -halfSize[1] : halfSize[1]),
-                    part.center[2] + ((corner & 4) == 0 ? -halfSize[2] : halfSize[2]), 1.0};
-                std::array<double, 4> animated = transformPoint(animation, cornerLocal);
-                animated[2] += modelOffsetZ;
-                const std::array<double, 4> cornerEye = transformPoint(modelView, animated);
-                const double depth = -cornerEye[2];
-                if (depth <= REFLECTION_NEAR_PLANE) {
-                    intersectsNearPlane = true;
+                const std::vector<int>& partReflectionIndices =
+                    reflectionTextureIndicesForPart(part);
+                if (partReflectionIndices.empty()) {
                     continue;
                 }
-                const double clipX = projection[0] * cornerEye[0] + projection[4] * cornerEye[1] +
-                                     projection[8] * cornerEye[2] + projection[12] * cornerEye[3];
-                const double clipY = projection[1] * cornerEye[0] + projection[5] * cornerEye[1] +
-                                     projection[9] * cornerEye[2] + projection[13] * cornerEye[3];
-                minimumNdcX = std::min(minimumNdcX, clipX / depth);
-                maximumNdcX = std::max(maximumNdcX, clipX / depth);
-                minimumNdcY = std::min(minimumNdcY, clipY / depth);
-                maximumNdcY = std::max(maximumNdcY, clipY / depth);
-                hasProjectedCorner = true;
-            }
-            if (!hasProjectedCorner) {
-                continue;
-            }
-            const double projectedWidth =
-                intersectsNearPlane ? viewportWidth
-                                    : std::clamp((maximumNdcX - minimumNdcX) * 0.5 * viewportWidth,
-                                                 0.0, viewportWidth);
-            const double projectedHeight =
-                intersectsNearPlane ? viewportHeight
-                                    : std::clamp((maximumNdcY - minimumNdcY) * 0.5 * viewportHeight,
-                                                 0.0, viewportHeight);
-            const double screenBoundedDiameter = std::max(projectedWidth, projectedHeight);
-            const int requiredSize =
-                std::max(MIN_REFLECTION_TARGET_SIZE,
-                         static_cast<int>(std::ceil(screenBoundedDiameter)));
+                const std::array<double, 3> center = animatedPartCenter(part);
+                const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
+                const std::array<double, 4> eye = transformPoint(modelView, local);
+                if (frustumCulling && sphereOutsideFrustum(frustum, eye, part.radius)) {
+                    continue;
+                }
+                const Matrix4 animation = animationTransformForPart(part);
+                const std::array<double, 3> halfSize = {std::max(part.size[0] * 0.5, 0.0),
+                                                        std::max(part.size[1] * 0.5, 0.0),
+                                                        std::max(part.size[2] * 0.5, 0.0)};
+                double minimumNdcX = std::numeric_limits<double>::max();
+                double maximumNdcX = std::numeric_limits<double>::lowest();
+                double minimumNdcY = std::numeric_limits<double>::max();
+                double maximumNdcY = std::numeric_limits<double>::lowest();
+                bool hasProjectedCorner = false;
+                bool intersectsNearPlane = false;
+
+                for (int corner = 0; corner < 8; ++corner) {
+                    const std::array<double, 4> cornerLocal = {
+                        part.center[0] + ((corner & 1) == 0 ? -halfSize[0] : halfSize[0]),
+                        part.center[1] + ((corner & 2) == 0 ? -halfSize[1] : halfSize[1]),
+                        part.center[2] + ((corner & 4) == 0 ? -halfSize[2] : halfSize[2]), 1.0};
+                    std::array<double, 4> animated = transformPoint(animation, cornerLocal);
+                    animated[2] += modelOffsetZ;
+                    const std::array<double, 4> cornerEye = transformPoint(modelView, animated);
+                    const double depth = -cornerEye[2];
+                    if (depth <= REFLECTION_NEAR_PLANE) {
+                        intersectsNearPlane = true;
+                        continue;
+                    }
+                    const double clipX =
+                        projection[0] * cornerEye[0] + projection[4] * cornerEye[1] +
+                        projection[8] * cornerEye[2] + projection[12] * cornerEye[3];
+                    const double clipY =
+                        projection[1] * cornerEye[0] + projection[5] * cornerEye[1] +
+                        projection[9] * cornerEye[2] + projection[13] * cornerEye[3];
+                    minimumNdcX = std::min(minimumNdcX, clipX / depth);
+                    maximumNdcX = std::max(maximumNdcX, clipX / depth);
+                    minimumNdcY = std::min(minimumNdcY, clipY / depth);
+                    maximumNdcY = std::max(maximumNdcY, clipY / depth);
+                    hasProjectedCorner = true;
+                }
+                if (!hasProjectedCorner) {
+                    continue;
+                }
+                const double projectedWidth =
+                    intersectsNearPlane
+                        ? viewportWidth
+                        : std::clamp((maximumNdcX - minimumNdcX) * 0.5 * viewportWidth, 0.0,
+                                     viewportWidth);
+                const double projectedHeight =
+                    intersectsNearPlane
+                        ? viewportHeight
+                        : std::clamp((maximumNdcY - minimumNdcY) * 0.5 * viewportHeight, 0.0,
+                                     viewportHeight);
+                const double screenBoundedDiameter = std::max(projectedWidth, projectedHeight);
+                const int requiredSize = std::max(
+                    MIN_REFLECTION_TARGET_SIZE, static_cast<int>(std::ceil(screenBoundedDiameter)));
 
                 for (const int reflectionIndex : partReflectionIndices) {
                     visibleReflectionTextureIndices.insert(reflectionIndex);
@@ -906,11 +906,11 @@ struct Vehicle {
     int requiredReflectionSize(std::size_t reflectionIndex) const {
         const auto required = reflectionRequiredSizes.find(static_cast<int>(reflectionIndex));
         return required == reflectionRequiredSizes.end() ? MIN_REFLECTION_TARGET_SIZE
-                                 : required->second;
+                                                         : required->second;
     }
 
     void updateSimulationVariables(const BusSimulation& simulation, double throttle,
-                                    double steering, double brake) {
+                                   double steering, double brake) {
         simulation.updateVariables(variables, throttle, steering, brake);
     }
 
@@ -3122,9 +3122,8 @@ Vehicle* Renderer::AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPoli
         }
         initializeReflectionTargets();
     }
-    auto model =
-        std::make_unique<Vehicle>(vehicle, loadingPolicy, *assetRequestManager_, simulationState_,
-                      soundEngine_);
+    auto model = std::make_unique<Vehicle>(vehicle, loadingPolicy, *assetRequestManager_,
+                                           simulationState_, soundEngine_);
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
     return result;
@@ -3210,10 +3209,10 @@ void Renderer::selectVehicleCamera(int direction) {
 
 double Renderer::currentFieldOfView() const {
     const VehicleCamera* camera = currentVehicleCamera();
-    const double baseFieldOfView =
-        camera != nullptr && camera->fieldOfView > 0.0 ? camera->fieldOfView : DEFAULT_FIELD_OF_VIEW;
-    return std::clamp(baseFieldOfView + fieldOfViewOffset_, MIN_FIELD_OF_VIEW,
-                      MAX_FIELD_OF_VIEW);
+    const double baseFieldOfView = camera != nullptr && camera->fieldOfView > 0.0
+                                       ? camera->fieldOfView
+                                       : DEFAULT_FIELD_OF_VIEW;
+    return std::clamp(baseFieldOfView + fieldOfViewOffset_, MIN_FIELD_OF_VIEW, MAX_FIELD_OF_VIEW);
 }
 
 void Renderer::initializeReflectionTargets() {
@@ -3354,9 +3353,9 @@ void Renderer::renderReflectionViews(const BusSimulation& simulation) {
                 camera.fieldOfView > 0.0 ? camera.fieldOfView : DEFAULT_FIELD_OF_VIEW;
             const double referenceFovScale =
                 std::tan(DEFAULT_FIELD_OF_VIEW * 3.141592653589793 / 360.0);
-            const double reflectionFovScale = std::tan(
-                std::clamp(reflectionFieldOfView, MIN_FIELD_OF_VIEW, MAX_FIELD_OF_VIEW) *
-                3.141592653589793 / 360.0);
+            const double reflectionFovScale =
+                std::tan(std::clamp(reflectionFieldOfView, MIN_FIELD_OF_VIEW, MAX_FIELD_OF_VIEW) *
+                         3.141592653589793 / 360.0);
             desiredSize = std::max(
                 desiredSize, static_cast<int>(std::ceil(desiredSize * referenceFovScale /
                                                         std::max(reflectionFovScale, 0.001))));
@@ -3419,10 +3418,9 @@ void Renderer::renderReflectionDebugOverlay() {
     const std::size_t rowCount = (reflectionTargets_.size() + columnCount - 1) / columnCount;
     const float gapPixels = 6.0f;
     constexpr float maxTilePixels = 220.0f;
-    const float tilePixels =
-        std::min({maxTilePixels,
-                  (static_cast<float>(width) - gapPixels * (columnCount + 1)) / columnCount,
-                  (static_cast<float>(height) - gapPixels * (rowCount + 1)) / rowCount});
+    const float tilePixels = std::min(
+        {maxTilePixels, (static_cast<float>(width) - gapPixels * (columnCount + 1)) / columnCount,
+         (static_cast<float>(height) - gapPixels * (rowCount + 1)) / rowCount});
     if (tilePixels <= 0.0f) {
         return;
     }
@@ -3558,7 +3556,8 @@ void Renderer::beginFrame() {
         }
         draggingFov_ = rightMouse;
         previousFovCursorY_ = cursorY;
-        const bool middleMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
+        const bool middleMouse =
+            glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
         if (middleMouse && !draggingCamera_) {
             previousCursorX_ = cursorX;
             previousCursorY_ = cursorY;

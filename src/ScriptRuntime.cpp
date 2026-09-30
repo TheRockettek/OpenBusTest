@@ -837,7 +837,8 @@ struct ScriptRuntime::Impl {
         const std::string name = luaL_checkstring(lua, 1);
         runtime->log(lua, "sound_trigger(" + name + ")");
         if (runtime->onSoundTrigger) {
-            runtime->onSoundTrigger(name, {}, runtime->floatStack.empty() ? 0.0 : runtime->floatStack.back());
+            runtime->onSoundTrigger(name, {},
+                                    runtime->floatStack.empty() ? 0.0 : runtime->floatStack.back());
         }
         return 0;
     }
@@ -1356,9 +1357,9 @@ struct ScriptRuntime::Impl {
     }
 };
 
-ScriptRuntime::ScriptRuntime(const VehicleConfig& configuration, Variables& localState,
-                             SimulationState& sharedState,
-                             std::function<void(const std::string&, const std::string&, double)> soundTrigger)
+ScriptRuntime::ScriptRuntime(
+    const VehicleConfig& configuration, Variables& localState, SimulationState& sharedState,
+    std::function<void(const std::string&, const std::string&, double)> soundTrigger)
     : impl_(std::make_unique<Impl>(configuration, localState, sharedState)) {
     impl_->onSoundTrigger = std::move(soundTrigger);
 }
