@@ -42,6 +42,14 @@ cmake -S . -B build-ode -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcp
 cmake --build build-ode --config Release
 ```
 
+Release and RelWithDebInfo builds enable interprocedural/link-time optimization
+for `OpenBus` by default. Disable it when comparing profiler call boundaries or
+when using a toolchain that does not support IPO:
+
+```powershell
+cmake -S . -B build-ode -DOPENBUS_ENABLE_IPO=OFF
+```
+
 On Linux, use a native build directory and the provided shell helpers:
 
 ```bash
@@ -164,6 +172,12 @@ derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
 - Mirror transparency is rendered by default. Set
   `OPENBUS_REFLECTION_TRANSPARENT=0` to render opaque geometry only and reduce
   mirror workload when transparent details are not needed.
+- Set `OPENBUS_MATERIAL_BATCHING=1` to use the experimental material-table
+  shader path. It combines compatible opaque geometry and supports up to 8
+  ordinary 2D base textures per group; transparent, animated-material, and
+  auxiliary-texture batches remain on the standard path. It is disabled in
+  `profile.bat` because the current E400 workload is GPU-bound and the extra
+  material texture sampling is slower than the additional draw calls.
 - Scripts normally follow the render rate. Set `OPENBUS_SCRIPT_HZ=30` to run
   vehicle scripts at 30 Hz while rendering continues at the display rate;
   fixed-rate script ticks receive `Timegap=1/30` and catch up for short frame

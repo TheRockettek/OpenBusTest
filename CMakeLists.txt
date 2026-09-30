@@ -11,6 +11,10 @@ option(OPENBUS_ENABLE_CLANG_TIDY
        "Run clang-tidy during compilation"
        OFF)
 
+option(OPENBUS_ENABLE_IPO
+    "Enable interprocedural/link-time optimization for Release builds"
+    ON)
+
 if(OPENBUS_ENABLE_CLANG_TIDY)
     find_program(OPENBUS_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
     set(CMAKE_CXX_CLANG_TIDY "${OPENBUS_CLANG_TIDY_EXECUTABLE}")
@@ -144,6 +148,17 @@ target_include_directories(OpenBus SYSTEM PRIVATE
     ${stb_SOURCE_DIR})
 target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} OpenBus::GLFW OpenGL::GL OpenBusLua)
 
+if(OPENBUS_ENABLE_IPO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT OPENBUS_IPO_SUPPORTED OUTPUT OPENBUS_IPO_ERROR LANGUAGES CXX)
+    if(OPENBUS_IPO_SUPPORTED)
+        set_property(TARGET OpenBus PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+        set_property(TARGET OpenBus PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+    else()
+        message(WARNING "IPO/LTO is unavailable; continuing without it: ${OPENBUS_IPO_ERROR}")
+    endif()
+endif()
+
 add_executable(OpenBusPhysicsProbe
     tests/BusSimulationSteeringProbe.cpp
     src/BusSimulation.cpp
@@ -170,8 +185,18 @@ target_include_directories(uno3d_converter SYSTEM PRIVATE ${stb_SOURCE_DIR})
 
 if(MSVC)
     target_compile_options(OpenBus PRIVATE /W4 /permissive-)
+    target_compile_options(OpenBus PRIVATE
+        $<$<CONFIG:Release>:/Gy>
+        $<$<CONFIG:Release>:/Gw>
+        $<$<CONFIG:RelWithDebInfo>:/Gy>
+        $<$<CONFIG:RelWithDebInfo>:/Gw>)
     target_compile_options(OpenBus PRIVATE $<$<CONFIG:Release>:/Zi>)
-    target_link_options(OpenBus PRIVATE $<$<CONFIG:Release>:/DEBUG>)
+    target_link_options(OpenBus PRIVATE
+        $<$<CONFIG:Release>:/DEBUG>
+        $<$<CONFIG:Release>:/OPT:REF>
+        $<$<CONFIG:Release>:/OPT:ICF>
+        $<$<CONFIG:RelWithDebInfo>:/OPT:REF>
+        $<$<CONFIG:RelWithDebInfo>:/OPT:ICF>)
     target_compile_definitions(OpenBus PRIVATE _CRT_SECURE_NO_WARNINGS GLFW_INCLUDE_NONE)
     target_link_libraries(OpenBus PRIVATE windowscodecs dbghelp)
 else()
