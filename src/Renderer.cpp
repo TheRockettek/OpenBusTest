@@ -290,6 +290,7 @@ using openbus::rendering::drawBox;
 using openbus::rendering::drawCenterOfGravityMarker;
 using openbus::rendering::drawEnvironmentBatch;
 using openbus::rendering::drawGround;
+using openbus::rendering::drawMaterialBatch;
 using openbus::rendering::drawModelBatch;
 using openbus::rendering::drawWheel;
 using openbus::rendering::lookAt;
@@ -339,6 +340,19 @@ struct Vehicle {
         std::shared_ptr<TextureCacheEntry> cacheEntry;
     };
 
+    struct MaterialTextureSource {
+        GLuint texture = 0;
+        bool textureArray = false;
+        std::size_t textureArrayLayers = 1;
+        std::filesystem::path texturePath;
+        std::filesystem::path textureRoot;
+        std::string textureName;
+        bool textureLoadAttempted = false;
+        bool textureLoadStarted = false;
+        std::shared_ptr<TextureRequest> textureRequest;
+        std::shared_ptr<TextureCacheEntry> textureCacheEntry;
+    };
+
     struct Batch {
         GLuint buffer = 0;
         GLuint texture = 0;
@@ -379,6 +393,9 @@ struct Vehicle {
         int baseTextureLayer = 0;
         int textureLayer = 0;
         std::vector<Vertex> vertices;
+        std::vector<std::array<float, 4>> materialColors;
+        std::vector<MaterialTextureSource> materialTextures;
+        std::vector<GLuint> materialTextureIds;
         std::vector<MaterialState::TextureChange> textureChanges;
         std::size_t vertexCount = 0;
     };
@@ -764,7 +781,18 @@ struct Vehicle {
         if (batch.noZcheck) {
             glDisable(GL_DEPTH_TEST);
         }
-        ensureTexture(batch);
+        const bool materialBatch = !batch.materialTextures.empty() && !forceUntextured;
+        const std::vector<GLuint>* materialTextureIds = nullptr;
+        if (materialBatch) {
+            batch.materialTextureIds.resize(batch.materialTextures.size());
+            for (MaterialTextureSource& source : batch.materialTextures) {
+                ensureMaterialTexture(source);
+                batch.materialTextureIds[&source - batch.materialTextures.data()] = source.texture;
+            }
+            materialTextureIds = &batch.materialTextureIds;
+        } else {
+            ensureTexture(batch);
+        }
         ensureAuxiliaryTexture(batch, batch.lightmap);
         ensureAuxiliaryTexture(batch, batch.nightmap);
         ensureAuxiliaryTexture(batch, batch.transmap);
@@ -772,9 +800,9 @@ struct Vehicle {
         const std::array<double, 3>& color =
             overrideColor == nullptr ? batch.color : *overrideColor;
         openbus::rendering::ModelMaterial material;
-        material.texture = batch.texture;
-        material.textureArray = batch.textureArray;
-        material.textured = batch.textured && !forceUntextured;
+        material.texture = materialBatch ? 0 : batch.texture;
+        material.textureArray = materialBatch ? false : batch.textureArray;
+        material.textured = materialBatch ? false : batch.textured && !forceUntextured;
         material.lightmap = batch.lightmap.texture;
         material.nightmap = batch.nightmap.texture;
         material.transmap = batch.transmap.texture;
@@ -796,7 +824,7 @@ struct Vehicle {
         material.texcoordOffsetY = static_cast<float>(
             batch.texcoordTransYVariable.empty() ? 0.0
                                                  : variables.get(batch.texcoordTransYVariable));
-        if (!activeReflectionPass) {
+        if (!activeReflectionPass && !materialBatch) {
             const int reflectionIndex = reflectionTextureIndex(
                 batch.textureName.empty() ? batch.texturePath.string() : batch.textureName);
             const auto reflectionTexture = activeReflectionTextures.find(reflectionIndex);
@@ -807,8 +835,13 @@ struct Vehicle {
                 material.flipTextureY = true;
             }
         }
-        drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
-                       forceUntextured ? 0 : batch.alphaMode);
+        if (materialBatch) {
+            drawMaterialBatch(batch.buffer, batch.vertexCount, batch.materialColors,
+                              *materialTextureIds);
+        } else {
+            drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
+                           forceUntextured ? 0 : batch.alphaMode);
+        }
         if (batch.noZcheck) {
             glEnable(GL_DEPTH_TEST);
         }
@@ -1247,7 +1280,20 @@ struct Vehicle {
         const auto texturesLoadedInParts = [&](const std::vector<DisplayPart>& parts) {
             for (const DisplayPart& displayPart : parts) {
                 for (const Batch& batch : displayPart.batches) {
-                    if (!batch.texturePath.empty() || !batch.textureName.empty()) {
+                    for (const MaterialTextureSource& source : batch.materialTextures) {
+                        if (!source.textureCacheEntry) {
+                            return false;
+                        }
+                        const TextureCacheEntry* sourceEntry = source.textureCacheEntry.get();
+                        if (trackedTextures.insert(sourceEntry).second) {
+                            std::lock_guard<std::mutex> sourceLock(sourceEntry->request->mutex);
+                            if (!sourceEntry->request->complete) {
+                                return false;
+                            }
+                        }
+                    }
+                    if (batch.materialTextures.empty() &&
+                        (!batch.texturePath.empty() || !batch.textureName.empty())) {
                         if (!batch.textureCacheEntry) {
                             return false;
                         }
@@ -1855,6 +1901,73 @@ struct Vehicle {
         // }
     }
 
+    void ensureMaterialTexture(MaterialTextureSource& source, bool visible = true) {
+        if (source.textureLoadAttempted) {
+            return;
+        }
+        TraceScope phase("texture", "ensureMaterialTexture");
+        if (!source.textureCacheEntry) {
+            source.textureCacheEntry = assets->requestTexture(
+                source.textureRoot, source.texturePath, source.textureName,
+                [](const std::filesystem::path& root, const std::filesystem::path& path,
+                   const std::string& name) {
+                    return Vehicle::findTexture(root, name.empty() ? path.string() : name);
+                });
+            source.textureRequest = source.textureCacheEntry->request;
+            source.textureLoadStarted = true;
+        }
+        startTextureRequest(source.textureCacheEntry);
+        bool requestComplete = false;
+        {
+            std::lock_guard<std::mutex> lock(source.textureCacheEntry->request->mutex);
+            requestComplete = source.textureCacheEntry->request->complete;
+        }
+        if (!requestComplete || !visible) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(source.textureCacheEntry->request->mutex);
+        if (!source.textureCacheEntry->request->complete) {
+            return;
+        }
+        source.texturePath = source.textureCacheEntry->request->resolvedPath;
+        if (!source.textureCacheEntry->uploadAttempted) {
+            if (loadingPolicy.textureMode == AssetLoadingMode::Deferred) {
+                constexpr auto textureUploadBudget = std::chrono::milliseconds(2);
+                if (std::chrono::steady_clock::now() - textureUploadStart >=
+                    textureUploadBudget) {
+                    return;
+                }
+            }
+            source.textureCacheEntry->uploadAttempted = true;
+            if (!source.texturePath.empty()) {
+                if (source.textureCacheEntry->request->compressedDds) {
+                    source.textureCacheEntry->texture = uploadCompressedDds(
+                        source.texturePath, *source.textureCacheEntry->request->compressedDds);
+                    if (source.textureCacheEntry->texture == 0) {
+                        Image fallbackImage;
+                        if (openbus::rendering::TextureLoader::readImage(source.texturePath,
+                                                                         fallbackImage)) {
+                            source.textureCacheEntry->texture =
+                                uploadTexture(source.texturePath, std::move(fallbackImage));
+                        }
+                    }
+                } else if (source.textureCacheEntry->request->compressedTexture) {
+                    source.textureCacheEntry->texture = uploadCompressedTexture(
+                        source.texturePath, *source.textureCacheEntry->request->compressedTexture,
+                        source.textureCacheEntry->textureArray,
+                        source.textureCacheEntry->textureArrayLayers);
+                } else if (source.textureCacheEntry->request->image) {
+                    source.textureCacheEntry->texture = uploadTexture(
+                        source.texturePath, *source.textureCacheEntry->request->image);
+                }
+            }
+        }
+        source.texture = source.textureCacheEntry->texture;
+        source.textureArray = source.textureCacheEntry->textureArray;
+        source.textureArrayLayers = source.textureCacheEntry->textureArrayLayers;
+        source.textureLoadAttempted = true;
+    }
+
     void ensureEnvironmentTexture(Batch& batch, bool visible = true) {
         if (batch.environmentLoadAttempted || batch.environmentTextureName.empty() ||
             batch.environmentStrength <= 0.0) {
@@ -1930,7 +2043,12 @@ struct Vehicle {
         const auto preload = [&](std::vector<DisplayPart>& parts) {
             for (DisplayPart& part : parts) {
                 for (Batch& batch : part.batches) {
-                    if (!batch.texturePath.empty() || !batch.textureName.empty()) {
+                    if (!batch.materialTextures.empty()) {
+                        for (MaterialTextureSource& source : batch.materialTextures) {
+                            ensureMaterialTexture(
+                                source, loadingPolicy.textureMode == AssetLoadingMode::Eager);
+                        }
+                    } else if (!batch.texturePath.empty() || !batch.textureName.empty()) {
                         ensureTexture(batch, loadingPolicy.textureMode == AssetLoadingMode::Eager);
                     }
                     ensureEnvironmentTexture(batch,
@@ -1960,6 +2078,8 @@ struct Vehicle {
         }
         static const bool verboseObjLoadLogs =
             parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_OBJ_LOAD"));
+        static const bool materialBatchingEnabled =
+            parseEnabledFlag(std::getenv("OPENBUS_MATERIAL_BATCHING"));
         if (verboseObjLoadLogs) {
             gameLog.Log("Loading OBJ model from path: " + part.objPath.generic_string());
         }
@@ -2220,6 +2340,94 @@ struct Vehicle {
             batches.push_back(std::move(batch));
         };
 
+        const auto canUseMaterialBatch = [](const Batch& batch) {
+            return batch.alphaMode == 0 && !batch.noZwrite && !batch.noZcheck &&
+                   !batch.textureArray && batch.textureChanges.empty() &&
+                   batch.lightmap.name.empty() && batch.nightmap.name.empty() &&
+                   batch.transmap.name.empty() && batch.freeTextureVariable.empty() &&
+                   batch.texcoordTransXVariable.empty() && batch.texcoordTransYVariable.empty() &&
+                   batch.alphaScaleVariable.empty();
+        };
+        const auto makeMaterialTexture = [](const Batch& source) {
+            MaterialTextureSource result;
+            result.texturePath = source.texturePath;
+            result.textureRoot = source.textureRoot;
+            result.textureName = source.textureName;
+            return result;
+        };
+        const auto sameMaterialBatch = [&](const Batch& first, const Batch& second) {
+            return canUseMaterialBatch(first) && canUseMaterialBatch(second) &&
+                   first.environmentTextureName == second.environmentTextureName &&
+                   first.environmentStrength == second.environmentStrength &&
+                   first.textured == second.textured && first.hasNormals == second.hasNormals &&
+                   first.baseTextureLayer == second.baseTextureLayer &&
+                   first.textureLayer == second.textureLayer && second.materialColors.empty() &&
+                   second.materialTextures.empty();
+        };
+        const auto consolidateMaterialBatches = [&](std::vector<Batch>& batches) {
+            if (!materialBatchingEnabled) {
+                return;
+            }
+            std::vector<Batch> consolidated;
+            consolidated.reserve(batches.size());
+            for (Batch& source : batches) {
+                auto target = std::find_if(
+                    consolidated.begin(), consolidated.end(), [&](const Batch& candidate) {
+                        return candidate.materialTextures.size() < 8 &&
+                               sameMaterialBatch(candidate, source);
+                    });
+                if (target == consolidated.end()) {
+                    if (canUseMaterialBatch(source)) {
+                        for (Vertex& vertex : source.vertices) {
+                            vertex.layer = 0.0f;
+                        }
+                        source.materialColors.push_back(
+                            {static_cast<float>(source.color[0]),
+                             static_cast<float>(source.color[1]),
+                             static_cast<float>(source.color[2]), 1.0f});
+                        source.materialTextures.push_back(makeMaterialTexture(source));
+                    }
+                    consolidated.push_back(std::move(source));
+                    continue;
+                }
+
+                const std::size_t materialIndex = target->materialColors.size();
+                for (Vertex& vertex : source.vertices) {
+                    vertex.layer = static_cast<float>(materialIndex);
+                }
+                target->vertices.insert(target->vertices.end(), source.vertices.begin(),
+                                        source.vertices.end());
+                target->vertexCount = target->vertices.size();
+                target->materialColors.push_back(
+                    {static_cast<float>(source.color[0]), static_cast<float>(source.color[1]),
+                     static_cast<float>(source.color[2]), 1.0f});
+                target->materialTextures.push_back(makeMaterialTexture(source));
+                if (source.buffer != 0) {
+                    pglDeleteBuffers(1, &source.buffer);
+                    source.buffer = 0;
+                }
+                pglBindBuffer(GL_ARRAY_BUFFER, target->buffer);
+                pglBufferData(
+                    GL_ARRAY_BUFFER,
+                    static_cast<std::ptrdiff_t>(target->vertices.size() * sizeof(Vertex)),
+                    target->vertices.data(), GL_STATIC_DRAW);
+            }
+            batches = std::move(consolidated);
+            for (Batch& batch : batches) {
+                if (batch.materialColors.size() < 2) {
+                    batch.materialColors.clear();
+                    batch.materialTextures.clear();
+                }
+            }
+            const std::size_t materialBatchCount = static_cast<std::size_t>(std::count_if(
+                batches.begin(), batches.end(),
+                [](const Batch& batch) { return batch.materialColors.size() >= 2; }));
+            if (verboseObjLoadLogs && materialBatchCount != 0) {
+                gameLog.Log("Material batches: " + std::to_string(materialBatchCount) +
+                            " from " + std::to_string(batches.size()) + " total batches");
+            }
+        };
+
         std::unordered_map<std::string, std::vector<const ObjTriangle*>> groups;
         std::unordered_map<std::string, std::filesystem::path> groupTextures;
         std::unordered_map<std::string, std::string> groupTextureNames;
@@ -2383,6 +2591,7 @@ struct Vehicle {
                       state.noZwrite, state.noZcheck, state.alphaScaleVariable,
                       state.textureChanges, state);
         }
+        consolidateMaterialBatches(destination->back().batches);
     }
 
     int lodForDistance(double distance) const {

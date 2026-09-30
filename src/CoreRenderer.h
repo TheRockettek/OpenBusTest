@@ -71,6 +71,9 @@ void invalidateTextureBindings();
 
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
                     const std::array<double, 3>& color, double alpha, int alphaMode);
+void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
+                       const std::vector<std::array<float, 4>>& colors,
+                       const std::vector<GLuint>& textures);
 void drawEnvironmentBatch(GLuint buffer, std::size_t vertexCount, GLuint texture, double alpha);
 void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primitive,
                     float lineWidth = 1.0f);

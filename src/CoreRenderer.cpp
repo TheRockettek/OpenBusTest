@@ -15,6 +15,7 @@ namespace openbus::rendering {
 namespace {
 
 constexpr GLsizei MODEL_VERTEX_STRIDE = static_cast<GLsizei>(9 * sizeof(float));
+constexpr std::size_t MAX_MATERIAL_TEXTURES = 8;
 
 struct Uniforms {
     GLint projection = -1;
@@ -37,6 +38,10 @@ struct Uniforms {
     GLint nightmapStrength = -1;
     GLint texcoordOffset = -1;
     GLint flipTextureY = -1;
+    GLint useMaterialColors = -1;
+    GLint materialColors = -1;
+    GLint useMaterialTextures = -1;
+    std::array<GLint, MAX_MATERIAL_TEXTURES> materialTextures = {};
     GLint environment = -1;
     GLint environmentAlpha = -1;
 };
@@ -50,6 +55,12 @@ struct ModelUniformState {
     bool useTransmap = false;
     bool useFreeTexture = false;
     bool flipTextureY = false;
+    bool useMaterialColors = false;
+    const void* materialColorData = nullptr;
+    GLsizei materialColorCount = 0;
+    bool useMaterialTextures = false;
+    const void* materialTextureData = nullptr;
+    GLsizei materialTextureCount = 0;
     int alphaMode = 0;
     float lightmapStrength = 0.0f;
     float nightmapStrength = 0.0f;
@@ -59,12 +70,14 @@ struct ModelUniformState {
 };
 
 GLuint modelProgram = 0;
+GLuint materialProgram = 0;
 GLuint environmentProgram = 0;
 GLuint primitiveProgram = 0;
 GLuint modelVertexArray = 0;
 GLuint primitiveVertexArray = 0;
 GLuint primitiveBuffer = 0;
 Uniforms modelUniforms;
+Uniforms materialUniforms;
 Uniforms environmentUniforms;
 Uniforms primitiveUniforms;
 GLuint currentProgram = 0;
@@ -76,6 +89,12 @@ GLuint matrixProgram = 0;
 Matrix4 cachedProjection = {};
 Matrix4 cachedModelView = {};
 ModelUniformState modelUniformState;
+struct MaterialUniformState {
+    bool valid = false;
+    const void* colorData = nullptr;
+    GLsizei colorCount = 0;
+};
+MaterialUniformState materialUniformState;
 
 const char* modelVertexShader = R"GLSL(
 #version 330 core
@@ -144,6 +163,36 @@ void main() {
     }
     if (uAlphaMode == 1 && color.a < 0.5) {
         discard;
+    }
+    fragmentColor = color;
+}
+)GLSL";
+
+const char* materialFragmentShader = R"GLSL(
+#version 330 core
+in vec3 vTexCoord;
+uniform vec4 uMaterialColors[128];
+uniform sampler2D uMaterialTextures[8];
+out vec4 fragmentColor;
+void main() {
+    int materialIndex = clamp(int(vTexCoord.z + 0.5), 0, 127);
+    vec4 color = uMaterialColors[materialIndex];
+    if (materialIndex == 0) {
+        color *= texture(uMaterialTextures[0], vTexCoord.xy);
+    } else if (materialIndex == 1) {
+        color *= texture(uMaterialTextures[1], vTexCoord.xy);
+    } else if (materialIndex == 2) {
+        color *= texture(uMaterialTextures[2], vTexCoord.xy);
+    } else if (materialIndex == 3) {
+        color *= texture(uMaterialTextures[3], vTexCoord.xy);
+    } else if (materialIndex == 4) {
+        color *= texture(uMaterialTextures[4], vTexCoord.xy);
+    } else if (materialIndex == 5) {
+        color *= texture(uMaterialTextures[5], vTexCoord.xy);
+    } else if (materialIndex == 6) {
+        color *= texture(uMaterialTextures[6], vTexCoord.xy);
+    } else {
+        color *= texture(uMaterialTextures[7], vTexCoord.xy);
     }
     fragmentColor = color;
 }
@@ -266,6 +315,25 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.nightmapStrength = pglGetUniformLocation(program, "uNightmapStrength");
         uniforms.texcoordOffset = pglGetUniformLocation(program, "uTexcoordOffset");
         uniforms.flipTextureY = pglGetUniformLocation(program, "uFlipTextureY");
+        uniforms.useMaterialColors = pglGetUniformLocation(program, "uUseMaterialColors");
+        uniforms.materialColors = pglGetUniformLocation(program, "uMaterialColors");
+        uniforms.useMaterialTextures = pglGetUniformLocation(program, "uUseMaterialTextures");
+        for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
+            uniforms.materialTextures[index] = pglGetUniformLocation(
+                program, ("uMaterialTextures[" + std::to_string(index) + "]").c_str());
+        }
+    }
+    return uniforms;
+}
+
+Uniforms materialUniformsFor(GLuint program) {
+    Uniforms uniforms;
+    uniforms.projection = pglGetUniformLocation(program, "uProjection");
+    uniforms.modelView = pglGetUniformLocation(program, "uModelView");
+    uniforms.materialColors = pglGetUniformLocation(program, "uMaterialColors");
+    for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
+        uniforms.materialTextures[index] = pglGetUniformLocation(
+            program, ("uMaterialTextures[" + std::to_string(index) + "]").c_str());
     }
     return uniforms;
 }
@@ -335,7 +403,7 @@ void bindTexture(GLenum target, GLuint texture) {
 }
 
 void uploadModelUniforms(const ModelMaterial& material, const std::array<double, 3>& color,
-                         double alpha, int alphaMode) {
+             double alpha, int alphaMode) {
     const std::array<float, 4> colorValue = {static_cast<float>(color[0]),
                                              static_cast<float>(color[1]),
                                              static_cast<float>(color[2]),
@@ -399,13 +467,16 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
 
 bool initializeCoreRenderer() {
     modelProgram = createProgram(modelVertexShader, modelFragmentShader);
+    materialProgram = createProgram(modelVertexShader, materialFragmentShader);
     environmentProgram = createProgram(modelVertexShader, environmentFragmentShader);
     primitiveProgram = createProgram(primitiveVertexShader, primitiveFragmentShader);
-    if (modelProgram == 0 || environmentProgram == 0 || primitiveProgram == 0) {
+    if (modelProgram == 0 || materialProgram == 0 || environmentProgram == 0 ||
+        primitiveProgram == 0) {
         shutdownCoreRenderer();
         return false;
     }
     modelUniforms = modelUniformsFor(modelProgram, false);
+    materialUniforms = materialUniformsFor(materialProgram);
     environmentUniforms = modelUniformsFor(environmentProgram, true);
     primitiveUniforms = modelUniformsFor(primitiveProgram, false);
     pglGenVertexArrays(1, &modelVertexArray);
@@ -427,6 +498,10 @@ bool initializeCoreRenderer() {
         pglUniform1i(modelUniforms.nightmap, 2);
         pglUniform1i(modelUniforms.transmap, 3);
         pglUniform1i(modelUniforms.freeTexture, 4);
+        useProgram(materialProgram);
+        for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
+            pglUniform1i(materialUniforms.materialTextures[index], static_cast<GLint>(index));
+        }
         useProgram(environmentProgram);
         pglUniform1i(environmentUniforms.environment, 0);
         useProgram(primitiveProgram);
@@ -436,6 +511,7 @@ bool initializeCoreRenderer() {
         currentProgram = 0;
         matrixProgram = 0;
         modelUniformState = {};
+        materialUniformState = {};
         boundTexture2D = 0;
         boundTextureArray = 0;
         return true;
@@ -450,6 +526,7 @@ void shutdownCoreRenderer() {
     currentArrayBuffer = 0;
     matrixProgram = 0;
     modelUniformState = {};
+    materialUniformState = {};
     boundTexture2D = 0;
     boundTextureArray = 0;
     if (primitiveBuffer != 0) {
@@ -475,6 +552,10 @@ void shutdownCoreRenderer() {
     if (modelProgram != 0) {
         pglDeleteProgram(modelProgram);
         modelProgram = 0;
+    }
+    if (materialProgram != 0) {
+        pglDeleteProgram(materialProgram);
+        materialProgram = 0;
     }
 }
 
@@ -502,6 +583,37 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     glBindTexture(GL_TEXTURE_2D, material.transmap);
     pglActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, material.freeTexture);
+    pglActiveTexture(GL_TEXTURE0);
+    bindModelVertexBuffer(buffer, modelVertexArray);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
+}
+
+void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
+                       const std::vector<std::array<float, 4>>& colors,
+                       const std::vector<GLuint>& textures) {
+    TraceScope trace("render", "CoreRenderer::drawMaterialBatch");
+    if (materialProgram == 0 || buffer == 0 || vertexCount == 0 || colors.empty() ||
+        textures.empty()) {
+        return;
+    }
+    useProgram(materialProgram);
+    uploadMatrices(materialUniforms);
+    const GLsizei colorCount =
+        static_cast<GLsizei>(std::min<std::size_t>(colors.size(), 128));
+    if (!materialUniformState.valid || materialUniformState.colorData != colors.data() ||
+        materialUniformState.colorCount != colorCount) {
+        pglUniform4fv(materialUniforms.materialColors, colorCount,
+                      reinterpret_cast<const GLfloat*>(colors.data()));
+        materialUniformState.valid = true;
+        materialUniformState.colorData = colors.data();
+        materialUniformState.colorCount = colorCount;
+    }
+    const std::size_t textureCount =
+        std::min<std::size_t>(textures.size(), MAX_MATERIAL_TEXTURES);
+    for (std::size_t index = 0; index < textureCount; ++index) {
+        pglActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(index));
+        glBindTexture(GL_TEXTURE_2D, textures[index]);
+    }
     pglActiveTexture(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));

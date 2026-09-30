@@ -42,6 +42,7 @@ Uniform1fProc pglUniform1f = nullptr;
 Uniform2fProc pglUniform2f = nullptr;
 Uniform3fProc pglUniform3f = nullptr;
 Uniform4fProc pglUniform4f = nullptr;
+Uniform4fvProc pglUniform4fv = nullptr;
 GenFramebuffersProc pglGenFramebuffers = nullptr;
 BindFramebufferProc pglBindFramebuffer = nullptr;
 DeleteFramebuffersProc pglDeleteFramebuffers = nullptr;
@@ -95,6 +96,7 @@ bool loadOpenGLFunctions() {
     pglUniform2f = reinterpret_cast<Uniform2fProc>(glfwGetProcAddress("glUniform2f"));
     pglUniform3f = reinterpret_cast<Uniform3fProc>(glfwGetProcAddress("glUniform3f"));
     pglUniform4f = reinterpret_cast<Uniform4fProc>(glfwGetProcAddress("glUniform4f"));
+    pglUniform4fv = reinterpret_cast<Uniform4fvProc>(glfwGetProcAddress("glUniform4fv"));
     pglGenFramebuffers =
         reinterpret_cast<GenFramebuffersProc>(glfwGetProcAddress("glGenFramebuffers"));
     pglBindFramebuffer =
@@ -114,6 +116,7 @@ bool loadOpenGLFunctions() {
         pglAttachShader && pglLinkProgram && pglGetProgramiv && pglGetProgramInfoLog &&
         pglDeleteProgram && pglUseProgram && pglGetUniformLocation && pglUniformMatrix4fv &&
         pglUniform1i && pglUniform1f && pglUniform2f && pglUniform3f && pglUniform4f &&
+        pglUniform4fv &&
         pglGenFramebuffers && pglBindFramebuffer && pglDeleteFramebuffers &&
         pglFramebufferTexture2D && pglCheckFramebufferStatus;
     if (!available) {
