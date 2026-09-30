@@ -14,6 +14,7 @@
 #include "RoadFeatures.h"
 #include "ScriptRuntime.h"
 #include "ScreenshotWriter.h"
+#include "SoundEngine.h"
 #include "TextureAssetLoader.h"
 #include "TextureLoader.h"
 #include "Variables.h"
@@ -489,6 +490,7 @@ struct Vehicle {
         std::size_t triangleCount;
         std::vector<ModelAnimation> animations;
         std::vector<AnimationState> animationStates;
+        std::vector<int> reflectionTextureIndices;
         mutable std::uint64_t animationCacheGeneration = 0;
         mutable Matrix4 cachedAnimationTransform = {};
         mutable std::uint64_t viewDepthCacheGeneration = 0;
@@ -773,15 +775,20 @@ struct Vehicle {
         }
     }
 
-    std::unordered_set<int> reflectionTextureIndicesForPart(const DisplayPart& part) const {
-        std::unordered_set<int> reflectionIndices;
+    const std::vector<int>& reflectionTextureIndicesForPart(const DisplayPart& part) const {
+        return part.reflectionTextureIndices;
+    }
+
+    void cacheReflectionTextureIndices(DisplayPart& part) const {
+        std::unordered_set<int> uniqueReflectionIndices;
         for (const Batch& batch : part.batches) {
             const auto registerReflection = [&](const std::string& textureName) {
                 const int reflectionIndex = reflectionTextureIndex(textureName);
                 if (reflectionIndex >= 0) {
-                    reflectionIndices.insert(reflectionIndex);
+                    uniqueReflectionIndices.insert(reflectionIndex);
                 }
             };
+            registerReflection(batch.baseTextureName);
             registerReflection(batch.textureName);
             for (const MaterialTextureSource& source : batch.materialTextures) {
                 registerReflection(source.textureName);
@@ -790,7 +797,8 @@ struct Vehicle {
                 registerReflection(change.textureName);
             }
         }
-        return reflectionIndices;
+        part.reflectionTextureIndices.assign(uniqueReflectionIndices.begin(),
+                                             uniqueReflectionIndices.end());
     }
 
     void prepareFrameVisibility(RenderViewContext context) {
@@ -820,7 +828,7 @@ struct Vehicle {
                     (part.viewpoint != 0 && (part.viewpoint & viewpointMask(context)) == 0)) {
                     continue;
                 }
-            const std::unordered_set<int> partReflectionIndices =
+            const std::vector<int>& partReflectionIndices =
                 reflectionTextureIndicesForPart(part);
             if (partReflectionIndices.empty()) {
                 continue;
@@ -915,7 +923,7 @@ struct Vehicle {
 #endif
 
     explicit Vehicle(BusVehicle vehicle, ModelLoadingPolicy policy, AssetRequestManager& manager,
-                     SimulationState& simulationState)
+                     SimulationState& simulationState, SoundEngine& soundEngine)
         : loadingPolicy(policy), variables(), assets(&manager) {
         if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
             try {
@@ -957,7 +965,12 @@ struct Vehicle {
         gameLog.Log("Loading bus model with config: " + resolveAssetPath(relativeConfig).string() +
                     " and model root: " + resolveAssetPath(relativeModelRoot).string());
         const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigurationPathFor(vehicle));
-        scripts = std::make_unique<ScriptRuntime>(vehicleConfiguration, variables, simulationState);
+        soundEngine.load(vehicleConfiguration.soundConfigPath);
+        scripts = std::make_unique<ScriptRuntime>(
+            vehicleConfiguration, variables, simulationState,
+            [&soundEngine](const std::string& name, const std::string& file, double controlValue) {
+                soundEngine.trigger(name, file, controlValue);
+            });
         for (const std::string& error : scripts->errors()) {
             gameLog.Log("Lua script error: " + error);
         }
@@ -2815,6 +2828,7 @@ struct Vehicle {
                       state.textureChanges, state);
         }
         consolidateMaterialBatches(destination->back().batches);
+        cacheReflectionTextureIndices(destination->back());
     }
 
     int lodForDistance(double distance) const {
@@ -3109,7 +3123,8 @@ Vehicle* Renderer::AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPoli
         initializeReflectionTargets();
     }
     auto model =
-        std::make_unique<Vehicle>(vehicle, loadingPolicy, *assetRequestManager_, simulationState_);
+        std::make_unique<Vehicle>(vehicle, loadingPolicy, *assetRequestManager_, simulationState_,
+                      soundEngine_);
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
     return result;
@@ -3128,6 +3143,7 @@ void Renderer::SetPlayerVehicle(Vehicle* model) {
 void Renderer::updatePlayerVariables(const BusSimulation& simulation, double throttle,
                                      double steering, double brake) {
     TraceScope trace("frame", "Renderer::updatePlayerVariables");
+    soundEngine_.setListenerDistance(cameraView_ == 0 ? cameraDistance_ : 0.0);
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(simulation, throttle, steering, brake);
     }

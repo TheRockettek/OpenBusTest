@@ -58,6 +58,7 @@ struct VehicleConfig {
     std::vector<std::string> variableLists;
     std::vector<std::string> stringVariableLists;
     std::vector<std::string> constantFiles;
+    std::filesystem::path soundConfigPath;
     std::vector<std::string> floatVariables;
     std::vector<std::string> stringVariables;
     std::unordered_map<std::string, double> constants;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BusTypes.h"
+#include "SoundEngine.h"
 #include "VehicleConfigLoader.h"
 #include "Variables.h"
 
@@ -125,6 +126,7 @@ class Renderer {
     std::vector<ReflectionTarget> reflectionTargets_;
     SimulationState simulationState_;
     std::unique_ptr<openbus::rendering::AssetRequestManager> assetRequestManager_;
+    SoundEngine soundEngine_;
     std::vector<std::unique_ptr<Vehicle>> vehicles_;
     Vehicle* playerVehicle_ = nullptr;
 };

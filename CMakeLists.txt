@@ -83,6 +83,13 @@ endif()
 
 find_package(OpenGL REQUIRED)
 
+if(UNIX AND NOT APPLE)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(PIPEWIRE QUIET IMPORTED_TARGET libpipewire-0.3)
+    endif()
+endif()
+
 if(TARGET ODE::ODE)
     set(OPENBUS_ODE_TARGET ODE::ODE)
 else()
@@ -129,6 +136,7 @@ add_executable(OpenBus
     src/ObjLoader.cpp
     src/OpenGLFunctions.cpp
     src/ScriptRuntime.cpp
+    src/SoundEngine.cpp
     src/osc/osc.cpp
 )
 
@@ -147,6 +155,14 @@ target_include_directories(OpenBus SYSTEM PRIVATE
     ${gli_SOURCE_DIR}/external/glm
     ${stb_SOURCE_DIR})
 target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} OpenBus::GLFW OpenGL::GL OpenBusLua)
+
+if(TARGET PkgConfig::PIPEWIRE)
+    target_compile_definitions(OpenBus PRIVATE OPENBUS_HAS_PIPEWIRE=1)
+    target_link_libraries(OpenBus PRIVATE PkgConfig::PIPEWIRE)
+    message(STATUS "PipeWire audio backend enabled")
+else()
+    message(STATUS "PipeWire audio backend disabled (libpipewire-0.3 not found)")
+endif()
 
 if(OPENBUS_ENABLE_IPO)
     include(CheckIPOSupported)
@@ -199,6 +215,7 @@ if(MSVC)
         $<$<CONFIG:RelWithDebInfo>:/OPT:ICF>)
     target_compile_definitions(OpenBus PRIVATE _CRT_SECURE_NO_WARNINGS GLFW_INCLUDE_NONE)
     target_link_libraries(OpenBus PRIVATE windowscodecs dbghelp)
+    target_link_libraries(OpenBus PRIVATE winmm)
 else()
     target_compile_options(OpenBus PRIVATE -Wall -Wextra -Wpedantic)
 endif()

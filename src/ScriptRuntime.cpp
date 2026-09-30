@@ -69,6 +69,7 @@ struct ScriptRuntime::Impl {
     std::string scriptIdentity;
     Variables& localState;
     SimulationState& sharedState;
+    std::function<void(const std::string&, const std::string&, double)> onSoundTrigger;
     ScriptEnvironment scriptEnvironment;
     std::vector<std::string> errors;
     std::vector<double> floatStack;
@@ -567,10 +568,16 @@ struct ScriptRuntime::Impl {
                     break;
                 case OscOpcode::SoundTrigger:
                     log("sound_trigger(" + instruction.name + ")");
+                    if (onSoundTrigger) {
+                        onSoundTrigger(instruction.name, {}, nativePeekFloat());
+                    }
                     break;
                 case OscOpcode::SoundTriggerFile: {
                     const std::string file = nativePopString();
                     log("sound_trigger_file(" + instruction.name + ", " + file + ")");
+                    if (onSoundTrigger) {
+                        onSoundTrigger(instruction.name, file, nativePeekFloat());
+                    }
                     break;
                 }
                 }
@@ -827,14 +834,23 @@ struct ScriptRuntime::Impl {
 
     static int soundTrigger(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        runtime->log(lua, "sound_trigger(" + std::string(luaL_checkstring(lua, 1)) + ")");
+        const std::string name = luaL_checkstring(lua, 1);
+        runtime->log(lua, "sound_trigger(" + name + ")");
+        if (runtime->onSoundTrigger) {
+            runtime->onSoundTrigger(name, {}, runtime->floatStack.empty() ? 0.0 : runtime->floatStack.back());
+        }
         return 0;
     }
 
     static int soundTriggerFile(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        runtime->log(lua, "sound_trigger_file(" + std::string(luaL_checkstring(lua, 1)) + ", " +
-                              std::string(luaL_checkstring(lua, 2)) + ")");
+        const std::string name = luaL_checkstring(lua, 1);
+        const std::string file = luaL_checkstring(lua, 2);
+        runtime->log(lua, "sound_trigger_file(" + name + ", " + file + ")");
+        if (runtime->onSoundTrigger) {
+            runtime->onSoundTrigger(name, file,
+                                    runtime->floatStack.empty() ? 0.0 : runtime->floatStack.back());
+        }
         return 0;
     }
 
@@ -1341,8 +1357,11 @@ struct ScriptRuntime::Impl {
 };
 
 ScriptRuntime::ScriptRuntime(const VehicleConfig& configuration, Variables& localState,
-                             SimulationState& sharedState)
-    : impl_(std::make_unique<Impl>(configuration, localState, sharedState)) {}
+                             SimulationState& sharedState,
+                             std::function<void(const std::string&, const std::string&, double)> soundTrigger)
+    : impl_(std::make_unique<Impl>(configuration, localState, sharedState)) {
+    impl_->onSoundTrigger = std::move(soundTrigger);
+}
 
 ScriptRuntime::~ScriptRuntime() = default;
 

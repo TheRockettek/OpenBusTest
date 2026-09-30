@@ -355,7 +355,10 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
         if (keyword == "sound" || keyword == "sound_ai" || keyword == "paths" ||
             keyword == "passengercabin" || keyword == "number" || keyword == "registration_list") {
             std::string ignored;
-            readOneString(reader, keyword, ignored, result.diagnostics);
+            if (readOneString(reader, keyword, ignored, result.diagnostics) && keyword == "sound") {
+                std::replace(ignored.begin(), ignored.end(), '\\', '/');
+                result.soundConfigPath = result.sourcePath.parent_path() / ignored;
+            }
             continue;
         }
         if (keyword == "script" || keyword == "varnamelist" || keyword == "stringvarnamelist" ||

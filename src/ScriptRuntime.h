@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -20,7 +21,8 @@ class ScriptRuntime {
     };
 
     ScriptRuntime(const VehicleConfig& configuration, Variables& localState,
-                  SimulationState& sharedState);
+                  SimulationState& sharedState,
+                  std::function<void(const std::string&, const std::string&, double)> soundTrigger = {});
     ~ScriptRuntime();
 
     ScriptRuntime(const ScriptRuntime&) = delete;
