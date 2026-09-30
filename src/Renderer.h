@@ -69,6 +69,7 @@ class Renderer {
     std::vector<KeyEvent> consumeKeyEvents();
 
   private:
+    struct ReflectionTarget;
     static void scrollCallback(GLFWwindow* window, double xOffset, double yOffset);
     bool isExteriorView() const;
     const VehicleCamera* currentVehicleCamera() const;
@@ -76,7 +77,9 @@ class Renderer {
     void updateScripts();
     double currentFieldOfView() const;
     void renderReflectionViews(const BusSimulation& simulation);
+    void renderReflectionDebugOverlay();
     void initializeReflectionTargets();
+    void resizeReflectionTarget(ReflectionTarget& target, int size);
     void destroyReflectionTargets();
 
     GLFWwindow* window_;
@@ -98,6 +101,8 @@ class Renderer {
     std::array<bool, 10> previousViewKeyStates_ = {};
     std::array<bool, 2> previousCameraNavigationStates_ = {};
     bool previousCaptureKeyState_ = false;
+    bool previousReflectionDebugKeyState_ = false;
+    bool reflectionDebugOverlay_ = false;
     bool renderingReflection_ = false;
     bool hasPreviousVariableTime_ = false;
     bool captureRequested_ = false;

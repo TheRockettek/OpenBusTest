@@ -19,6 +19,7 @@ void multiplyMatrix(const Matrix4& matrix);
 void scale(double x, double y, double z);
 const Matrix4& modelViewMatrix();
 const Matrix4& projectionMatrix();
+void setModelViewMatrix(const Matrix4& matrix);
 std::array<double, 3> transformLocalPoint(const BodyPose& pose, const std::array<double, 3>& local);
 
 } // namespace openbus::rendering

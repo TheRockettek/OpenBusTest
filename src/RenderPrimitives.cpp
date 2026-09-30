@@ -48,8 +48,8 @@ void appendColoredBox(std::vector<PrimitiveVertex>& vertices, double length, dou
 }
 
 void drawColoredBox(double length, double width, double height, double centerX, double centerY,
-                   double bottomZ, const std::array<double, 3>& topColor,
-                   const std::array<double, 3>& sideColor) {
+                    double bottomZ, const std::array<double, 3>& topColor,
+                    const std::array<double, 3>& sideColor) {
     std::vector<PrimitiveVertex> vertices;
     vertices.reserve(36);
     appendColoredBox(vertices, length, width, height, centerX, centerY, bottomZ, topColor,
@@ -105,8 +105,8 @@ void drawRoadBox(double centerX, double centerY, double length, double width, do
     drawColoredBox(length, width, height, centerX, centerY, bottomZ, topColor, sideColor);
 }
 
-void appendRoadIncline(std::vector<PrimitiveVertex>& surfaces,
-                       std::vector<PrimitiveVertex>& lines, const RoadBump& bump) {
+void appendRoadIncline(std::vector<PrimitiveVertex>& surfaces, std::vector<PrimitiveVertex>& lines,
+                       const RoadBump& bump) {
     const double halfWidth = bump.width * 0.5;
     const double startX = bump.centerX - bump.length * 0.5;
     const double segmentLength = bump.length / ROAD_INCLINE_SEGMENTS;
@@ -187,8 +187,7 @@ void drawGround(const std::vector<RoadBump>& bumps) {
     surfaces.reserve(bumps.size() * 36);
     lines.reserve(bumps.size() * 8);
     const auto addBox = [&](double length, double width, double height, double centerX,
-                            double centerY, double bottomZ,
-                            const std::array<double, 3>& topColor,
+                            double centerY, double bottomZ, const std::array<double, 3>& topColor,
                             const std::array<double, 3>& sideColor) {
         appendColoredBox(surfaces, length, width, height, centerX, centerY, bottomZ, topColor,
                          sideColor);
@@ -209,27 +208,27 @@ void drawGround(const std::vector<RoadBump>& bumps) {
             const std::array<double, 3> deckSideColor = {0.16, 0.20, 0.24};
             for (int segment = 0; segment < ROAD_RAMP_SEGMENTS; ++segment) {
                 const double phase = (static_cast<double>(segment) + 0.5) / ROAD_RAMP_SEGMENTS;
-                  addBox(segmentLength, bump.width, bump.height * phase,
-                      startX + segmentLength * (segment + 0.5), bump.centerY, 0.0, deckColor,
-                      deckSideColor);
+                addBox(segmentLength, bump.width, bump.height * phase,
+                       startX + segmentLength * (segment + 0.5), bump.centerY, 0.0, deckColor,
+                       deckSideColor);
             }
-                 addBox(deckLength, bump.width, bump.height, bump.centerX, bump.centerY, 0.0,
-                     deckColor, deckSideColor);
+            addBox(deckLength, bump.width, bump.height, bump.centerX, bump.centerY, 0.0, deckColor,
+                   deckSideColor);
             const double downStartX = bump.centerX + bump.length * 0.5 - rampLength;
             for (int segment = 0; segment < ROAD_RAMP_SEGMENTS; ++segment) {
                 const double phase = (static_cast<double>(segment) + 0.5) / ROAD_RAMP_SEGMENTS;
-                  addBox(segmentLength, bump.width, bump.height * (1.0 - phase),
-                      downStartX + segmentLength * (segment + 0.5), bump.centerY, 0.0, deckColor,
-                      deckSideColor);
+                addBox(segmentLength, bump.width, bump.height * (1.0 - phase),
+                       downStartX + segmentLength * (segment + 0.5), bump.centerY, 0.0, deckColor,
+                       deckSideColor);
             }
             if (bump.railHeight > 0.0 && bump.railWidth > 0.0) {
                 const double railY = bump.width * 0.5 - bump.railWidth * 0.5;
                 const std::array<double, 3> railColor = {0.72, 0.76, 0.80};
                 const std::array<double, 3> railSideColor = {0.30, 0.34, 0.38};
-                  addBox(bump.length, bump.railWidth, bump.railHeight, bump.centerX,
-                      bump.centerY + railY, bump.height, railColor, railSideColor);
-                  addBox(bump.length, bump.railWidth, bump.railHeight, bump.centerX,
-                      bump.centerY - railY, bump.height, railColor, railSideColor);
+                addBox(bump.length, bump.railWidth, bump.railHeight, bump.centerX,
+                       bump.centerY + railY, bump.height, railColor, railSideColor);
+                addBox(bump.length, bump.railWidth, bump.railHeight, bump.centerX,
+                       bump.centerY - railY, bump.height, railColor, railSideColor);
             }
             continue;
         }

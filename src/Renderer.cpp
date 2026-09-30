@@ -122,11 +122,16 @@ constexpr int viewpointMask(RenderViewContext context) {
 constexpr double MAN_DL05_MODEL_OFFSET_Z = -1.035;
 constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
 constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 8;
+constexpr int MIN_REFLECTION_TARGET_SIZE = 64;
+constexpr double DEFAULT_FIELD_OF_VIEW = 60.0;
+constexpr double MIN_FIELD_OF_VIEW = 20.0;
+constexpr double MAX_FIELD_OF_VIEW = 120.0;
+constexpr double REFLECTION_NEAR_PLANE = 0.1;
 
 int reflectionSizeFromEnvironment() {
     const char* value = std::getenv("OPENBUS_REFLECTION_SIZE");
     if (value == nullptr) {
-        return 256;
+        return 1024;
     }
     const int size = std::atoi(value);
     return size == 256 || size == 512 || size == 1024 ? size : 256;
@@ -179,6 +184,65 @@ Matrix4 multiplyMatrix4(const Matrix4& left, const Matrix4& right) {
         }
     }
     return result;
+}
+
+std::array<double, 4> transformPoint(const Matrix4& matrix,
+                                     const std::array<double, 4>& point) {
+    std::array<double, 4> result = {};
+    for (int row = 0; row < 4; ++row) {
+        for (int column = 0; column < 4; ++column) {
+            result[row] += matrix[row + column * 4] * point[column];
+        }
+    }
+    return result;
+}
+
+using FrustumPlanes = std::array<std::array<double, 4>, 6>;
+using FrustumPlaneLengths = std::array<double, 6>;
+
+struct ViewFrustum {
+    FrustumPlanes planes = {};
+    FrustumPlaneLengths planeLengths = {};
+};
+
+ViewFrustum buildViewFrustum(const Matrix4& projection) {
+    const std::array<std::array<double, 4>, 6> planeSigns = {
+        {{{1.0, 0.0, 0.0, 1.0}},
+         {{-1.0, 0.0, 0.0, 1.0}},
+         {{0.0, 1.0, 0.0, 1.0}},
+         {{0.0, -1.0, 0.0, 1.0}},
+         {{0.0, 0.0, 1.0, 1.0}},
+         {{0.0, 0.0, -1.0, 1.0}}}};
+    ViewFrustum frustum;
+    for (std::size_t plane = 0; plane < planeSigns.size(); ++plane) {
+        double lengthSquared = 0.0;
+        for (int column = 0; column < 4; ++column) {
+            double coefficient = 0.0;
+            for (int row = 0; row < 4; ++row) {
+                coefficient += planeSigns[plane][row] * projection[row + column * 4];
+            }
+            frustum.planes[plane][column] = coefficient;
+            if (column < 3) {
+                lengthSquared += coefficient * coefficient;
+            }
+        }
+        frustum.planeLengths[plane] = std::sqrt(lengthSquared);
+    }
+    return frustum;
+}
+
+bool sphereOutsideFrustum(const ViewFrustum& frustum, const std::array<double, 4>& eye,
+                          double radius) {
+    for (std::size_t plane = 0; plane < frustum.planes.size(); ++plane) {
+        const double planeDistance = frustum.planes[plane][0] * eye[0] +
+                                     frustum.planes[plane][1] * eye[1] +
+                                     frustum.planes[plane][2] * eye[2] +
+                                     frustum.planes[plane][3];
+        if (planeDistance < -radius * frustum.planeLengths[plane]) {
+            return true;
+        }
+    }
+    return false;
 }
 
 Matrix4 translationMatrix(const std::array<double, 3>& value) {
@@ -425,6 +489,10 @@ struct Vehicle {
         std::size_t triangleCount;
         std::vector<ModelAnimation> animations;
         std::vector<AnimationState> animationStates;
+        mutable std::uint64_t animationCacheGeneration = 0;
+        mutable Matrix4 cachedAnimationTransform = {};
+        mutable std::uint64_t viewDepthCacheGeneration = 0;
+        mutable double cachedViewDepth = 0.0;
     };
 
     struct WheelModel {
@@ -433,6 +501,9 @@ struct Vehicle {
     };
 
     std::vector<DisplayPart> displayLists;
+    std::vector<bool> variableVisibleParts;
+    std::unordered_set<int> visibleReflectionTextureIndices;
+    std::unordered_map<int, int> reflectionRequiredSizes;
     std::vector<WheelModel> wheelModels;
     openbus::scripting::Vehicle variables;
     std::unique_ptr<ScriptRuntime> scripts;
@@ -445,11 +516,13 @@ struct Vehicle {
     std::vector<double> lodThresholds;
     std::size_t opaqueDisplayCount = 0;
     mutable std::size_t lastRenderedTriangles = 0;
+    std::uint64_t viewDepthGeneration = 0;
     bool loaded = false;
     bool hasLoadedInitialView = false;
     bool loggedAllObjectsLoaded = false;
     int activeLod = -1;
     double animationTimeStep = 0.0;
+    std::uint64_t animationGeneration = 1;
     std::chrono::steady_clock::time_point textureUploadStart;
 
     void updateMaterialChange(Batch& batch) {
@@ -461,7 +534,7 @@ struct Vehicle {
         // request state so the new texture is resolved and uploaded.
         const MaterialState::TextureChange* selected = nullptr;
         for (const MaterialState::TextureChange& change : batch.textureChanges) {
-            const double activationValue = variables.get(change.activationVariable);
+            const double activationValue = variables.getNormalized(change.activationVariable);
             if (activationValue != 0.0) {
                 selected = &change;
             }
@@ -508,10 +581,12 @@ struct Vehicle {
         if (batch.alphaScaleVariable.empty()) {
             return 1.0;
         }
-        return std::clamp(variables.get(batch.alphaScaleVariable), 0.0, 1.0);
+        return std::clamp(variables.getNormalized(batch.alphaScaleVariable), 0.0, 1.0);
     }
 
     void updateAnimationStates() {
+        TraceScope trace("render", "Vehicle::updateAnimationStates");
+        ++animationGeneration;
         const double timeStep = std::clamp(animationTimeStep, 0.0, 0.25);
         for (DisplayPart& part : displayLists) {
             if (part.animationStates.size() != part.animations.size()) {
@@ -527,7 +602,8 @@ struct Vehicle {
                     continue;
                 }
                 const double targetAmount =
-                    variables.get(animation.variable) * animation.scale + animation.offset;
+                    variables.getNormalized(animation.variable) * animation.scale +
+                    animation.offset;
                 if (!state.initialized) {
                     state.currentAmount = targetAmount;
                     state.targetAmount = targetAmount;
@@ -598,10 +674,13 @@ struct Vehicle {
 
     Matrix4 animationTransformForPart(const DisplayPart& part,
                                       std::vector<const DisplayPart*>& active) const {
+        if (part.animationCacheGeneration == animationGeneration) {
+            return part.cachedAnimationTransform;
+        }
         Matrix4 local = identityMatrix();
         for (std::size_t index = 0; index < part.animations.size(); ++index) {
             const ModelAnimation& animation = part.animations[index];
-            const double value = variables.get(animation.variable);
+            const double value = variables.getNormalized(animation.variable);
             const double amount = index < part.animationStates.size()
                                       ? part.animationStates[index].currentAmount
                                       : value * animation.scale + animation.offset;
@@ -609,6 +688,11 @@ struct Vehicle {
         }
         if (part.animationParent.empty() ||
             std::find(active.begin(), active.end(), &part) != active.end()) {
+            if (std::find(active.begin(), active.end(), &part) != active.end()) {
+                return local;
+            }
+            part.cachedAnimationTransform = local;
+            part.animationCacheGeneration = animationGeneration;
             return local;
         }
         const DisplayPart* parent = nullptr;
@@ -629,17 +713,35 @@ struct Vehicle {
             }
         }
         if (parent == nullptr) {
+            part.cachedAnimationTransform = local;
+            part.animationCacheGeneration = animationGeneration;
             return local;
         }
         active.push_back(&part);
         const Matrix4 parentTransform = animationTransformForPart(*parent, active);
         active.pop_back();
-        return multiplyMatrix4(parentTransform, local);
+        part.cachedAnimationTransform = multiplyMatrix4(parentTransform, local);
+        part.animationCacheGeneration = animationGeneration;
+        return part.cachedAnimationTransform;
+    }
+
+    Matrix4 animationTransformForPart(const DisplayPart& part) const {
+        if (part.animationCacheGeneration == animationGeneration) {
+            return part.cachedAnimationTransform;
+        }
+        std::vector<const DisplayPart*> active;
+        return animationTransformForPart(part, active);
     }
 
     void applyAnimations(const DisplayPart& part) const {
-        std::vector<const DisplayPart*> active;
-        multiplyMatrix(animationTransformForPart(part, active));
+        multiplyMatrix(animationTransformForPart(part));
+    }
+
+    std::array<double, 3> animatedPartCenter(const DisplayPart& part) const {
+        const std::array<double, 4> local = {part.center[0], part.center[1], part.center[2], 1.0};
+        const Matrix4 animation = animationTransformForPart(part);
+        const std::array<double, 4> transformed = transformPoint(animation, local);
+        return {transformed[0], transformed[1], transformed[2] + modelOffsetZ};
     }
 
     static void setBackFaceCulling(bool enabled) {
@@ -653,6 +755,7 @@ struct Vehicle {
     }
 
     void updateFrameVariables(bool isAiVehicle, double timeStep) {
+        TraceScope trace("frame", "Vehicle::updateFrameVariables");
         // Frame-scoped values are refreshed before simulation and rendering run.
         variables.updateFrame();
         variables.set("AI", isAiVehicle ? 1.0 : 0.0);
@@ -660,6 +763,7 @@ struct Vehicle {
     }
 
     void updateScripts(bool isAiVehicle) {
+        TraceScope trace("script", "Vehicle::updateScripts");
         if (scripts) {
             const std::size_t scriptErrorCount = scripts->errors().size();
             scripts->update(isAiVehicle);
@@ -669,8 +773,136 @@ struct Vehicle {
         }
     }
 
+    std::unordered_set<int> reflectionTextureIndicesForPart(const DisplayPart& part) const {
+        std::unordered_set<int> reflectionIndices;
+        for (const Batch& batch : part.batches) {
+            const auto registerReflection = [&](const std::string& textureName) {
+                const int reflectionIndex = reflectionTextureIndex(textureName);
+                if (reflectionIndex >= 0) {
+                    reflectionIndices.insert(reflectionIndex);
+                }
+            };
+            registerReflection(batch.textureName);
+            for (const MaterialTextureSource& source : batch.materialTextures) {
+                registerReflection(source.textureName);
+            }
+            for (const MaterialState::TextureChange& change : batch.textureChanges) {
+                registerReflection(change.textureName);
+            }
+        }
+        return reflectionIndices;
+    }
+
+    void prepareFrameVisibility(RenderViewContext context) {
+        TraceScope trace("render", "Vehicle::prepareFrameVisibility");
+        variableVisibleParts.resize(displayLists.size());
+        visibleReflectionTextureIndices.clear();
+        reflectionRequiredSizes.clear();
+        GLint viewport[4] = {};
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        const auto& modelView = openbus::rendering::modelViewMatrix();
+        const auto& projection = openbus::rendering::projectionMatrix();
+        const double viewportWidth = static_cast<double>(std::max(viewport[2], 1));
+        const double viewportHeight = static_cast<double>(std::max(viewport[3], 1));
+        ViewFrustum frustum;
+        if (frustumCulling) {
+            frustum = buildViewFrustum(projection);
+        }
+        {
+            TraceScope phase("render", "Vehicle::prepareFrameVisibility.scanParts");
+            for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+                const DisplayPart& part = displayLists[partIndex];
+                const bool visible =
+                    part.visibleVariable.empty() || variables.getNormalized(part.visibleVariable) ==
+                                                        static_cast<double>(part.visibleValue);
+                variableVisibleParts[partIndex] = visible;
+                if (!visible ||
+                    (part.viewpoint != 0 && (part.viewpoint & viewpointMask(context)) == 0)) {
+                    continue;
+                }
+            const std::unordered_set<int> partReflectionIndices =
+                reflectionTextureIndicesForPart(part);
+            if (partReflectionIndices.empty()) {
+                continue;
+            }
+            const std::array<double, 3> center = animatedPartCenter(part);
+            const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
+            const std::array<double, 4> eye = transformPoint(modelView, local);
+            if (frustumCulling && sphereOutsideFrustum(frustum, eye, part.radius)) {
+                continue;
+            }
+            const Matrix4 animation = animationTransformForPart(part);
+            const std::array<double, 3> halfSize = {std::max(part.size[0] * 0.5, 0.0),
+                                                    std::max(part.size[1] * 0.5, 0.0),
+                                                    std::max(part.size[2] * 0.5, 0.0)};
+            double minimumNdcX = std::numeric_limits<double>::max();
+            double maximumNdcX = std::numeric_limits<double>::lowest();
+            double minimumNdcY = std::numeric_limits<double>::max();
+            double maximumNdcY = std::numeric_limits<double>::lowest();
+            bool hasProjectedCorner = false;
+            bool intersectsNearPlane = false;
+
+            for (int corner = 0; corner < 8; ++corner) {
+                const std::array<double, 4> cornerLocal = {
+                    part.center[0] + ((corner & 1) == 0 ? -halfSize[0] : halfSize[0]),
+                    part.center[1] + ((corner & 2) == 0 ? -halfSize[1] : halfSize[1]),
+                    part.center[2] + ((corner & 4) == 0 ? -halfSize[2] : halfSize[2]), 1.0};
+                std::array<double, 4> animated = transformPoint(animation, cornerLocal);
+                animated[2] += modelOffsetZ;
+                const std::array<double, 4> cornerEye = transformPoint(modelView, animated);
+                const double depth = -cornerEye[2];
+                if (depth <= REFLECTION_NEAR_PLANE) {
+                    intersectsNearPlane = true;
+                    continue;
+                }
+                const double clipX = projection[0] * cornerEye[0] + projection[4] * cornerEye[1] +
+                                     projection[8] * cornerEye[2] + projection[12] * cornerEye[3];
+                const double clipY = projection[1] * cornerEye[0] + projection[5] * cornerEye[1] +
+                                     projection[9] * cornerEye[2] + projection[13] * cornerEye[3];
+                minimumNdcX = std::min(minimumNdcX, clipX / depth);
+                maximumNdcX = std::max(maximumNdcX, clipX / depth);
+                minimumNdcY = std::min(minimumNdcY, clipY / depth);
+                maximumNdcY = std::max(maximumNdcY, clipY / depth);
+                hasProjectedCorner = true;
+            }
+            if (!hasProjectedCorner) {
+                continue;
+            }
+            const double projectedWidth =
+                intersectsNearPlane ? viewportWidth
+                                    : std::clamp((maximumNdcX - minimumNdcX) * 0.5 * viewportWidth,
+                                                 0.0, viewportWidth);
+            const double projectedHeight =
+                intersectsNearPlane ? viewportHeight
+                                    : std::clamp((maximumNdcY - minimumNdcY) * 0.5 * viewportHeight,
+                                                 0.0, viewportHeight);
+            const double screenBoundedDiameter = std::max(projectedWidth, projectedHeight);
+            const int requiredSize =
+                std::max(MIN_REFLECTION_TARGET_SIZE,
+                         static_cast<int>(std::ceil(screenBoundedDiameter)));
+
+                for (const int reflectionIndex : partReflectionIndices) {
+                    visibleReflectionTextureIndices.insert(reflectionIndex);
+                    reflectionRequiredSizes[reflectionIndex] =
+                        std::max(reflectionRequiredSizes[reflectionIndex], requiredSize);
+                }
+            }
+        }
+    }
+
+    bool needsReflectionTexture(std::size_t reflectionIndex) const {
+        return visibleReflectionTextureIndices.find(static_cast<int>(reflectionIndex)) !=
+               visibleReflectionTextureIndices.end();
+    }
+
+    int requiredReflectionSize(std::size_t reflectionIndex) const {
+        const auto required = reflectionRequiredSizes.find(static_cast<int>(reflectionIndex));
+        return required == reflectionRequiredSizes.end() ? MIN_REFLECTION_TARGET_SIZE
+                                 : required->second;
+    }
+
     void updateSimulationVariables(const BusSimulation& simulation, double throttle,
-                                   double steering, double brake) {
+                                    double steering, double brake) {
         simulation.updateVariables(variables, throttle, steering, brake);
     }
 
@@ -783,10 +1015,21 @@ struct Vehicle {
         }
         const bool materialBatch = !batch.materialTextures.empty() && !forceUntextured;
         const std::vector<GLuint>* materialTextureIds = nullptr;
+        std::vector<bool> materialTextureFlips;
         if (materialBatch) {
             batch.materialTextureIds.resize(batch.materialTextures.size());
+            materialTextureFlips.resize(batch.materialTextures.size());
             for (MaterialTextureSource& source : batch.materialTextures) {
                 ensureMaterialTexture(source);
+                if (!activeReflectionPass) {
+                    const int reflectionIndex = reflectionTextureIndex(source.textureName);
+                    const auto reflectionTexture = activeReflectionTextures.find(reflectionIndex);
+                    if (reflectionTexture != activeReflectionTextures.end()) {
+                        source.texture = reflectionTexture->second;
+                        source.textureArray = false;
+                        materialTextureFlips[&source - batch.materialTextures.data()] = true;
+                    }
+                }
                 batch.materialTextureIds[&source - batch.materialTextures.data()] = source.texture;
             }
             materialTextureIds = &batch.materialTextureIds;
@@ -814,16 +1057,18 @@ struct Vehicle {
         material.lightmapStrength = static_cast<float>(
             batch.lightmapStrengthVariable.empty()
                 ? 1.0
-                : std::clamp(variables.get(batch.lightmapStrengthVariable), 0.0, 1.0));
-        const double nightlight =
-            std::max(variables.get("NightlightA"), 1.0 - variables.get("Envir_Brightness"));
+                : std::clamp(variables.getNormalized(batch.lightmapStrengthVariable), 0.0, 1.0));
+        const double nightlight = std::max(variables.getNormalized("nightlighta"),
+                                           1.0 - variables.getNormalized("envir_brightness"));
         material.nightmapStrength = static_cast<float>(std::clamp(nightlight, 0.0, 1.0));
-        material.texcoordOffsetX = static_cast<float>(
-            batch.texcoordTransXVariable.empty() ? 0.0
-                                                 : variables.get(batch.texcoordTransXVariable));
-        material.texcoordOffsetY = static_cast<float>(
-            batch.texcoordTransYVariable.empty() ? 0.0
-                                                 : variables.get(batch.texcoordTransYVariable));
+        material.texcoordOffsetX =
+            static_cast<float>(batch.texcoordTransXVariable.empty()
+                                   ? 0.0
+                                   : variables.getNormalized(batch.texcoordTransXVariable));
+        material.texcoordOffsetY =
+            static_cast<float>(batch.texcoordTransYVariable.empty()
+                                   ? 0.0
+                                   : variables.getNormalized(batch.texcoordTransYVariable));
         if (!activeReflectionPass && !materialBatch) {
             const int reflectionIndex = reflectionTextureIndex(
                 batch.textureName.empty() ? batch.texturePath.string() : batch.textureName);
@@ -837,7 +1082,7 @@ struct Vehicle {
         }
         if (materialBatch) {
             drawMaterialBatch(batch.buffer, batch.vertexCount, batch.materialColors,
-                              *materialTextureIds);
+                              *materialTextureIds, materialTextureFlips);
         } else {
             drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
                            forceUntextured ? 0 : batch.alphaMode);
@@ -852,6 +1097,7 @@ struct Vehicle {
         if (!loaded) {
             return;
         }
+        ++viewDepthGeneration;
         const bool reflectionPass = activeReflectionPass;
         const bool renderTransparent = !reflectionPass || reflectionTransparentFromEnvironment();
         if (!reflectionPass) {
@@ -862,8 +1108,7 @@ struct Vehicle {
         textureUploadStart = std::chrono::steady_clock::now();
 
         const auto& modelView = openbus::rendering::modelViewMatrix();
-        std::array<std::array<double, 4>, 6> frustumPlanes = {};
-        std::array<double, 6> frustumPlaneLengths = {};
+        ViewFrustum frustum;
 
         {
             TraceScope phase("render", "Vehicle::draw.setup");
@@ -879,45 +1124,20 @@ struct Vehicle {
         {
             if (frustumCulling) {
                 TraceScope phase("render", "Vehicle::draw.frustumSetup");
-                const auto& projection = openbus::rendering::projectionMatrix();
-                const std::array<std::array<double, 4>, 6> planeSigns = {{{{1.0, 0.0, 0.0, 1.0}},
-                                                                          {{-1.0, 0.0, 0.0, 1.0}},
-                                                                          {{0.0, 1.0, 0.0, 1.0}},
-                                                                          {{0.0, -1.0, 0.0, 1.0}},
-                                                                          {{0.0, 0.0, 1.0, 1.0}},
-                                                                          {{0.0, 0.0, -1.0, 1.0}}}};
-                for (std::size_t plane = 0; plane < planeSigns.size(); ++plane) {
-                    const auto& signs = planeSigns[plane];
-                    double lengthSquared = 0.0;
-                    for (int column = 0; column < 4; ++column) {
-                        double coefficient = 0.0;
-                        for (int row = 0; row < 4; ++row) {
-                            coefficient += signs[row] * projection[row + column * 4];
-                        }
-                        frustumPlanes[plane][column] = coefficient;
-                        if (column < 3) {
-                            lengthSquared += coefficient * coefficient;
-                        }
-                    }
-                    frustumPlaneLengths[plane] = std::sqrt(lengthSquared);
-                }
+                frustum = buildViewFrustum(openbus::rendering::projectionMatrix());
             }
         }
 
-        const auto visible = [&](const DisplayPart& part) {
+        const auto visible = [&](const DisplayPart& part, std::size_t partIndex) {
             // TraceScope phase("render", "Vehicle::draw.visible");
-            if (!part.visibleVariable.empty() &&
-                variables.get(part.visibleVariable) != static_cast<double>(part.visibleValue)) {
+            if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex]) {
                 return false;
             }
-            const double local[4] = {part.center[0], part.center[1], part.center[2] + modelOffsetZ,
-                                     1.0};
-            double eye[4] = {};
-            for (int row = 0; row < 4; ++row) {
-                for (int column = 0; column < 4; ++column) {
-                    eye[row] += modelView[row + column * 4] * local[column];
-                }
-            }
+            const std::array<double, 3> center = animatedPartCenter(part);
+            const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
+            const std::array<double, 4> eye = transformPoint(modelView, local);
+            part.cachedViewDepth = -eye[2];
+            part.viewDepthCacheGeneration = viewDepthGeneration;
             const double distance = std::sqrt(eye[0] * eye[0] + eye[1] * eye[1] + eye[2] * eye[2]);
             if (!lodThresholds.empty() && part.lodIndex >= 0) {
                 std::size_t selectedLod = lodThresholds.size() - 1;
@@ -935,25 +1155,22 @@ struct Vehicle {
             if (!frustumCulling) {
                 return true;
             }
-            for (std::size_t plane = 0; plane < frustumPlanes.size(); ++plane) {
-                const double planeDistance =
-                    frustumPlanes[plane][0] * eye[0] + frustumPlanes[plane][1] * eye[1] +
-                    frustumPlanes[plane][2] * eye[2] + frustumPlanes[plane][3];
-                if (planeDistance < -part.radius * frustumPlaneLengths[plane]) {
-                    return false;
-                }
+            if (sphereOutsideFrustum(frustum, eye, part.radius)) {
+                return false;
             }
             return true;
         };
         const auto viewDepth = [&](const DisplayPart& part) {
             // TraceScope phase("render", "Vehicle::draw.viewDepth");
-            const double local[4] = {part.center[0], part.center[1], part.center[2] + modelOffsetZ,
-                                     1.0};
-            double eyeZ = 0.0;
-            for (int column = 0; column < 4; ++column) {
-                eyeZ += modelView[2 + column * 4] * local[column];
+            if (part.viewDepthCacheGeneration == viewDepthGeneration) {
+                return part.cachedViewDepth;
             }
-            return -eyeZ;
+            const std::array<double, 3> center = animatedPartCenter(part);
+            const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
+            const double depth = -transformPoint(modelView, local)[2];
+            part.cachedViewDepth = depth;
+            part.viewDepthCacheGeneration = viewDepthGeneration;
+            return depth;
         };
         struct TransparentBatch {
             Batch* batch;
@@ -971,10 +1188,11 @@ struct Vehicle {
         }
         {
             TraceScope phase("render", "Vehicle::draw.classifyParts");
-            for (DisplayPart& part : displayLists) {
+            for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+                DisplayPart& part = displayLists[partIndex];
                 const bool viewpointMatches =
                     part.viewpoint == 0 || (part.viewpoint & viewpointMask(context)) != 0;
-                if (!viewpointMatches || !visible(part)) {
+                if (!viewpointMatches || !visible(part, partIndex)) {
                     continue;
                 }
                 const bool hasOpaqueBatch =
@@ -1145,20 +1363,20 @@ struct Vehicle {
         };
         if (!animation.steeringVariable.empty() &&
             steeringVariableMatchesAxle(animation.steeringVariable)) {
-            const double requested = variables.get(animation.steeringVariable);
+            const double requested = variables.getNormalized(animation.steeringVariable);
             const double physical = simulation.wheelSteeringAngle(simulationIndex);
             const double scale =
                 animation.steeringScale == 0.0 ? RADIANS_TO_DEGREES : animation.steeringScale;
             rotate((requested - physical) * scale, 0.0, 0.0, 1.0);
         }
         if (!animation.rotationVariable.empty()) {
-            const double requested = variables.get(animation.rotationVariable);
+            const double requested = variables.getNormalized(animation.rotationVariable);
             const double scale =
                 animation.rotationScale == 0.0 ? RADIANS_TO_DEGREES : animation.rotationScale;
             rotate(-requested * scale, 0.0, 1.0, 0.0);
         }
         if (!animation.suspensionVariable.empty()) {
-            const double requested = variables.get(animation.suspensionVariable);
+            const double requested = variables.getNormalized(animation.suspensionVariable);
             const double physical = simulation.wheelSuspensionCompression(simulationIndex);
             const double scale = animation.suspensionScale == 0.0 ? 1.0 : animation.suspensionScale;
             translate(0.0, 0.0, (requested - physical) * scale);
@@ -1167,6 +1385,7 @@ struct Vehicle {
 
     void drawConfiguredWheels(const BusSimulation& simulation, const BodyPose& chassis,
                               bool outsideView) {
+        TraceScope trace("render", "Vehicle::drawConfiguredWheels");
         std::vector<bool> usedWheelIndices(simulation.wheelCount(), false);
         for (std::size_t modelIndex = 0; modelIndex < wheelModels.size(); ++modelIndex) {
             WheelModel& wheel = wheelModels[modelIndex];
@@ -1785,7 +2004,8 @@ struct Vehicle {
         if (batch.freeTextureVariable.empty() || !scripts) {
             return;
         }
-        const int index = static_cast<int>(std::lround(variables.get(batch.freeTextureVariable)));
+        const int index =
+            static_cast<int>(std::lround(variables.getNormalized(batch.freeTextureVariable)));
         ScriptRuntime::ScriptTextureSnapshot snapshot;
         if (index < 0 || !scripts->copyScriptTexture(index, snapshot) || snapshot.width <= 0 ||
             snapshot.height <= 0 || snapshot.pixels.empty()) {
@@ -1933,8 +2153,7 @@ struct Vehicle {
         if (!source.textureCacheEntry->uploadAttempted) {
             if (loadingPolicy.textureMode == AssetLoadingMode::Deferred) {
                 constexpr auto textureUploadBudget = std::chrono::milliseconds(2);
-                if (std::chrono::steady_clock::now() - textureUploadStart >=
-                    textureUploadBudget) {
+                if (std::chrono::steady_clock::now() - textureUploadStart >= textureUploadBudget) {
                     return;
                 }
             }
@@ -2045,8 +2264,8 @@ struct Vehicle {
                 for (Batch& batch : part.batches) {
                     if (!batch.materialTextures.empty()) {
                         for (MaterialTextureSource& source : batch.materialTextures) {
-                            ensureMaterialTexture(
-                                source, loadingPolicy.textureMode == AssetLoadingMode::Eager);
+                            ensureMaterialTexture(source, loadingPolicy.textureMode ==
+                                                              AssetLoadingMode::Eager);
                         }
                     } else if (!batch.texturePath.empty() || !batch.textureName.empty()) {
                         ensureTexture(batch, loadingPolicy.textureMode == AssetLoadingMode::Eager);
@@ -2097,6 +2316,7 @@ struct Vehicle {
 
         std::vector<ModelAnimation> animations = part.animations;
         for (ModelAnimation& animation : animations) {
+            animation.variable = lower(animation.variable);
             if (animation.originFromMesh) {
                 if (parsed->hasTransform) {
                     // The converter preserves OBJ vertices and stores this transform as
@@ -2130,12 +2350,15 @@ struct Vehicle {
                             std::to_string(animation.origin[0]) + ',' +
                             std::to_string(animation.origin[1]) + ',' +
                             std::to_string(animation.origin[2]) +
-                            ") hasOrigin=" + (animation.hasOrigin ? "true" : "false") +
-                            " value=" + std::to_string(variables.get(animation.variable)));
+                            ") hasOrigin=" + (animation.hasOrigin ? "true" : "false") + " value=" +
+                            std::to_string(variables.getNormalized(animation.variable)));
             }
         }
 
         WheelAnimation wheelAnimation = part.wheelAnimation;
+        wheelAnimation.rotationVariable = lower(wheelAnimation.rotationVariable);
+        wheelAnimation.suspensionVariable = lower(wheelAnimation.suspensionVariable);
+        wheelAnimation.steeringVariable = lower(wheelAnimation.steeringVariable);
         if (verboseObjLoadLogs && !wheelAnimation.rotationVariable.empty()) {
             gameLog.Log("Wheel OBJ animation: " + part.objPath.filename().string() +
                         " rotation=" + wheelAnimation.rotationVariable +
@@ -2276,17 +2499,20 @@ struct Vehicle {
             batch.lightmap.name = materialState.lightmapTextureName;
             batch.nightmap.name = materialState.nightmapTextureName;
             batch.transmap.name = materialState.transmapTextureName;
-            batch.lightmapStrengthVariable = materialState.lightmapStrengthVariable;
-            batch.freeTextureVariable = materialState.freeTextureVariable;
-            batch.texcoordTransXVariable = materialState.texcoordTransXVariable;
-            batch.texcoordTransYVariable = materialState.texcoordTransYVariable;
+            batch.lightmapStrengthVariable = lower(materialState.lightmapStrengthVariable);
+            batch.freeTextureVariable = lower(materialState.freeTextureVariable);
+            batch.texcoordTransXVariable = lower(materialState.texcoordTransXVariable);
+            batch.texcoordTransYVariable = lower(materialState.texcoordTransYVariable);
             batch.color = color;
             batch.hasNormals = true;
             batch.alphaMode = alphaMode;
             batch.noZwrite = noZwrite;
             batch.noZcheck = noZcheck;
-            batch.alphaScaleVariable = alphaScaleVariable;
+            batch.alphaScaleVariable = lower(alphaScaleVariable);
             batch.textureChanges = textureChanges;
+            for (MaterialState::TextureChange& change : batch.textureChanges) {
+                change.activationVariable = lower(change.activationVariable);
+            }
             batch.vertexCount = batch.vertices.size();
 
             const auto canMergeOpaqueBatches = [](const Batch& first, const Batch& second) {
@@ -2323,10 +2549,9 @@ struct Vehicle {
                 merged.vertexCount = merged.vertices.size();
                 TraceScope uploadTrace("obj", "loadObj.mergeBatch");
                 pglBindBuffer(GL_ARRAY_BUFFER, merged.buffer);
-                pglBufferData(
-                    GL_ARRAY_BUFFER,
-                    static_cast<std::ptrdiff_t>(merged.vertices.size() * sizeof(Vertex)),
-                    merged.vertices.data(), GL_STATIC_DRAW);
+                pglBufferData(GL_ARRAY_BUFFER,
+                              static_cast<std::ptrdiff_t>(merged.vertices.size() * sizeof(Vertex)),
+                              merged.vertices.data(), GL_STATIC_DRAW);
                 return;
             }
             {
@@ -2371,20 +2596,20 @@ struct Vehicle {
             std::vector<Batch> consolidated;
             consolidated.reserve(batches.size());
             for (Batch& source : batches) {
-                auto target = std::find_if(
-                    consolidated.begin(), consolidated.end(), [&](const Batch& candidate) {
-                        return candidate.materialTextures.size() < 8 &&
-                               sameMaterialBatch(candidate, source);
-                    });
+                auto target = std::find_if(consolidated.begin(), consolidated.end(),
+                                           [&](const Batch& candidate) {
+                                               return candidate.materialTextures.size() < 8 &&
+                                                      sameMaterialBatch(candidate, source);
+                                           });
                 if (target == consolidated.end()) {
                     if (canUseMaterialBatch(source)) {
                         for (Vertex& vertex : source.vertices) {
                             vertex.layer = 0.0f;
                         }
-                        source.materialColors.push_back(
-                            {static_cast<float>(source.color[0]),
-                             static_cast<float>(source.color[1]),
-                             static_cast<float>(source.color[2]), 1.0f});
+                        source.materialColors.push_back({static_cast<float>(source.color[0]),
+                                                         static_cast<float>(source.color[1]),
+                                                         static_cast<float>(source.color[2]),
+                                                         1.0f});
                         source.materialTextures.push_back(makeMaterialTexture(source));
                     }
                     consolidated.push_back(std::move(source));
@@ -2398,19 +2623,18 @@ struct Vehicle {
                 target->vertices.insert(target->vertices.end(), source.vertices.begin(),
                                         source.vertices.end());
                 target->vertexCount = target->vertices.size();
-                target->materialColors.push_back(
-                    {static_cast<float>(source.color[0]), static_cast<float>(source.color[1]),
-                     static_cast<float>(source.color[2]), 1.0f});
+                target->materialColors.push_back({static_cast<float>(source.color[0]),
+                                                  static_cast<float>(source.color[1]),
+                                                  static_cast<float>(source.color[2]), 1.0f});
                 target->materialTextures.push_back(makeMaterialTexture(source));
                 if (source.buffer != 0) {
                     pglDeleteBuffers(1, &source.buffer);
                     source.buffer = 0;
                 }
                 pglBindBuffer(GL_ARRAY_BUFFER, target->buffer);
-                pglBufferData(
-                    GL_ARRAY_BUFFER,
-                    static_cast<std::ptrdiff_t>(target->vertices.size() * sizeof(Vertex)),
-                    target->vertices.data(), GL_STATIC_DRAW);
+                pglBufferData(GL_ARRAY_BUFFER,
+                              static_cast<std::ptrdiff_t>(target->vertices.size() * sizeof(Vertex)),
+                              target->vertices.data(), GL_STATIC_DRAW);
             }
             batches = std::move(consolidated);
             for (Batch& batch : batches) {
@@ -2419,12 +2643,12 @@ struct Vehicle {
                     batch.materialTextures.clear();
                 }
             }
-            const std::size_t materialBatchCount = static_cast<std::size_t>(std::count_if(
-                batches.begin(), batches.end(),
-                [](const Batch& batch) { return batch.materialColors.size() >= 2; }));
+            const std::size_t materialBatchCount = static_cast<std::size_t>(
+                std::count_if(batches.begin(), batches.end(),
+                              [](const Batch& batch) { return batch.materialColors.size() >= 2; }));
             if (verboseObjLoadLogs && materialBatchCount != 0) {
-                gameLog.Log("Material batches: " + std::to_string(materialBatchCount) +
-                            " from " + std::to_string(batches.size()) + " total batches");
+                gameLog.Log("Material batches: " + std::to_string(materialBatchCount) + " from " +
+                            std::to_string(batches.size()) + " total batches");
             }
         };
 
@@ -2563,9 +2787,8 @@ struct Vehicle {
                 groupEnvironmentStrengths[key] = state.environmentStrength;
                 groupColors[key] = color;
                 groupStates[key] = state;
-                hasTransparentMaterial =
-                    hasTransparentMaterial || state.alphaMode != 0 || state.noZwrite ||
-                    state.noZcheck;
+                hasTransparentMaterial = hasTransparentMaterial || state.alphaMode != 0 ||
+                                         state.noZwrite || state.noZcheck;
             }
         }
         DisplayPart displayPart;
@@ -2573,7 +2796,7 @@ struct Vehicle {
         displayPart.renderType = part.renderType;
         displayPart.transparent = hasTransparentMaterial;
         displayPart.lodIndex = part.lodIndex;
-        displayPart.visibleVariable = part.visibleVariable;
+        displayPart.visibleVariable = lower(part.visibleVariable);
         displayPart.visibleValue = part.visibleValue;
         displayPart.meshIdentifier = part.meshIdentifier;
         displayPart.animationParent = part.animationParent;
@@ -2904,6 +3127,7 @@ void Renderer::SetPlayerVehicle(Vehicle* model) {
 
 void Renderer::updatePlayerVariables(const BusSimulation& simulation, double throttle,
                                      double steering, double brake) {
+    TraceScope trace("frame", "Renderer::updatePlayerVariables");
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(simulation, throttle, steering, brake);
     }
@@ -2911,6 +3135,7 @@ void Renderer::updatePlayerVariables(const BusSimulation& simulation, double thr
 }
 
 void Renderer::updateScripts() {
+    TraceScope trace("script", "Renderer::updateScripts");
     const double renderTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
     if (scriptRateHz_ <= 0.0) {
         simulationState_.sharedVariables().set("Timegap", renderTimeStep);
@@ -2970,11 +3195,13 @@ void Renderer::selectVehicleCamera(int direction) {
 double Renderer::currentFieldOfView() const {
     const VehicleCamera* camera = currentVehicleCamera();
     const double baseFieldOfView =
-        camera != nullptr && camera->fieldOfView > 0.0 ? camera->fieldOfView : 60.0;
-    return std::clamp(baseFieldOfView + fieldOfViewOffset_, 20.0, 120.0);
+        camera != nullptr && camera->fieldOfView > 0.0 ? camera->fieldOfView : DEFAULT_FIELD_OF_VIEW;
+    return std::clamp(baseFieldOfView + fieldOfViewOffset_, MIN_FIELD_OF_VIEW,
+                      MAX_FIELD_OF_VIEW);
 }
 
 void Renderer::initializeReflectionTargets() {
+    TraceScope trace("render", "Renderer::initializeReflectionTargets");
     std::size_t reflectionCount = 0;
     for (const VehicleCamera& camera : vehicleCameras_) {
         if (camera.kind == VehicleCameraKind::Reflexion ||
@@ -3010,13 +3237,12 @@ void Renderer::initializeReflectionTargets() {
 
         pglGenFramebuffers(1, &target.framebuffer);
         pglBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
-        pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                                target.texture, 0);
+        pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target.texture,
+                                0);
         pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
                                 target.depthTexture, 0);
         if (pglCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-            gameLog.Log("Reflection framebuffer is incomplete at index " +
-                        std::to_string(index));
+            gameLog.Log("Reflection framebuffer is incomplete at index " + std::to_string(index));
         }
         activeReflectionTextures[static_cast<int>(index)] = target.texture;
     }
@@ -3024,7 +3250,25 @@ void Renderer::initializeReflectionTargets() {
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+void Renderer::resizeReflectionTarget(ReflectionTarget& target, int size) {
+    TraceScope trace("render", "Renderer::resizeReflectionTarget");
+    size = std::clamp(size, MIN_REFLECTION_TARGET_SIZE, reflectionSize_);
+    if (target.width == size && target.height == size) {
+        return;
+    }
+    target.width = size;
+    target.height = size;
+
+    glBindTexture(GL_TEXTURE_2D, target.texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glBindTexture(GL_TEXTURE_2D, target.depthTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, size, size, 0, GL_DEPTH_COMPONENT,
+                 GL_FLOAT, nullptr);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
 void Renderer::destroyReflectionTargets() {
+    TraceScope trace("render", "Renderer::destroyReflectionTargets");
     activeReflectionTextures.clear();
     for (const ReflectionTarget& target : reflectionTargets_) {
         if (target.texture != 0) {
@@ -3041,6 +3285,7 @@ void Renderer::destroyReflectionTargets() {
 }
 
 void Renderer::renderReflectionViews(const BusSimulation& simulation) {
+    TraceScope trace("render", "Renderer::renderReflectionViews");
     if (renderingReflection_ || reflectionTargets_.empty()) {
         return;
     }
@@ -3055,10 +3300,12 @@ void Renderer::renderReflectionViews(const BusSimulation& simulation) {
     const double previousFovOffset = fieldOfViewOffset_;
     const double previousLookYaw = viewLookYaw_;
     const double previousLookPitch = viewLookPitch_;
+    const Matrix4 previousModelView = openbus::rendering::modelViewMatrix();
     std::size_t reflectionIndex = 0;
     renderingReflection_ = true;
     activeReflectionPass = true;
     for (std::size_t cameraIndex = 0; cameraIndex < vehicleCameras_.size(); ++cameraIndex) {
+        TraceScope targetTrace("render", "Renderer::renderReflectionViews.target");
         const VehicleCamera& camera = vehicleCameras_[cameraIndex];
         if (camera.kind != VehicleCameraKind::Reflexion &&
             camera.kind != VehicleCameraKind::Reflexion2) {
@@ -3067,29 +3314,121 @@ void Renderer::renderReflectionViews(const BusSimulation& simulation) {
         if (reflectionIndex >= reflectionTargets_.size()) {
             break;
         }
-        const ReflectionTarget& target = reflectionTargets_[reflectionIndex];
+        ReflectionTarget& target = reflectionTargets_[reflectionIndex];
+        bool reflectionNeeded = false;
+        int desiredSize = MIN_REFLECTION_TARGET_SIZE;
+        {
+            TraceScope phase("render", "Renderer::renderReflectionViews.visibility");
+            for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+                if (vehicle->needsReflectionTexture(reflectionIndex)) {
+                    reflectionNeeded = true;
+                    desiredSize =
+                        std::max(desiredSize, vehicle->requiredReflectionSize(reflectionIndex));
+                }
+            }
+        }
+        if (!reflectionNeeded) {
+            ++reflectionIndex;
+            continue;
+        }
         pglBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
-        glViewport(0, 0, target.width, target.height);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        cameraView_ = static_cast<int>(cameraIndex + 1);
-        fieldOfViewOffset_ = 0.0;
-        viewLookYaw_ = 0.0;
-        viewLookPitch_ = 0.0;
-        setPerspective(static_cast<double>(target.width), static_cast<double>(target.height),
-                       currentFieldOfView());
-        draw(simulation);
+        {
+            TraceScope phase("render", "Renderer::renderReflectionViews.resize");
+            const double reflectionFieldOfView =
+                camera.fieldOfView > 0.0 ? camera.fieldOfView : DEFAULT_FIELD_OF_VIEW;
+            const double referenceFovScale =
+                std::tan(DEFAULT_FIELD_OF_VIEW * 3.141592653589793 / 360.0);
+            const double reflectionFovScale = std::tan(
+                std::clamp(reflectionFieldOfView, MIN_FIELD_OF_VIEW, MAX_FIELD_OF_VIEW) *
+                3.141592653589793 / 360.0);
+            desiredSize = std::max(
+                desiredSize, static_cast<int>(std::ceil(desiredSize * referenceFovScale /
+                                                        std::max(reflectionFovScale, 0.001))));
+            int targetSize = MIN_REFLECTION_TARGET_SIZE;
+            while (targetSize < desiredSize && targetSize < reflectionSize_) {
+                targetSize *= 2;
+            }
+            targetSize = std::min(targetSize, reflectionSize_);
+            if (targetSize < target.width && desiredSize > target.width / 2) {
+                targetSize = target.width;
+            }
+            if (target.width != targetSize || target.height != targetSize) {
+                gameLog.Log(
+                    "Reflection target " + std::to_string(reflectionIndex) + " resized from " +
+                    std::to_string(target.width) + "x" + std::to_string(target.height) + " to " +
+                    std::to_string(targetSize) + "x" + std::to_string(targetSize) + " (max " +
+                    std::to_string(reflectionSize_) + "x" + std::to_string(reflectionSize_) + ")");
+            }
+            resizeReflectionTarget(target, targetSize);
+        }
+        {
+            TraceScope phase("render", "Renderer::renderReflectionViews.renderTarget");
+            glViewport(0, 0, target.width, target.height);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            cameraView_ = static_cast<int>(cameraIndex + 1);
+            fieldOfViewOffset_ = 0.0;
+            viewLookYaw_ = 0.0;
+            viewLookPitch_ = 0.0;
+            setPerspective(static_cast<double>(target.width), static_cast<double>(target.height),
+                           currentFieldOfView());
+            draw(simulation);
+        }
         ++reflectionIndex;
     }
-    renderingReflection_ = false;
-    activeReflectionPass = false;
-    pglBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-    cameraView_ = previousCameraView;
-    fieldOfViewOffset_ = previousFovOffset;
-    viewLookYaw_ = previousLookYaw;
-    viewLookPitch_ = previousLookPitch;
-    setPerspective(static_cast<double>(viewport[2]), static_cast<double>(viewport[3]),
-                   currentFieldOfView());
+    {
+        TraceScope phase("render", "Renderer::renderReflectionViews.restore");
+        renderingReflection_ = false;
+        activeReflectionPass = false;
+        pglBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        cameraView_ = previousCameraView;
+        fieldOfViewOffset_ = previousFovOffset;
+        viewLookYaw_ = previousLookYaw;
+        viewLookPitch_ = previousLookPitch;
+        setPerspective(static_cast<double>(viewport[2]), static_cast<double>(viewport[3]),
+                       currentFieldOfView());
+        openbus::rendering::setModelViewMatrix(previousModelView);
+    }
+}
+
+void Renderer::renderReflectionDebugOverlay() {
+    TraceScope trace("render", "Renderer::renderReflectionDebugOverlay");
+    if (renderingReflection_ || !reflectionDebugOverlay_ || reflectionTargets_.empty()) {
+        return;
+    }
+    int width = 1;
+    int height = 1;
+    glfwGetFramebufferSize(window_, &width, &height);
+    const std::size_t columnCount = std::min<std::size_t>(4, reflectionTargets_.size());
+    const std::size_t rowCount = (reflectionTargets_.size() + columnCount - 1) / columnCount;
+    const float gapPixels = 6.0f;
+    constexpr float maxTilePixels = 220.0f;
+    const float tilePixels =
+        std::min({maxTilePixels,
+                  (static_cast<float>(width) - gapPixels * (columnCount + 1)) / columnCount,
+                  (static_cast<float>(height) - gapPixels * (rowCount + 1)) / rowCount});
+    if (tilePixels <= 0.0f) {
+        return;
+    }
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    {
+        TraceScope phase("render", "Renderer::renderReflectionDebugOverlay.tiles");
+        for (std::size_t index = 0; index < reflectionTargets_.size(); ++index) {
+            const std::size_t column = index % columnCount;
+            const std::size_t row = index / columnCount;
+            const float leftPixels = gapPixels + column * (tilePixels + gapPixels);
+            const float topPixels = gapPixels + row * (tilePixels + gapPixels);
+            const float left = -1.0f + 2.0f * leftPixels / static_cast<float>(width);
+            const float bottom =
+                1.0f - 2.0f * (topPixels + tilePixels) / static_cast<float>(height);
+            openbus::rendering::drawTextureQuad(reflectionTargets_[index].texture, left, bottom,
+                                                2.0f * tilePixels / static_cast<float>(width),
+                                                2.0f * tilePixels / static_cast<float>(height));
+        }
+    }
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
 }
 
 bool Renderer::shouldClose() const {
@@ -3104,102 +3443,137 @@ void Renderer::requestClose() {
 
 void Renderer::beginFrame() {
     TraceScope trace("frame", "Renderer::beginFrame");
-    glfwPollEvents();
+    {
+        TraceScope phase("frame", "Renderer::beginFrame.pollEvents");
+        glfwPollEvents();
+    }
     const double currentTime = glfwGetTime();
     const double timegap =
         hasPreviousVariableTime_ ? std::max(0.0, currentTime - previousVariableTime_) : 0.0;
     previousVariableTime_ = currentTime;
     hasPreviousVariableTime_ = true;
     frameTimeStep_ = timegap;
-    const std::array<int, 4> keys = {GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D};
-    const std::array<const char*, 4> keyNames = {"W", "A", "S", "D"};
-    for (std::size_t index = 0; index < keys.size(); ++index) {
-        const bool pressed = glfwGetKey(window_, keys[index]) == GLFW_PRESS;
-        if (pressed != previousKeyStates_[index]) {
-            keyEvents_.push_back({keyNames[index], pressed, glfwGetTime()});
-            gameLog.Log(std::string("Key ") + keyNames[index] +
-                        (pressed ? " pressed" : " released"));
-            previousKeyStates_[index] = pressed;
-        }
-    }
-    for (std::size_t index = 0; index < previousViewKeyStates_.size(); ++index) {
-        const int key = GLFW_KEY_0 + static_cast<int>(index);
-        const bool pressed = glfwGetKey(window_, key) == GLFW_PRESS;
-        if (pressed && !previousViewKeyStates_[index]) {
-            if (index == 0 || index <= vehicleCameras_.size()) {
-                cameraView_ = static_cast<int>(index);
-                viewLookYaw_ = 0.0;
-                viewLookPitch_ = 0.0;
-                gameLog.Log("Changed camera view to " + std::to_string(cameraView_));
+    {
+        TraceScope phase("frame", "Renderer::beginFrame.keyboardInput");
+        const std::array<int, 4> keys = {GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D};
+        const std::array<const char*, 4> keyNames = {"W", "A", "S", "D"};
+        for (std::size_t index = 0; index < keys.size(); ++index) {
+            const bool pressed = glfwGetKey(window_, keys[index]) == GLFW_PRESS;
+            if (pressed != previousKeyStates_[index]) {
+                keyEvents_.push_back({keyNames[index], pressed, glfwGetTime()});
+                gameLog.Log(std::string("Key ") + keyNames[index] +
+                            (pressed ? " pressed" : " released"));
+                previousKeyStates_[index] = pressed;
             }
         }
-        previousViewKeyStates_[index] = pressed;
     }
-    const std::array<int, 2> cameraNavigationKeys = {GLFW_KEY_LEFT, GLFW_KEY_RIGHT};
-    for (std::size_t index = 0; index < cameraNavigationKeys.size(); ++index) {
-        const bool pressed = glfwGetKey(window_, cameraNavigationKeys[index]) == GLFW_PRESS;
-        if (pressed && !previousCameraNavigationStates_[index]) {
-            selectVehicleCamera(index == 0 ? -1 : 1);
+    {
+        TraceScope phase("frame", "Renderer::beginFrame.viewInput");
+        for (std::size_t index = 0; index < previousViewKeyStates_.size(); ++index) {
+            const int key = GLFW_KEY_0 + static_cast<int>(index);
+            const bool pressed = glfwGetKey(window_, key) == GLFW_PRESS;
+            if (pressed && !previousViewKeyStates_[index]) {
+                if (index == 0 || index <= vehicleCameras_.size()) {
+                    cameraView_ = static_cast<int>(index);
+                    viewLookYaw_ = 0.0;
+                    viewLookPitch_ = 0.0;
+                    gameLog.Log("Changed camera view to " + std::to_string(cameraView_));
+                }
+            }
+            previousViewKeyStates_[index] = pressed;
         }
-        previousCameraNavigationStates_[index] = pressed;
     }
-    const bool captureKeyPressed = glfwGetKey(window_, GLFW_KEY_F12) == GLFW_PRESS;
-    if (captureKeyPressed && !previousCaptureKeyState_) {
-        captureRequested_ = true;
+    {
+        TraceScope phase("frame", "Renderer::beginFrame.cameraNavigation");
+        const std::array<int, 2> cameraNavigationKeys = {GLFW_KEY_LEFT, GLFW_KEY_RIGHT};
+        for (std::size_t index = 0; index < cameraNavigationKeys.size(); ++index) {
+            const bool pressed = glfwGetKey(window_, cameraNavigationKeys[index]) == GLFW_PRESS;
+            if (pressed && !previousCameraNavigationStates_[index]) {
+                selectVehicleCamera(index == 0 ? -1 : 1);
+            }
+            previousCameraNavigationStates_[index] = pressed;
+        }
     }
-    previousCaptureKeyState_ = captureKeyPressed;
+    {
+        TraceScope phase("frame", "Renderer::beginFrame.captureInput");
+        const bool captureKeyPressed = glfwGetKey(window_, GLFW_KEY_F12) == GLFW_PRESS;
+        if (captureKeyPressed && !previousCaptureKeyState_) {
+            captureRequested_ = true;
+        }
+        previousCaptureKeyState_ = captureKeyPressed;
+    }
+    {
+        TraceScope phase("frame", "Renderer::beginFrame.debugInput");
+        const bool reflectionDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_R) == GLFW_PRESS;
+        if (reflectionDebugKeyPressed && !previousReflectionDebugKeyState_) {
+            reflectionDebugOverlay_ = !reflectionDebugOverlay_;
+            gameLog.Log(std::string("Reflection texture overlay ") +
+                        (reflectionDebugOverlay_ ? "enabled" : "disabled"));
+        }
+        previousReflectionDebugKeyState_ = reflectionDebugKeyPressed;
+    }
     int width = 1;
     int height = 1;
-    glfwGetFramebufferSize(window_, &width, &height);
     double cursorX = 0.0;
     double cursorY = 0.0;
-    glfwGetCursorPos(window_, &cursorX, &cursorY);
-    simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
-    for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-        const bool isAiVehicle = vehicle.get() != playerVehicle_;
-        vehicle->updateFrameVariables(isAiVehicle, timegap);
-    }
-    const bool rightMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-    if (rightMouse && !draggingFov_) {
-        previousFovCursorY_ = cursorY;
-    } else if (rightMouse) {
-        const double cursorDeltaY = cursorY - previousFovCursorY_;
-        if (cameraView_ == 0) {
-            cameraDistance_ = std::clamp(cameraDistance_ + cursorDeltaY * 0.1, 0.0, 80.0);
-        } else {
-            fieldOfViewOffset_ = std::clamp(fieldOfViewOffset_ + cursorDeltaY * 0.15, -40.0, 60.0);
+    {
+        TraceScope phase("frame", "Renderer::beginFrame.windowAndVariables");
+        glfwGetFramebufferSize(window_, &width, &height);
+        glfwGetCursorPos(window_, &cursorX, &cursorY);
+        simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
+        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+            const bool isAiVehicle = vehicle.get() != playerVehicle_;
+            vehicle->updateFrameVariables(isAiVehicle, timegap);
         }
     }
-    draggingFov_ = rightMouse;
-    previousFovCursorY_ = cursorY;
-    const bool middleMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
-    if (middleMouse && !draggingCamera_) {
+    {
+        TraceScope phase("frame", "Renderer::beginFrame.mouseInput");
+        const bool rightMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+        if (rightMouse && !draggingFov_) {
+            previousFovCursorY_ = cursorY;
+        } else if (rightMouse) {
+            const double cursorDeltaY = cursorY - previousFovCursorY_;
+            if (cameraView_ == 0) {
+                cameraDistance_ = std::clamp(cameraDistance_ + cursorDeltaY * 0.1, 0.0, 80.0);
+            } else {
+                fieldOfViewOffset_ =
+                    std::clamp(fieldOfViewOffset_ + cursorDeltaY * 0.15, -40.0, 60.0);
+            }
+        }
+        draggingFov_ = rightMouse;
+        previousFovCursorY_ = cursorY;
+        const bool middleMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
+        if (middleMouse && !draggingCamera_) {
+            previousCursorX_ = cursorX;
+            previousCursorY_ = cursorY;
+        } else if (middleMouse) {
+            const double cursorDeltaX = cursorX - previousCursorX_;
+            const double cursorDeltaY = cursorY - previousCursorY_;
+            if (isExteriorView()) {
+                cameraYaw_ -= cursorDeltaX * 0.005;
+                cameraPitch_ -= cursorDeltaY * 0.005;
+                cameraPitch_ = std::clamp(cameraPitch_, -1.35, 1.35);
+            } else {
+                viewLookYaw_ -= cursorDeltaX * 0.005;
+                viewLookPitch_ -= cursorDeltaY * 0.005;
+                viewLookPitch_ = std::clamp(viewLookPitch_, -1.35, 1.35);
+            }
+        }
+        draggingCamera_ = middleMouse;
         previousCursorX_ = cursorX;
         previousCursorY_ = cursorY;
-    } else if (middleMouse) {
-        const double cursorDeltaX = cursorX - previousCursorX_;
-        const double cursorDeltaY = cursorY - previousCursorY_;
-        if (isExteriorView()) {
-            cameraYaw_ -= cursorDeltaX * 0.005;
-            cameraPitch_ -= cursorDeltaY * 0.005;
-            cameraPitch_ = std::clamp(cameraPitch_, -1.35, 1.35);
-        } else {
-            viewLookYaw_ -= cursorDeltaX * 0.005;
-            viewLookPitch_ -= cursorDeltaY * 0.005;
-            viewLookPitch_ = std::clamp(viewLookPitch_, -1.35, 1.35);
-        }
     }
-    draggingCamera_ = middleMouse;
-    previousCursorX_ = cursorX;
-    previousCursorY_ = cursorY;
-    glViewport(0, 0, width, height);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    setPerspective(static_cast<double>(width), static_cast<double>(height), currentFieldOfView());
+    {
+        TraceScope phase("render", "Renderer::beginFrame.setupView");
+        glViewport(0, 0, width, height);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        setPerspective(static_cast<double>(width), static_cast<double>(height),
+                       currentFieldOfView());
+    }
 }
 
 void Renderer::draw(const BusSimulation& simulation) {
     TraceScope trace("frame", "Renderer::draw");
-    renderReflectionViews(simulation);
     const BodyPose chassis = simulation.chassisPose();
     const ChassisCollisionBox collision = simulation.chassisCollisionBox();
     {
@@ -3218,7 +3592,10 @@ void Renderer::draw(const BusSimulation& simulation) {
             lookAt(eyeX, eyeY, eyeZ, targetX, targetY, targetZ);
         } else if (const VehicleCamera* camera = currentVehicleCamera(); camera != nullptr) {
             constexpr double DEGREES_TO_RADIANS = 3.141592653589793 / 180.0;
-            const double pan = -camera->pan * DEGREES_TO_RADIANS + viewLookYaw_;
+            const bool reflectionCamera = camera->kind == VehicleCameraKind::Reflexion ||
+                                          camera->kind == VehicleCameraKind::Reflexion2;
+            const double panSign = reflectionCamera ? 1.0 : -1.0;
+            const double pan = panSign * camera->pan * DEGREES_TO_RADIANS + viewLookYaw_;
             const double tilt = camera->tilt * DEGREES_TO_RADIANS + viewLookPitch_;
             const double modelOffsetZ =
                 playerVehicle_ != nullptr ? playerVehicle_->modelOffsetZ : 0.0;
@@ -3293,18 +3670,38 @@ void Renderer::draw(const BusSimulation& simulation) {
             lookAt(eye[0], eye[1], eye[2], target[0], target[1], target[2]);
         }
     }
-
+    {
+        TraceScope phase("render", "Renderer::draw.visibility");
+        if (!renderingReflection_) {
+            const RenderViewContext context = isExteriorView() ? RenderViewContext::PlayerExterior
+                                                               : RenderViewContext::PlayerInterior;
+            pushMatrix();
+            applyPose(chassis);
+            for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+                vehicle->prepareFrameVisibility(context);
+            }
+            popMatrix();
+        }
+    }
+    {
+        TraceScope phase("render", "Renderer::draw.reflections");
+        renderReflectionViews(simulation);
+    }
     {
         TraceScope phase("render", "Renderer::draw.ground");
         if (!captureMode_) {
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LESS);
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_POLYGON_OFFSET_FILL);
             drawGround(simulation.roadBumps());
         }
     }
-
-    const RenderViewContext context =
-        (renderingReflection_ || isExteriorView()) ? RenderViewContext::PlayerExterior
-                                                   : RenderViewContext::PlayerInterior;
-
+    const RenderViewContext context = (renderingReflection_ || isExteriorView())
+                                          ? RenderViewContext::PlayerExterior
+                                          : RenderViewContext::PlayerInterior;
     {
         TraceScope phase("render", "Renderer::draw.model");
         if (playerVehicle_ && playerVehicle_->loaded && !playerVehicle_->displayLists.empty()) {
@@ -3320,48 +3717,40 @@ void Renderer::draw(const BusSimulation& simulation) {
             popMatrix();
         }
     }
-
     if (!renderingReflection_ && playerVehicle_ && glfwGetTime() - lastStatsTitleTime_ > 0.25) {
         std::ostringstream title;
         title << "OpenBus - " << playerVehicle_->renderedTriangles() << " triangles";
         glfwSetWindowTitle(window_, title.str().c_str());
         lastStatsTitleTime_ = glfwGetTime();
     }
-
     {
         TraceScope phase("render", "Renderer::draw.overlays");
         if (!renderingReflection_) {
-            // Render center of gravity marker
             const std::array<double, 3> centerOfGravity = simulation.centerOfGravity();
             pushMatrix();
             translate(centerOfGravity[0], centerOfGravity[1], centerOfGravity[2]);
             drawCenterOfGravityMarker(0.35);
             popMatrix();
-
-            // Render axle lines
             const std::array<double, 3> axleColor = {0.20, 0.20, 0.20};
             std::vector<openbus::rendering::PrimitiveVertex> axleLines;
             axleLines.reserve(simulation.axleCount() * 2);
             for (std::size_t axleIndex = 0; axleIndex < simulation.axleCount(); ++axleIndex) {
                 const BodyPose leftWheel = simulation.wheelPose(axleIndex * 2);
                 const BodyPose rightWheel = simulation.wheelPose(axleIndex * 2 + 1);
-                axleLines.push_back({static_cast<float>(rightWheel.position[0]),
-                                     static_cast<float>(rightWheel.position[1]),
-                                     static_cast<float>(rightWheel.position[2]),
-                                     static_cast<float>(axleColor[0]),
-                                     static_cast<float>(axleColor[1]),
-                                     static_cast<float>(axleColor[2])});
-                axleLines.push_back({static_cast<float>(leftWheel.position[0]),
-                                     static_cast<float>(leftWheel.position[1]),
-                                     static_cast<float>(leftWheel.position[2]),
-                                     static_cast<float>(axleColor[0]),
-                                     static_cast<float>(axleColor[1]),
-                                     static_cast<float>(axleColor[2])});
+                axleLines.push_back(
+                    {static_cast<float>(rightWheel.position[0]),
+                     static_cast<float>(rightWheel.position[1]),
+                     static_cast<float>(rightWheel.position[2]), static_cast<float>(axleColor[0]),
+                     static_cast<float>(axleColor[1]), static_cast<float>(axleColor[2])});
+                axleLines.push_back(
+                    {static_cast<float>(leftWheel.position[0]),
+                     static_cast<float>(leftWheel.position[1]),
+                     static_cast<float>(leftWheel.position[2]), static_cast<float>(axleColor[0]),
+                     static_cast<float>(axleColor[1]), static_cast<float>(axleColor[2])});
             }
             openbus::rendering::drawPrimitives(axleLines, GL_LINES);
         }
     }
-
     {
         TraceScope phase("render", "Renderer::draw.wheels");
         if (playerVehicle_ && playerVehicle_->hasConfiguredWheels(simulation.wheelCount())) {
@@ -3377,6 +3766,7 @@ void Renderer::draw(const BusSimulation& simulation) {
             }
         }
     }
+    renderReflectionDebugOverlay();
 }
 
 void Renderer::endFrame() {
@@ -3386,6 +3776,7 @@ void Renderer::endFrame() {
 
 void Renderer::captureViews(const BusSimulation& simulation,
                             const std::filesystem::path& directory) {
+    TraceScope trace("capture", "Renderer::captureViews");
     std::filesystem::create_directories(directory);
     int width = 1;
     int height = 1;
@@ -3414,19 +3805,26 @@ void Renderer::captureViews(const BusSimulation& simulation,
                                                {"left", 1.5707963267948966, 0.08, 10.5},
                                                {"right", -1.5707963267948966, 0.08, 10.5}}};
     for (const CaptureView& view : views) {
+        TraceScope viewTrace("capture", "Renderer::captureViews.view");
         cameraYaw_ = view.yaw;
         cameraPitch_ = view.pitch;
         cameraDistance_ = view.distance;
-        glViewport(0, 0, width, height);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        setPerspective(static_cast<double>(width), static_cast<double>(height), 60.0);
-        draw(simulation);
-        glFinish();
+        {
+            TraceScope phase("capture", "Renderer::captureViews.render");
+            glViewport(0, 0, width, height);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            setPerspective(static_cast<double>(width), static_cast<double>(height), 60.0);
+            draw(simulation);
+            glFinish();
+        }
         const std::filesystem::path path = directory / (std::string(view.name) + ".png");
-        if (!openbus::rendering::saveFramebufferPng(path, width, height)) {
-            gameLog.Log("Failed to save screenshot: " + path.string());
-        } else {
-            gameLog.Log("Saved screenshot: " + path.string());
+        {
+            TraceScope phase("capture", "Renderer::captureViews.save");
+            if (!openbus::rendering::saveFramebufferPng(path, width, height)) {
+                gameLog.Log("Failed to save screenshot: " + path.string());
+            } else {
+                gameLog.Log("Saved screenshot: " + path.string());
+            }
         }
     }
 

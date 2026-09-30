@@ -16,6 +16,7 @@ namespace {
 
 constexpr GLsizei MODEL_VERTEX_STRIDE = static_cast<GLsizei>(9 * sizeof(float));
 constexpr std::size_t MAX_MATERIAL_TEXTURES = 8;
+constexpr std::size_t MAX_TEXTURE_UNITS = 16;
 
 struct Uniforms {
     GLint projection = -1;
@@ -38,6 +39,7 @@ struct Uniforms {
     GLint nightmapStrength = -1;
     GLint texcoordOffset = -1;
     GLint flipTextureY = -1;
+    std::array<GLint, MAX_MATERIAL_TEXTURES> materialFlipTextureY = {};
     GLint useMaterialColors = -1;
     GLint materialColors = -1;
     GLint useMaterialTextures = -1;
@@ -73,18 +75,25 @@ GLuint modelProgram = 0;
 GLuint materialProgram = 0;
 GLuint environmentProgram = 0;
 GLuint primitiveProgram = 0;
+GLuint textureQuadProgram = 0;
 GLuint modelVertexArray = 0;
 GLuint primitiveVertexArray = 0;
 GLuint primitiveBuffer = 0;
+GLuint textureQuadVertexArray = 0;
+GLuint textureQuadBuffer = 0;
 Uniforms modelUniforms;
 Uniforms materialUniforms;
 Uniforms environmentUniforms;
 Uniforms primitiveUniforms;
+GLint textureQuadRect = -1;
+GLint textureQuadTexture = -1;
+GLint textureQuadFlipTextureY = -1;
 GLuint currentProgram = 0;
 GLuint currentVertexArray = 0;
 GLuint currentArrayBuffer = 0;
-GLuint boundTexture2D = 0;
-GLuint boundTextureArray = 0;
+GLenum currentTextureUnit = GL_TEXTURE0;
+std::array<GLuint, MAX_TEXTURE_UNITS> boundTexture2D = {};
+std::array<GLuint, MAX_TEXTURE_UNITS> boundTextureArray = {};
 GLuint matrixProgram = 0;
 Matrix4 cachedProjection = {};
 Matrix4 cachedModelView = {};
@@ -173,26 +182,31 @@ const char* materialFragmentShader = R"GLSL(
 in vec3 vTexCoord;
 uniform vec4 uMaterialColors[128];
 uniform sampler2D uMaterialTextures[8];
+uniform bool uFlipTextureY[8];
 out vec4 fragmentColor;
 void main() {
     int materialIndex = clamp(int(vTexCoord.z + 0.5), 0, 127);
+    int textureIndex = clamp(materialIndex, 0, 7);
+    vec2 textureCoord = uFlipTextureY[textureIndex]
+                            ? vec2(vTexCoord.x, 1.0 - vTexCoord.y)
+                            : vTexCoord.xy;
     vec4 color = uMaterialColors[materialIndex];
-    if (materialIndex == 0) {
-        color *= texture(uMaterialTextures[0], vTexCoord.xy);
-    } else if (materialIndex == 1) {
-        color *= texture(uMaterialTextures[1], vTexCoord.xy);
-    } else if (materialIndex == 2) {
-        color *= texture(uMaterialTextures[2], vTexCoord.xy);
-    } else if (materialIndex == 3) {
-        color *= texture(uMaterialTextures[3], vTexCoord.xy);
-    } else if (materialIndex == 4) {
-        color *= texture(uMaterialTextures[4], vTexCoord.xy);
-    } else if (materialIndex == 5) {
-        color *= texture(uMaterialTextures[5], vTexCoord.xy);
-    } else if (materialIndex == 6) {
-        color *= texture(uMaterialTextures[6], vTexCoord.xy);
+    if (textureIndex == 0) {
+        color *= texture(uMaterialTextures[0], textureCoord);
+    } else if (textureIndex == 1) {
+        color *= texture(uMaterialTextures[1], textureCoord);
+    } else if (textureIndex == 2) {
+        color *= texture(uMaterialTextures[2], textureCoord);
+    } else if (textureIndex == 3) {
+        color *= texture(uMaterialTextures[3], textureCoord);
+    } else if (textureIndex == 4) {
+        color *= texture(uMaterialTextures[4], textureCoord);
+    } else if (textureIndex == 5) {
+        color *= texture(uMaterialTextures[5], textureCoord);
+    } else if (textureIndex == 6) {
+        color *= texture(uMaterialTextures[6], textureCoord);
     } else {
-        color *= texture(uMaterialTextures[7], vTexCoord.xy);
+        color *= texture(uMaterialTextures[7], textureCoord);
     }
     fragmentColor = color;
 }
@@ -234,6 +248,30 @@ in vec3 vColor;
 out vec4 fragmentColor;
 void main() {
     fragmentColor = vec4(vColor, 1.0);
+}
+)GLSL";
+
+const char* textureQuadVertexShader = R"GLSL(
+#version 330 core
+layout(location = 0) in vec2 aPosition;
+layout(location = 1) in vec2 aTexCoord;
+uniform vec4 uRect;
+uniform bool uFlipTextureY;
+out vec2 vTexCoord;
+void main() {
+    vec2 position = uRect.xy + aPosition * uRect.zw;
+    gl_Position = vec4(position, 0.0, 1.0);
+    vTexCoord = vec2(aTexCoord.x, uFlipTextureY ? 1.0 - aTexCoord.y : aTexCoord.y);
+}
+)GLSL";
+
+const char* textureQuadFragmentShader = R"GLSL(
+#version 330 core
+in vec2 vTexCoord;
+uniform sampler2D uTexture;
+out vec4 fragmentColor;
+void main() {
+    fragmentColor = texture(uTexture, vTexCoord);
 }
 )GLSL";
 
@@ -332,6 +370,10 @@ Uniforms materialUniformsFor(GLuint program) {
     uniforms.modelView = pglGetUniformLocation(program, "uModelView");
     uniforms.materialColors = pglGetUniformLocation(program, "uMaterialColors");
     for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
+        uniforms.materialFlipTextureY[index] = pglGetUniformLocation(
+            program, ("uFlipTextureY[" + std::to_string(index) + "]").c_str());
+    }
+    for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
         uniforms.materialTextures[index] = pglGetUniformLocation(
             program, ("uMaterialTextures[" + std::to_string(index) + "]").c_str());
     }
@@ -394,7 +436,9 @@ void useProgram(GLuint program) {
 }
 
 void bindTexture(GLenum target, GLuint texture) {
-    GLuint& cachedTexture = target == GL_TEXTURE_2D_ARRAY ? boundTextureArray : boundTexture2D;
+    const std::size_t unit = static_cast<std::size_t>(currentTextureUnit - GL_TEXTURE0);
+    GLuint& cachedTexture =
+        target == GL_TEXTURE_2D_ARRAY ? boundTextureArray[unit] : boundTexture2D[unit];
     if (cachedTexture == texture) {
         return;
     }
@@ -402,12 +446,19 @@ void bindTexture(GLenum target, GLuint texture) {
     cachedTexture = texture;
 }
 
+void selectTextureUnit(GLenum textureUnit) {
+    if (currentTextureUnit == textureUnit) {
+        return;
+    }
+    pglActiveTexture(textureUnit);
+    currentTextureUnit = textureUnit;
+}
+
 void uploadModelUniforms(const ModelMaterial& material, const std::array<double, 3>& color,
-             double alpha, int alphaMode) {
-    const std::array<float, 4> colorValue = {static_cast<float>(color[0]),
-                                             static_cast<float>(color[1]),
-                                             static_cast<float>(color[2]),
-                                             static_cast<float>(alpha)};
+                         double alpha, int alphaMode) {
+    const std::array<float, 4> colorValue = {
+        static_cast<float>(color[0]), static_cast<float>(color[1]), static_cast<float>(color[2]),
+        static_cast<float>(alpha)};
     const bool flagsChanged =
         !modelUniformState.valid || modelUniformState.textured != material.textured ||
         modelUniformState.textureArray != (material.textured && material.textureArray) ||
@@ -431,11 +482,11 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         modelUniformState.lightmapStrength != material.lightmapStrength) {
         pglUniform1f(modelUniforms.lightmapStrength, material.lightmapStrength);
     }
-    if (!modelUniformState.valid || modelUniformState.nightmapStrength != material.nightmapStrength) {
+    if (!modelUniformState.valid ||
+        modelUniformState.nightmapStrength != material.nightmapStrength) {
         pglUniform1f(modelUniforms.nightmapStrength, material.nightmapStrength);
     }
-    if (!modelUniformState.valid ||
-        modelUniformState.texcoordOffsetX != material.texcoordOffsetX ||
+    if (!modelUniformState.valid || modelUniformState.texcoordOffsetX != material.texcoordOffsetX ||
         modelUniformState.texcoordOffsetY != material.texcoordOffsetY) {
         pglUniform2f(modelUniforms.texcoordOffset, material.texcoordOffsetX,
                      material.texcoordOffsetY);
@@ -470,8 +521,9 @@ bool initializeCoreRenderer() {
     materialProgram = createProgram(modelVertexShader, materialFragmentShader);
     environmentProgram = createProgram(modelVertexShader, environmentFragmentShader);
     primitiveProgram = createProgram(primitiveVertexShader, primitiveFragmentShader);
+    textureQuadProgram = createProgram(textureQuadVertexShader, textureQuadFragmentShader);
     if (modelProgram == 0 || materialProgram == 0 || environmentProgram == 0 ||
-        primitiveProgram == 0) {
+        primitiveProgram == 0 || textureQuadProgram == 0) {
         shutdownCoreRenderer();
         return false;
     }
@@ -479,15 +531,24 @@ bool initializeCoreRenderer() {
     materialUniforms = materialUniformsFor(materialProgram);
     environmentUniforms = modelUniformsFor(environmentProgram, true);
     primitiveUniforms = modelUniformsFor(primitiveProgram, false);
+    textureQuadRect = pglGetUniformLocation(textureQuadProgram, "uRect");
+    textureQuadTexture = pglGetUniformLocation(textureQuadProgram, "uTexture");
+    textureQuadFlipTextureY = pglGetUniformLocation(textureQuadProgram, "uFlipTextureY");
     pglGenVertexArrays(1, &modelVertexArray);
     pglGenVertexArrays(1, &primitiveVertexArray);
     pglGenBuffers(1, &primitiveBuffer);
-    if (modelVertexArray != 0 && primitiveVertexArray != 0 && primitiveBuffer != 0) {
+    pglGenVertexArrays(1, &textureQuadVertexArray);
+    pglGenBuffers(1, &textureQuadBuffer);
+    if (modelVertexArray != 0 && primitiveVertexArray != 0 && primitiveBuffer != 0 &&
+        textureQuadVertexArray != 0 && textureQuadBuffer != 0) {
         pglBindVertexArray(modelVertexArray);
         pglEnableVertexAttribArray(0);
         pglEnableVertexAttribArray(1);
         pglEnableVertexAttribArray(2);
         pglBindVertexArray(primitiveVertexArray);
+        pglEnableVertexAttribArray(0);
+        pglEnableVertexAttribArray(1);
+        pglBindVertexArray(textureQuadVertexArray);
         pglEnableVertexAttribArray(0);
         pglEnableVertexAttribArray(1);
         pglBindVertexArray(0);
@@ -505,6 +566,8 @@ bool initializeCoreRenderer() {
         useProgram(environmentProgram);
         pglUniform1i(environmentUniforms.environment, 0);
         useProgram(primitiveProgram);
+        useProgram(textureQuadProgram);
+        pglUniform1i(textureQuadTexture, 0);
         useProgram(0);
         currentVertexArray = 0;
         currentArrayBuffer = 0;
@@ -512,8 +575,9 @@ bool initializeCoreRenderer() {
         matrixProgram = 0;
         modelUniformState = {};
         materialUniformState = {};
-        boundTexture2D = 0;
-        boundTextureArray = 0;
+        currentTextureUnit = GL_TEXTURE0;
+        boundTexture2D.fill(0);
+        boundTextureArray.fill(0);
         return true;
     }
     shutdownCoreRenderer();
@@ -527,15 +591,24 @@ void shutdownCoreRenderer() {
     matrixProgram = 0;
     modelUniformState = {};
     materialUniformState = {};
-    boundTexture2D = 0;
-    boundTextureArray = 0;
+    currentTextureUnit = GL_TEXTURE0;
+    boundTexture2D.fill(0);
+    boundTextureArray.fill(0);
     if (primitiveBuffer != 0) {
         pglDeleteBuffers(1, &primitiveBuffer);
         primitiveBuffer = 0;
     }
+    if (textureQuadBuffer != 0) {
+        pglDeleteBuffers(1, &textureQuadBuffer);
+        textureQuadBuffer = 0;
+    }
     if (primitiveVertexArray != 0) {
         pglDeleteVertexArrays(1, &primitiveVertexArray);
         primitiveVertexArray = 0;
+    }
+    if (textureQuadVertexArray != 0) {
+        pglDeleteVertexArrays(1, &textureQuadVertexArray);
+        textureQuadVertexArray = 0;
     }
     if (modelVertexArray != 0) {
         pglDeleteVertexArrays(1, &modelVertexArray);
@@ -557,11 +630,17 @@ void shutdownCoreRenderer() {
         pglDeleteProgram(materialProgram);
         materialProgram = 0;
     }
+    if (textureQuadProgram != 0) {
+        pglDeleteProgram(textureQuadProgram);
+        textureQuadProgram = 0;
+    }
 }
 
 void invalidateTextureBindings() {
-    boundTexture2D = std::numeric_limits<GLuint>::max();
-    boundTextureArray = std::numeric_limits<GLuint>::max();
+    boundTexture2D.fill(std::numeric_limits<GLuint>::max());
+    boundTextureArray.fill(std::numeric_limits<GLuint>::max());
+    pglActiveTexture(GL_TEXTURE0);
+    currentTextureUnit = GL_TEXTURE0;
 }
 
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
@@ -573,24 +652,24 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     useProgram(modelProgram);
     uploadMatrices(modelUniforms);
     uploadModelUniforms(material, color, alpha, alphaMode);
-    pglActiveTexture(GL_TEXTURE0);
+    selectTextureUnit(GL_TEXTURE0);
     bindTexture(material.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D, material.texture);
-    pglActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, material.lightmap);
-    pglActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, material.nightmap);
-    pglActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, material.transmap);
-    pglActiveTexture(GL_TEXTURE4);
-    glBindTexture(GL_TEXTURE_2D, material.freeTexture);
-    pglActiveTexture(GL_TEXTURE0);
+    selectTextureUnit(GL_TEXTURE1);
+    bindTexture(GL_TEXTURE_2D, material.lightmap);
+    selectTextureUnit(GL_TEXTURE2);
+    bindTexture(GL_TEXTURE_2D, material.nightmap);
+    selectTextureUnit(GL_TEXTURE3);
+    bindTexture(GL_TEXTURE_2D, material.transmap);
+    selectTextureUnit(GL_TEXTURE4);
+    bindTexture(GL_TEXTURE_2D, material.freeTexture);
+    selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
 }
 
 void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
                        const std::vector<std::array<float, 4>>& colors,
-                       const std::vector<GLuint>& textures) {
+                       const std::vector<GLuint>& textures, const std::vector<bool>& flipTextureY) {
     TraceScope trace("render", "CoreRenderer::drawMaterialBatch");
     if (materialProgram == 0 || buffer == 0 || vertexCount == 0 || colors.empty() ||
         textures.empty()) {
@@ -598,8 +677,11 @@ void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
     }
     useProgram(materialProgram);
     uploadMatrices(materialUniforms);
-    const GLsizei colorCount =
-        static_cast<GLsizei>(std::min<std::size_t>(colors.size(), 128));
+    for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
+        pglUniform1i(materialUniforms.materialFlipTextureY[index],
+                     flipTextureY.size() > index && flipTextureY[index] ? 1 : 0);
+    }
+    const GLsizei colorCount = static_cast<GLsizei>(std::min<std::size_t>(colors.size(), 128));
     if (!materialUniformState.valid || materialUniformState.colorData != colors.data() ||
         materialUniformState.colorCount != colorCount) {
         pglUniform4fv(materialUniforms.materialColors, colorCount,
@@ -608,13 +690,12 @@ void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
         materialUniformState.colorData = colors.data();
         materialUniformState.colorCount = colorCount;
     }
-    const std::size_t textureCount =
-        std::min<std::size_t>(textures.size(), MAX_MATERIAL_TEXTURES);
+    const std::size_t textureCount = std::min<std::size_t>(textures.size(), MAX_MATERIAL_TEXTURES);
     for (std::size_t index = 0; index < textureCount; ++index) {
-        pglActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(index));
-        glBindTexture(GL_TEXTURE_2D, textures[index]);
+        selectTextureUnit(GL_TEXTURE0 + static_cast<GLenum>(index));
+        bindTexture(GL_TEXTURE_2D, textures[index]);
     }
-    pglActiveTexture(GL_TEXTURE0);
+    selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
 }
@@ -627,6 +708,7 @@ void drawEnvironmentBatch(GLuint buffer, std::size_t vertexCount, GLuint texture
     useProgram(environmentProgram);
     uploadMatrices(environmentUniforms);
     pglUniform1f(environmentUniforms.environmentAlpha, static_cast<GLfloat>(alpha));
+    selectTextureUnit(GL_TEXTURE0);
     bindTexture(GL_TEXTURE_2D, texture);
     bindModelVertexBuffer(buffer, modelVertexArray);
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
@@ -656,6 +738,29 @@ void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primiti
                            reinterpret_cast<const void*>(3 * sizeof(float)));
     glLineWidth(lineWidth);
     glDrawArrays(primitive, 0, static_cast<GLsizei>(vertices.size()));
+}
+
+void drawTextureQuad(GLuint texture, float x, float y, float width, float height,
+                     bool flipTextureY) {
+    if (textureQuadProgram == 0 || textureQuadVertexArray == 0 || textureQuadBuffer == 0 ||
+        texture == 0) {
+        return;
+    }
+    constexpr std::array<float, 16> vertices = {0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+                                                0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+    useProgram(textureQuadProgram);
+    pglBindVertexArray(textureQuadVertexArray);
+    pglBindBuffer(GL_ARRAY_BUFFER, textureQuadBuffer);
+    pglBufferData(GL_ARRAY_BUFFER, static_cast<std::ptrdiff_t>(vertices.size() * sizeof(float)),
+                  vertices.data(), GL_STREAM_DRAW);
+    pglVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), nullptr);
+    pglVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                           reinterpret_cast<const void*>(2 * sizeof(float)));
+    pglUniform4f(textureQuadRect, x, y, width, height);
+    pglUniform1i(textureQuadFlipTextureY, flipTextureY ? 1 : 0);
+    selectTextureUnit(GL_TEXTURE0);
+    bindTexture(GL_TEXTURE_2D, texture);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
 } // namespace openbus::rendering

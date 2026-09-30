@@ -33,12 +33,11 @@ struct TraceEvent {
 class PerfTraceState {
   public:
     PerfTraceState()
-        : traceEnabled(parseEnabledFlag(std::getenv("OPENBUS_TRACE"))),
-                    enabled(traceEnabled),
-                    maxEvents(parseMaxEvents(std::getenv("OPENBUS_TRACE_MAX_EVENTS"))),
-                      minDurationUs(parseMinDuration(std::getenv("OPENBUS_TRACE_MIN_US"))),
+        : traceEnabled(parseEnabledFlag(std::getenv("OPENBUS_TRACE"))), enabled(traceEnabled),
+          maxEvents(parseMaxEvents(std::getenv("OPENBUS_TRACE_MAX_EVENTS"))),
+          minDurationUs(parseMinDuration(std::getenv("OPENBUS_TRACE_MIN_US"))),
           start(std::chrono::steady_clock::now()) {
-                events.reserve(std::min<std::size_t>(maxEvents, 8192));
+        events.reserve(std::min<std::size_t>(maxEvents, 8192));
         if (traceEnabled) {
             traceOutputPath = configuredTracePath();
             traceOutput.open(traceOutputPath, std::ios::trunc);
@@ -64,8 +63,8 @@ class PerfTraceState {
             return;
         }
         const std::int64_t endTimestampUs = nowUs();
-        const std::int64_t durationUs = std::max<std::int64_t>(
-            0, endTimestampUs - startTimestampUs);
+        const std::int64_t durationUs =
+            std::max<std::int64_t>(0, endTimestampUs - startTimestampUs);
         if (durationUs < minDurationUs) {
             return;
         }
@@ -119,9 +118,8 @@ class PerfTraceState {
         std::vector<TraceEvent> chunk;
         for (;;) {
             std::unique_lock<std::mutex> lock(mutex);
-            eventCondition.wait_for(lock, std::chrono::milliseconds(100), [this] {
-                return writerStopRequested || !events.empty();
-            });
+            eventCondition.wait_for(lock, std::chrono::milliseconds(100),
+                                    [this] { return writerStopRequested || !events.empty(); });
             const bool stopRequested = writerStopRequested;
             if (events.empty() && stopRequested) {
                 break;
@@ -143,9 +141,9 @@ class PerfTraceState {
                 traceOutput << ",\n";
             }
             traceFirstEvent = false;
-            traceOutput << "    {\"name\":\"" << event.name << "\",\"cat\":\""
-                        << event.category << "\",\"ph\":\"" << event.phase << "\",\"ts\":"
-                        << event.timestampUs << ",\"dur\":" << event.durationUs
+            traceOutput << "    {\"name\":\"" << event.name << "\",\"cat\":\"" << event.category
+                        << "\",\"ph\":\"" << event.phase << "\",\"ts\":" << event.timestampUs
+                        << ",\"dur\":" << event.durationUs
                         << ",\"pid\":1,\"tid\":" << event.threadId << "}";
         }
         traceOutput.flush();

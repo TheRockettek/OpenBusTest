@@ -103,8 +103,8 @@ bool loadOpenGLFunctions() {
         reinterpret_cast<BindFramebufferProc>(glfwGetProcAddress("glBindFramebuffer"));
     pglDeleteFramebuffers =
         reinterpret_cast<DeleteFramebuffersProc>(glfwGetProcAddress("glDeleteFramebuffers"));
-    pglFramebufferTexture2D = reinterpret_cast<FramebufferTexture2DProc>(
-        glfwGetProcAddress("glFramebufferTexture2D"));
+    pglFramebufferTexture2D =
+        reinterpret_cast<FramebufferTexture2DProc>(glfwGetProcAddress("glFramebufferTexture2D"));
     pglCheckFramebufferStatus = reinterpret_cast<CheckFramebufferStatusProc>(
         glfwGetProcAddress("glCheckFramebufferStatus"));
     const bool available =
@@ -116,8 +116,7 @@ bool loadOpenGLFunctions() {
         pglAttachShader && pglLinkProgram && pglGetProgramiv && pglGetProgramInfoLog &&
         pglDeleteProgram && pglUseProgram && pglGetUniformLocation && pglUniformMatrix4fv &&
         pglUniform1i && pglUniform1f && pglUniform2f && pglUniform3f && pglUniform4f &&
-        pglUniform4fv &&
-        pglGenFramebuffers && pglBindFramebuffer && pglDeleteFramebuffers &&
+        pglUniform4fv && pglGenFramebuffers && pglBindFramebuffer && pglDeleteFramebuffers &&
         pglFramebufferTexture2D && pglCheckFramebufferStatus;
     if (!available) {
         gameLog.Log("Failed to load required OpenGL VBO functions");
