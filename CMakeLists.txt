@@ -128,9 +128,10 @@ add_executable(OpenBus
     src/CameraMath.cpp
     src/CoreRenderer.cpp
     src/RenderPrimitives.cpp
+    src/RendererReflection.cpp
     src/SceneryObjectConfigLoader.cpp
     src/PerfTrace.cpp
-    src/Renderer.cpp
+    src/RenderLoop.cpp
     src/AssetRequestManager.cpp
     src/ScreenshotWriter.cpp
     src/TextureAssetLoader.cpp

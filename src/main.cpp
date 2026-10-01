@@ -4,7 +4,7 @@
 #include "Logger.h"
 #include "ModelConfigLoader.h"
 #include "PerfTrace.h"
-#include "Renderer.h"
+#include "RenderLoop.h"
 
 #include <GLFW/glfw3.h>
 #include <algorithm>
@@ -65,7 +65,7 @@ int main() {
 
         BusSimulation simulation(configuration);
 
-        Renderer renderer(1280, 720, "OpenBus");
+        RenderLoop renderer(1280, 720, "OpenBus");
         Vehicle* playerVehicle =
             renderer.AddVehicle(vehicle, {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
         renderer.SetPlayerVehicle(playerVehicle);
