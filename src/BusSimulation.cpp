@@ -21,8 +21,6 @@ constexpr dReal GRAVITY = -9.81;
 
 constexpr dReal SUSP_REST = 0.35;
 constexpr dReal SUSP_MAX_TRAVEL = 0.25;
-constexpr dReal SUSP_SPRING_K = 250000.0;
-constexpr dReal SUSP_DAMPER_C = 16000.0;
 constexpr dReal TIRE_GRIP_LONG = 24000.0;
 constexpr dReal ROLLING_RESIST = 0.012;
 constexpr dReal WHEEL_MASS = 180.0;

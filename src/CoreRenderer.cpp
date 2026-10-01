@@ -653,7 +653,12 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     uploadMatrices(modelUniforms);
     uploadModelUniforms(material, color, alpha, alphaMode);
     selectTextureUnit(GL_TEXTURE0);
-    bindTexture(material.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D, material.texture);
+    const GLenum textureTarget = material.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+    bindTexture(textureTarget, material.texture);
+    if (material.texture != 0) {
+        glTexParameteri(textureTarget, GL_TEXTURE_WRAP_S, material.textureWrapS);
+        glTexParameteri(textureTarget, GL_TEXTURE_WRAP_T, material.textureWrapT);
+    }
     selectTextureUnit(GL_TEXTURE1);
     bindTexture(GL_TEXTURE_2D, material.lightmap);
     selectTextureUnit(GL_TEXTURE2);

@@ -81,6 +81,18 @@
 #define GL_CLAMP_TO_EDGE 0x812F
 #endif
 
+#ifndef GL_CLAMP_TO_BORDER
+#define GL_CLAMP_TO_BORDER 0x812D
+#endif
+
+#ifndef GL_MIRRORED_REPEAT
+#define GL_MIRRORED_REPEAT 0x8370
+#endif
+
+#ifndef GL_MIRROR_CLAMP_TO_EDGE
+#define GL_MIRROR_CLAMP_TO_EDGE 0x8743
+#endif
+
 #ifndef GL_TEXTURE0
 #define GL_TEXTURE0 0x84C0
 #define GL_TEXTURE1 0x84C1
@@ -147,6 +159,22 @@ int reflectionIntervalFromEnvironment() {
 bool reflectionTransparentFromEnvironment() {
     const char* value = std::getenv("OPENBUS_REFLECTION_TRANSPARENT");
     return value == nullptr || openbus::rendering::parseEnabledFlag(value);
+}
+
+GLenum textureAddressModeToGl(TextureAddressMode mode) {
+    switch (mode) {
+    case TextureAddressMode::Clamp:
+        return GL_CLAMP_TO_EDGE;
+    case TextureAddressMode::Border:
+        return GL_CLAMP_TO_BORDER;
+    case TextureAddressMode::Mirror:
+        return GL_MIRRORED_REPEAT;
+    case TextureAddressMode::MirrorOnce:
+        return GL_MIRROR_CLAMP_TO_EDGE;
+    case TextureAddressMode::Repeat:
+    default:
+        return GL_REPEAT;
+    }
 }
 
 std::unordered_map<int, GLuint> activeReflectionTextures;
@@ -429,6 +457,8 @@ struct Vehicle {
         std::shared_ptr<TextureCacheEntry> environmentTextureCacheEntry;
         std::array<double, 3> color = {0.65, 0.65, 0.65};
         bool textured = false;
+        GLenum textureWrapS = GL_REPEAT;
+        GLenum textureWrapT = GL_REPEAT;
         bool hasNormals = false;
         bool textureLoadAttempted = false;
         bool textureLoadStarted = false;
@@ -1085,6 +1115,8 @@ struct Vehicle {
         material.texture = materialBatch ? 0 : batch.texture;
         material.textureArray = materialBatch ? false : batch.textureArray;
         material.textured = materialBatch ? false : batch.textured && !forceUntextured;
+        material.textureWrapS = batch.textureWrapS;
+        material.textureWrapT = batch.textureWrapT;
         material.lightmap = batch.lightmap.texture;
         material.nightmap = batch.nightmap.texture;
         material.transmap = batch.transmap.texture;
@@ -1503,8 +1535,15 @@ struct Vehicle {
                 std::max(1, static_cast<int>(std::lround(image.width * textureScale)));
             const int scaledHeight =
                 std::max(1, static_cast<int>(std::lround(image.height * textureScale)));
-            std::vector<std::uint8_t> scaled(static_cast<std::size_t>(scaledWidth) * scaledHeight *
-                                             4);
+            std::size_t scaledSize = 0;
+            if (!openbus::rendering::checkedTextureBufferSize(
+                    static_cast<std::size_t>(scaledWidth), static_cast<std::size_t>(scaledHeight), 4,
+                    scaledSize)) {
+                gameLog.Log("Texture scaling exceeds the decoded image size limit: " +
+                            path.generic_string());
+                return 0;
+            }
+            std::vector<std::uint8_t> scaled(scaledSize);
             for (int y = 0; y < scaledHeight; ++y) {
                 const int sourceY = std::min(image.height - 1, static_cast<int>(y / textureScale));
                 for (int x = 0; x < scaledWidth; ++x) {
@@ -2325,6 +2364,8 @@ struct Vehicle {
             batch.texcoordTransYVariable = lower(materialState.texcoordTransYVariable);
             batch.color = color;
             batch.hasNormals = true;
+            batch.textureWrapS = textureAddressModeToGl(materialState.textureAddressS);
+            batch.textureWrapT = textureAddressModeToGl(materialState.textureAddressT);
             batch.alphaMode = alphaMode;
             batch.noZwrite = noZwrite;
             batch.noZcheck = noZcheck;
@@ -2345,6 +2386,8 @@ struct Vehicle {
                        first.environmentStrength == second.environmentStrength &&
                        first.color == second.color && first.textured == second.textured &&
                        first.hasNormals == second.hasNormals &&
+                       first.textureWrapS == second.textureWrapS &&
+                       first.textureWrapT == second.textureWrapT &&
                        first.lightmap.name == second.lightmap.name &&
                        first.nightmap.name == second.nightmap.name &&
                        first.transmap.name == second.transmap.name &&
@@ -2388,6 +2431,7 @@ struct Vehicle {
         const auto canUseMaterialBatch = [](const Batch& batch) {
             return batch.alphaMode == 0 && !batch.noZwrite && !batch.noZcheck &&
                    !batch.textureArray && batch.textureChanges.empty() &&
+                   batch.textureWrapS == GL_REPEAT && batch.textureWrapT == GL_REPEAT &&
                    batch.lightmap.name.empty() && batch.nightmap.name.empty() &&
                    batch.transmap.name.empty() && batch.freeTextureVariable.empty() &&
                    batch.texcoordTransXVariable.empty() && batch.texcoordTransYVariable.empty() &&
@@ -2953,12 +2997,6 @@ Vehicle* Renderer::AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPoli
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
     return result;
-}
-
-Vehicle* Renderer::AddVehicle(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
-                              ModelLoadingPolicy loadingPolicy) {
-    static_cast<void>(spawnPosition);
-    return AddVehicle(vehicle, loadingPolicy);
 }
 
 void Renderer::SetPlayerVehicle(Vehicle* model) {

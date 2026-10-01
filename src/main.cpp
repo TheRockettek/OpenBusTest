@@ -66,8 +66,8 @@ int main() {
         BusSimulation simulation(configuration);
 
         Renderer renderer(1280, 720, "OpenBus");
-        Vehicle* playerVehicle = renderer.AddVehicle(
-            vehicle, {0, 0, 20}, {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+        Vehicle* playerVehicle =
+            renderer.AddVehicle(vehicle, {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
         renderer.SetPlayerVehicle(playerVehicle);
 
         double previousTime = glfwGetTime();

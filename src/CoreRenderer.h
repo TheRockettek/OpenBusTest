@@ -50,6 +50,8 @@ struct ModelMaterial {
     GLuint texture = 0;
     bool textureArray = false;
     bool textured = false;
+    GLenum textureWrapS = GL_REPEAT;
+    GLenum textureWrapT = GL_REPEAT;
     GLuint lightmap = 0;
     GLuint nightmap = 0;
     GLuint transmap = 0;

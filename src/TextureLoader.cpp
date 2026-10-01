@@ -27,6 +27,28 @@ extern Logger gameLog;
 namespace openbus::rendering {
 namespace {
 
+bool checkedBufferSize(std::size_t width, std::size_t height, std::size_t bytesPerPixel,
+                      std::size_t& size) {
+    if (width == 0 || height == 0 || bytesPerPixel == 0 ||
+        width > std::numeric_limits<std::size_t>::max() / height) {
+        return false;
+    }
+    const std::size_t pixelCount = width * height;
+    if (pixelCount > std::numeric_limits<std::size_t>::max() / bytesPerPixel) {
+        return false;
+    }
+    size = pixelCount * bytesPerPixel;
+    return size <= MAX_TEXTURE_BUFFER_BYTES;
+}
+
+bool checkedFileSize(std::streamoff length, std::size_t& size) {
+    if (length < 0 || static_cast<std::uintmax_t>(length) > MAX_TEXTURE_BUFFER_BYTES) {
+        return false;
+    }
+    size = static_cast<std::size_t>(length);
+    return true;
+}
+
 std::string lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
         return static_cast<char>(std::tolower(character));
@@ -49,6 +71,15 @@ std::uint32_t readU32(const std::vector<std::uint8_t>& data, std::size_t offset)
 bool readStbImage(const std::filesystem::path& path, Image& image) {
     int width = 0;
     int height = 0;
+    if (stbi_info(path.string().c_str(), &width, &height, nullptr) == 0) {
+        return false;
+    }
+    std::size_t rgbaSize = 0;
+    if (width <= 0 || height <= 0 ||
+        !checkedBufferSize(static_cast<std::size_t>(width), static_cast<std::size_t>(height), 4,
+                           rgbaSize)) {
+        return false;
+    }
     stbi_uc* pixels = stbi_load(path.string().c_str(), &width, &height, nullptr, 4);
     if (pixels == nullptr || width <= 0 || height <= 0) {
         if (pixels != nullptr) {
@@ -58,7 +89,7 @@ bool readStbImage(const std::filesystem::path& path, Image& image) {
     }
     image.width = width;
     image.height = height;
-    image.rgba.assign(pixels, pixels + static_cast<std::size_t>(width) * height * 4);
+    image.rgba.assign(pixels, pixels + rgbaSize);
     stbi_image_free(pixels);
     return true;
 }
@@ -94,7 +125,11 @@ bool readTgaImage(const std::filesystem::path& path, Image& image) {
         if ((header[7] != 24 && header[7] != 32) || colorMapLength == 0) {
             return false;
         }
-        colorMap.resize(colorMapLength * colorMapEntryBytes);
+        std::size_t colorMapSize = 0;
+        if (!checkedBufferSize(colorMapLength, 1, colorMapEntryBytes, colorMapSize)) {
+            return false;
+        }
+        colorMap.resize(colorMapSize);
         input.read(reinterpret_cast<char*>(colorMap.data()),
                    static_cast<std::streamsize>(colorMap.size()));
         if (!input) {
@@ -102,7 +137,15 @@ bool readTgaImage(const std::filesystem::path& path, Image& image) {
         }
     }
     const std::size_t pixelCount = static_cast<std::size_t>(image.width) * image.height;
-    std::vector<std::uint8_t> source(pixelCount * pixelBytes);
+    std::size_t sourceSize = 0;
+    std::size_t rgbaSize = 0;
+    if (!checkedBufferSize(static_cast<std::size_t>(image.width), static_cast<std::size_t>(image.height),
+                           static_cast<std::size_t>(pixelBytes), sourceSize) ||
+        !checkedBufferSize(static_cast<std::size_t>(image.width), static_cast<std::size_t>(image.height),
+                           4, rgbaSize)) {
+        return false;
+    }
+    std::vector<std::uint8_t> source(sourceSize);
     if (header[2] == 1 || header[2] == 2) {
         input.read(reinterpret_cast<char*>(source.data()),
                    static_cast<std::streamsize>(source.size()));
@@ -141,7 +184,7 @@ bool readTgaImage(const std::filesystem::path& path, Image& image) {
             return false;
         }
     }
-    image.rgba.resize(pixelCount * 4);
+    image.rgba.resize(rgbaSize);
     const bool topOrigin = (header[17] & 0x20) != 0;
     for (int y = 0; y < image.height; ++y) {
         const int sourceY = topOrigin ? y : image.height - y - 1;
@@ -204,9 +247,16 @@ bool readBmpImage(const std::filesystem::path& path, Image& image) {
     if (static_cast<std::size_t>(width) > std::numeric_limits<std::size_t>::max() / channels) {
         return false;
     }
-    const std::size_t rowStride = ((static_cast<std::size_t>(width) * channels + 3) / 4) * 4;
+    std::size_t rowBytes = 0;
+    if (!checkedBufferSize(static_cast<std::size_t>(width), 1, static_cast<std::size_t>(channels),
+                           rowBytes) ||
+        rowBytes > std::numeric_limits<std::size_t>::max() - 3) {
+        return false;
+    }
+    const std::size_t rowStride = ((rowBytes + 3) / 4) * 4;
     if (rowStride > std::numeric_limits<std::size_t>::max() /
-                        static_cast<std::size_t>(absoluteHeight)) {
+                        static_cast<std::size_t>(absoluteHeight) ||
+        rowStride * static_cast<std::size_t>(absoluteHeight) > MAX_TEXTURE_BUFFER_BYTES) {
         return false;
     }
     std::vector<std::uint8_t> source(rowStride * absoluteHeight);
@@ -217,7 +267,12 @@ bool readBmpImage(const std::filesystem::path& path, Image& image) {
     }
     image.width = width;
     image.height = absoluteHeight;
-    image.rgba.resize(static_cast<std::size_t>(width) * absoluteHeight * 4);
+    std::size_t rgbaSize = 0;
+    if (!checkedBufferSize(static_cast<std::size_t>(width), static_cast<std::size_t>(absoluteHeight),
+                           4, rgbaSize)) {
+        return false;
+    }
+    image.rgba.resize(rgbaSize);
     for (int y = 0; y < absoluteHeight; ++y) {
         const int sourceY = height > 0 ? absoluteHeight - y - 1 : y;
         for (int x = 0; x < width; ++x) {
@@ -247,7 +302,11 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
     if (length < 128) {
         return false;
     }
-    std::vector<std::uint8_t> data(static_cast<std::size_t>(length));
+    std::size_t dataSize = 0;
+    if (!checkedFileSize(length, dataSize)) {
+        return false;
+    }
+    std::vector<std::uint8_t> data(dataSize);
     input.read(reinterpret_cast<char*>(data.data()), length);
     if (!input || std::string(data.begin(), data.begin() + 4) != "DDS ") {
         return false;
@@ -274,7 +333,11 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
             return false;
         }
         const std::size_t bytesPerPixel = rgbBitCount / 8;
-        const std::size_t minimumRowPitch = static_cast<std::size_t>(image.width) * bytesPerPixel;
+        std::size_t minimumRowPitch = 0;
+        if (!checkedBufferSize(static_cast<std::size_t>(image.width), 1, bytesPerPixel,
+                               minimumRowPitch)) {
+            return false;
+        }
         const std::size_t rowPitch = std::max<std::size_t>(readU32(data, 20), minimumRowPitch);
         if (rowPitch > (std::numeric_limits<std::size_t>::max() - 128) /
                            static_cast<std::size_t>(image.height)) {
@@ -298,7 +361,12 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
             return static_cast<std::uint8_t>(
                 (static_cast<std::uint64_t>(component) * 255 + mask / 2) / mask);
         };
-        image.rgba.resize(static_cast<std::size_t>(image.width) * image.height * 4);
+        std::size_t rgbaSize = 0;
+        if (!checkedBufferSize(static_cast<std::size_t>(image.width),
+                               static_cast<std::size_t>(image.height), 4, rgbaSize)) {
+            return false;
+        }
+        image.rgba.resize(rgbaSize);
         for (int y = 0; y < image.height; ++y) {
             const std::size_t rowOffset = 128 + static_cast<std::size_t>(y) * rowPitch;
             for (int x = 0; x < image.width; ++x) {
@@ -332,7 +400,12 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
     if (data.size() < requiredSize) {
         return false;
     }
-    image.rgba.resize(static_cast<std::size_t>(image.width) * image.height * 4);
+    std::size_t rgbaSize = 0;
+    if (!checkedBufferSize(static_cast<std::size_t>(image.width),
+                           static_cast<std::size_t>(image.height), 4, rgbaSize)) {
+        return false;
+    }
+    image.rgba.resize(rgbaSize);
     std::size_t sourceOffset = 128;
     for (int blockY = 0; blockY < blocksY; ++blockY) {
         for (int blockX = 0; blockX < blocksX; ++blockX) {
@@ -423,6 +496,11 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
 }
 
 } // namespace
+
+bool checkedTextureBufferSize(std::size_t width, std::size_t height, std::size_t bytesPerPixel,
+                              std::size_t& size) {
+    return checkedBufferSize(width, height, bytesPerPixel, size);
+}
 
 bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
     TraceScope trace("texture", "readImage");
@@ -551,7 +629,11 @@ bool TextureLoader::readDxt5CompressedDds(const std::filesystem::path& path, Com
     if (length < 128) {
         return false;
     }
-    std::vector<std::uint8_t> data(static_cast<std::size_t>(length));
+    std::size_t dataSize = 0;
+    if (!checkedFileSize(length, dataSize)) {
+        return false;
+    }
+    std::vector<std::uint8_t> data(dataSize);
     input.read(reinterpret_cast<char*>(data.data()), length);
     if (!input || std::string(data.begin(), data.begin() + 4) != "DDS " ||
         std::string(data.begin() + 84, data.begin() + 88) != "DXT5") {
@@ -572,6 +654,7 @@ bool TextureLoader::readDxt5CompressedDds(const std::filesystem::path& path, Com
     image.levels.clear();
     image.levels.reserve(levelCount);
     std::size_t sourceOffset = 128;
+    std::size_t totalLevelBytes = 0;
     std::uint32_t levelWidth = width;
     std::uint32_t levelHeight = height;
     for (std::size_t level = 0; level < levelCount; ++level) {
@@ -582,6 +665,11 @@ bool TextureLoader::readDxt5CompressedDds(const std::filesystem::path& path, Com
             return false;
         }
         const std::size_t levelSize = blocksX * blocksY * 16;
+        if (levelSize > MAX_TEXTURE_BUFFER_BYTES ||
+            totalLevelBytes > MAX_TEXTURE_BUFFER_BYTES - levelSize) {
+            return false;
+        }
+        totalLevelBytes += levelSize;
         if (sourceOffset > data.size() || levelSize > data.size() - sourceOffset) {
             return false;
         }

@@ -8,6 +8,10 @@
 
 namespace openbus::config {
 
+namespace {
+constexpr std::size_t MAX_CONFIG_RECORDS = 1'000'000;
+}
+
 std::string trim(const std::string& value) {
     // CFG payloads are line-oriented, so whitespace is removed before parsing
     // keywords, numbers, and variable names.
@@ -140,6 +144,10 @@ bool Reader::readPayload(Line& line, ConfigurationDiagnostics& diagnostics,
 bool Reader::readPayloads(std::size_t count, std::vector<std::string>& values,
                           ConfigurationDiagnostics& diagnostics, const std::string& ownerKeyword) {
     values.clear();
+    if (count > MAX_CONFIG_RECORDS) {
+        diagnostics.error(nextLineNumber_, ownerKeyword, "entry count is too large");
+        return false;
+    }
     values.reserve(count);
     for (std::size_t index = 0; index < count; ++index) {
         Line line;

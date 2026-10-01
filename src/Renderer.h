@@ -40,15 +40,9 @@ class Renderer {
     bool shouldClose() const;
     void requestClose();
     Vehicle* AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {});
-    Vehicle* AddVehicle(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
-                        ModelLoadingPolicy loadingPolicy = {});
 
     Vehicle* AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {}) {
         return AddVehicle(vehicle, loadingPolicy);
-    }
-    Vehicle* AddBusModel(BusVehicle vehicle, const std::array<double, 3>& spawnPosition,
-                         ModelLoadingPolicy loadingPolicy = {}) {
-        return AddVehicle(vehicle, spawnPosition, loadingPolicy);
     }
 
     void SetPlayerVehicle(Vehicle* vehicle);

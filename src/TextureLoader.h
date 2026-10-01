@@ -1,10 +1,16 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <vector>
 
 namespace openbus::rendering {
+
+constexpr std::size_t MAX_TEXTURE_BUFFER_BYTES = 256U * 1024U * 1024U;
+
+bool checkedTextureBufferSize(std::size_t width, std::size_t height, std::size_t bytesPerPixel,
+                              std::size_t& size);
 
 struct Image {
     int width = 0;
