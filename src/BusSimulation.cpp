@@ -273,6 +273,77 @@ struct BusSimulation::Impl {
         roadMeshGeoms.push_back(geometry);
     }
 
+    void addRoadBumpMesh(const RoadBump& feature) {
+        constexpr int verticesPerStation = 4;
+        const int stationCount = ROAD_BUMP_SEGMENTS + 1;
+        const dReal halfWidth = static_cast<dReal>(feature.width) * 0.5;
+        const dReal segmentLength = static_cast<dReal>(feature.length) / ROAD_BUMP_SEGMENTS;
+        const dReal startX = static_cast<dReal>(feature.centerX) - feature.length * 0.5;
+        std::vector<double> vertices;
+        std::vector<int> indices;
+        vertices.reserve(stationCount * verticesPerStation * 3);
+        indices.reserve(ROAD_BUMP_SEGMENTS * 8 * 3 + 12);
+        for (int station = 0; station < stationCount; ++station) {
+            const dReal localX = segmentLength * station - feature.length * 0.5;
+            const dReal height = static_cast<dReal>(
+                roadFeatureHeightAt(feature, static_cast<double>(localX)));
+            const dReal x = startX + segmentLength * station;
+            const dReal yNegative = static_cast<dReal>(feature.centerY) - halfWidth;
+            const dReal yPositive = static_cast<dReal>(feature.centerY) + halfWidth;
+            const auto addVertex = [&](dReal y, dReal z) {
+                vertices.push_back(static_cast<double>(x));
+                vertices.push_back(static_cast<double>(y));
+                vertices.push_back(static_cast<double>(z));
+            };
+            addVertex(yNegative, height);
+            addVertex(yPositive, height);
+            addVertex(yNegative, 0.0);
+            addVertex(yPositive, 0.0);
+        }
+        auto addTriangle = [&](int first, int second, int third) {
+            indices.push_back(first);
+            indices.push_back(second);
+            indices.push_back(third);
+        };
+        for (int segment = 0; segment < ROAD_BUMP_SEGMENTS; ++segment) {
+            const int current = segment * verticesPerStation;
+            const int next = (segment + 1) * verticesPerStation;
+            addTriangle(current, next, next + 1);
+            addTriangle(current, next + 1, current + 1);
+            addTriangle(current, current + 2, next + 2);
+            addTriangle(current, next + 2, next);
+            addTriangle(current + 1, next + 1, next + 3);
+            addTriangle(current + 1, next + 3, current + 3);
+            addTriangle(current + 2, current + 3, next + 3);
+            addTriangle(current + 2, next + 3, next + 2);
+        }
+        addTriangle(0, 1, 3);
+        addTriangle(0, 3, 2);
+        const int last = ROAD_BUMP_SEGMENTS * verticesPerStation;
+        addTriangle(last, last + 2, last + 3);
+        addTriangle(last, last + 3, last + 1);
+
+        roadMeshVertices.push_back(std::move(vertices));
+        roadMeshIndices.push_back(std::move(indices));
+        const dTriMeshDataID meshData = dGeomTriMeshDataCreate();
+        if (!meshData) {
+            throw std::runtime_error("Failed to create road bump mesh data");
+        }
+        const auto& storedVertices = roadMeshVertices.back();
+        const auto& storedIndices = roadMeshIndices.back();
+        dGeomTriMeshDataBuildDouble(meshData, storedVertices.data(), 3 * sizeof(double),
+                                    static_cast<int>(storedVertices.size() / 3),
+                                    storedIndices.data(), static_cast<int>(storedIndices.size()),
+                                    3 * sizeof(int));
+        const dGeomID geometry = dCreateTriMesh(ode.space, meshData, nullptr, nullptr, nullptr);
+        if (!geometry) {
+            dGeomTriMeshDataDestroy(meshData);
+            throw std::runtime_error("Failed to create road bump collision mesh");
+        }
+        roadMeshData.push_back(meshData);
+        roadMeshGeoms.push_back(geometry);
+    }
+
     void addRoadFeature(const RoadBump& feature) {
         if (feature.type == RoadFeatureType::Barrier) {
             addRoadBox(feature.centerX, feature.centerY, feature.length, feature.width,
@@ -314,15 +385,7 @@ struct BusSimulation::Impl {
             return;
         }
 
-        const dReal segmentLength = static_cast<dReal>(feature.length) / ROAD_BUMP_SEGMENTS;
-        for (int segment = 0; segment < ROAD_BUMP_SEGMENTS; ++segment) {
-            const dReal phase = (static_cast<dReal>(segment) + 0.5) / ROAD_BUMP_SEGMENTS;
-            const dReal profile =
-                feature.height * (phase <= 0.5 ? phase * 2.0 : (1.0 - phase) * 2.0);
-            const dReal segmentCenterX = feature.centerX - feature.length * 0.5 +
-                                         segmentLength * (static_cast<dReal>(segment) + 0.5);
-            addRoadBox(segmentCenterX, feature.centerY, segmentLength, feature.width, profile);
-        }
+        addRoadBumpMesh(feature);
     }
 
     Impl(BusConfiguration vehicle, double physicsHz, int catchUpSteps)

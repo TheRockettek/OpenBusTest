@@ -42,7 +42,8 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* excepti
         return;
     }
 
-    crashLog.Log("Crash detected: " + std::string(reason));
+    try {
+        crashLog.Log("Crash detected: " + std::string(reason));
 
     std::ofstream report("game.crash", std::ios::out | std::ios::trunc);
     if (!report.is_open()) {
@@ -167,6 +168,9 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* excepti
         MiniDumpWriteDump(process, GetCurrentProcessId(), dumpFile, dumpType,
                           exceptionInfo != nullptr ? &dumpException : nullptr, nullptr, nullptr);
         CloseHandle(dumpFile);
+    }
+    } catch (...) {
+        // Crash reporting must never replace or obscure the original failure.
     }
 }
 
