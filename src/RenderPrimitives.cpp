@@ -294,8 +294,7 @@ void drawCollisionWireframe(const BusSimulation& simulation) {
     for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
         pushMatrix();
         applyPose(simulation.wheelPose(index));
-        drawWheel(simulation.wheelRadius(index), simulation.wheelHalfWidth(), 0.0, 0.85,
-              0.95);
+        drawWheel(simulation.wheelRadius(index), simulation.wheelHalfWidth(), 0.0, 0.85, 0.95);
         popMatrix();
     }
     glDepthMask(GL_TRUE);

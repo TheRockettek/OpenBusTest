@@ -360,8 +360,7 @@ struct BusSimulation::Impl {
                 simulationLog.Log("Bus axle geometry is outside the chassis");
                 throw std::invalid_argument("Bus axle geometry is outside the chassis");
             }
-            const dReal wheelCenterOffset =
-                axle.trackWidth * 0.5 - configuration.wheelHalfWidth;
+            const dReal wheelCenterOffset = axle.trackWidth * 0.5 - configuration.wheelHalfWidth;
             if (wheelCenterOffset <= 0.0) {
                 simulationLog.Log("Bus axle width is too small for configured wheel width");
                 throw std::invalid_argument("Bus axle width must exceed wheel width");
@@ -497,10 +496,9 @@ struct BusSimulation::Impl {
             const dReal anchorLocalVelocityZ = chassisRotation[2] * chassisVelocity[0] +
                                                chassisRotation[6] * chassisVelocity[1] +
                                                chassisRotation[10] * chassisVelocity[2] +
-                                               localAngularX * corner.y -
-                                               localAngularY * corner.x;
-            corner.springCompression = std::clamp(SUSP_REST - (anchorLocalZ - wheelLocalZ),
-                                                  0.0, SUSP_MAX_TRAVEL);
+                                               localAngularX * corner.y - localAngularY * corner.x;
+            corner.springCompression =
+                std::clamp(SUSP_REST - (anchorLocalZ - wheelLocalZ), 0.0, SUSP_MAX_TRAVEL);
             corner.verticalVelocity = wheelLocalVelocityZ - anchorLocalVelocityZ;
             const dReal* wheelRotation = dBodyGetRotation(corner.wheelBody);
             const dReal* wheelAngularVelocity = dBodyGetAngularVel(corner.wheelBody);
@@ -612,13 +610,12 @@ struct BusSimulation::Impl {
 
             const dReal targetSteering = front ? steeringAngle : 0.0;
             const dReal currentSteering = dJointGetHingeAngle(corners[index].steeringJoint);
-            const dReal steeringRate =
-                dJointGetHingeAngleRate(corners[index].steeringJoint);
-            dJointSetHingeParam(corners[index].steeringJoint, dParamVel,
-                                std::clamp((targetSteering - currentSteering) *
-                                                STEERING_POSITION_GAIN -
-                                            steeringRate * STEERING_RATE_DAMPING,
-                                            -STEERING_MAX_RATE, STEERING_MAX_RATE));
+            const dReal steeringRate = dJointGetHingeAngleRate(corners[index].steeringJoint);
+            dJointSetHingeParam(
+                corners[index].steeringJoint, dParamVel,
+                std::clamp((targetSteering - currentSteering) * STEERING_POSITION_GAIN -
+                               steeringRate * STEERING_RATE_DAMPING,
+                           -STEERING_MAX_RATE, STEERING_MAX_RATE));
             dJointSetHingeParam(corners[index].steeringJoint, dParamFMax, STEERING_MAX_TORQUE);
 
             const dReal requestedDriveTorquePerWheel =

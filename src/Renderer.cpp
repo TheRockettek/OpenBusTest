@@ -671,18 +671,18 @@ struct Vehicle {
         }
         if (wheelsFromOde && odeSimulation != nullptr && part.odeWheelIndex >= 0) {
             const BodyPose chassis = odeSimulation->chassisPose();
-            const BodyPose wheel = odeSimulation->wheelPose(
-                static_cast<std::size_t>(part.odeWheelIndex));
+            const BodyPose wheel =
+                odeSimulation->wheelPose(static_cast<std::size_t>(part.odeWheelIndex));
             Matrix4 relative = identityMatrix();
-            const std::array<double, 3> delta = {
-                wheel.position[0] - chassis.position[0], wheel.position[1] - chassis.position[1],
-                wheel.position[2] - chassis.position[2]};
+            const std::array<double, 3> delta = {wheel.position[0] - chassis.position[0],
+                                                 wheel.position[1] - chassis.position[1],
+                                                 wheel.position[2] - chassis.position[2]};
             for (int row = 0; row < 3; ++row) {
                 const double odeLocalPosition = chassis.rotation[row] * delta[0] +
-                                                 chassis.rotation[3 + row] * delta[1] +
-                                                 chassis.rotation[6 + row] * delta[2];
-                const double modelLocalPosition = part.center[row] +
-                                                  (row == 2 ? modelOffsetZ : 0.0);
+                                                chassis.rotation[3 + row] * delta[1] +
+                                                chassis.rotation[6 + row] * delta[2];
+                const double modelLocalPosition =
+                    part.center[row] + (row == 2 ? modelOffsetZ : 0.0);
                 relative[12 + row] = odeLocalPosition - modelLocalPosition;
                 for (int column = 0; column < 3; ++column) {
                     relative[column * 4 + row] =
@@ -942,7 +942,6 @@ struct Vehicle {
         odeSimulation = &simulation;
     }
 
-
     void joinTextureWorkers() {
         assets->join();
     }
@@ -954,8 +953,9 @@ struct Vehicle {
     explicit Vehicle(BusVehicle vehicle, double configuredModelOffsetZ, ModelLoadingPolicy policy,
                      AssetRequestManager& manager, SimulationState& simulationState,
                      SoundEngine& soundEngine)
-                : loadingPolicy(policy), variables(), assets(&manager), modelOffsetZ(configuredModelOffsetZ),
-                    wheelsFromOde(parseEnabledFlag(std::getenv("OPENBUS_WHEELS_FROM_ODE"))) {
+        : loadingPolicy(policy), variables(), assets(&manager),
+          modelOffsetZ(configuredModelOffsetZ),
+          wheelsFromOde(parseEnabledFlag(std::getenv("OPENBUS_WHEELS_FROM_ODE"))) {
         if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
             try {
                 textureScale = std::clamp(std::stod(scale), 0.25, 1.0);
@@ -2628,8 +2628,8 @@ struct Vehicle {
             const std::size_t sideSeparator = wheelVariable.find('_', axleStart);
             if (sideSeparator != std::string::npos) {
                 try {
-                    const int axleIndex = std::stoi(
-                        wheelVariable.substr(axleStart, sideSeparator - axleStart));
+                    const int axleIndex =
+                        std::stoi(wheelVariable.substr(axleStart, sideSeparator - axleStart));
                     const std::string side = wheelVariable.substr(sideSeparator + 1);
                     if (axleIndex >= 0 && (side == "l" || side == "r")) {
                         displayPart.odeWheelIndex = axleIndex * 2 + (side == "r" ? 1 : 0);
