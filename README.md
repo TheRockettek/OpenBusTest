@@ -197,6 +197,8 @@ derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
   and state churn. Set `OPENBUS_FRUSTUM_CULLING=0` to disable culling for
   debugging. Opaque parts are front-to-back and transparent parts
   back-to-front; this is not hardware occlusion-query culling.
+- Set `OPENBUS_WHEELS_FROM_ODE=1` to bypass wheel `newanim` transforms and
+  place each wheel from its matching ODE body pose. The default is `0`.
 - Model geometry is uploaded to OpenGL vertex buffer objects (VBOs) and drawn
   with shader-backed `glDrawArrays` calls in an OpenGL 3.3 core profile.
 - Window and door glass remains material-driven in the VBO path; the temporary

@@ -103,7 +103,9 @@ class Renderer {
     std::array<bool, 2> previousCameraNavigationStates_ = {};
     bool previousCaptureKeyState_ = false;
     bool previousReflectionDebugKeyState_ = false;
+    bool previousCollisionDebugKeyState_ = false;
     bool reflectionDebugOverlay_ = false;
+    bool collisionDebugOverlay_ = false;
     bool renderingReflection_ = false;
     bool hasPreviousVariableTime_ = false;
     bool captureRequested_ = false;

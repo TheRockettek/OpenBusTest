@@ -40,6 +40,9 @@ constexpr dReal STOP_YAW_DAMPING = 300000.0;
 constexpr dReal MAX_STEER_ANGLE = 0.45;
 constexpr dReal STEER_SPEED = 0.65;
 constexpr dReal STEERING_MAX_TORQUE = 3000.0;
+constexpr dReal STEERING_POSITION_GAIN = 4.0;
+constexpr dReal STEERING_RATE_DAMPING = 0.8;
+constexpr dReal STEERING_MAX_RATE = 2.0;
 constexpr dReal MAX_BRAKE_FORCE = 32000.0;
 constexpr dReal YAW_DAMPING = 180000.0;
 constexpr dReal AERO_CD = 0.65;
@@ -106,6 +109,7 @@ struct BusSimulation::Impl {
         dJointID wheelJoint = nullptr;
         dReal wheelOmega = 0.0;
         dReal wheelRotation = 0.0;
+        dReal previousWheelHingeAngle = 0.0;
         dReal wheelSurfaceSpeed = 0.0;
         dReal pointLongitudinalSpeed = 0.0;
         dReal longitudinalSlipRatio = 0.0;
@@ -166,13 +170,13 @@ struct BusSimulation::Impl {
         if (firstHasBody == secondHasBody) {
             return;
         }
-        dContact contacts[8] = {};
-        const int count = dCollide(first, second, 8, &contacts[0].geom, sizeof(dContact));
+        dContact contacts[4] = {};
+        const int count = dCollide(first, second, 4, &contacts[0].geom, sizeof(dContact));
         for (int index = 0; index < count; ++index) {
             contacts[index].surface.mode = dContactSoftERP | dContactSoftCFM | dContactApprox1;
             contacts[index].surface.mu = ROAD_FRICTION_COEFFICIENT;
-            contacts[index].surface.soft_erp = 0.8;
-            contacts[index].surface.soft_cfm = 1e-5;
+            contacts[index].surface.soft_erp = 0.35;
+            contacts[index].surface.soft_cfm = 2e-5;
             dJointID contact = dJointCreateContact(simulation->ode.world, simulation->ode.contacts,
                                                    &contacts[index]);
             dJointAttach(contact, dGeomGetBody(first), dGeomGetBody(second));
@@ -356,8 +360,14 @@ struct BusSimulation::Impl {
                 simulationLog.Log("Bus axle geometry is outside the chassis");
                 throw std::invalid_argument("Bus axle geometry is outside the chassis");
             }
-            corners.push_back({axle.position, axle.trackWidth * 0.5, axle.wheelDiameter * 0.5});
-            corners.push_back({axle.position, -axle.trackWidth * 0.5, axle.wheelDiameter * 0.5});
+            const dReal wheelCenterOffset =
+                axle.trackWidth * 0.5 - configuration.wheelHalfWidth;
+            if (wheelCenterOffset <= 0.0) {
+                simulationLog.Log("Bus axle width is too small for configured wheel width");
+                throw std::invalid_argument("Bus axle width must exceed wheel width");
+            }
+            corners.push_back({axle.position, wheelCenterOffset, axle.wheelDiameter * 0.5});
+            corners.push_back({axle.position, -wheelCenterOffset, axle.wheelDiameter * 0.5});
         }
         ground = dCreatePlane(ode.space, 0.0, 0.0, 1.0, 0.0);
         for (const RoadBump& bump : defaultRoadBumps()) {
@@ -400,7 +410,6 @@ struct BusSimulation::Impl {
         for (std::size_t index = 0; index < corners.size(); ++index) {
             Corner& corner = corners[index];
             const std::size_t axleIndex = index / 2;
-            const dReal side = index % 2 == 0 ? 1.0 : -1.0;
             dMass wheelMass;
             dMassSetCylinderTotal(&wheelMass, WHEEL_MASS, 3, corner.wheelRadius,
                                   configuration.wheelHalfWidth * 2.0);
@@ -416,7 +425,7 @@ struct BusSimulation::Impl {
             dBodySetAutoDisableFlag(corner.wheelBody, 0);
 
             const dReal worldX = configuration.axles[axleIndex].position;
-            const dReal worldY = side * configuration.axles[axleIndex].trackWidth * 0.5;
+            const dReal worldY = corner.y;
             const dReal worldZ = dBodyGetPosition(chassis)[2] + wheelLocalZ;
             dBodySetPosition(corner.suspensionBody, worldX, worldY, worldZ);
             dBodySetPosition(corner.steeringBody, worldX, worldY, worldZ);
@@ -467,20 +476,32 @@ struct BusSimulation::Impl {
         for (std::size_t index = 0; index < corners.size(); ++index) {
             Corner& corner = corners[index];
             const dReal localZ = suspensionAnchorZ(index);
-            const dReal offsetX = chassisRotation[0] * corner.x + chassisRotation[1] * corner.y +
-                                  chassisRotation[2] * localZ;
-            const dReal offsetY = chassisRotation[4] * corner.x + chassisRotation[5] * corner.y +
-                                  chassisRotation[6] * localZ;
-            const dReal offsetZ = chassisRotation[8] * corner.x + chassisRotation[9] * corner.y +
-                                  chassisRotation[10] * localZ;
-            const dReal anchorZ = chassisPosition[2] + offsetZ;
-            const dReal anchorVelocityZ = chassisVelocity[2] + chassisAngularVelocity[0] * offsetY -
-                                          chassisAngularVelocity[1] * offsetX;
             const dReal* wheelPosition = dBodyGetPosition(corner.wheelBody);
+            const dReal wheelOffsetX = wheelPosition[0] - chassisPosition[0];
+            const dReal wheelOffsetY = wheelPosition[1] - chassisPosition[1];
+            const dReal wheelOffsetZ = wheelPosition[2] - chassisPosition[2];
+            const dReal wheelLocalZ = chassisRotation[2] * wheelOffsetX +
+                                      chassisRotation[6] * wheelOffsetY +
+                                      chassisRotation[10] * wheelOffsetZ;
+            const dReal anchorLocalZ = localZ;
             const dReal* wheelVelocity = dBodyGetLinearVel(corner.wheelBody);
-            corner.springCompression =
-                std::clamp(SUSP_REST - (anchorZ - wheelPosition[2]), 0.0, SUSP_MAX_TRAVEL);
-            corner.verticalVelocity = wheelVelocity[2] - anchorVelocityZ;
+            const dReal wheelLocalVelocityZ = chassisRotation[2] * wheelVelocity[0] +
+                                              chassisRotation[6] * wheelVelocity[1] +
+                                              chassisRotation[10] * wheelVelocity[2];
+            const dReal localAngularX = chassisRotation[0] * chassisAngularVelocity[0] +
+                                        chassisRotation[4] * chassisAngularVelocity[1] +
+                                        chassisRotation[8] * chassisAngularVelocity[2];
+            const dReal localAngularY = chassisRotation[1] * chassisAngularVelocity[0] +
+                                        chassisRotation[5] * chassisAngularVelocity[1] +
+                                        chassisRotation[9] * chassisAngularVelocity[2];
+            const dReal anchorLocalVelocityZ = chassisRotation[2] * chassisVelocity[0] +
+                                               chassisRotation[6] * chassisVelocity[1] +
+                                               chassisRotation[10] * chassisVelocity[2] +
+                                               localAngularX * corner.y -
+                                               localAngularY * corner.x;
+            corner.springCompression = std::clamp(SUSP_REST - (anchorLocalZ - wheelLocalZ),
+                                                  0.0, SUSP_MAX_TRAVEL);
+            corner.verticalVelocity = wheelLocalVelocityZ - anchorLocalVelocityZ;
             const dReal* wheelRotation = dBodyGetRotation(corner.wheelBody);
             const dReal* wheelAngularVelocity = dBodyGetAngularVel(corner.wheelBody);
             const dReal wheelAxisX = wheelRotation[2];
@@ -489,6 +510,10 @@ struct BusSimulation::Impl {
             corner.wheelOmega = wheelAngularVelocity[0] * wheelAxisX +
                                 wheelAngularVelocity[1] * wheelAxisY +
                                 wheelAngularVelocity[2] * wheelAxisZ;
+            const dReal wheelHingeAngle = dJointGetHingeAngle(corner.wheelJoint);
+            corner.wheelRotation -=
+                std::remainder(wheelHingeAngle - corner.previousWheelHingeAngle, 2.0 * PI);
+            corner.previousWheelHingeAngle = wheelHingeAngle;
             corner.wheelSurfaceSpeed = corner.wheelOmega * corner.wheelRadius;
 
             const dReal* steeringRotation = dBodyGetRotation(corner.steeringBody);
@@ -587,8 +612,13 @@ struct BusSimulation::Impl {
 
             const dReal targetSteering = front ? steeringAngle : 0.0;
             const dReal currentSteering = dJointGetHingeAngle(corners[index].steeringJoint);
+            const dReal steeringRate =
+                dJointGetHingeAngleRate(corners[index].steeringJoint);
             dJointSetHingeParam(corners[index].steeringJoint, dParamVel,
-                                std::clamp((targetSteering - currentSteering) * 4.0, -2.0, 2.0));
+                                std::clamp((targetSteering - currentSteering) *
+                                                STEERING_POSITION_GAIN -
+                                            steeringRate * STEERING_RATE_DAMPING,
+                                            -STEERING_MAX_RATE, STEERING_MAX_RATE));
             dJointSetHingeParam(corners[index].steeringJoint, dParamFMax, STEERING_MAX_TORQUE);
 
             const dReal requestedDriveTorquePerWheel =
@@ -676,9 +706,6 @@ struct BusSimulation::Impl {
         dWorldStep(ode.world, fixedStep);
         dJointGroupEmpty(ode.contacts);
         refreshWheelTelemetry();
-        for (Corner& corner : corners) {
-            corner.wheelRotation += corner.wheelOmega * fixedStep;
-        }
         simulationTime += fixedStep;
     }
 };
@@ -832,9 +859,9 @@ BodyPose BusSimulation::wheelMountPose(std::size_t index) const {
         throw std::out_of_range("Wheel index is outside the bus configuration");
     }
     const dReal* position = dBodyGetPosition(impl_->corners[index].wheelBody);
-    const dReal* steeringRotation = dBodyGetRotation(impl_->corners[index].steeringBody);
-    // The steering body carries steering, while the wheel mesh basis is fixed
-    // at -90 degrees around X. Rolling belongs to wheelBody and is excluded.
+    const dReal* chassisRotation = dBodyGetRotation(impl_->chassis);
+    // Wheel animation owns steering and rolling. ODE supplies only the physical
+    // corner position, while the mesh keeps the chassis basis and fixed wheel basis.
     constexpr dReal fixedWheelRotation[3][3] = {
         {1.0, 0.0, 0.0},
         {0.0, 0.0, 1.0},
@@ -845,7 +872,7 @@ BodyPose BusSimulation::wheelMountPose(std::size_t index) const {
         for (int column = 0; column < 3; ++column) {
             for (int inner = 0; inner < 3; ++inner) {
                 rotation[row][column] +=
-                    steeringRotation[row * 4 + inner] * fixedWheelRotation[inner][column];
+                    chassisRotation[row * 4 + inner] * fixedWheelRotation[inner][column];
             }
         }
     }

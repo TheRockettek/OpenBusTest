@@ -337,6 +337,47 @@ valid.
 `delay` is a rate-based smoothing value, `maxspeed` is a per-second limit, and
 `offset` is added to the driven value.
 
+### Wheel animation timing in OpenBus
+
+The physical and visual wheel paths are updated in this order each frame:
+
+1. `BusSimulation::update()` advances ODE in fixed-size steps. Each step calls
+  refreshWheelTelemetry()` after `dWorldStep()`, which reads suspension from
+  the wheel/chassis separation projected onto chassis-local Z and reads the
+  wheel angular velocity from the ODE wheel body rotation and angular
+  velocity. The local projection keeps front and rear animations independent
+  when the chassis rolls or pitches.
+2. The same fixed step reads the ODE wheel hinge angle, unwraps it across
+  `+/-pi`, and publishes the accumulated value as
+  `Wheel_Rotation_<axle>_<side>`. The accumulated value is sign-inverted at
+  this boundary because ODE's hinge angle axis is opposite to the model CFG
+  wheel-rotation convention. Suspension is published as
+  `Axle_Suspension_<axle>_<side>`. Angular velocity is retained separately as
+  `Wheel_RotationSpeed_<axle>_<side>`.
+3. `main.cpp` calls `renderer.updatePlayerVariables()` immediately after
+  `simulation.update()`. The values therefore reach the model variables in
+  the same frame as the latest completed ODE step.
+4. During `Vehicle::draw()`, `updateAnimationStates()` converts each variable
+  to a `newanim` target. It then applies `delay` smoothing and `maxspeed`
+  limiting before `animationTransformForPart()` builds the mesh transform.
+
+Consequently, ODE debug geometry shows the latest physical wheel pose, while a
+`newanim` wheel can intentionally show an earlier pose when its animation has
+`delay` or `maxspeed`. A mismatch with no such limits must instead come from
+the animation scale/sign, origin basis, or the fact that ODE rotation is
+integrated from angular velocity while the model consumes the accumulated
+`Wheel_Rotation` value. The rotation target is now derived from the ODE hinge
+angle rather than integrating angular velocity a second time; this avoids a
+step of phase error when ODE changes the wheel speed during a fixed step.
+For suspension, ODE reports positive compression when the wheel moves upward.
+The converted `origin_rot_y` suspension frame maps the positive `anim_trans`
+amount to render +Z, so the renderer must preserve that positive sign.
+
+For wheel debugging, compare these values in order: ODE `wheelPose()`;
+`wheelRotation()` and `wheelSuspensionCompression()`; the published variable;
+the animation target amount; and finally the smoothed `currentAmount`. The
+first value that differs identifies the responsible layer.
+
 ### `[animparent]`
 
 One parent attachment/name. The current mesh inherits the parent transform,

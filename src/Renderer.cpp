@@ -104,7 +104,6 @@
 
 Logger gameLog = Logger("Game");
 Logger textureLog = Logger("Texture");
-Logger wheelLog = Logger("Wheel");
 
 using Matrix4 = openbus::rendering::Matrix4;
 
@@ -120,7 +119,6 @@ constexpr int viewpointMask(RenderViewContext context) {
     return static_cast<int>(context);
 }
 
-constexpr double MAN_DL05_MODEL_OFFSET_Z = -1.035;
 constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
 constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 8;
 constexpr int MIN_REFLECTION_TARGET_SIZE = 64;
@@ -350,11 +348,11 @@ using openbus::rendering::applyPose;
 using AssetRequestManager = openbus::rendering::AssetRequestManager;
 using openbus::rendering::drawBox;
 using openbus::rendering::drawCenterOfGravityMarker;
+using openbus::rendering::drawCollisionWireframe;
 using openbus::rendering::drawEnvironmentBatch;
 using openbus::rendering::drawGround;
 using openbus::rendering::drawMaterialBatch;
 using openbus::rendering::drawModelBatch;
-using openbus::rendering::drawWheel;
 using openbus::rendering::lookAt;
 using openbus::rendering::multiplyMatrix;
 using openbus::rendering::parseEnabledFlag;
@@ -385,7 +383,6 @@ struct Vehicle {
     };
 
     using MaterialState = openbus::rendering::BusModelMaterialState;
-    using WheelAnimation = openbus::rendering::WheelAnimation;
 
     struct Part : openbus::rendering::BusModelPart {
         std::shared_ptr<ObjRequest> objRequest;
@@ -480,6 +477,7 @@ struct Vehicle {
         int visibleValue = 0;
         std::string meshIdentifier;
         std::string animationParent;
+        int odeWheelIndex = -1;
         bool backFaceCulling = false;
         std::array<double, 3> center;
         std::array<double, 3> size;
@@ -494,22 +492,15 @@ struct Vehicle {
         mutable double cachedViewDepth = 0.0;
     };
 
-    struct WheelModel {
-        WheelAnimation animation;
-        std::vector<DisplayPart> parts;
-    };
-
     std::vector<DisplayPart> displayLists;
     std::vector<bool> variableVisibleParts;
     std::unordered_set<int> visibleReflectionTextureIndices;
     std::unordered_map<int, int> reflectionRequiredSizes;
-    std::vector<WheelModel> wheelModels;
     openbus::scripting::Vehicle variables;
     std::unique_ptr<ScriptRuntime> scripts;
     std::vector<Part> pendingParts;
     AssetRequestManager* assets;
-    mutable std::unordered_set<std::size_t> loggedWheelBindings;
-    double modelOffsetZ = MAN_DL05_MODEL_OFFSET_Z;
+    double modelOffsetZ = 0.0;
     double textureScale = 1;
     bool frustumCulling = true;
     std::vector<double> lodThresholds;
@@ -522,6 +513,8 @@ struct Vehicle {
     int activeLod = -1;
     double animationTimeStep = 0.0;
     std::uint64_t animationGeneration = 1;
+    bool wheelsFromOde = false;
+    const BusSimulation* odeSimulation = nullptr;
     std::chrono::steady_clock::time_point textureUploadStart;
 
     void updateMaterialChange(Batch& batch) {
@@ -666,7 +659,7 @@ struct Vehicle {
         invertAffineMatrix(origin, inverseOrigin);
         const Matrix4 local = animation.type == "anim_rot" ? rotationMatrix(-amount, 0.0, -1.0, 0.0)
                               : animation.type == "anim_trans"
-                                  ? translationMatrix({0.0, -amount, 0.0})
+                                  ? translationMatrix({0.0, amount, 0.0})
                                   : identityMatrix();
         return multiplyMatrix4(multiplyMatrix4(origin, local), inverseOrigin);
     }
@@ -674,6 +667,45 @@ struct Vehicle {
     Matrix4 animationTransformForPart(const DisplayPart& part,
                                       std::vector<const DisplayPart*>& active) const {
         if (part.animationCacheGeneration == animationGeneration) {
+            return part.cachedAnimationTransform;
+        }
+        if (wheelsFromOde && odeSimulation != nullptr && part.odeWheelIndex >= 0) {
+            const BodyPose chassis = odeSimulation->chassisPose();
+            const BodyPose wheel = odeSimulation->wheelPose(
+                static_cast<std::size_t>(part.odeWheelIndex));
+            Matrix4 relative = identityMatrix();
+            const std::array<double, 3> delta = {
+                wheel.position[0] - chassis.position[0], wheel.position[1] - chassis.position[1],
+                wheel.position[2] - chassis.position[2]};
+            for (int row = 0; row < 3; ++row) {
+                const double odeLocalPosition = chassis.rotation[row] * delta[0] +
+                                                 chassis.rotation[3 + row] * delta[1] +
+                                                 chassis.rotation[6 + row] * delta[2];
+                const double modelLocalPosition = part.center[row] +
+                                                  (row == 2 ? modelOffsetZ : 0.0);
+                relative[12 + row] = odeLocalPosition - modelLocalPosition;
+                for (int column = 0; column < 3; ++column) {
+                    relative[column * 4 + row] =
+                        chassis.rotation[row] * wheel.rotation[column] +
+                        chassis.rotation[3 + row] * wheel.rotation[3 + column] +
+                        chassis.rotation[6 + row] * wheel.rotation[6 + column];
+                }
+            }
+            Matrix4 base = identityMatrix();
+            base[5] = 0.0;
+            base[6] = -1.0;
+            base[9] = 1.0;
+            base[10] = 0.0;
+            Matrix4 inverseBase = identityMatrix();
+            invertAffineMatrix(base, inverseBase);
+            relative = multiplyMatrix4(relative, inverseBase);
+            const Matrix4 toOrigin =
+                translationMatrix({-part.center[0], -part.center[1], -part.center[2]});
+            const Matrix4 fromOrigin =
+                translationMatrix({part.center[0], part.center[1], part.center[2]});
+            part.cachedAnimationTransform =
+                multiplyMatrix4(fromOrigin, multiplyMatrix4(relative, toOrigin));
+            part.animationCacheGeneration = animationGeneration;
             return part.cachedAnimationTransform;
         }
         Matrix4 local = identityMatrix();
@@ -703,14 +735,6 @@ struct Vehicle {
             return found == parts.end() ? nullptr : &*found;
         };
         parent = findParent(displayLists);
-        if (parent == nullptr) {
-            for (const WheelModel& wheel : wheelModels) {
-                parent = findParent(wheel.parts);
-                if (parent != nullptr) {
-                    break;
-                }
-            }
-        }
         if (parent == nullptr) {
             part.cachedAnimationTransform = local;
             part.animationCacheGeneration = animationGeneration;
@@ -914,6 +938,11 @@ struct Vehicle {
         simulation.updateVariables(variables, throttle, steering, brake);
     }
 
+    void setOdeSimulation(const BusSimulation& simulation) {
+        odeSimulation = &simulation;
+    }
+
+
     void joinTextureWorkers() {
         assets->join();
     }
@@ -922,9 +951,11 @@ struct Vehicle {
     bool comInitialized = false;
 #endif
 
-    explicit Vehicle(BusVehicle vehicle, ModelLoadingPolicy policy, AssetRequestManager& manager,
-                     SimulationState& simulationState, SoundEngine& soundEngine)
-        : loadingPolicy(policy), variables(), assets(&manager) {
+    explicit Vehicle(BusVehicle vehicle, double configuredModelOffsetZ, ModelLoadingPolicy policy,
+                     AssetRequestManager& manager, SimulationState& simulationState,
+                     SoundEngine& soundEngine)
+                : loadingPolicy(policy), variables(), assets(&manager), modelOffsetZ(configuredModelOffsetZ),
+                    wheelsFromOde(parseEnabledFlag(std::getenv("OPENBUS_WHEELS_FROM_ODE"))) {
         if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
             try {
                 textureScale = std::clamp(std::stod(scale), 0.25, 1.0);
@@ -945,7 +976,6 @@ struct Vehicle {
             relativeConfig = std::filesystem::path("SP_E400MMC") / "Model" / "Configuration Files" /
                              "E400MMC_ADL_10.9m_Voith_LowHeight.cfg";
             relativeModelRoot = std::filesystem::path("SP_E400MMC") / "Model" / "SP_E400MMC_obj";
-            modelOffsetZ = -1.02;
         } else {
             relativeConfig = std::filesystem::path("MAN_DL05") / "Model" / "DL05.cfg";
             relativeModelRoot = std::filesystem::path("MAN_DL05") / "Model" / "DL05_obj";
@@ -994,9 +1024,6 @@ struct Vehicle {
             }
         };
         deleteBuffers(displayLists);
-        for (const WheelModel& wheel : wheelModels) {
-            deleteBuffers(wheel.parts);
-        }
 #ifdef _WIN32
         if (comInitialized) {
             CoUninitialize();
@@ -1348,154 +1375,6 @@ struct Vehicle {
         popMatrix();
     }
 
-    bool hasConfiguredWheels(std::size_t expectedWheelCount) const {
-        static_cast<void>(expectedWheelCount);
-        return std::any_of(wheelModels.begin(), wheelModels.end(),
-                           [](const WheelModel& wheel) { return !wheel.parts.empty(); });
-    }
-
-    void applyWheelVariableCorrections(const WheelAnimation& animation,
-                                       const BusSimulation& simulation,
-                                       std::size_t simulationIndex) const {
-        constexpr double RADIANS_TO_DEGREES = 57.29577951308232;
-        const auto steeringVariableMatchesAxle = [&](const std::string& variable) {
-            const std::string normalized = lower(variable);
-            constexpr const char* prefix = "axle_steering_";
-            constexpr std::size_t prefixLength = 14;
-            if (normalized.rfind(prefix, 0) != 0) {
-                return true;
-            }
-            const std::size_t separator = normalized.find('_', prefixLength);
-            if (separator == std::string::npos) {
-                return true;
-            }
-            const int variableAxle =
-                parseInt(normalized.substr(prefixLength, separator - prefixLength), -1);
-            return variableAxle < 0 ||
-                   static_cast<std::size_t>(variableAxle) == simulationIndex / 2;
-        };
-        if (!animation.steeringVariable.empty() &&
-            steeringVariableMatchesAxle(animation.steeringVariable)) {
-            const double requested = variables.getNormalized(animation.steeringVariable);
-            const double physical = simulation.wheelSteeringAngle(simulationIndex);
-            const double scale =
-                animation.steeringScale == 0.0 ? RADIANS_TO_DEGREES : animation.steeringScale;
-            rotate((requested - physical) * scale, 0.0, 0.0, 1.0);
-        }
-        if (!animation.rotationVariable.empty()) {
-            const double requested = variables.getNormalized(animation.rotationVariable);
-            const double scale =
-                animation.rotationScale == 0.0 ? RADIANS_TO_DEGREES : animation.rotationScale;
-            rotate(-requested * scale, 0.0, 1.0, 0.0);
-        }
-        if (!animation.suspensionVariable.empty()) {
-            const double requested = variables.getNormalized(animation.suspensionVariable);
-            const double physical = simulation.wheelSuspensionCompression(simulationIndex);
-            const double scale = animation.suspensionScale == 0.0 ? 1.0 : animation.suspensionScale;
-            translate(0.0, 0.0, (requested - physical) * scale);
-        }
-    }
-
-    void drawConfiguredWheels(const BusSimulation& simulation, const BodyPose& chassis,
-                              bool outsideView) {
-        TraceScope trace("render", "Vehicle::drawConfiguredWheels");
-        std::vector<bool> usedWheelIndices(simulation.wheelCount(), false);
-        for (std::size_t modelIndex = 0; modelIndex < wheelModels.size(); ++modelIndex) {
-            WheelModel& wheel = wheelModels[modelIndex];
-            if (wheel.parts.empty() || !wheel.animation.hasOrigin) {
-                continue;
-            }
-            std::array<double, 3> targetLocal = wheel.animation.origin;
-            targetLocal[2] += modelOffsetZ;
-            const std::array<double, 3> target = transformLocalPoint(chassis, targetLocal);
-            std::size_t simulationIndex = 0;
-            double closestDistance = std::numeric_limits<double>::max();
-            for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
-                if (usedWheelIndices[index]) {
-                    continue;
-                }
-                const BodyPose pose = simulation.wheelPose(index);
-                const double deltaX = pose.position[0] - target[0];
-                const double deltaY = pose.position[1] - target[1];
-                const double deltaZ = pose.position[2] - target[2];
-                const double distance = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
-                if (distance < closestDistance) {
-                    closestDistance = distance;
-                    simulationIndex = index;
-                }
-            }
-            if (closestDistance == std::numeric_limits<double>::max()) {
-                continue;
-            }
-            usedWheelIndices[simulationIndex] = true;
-            const BodyPose pose = simulation.wheelMountPose(simulationIndex);
-            if (loggedWheelBindings.insert(modelIndex).second) {
-                wheelLog.Log("cfgWheel=" + std::to_string(modelIndex) +
-                             " odeWheel=" + std::to_string(simulationIndex) + " origin=(" +
-                             std::to_string(wheel.animation.origin[0]) + ',' +
-                             std::to_string(wheel.animation.origin[1]) + ',' +
-                             std::to_string(wheel.animation.origin[2]) + ')' +
-                             " rotationVar=" + wheel.animation.rotationVariable +
-                             " suspensionVar=" + wheel.animation.suspensionVariable +
-                             " steeringVar=" + wheel.animation.steeringVariable + " pose=(" +
-                             std::to_string(pose.position[0]) + ',' +
-                             std::to_string(pose.position[1]) + ',' +
-                             std::to_string(pose.position[2]) + ")");
-            }
-            const std::array<double, 3> meshOrigin = wheel.animation.origin;
-            double visualWheelDiameter = 0.0;
-            for (const DisplayPart& part : wheel.parts) {
-                visualWheelDiameter =
-                    std::max(visualWheelDiameter, std::max(part.size[0], part.size[2]));
-            }
-            const BusAxle axle = simulation.axle(simulationIndex / 2);
-            const double sideSign = simulationIndex % 2 == 0 ? 1.0 : -1.0;
-            const double currentCenter = sideSign * axle.trackWidth * 0.5;
-            const double lateralOffset = wheel.animation.origin[1] - currentCenter;
-            const double diameterScale = visualWheelDiameter > 0.0 && axle.wheelDiameter > 0.0
-                                             ? axle.wheelDiameter / visualWheelDiameter
-                                             : 1.0;
-            for (DisplayPart& part : wheel.parts) {
-                const bool visibleOutside = part.viewpoint == 0 || (part.viewpoint & 1) != 0;
-                const bool visibleInside = part.viewpoint == 0 || (part.viewpoint & 2) != 0;
-                if ((outsideView && !visibleOutside) || (!outsideView && !visibleInside)) {
-                    continue;
-                }
-                pushMatrix();
-                applyPose(pose);
-                rotate(90.0, 1.0, 0.0, 0.0);
-                applyWheelVariableCorrections(wheel.animation, simulation, simulationIndex);
-                translate(0.0, lateralOffset, 0.0);
-                scale(diameterScale, diameterScale, diameterScale);
-                translate(-meshOrigin[0], -meshOrigin[1], -meshOrigin[2]);
-                for (Batch& batch : part.batches) {
-                    setBackFaceCulling(part.backFaceCulling);
-                    if (isWheelRubberTexture(batch.textureName)) {
-                        const std::array<double, 3> rubberColor = {0.20, 0.20, 0.20};
-                        drawBatch(batch, alphaScale(batch), true, &rubberColor);
-                    } else {
-                        drawBatch(batch, alphaScale(batch));
-                    }
-                }
-                popMatrix();
-            }
-        }
-        setBackFaceCulling(false);
-        for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
-            if (usedWheelIndices[index]) {
-                continue;
-            }
-            const BodyPose pose = simulation.wheelPose(index);
-            pushMatrix();
-            applyPose(pose);
-            drawWheel(simulation.wheelRadius(index), simulation.wheelHalfWidth());
-            popMatrix();
-        }
-        setBackFaceCulling(false);
-        glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
-    }
-
     std::size_t renderedTriangles() const {
         return lastRenderedTriangles;
     }
@@ -1561,11 +1440,6 @@ struct Vehicle {
         if (!texturesLoadedInParts(displayLists)) {
             return false;
         }
-        for (const WheelModel& wheel : wheelModels) {
-            if (!texturesLoadedInParts(wheel.parts)) {
-                return false;
-            }
-        }
         return true;
     }
 
@@ -1584,12 +1458,8 @@ struct Vehicle {
         loaded = !displayLists.empty();
         hasLoadedInitialView = true;
         if (!loggedAllObjectsLoaded && loaded) {
-            std::size_t wheelPartCount = 0;
-            for (const WheelModel& wheel : wheelModels) {
-                wheelPartCount += wheel.parts.size();
-            }
             gameLog.Log("All objects loaded. bodyParts=" + std::to_string(displayLists.size()) +
-                        " wheelParts=" + std::to_string(wheelPartCount));
+                        " wheelParts=generic");
             loggedAllObjectsLoaded = true;
         }
     }
@@ -1611,25 +1481,12 @@ struct Vehicle {
         return value;
     }
 
-    static int parseInt(const std::string& value, int fallback) {
-        try {
-            return std::stoi(trim(value));
-        } catch (const std::exception&) {
-            return fallback;
-        }
-    }
-
     static double parseDouble(const std::string& value, double fallback) {
         try {
             return std::stod(trim(value));
         } catch (const std::exception&) {
             return fallback;
         }
-    }
-
-    static bool isWheelRubberTexture(const std::string& textureName) {
-        const std::string stem = lower(std::filesystem::path(textureName).stem().string());
-        return stem == "e4_wheel_tyre" || stem == "e4_wheel_tread";
     }
 
     GLuint uploadTexture(const std::filesystem::path& path, Image image) {
@@ -2292,9 +2149,6 @@ struct Vehicle {
             }
         };
         preload(displayLists);
-        for (WheelModel& wheel : wheelModels) {
-            preload(wheel.parts);
-        }
     }
 
     std::shared_future<std::shared_ptr<ParsedObj>>
@@ -2368,58 +2222,7 @@ struct Vehicle {
             }
         }
 
-        WheelAnimation wheelAnimation = part.wheelAnimation;
-        wheelAnimation.rotationVariable = lower(wheelAnimation.rotationVariable);
-        wheelAnimation.suspensionVariable = lower(wheelAnimation.suspensionVariable);
-        wheelAnimation.steeringVariable = lower(wheelAnimation.steeringVariable);
-        if (verboseObjLoadLogs && !wheelAnimation.rotationVariable.empty()) {
-            gameLog.Log("Wheel OBJ animation: " + part.objPath.filename().string() +
-                        " rotation=" + wheelAnimation.rotationVariable +
-                        " suspension=" + wheelAnimation.suspensionVariable +
-                        " steering=" + wheelAnimation.steeringVariable);
-        }
-        if (!wheelAnimation.rotationVariable.empty() && !wheelAnimation.hasOrigin) {
-            const auto rotationAnimation = std::find_if(
-                animations.begin(), animations.end(), [&](const ModelAnimation& animation) {
-                    return animation.variable == wheelAnimation.rotationVariable &&
-                           animation.hasOrigin;
-                });
-            if (rotationAnimation != animations.end()) {
-                wheelAnimation.origin = rotationAnimation->origin;
-                wheelAnimation.hasOrigin = true;
-            } else {
-                wheelAnimation.origin = boundsCenter;
-                wheelAnimation.hasOrigin = true;
-            }
-        }
         std::vector<DisplayPart>* destination = &displayLists;
-        if (!wheelAnimation.rotationVariable.empty()) {
-            auto wheel = std::find_if(
-                wheelModels.begin(), wheelModels.end(), [&](const WheelModel& candidate) {
-                    const bool sameAnimation =
-                        wheelAnimation.rotationVariable == candidate.animation.rotationVariable &&
-                        wheelAnimation.suspensionVariable ==
-                            candidate.animation.suspensionVariable &&
-                        wheelAnimation.steeringVariable == candidate.animation.steeringVariable &&
-                        wheelAnimation.hasOrigin == candidate.animation.hasOrigin &&
-                        (!wheelAnimation.hasOrigin ||
-                         (std::abs(wheelAnimation.origin[0] - candidate.animation.origin[0]) <
-                              1e-6 &&
-                          std::abs(wheelAnimation.origin[1] - candidate.animation.origin[1]) <
-                              1e-6 &&
-                          std::abs(wheelAnimation.origin[2] - candidate.animation.origin[2]) <
-                              1e-6));
-                    if (sameAnimation) {
-                        return true;
-                    }
-                    return false;
-                });
-            if (wheel == wheelModels.end()) {
-                wheelModels.push_back({wheelAnimation, {}});
-                wheel = wheelModels.end() - 1;
-            }
-            destination = &wheel->parts;
-        }
         auto makeBatch = [&](const std::vector<const ObjTriangle*>& source,
                              const std::filesystem::path& texturePath,
                              const std::string& textureName, const std::array<double, 3>& color,
@@ -2819,6 +2622,23 @@ struct Vehicle {
         displayPart.radius = boundsRadius;
         displayPart.triangleCount = renderedTriangleCount;
         displayPart.animations = std::move(animations);
+        const std::string wheelVariable = lower(part.wheelAnimation.rotationVariable);
+        if (wheelVariable.rfind("wheel_rotation_", 0) == 0) {
+            const std::size_t axleStart = std::string("wheel_rotation_").size();
+            const std::size_t sideSeparator = wheelVariable.find('_', axleStart);
+            if (sideSeparator != std::string::npos) {
+                try {
+                    const int axleIndex = std::stoi(
+                        wheelVariable.substr(axleStart, sideSeparator - axleStart));
+                    const std::string side = wheelVariable.substr(sideSeparator + 1);
+                    if (axleIndex >= 0 && (side == "l" || side == "r")) {
+                        displayPart.odeWheelIndex = axleIndex * 2 + (side == "r" ? 1 : 0);
+                    }
+                } catch (const std::exception&) {
+                    displayPart.odeWheelIndex = -1;
+                }
+            }
+        }
         destination->push_back(std::move(displayPart));
         for (const std::string& key : groupOrder) {
             const MaterialState& state = groupStates[key];
@@ -2972,12 +2792,8 @@ struct Vehicle {
         }
         loaded = !displayLists.empty() || !pendingParts.empty();
         if (!loggedAllObjectsLoaded && pendingParts.empty() && loaded) {
-            std::size_t wheelPartCount = 0;
-            for (const WheelModel& wheel : wheelModels) {
-                wheelPartCount += wheel.parts.size();
-            }
             gameLog.Log("All objects loaded. bodyParts=" + std::to_string(displayLists.size()) +
-                        " wheelParts=" + std::to_string(wheelPartCount));
+                        " wheelParts=generic");
             loggedAllObjectsLoaded = true;
         }
     }
@@ -3095,8 +2911,8 @@ Renderer::~Renderer() {
 }
 
 Vehicle* Renderer::AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy) {
+    const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigurationPathFor(vehicle));
     if (vehicleCameras_.empty()) {
-        const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigurationPathFor(vehicle));
         for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
             if (camera.kind == VehicleCameraKind::Driver ||
                 camera.kind == VehicleCameraKind::Passenger ||
@@ -3122,8 +2938,9 @@ Vehicle* Renderer::AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPoli
         }
         initializeReflectionTargets();
     }
-    auto model = std::make_unique<Vehicle>(vehicle, loadingPolicy, *assetRequestManager_,
-                                           simulationState_, soundEngine_);
+    const double modelOffsetZ = -vehicleConfiguration.centerOfGravityHeight;
+    auto model = std::make_unique<Vehicle>(vehicle, modelOffsetZ, loadingPolicy,
+                                           *assetRequestManager_, simulationState_, soundEngine_);
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
     return result;
@@ -3525,6 +3342,13 @@ void Renderer::beginFrame() {
                         (reflectionDebugOverlay_ ? "enabled" : "disabled"));
         }
         previousReflectionDebugKeyState_ = reflectionDebugKeyPressed;
+        const bool collisionDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_C) == GLFW_PRESS;
+        if (collisionDebugKeyPressed && !previousCollisionDebugKeyState_) {
+            collisionDebugOverlay_ = !collisionDebugOverlay_;
+            gameLog.Log(std::string("Collision wireframe overlay ") +
+                        (collisionDebugOverlay_ ? "enabled" : "disabled"));
+        }
+        previousCollisionDebugKeyState_ = collisionDebugKeyPressed;
     }
     int width = 1;
     int height = 1;
@@ -3690,6 +3514,9 @@ void Renderer::draw(const BusSimulation& simulation) {
         if (!renderingReflection_) {
             const RenderViewContext context = isExteriorView() ? RenderViewContext::PlayerExterior
                                                                : RenderViewContext::PlayerInterior;
+            if (playerVehicle_ != nullptr) {
+                playerVehicle_->setOdeSimulation(simulation);
+            }
             pushMatrix();
             applyPose(chassis);
             for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
@@ -3764,20 +3591,8 @@ void Renderer::draw(const BusSimulation& simulation) {
                      static_cast<float>(axleColor[1]), static_cast<float>(axleColor[2])});
             }
             openbus::rendering::drawPrimitives(axleLines, GL_LINES);
-        }
-    }
-    {
-        TraceScope phase("render", "Renderer::draw.wheels");
-        if (playerVehicle_ && playerVehicle_->hasConfiguredWheels(simulation.wheelCount())) {
-            playerVehicle_->drawConfiguredWheels(simulation, chassis,
-                                                 renderingReflection_ || isExteriorView());
-        } else {
-            for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
-                const BodyPose wheel = simulation.wheelPose(index);
-                pushMatrix();
-                applyPose(wheel);
-                drawWheel(simulation.wheelRadius(index), simulation.wheelHalfWidth());
-                popMatrix();
+            if (collisionDebugOverlay_) {
+                drawCollisionWireframe(simulation);
             }
         }
     }

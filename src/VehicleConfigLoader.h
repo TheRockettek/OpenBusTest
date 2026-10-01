@@ -45,6 +45,8 @@ struct VehicleConfig {
     double massTonnes = 0.0;
     double centerOfGravityHeight = 0.0;
     bool hasCenterOfGravityHeight = false;
+    double aiDeltaHeight = 0.0;
+    bool hasAiDeltaHeight = false;
     double inverseMinimumTurnRadius = 0.0;
     bool hasInverseMinimumTurnRadius = false;
     double wheelHalfWidth = 0.0;
