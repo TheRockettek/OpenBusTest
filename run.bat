@@ -1,14 +1,13 @@
 taskkill.exe /F /IM OpenBus.exe
 
-del .\SP_E400MMC\Script\*.lua
-del .\SP_E400MMC\Script\E400MMC\ADL\*.lua
-del .\SP_E400MMC\Script\E400MMC\Scania\*.lua
+@REM set "OPENBUS_BUS_CONFIG=Vehicles/MAN_DL05/MAN_DL05.bus"
+@REM set "OPENBUS_MODEL_CONFIG=Vehicles/MAN_DL05/Model/DL05.cfg"
 
-del .\MAN_DL05\Script\*.lua
+set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
+set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
 
-@REM set "OPENBUS_VEHICLE=DL05"
-set "OPENBUS_VEHICLE=e400"
-set "OPENBUS_BUS_CONFIG="
+set "OPENBUS_AI_BUS_CONFIG=Vehicles/VW_Golf_2/ai_vw_golf_2.bus"
+set "OPENBUS_AI_MODEL_CONFIG=Vehicles/VW_Golf_2/model/model.cfg"
 
 set "OPENBUS_SCRIPT_HZ=0"
 set "OPENBUS_VSYNC=off"

@@ -3,8 +3,8 @@ setlocal
 
 taskkill.exe /F /IM OpenBus.exe
 
-set "OPENBUS_VEHICLE=e400"
-set "OPENBUS_BUS_CONFIG="
+set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
+set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
 
 set "OPENBUS_VSYNC=off"
 

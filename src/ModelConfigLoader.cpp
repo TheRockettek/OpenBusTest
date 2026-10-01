@@ -894,10 +894,10 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             readValues(reader, line.number, keyword, 6, values, result.diagnostics);
             continue;
         }
-        // [tex_detail_factor]: texture-detail identifier and numeric blend factor.
+        // [tex_detail_factor]: one numeric texture-detail blend factor.
         if (keyword == "tex_detail_factor") {
             std::vector<std::string> values;
-            readValues(reader, line.number, keyword, 2, values, result.diagnostics);
+            readValues(reader, line.number, keyword, 1, values, result.diagnostics);
             continue;
         }
         // [ctc]: three texture/color-template values retained for record alignment.

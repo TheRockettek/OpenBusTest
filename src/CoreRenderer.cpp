@@ -168,7 +168,7 @@ void main() {
         color.rgb = mix(color.rgb, color.rgb * nightmap.rgb, uNightmapStrength);
     }
     if (uUseTransmap) {
-        color.a *= texture(uTransmap, vTexCoord.xy).r;
+        color.a = texture(uTransmap, vTexCoord.xy).a;
     }
     if (uAlphaMode == 1 && color.a < 0.5) {
         discard;

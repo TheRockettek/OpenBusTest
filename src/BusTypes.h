@@ -11,12 +11,6 @@ struct KeyEvent {
     double wallTimeSeconds;
 };
 
-enum class BusVehicle {
-    ManDl05,
-    SpE400Mmc,
-};
-using VehicleType = BusVehicle;
-
 struct BusAxle {
     double position;
     double trackWidth;
@@ -75,6 +69,11 @@ struct RoadBump {
 struct BodyPose {
     std::array<double, 3> position;
     std::array<double, 9> rotation;
+};
+
+struct VehiclePlacement {
+    std::array<double, 3> position;
+    double yawDegrees;
 };
 
 struct ChassisCollisionBox {

@@ -40,16 +40,12 @@ class RenderLoop {
 
     bool shouldClose() const;
     void requestClose();
-    Vehicle* AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {});
-
-    Vehicle* AddBusModel(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy = {}) {
-        return AddVehicle(vehicle, loadingPolicy);
-    }
+    Vehicle* AddVehicle(const std::filesystem::path& busConfigPath,
+                        const std::filesystem::path& modelConfigPath,
+                        const VehiclePlacement& placement,
+                        ModelLoadingPolicy loadingPolicy = {});
 
     void SetPlayerVehicle(Vehicle* vehicle);
-    void SetPlayerBusModel(Vehicle* vehicle) {
-        SetPlayerVehicle(vehicle);
-    }
 
     void beginFrame();
     void updatePlayerVariables(const BusSimulation& simulation, double throttle, double steering,

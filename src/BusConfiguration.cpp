@@ -19,6 +19,64 @@
 namespace {
 
 constexpr double DEFAULT_WHEEL_HALF_WIDTH = 0.145;
+constexpr const char* DEFAULT_OMSI_ROOT =
+    R"(C:\Program Files (x86)\Steam\steamapps\common\OMSI 2)";
+
+std::filesystem::path omsiRootPath() {
+    if (const char* configuredRoot = std::getenv("OPENBUS_OMSI_ROOT");
+        configuredRoot != nullptr && *configuredRoot != '\0') {
+        return configuredRoot;
+    }
+    return DEFAULT_OMSI_ROOT;
+}
+
+std::filesystem::path normalizedPath(const std::filesystem::path& path) {
+    std::string value = path.string();
+    std::replace(value.begin(), value.end(), '\\', '/');
+    return std::filesystem::path(value);
+}
+
+std::filesystem::path resolveConfiguredBusPath(const std::filesystem::path& configuredPath) {
+    const std::filesystem::path relative = normalizedPath(configuredPath);
+    if (relative.is_absolute()) {
+        return relative;
+    }
+    const std::filesystem::path root = omsiRootPath();
+    const std::array<std::filesystem::path, 5> candidates = {
+        root / relative,
+        relative,
+        std::filesystem::current_path() / relative,
+        std::filesystem::current_path().parent_path() / relative,
+        std::filesystem::current_path().parent_path().parent_path() / relative};
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate)) {
+            return candidate;
+        }
+    }
+    return relative;
+}
+
+std::filesystem::path resolveConfiguredModelPath(const std::filesystem::path& busPath,
+                                                 const std::filesystem::path& configuredPath) {
+    const std::filesystem::path relative = normalizedPath(configuredPath);
+    if (relative.is_absolute()) {
+        return relative;
+    }
+    const std::filesystem::path root = omsiRootPath();
+    const std::array<std::filesystem::path, 6> candidates = {
+        busPath.parent_path() / relative,
+        root / relative,
+        relative,
+        std::filesystem::current_path() / relative,
+        std::filesystem::current_path().parent_path() / relative,
+        std::filesystem::current_path().parent_path().parent_path() / relative};
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate)) {
+            return candidate;
+        }
+    }
+    return relative;
+}
 
 BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source) {
     const std::array<double, 6>& boundingBox = source.boundingBox;
@@ -52,9 +110,7 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source) {
 
 std::filesystem::path resolveModelConfigPath(const std::filesystem::path& busPath,
                                              const std::filesystem::path& modelPath) {
-    std::string normalized = modelPath.string();
-    std::replace(normalized.begin(), normalized.end(), '\\', '/');
-    return busPath.parent_path() / std::filesystem::path(normalized);
+    return busPath.parent_path() / normalizedPath(modelPath);
 }
 
 std::optional<std::size_t> steeringAxleIndex(const std::string& variable) {
@@ -90,27 +146,14 @@ void applyModelSteering(VehicleConfig& vehicle, const ModelConfig& model) {
     }
 }
 
-std::filesystem::path findBusFile(BusVehicle vehicle) {
-    const std::filesystem::path relative =
-        vehicle == BusVehicle::SpE400Mmc
-            ? std::filesystem::path("SP_E400MMC") / "E400MMC_ADL_10.9m_Voith_LowHeight.bus"
-            : std::filesystem::path("MAN_DL05") / "MAN_DL05.bus";
-    const std::array<std::filesystem::path, 4> candidates = {
-        relative, std::filesystem::current_path() / relative,
-        std::filesystem::current_path().parent_path() / relative,
-        std::filesystem::current_path().parent_path().parent_path() / relative};
-    for (const auto& candidate : candidates) {
-        if (std::filesystem::exists(candidate)) {
-            return candidate;
-        }
-    }
-    return {};
-}
-
 } // namespace
 
 std::filesystem::path modelConfigurationPathForBus(const std::filesystem::path& busConfigPath) {
     openbus::rendering::TraceScope trace("config", "modelConfigurationPathForBus");
+    if (const char* configuredPath = std::getenv("OPENBUS_MODEL_CONFIG");
+        configuredPath != nullptr && *configuredPath != '\0') {
+        return modelConfigurationPathForBus(busConfigPath, configuredPath);
+    }
     const VehicleConfig source = loadBusConfig(busConfigPath);
     if (source.modelPath.empty()) {
         throw std::runtime_error("Bus configuration has no [model] entry: " +
@@ -120,6 +163,18 @@ std::filesystem::path modelConfigurationPathForBus(const std::filesystem::path& 
         resolveModelConfigPath(busConfigPath, source.modelPath);
     if (!std::filesystem::exists(modelConfigPath)) {
         throw std::runtime_error("Bus model configuration was not found: " +
+                                 modelConfigPath.string());
+    }
+    return modelConfigPath;
+}
+
+std::filesystem::path modelConfigurationPathForBus(
+    const std::filesystem::path& busConfigPath, const std::filesystem::path& configuredPath) {
+    openbus::rendering::TraceScope trace("config", "modelConfigurationPathForBus.explicit");
+    const std::filesystem::path modelConfigPath =
+        resolveConfiguredModelPath(busConfigPath, configuredPath);
+    if (!std::filesystem::exists(modelConfigPath)) {
+        throw std::runtime_error("Configured bus model was not found: " +
                                  modelConfigPath.string());
     }
     return modelConfigPath;
@@ -239,29 +294,22 @@ void writeBusConfigurationJson(std::ostream& output, const BusConfiguration& con
     output << "\n  ]\n}\n";
 }
 
-BusVehicle busVehicleFromEnvironment() {
-    const char* selected = std::getenv("OPENBUS_VEHICLE");
-    if (selected != nullptr) {
-        const std::string value(selected);
-        if (value == "e400" || value == "sp_e400mmc" || value == "400mmc") {
-            return BusVehicle::SpE400Mmc;
-        }
-    }
-    return BusVehicle::ManDl05;
-}
-
-std::filesystem::path busConfigurationPathFor(BusVehicle vehicle) {
+std::filesystem::path busConfigurationPathFor() {
     if (const char* configuredPath = std::getenv("OPENBUS_BUS_CONFIG");
         configuredPath != nullptr && *configuredPath != '\0') {
-        return configuredPath;
+        return busConfigurationPathFor(configuredPath);
     }
-    const std::filesystem::path busFile = findBusFile(vehicle);
-    if (busFile.empty()) {
-        throw std::runtime_error("No .bus configuration found for selected vehicle");
-    }
-    return busFile;
+    throw std::runtime_error("OPENBUS_BUS_CONFIG is not set");
 }
 
-BusConfiguration busConfigurationFor(BusVehicle vehicle) {
-    return loadBusConfiguration(busConfigurationPathFor(vehicle));
+std::filesystem::path busConfigurationPathFor(const std::filesystem::path& configuredPath) {
+    const std::filesystem::path busPath = resolveConfiguredBusPath(configuredPath);
+    if (!std::filesystem::exists(busPath)) {
+        throw std::runtime_error("Bus configuration was not found: " + busPath.string());
+    }
+    return busPath;
+}
+
+BusConfiguration busConfigurationFor() {
+    return loadBusConfiguration(busConfigurationPathFor());
 }

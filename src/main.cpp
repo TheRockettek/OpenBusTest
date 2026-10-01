@@ -20,16 +20,34 @@ int main() {
     Logger applicationLog("Application");
     try {
         applicationLog.Log("Starting OpenBus");
-        const BusVehicle vehicle = busVehicleFromEnvironment();
 
         // Resolve configuration paths for the bus and model.
         std::filesystem::path busConfigPath;
         std::filesystem::path modelConfigPath;
+        std::filesystem::path aiBusConfigPath;
+        std::filesystem::path aiModelConfigPath;
         {
             openbus::rendering::TraceScope trace("config", "main.resolveConfigurationPaths");
-            busConfigPath = busConfigurationPathFor(vehicle);
+            busConfigPath = busConfigurationPathFor();
             modelConfigPath = modelConfigurationPathForBus(busConfigPath);
+            const char* configuredAiBusPath = std::getenv("OPENBUS_AI_BUS_CONFIG");
+            const char* configuredAiModelPath = std::getenv("OPENBUS_AI_MODEL_CONFIG");
+            const bool hasAiBusPath = configuredAiBusPath != nullptr && *configuredAiBusPath != '\0';
+            const bool hasAiModelPath =
+                configuredAiModelPath != nullptr && *configuredAiModelPath != '\0';
+            if (hasAiBusPath != hasAiModelPath) {
+                throw std::runtime_error(
+                    "OPENBUS_AI_BUS_CONFIG and OPENBUS_AI_MODEL_CONFIG must be set together");
+            }
+            if (hasAiBusPath) {
+                aiBusConfigPath = busConfigurationPathFor(configuredAiBusPath);
+                aiModelConfigPath =
+                    modelConfigurationPathForBus(aiBusConfigPath, configuredAiModelPath);
+            }
         }
+
+        const VehiclePlacement busPlacement{{0.0, 0.0, 0.0}, 0.0};
+        const VehiclePlacement aiPlacement{{5.0, 2.0, 0.0}, 180.0};
 
         BusConfiguration configuration;
         {
@@ -63,12 +81,17 @@ int main() {
             modelConfigurationOutput.flush();
         }
 
-        BusSimulation simulation(configuration);
+        BusSimulation simulation(configuration, busPlacement);
 
         RenderLoop renderer(1280, 720, "OpenBus");
-        Vehicle* playerVehicle =
-            renderer.AddVehicle(vehicle, {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+        Vehicle* playerVehicle = renderer.AddVehicle(
+            busConfigPath, modelConfigPath, busPlacement,
+            {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
         renderer.SetPlayerVehicle(playerVehicle);
+        if (!aiBusConfigPath.empty()) {
+            renderer.AddVehicle(aiBusConfigPath, aiModelConfigPath, aiPlacement,
+                                {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+        }
 
         double previousTime = glfwGetTime();
         bool captureOnStartup = std::getenv("OPENBUS_CAPTURE_VIEWS") != nullptr;

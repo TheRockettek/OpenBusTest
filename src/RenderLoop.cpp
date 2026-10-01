@@ -1,6 +1,7 @@
 #include "RenderLoop.h"
 
 #include "AssetRequestManager.h"
+#include "BusConfiguration.h"
 #include "BusConfigLoader.h"
 #include "BusModelLoader.h"
 #include "BusSimulation.h"
@@ -358,6 +359,11 @@ using ParsedObj = openbus::rendering::ParsedObj;
 using Image = openbus::rendering::Image;
 using CompressedDds = openbus::rendering::CompressedDds;
 
+void applyVehiclePlacement(const VehiclePlacement& placement) {
+    translate(placement.position[0], placement.position[1], placement.position[2]);
+    rotate(placement.yawDegrees, 0.0, 0.0, 1.0);
+}
+
 struct Vehicle {
     ModelLoadingPolicy loadingPolicy;
     using TextureRequest = AssetRequestManager::TextureRequest;
@@ -487,6 +493,7 @@ struct Vehicle {
     std::unique_ptr<ScriptRuntime> scripts;
     std::vector<Part> pendingParts;
     AssetRequestManager* assets;
+    VehiclePlacement placement;
     double modelOffsetZ = 0.0;
     double textureScale = 1;
     bool frustumCulling = true;
@@ -939,10 +946,12 @@ struct Vehicle {
     bool comInitialized = false;
 #endif
 
-    explicit Vehicle(BusVehicle vehicle, double configuredModelOffsetZ, ModelLoadingPolicy policy,
-                     AssetRequestManager& manager, SimulationState& simulationState,
-                     SoundEngine& soundEngine)
-        : loadingPolicy(policy), variables(), assets(&manager),
+        explicit Vehicle(const std::filesystem::path& busConfigPath,
+                                         const std::filesystem::path& modelConfigPath,
+                                         const VehiclePlacement& configuredPlacement, double configuredModelOffsetZ,
+                                         ModelLoadingPolicy policy, AssetRequestManager& manager,
+                     SimulationState& simulationState, SoundEngine& soundEngine)
+                : loadingPolicy(policy), variables(), assets(&manager), placement(configuredPlacement),
           modelOffsetZ(configuredModelOffsetZ),
           wheelsFromOde(parseEnabledFlag(std::getenv("OPENBUS_WHEELS_FROM_ODE"))) {
         if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
@@ -959,31 +968,14 @@ struct Vehicle {
         const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         comInitialized = SUCCEEDED(comResult);
 #endif
-        std::filesystem::path relativeConfig;
-        std::filesystem::path relativeModelRoot;
-        if (vehicle == BusVehicle::SpE400Mmc) {
-            relativeConfig = std::filesystem::path("SP_E400MMC") / "Model" / "Configuration Files" /
-                             "E400MMC_ADL_10.9m_Voith_LowHeight.cfg";
-            relativeModelRoot = std::filesystem::path("SP_E400MMC") / "Model" / "SP_E400MMC_obj";
-        } else {
-            relativeConfig = std::filesystem::path("MAN_DL05") / "Model" / "DL05.cfg";
-            relativeModelRoot = std::filesystem::path("MAN_DL05") / "Model" / "DL05_obj";
-        }
-        const auto resolveAssetPath = [](const std::filesystem::path& relative) {
-            const std::array<std::filesystem::path, 4> candidates = {
-                relative, std::filesystem::current_path() / relative,
-                std::filesystem::current_path().parent_path() / relative,
-                std::filesystem::current_path().parent_path().parent_path() / relative};
-            for (const auto& candidate : candidates) {
-                if (std::filesystem::exists(candidate)) {
-                    return candidate;
-                }
-            }
-            return relative;
-        };
-        gameLog.Log("Loading bus model with config: " + resolveAssetPath(relativeConfig).string() +
-                    " and model root: " + resolveAssetPath(relativeModelRoot).string());
-        const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigurationPathFor(vehicle));
+        const std::filesystem::path modelConfigDirectory = modelConfigPath.parent_path();
+        const std::filesystem::path modelRoot =
+            lower(modelConfigDirectory.filename().string()) == "configuration files"
+                ? modelConfigDirectory.parent_path()
+                : modelConfigDirectory;
+        gameLog.Log("Loading bus model with config: " + modelConfigPath.string() +
+                    " and model root: " + modelRoot.string());
+        const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigPath);
         soundEngine.load(vehicleConfiguration.soundConfigPath);
         scripts = std::make_unique<ScriptRuntime>(
             vehicleConfiguration, variables, simulationState,
@@ -993,7 +985,7 @@ struct Vehicle {
         for (const std::string& error : scripts->errors()) {
             gameLog.Log("Lua script error: " + error);
         }
-        load(resolveAssetPath(relativeConfig), resolveAssetPath(relativeModelRoot));
+        load(modelConfigPath, modelRoot);
         scripts->initialize();
         for (const std::string& error : scripts->errors()) {
             gameLog.Log("Lua initialization error: " + error);
@@ -2666,6 +2658,16 @@ struct Vehicle {
         }
         consolidateMaterialBatches(destination->back().batches);
         cacheReflectionTextureIndices(destination->back());
+        if (verboseObjLoadLogs) {
+            for (const Batch& batch : destination->back().batches) {
+                gameLog.Log("OBJ batch: " + part.objPath.filename().string() +
+                            " vertices=" + std::to_string(batch.vertexCount) +
+                            " alpha=" + std::to_string(batch.alphaMode) +
+                            " noZwrite=" + (batch.noZwrite ? "true" : "false") +
+                            " texture=" + batch.textureName +
+                            " transmap=" + batch.transmap.name);
+            }
+        }
     }
 
     int lodForDistance(double distance) const {
@@ -2923,8 +2925,15 @@ RenderLoop::~RenderLoop() {
     glfwTerminate();
 }
 
-Vehicle* RenderLoop::AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPolicy) {
-    const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigurationPathFor(vehicle));
+Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& busConfigPath,
+                                const std::filesystem::path& modelConfigPath,
+                                const VehiclePlacement& placement,
+                                ModelLoadingPolicy loadingPolicy) {
+    const std::filesystem::path resolvedBusConfigPath =
+        busConfigurationPathFor(busConfigPath);
+    const std::filesystem::path resolvedModelConfigPath =
+        modelConfigurationPathForBus(resolvedBusConfigPath, modelConfigPath);
+    const VehicleConfig vehicleConfiguration = loadBusConfig(resolvedBusConfigPath);
     if (vehicleCameras_.empty()) {
         for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
             if (camera.kind == VehicleCameraKind::Driver ||
@@ -2952,7 +2961,8 @@ Vehicle* RenderLoop::AddVehicle(BusVehicle vehicle, ModelLoadingPolicy loadingPo
         reflectionRenderer_->initialize(vehicleCameras_);
     }
     const double modelOffsetZ = -vehicleConfiguration.centerOfGravityHeight;
-    auto model = std::make_unique<Vehicle>(vehicle, modelOffsetZ, loadingPolicy,
+    auto model = std::make_unique<Vehicle>(resolvedBusConfigPath, resolvedModelConfigPath,
+                                           placement, modelOffsetZ, loadingPolicy,
                                            *assetRequestManager_, simulationState_, soundEngine_);
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
@@ -3342,12 +3352,17 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             if (playerVehicle_ != nullptr) {
                 playerVehicle_->setOdeSimulation(simulation);
             }
-            pushMatrix();
-            applyPose(chassis);
             for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-                vehicle->prepareFrameVisibility(context);
+                pushMatrix();
+                if (vehicle.get() == playerVehicle_) {
+                    applyPose(chassis);
+                    vehicle->prepareFrameVisibility(context);
+                } else {
+                    applyVehiclePlacement(vehicle->placement);
+                    vehicle->prepareFrameVisibility(RenderViewContext::NonPlayer);
+                }
+                popMatrix();
             }
-            popMatrix();
         }
     }
     {
@@ -3371,12 +3386,25 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                           : RenderViewContext::PlayerInterior;
     {
         TraceScope phase("render", "RenderLoop::draw.model");
-        if (playerVehicle_ && playerVehicle_->loaded && !playerVehicle_->displayLists.empty()) {
+        bool playerDrawn = false;
+        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+            if (!vehicle->loaded || vehicle->displayLists.empty()) {
+                continue;
+            }
             pushMatrix();
-            applyPose(chassis);
-            playerVehicle_->draw(context);
+            const RenderViewContext vehicleContext = vehicle.get() == playerVehicle_
+                                                         ? context
+                                                         : RenderViewContext::NonPlayer;
+            if (vehicle.get() == playerVehicle_) {
+                applyPose(chassis);
+                playerDrawn = true;
+            } else {
+                applyVehiclePlacement(vehicle->placement);
+            }
+            vehicle->draw(vehicleContext);
             popMatrix();
-        } else {
+        }
+        if (!playerDrawn) {
             pushMatrix();
             applyPose(chassis);
             translate(collision.offsetX, collision.offsetY, collision.offsetZ);

@@ -10,9 +10,8 @@ class Vehicle;
 
 class BusSimulation {
   public:
-    explicit BusSimulation(
-        BusConfiguration configuration = busConfigurationFor(BusVehicle::ManDl05),
-        double physicsHz = 60.0, int maxCatchUpSteps = 8);
+    explicit BusSimulation(BusConfiguration configuration, VehiclePlacement placement,
+                           double physicsHz = 60.0, int maxCatchUpSteps = 8);
     ~BusSimulation();
 
     BusSimulation(const BusSimulation&) = delete;

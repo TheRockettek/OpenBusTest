@@ -126,9 +126,16 @@ with `-DCMAKE_BUILD_TYPE=Debug`.
   frame exceeds that budget, excess accumulated time is dropped to avoid a
   spiral of death
 
-Vehicle physics is loaded from the selected OMSI `.bus` file. The default MAN
-DL05 file is `MAN_DL05/MAN_DL05.bus`, and the supplied E400 MMC file is loaded
-for the E400 configuration. Vehicle values are not duplicated in C++.
+Vehicle physics is loaded from the OMSI `.bus` file configured by
+`OPENBUS_BUS_CONFIG`. Relative paths are resolved against the standard Steam
+installation at `C:\Program Files (x86)\Steam\steamapps\common\OMSI 2`; set
+`OPENBUS_OMSI_ROOT` when OMSI is installed elsewhere:
+
+```powershell
+$env:OPENBUS_OMSI_ROOT = "D:\SteamLibrary\steamapps\common\OMSI 2"
+```
+
+Vehicle values are not duplicated in C++.
 Articulated vehicles can set the `articulated` flag in the file; articulated
 multi-body sections will be added as a separate ODE body/joint layer.
 The parsed configuration is written to `OpenBus_configuration.json` at startup.
@@ -146,13 +153,24 @@ the current date, and `DayOfYear` is the zero-based day index. Defaults include
 `Timegap`, `GetTime`, `mouse_x`, and `mouse_y` are updated from the renderer
 each frame.
 
-Set `OPENBUS_BUS_CONFIG` to an OMSI `.bus` file to load physics data at startup
-instead of selecting a built-in configuration, for example:
+`OPENBUS_BUS_CONFIG` accepts either an absolute path or a path relative to
+`OPENBUS_OMSI_ROOT`. Set the optional `OPENBUS_MODEL_CONFIG` to select a `.cfg`
+explicitly; otherwise the loader uses the `.bus` file's `[model]` entry. For
+example, both paths below are relative to the OMSI installation root:
 
 ```powershell
-$env:OPENBUS_BUS_CONFIG = "SP_E400MMC/E400MMC_ADL_10.9m_Voith_LowHeight.bus"
+$env:OPENBUS_BUS_CONFIG = "Vehicles/Caetano Levante/Caetano.bus"
+$env:OPENBUS_MODEL_CONFIG = "Vehicles/Caetano Levante/Model/model_caetano.cfg"
 ./build-ode/Release/OpenBus.exe
 ```
+
+Every rendered vehicle must provide a `VehiclePlacement` containing its world
+`x/y/z` position and yaw in degrees. The renderer can load multiple vehicles
+in one process by calling `RenderLoop::AddVehicle` once per `.bus`/`.cfg` pair.
+The first vehicle is connected to the shared bus simulation; additional
+vehicles are scripted AI models rendered at their declared placements. Set
+`OPENBUS_AI_BUS_CONFIG` and `OPENBUS_AI_MODEL_CONFIG` together to add an
+optional AI vehicle; `run.bat` uses them to load the VW Golf test vehicle.
 
 The loader uses `[mass]`, `[boundingbox]`, `[schwerpunkt]`, and `[newachse]`
 records, including axle spring, damper, load, and driven flags. The

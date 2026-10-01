@@ -83,6 +83,98 @@ std::uint32_t readCount(Reader& reader, bool longHeader) {
     return longHeader ? reader.u32() : static_cast<std::uint32_t>(reader.u16());
 }
 
+struct O3DVertexDecodeState {
+    bool enabled = false;
+    bool alternateSeed = false;
+    std::uint32_t productId = 0;
+    std::uint16_t productIdSalt = 0;
+    std::uint16_t vertexCount = 0;
+    std::uint8_t salt = 0;
+};
+
+O3DVertexDecodeState makeVertexDecodeState(std::uint8_t version, std::uint8_t options,
+                                           std::uint32_t encryptionKey,
+                                           std::uint32_t vertexCount) {
+    O3DVertexDecodeState state;
+    if (version <= 3 || encryptionKey == 0xFFFFFFFFu || encryptionKey == 0xFFFFu) {
+        return state;
+    }
+
+    state.enabled = true;
+    state.alternateSeed = (options & 0x2u) != 0;
+    state.productId = encryptionKey;
+    state.vertexCount = static_cast<std::uint16_t>(vertexCount % 65000u);
+    state.productIdSalt = static_cast<std::uint16_t>(encryptionKey + version - 4u);
+    state.productIdSalt = static_cast<std::uint16_t>(
+        (static_cast<std::uint32_t>(state.productIdSalt) + (state.alternateSeed ? 381u : 0u)) %
+        65000u);
+    return state;
+}
+
+void mixVertexSalt(O3DVertexDecodeState& state) {
+    const std::uint32_t mixed =
+        (static_cast<std::uint32_t>(state.salt) * state.vertexCount +
+         static_cast<std::uint32_t>(state.vertexCount) * state.productIdSalt) %
+        8000u;
+    state.productIdSalt = static_cast<std::uint16_t>(mixed);
+    state.salt = static_cast<std::uint8_t>(mixed / 8000u);
+}
+
+void decodeVertex(O3DVertexDecodeState& state, float& x, float& y, float& z, float& normalX,
+                  float& normalY, float& normalZ, float& u, float& v) {
+    if (!state.enabled) {
+        return;
+    }
+
+    if (state.productId == 0u) {
+        state.productIdSalt = state.alternateSeed ? 304u : 0u;
+    }
+    mixVertexSalt(state);
+
+    float integral = 0.0f;
+    const float fractionalX = std::modf(x, &integral);
+    const float fractionalY = std::modf(y, &integral);
+    const float fractionalZ = std::modf(z, &integral);
+    const float fractionalProduct = std::fabs(fractionalX * fractionalY * fractionalZ) * 600.0f;
+    state.salt = static_cast<std::uint8_t>(static_cast<unsigned int>(fractionalProduct));
+
+    if (state.productIdSalt >= 1000u) {
+        if (state.productIdSalt < 3000u) {
+            std::swap(x, z);
+        } else if (state.productIdSalt > 7000u) {
+            std::swap(y, z);
+        }
+    } else {
+        std::swap(x, y);
+    }
+
+    if ((state.productIdSalt & 3u) == 0u) {
+        normalX = -normalX;
+    }
+    if ((state.productIdSalt % 6u) == 0u) {
+        normalY = -normalY;
+    }
+    if ((state.productIdSalt % 7u) == 0u) {
+        normalZ = -normalZ;
+    }
+    if (state.productIdSalt >= 600u) {
+        if (state.productIdSalt > 4500u) {
+            std::swap(normalX, normalY);
+        }
+    } else {
+        std::swap(normalY, normalZ);
+    }
+
+    if ((state.productIdSalt % 5u) == 0u) {
+        const float offset = static_cast<float>(state.productIdSalt % 0x64u);
+        u -= offset * offset / 10000.0f;
+    }
+    if ((state.productIdSalt % 3u) == 0u) {
+        const float offset = static_cast<float>(state.productIdSalt % 0x32u);
+        v -= offset * offset / 2500.0f;
+    }
+}
+
 std::array<double, 16> convertTransform(const std::array<float, 16>& source) {
     std::array<double, 16> result = {};
     const auto sourceAxis = [](int axis) { return axis == 1 ? 2 : axis == 2 ? 1 : axis; };
@@ -162,13 +254,12 @@ std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
         const std::uint8_t version = reader.u8();
         const bool longHeader = version > 3;
         bool longTriangleIndices = false;
+        O3DVertexDecodeState vertexDecodeState;
         if (longHeader) {
             const std::uint8_t options = reader.u8();
             const std::uint32_t encryptionKey = reader.u32();
             longTriangleIndices = (options & 0x1u) != 0;
-            if (encryptionKey != 0xFFFFFFFFu) {
-                return {};
-            }
+            vertexDecodeState = makeVertexDecodeState(version, options, encryptionKey, 0);
         }
 
         auto result = std::make_shared<ParsedObj>();
@@ -176,19 +267,25 @@ std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
             switch (reader.u8()) {
             case VertexList: {
                 const std::uint32_t count = readCount(reader, longHeader);
+                if (longHeader && vertexDecodeState.enabled) {
+                    vertexDecodeState.vertexCount = static_cast<std::uint16_t>(count % 65000u);
+                }
                 result->positions.reserve(count);
                 result->normals.reserve(count);
                 result->texCoords.reserve(count);
                 for (std::uint32_t index = 0; index < count; ++index) {
-                    const double x = reader.f32();
-                    const double y = reader.f32();
-                    const double z = reader.f32();
+                    float x = reader.f32();
+                    float y = reader.f32();
+                    float z = reader.f32();
+                    float normalX = reader.f32();
+                    float normalY = reader.f32();
+                    float normalZ = reader.f32();
+                    float u = reader.f32();
+                    float v = reader.f32();
+                    decodeVertex(vertexDecodeState, x, y, z, normalX, normalY, normalZ, u, v);
                     result->positions.push_back({x, z, y});
-                    const double normalX = reader.f32();
-                    const double normalY = reader.f32();
-                    const double normalZ = reader.f32();
                     result->normals.push_back({-normalX, -normalZ, -normalY});
-                    result->texCoords.push_back({reader.f32(), 1.0 - reader.f32()});
+                    result->texCoords.push_back({u, 1.0 - v});
                 }
                 break;
             }
@@ -203,14 +300,13 @@ std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
                     const std::uint32_t second = readIndex();
                     const std::uint32_t third = readIndex();
                     const std::uint16_t material = reader.u16();
+                                        const int firstIndex = static_cast<int>(first + 1);
+                                        const int secondIndex = static_cast<int>(second + 1);
+                                        const int thirdIndex = static_cast<int>(third + 1);
                                         ObjTriangle triangle;
-                                        triangle.indices = {{{static_cast<int>(first + 1), static_cast<int>(first + 1),
-                                                                                    static_cast<int>(first + 1)},
-                                                                                 {static_cast<int>(second + 1),
-                                                                                    static_cast<int>(second + 1),
-                                                                                    static_cast<int>(second + 1)},
-                                                                                 {static_cast<int>(third + 1), static_cast<int>(third + 1),
-                                                                                    static_cast<int>(third + 1)}}};
+                                        triangle.indices = {{{firstIndex, firstIndex, firstIndex},
+                                                                                 {secondIndex, secondIndex, secondIndex},
+                                                                                 {thirdIndex, thirdIndex, thirdIndex}}};
                                         triangle.material = "matl_" + std::to_string(material);
                                         result->triangles.push_back(std::move(triangle));
                 }
@@ -263,6 +359,14 @@ std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
         }
         if (result->triangles.empty() || result->positions.empty()) {
             return {};
+        }
+        for (const ObjTriangle& triangle : result->triangles) {
+            for (const ObjIndex& index : triangle.indices) {
+                if (index.position <= 0 ||
+                    index.position > static_cast<int>(result->positions.size())) {
+                    return {};
+                }
+            }
         }
         result->backFaceCulling = determinant(result->transform) < 0.0;
         calculateBounds(*result);

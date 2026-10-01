@@ -21,6 +21,7 @@ constexpr dReal GRAVITY = -9.81;
 
 constexpr dReal SUSP_REST = 0.35;
 constexpr dReal SUSP_MAX_TRAVEL = 0.25;
+constexpr dReal MINIMUM_CHASSIS_MASS = 1.0;
 constexpr dReal TIRE_GRIP_LONG = 24000.0;
 constexpr dReal ROLLING_RESIST = 0.012;
 constexpr dReal WHEEL_MASS = 180.0;
@@ -131,6 +132,7 @@ struct BusSimulation::Impl {
     std::vector<std::vector<int>> roadMeshIndices;
     dGeomID chassisGeom = nullptr;
     BusConfiguration configuration;
+    VehiclePlacement placement;
     std::vector<Corner> corners;
     double fixedStep;
     int maxCatchUpSteps;
@@ -388,8 +390,9 @@ struct BusSimulation::Impl {
         addRoadBumpMesh(feature);
     }
 
-    Impl(BusConfiguration vehicle, double physicsHz, int catchUpSteps)
-        : configuration(std::move(vehicle)), fixedStep(1.0 / physicsHz),
+    Impl(BusConfiguration vehicle, VehiclePlacement vehiclePlacement, double physicsHz,
+         int catchUpSteps)
+        : configuration(std::move(vehicle)), placement(vehiclePlacement), fixedStep(1.0 / physicsHz),
           maxCatchUpSteps(catchUpSteps) {
         if (physicsHz <= 0.0 || catchUpSteps <= 0) {
             simulationLog.Log("Invalid physics timing configuration");
@@ -429,6 +432,13 @@ struct BusSimulation::Impl {
             corners.push_back({axle.position, wheelCenterOffset, axle.wheelDiameter * 0.5});
             corners.push_back({axle.position, -wheelCenterOffset, axle.wheelDiameter * 0.5});
         }
+        const dReal componentMass = corners.size() * (WHEEL_MASS + 2.0 * KNUCKLE_MASS);
+        const dReal minimumMass = componentMass + MINIMUM_CHASSIS_MASS;
+        if (configuration.mass < minimumMass) {
+            simulationLog.Log("Configured bus mass is below the physics minimum; using " +
+                              std::to_string(minimumMass) + " kg");
+            configuration.mass = minimumMass;
+        }
         ground = dCreatePlane(ode.space, 0.0, 0.0, 1.0, 0.0);
         for (const RoadBump& bump : defaultRoadBumps()) {
             addRoadFeature(bump);
@@ -454,9 +464,13 @@ struct BusSimulation::Impl {
         const dReal staticCompression = std::clamp(configuration.mass * std::abs(GRAVITY) /
                                                        (corners.size() * averageSpringRate),
                                                    0.0, SUSP_MAX_TRAVEL * 0.9);
-        dBodySetPosition(chassis, 0.0, 0.0,
-                         configuration.centerOfGravityHeight +
-                             (configuration.mass - chassisMass) / configuration.mass * 0.5);
+        const dReal placementYaw =
+            static_cast<dReal>(placement.yawDegrees * PI / 180.0);
+        dMatrix3 placementRotation;
+        dRFromAxisAndAngle(placementRotation, 0.0, 0.0, 1.0, placementYaw);
+        dBodySetPosition(chassis, placement.position[0], placement.position[1],
+                         placement.position[2] + configuration.centerOfGravityHeight);
+        dBodySetRotation(chassis, placementRotation);
         chassisGeom = dCreateBox(ode.space, configuration.collisionLength,
                                  configuration.collisionWidth, configuration.collisionHeight);
         dGeomSetBody(chassisGeom, chassis);
@@ -483,16 +497,32 @@ struct BusSimulation::Impl {
             dBodySetAutoDisableFlag(corner.suspensionBody, 0);
             dBodySetAutoDisableFlag(corner.steeringBody, 0);
             dBodySetAutoDisableFlag(corner.wheelBody, 0);
+            dBodySetRotation(corner.suspensionBody, placementRotation);
+            dBodySetRotation(corner.steeringBody, placementRotation);
 
-            const dReal worldX = configuration.axles[axleIndex].position;
-            const dReal worldY = corner.y;
+            const dReal localX = configuration.axles[axleIndex].position;
+            const dReal localY = corner.y;
+            const dReal worldX = placement.position[0] + placementRotation[0] * localX +
+                                 placementRotation[1] * localY;
+            const dReal worldY = placement.position[1] + placementRotation[4] * localX +
+                                 placementRotation[5] * localY;
             const dReal worldZ = dBodyGetPosition(chassis)[2] + wheelLocalZ;
             dBodySetPosition(corner.suspensionBody, worldX, worldY, worldZ);
             dBodySetPosition(corner.steeringBody, worldX, worldY, worldZ);
             dBodySetPosition(corner.wheelBody, worldX, worldY, worldZ);
 
-            dMatrix3 wheelRotation;
-            dRFromAxisAndAngle(wheelRotation, 1.0, 0.0, 0.0, -PI * 0.5);
+            dMatrix3 localWheelRotation;
+            dRFromAxisAndAngle(localWheelRotation, 1.0, 0.0, 0.0, -PI * 0.5);
+            dMatrix3 wheelRotation = {};
+            for (int row = 0; row < 3; ++row) {
+                for (int column = 0; column < 3; ++column) {
+                    for (int inner = 0; inner < 3; ++inner) {
+                        wheelRotation[row * 4 + column] +=
+                            placementRotation[row * 4 + inner] *
+                            localWheelRotation[inner * 4 + column];
+                    }
+                }
+            }
             dBodySetRotation(corner.wheelBody, wheelRotation);
 
             corner.wheelGeom =
@@ -521,7 +551,7 @@ struct BusSimulation::Impl {
             corner.wheelJoint = dJointCreateHinge(ode.world, nullptr);
             dJointAttach(corner.wheelJoint, corner.steeringBody, corner.wheelBody);
             dJointSetHingeAnchor(corner.wheelJoint, worldX, worldY, worldZ);
-            dJointSetHingeAxis(corner.wheelJoint, 0.0, 1.0, 0.0);
+            dJointSetHingeAxis(corner.wheelJoint, placementRotation[1], placementRotation[5], 0.0);
         }
         simulationLog.Log("Initialized ODE bus with " + std::to_string(configuration.axles.size()) +
                           " axles and " + std::to_string(corners.size()) + " wheels");
@@ -768,8 +798,10 @@ struct BusSimulation::Impl {
     }
 };
 
-BusSimulation::BusSimulation(BusConfiguration configuration, double physicsHz, int maxCatchUpSteps)
-    : impl_(std::make_unique<Impl>(std::move(configuration), physicsHz, maxCatchUpSteps)) {
+BusSimulation::BusSimulation(BusConfiguration configuration, VehiclePlacement placement,
+                             double physicsHz, int maxCatchUpSteps)
+    : impl_(std::make_unique<Impl>(std::move(configuration), placement, physicsHz,
+                                   maxCatchUpSteps)) {
     openbus::rendering::TraceScope trace("startup", "BusSimulation::BusSimulation");
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }

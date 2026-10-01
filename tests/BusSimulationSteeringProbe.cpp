@@ -37,7 +37,7 @@ double steeringHeading(const BodyPose& pose) {
 } // namespace
 
 int main() {
-    BusSimulation simulation(testConfiguration());
+    BusSimulation simulation(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
     const BodyPose rearStartPose = simulation.wheelPose(2);
     for (int step = 0; step < 180; ++step) {
         simulation.step(0.0, 0.0, 0.0);
