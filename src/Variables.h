@@ -21,21 +21,19 @@ class Variables {
   public:
     explicit Variables(ScriptObjectKind objectKind = ScriptObjectKind::Generic);
 
-    void configure(std::initializer_list<VariableDefinition> definitions);
+    void setValues(std::initializer_list<VariableDefinition> values);
+
     void declare(const std::string& name);
     void declareString(const std::string& name);
+
     bool has(const std::string& name) const;
-    bool hasString(const std::string& name) const;
     double get(const std::string& name) const;
-    double getNormalized(const std::string& name) const;
-    std::string getString(const std::string& name) const;
-    std::string getStringNormalized(const std::string& name) const;
     void set(const std::string& name, double value);
-    void setNormalized(const std::string& name, double value);
-    void setValues(std::initializer_list<VariableDefinition> values);
+    
+    bool hasString(const std::string& name) const;
+    std::string getString(const std::string& name) const;
     void setString(const std::string& name, const std::string& value);
-    void setStringNormalized(const std::string& name, const std::string& value);
-    void clearString(const std::string& name);
+
     ScriptObjectKind objectKind() const;
     bool supportsSystemMacro(const std::string& name) const;
     bool supportsSystemTrigger(const std::string& name) const;

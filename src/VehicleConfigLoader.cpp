@@ -83,7 +83,7 @@ void loadVariableFile(const std::filesystem::path& configPath, const std::string
     }
     Line line;
     while (reader.next(line)) {
-        const std::string name = trim(line.text);
+        const std::string name = lower(trim(line.text));
         if (name.empty() || name.front() == ';' || name.front() == '/') {
             continue;
         }

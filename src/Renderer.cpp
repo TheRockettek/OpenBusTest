@@ -526,7 +526,7 @@ struct Vehicle {
         // request state so the new texture is resolved and uploaded.
         const MaterialState::TextureChange* selected = nullptr;
         for (const MaterialState::TextureChange& change : batch.textureChanges) {
-            const double activationValue = variables.getNormalized(change.activationVariable);
+            const double activationValue = variables.get(change.activationVariable);
             if (activationValue != 0.0) {
                 selected = &change;
             }
@@ -573,7 +573,7 @@ struct Vehicle {
         if (batch.alphaScaleVariable.empty()) {
             return 1.0;
         }
-        return std::clamp(variables.getNormalized(batch.alphaScaleVariable), 0.0, 1.0);
+        return std::clamp(variables.get(batch.alphaScaleVariable), 0.0, 1.0);
     }
 
     void updateAnimationStates() {
@@ -594,8 +594,7 @@ struct Vehicle {
                     continue;
                 }
                 const double targetAmount =
-                    variables.getNormalized(animation.variable) * animation.scale +
-                    animation.offset;
+                    variables.get(animation.variable) * animation.scale + animation.offset;
                 if (!state.initialized) {
                     state.currentAmount = targetAmount;
                     state.targetAmount = targetAmount;
@@ -711,7 +710,7 @@ struct Vehicle {
         Matrix4 local = identityMatrix();
         for (std::size_t index = 0; index < part.animations.size(); ++index) {
             const ModelAnimation& animation = part.animations[index];
-            const double value = variables.getNormalized(animation.variable);
+            const double value = variables.get(animation.variable);
             const double amount = index < part.animationStates.size()
                                       ? part.animationStates[index].currentAmount
                                       : value * animation.scale + animation.offset;
@@ -781,7 +780,7 @@ struct Vehicle {
         TraceScope trace("frame", "Vehicle::updateFrameVariables");
         // Frame-scoped values are refreshed before simulation and rendering run.
         variables.updateFrame();
-        variables.set("AI", isAiVehicle ? 1.0 : 0.0);
+        variables.set("ai", isAiVehicle ? 1.0 : 0.0);
         animationTimeStep = timeStep;
     }
 
@@ -842,8 +841,8 @@ struct Vehicle {
             for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
                 const DisplayPart& part = displayLists[partIndex];
                 const bool visible =
-                    part.visibleVariable.empty() || variables.getNormalized(part.visibleVariable) ==
-                                                        static_cast<double>(part.visibleValue);
+                    part.visibleVariable.empty() ||
+                    variables.get(part.visibleVariable) == static_cast<double>(part.visibleValue);
                 variableVisibleParts[partIndex] = visible;
                 if (!visible ||
                     (part.viewpoint != 0 && (part.viewpoint & viewpointMask(context)) == 0)) {
@@ -1097,18 +1096,16 @@ struct Vehicle {
         material.lightmapStrength = static_cast<float>(
             batch.lightmapStrengthVariable.empty()
                 ? 1.0
-                : std::clamp(variables.getNormalized(batch.lightmapStrengthVariable), 0.0, 1.0));
-        const double nightlight = std::max(variables.getNormalized("nightlighta"),
-                                           1.0 - variables.getNormalized("envir_brightness"));
+                : std::clamp(variables.get(batch.lightmapStrengthVariable), 0.0, 1.0));
+        const double nightlight =
+            std::max(variables.get("nightlighta"), 1.0 - variables.get("envir_brightness"));
         material.nightmapStrength = static_cast<float>(std::clamp(nightlight, 0.0, 1.0));
-        material.texcoordOffsetX =
-            static_cast<float>(batch.texcoordTransXVariable.empty()
-                                   ? 0.0
-                                   : variables.getNormalized(batch.texcoordTransXVariable));
-        material.texcoordOffsetY =
-            static_cast<float>(batch.texcoordTransYVariable.empty()
-                                   ? 0.0
-                                   : variables.getNormalized(batch.texcoordTransYVariable));
+        material.texcoordOffsetX = static_cast<float>(
+            batch.texcoordTransXVariable.empty() ? 0.0
+                                                 : variables.get(batch.texcoordTransXVariable));
+        material.texcoordOffsetY = static_cast<float>(
+            batch.texcoordTransYVariable.empty() ? 0.0
+                                                 : variables.get(batch.texcoordTransYVariable));
         if (!activeReflectionPass && !materialBatch) {
             const int reflectionIndex = reflectionTextureIndex(
                 batch.textureName.empty() ? batch.texturePath.string() : batch.textureName);
@@ -1874,8 +1871,7 @@ struct Vehicle {
         if (batch.freeTextureVariable.empty() || !scripts) {
             return;
         }
-        const int index =
-            static_cast<int>(std::lround(variables.getNormalized(batch.freeTextureVariable)));
+        const int index = static_cast<int>(std::lround(variables.get(batch.freeTextureVariable)));
         ScriptRuntime::ScriptTextureSnapshot snapshot;
         if (index < 0 || !scripts->copyScriptTexture(index, snapshot) || snapshot.width <= 0 ||
             snapshot.height <= 0 || snapshot.pixels.empty()) {
@@ -2217,8 +2213,8 @@ struct Vehicle {
                             std::to_string(animation.origin[0]) + ',' +
                             std::to_string(animation.origin[1]) + ',' +
                             std::to_string(animation.origin[2]) +
-                            ") hasOrigin=" + (animation.hasOrigin ? "true" : "false") + " value=" +
-                            std::to_string(variables.getNormalized(animation.variable)));
+                            ") hasOrigin=" + (animation.hasOrigin ? "true" : "false") +
+                            " value=" + std::to_string(variables.get(animation.variable)));
             }
         }
 
@@ -2970,7 +2966,7 @@ void Renderer::updateScripts() {
     TraceScope trace("script", "Renderer::updateScripts");
     const double renderTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
     if (scriptRateHz_ <= 0.0) {
-        simulationState_.sharedVariables().set("Timegap", renderTimeStep);
+        simulationState_.sharedVariables().set("timegap", renderTimeStep);
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
             vehicle->updateScripts(vehicle.get() != playerVehicle_);
         }
@@ -2982,7 +2978,7 @@ void Renderer::updateScripts() {
     int ticks = 0;
     while (scriptAccumulator_ >= scriptTimeStep && ticks < MAX_SCRIPT_CATCH_UP_TICKS) {
         scriptAccumulator_ -= scriptTimeStep;
-        simulationState_.sharedVariables().set("Timegap", scriptTimeStep);
+        simulationState_.sharedVariables().set("timegap", scriptTimeStep);
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
             vehicle->updateScripts(vehicle.get() != playerVehicle_);
         }

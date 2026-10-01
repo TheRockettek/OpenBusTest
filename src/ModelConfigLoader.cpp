@@ -170,9 +170,10 @@ bool readIntValue(Reader& reader, const std::string& keyword, int& value,
 
 void declareIfVariable(const std::string& value, Variables& variables) {
     // Configuration records mix numeric constants and script-variable names.
+    const std::string normalized = lower(trim(value));
     double numericValue = 0.0;
-    if (!value.empty() && !parseDouble(value, numericValue)) {
-        variables.declare(value);
+    if (!normalized.empty() && !parseDouble(normalized, numericValue)) {
+        variables.declare(normalized);
     }
 }
 
@@ -278,7 +279,7 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
             if (!readValues(reader, field.number, name, 2, values, diagnostics)) {
                 return false;
             }
-            animation.variable = trim(values[0]);
+            animation.variable = lower(trim(values[0]));
             if (animation.variable.empty()) {
                 diagnostics.error(field.number, name, "animation variable cannot be empty");
                 return false;
@@ -506,7 +507,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     result.diagnostics.error(line.number, "visible", "expected an integer value");
                 } else {
                     // The renderer compares this variable with the target at frame time.
-                    current->visibleVariable = trim(values[0]);
+                    current->visibleVariable = lower(trim(values[0]));
                     current->visibleValue = value;
                     variables.declare(current->visibleVariable);
                 }
@@ -660,7 +661,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             ModelMaterialState* current = requireMaterial();
             Line value;
             if (current != nullptr && reader.readPayload(value, result.diagnostics, keyword)) {
-                current->alphaScaleVariable = trim(value.text);
+                current->alphaScaleVariable = lower(trim(value.text));
                 variables.declare(current->alphaScaleVariable);
             }
             continue;
@@ -732,9 +733,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                             reader.pushBack(std::move(variable));
                         } else if (variable.text != "--") {
                             if (keyword == "matl_lightmap") {
-                                current->lightmapStrengthVariable = trim(variable.text);
+                                current->lightmapStrengthVariable = lower(trim(variable.text));
                             } else {
-                                current->freeTextureVariable = trim(variable.text);
+                                current->freeTextureVariable = lower(trim(variable.text));
                             }
                             declareIfVariable(variable.text, variables);
                         }
@@ -759,7 +760,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                                                  "expected a non-negative texture layer");
                         continue;
                     }
-                    const std::string activationVariable = trim(values[2]);
+                    const std::string activationVariable = lower(trim(values[2]));
                     if (textureName.empty() || activationVariable.empty()) {
                         result.diagnostics.error(
                             line.number, keyword,
@@ -809,9 +810,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 Line value;
                 if (reader.readPayload(value, result.diagnostics, keyword)) {
                     if (keyword == "texcoordtransx") {
-                        current->texcoordTransXVariable = trim(value.text);
+                        current->texcoordTransXVariable = lower(trim(value.text));
                     } else {
-                        current->texcoordTransYVariable = trim(value.text);
+                        current->texcoordTransYVariable = lower(trim(value.text));
                     }
                     declareIfVariable(value.text, variables);
                 }

@@ -7,14 +7,6 @@
 
 ### High Priority
 
-#### 1. Normalized script variables are case-sensitive by mistake
-
-`getNormalized`, `getStringNormalized`, and their setters bypass `keyFor()`. Shipped mixed-case E400 Lua variables can therefore create duplicate keys and fail to read canonical state.
-
-**Location:** `src/Variables.cpp:61`
-
-**Fix:** Apply the same lowercase normalization to all four normalized accessors, or rename the API if exact-case access is intentional. Add tests covering mixed-case reads and writes.
-
 #### 2. `AddVehicle` ignores `spawnPosition`
 
 The overload explicitly discards its spawn argument, so every added vehicle starts at the same location.

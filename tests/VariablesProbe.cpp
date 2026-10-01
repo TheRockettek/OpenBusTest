@@ -21,20 +21,20 @@ int main() {
     openbus::scripting::SceneryObject sceneryObject;
 
     bool valid = true;
-    valid &= require(simulation.sharedVariables().has("Timegap"), "system Timegap");
-    valid &= require(!simulation.sharedVariables().has("Throttle"), "system excludes Throttle");
-    valid &= require(vehicle.has("Throttle"), "vehicle Throttle");
-    valid &= require(!vehicle.has("LastMovedDist"), "vehicle excludes human state");
-    valid &= require(human.has("LastMovedDist"), "human LastMovedDist");
-    valid &= require(!human.has("Throttle"), "human excludes vehicle state");
-    valid &= require(sceneryObject.has("NightlightA"), "scenery NightlightA");
-    valid &= require(!sceneryObject.has("Throttle"), "scenery excludes vehicle state");
-    valid &= require(vehicle.supportsSystemMacro("GetRouteIndex"), "vehicle macro capability");
-    valid &= require(!vehicle.supportsSystemMacro("GetArrBusLine"),
+    valid &= require(simulation.sharedVariables().has("timegap"), "system timegap");
+    valid &= require(!simulation.sharedVariables().has("throttle"), "system excludes throttle");
+    valid &= require(vehicle.has("throttle"), "vehicle throttle");
+    valid &= require(!vehicle.has("lastmoveddist"), "vehicle excludes human state");
+    valid &= require(human.has("lastmoveddist"), "human lastmoveddist");
+    valid &= require(!human.has("throttle"), "human excludes vehicle state");
+    valid &= require(sceneryObject.has("nightlighta"), "scenery nightlighta");
+    valid &= require(!sceneryObject.has("throttle"), "scenery excludes vehicle state");
+    valid &= require(vehicle.supportsSystemMacro("getrouteindex"), "vehicle macro capability");
+    valid &= require(!vehicle.supportsSystemMacro("getarrbusline"),
                      "vehicle excludes scenery macro");
-    valid &= require(sceneryObject.supportsSystemMacro("GetArrBusLine"),
+    valid &= require(sceneryObject.supportsSystemMacro("getarrbusline"),
                      "scenery macro capability");
-    valid &= require(!human.supportsSystemMacro("GetRouteIndex"), "human excludes vehicle macro");
+    valid &= require(!human.supportsSystemMacro("getrouteindex"), "human excludes vehicle macro");
     valid &= require(vehicle.supportsSystemTrigger("collision"), "vehicle trigger capability");
     valid &= require(!sceneryObject.supportsSystemTrigger("collision"),
                      "scenery excludes vehicle trigger");
@@ -42,11 +42,18 @@ int main() {
     vehicle.setString("ident", "probe");
     valid &= require(vehicle.hasString("ident") && vehicle.getString("ident") == "probe",
                      "vehicle string state");
-    vehicle.set("SteeringWheelOffset", 0.25);
+    vehicle.set("steeringwheeloffset", 0.25);
     vehicle.updateFrame();
-    valid &= require(vehicle.get("SteeringWheelOffset") == 0.25,
+    valid &= require(vehicle.get("steeringwheeloffset") == 0.25,
                      "local numeric state persists across frames");
     valid &= require(vehicle.getString("ident") == "probe",
                      "local string state persists across frames");
+
+    vehicle.set("mixedcasevalue", 0.75);
+    valid &= require(vehicle.get("mixedcasevalue") == 0.75,
+                     "normalized numeric state uses lowercase keys");
+    vehicle.setString("mixedcasestring", "normalized");
+    valid &= require(vehicle.getString("mixedcasestring") == "normalized",
+                     "normalized string state uses lowercase keys");
     return valid ? 0 : 1;
 }

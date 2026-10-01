@@ -759,20 +759,20 @@ void BusSimulation::step(double throttle, double steering, double brake) {
 
 void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, double throttle,
                                     double steering, double brake) const {
-    variables.set("Throttle", std::clamp(throttle, -1.0, 1.0));
-    variables.set("Brake", std::clamp(brake, 0.0, 1.0));
-    variables.set("Velocity", speed());
-    variables.set("Velocity_Ground", speed());
-    variables.set("Steering", std::clamp(steering, -1.0, 1.0));
-    variables.set("SteeringAngle", steeringAngle());
+    variables.set("throttle", std::clamp(throttle, -1.0, 1.0));
+    variables.set("brake", std::clamp(brake, 0.0, 1.0));
+    variables.set("velocity", speed());
+    variables.set("velocity_ground", speed());
+    variables.set("steering", std::clamp(steering, -1.0, 1.0));
+    variables.set("steeringangle", steeringAngle());
     for (std::size_t index = 0; index < impl_->corners.size(); ++index) {
         const std::size_t axleIndex = index / 2;
-        const char* side = index % 2 == 0 ? "L" : "R";
+        const char* side = index % 2 == 0 ? "l" : "r";
         const std::string prefix = "_" + std::to_string(axleIndex) + "_" + side;
-        variables.set("Wheel_Rotation" + prefix, impl_->corners[index].wheelRotation);
-        variables.set("Wheel_RotationSpeed" + prefix, impl_->corners[index].wheelOmega);
-        variables.set("Axle_Suspension" + prefix, impl_->corners[index].springCompression);
-        variables.set("Axle_Steering_" + std::to_string(axleIndex) + "_" + side,
+        variables.set("wheel_rotation" + prefix, impl_->corners[index].wheelRotation);
+        variables.set("wheel_rotationspeed" + prefix, impl_->corners[index].wheelOmega);
+        variables.set("axle_suspension" + prefix, impl_->corners[index].springCompression);
+        variables.set("axle_steering_" + std::to_string(axleIndex) + "_" + side,
                       dJointGetHingeAngle(impl_->corners[index].steeringJoint));
     }
 }

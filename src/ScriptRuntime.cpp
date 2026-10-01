@@ -239,24 +239,22 @@ struct ScriptRuntime::Impl {
                     stringStack.push_back(instruction.name);
                     break;
                 case OscOpcode::LoadLocal:
-                    floatStack.push_back(localState.getNormalized(instruction.name));
+                    floatStack.push_back(localState.get(instruction.name));
                     break;
                 case OscOpcode::LoadLocalString:
-                    stringStack.push_back(localState.getStringNormalized(instruction.name));
+                    stringStack.push_back(localState.getString(instruction.name));
                     break;
                 case OscOpcode::StoreLocal:
-                    localState.setNormalized(instruction.name, nativePeekFloat());
+                    localState.set(instruction.name, nativePeekFloat());
                     break;
                 case OscOpcode::StoreLocalString:
-                    localState.setStringNormalized(instruction.name, nativePopString());
+                    localState.setString(instruction.name, nativePopString());
                     break;
                 case OscOpcode::LoadSystem:
-                    floatStack.push_back(
-                        sharedState.sharedVariables().getNormalized(instruction.name));
+                    floatStack.push_back(sharedState.sharedVariables().get(instruction.name));
                     break;
                 case OscOpcode::StoreSystem:
-                    sharedState.sharedVariables().setNormalized(instruction.name,
-                                                                nativePeekFloat());
+                    sharedState.sharedVariables().set(instruction.name, nativePeekFloat());
                     break;
                 case OscOpcode::LoadConstant: {
                     const auto constant = configuration.constants.find(instruction.name);
@@ -628,7 +626,7 @@ struct ScriptRuntime::Impl {
         for (const std::string& variable : configuration.stringVariables) {
             localState.declareString(variable);
         }
-        for (const char* variable : {"ident", "number", "act_route", "act_busstop", "SetLineTo",
+        for (const char* variable : {"ident", "number", "act_route", "act_busstop", "setlineto",
                                      "yard", "file_schedule"}) {
             localState.declareString(variable);
         }
@@ -693,7 +691,7 @@ struct ScriptRuntime::Impl {
     static int getLocal(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
         const char* name = luaL_checkstring(lua, 1);
-        const double value = runtime->localState.getNormalized(name);
+        const double value = runtime->localState.get(name);
         // runtime->log(lua, "get_local_var(" + std::string(name) + "): " + std::to_string(value));
         lua_pushnumber(lua, value);
         return 1;
@@ -705,14 +703,14 @@ struct ScriptRuntime::Impl {
         const double value = numericArgument(lua, 2);
         // runtime->log(lua, "set_local_var(" + std::string(name) + ", " + std::to_string(value) +
         // ")");
-        runtime->localState.setNormalized(name, value);
+        runtime->localState.set(name, value);
         return 0;
     }
 
     static int getLocalString(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
         // runtime->log(lua, "get_local_str(" + std::string(luaL_checkstring(lua, 1)) + ")");
-        const std::string value = runtime->localState.getStringNormalized(luaL_checkstring(lua, 1));
+        const std::string value = runtime->localState.getString(luaL_checkstring(lua, 1));
         lua_pushstring(lua, value.c_str());
         return 1;
     }
@@ -721,15 +719,14 @@ struct ScriptRuntime::Impl {
         Impl* runtime = runtimeFor(lua);
         // runtime->log(lua, "set_local_str(" + std::string(luaL_checkstring(lua, 1)) + ", " +
         // std::string(luaL_checkstring(lua, 2)) + ")");
-        runtime->localState.setStringNormalized(luaL_checkstring(lua, 1), luaL_checkstring(lua, 2));
+        runtime->localState.setString(luaL_checkstring(lua, 1), luaL_checkstring(lua, 2));
         return 0;
     }
 
     static int getSystem(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
         // runtime->log(lua, "get_sys_var(" + std::string(luaL_checkstring(lua, 1)) + ")");
-        lua_pushnumber(
-            lua, runtime->sharedState.sharedVariables().getNormalized(luaL_checkstring(lua, 1)));
+        lua_pushnumber(lua, runtime->sharedState.sharedVariables().get(luaL_checkstring(lua, 1)));
         return 1;
     }
 
@@ -737,8 +734,8 @@ struct ScriptRuntime::Impl {
         Impl* runtime = runtimeFor(lua);
         // runtime->log(lua, "set_sys_var(" + std::string(luaL_checkstring(lua, 1)) + ", " +
         // std::to_string(numericArgument(lua, 2)) + ")");
-        runtime->sharedState.sharedVariables().setNormalized(luaL_checkstring(lua, 1),
-                                                             numericArgument(lua, 2));
+        runtime->sharedState.sharedVariables().set(luaL_checkstring(lua, 1),
+                                                   numericArgument(lua, 2));
         return 0;
     }
 

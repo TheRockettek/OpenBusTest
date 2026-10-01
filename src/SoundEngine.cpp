@@ -27,7 +27,7 @@ namespace {
 
 Logger soundLog = Logger("Sound");
 
-std::string normalized(std::string value) {
+std::string lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
         return static_cast<char>(std::tolower(character));
     });
@@ -290,7 +290,7 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
         if (!line.isKeyword()) {
             continue;
         }
-        const std::string keyword = normalized(line.keyword());
+        const std::string keyword = (line.keyword());
         if (keyword == "sound" || keyword == "loopsound") {
             openbus::config::Line value;
             ConfigurationDiagnostics diagnostics;
@@ -308,7 +308,7 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
             openbus::config::Line value;
             ConfigurationDiagnostics diagnostics;
             if (hasSound && reader.readPayload(value, diagnostics, keyword)) {
-                currentTriggerNames.push_back(normalized(openbus::config::trim(value.text)));
+                currentTriggerNames.push_back((openbus::config::trim(value.text)));
                 updateCurrentTriggers();
             }
             continue;
@@ -337,7 +337,7 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
         }
         if (keyword == "volcurve") {
             while (reader.next(line)) {
-                if (line.isKeyword() && normalized(line.keyword()) != "pnt") {
+                if (line.isKeyword() && (line.keyword()) != "pnt") {
                     reader.pushBack(std::move(line));
                     break;
                 }
@@ -371,7 +371,7 @@ void SoundEngine::setListenerDistance(double distance) {
 
 void SoundEngine::trigger(const std::string& name, const std::filesystem::path& overrideFile,
                           double controlValue) {
-    const auto found = triggers_.find(normalized(name));
+    const auto found = triggers_.find((name));
     if (found == triggers_.end() && overrideFile.empty()) {
         return;
     }
