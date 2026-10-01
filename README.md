@@ -86,6 +86,21 @@ Run the prototype:
 The executable opens a simple OpenGL preview window while the physics runs at
 the configured fixed rate.
 
+### Optional binary mesh bundle
+
+To reduce startup parsing and file-open overhead, generate an `.obx` bundle
+from converted OBJ meshes:
+
+```powershell
+.\build-ode\Release\obj_bundle.exe MAN_DL05\Model\DL05_obj build-ode\DL05.obx
+```
+
+Copy or rename the resulting file to `openbus.obx` beside the model's
+converted meshes. OpenBus uses matching bundle entries when available and
+falls back to OBJ files for missing entries, so the bundle is optional.
+The model CFG still controls mesh order, visibility, animations, and material
+overrides.
+
 The Windows build writes a symbolized `game.crash` report with exception
 details, registers, module names, and source lines when matching PDB files are
 available. It also writes `game.crash.dmp`, which can be opened in Visual

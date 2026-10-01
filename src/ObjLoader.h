@@ -61,7 +61,11 @@ struct ParsedObj {
 
 class ObjLoader {
   public:
-    static std::shared_ptr<ParsedObj> parse(const std::filesystem::path& path);
+        static std::shared_ptr<ParsedObj> parse(const std::filesystem::path& path,
+                                                                                        const std::string& bundleEntry = {});
+        static bool writeBundle(const std::filesystem::path& output,
+                                                        const std::filesystem::path& root,
+                                                        const std::vector<std::filesystem::path>& objects);
 };
 
 } // namespace openbus::rendering

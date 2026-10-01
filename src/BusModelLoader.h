@@ -58,6 +58,7 @@ struct BusModelMaterialState {
 
 struct BusModelPart {
     std::filesystem::path objPath;
+    std::string bundleEntry;
     std::filesystem::path texturePath;
     std::string textureName;
     std::array<double, 3> color = {0.65, 0.65, 0.65};

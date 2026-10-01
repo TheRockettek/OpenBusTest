@@ -141,7 +141,8 @@ struct ScriptRuntime::Impl {
         } else if (name == "nrspecrandom") {
             const unsigned int seed = static_cast<unsigned int>(nativePopFloat());
             std::minstd_rand random(seed);
-            pushNumber(static_cast<double>(random()) / RAND_MAX);
+            pushNumber(static_cast<double>(random()) /
+                       static_cast<double>(std::minstd_rand::max()));
         } else if (name == "getterminuscode" || name == "getrouteterminusindex" ||
                    name == "getbusstopcount" || name == "getttlinestring" ||
                    name == "getttterminusindex" || name == "getttbusstopcount" ||
@@ -925,7 +926,8 @@ struct ScriptRuntime::Impl {
     static int safeNrSpecRandom(lua_State* lua) {
         double seed = popSystemFloat(runtimeFor(lua));
         std::minstd_rand rand(static_cast<unsigned int>(seed));
-        return returnSystemFloat(lua, static_cast<double>(rand()) / RAND_MAX);
+        return returnSystemFloat(
+            lua, static_cast<double>(rand()) / static_cast<double>(std::minstd_rand::max()));
     }
 
     // TODO: Implement currency configuration and change-coin issuance.

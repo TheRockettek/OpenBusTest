@@ -1,10 +1,14 @@
 #include "AssetRequestManager.h"
 
+#include "O3DLoader.h"
+
 #include "Logger.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <exception>
+#include <stdexcept>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -20,6 +24,24 @@ namespace openbus::rendering {
 
 namespace {
 
+#ifdef _WIN32
+class ComInitializer {
+    public:
+        ComInitializer() : initialized_(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) {}
+        ~ComInitializer() {
+                if (initialized_) {
+                        CoUninitialize();
+                }
+        }
+
+        ComInitializer(const ComInitializer&) = delete;
+        ComInitializer& operator=(const ComInitializer&) = delete;
+
+    private:
+        bool initialized_;
+};
+#endif
+
 std::string lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
         return static_cast<char>(std::tolower(character));
@@ -29,10 +51,65 @@ std::string lower(std::string value) {
 
 } // namespace
 
+AssetRequestManager::AssetRequestManager() {
+    std::size_t workerCount = 4;
+    if (const char* configuredWorkers = std::getenv("OPENBUS_ASSET_WORKERS")) {
+        try {
+            workerCount = static_cast<std::size_t>(
+                std::clamp(std::stoi(configuredWorkers), 1, static_cast<int>(std::thread::hardware_concurrency())));
+        } catch (const std::exception&) {
+            workerCount = 4;
+        }
+    }
+    workers_.reserve(workerCount);
+    for (std::size_t index = 0; index < workerCount; ++index) {
+        workers_.emplace_back(&AssetRequestManager::workerLoop, this);
+    }
+}
+
 AssetRequestManager::~AssetRequestManager() {
     join();
+    {
+        std::lock_guard<std::mutex> lock(workerMutex_);
+        stoppingWorkers_ = true;
+    }
+    workerCondition_.notify_all();
+    for (std::thread& worker : workers_) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
     if (!textures_.empty()) {
         glDeleteTextures(static_cast<GLsizei>(textures_.size()), textures_.data());
+    }
+}
+
+void AssetRequestManager::enqueue(std::function<void()> task) {
+    {
+        std::lock_guard<std::mutex> lock(workerMutex_);
+        if (stoppingWorkers_) {
+            throw std::runtime_error("asset worker pool is stopping");
+        }
+        workerQueue_.push(std::move(task));
+    }
+    workerCondition_.notify_one();
+}
+
+void AssetRequestManager::workerLoop() {
+    while (true) {
+        std::function<void()> task;
+        {
+            std::unique_lock<std::mutex> lock(workerMutex_);
+            workerCondition_.wait(lock, [this] {
+                return stoppingWorkers_ || !workerQueue_.empty();
+            });
+            if (stoppingWorkers_ && workerQueue_.empty()) {
+                return;
+            }
+            task = std::move(workerQueue_.front());
+            workerQueue_.pop();
+        }
+        task();
     }
 }
 
@@ -52,19 +129,31 @@ std::string AssetRequestManager::textureAliasKey(const std::filesystem::path& ro
                                                  const std::string& name) {
     const std::string normalizedRoot = normalizedPathKey(root);
     const std::filesystem::path identity = path.empty() ? std::filesystem::path(name) : path;
-    return normalizedRoot + "|" + lower(identity.stem().generic_string());
+    return normalizedRoot + "|" + lower(identity.parent_path().generic_string()) + "/" +
+           lower(identity.stem().generic_string());
 }
 
 std::shared_future<std::shared_ptr<ParsedObj>>
-AssetRequestManager::requestObj(const std::filesystem::path& path) {
-    const std::string key = normalizedPathKey(path);
+AssetRequestManager::requestObj(const std::filesystem::path& path,
+                                const std::string& bundleEntry) {
+    const std::string key = normalizedPathKey(path) + "|" + lower(bundleEntry);
     std::lock_guard<std::mutex> lock(parsedObjMutex_);
     const auto cached = parsedObjCache_.find(key);
     if (cached != parsedObjCache_.end()) {
         return cached->second;
     }
-    std::shared_future<std::shared_ptr<ParsedObj>> future =
-        std::async(std::launch::async, &ObjLoader::parse, path).share();
+    auto task = std::make_shared<std::packaged_task<std::shared_ptr<ParsedObj>()>>(
+        [path, bundleEntry] {
+            std::string extension = path.extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(),
+                           [](unsigned char character) {
+                               return static_cast<char>(std::tolower(character));
+                           });
+            return extension == ".o3d" ? O3DLoader::parse(path)
+                                        : ObjLoader::parse(path, bundleEntry);
+        });
+    std::shared_future<std::shared_ptr<ParsedObj>> future = task->get_future().share();
+    enqueue([task] { (*task)(); });
     parsedObjCache_.emplace(key, future);
     return future;
 }
@@ -109,20 +198,19 @@ void AssetRequestManager::startTextureRequest(const std::shared_ptr<TextureCache
         entry->request->started = true;
     }
     try {
-        entry->request->task =
-            std::async(std::launch::async, [this, request = entry->request] {
-                try {
-                    loadTextureRequest(request);
-                } catch (const std::exception& error) {
-                    gameLog.Log("Texture worker failed: " + std::string(error.what()));
-                    std::lock_guard<std::mutex> lock(request->mutex);
-                    request->complete = true;
-                } catch (...) {
-                    gameLog.Log("Texture worker failed with an unknown error");
-                    std::lock_guard<std::mutex> lock(request->mutex);
-                    request->complete = true;
-                }
-            }).share();
+        auto task = std::make_shared<std::packaged_task<void()>>([this, request = entry->request] {
+            try {
+                loadTextureRequest(request);
+            } catch (const std::exception& error) {
+                gameLog.Log("Texture worker failed: " + std::string(error.what()));
+            } catch (...) {
+                gameLog.Log("Texture worker failed with an unknown error");
+            }
+            std::lock_guard<std::mutex> lock(request->mutex);
+            request->complete = true;
+        });
+        entry->request->task = task->get_future().share();
+        enqueue([task] { (*task)(); });
     } catch (const std::exception& error) {
         gameLog.Log("Failed to start texture worker: " + std::string(error.what()));
         std::lock_guard<std::mutex> lock(entry->request->mutex);
@@ -132,7 +220,7 @@ void AssetRequestManager::startTextureRequest(const std::shared_ptr<TextureCache
 
 void AssetRequestManager::loadTextureRequest(const std::shared_ptr<TextureRequest>& request) {
 #ifdef _WIN32
-    const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const ComInitializer com;
 #endif
     std::filesystem::path resolved;
     if (request->resolver) {
@@ -163,21 +251,11 @@ void AssetRequestManager::loadTextureRequest(const std::shared_ptr<TextureReques
             request->compressedTexture = cachedTexture->compressedTexture;
             request->compressedDds = cachedTexture->compressedDds;
             request->complete = true;
-#ifdef _WIN32
-            if (SUCCEEDED(comResult)) {
-                CoUninitialize();
-            }
-#endif
             return;
         }
     }
     TextureAsset asset;
     const bool textureLoaded = loadTextureAsset(resolved, asset);
-#ifdef _WIN32
-    if (SUCCEEDED(comResult)) {
-        CoUninitialize();
-    }
-#endif
     std::lock_guard<std::mutex> lock(request->mutex);
     if (textureLoaded) {
         request->resolvedPath = std::move(resolved);

@@ -1,13 +1,16 @@
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -20,6 +23,8 @@
 #include <utility>
 #include <vector>
 
+#include "PerfTrace.h"
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -28,6 +33,8 @@
 namespace fs = std::filesystem;
 
 namespace {
+
+std::mutex textureOutputMutex;
 
 constexpr uint8_t SECTION_VERTEX_LIST = 0x17;
 constexpr uint8_t SECTION_TRIANGLE_LIST = 0x49;
@@ -261,6 +268,7 @@ std::array<float, 16> parseTransform(ByteReader& r) {
 
 Mesh parseO3D(const fs::path& input) {
     std::ifstream in(input, std::ios::binary);
+    openbus::rendering::TraceScope trace("converter", "parseO3D");
     if (!in) {
         throw ParseError("Failed to open input file: " + input.string());
     }
@@ -473,6 +481,7 @@ std::optional<fs::path> tryResolveTexture(const std::string& textureRef, const f
 }
 
 bool convertTextureToPng(const fs::path& source, const fs::path& destination) {
+    openbus::rendering::TraceScope trace("converter", "convertTextureToPng");
     if (destination.has_parent_path() && !destination.parent_path().empty()) {
         fs::create_directories(destination.parent_path());
     }
@@ -499,6 +508,7 @@ void writeObjMtl(const Mesh& mesh, const fs::path& outObj, bool flipWinding,
                  const std::unordered_set<int>* hiddenMaterialIds = nullptr,
                  const fs::path* cfgDir = nullptr, const fs::path* meshSourceDir = nullptr,
                  bool copyTextures = false, bool convertTextures = false) {
+    openbus::rendering::TraceScope trace("converter", "writeObjMtl");
     if (outObj.has_parent_path() && !outObj.parent_path().empty()) {
         fs::create_directories(outObj.parent_path());
     }
@@ -565,6 +575,7 @@ void writeObjMtl(const Mesh& mesh, const fs::path& outObj, bool flipWinding,
                         if (resolved.has_value()) {
                             const bool isDds = toLower(resolved->extension().string()) == ".dds";
                             if (convertTextures && !isDds) {
+                                std::lock_guard<std::mutex> lock(textureOutputMutex);
                                 fs::path dstTex = outMtl.parent_path() / resolved->filename();
                                 dstTex.replace_extension(".png");
                                 if (!convertTextureToPng(*resolved, dstTex)) {
@@ -573,6 +584,7 @@ void writeObjMtl(const Mesh& mesh, const fs::path& outObj, bool flipWinding,
                                 }
                                 mapKdPath = dstTex.filename().generic_string();
                             } else if (copyTextures && !isDds) {
+                                std::lock_guard<std::mutex> lock(textureOutputMutex);
                                 const fs::path dstTex = outMtl.parent_path() / resolved->filename();
                                 std::error_code ec;
                                 fs::create_directories(dstTex.parent_path(), ec);
@@ -853,6 +865,7 @@ int convertO3DSingle(const fs::path& inPath, const fs::path& outObj, bool flipWi
                      const std::unordered_set<int>* hiddenMaterialIds = nullptr,
                      const fs::path* cfgDir = nullptr, const fs::path* meshDir = nullptr,
                      bool copyTextures = false, bool convertTextures = false) {
+    openbus::rendering::TraceScope trace("converter", "convertO3DSingle");
     Mesh mesh = parseO3D(inPath);
     writeObjMtl(mesh, outObj, flipWinding, materialOverrides, opacityOverrides, hiddenMaterialIds,
                 cfgDir, meshDir, copyTextures, convertTextures);
@@ -875,79 +888,95 @@ fs::path resolveCfgMeshPath(const fs::path& cfgDir, const fs::path& meshPath) {
 }
 
 int convertCfgSingle(const fs::path& cfgPath, const fs::path& outBaseDir, bool flipWinding,
-                     bool convertTextures = false) {
+                     bool convertTextures = false, unsigned int workers = 4) {
+    openbus::rendering::TraceScope trace("converter", "convertCfgSingle");
     const fs::path cfgDir = cfgPath.parent_path();
     const ParsedCfg cfg = parseCfg(cfgPath);
 
     int errors = 0;
     std::set<std::string> converted;
+    struct Job {
+        fs::path source;
+        fs::path output;
+        CfgMeshEntry entry;
+    };
+    std::vector<Job> jobs;
     for (const auto& entry : cfg.meshes) {
+        const fs::path srcMesh = resolveCfgMeshPath(cfgDir, entry.meshPath);
+        if (!isO3DExt(srcMesh)) {
+            std::cerr << "WARN " << srcMesh << ": non-O3D mesh reference skipped\n";
+            continue;
+        }
+        if (!fs::exists(srcMesh)) {
+            std::cerr << "WARN " << srcMesh << ": missing mesh referenced by CFG\n";
+            continue;
+        }
+        fs::path outObj = outBaseDir / entry.meshPath;
+        outObj.replace_extension(".obj");
+        const std::string key =
+            srcMesh.lexically_normal().string() + "|" + outObj.lexically_normal().string();
+        if (converted.insert(key).second) {
+            jobs.push_back({srcMesh, outObj, entry});
+        }
+    }
+
+    auto convertJob = [&](const Job& job) {
         try {
-            const fs::path srcMesh = resolveCfgMeshPath(cfgDir, entry.meshPath);
-            if (!isO3DExt(srcMesh)) {
-                std::cerr << "WARN " << srcMesh << ": non-O3D mesh reference skipped\n";
-                continue;
-            }
-
-            if (!fs::exists(srcMesh)) {
-                std::cerr << "WARN " << srcMesh << ": missing mesh referenced by CFG\n";
-                continue;
-            }
-            const fs::path meshDir = srcMesh.parent_path();
-
-            fs::path outObj = outBaseDir / entry.meshPath;
-            outObj.replace_extension(".obj");
-
-            // Avoid repeated conversion of identical source->destination pairs
-            const std::string key =
-                srcMesh.lexically_normal().string() + "|" + outObj.lexically_normal().string();
-            if (!converted.insert(key).second) {
-                continue;
-            }
-
-            Mesh mesh = parseO3D(srcMesh);
-
+            const fs::path meshDir = job.source.parent_path();
+            Mesh mesh = parseO3D(job.source);
             std::unordered_map<int, std::string> resolvedMaterialOverrides;
             std::unordered_map<int, float> resolvedOpacityOverrides;
             std::unordered_set<int> resolvedHiddenMaterialIds;
-
-            for (const auto& sel : entry.materialSelectors) {
-                const int matId =
-                    findMaterialIdByTextureOccurrence(mesh, sel.textureRef, sel.occurrence);
+            for (const auto& sel : job.entry.materialSelectors) {
+                const int matId = findMaterialIdByTextureOccurrence(mesh, sel.textureRef, sel.occurrence);
                 if (matId < 0) {
-                    std::cerr << "WARN " << srcMesh << ": [matl] target not found for texture '"
+                    std::cerr << "WARN " << job.source << ": [matl] target not found for texture '"
                               << sel.textureRef << "' occurrence " << sel.occurrence << "\n";
                     continue;
                 }
-
                 resolvedMaterialOverrides[matId] = sel.textureRef;
-
                 if (sel.alphaMode == 0) {
                     resolvedOpacityOverrides[matId] = 1.0f;
                 } else if (sel.alphaMode == 1) {
                     resolvedOpacityOverrides[matId] = 0.0f;
                     resolvedHiddenMaterialIds.insert(matId);
                 }
-
                 if (sel.hideFromAlphaScale) {
                     resolvedHiddenMaterialIds.insert(matId);
-
-                    // Robust fallback: hide all material slots that use this texture,
-                    // because OMSI [matl] occurrences can vary between assets.
                     for (int id : findAllMaterialIdsByTexture(mesh, sel.textureRef)) {
                         resolvedHiddenMaterialIds.insert(id);
                     }
                 }
             }
-
-            writeObjMtl(mesh, outObj, flipWinding, &resolvedMaterialOverrides,
+            writeObjMtl(mesh, job.output, flipWinding, &resolvedMaterialOverrides,
                         &resolvedOpacityOverrides, &resolvedHiddenMaterialIds, &cfgDir, &meshDir,
                         true, convertTextures);
-            std::cout << "OK  " << srcMesh << " -> " << outObj << "\n";
+            std::cout << "OK  " << job.source << " -> " << job.output << "\n";
+            return 0;
         } catch (const std::exception& e) {
-            ++errors;
             std::cerr << "ERR " << cfgPath << ": " << e.what() << "\n";
+            return 1;
         }
+    };
+    std::atomic_size_t nextJob{0};
+    std::vector<std::future<int>> futures;
+    const unsigned int workerCount = std::min<unsigned int>(workers, jobs.size());
+    futures.reserve(workerCount);
+    for (unsigned int worker = 0; worker < workerCount; ++worker) {
+        futures.push_back(std::async(std::launch::async, [&convertJob, &jobs, &nextJob] {
+            int workerErrors = 0;
+            while (true) {
+                const std::size_t index = nextJob.fetch_add(1, std::memory_order_relaxed);
+                if (index >= jobs.size()) {
+                    break;
+                }
+                workerErrors += convertJob(jobs[index]);
+            }
+            return workerErrors;
+        }));
+    }
+    for (auto& future : futures) {
+        errors += future.get();
     }
 
     if (cfg.meshes.empty()) {
@@ -963,7 +992,12 @@ struct CliOptions {
     bool recursive = false;
     bool flipWinding = false;
     bool convertTextures = false;
+    unsigned int workers = 4;
 };
+
+unsigned int defaultWorkerCount() {
+    return 4;
+}
 
 void printUsage(const char* exeName) {
     std::cout << "Usage:\n"
@@ -978,6 +1012,7 @@ void printUsage(const char* exeName) {
               << "  --flip-winding       Flip triangle winding in generated OBJ\n"
               << "  --convert-textures   Rewrite all texture references in MTL "
                  "to convert non-DDS textures to PNG and reference the converted files\n"
+                  << "  --workers <count>    Concurrent directory O3D conversions (default 4, max 8)\n"
               << "  -h, --help           Show this message\n";
 }
 
@@ -988,6 +1023,14 @@ std::optional<CliOptions> parseArgs(int argc, char** argv) {
     }
 
     CliOptions opt;
+    opt.workers = defaultWorkerCount();
+    if (const char* configuredWorkers = std::getenv("OPENBUS_CONVERTER_WORKERS")) {
+        try {
+            opt.workers = static_cast<unsigned int>(std::clamp(std::stoi(configuredWorkers), 1, 8));
+        } catch (const std::exception&) {
+            opt.workers = 4;
+        }
+    }
     bool inputSet = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -1006,6 +1049,17 @@ std::optional<CliOptions> parseArgs(int argc, char** argv) {
         }
         if (arg == "--convert-textures") {
             opt.convertTextures = true;
+            continue;
+        }
+        if (arg == "--workers") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error("Missing value for --workers");
+            }
+            try {
+                opt.workers = static_cast<unsigned int>(std::clamp(std::stoi(argv[++i]), 1, 8));
+            } catch (const std::exception&) {
+                throw std::runtime_error("Invalid --workers value");
+            }
             continue;
         }
         if (arg == "-o" || arg == "--out") {
@@ -1064,34 +1118,56 @@ int run(const CliOptions& opt) {
         const fs::path outDir =
             opt.out.has_value() ? opt.out.value()
                                 : (opt.input.parent_path() / (opt.input.stem().string() + "_obj"));
-        errors += convertCfgSingle(opt.input, outDir, opt.flipWinding, opt.convertTextures);
+        errors += convertCfgSingle(opt.input, outDir, opt.flipWinding, opt.convertTextures,
+                       opt.workers);
         return errors == 0 ? 0 : 1;
     }
 
     if (fs::is_directory(opt.input)) {
+        openbus::rendering::TraceScope trace("converter", "convertDirectory");
         const fs::path outDir = opt.out.has_value() ? opt.out.value() : opt.input;
 
-        const auto o3dFiles = collectO3DInDirectory(opt.input, opt.recursive);
-        for (const auto& inPath : o3dFiles) {
-            try {
-                fs::path rel = fs::relative(inPath, opt.input);
-                fs::path outObj = outDir / rel;
-                outObj.replace_extension(".obj");
-                const fs::path sourceDir = inPath.parent_path();
-                errors +=
-                    convertO3DSingle(inPath, outObj, opt.flipWinding, nullptr, nullptr, nullptr,
-                                     &sourceDir, &sourceDir, false, opt.convertTextures);
-            } catch (const std::exception& e) {
-                ++errors;
-                std::cerr << "ERR " << inPath << ": " << e.what() << "\n";
-            }
+        auto o3dFiles = collectO3DInDirectory(opt.input, opt.recursive);
+        std::sort(o3dFiles.begin(), o3dFiles.end());
+        std::atomic_size_t nextO3D{0};
+        std::vector<std::future<int>> conversions;
+        const unsigned int workerCount = std::min<unsigned int>(opt.workers, o3dFiles.size());
+        conversions.reserve(workerCount);
+        for (unsigned int worker = 0; worker < workerCount; ++worker) {
+            conversions.push_back(std::async(std::launch::async, [&opt, &outDir, &o3dFiles,
+                                                                    &nextO3D] {
+                int workerErrors = 0;
+                while (true) {
+                    const std::size_t index = nextO3D.fetch_add(1, std::memory_order_relaxed);
+                    if (index >= o3dFiles.size()) {
+                        break;
+                    }
+                    try {
+                        fs::path rel = fs::relative(o3dFiles[index], opt.input);
+                        fs::path outObj = outDir / rel;
+                        outObj.replace_extension(".obj");
+                        const fs::path sourceDir = o3dFiles[index].parent_path();
+                        workerErrors += convertO3DSingle(o3dFiles[index], outObj, opt.flipWinding,
+                                                         nullptr, nullptr, nullptr, &sourceDir,
+                                                         &sourceDir, false, opt.convertTextures);
+                    } catch (const std::exception& e) {
+                        std::cerr << "ERR " << o3dFiles[index] << ": " << e.what() << "\n";
+                        ++workerErrors;
+                    }
+                }
+                return workerErrors;
+            }));
+        }
+        for (auto& conversion : conversions) {
+            errors += conversion.get();
         }
 
         const auto cfgFiles = collectCfgInDirectory(opt.input, opt.recursive);
         for (const auto& cfgPath : cfgFiles) {
             fs::path cfgRelDir = fs::relative(cfgPath.parent_path(), opt.input);
             fs::path cfgOutDir = outDir / cfgRelDir / (cfgPath.stem().string() + "_obj");
-            errors += convertCfgSingle(cfgPath, cfgOutDir, opt.flipWinding, opt.convertTextures);
+            errors += convertCfgSingle(cfgPath, cfgOutDir, opt.flipWinding, opt.convertTextures,
+                                       opt.workers);
         }
 
         if (o3dFiles.empty() && cfgFiles.empty()) {
@@ -1110,6 +1186,17 @@ int run(const CliOptions& opt) {
 
 int main(int argc, char** argv) {
     try {
+#ifdef _WIN32
+        _putenv_s("OPENBUS_TRACE", "1");
+        if (std::getenv("OPENBUS_TRACE_FILE") == nullptr) {
+            _putenv_s("OPENBUS_TRACE_FILE", "uno3d_trace.json");
+        }
+#else
+        setenv("OPENBUS_TRACE", "1", 1);
+        if (std::getenv("OPENBUS_TRACE_FILE") == nullptr) {
+            setenv("OPENBUS_TRACE_FILE", "uno3d_trace.json", 1);
+        }
+#endif
         const auto parsed = parseArgs(argc, argv);
         if (!parsed.has_value()) {
             return 0;

@@ -196,9 +196,19 @@ bool readBmpImage(const std::filesystem::path& path, Image& image) {
     if (width <= 0 || height == 0 || (bitsPerPixel != 24 && bitsPerPixel != 32)) {
         return false;
     }
+    if (height == std::numeric_limits<std::int32_t>::min()) {
+        return false;
+    }
     const int absoluteHeight = std::abs(height);
     const int channels = bitsPerPixel / 8;
+    if (static_cast<std::size_t>(width) > std::numeric_limits<std::size_t>::max() / channels) {
+        return false;
+    }
     const std::size_t rowStride = ((static_cast<std::size_t>(width) * channels + 3) / 4) * 4;
+    if (rowStride > std::numeric_limits<std::size_t>::max() /
+                        static_cast<std::size_t>(absoluteHeight)) {
+        return false;
+    }
     std::vector<std::uint8_t> source(rowStride * absoluteHeight);
     input.seekg(pixelOffset);
     input.read(reinterpret_cast<char*>(source.data()), static_cast<std::streamsize>(source.size()));
@@ -310,11 +320,15 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
         }
         return true;
     }
-    const int blocksX = (image.width + 3) / 4;
-    const int blocksY = (image.height + 3) / 4;
+    const std::size_t blocksX = (static_cast<std::size_t>(image.width) + 3) / 4;
+    const std::size_t blocksY = (static_cast<std::size_t>(image.height) + 3) / 4;
     const bool explicitAlpha = dxt2 || dxt3;
     const std::size_t blockSize = dxt5 || explicitAlpha ? 16 : 8;
-    const std::size_t requiredSize = 128 + static_cast<std::size_t>(blocksX) * blocksY * blockSize;
+    if (blocksX > std::numeric_limits<std::size_t>::max() / blocksY ||
+        blocksX * blocksY > (std::numeric_limits<std::size_t>::max() - 128) / blockSize) {
+        return false;
+    }
+    const std::size_t requiredSize = 128 + blocksX * blocksY * blockSize;
     if (data.size() < requiredSize) {
         return false;
     }

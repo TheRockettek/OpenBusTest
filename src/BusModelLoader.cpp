@@ -23,6 +23,7 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
         }
         BusModelPart part;
         part.objPath = source.objPath;
+        part.bundleEntry = source.bundleEntry;
         part.textureName = source.textureName;
         part.viewpoint = source.viewpoint;
         part.renderType = source.renderType;

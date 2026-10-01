@@ -46,6 +46,12 @@ Writes:
 ./build/bin/uno3d_converter "C:/path/to/models" -r -o "C:/converted"
 ```
 
+Directory O3D conversion uses up to four concurrent workers by default. Adjust
+the limit with `--workers`, or set `OPENBUS_CONVERTER_WORKERS` to a value from
+1 through 8. Converter profiling is enabled automatically and writes
+`uno3d_trace.json`; set `OPENBUS_TRACE_FILE` to choose another path. The trace
+contains conversion, O3D parsing, OBJ/MTL writing, and texture-conversion phases.
+
 ### Convert an OMSI model CFG (recommended for full bus models)
 
 ```powershell
@@ -57,6 +63,19 @@ Behavior in CFG mode:
 - Reads `[matl]` and `[matl_change]` texture overrides and applies them to generated MTLs.
 - Attempts to copy resolved textures next to each generated MTL for easy loading.
 - Skips non-`.o3d` mesh entries (for example `.x`) with warnings.
+
+### Build an optional OpenBus binary bundle
+
+After conversion, pack the generated OBJ meshes into one `.obx` file:
+
+```powershell
+.\build-ode\Release\obj_bundle.exe MAN_DL05\Model\DL05_obj .\DL05.obx
+```
+
+Place the result beside the converted meshes and name it `openbus.obx`.
+OpenBus uses matching bundle entries when available and falls back to the OBJ
+files otherwise. The CFG remains responsible for mesh order, visibility,
+animations, and material overrides.
 
 ### If winding is wrong in your renderer
 

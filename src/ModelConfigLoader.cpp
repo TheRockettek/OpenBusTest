@@ -178,20 +178,36 @@ void declareIfVariable(const std::string& value, Variables& variables) {
 }
 
 std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
-                                  const std::string& meshValue) {
-    // Converted OBJ files normally preserve the source subdirectory, but some
-    // converters flatten it; try both layouts before reporting a missing mesh.
+                                  const std::string& meshValue, bool includeO3D = true) {
+    // Prefer converted OBJ files, then fall back to the source O3D mesh.
     std::string normalized = trim(meshValue);
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
-    std::filesystem::path relative = normalized;
-    relative.replace_extension(".obj");
-    std::filesystem::path candidate = modelRoot / relative;
-    if (std::filesystem::exists(candidate)) {
-        return candidate;
+    const std::filesystem::path source = normalized;
+    const std::array<const char*, 2> extensions = {".obj", ".o3d"};
+    const std::size_t extensionCount = includeO3D ? extensions.size() : 1;
+    std::vector<std::filesystem::path> roots = {modelRoot};
+    if (!modelRoot.parent_path().empty()) {
+        roots.push_back(modelRoot.parent_path());
+        std::filesystem::path sourceDirectory = modelRoot.filename();
+        const std::string directoryName = sourceDirectory.string();
+        if (directoryName.size() > 4 &&
+            directoryName.substr(directoryName.size() - 4) == "_obj") {
+            sourceDirectory = directoryName.substr(0, directoryName.size() - 4);
+            roots.push_back(modelRoot.parent_path() / sourceDirectory);
+        }
     }
-    candidate = modelRoot / relative.filename();
-    if (std::filesystem::exists(candidate)) {
-        return candidate;
+    for (std::size_t extensionIndex = 0; extensionIndex < extensionCount; ++extensionIndex) {
+        const char* extension = extensions[extensionIndex];
+        std::filesystem::path relative = source;
+        relative.replace_extension(extension);
+        for (const std::filesystem::path& root : roots) {
+            for (const std::filesystem::path& candidate : {root / relative,
+                                                            root / relative.filename()}) {
+                if (std::filesystem::exists(candidate)) {
+                    return candidate;
+                }
+            }
+        }
     }
     return {};
 }
@@ -404,21 +420,38 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             currentMaterialIndex = static_cast<std::size_t>(-1);
             continue;
         }
-        // [mesh]: one source .o3d path; it is mapped to the converted .obj path.
+        // [mesh]: prefer a converted OBJ, with direct O3D loading as fallback.
         if (keyword == "mesh") {
             Line meshLine;
             if (!reader.readPayload(meshLine, result.diagnostics, "mesh")) {
                 continue;
             }
             const std::string meshValue = trim(meshLine.text);
-            const std::filesystem::path objPath = resolveMesh(modelRoot, meshValue);
+            std::filesystem::path objPath;
+            std::string bundleEntry;
+            const std::filesystem::path bundlePath = modelRoot / "openbus.obx";
+            const std::filesystem::path resolvedMesh = resolveMesh(modelRoot, meshValue, false);
+            if (!resolvedMesh.empty()) {
+                objPath = resolvedMesh;
+            } else if (std::filesystem::exists(bundlePath)) {
+                std::filesystem::path relativeMesh = meshValue;
+                relativeMesh.replace_extension(".obj");
+                bundleEntry = lower(relativeMesh.generic_string());
+                objPath = bundlePath;
+            } else {
+                objPath = resolveMesh(modelRoot, meshValue);
+            }
+            if (objPath.empty()) {
+                bundleEntry.clear();
+            }
             if (objPath.empty()) {
                 result.diagnostics.warning(meshLine.number, "mesh",
-                                           "converted mesh was not found: " + meshValue);
+                                           "mesh was not found: " + meshValue);
             }
             ModelPart newPart;
             // Store both source text and resolved path for diagnostics and export.
             newPart.objPath = objPath;
+            newPart.bundleEntry = std::move(bundleEntry);
             newPart.sourceMeshPath = meshValue;
             newPart.lodIndex = currentLodIndex;
             if (hasPendingInteriorLightIndexes) {

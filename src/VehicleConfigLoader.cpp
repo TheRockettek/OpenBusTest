@@ -16,6 +16,8 @@
 
 namespace {
 
+constexpr std::size_t MAX_CONFIG_RECORDS = 1'000'000;
+
 using openbus::config::Line;
 using openbus::config::lower;
 using openbus::config::parseDouble;
@@ -369,6 +371,10 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                 !parseInt(countLine.text, count) || count < 0) {
                 result.diagnostics.error(line.number, keyword,
                                          "expected a non-negative entry count");
+                continue;
+            }
+            if (static_cast<std::size_t>(count) > MAX_CONFIG_RECORDS) {
+                result.diagnostics.error(line.number, keyword, "entry count is too large");
                 continue;
             }
             std::vector<std::string> values;

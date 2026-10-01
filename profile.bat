@@ -19,5 +19,7 @@ set "OPENBUS_TRACE_FILE=openbus_trace.json"
 set "OPENBUS_TRACE_MAX_EVENTS=500000"
 set "OPENBUS_TRACE_MIN_US=1"
 
+set "OPENBUS_ASSET_WORKERS=4"
+
 
 cmake -S . -B build-ode -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake && cmake --build build-ode --config Release && .\build-ode\Release\OpenBus.exe

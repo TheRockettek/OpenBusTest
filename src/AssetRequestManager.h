@@ -4,11 +4,14 @@
 #include "TextureAssetLoader.h"
 
 #include <filesystem>
+#include <condition_variable>
+#include <queue>
 #include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -43,13 +46,14 @@ class AssetRequestManager {
         bool uploadAttempted = false;
     };
 
-    AssetRequestManager() = default;
+    AssetRequestManager();
     ~AssetRequestManager();
 
     AssetRequestManager(const AssetRequestManager&) = delete;
     AssetRequestManager& operator=(const AssetRequestManager&) = delete;
 
-    std::shared_future<std::shared_ptr<ParsedObj>> requestObj(const std::filesystem::path& path);
+    std::shared_future<std::shared_ptr<ParsedObj>> requestObj(
+        const std::filesystem::path& path, const std::string& bundleEntry = {});
     std::shared_ptr<TextureCacheEntry> requestTexture(const std::filesystem::path& root,
                                                       const std::filesystem::path& path,
                                                       const std::string& name,
@@ -70,6 +74,8 @@ class AssetRequestManager {
                                   const std::filesystem::path& path, const std::string& name);
     static std::string textureAliasKey(const std::filesystem::path& root,
                                        const std::filesystem::path& path, const std::string& name);
+    void enqueue(std::function<void()> task);
+    void workerLoop();
     void loadTextureRequest(const std::shared_ptr<TextureRequest>& request);
 
     std::mutex parsedObjMutex_;
@@ -80,6 +86,11 @@ class AssetRequestManager {
     std::mutex decodedTextureMutex_;
     std::unordered_map<std::string, std::shared_ptr<DecodedTexture>> decodedTextureCache_;
     std::vector<TextureHandle> textures_;
+    std::mutex workerMutex_;
+    std::condition_variable workerCondition_;
+    std::queue<std::function<void()>> workerQueue_;
+    bool stoppingWorkers_ = false;
+    std::vector<std::thread> workers_;
 };
 
 } // namespace openbus::rendering

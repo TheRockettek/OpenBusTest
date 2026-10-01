@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(OpenBus VERSION 0.1.0 LANGUAGES CXX)
 
+enable_testing()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -134,6 +136,7 @@ add_executable(OpenBus
     src/TextureAssetLoader.cpp
     src/TextureLoader.cpp
     src/ObjLoader.cpp
+    src/O3DLoader.cpp
     src/OpenGLFunctions.cpp
     src/ScriptRuntime.cpp
     src/SoundEngine.cpp
@@ -192,12 +195,32 @@ add_executable(OpenBusVariablesProbe
     src/Variables.cpp
 )
 target_include_directories(OpenBusVariablesProbe PRIVATE src)
+add_test(NAME OpenBusVariablesProbe COMMAND OpenBusVariablesProbe)
+add_test(NAME OpenBusPhysicsProbe COMMAND OpenBusPhysicsProbe)
+
+add_executable(OpenBusO3DLoaderProbe
+    tests/O3DLoaderProbe.cpp
+    src/O3DLoader.cpp
+    src/PerfTrace.cpp
+)
+target_include_directories(OpenBusO3DLoaderProbe PRIVATE src)
+add_test(NAME OpenBusO3DLoaderProbe
+         COMMAND OpenBusO3DLoaderProbe ${CMAKE_CURRENT_SOURCE_DIR}/uno3d/SitzeU.o3d)
 
 add_executable(uno3d_converter
     uno3d/o3d_to_obj.cpp
+    src/PerfTrace.cpp
 )
 
 target_include_directories(uno3d_converter SYSTEM PRIVATE ${stb_SOURCE_DIR})
+target_include_directories(uno3d_converter PRIVATE src)
+
+add_executable(obj_bundle
+    tools/obj_bundle.cpp
+    src/ObjLoader.cpp
+    src/PerfTrace.cpp
+)
+target_include_directories(obj_bundle PRIVATE src)
 
 if(MSVC)
     target_compile_options(OpenBus PRIVATE /W4 /permissive-)

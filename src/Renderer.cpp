@@ -1446,8 +1446,13 @@ struct Vehicle {
 
     void spawn() {
         TraceScope trace("obj", "spawn");
+        std::vector<std::pair<Part*, std::shared_future<std::shared_ptr<ParsedObj>>>> requests;
+        requests.reserve(pendingParts.size());
         for (Part& part : pendingParts) {
-            loadObj(part, parsedObjFuture(part.objPath).get());
+            requests.emplace_back(&part, parsedObjFuture(part.objPath, part.bundleEntry));
+        }
+        for (const auto& request : requests) {
+            loadObj(*request.first, request.second.get());
         }
         pendingParts.clear();
         rebuildDisplayOrder();
@@ -2148,8 +2153,8 @@ struct Vehicle {
     }
 
     std::shared_future<std::shared_ptr<ParsedObj>>
-    parsedObjFuture(const std::filesystem::path& path) {
-        return assets->requestObj(path);
+    parsedObjFuture(const std::filesystem::path& path, const std::string& bundleEntry = {}) {
+        return assets->requestObj(path, bundleEntry);
     }
 
     void loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed) {
@@ -2229,6 +2234,9 @@ struct Vehicle {
                              const MaterialState& materialState) {
             TraceScope batchTrace("obj", "loadObj.makeBatch");
             std::vector<Vertex> vertices;
+            if (source.size() > std::numeric_limits<std::size_t>::max() / 3) {
+                throw std::runtime_error("triangle vertex count overflow");
+            }
             vertices.reserve(source.size() * 3);
             const auto convertPosition = [](const ObjPosition& position) {
                 return std::array<double, 3>{position.y, -position.x, position.z};
@@ -2490,6 +2498,11 @@ struct Vehicle {
                                                         : std::filesystem::path(state.textureName);
             std::vector<const MaterialState*>& states =
                 materialStatesByStemOccurrence[lower(statePath.stem().string())];
+            if (state.materialIndex > 10000) {
+                gameLog.Log("Ignoring out-of-range material index " +
+                            std::to_string(state.materialIndex));
+                continue;
+            }
             if (state.materialIndex >= 0) {
                 if (states.size() <= static_cast<std::size_t>(state.materialIndex)) {
                     states.resize(static_cast<std::size_t>(state.materialIndex) + 1, nullptr);
@@ -2732,7 +2745,7 @@ struct Vehicle {
                 continue;
             }
             part.objRequest = std::make_shared<ObjRequest>();
-            part.objRequest->future = parsedObjFuture(part.objPath);
+            part.objRequest->future = parsedObjFuture(part.objPath, part.bundleEntry);
             ++activeObjWorkers;
         }
 
@@ -2752,7 +2765,7 @@ struct Vehicle {
             }
             std::shared_ptr<ParsedObj> parsed;
             if (!part->objRequest) {
-                parsed = parsedObjFuture(part->objPath).get();
+                parsed = parsedObjFuture(part->objPath, part->bundleEntry).get();
             } else {
                 parsed = part->objRequest->future.get();
             }
