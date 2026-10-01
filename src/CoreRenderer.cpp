@@ -173,6 +173,9 @@ void main() {
     if (uAlphaMode == 1 && color.a < 0.5) {
         discard;
     }
+    if (uAlphaMode == 3 && color.a < 0.99) {
+        discard;
+    }
     fragmentColor = color;
 }
 )GLSL";
