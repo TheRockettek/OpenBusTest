@@ -1,23 +1,27 @@
 #include "PerfTrace.h"
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
-#include <chrono>
-#include <cstdint>
 #include <cstdlib>
+#include <string>
+
+#if OPENBUS_ENABLE_PERF_TRACE
+#include <atomic>
+#include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <mutex>
 #include <limits>
-#include <string>
+#include <mutex>
 #include <thread>
 #include <utility>
 #include <vector>
+#endif
 
 namespace openbus::rendering {
+#if OPENBUS_ENABLE_PERF_TRACE
 namespace {
 
 struct TraceEvent {
@@ -211,6 +215,7 @@ PerfTraceState& perfTrace() {
 }
 
 } // namespace
+#endif
 
 bool parseEnabledFlag(const char* value) {
     if (value == nullptr) {
@@ -223,6 +228,7 @@ bool parseEnabledFlag(const char* value) {
     return lowered == "1" || lowered == "true" || lowered == "on" || lowered == "yes";
 }
 
+#if OPENBUS_ENABLE_PERF_TRACE
 void Flush() {
     perfTrace().flush();
 }
@@ -239,5 +245,6 @@ TraceScope::~TraceScope() {
         perfTrace().pushDuration(category_, name_, startTimestampUs_);
     }
 }
+#endif
 
 } // namespace openbus::rendering

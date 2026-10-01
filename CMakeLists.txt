@@ -17,6 +17,21 @@ option(OPENBUS_ENABLE_IPO
     "Enable interprocedural/link-time optimization for Release builds"
     ON)
 
+option(OPENBUS_ENABLE_PERF_TRACE
+       "Compile performance tracing instrumentation"
+       OFF)
+
+if(OPENBUS_ENABLE_PERF_TRACE)
+    set(OPENBUS_PERF_TRACE_DEFINE 1)
+else()
+    set(OPENBUS_PERF_TRACE_DEFINE 0)
+endif()
+
+function(openbus_configure_perf_trace target)
+    target_compile_definitions(${target} PRIVATE
+        OPENBUS_ENABLE_PERF_TRACE=${OPENBUS_PERF_TRACE_DEFINE})
+endfunction()
+
 if(OPENBUS_ENABLE_CLANG_TIDY)
     find_program(OPENBUS_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
     set(CMAKE_CXX_CLANG_TIDY "${OPENBUS_CLANG_TIDY_EXECUTABLE}")
@@ -144,6 +159,7 @@ add_executable(OpenBus
     src/osc/osc.cpp
 )
 
+openbus_configure_perf_trace(OpenBus)
 target_include_directories(OpenBus PRIVATE src)
 target_include_directories(OpenBus PRIVATE src/osc)
 add_library(OpenBusLua SHARED IMPORTED)
@@ -188,6 +204,7 @@ add_executable(OpenBusPhysicsProbe
     src/Variables.cpp
 )
 
+openbus_configure_perf_trace(OpenBusPhysicsProbe)
 target_include_directories(OpenBusPhysicsProbe PRIVATE src)
 target_link_libraries(OpenBusPhysicsProbe PRIVATE ${OPENBUS_ODE_TARGET})
 
@@ -211,6 +228,7 @@ add_executable(OpenBusO3DLoaderProbe
     src/O3DLoader.cpp
     src/PerfTrace.cpp
 )
+openbus_configure_perf_trace(OpenBusO3DLoaderProbe)
 target_include_directories(OpenBusO3DLoaderProbe PRIVATE src)
 add_test(NAME OpenBusO3DLoaderProbe
          COMMAND OpenBusO3DLoaderProbe ${CMAKE_CURRENT_SOURCE_DIR}/uno3d/SitzeU.o3d)
@@ -219,6 +237,7 @@ add_executable(uno3d_converter
     uno3d/o3d_to_obj.cpp
     src/PerfTrace.cpp
 )
+openbus_configure_perf_trace(uno3d_converter)
 
 target_include_directories(uno3d_converter SYSTEM PRIVATE ${stb_SOURCE_DIR})
 target_include_directories(uno3d_converter PRIVATE src)
@@ -228,6 +247,7 @@ add_executable(obj_bundle
     src/ObjLoader.cpp
     src/PerfTrace.cpp
 )
+openbus_configure_perf_trace(obj_bundle)
 target_include_directories(obj_bundle PRIVATE src)
 
 if(MSVC)

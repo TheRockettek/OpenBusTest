@@ -22,4 +22,4 @@ set "OPENBUS_TRACE_MIN_US=1"
 set "OPENBUS_ASSET_WORKERS=4"
 
 
-cmake -S . -B build-ode -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake && cmake --build build-ode --config Release && .\build-ode\Release\OpenBus.exe
+cmake -S . -B build-ode -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DOPENBUS_ENABLE_PERF_TRACE=ON && cmake --build build-ode --config Release && .\build-ode\Release\OpenBus.exe
