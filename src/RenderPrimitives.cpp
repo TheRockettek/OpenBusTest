@@ -239,10 +239,9 @@ void drawGround(const std::vector<RoadBump>& bumps) {
         const double halfWidth = bump.width * 0.5;
         const double segmentLength = bump.length / ROAD_BUMP_SEGMENTS;
         for (int segment = 0; segment < ROAD_BUMP_SEGMENTS; ++segment) {
-            const double phase = (static_cast<double>(segment) + 0.5) / ROAD_BUMP_SEGMENTS;
-            const double height = bump.height * (phase <= 0.5 ? phase * 2.0 : (1.0 - phase) * 2.0);
             const double minX = bump.centerX - bump.length * 0.5 + segment * segmentLength;
             const double maxX = minX + segmentLength;
+            const double height = roadFeatureHeightAt(bump, (minX + maxX) * 0.5 - bump.centerX);
             addBox(maxX - minX, halfWidth * 2.0, height, (minX + maxX) * 0.5, bump.centerY, 0.0,
                    {0.72, 0.46, 0.18}, {0.48, 0.28, 0.10});
         }

@@ -3,11 +3,18 @@
 #include <algorithm>
 
 double roadFeatureHeightAt(const RoadBump& feature, double localX) {
-    if (feature.type != RoadFeatureType::Incline || feature.length <= 0.0) {
+    if (feature.length <= 0.0) {
         return 0.0;
     }
     const double phase = std::clamp((localX + feature.length * 0.5) / feature.length, 0.0, 1.0);
-    return feature.height * phase * phase * phase;
+    if (feature.type == RoadFeatureType::Incline) {
+        return feature.height * phase * phase * phase;
+    }
+    if (feature.type == RoadFeatureType::Hump) {
+        const double profile = phase <= 0.5 ? phase * 2.0 : (1.0 - phase) * 2.0;
+        return feature.height * profile;
+    }
+    return 0.0;
 }
 
 const std::vector<RoadBump>& defaultRoadBumps() {

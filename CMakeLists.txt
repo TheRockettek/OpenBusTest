@@ -199,6 +199,13 @@ target_include_directories(OpenBusVariablesProbe PRIVATE src)
 add_test(NAME OpenBusVariablesProbe COMMAND OpenBusVariablesProbe)
 add_test(NAME OpenBusPhysicsProbe COMMAND OpenBusPhysicsProbe)
 
+add_executable(OpenBusRoadFeaturesProbe
+    tests/RoadFeaturesProbe.cpp
+    src/RoadFeatures.cpp
+)
+target_include_directories(OpenBusRoadFeaturesProbe PRIVATE src)
+add_test(NAME OpenBusRoadFeaturesProbe COMMAND OpenBusRoadFeaturesProbe)
+
 add_executable(OpenBusO3DLoaderProbe
     tests/O3DLoaderProbe.cpp
     src/O3DLoader.cpp
