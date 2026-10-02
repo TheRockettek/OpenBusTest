@@ -28,7 +28,9 @@ class Reader {
   public:
     explicit Reader(std::vector<std::uint8_t> data) : data_(std::move(data)) {}
 
-    std::size_t remaining() const { return data_.size() - offset_; }
+    std::size_t remaining() const {
+        return data_.size() - offset_;
+    }
 
     std::uint8_t u8() {
         ensure(1);
@@ -93,8 +95,7 @@ struct O3DVertexDecodeState {
 };
 
 O3DVertexDecodeState makeVertexDecodeState(std::uint8_t version, std::uint8_t options,
-                                           std::uint32_t encryptionKey,
-                                           std::uint32_t vertexCount) {
+                                           std::uint32_t encryptionKey, std::uint32_t vertexCount) {
     O3DVertexDecodeState state;
     if (version <= 3 || encryptionKey == 0xFFFFFFFFu || encryptionKey == 0xFFFFu) {
         return state;
@@ -208,11 +209,11 @@ double determinant(const std::array<double, 16>& transform) {
 
 void calculateBounds(ParsedObj& result) {
     std::array<double, 3> minimum = {std::numeric_limits<double>::max(),
-                                      std::numeric_limits<double>::max(),
-                                      std::numeric_limits<double>::max()};
+                                     std::numeric_limits<double>::max(),
+                                     std::numeric_limits<double>::max()};
     std::array<double, 3> maximum = {std::numeric_limits<double>::lowest(),
-                                      std::numeric_limits<double>::lowest(),
-                                      std::numeric_limits<double>::lowest()};
+                                     std::numeric_limits<double>::lowest(),
+                                     std::numeric_limits<double>::lowest()};
     for (const ObjPosition& position : result.positions) {
         const std::array<double, 3> converted = {position.y, -position.x, position.z};
         for (int axis = 0; axis < 3; ++axis) {
@@ -300,15 +301,15 @@ std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
                     const std::uint32_t second = readIndex();
                     const std::uint32_t third = readIndex();
                     const std::uint16_t material = reader.u16();
-                                        const int firstIndex = static_cast<int>(first + 1);
-                                        const int secondIndex = static_cast<int>(second + 1);
-                                        const int thirdIndex = static_cast<int>(third + 1);
-                                        ObjTriangle triangle;
-                                        triangle.indices = {{{firstIndex, firstIndex, firstIndex},
-                                                                                 {secondIndex, secondIndex, secondIndex},
-                                                                                 {thirdIndex, thirdIndex, thirdIndex}}};
-                                        triangle.material = "matl_" + std::to_string(material);
-                                        result->triangles.push_back(std::move(triangle));
+                    const int firstIndex = static_cast<int>(first + 1);
+                    const int secondIndex = static_cast<int>(second + 1);
+                    const int thirdIndex = static_cast<int>(third + 1);
+                    ObjTriangle triangle;
+                    triangle.indices = {{{firstIndex, firstIndex, firstIndex},
+                                         {secondIndex, secondIndex, secondIndex},
+                                         {thirdIndex, thirdIndex, thirdIndex}}};
+                    triangle.material = "matl_" + std::to_string(material);
+                    result->triangles.push_back(std::move(triangle));
                 }
                 break;
             }
@@ -323,8 +324,7 @@ std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
                     material.emission = {reader.f32(), reader.f32(), reader.f32()};
                     material.specularPower = reader.f32();
                     material.textureName = reader.string();
-                    result->materials.emplace("matl_" + std::to_string(index),
-                                              std::move(material));
+                    result->materials.emplace("matl_" + std::to_string(index), std::move(material));
                 }
                 break;
             }

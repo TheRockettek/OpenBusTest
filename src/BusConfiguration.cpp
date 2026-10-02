@@ -19,8 +19,7 @@
 namespace {
 
 constexpr double DEFAULT_WHEEL_HALF_WIDTH = 0.145;
-constexpr const char* DEFAULT_OMSI_ROOT =
-    R"(C:\Program Files (x86)\Steam\steamapps\common\OMSI 2)";
+constexpr const char* DEFAULT_OMSI_ROOT = R"(C:\Program Files (x86)\Steam\steamapps\common\OMSI 2)";
 
 std::filesystem::path omsiRootPath() {
     if (const char* configuredRoot = std::getenv("OPENBUS_OMSI_ROOT");
@@ -43,9 +42,7 @@ std::filesystem::path resolveConfiguredBusPath(const std::filesystem::path& conf
     }
     const std::filesystem::path root = omsiRootPath();
     const std::array<std::filesystem::path, 5> candidates = {
-        root / relative,
-        relative,
-        std::filesystem::current_path() / relative,
+        root / relative, relative, std::filesystem::current_path() / relative,
         std::filesystem::current_path().parent_path() / relative,
         std::filesystem::current_path().parent_path().parent_path() / relative};
     for (const auto& candidate : candidates) {
@@ -169,14 +166,13 @@ std::filesystem::path modelConfigurationPathForBus(const std::filesystem::path& 
     return modelConfigPath;
 }
 
-std::filesystem::path modelConfigurationPathForBus(
-    const std::filesystem::path& busConfigPath, const std::filesystem::path& configuredPath) {
+std::filesystem::path modelConfigurationPathForBus(const std::filesystem::path& busConfigPath,
+                                                   const std::filesystem::path& configuredPath) {
     openbus::rendering::TraceScope trace("config", "modelConfigurationPathForBus.explicit");
     const std::filesystem::path modelConfigPath =
         resolveConfiguredModelPath(busConfigPath, configuredPath);
     if (!std::filesystem::exists(modelConfigPath)) {
-        throw std::runtime_error("Configured bus model was not found: " +
-                                 modelConfigPath.string());
+        throw std::runtime_error("Configured bus model was not found: " + modelConfigPath.string());
     }
     return modelConfigPath;
 }

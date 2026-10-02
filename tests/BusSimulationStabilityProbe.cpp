@@ -52,6 +52,16 @@ int main(int argc, char** argv) {
         argc > steeringArgument ? std::stod(argv[steeringArgument]) : 1.0;
     BusSimulation simulation(caetanoConfiguration(useConfiguredInertia),
                              VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    BusSimulation scriptTorqueSimulation(caetanoConfiguration(useConfiguredInertia),
+                                          VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    const double scriptTorqueStartX = scriptTorqueSimulation.positionX();
+    for (int step = 0; step < 600; ++step) {
+        scriptTorqueSimulation.stepWithWheelTorque(25000.0, 0.0, 0.0);
+    }
+    if (scriptTorqueSimulation.positionX() - scriptTorqueStartX < 0.5) {
+        std::cerr << "Script-produced wheel torque did not move the vehicle\n";
+        return 1;
+    }
     double settledRoll = 0.0;
     double settledPitch = 0.0;
     double straightRoll = 0.0;

@@ -29,7 +29,7 @@ class Variables {
     bool has(const std::string& name) const;
     double get(const std::string& name) const;
     void set(const std::string& name, double value);
-    
+
     bool hasString(const std::string& name) const;
     std::string getString(const std::string& name) const;
     void setString(const std::string& name, const std::string& value);

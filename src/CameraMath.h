@@ -11,7 +11,7 @@ using Matrix4 = std::array<double, 16>;
 void setPerspective(double width, double height, double fieldOfView);
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ);
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ,
-			double upX, double upY, double upZ);
+            double upX, double upY, double upZ);
 void applyPose(const BodyPose& pose);
 void pushMatrix();
 void popMatrix();

@@ -190,8 +190,7 @@ std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
         roots.push_back(modelRoot.parent_path());
         std::filesystem::path sourceDirectory = modelRoot.filename();
         const std::string directoryName = sourceDirectory.string();
-        if (directoryName.size() > 4 &&
-            directoryName.substr(directoryName.size() - 4) == "_obj") {
+        if (directoryName.size() > 4 && directoryName.substr(directoryName.size() - 4) == "_obj") {
             sourceDirectory = directoryName.substr(0, directoryName.size() - 4);
             roots.push_back(modelRoot.parent_path() / sourceDirectory);
         }
@@ -201,8 +200,8 @@ std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
         std::filesystem::path relative = source;
         relative.replace_extension(extension);
         for (const std::filesystem::path& root : roots) {
-            for (const std::filesystem::path& candidate : {root / relative,
-                                                            root / relative.filename()}) {
+            for (const std::filesystem::path& candidate :
+                 {root / relative, root / relative.filename()}) {
                 if (std::filesystem::exists(candidate)) {
                     return candidate;
                 }
@@ -641,10 +640,12 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         // [mouseevent]: one event identifier; the event behavior is script-defined.
         if (keyword == "mouseevent") {
-            if (requirePart() != nullptr) {
+            ModelPart* current = requirePart();
+            if (current != nullptr) {
                 Line value;
-                // Consume the event identifier so the next keyword stays aligned.
-                reader.readPayload(value, result.diagnostics, keyword);
+                if (reader.readPayload(value, result.diagnostics, keyword)) {
+                    current->mouseEvent = lower(trim(value.text));
+                }
             }
             continue;
         }

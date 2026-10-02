@@ -37,6 +37,13 @@ class ScriptRuntime {
     void update(bool isAiVehicle);
     void invokeEntryPoint(const std::string& functionName);
     void invokeSystemTrigger(const std::string& triggerName);
+    void invokeInputEvent(const std::string& keyName, bool pressed);
+    void invokeKeyBinding(const std::string& bindingName, bool pressed);
+    void invokeMouseEvent(const std::string& eventName);
+    bool hasScriptEntryPoint(const std::string& functionName) const;
+    void invokeMouseRelease(const std::string& eventName);
+    void invokeMouseDrag(const std::string& eventName, double deltaX, double deltaY, double cursorX,
+                         double cursorY);
     void configureScriptTextures(const std::vector<ModelScriptTexture>& definitions);
     void configureTextTextures(const std::vector<ModelTextTexture>& definitions);
     bool copyScriptTexture(int index, ScriptTextureSnapshot& snapshot) const;

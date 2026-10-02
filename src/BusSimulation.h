@@ -19,7 +19,11 @@ class BusSimulation {
 
     // Accumulates wall-clock time and advances ODE in fixed-size steps.
     void update(double elapsedSeconds, double throttle, double steering = 0.0, double brake = 0.0);
+    // Applies script-produced total wheel torque while retaining ODE tire/contact physics.
+    void updateWithWheelTorque(double elapsedSeconds, double wheelTorque, double steering = 0.0,
+                               double brake = 0.0);
     void step(double throttle, double steering = 0.0, double brake = 0.0);
+    void stepWithWheelTorque(double wheelTorque, double steering = 0.0, double brake = 0.0);
     void updateVariables(openbus::scripting::Vehicle& variables, double throttle, double steering,
                          double brake) const;
     double positionX() const;

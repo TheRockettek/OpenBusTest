@@ -265,7 +265,6 @@ SoundEngine::SoundEngine()
 SoundEngine::~SoundEngine() = default;
 
 void SoundEngine::load(const std::filesystem::path& configPath) {
-    triggers_.clear();
     basePath_ = configPath.parent_path();
     if (configPath.empty()) {
         return;
@@ -282,7 +281,7 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
     std::vector<std::string> currentTriggerNames;
     const auto updateCurrentTriggers = [&]() {
         for (const std::string& name : currentTriggerNames) {
-            triggers_[name] = current;
+            triggers_[lower(name)] = current;
         }
     };
     openbus::config::Line line;
@@ -371,7 +370,7 @@ void SoundEngine::setListenerDistance(double distance) {
 
 void SoundEngine::trigger(const std::string& name, const std::filesystem::path& overrideFile,
                           double controlValue) {
-    const auto found = triggers_.find((name));
+    const auto found = triggers_.find(lower(name));
     if (found == triggers_.end() && overrideFile.empty()) {
         soundLog.Log("Skipping unknown sound trigger: " + name);
         return;
@@ -408,9 +407,8 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
     }
     if (gain <= 0.0) {
         soundLog.Log("Skipping silent sound: trigger=" + name +
-                     " distance=" + std::to_string(listenerDistance_) +
-                     " maxDistance=" + std::to_string(maxDistance) +
-                     " gain=" + std::to_string(gain));
+                     " distance=" + std::to_string(listenerDistance_) + " maxDistance=" +
+                     std::to_string(maxDistance) + " gain=" + std::to_string(gain));
         return;
     }
     const std::filesystem::path file =
@@ -419,8 +417,8 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
             : (overrideFile.is_absolute() ? overrideFile : basePath_ / overrideFile);
     soundLog.Log("Attempting sound playback: trigger=" + name + " file=" + file.string() +
                  " distance=" + std::to_string(listenerDistance_) +
-                 " maxDistance=" + std::to_string(maxDistance) +
-                 " gain=" + std::to_string(gain) + " loop=" + (loop ? "true" : "false"));
+                 " maxDistance=" + std::to_string(maxDistance) + " gain=" + std::to_string(gain) +
+                 " loop=" + (loop ? "true" : "false"));
 #ifdef _WIN32
     const std::wstring widePath = file.wstring();
     const DWORD flags = SND_FILENAME | SND_ASYNC | SND_NODEFAULT | (loop ? SND_LOOP : 0);

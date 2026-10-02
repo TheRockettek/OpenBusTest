@@ -106,6 +106,7 @@ struct ModelPart {
     bool isShadow = false;
     std::string meshIdentifier;
     std::string animationParent;
+    std::string mouseEvent;
     std::string visibleVariable;
     int visibleValue = 0;
     std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};

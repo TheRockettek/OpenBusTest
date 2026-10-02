@@ -132,6 +132,9 @@ SystemVariables::SystemVariables() : Variables(ScriptObjectKind::System) {
         {"month", static_cast<double>(localDate.tm_mon + 1)},
         {"year", static_cast<double>(localDate.tm_year + 1900)},
         {"dayofyear", static_cast<double>(localDate.tm_yday)},
+        // These are initialized for the system-variable contract. updateFrame()
+        // supplies the live cursor position, and ScriptRuntime temporarily
+        // overwrites them with OMSI drag deltas while invoking a drag handler.
         {"mouse_x", 0.0},
         {"mouse_y", 0.0},
         {"preciptype", 0.0},

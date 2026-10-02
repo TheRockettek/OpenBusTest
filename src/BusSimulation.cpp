@@ -66,8 +66,7 @@ constexpr int ROAD_RAMP_SEGMENTS = 6;
 constexpr int ROAD_INCLINE_SEGMENTS = 128;
 
 bool hasValidMomentOfInertia(const BusConfiguration& configuration) {
-    return std::all_of(configuration.momentOfInertia.begin(),
-                       configuration.momentOfInertia.end(),
+    return std::all_of(configuration.momentOfInertia.begin(), configuration.momentOfInertia.end(),
                        [](double value) { return std::isfinite(value) && value > 0.0; });
 }
 
@@ -300,8 +299,8 @@ struct BusSimulation::Impl {
         indices.reserve(ROAD_BUMP_SEGMENTS * 8 * 3 + 12);
         for (int station = 0; station < stationCount; ++station) {
             const dReal localX = segmentLength * station - feature.length * 0.5;
-            const dReal height = static_cast<dReal>(
-                roadFeatureHeightAt(feature, static_cast<double>(localX)));
+            const dReal height =
+                static_cast<dReal>(roadFeatureHeightAt(feature, static_cast<double>(localX)));
             const dReal x = startX + segmentLength * station;
             const dReal yNegative = static_cast<dReal>(feature.centerY) - halfWidth;
             const dReal yPositive = static_cast<dReal>(feature.centerY) + halfWidth;
@@ -405,8 +404,8 @@ struct BusSimulation::Impl {
 
     Impl(BusConfiguration vehicle, VehiclePlacement vehiclePlacement, double physicsHz,
          int catchUpSteps)
-        : configuration(std::move(vehicle)), placement(vehiclePlacement), fixedStep(1.0 / physicsHz),
-          maxCatchUpSteps(catchUpSteps) {
+        : configuration(std::move(vehicle)), placement(vehiclePlacement),
+          fixedStep(1.0 / physicsHz), maxCatchUpSteps(catchUpSteps) {
         if (physicsHz <= 0.0 || catchUpSteps <= 0) {
             simulationLog.Log("Invalid physics timing configuration");
             throw std::invalid_argument("Physics rate and catch-up steps must be positive");
@@ -483,8 +482,7 @@ struct BusSimulation::Impl {
         const dReal staticCompression = std::clamp(configuration.mass * std::abs(GRAVITY) /
                                                        (corners.size() * averageSpringRate),
                                                    0.0, SUSP_MAX_TRAVEL * 0.9);
-        const dReal placementYaw =
-            static_cast<dReal>(placement.yawDegrees * PI / 180.0);
+        const dReal placementYaw = static_cast<dReal>(placement.yawDegrees * PI / 180.0);
         dMatrix3 placementRotation;
         dRFromAxisAndAngle(placementRotation, 0.0, 0.0, 1.0, placementYaw);
         dBodySetPosition(chassis, placement.position[0], placement.position[1],
@@ -536,9 +534,8 @@ struct BusSimulation::Impl {
             for (int row = 0; row < 3; ++row) {
                 for (int column = 0; column < 3; ++column) {
                     for (int inner = 0; inner < 3; ++inner) {
-                        wheelRotation[row * 4 + column] +=
-                            placementRotation[row * 4 + inner] *
-                            localWheelRotation[inner * 4 + column];
+                        wheelRotation[row * 4 + column] += placementRotation[row * 4 + inner] *
+                                                           localWheelRotation[inner * 4 + column];
                     }
                 }
             }
@@ -651,7 +648,7 @@ struct BusSimulation::Impl {
         }
     }
 
-    void applyCornerForces(double throttle, double steering, double brake) {
+    void applyCornerForces(double driveCommand, double steering, double brake, bool scriptDriven) {
         openbus::rendering::TraceScope trace("physics", "BusSimulation::applyCornerForces");
         refreshWheelTelemetry();
         const dReal* velocity = dBodyGetLinearVel(chassis);
@@ -666,34 +663,39 @@ struct BusSimulation::Impl {
         const dReal maxSteerDelta = STEER_SPEED * static_cast<dReal>(fixedStep);
         steeringAngle += std::clamp(steerTarget - steeringAngle, -maxSteerDelta, maxSteerDelta);
 
-        const dReal engineWheelRadius = [&] {
-            for (std::size_t axleIndex = 0; axleIndex < configuration.axles.size(); ++axleIndex) {
-                if (configuration.axles[axleIndex].driven) {
-                    return corners[axleIndex * 2].wheelRadius;
+        dReal driveTorque = static_cast<dReal>(driveCommand);
+        if (!scriptDriven) {
+            const dReal engineWheelRadius = [&] {
+                for (std::size_t axleIndex = 0; axleIndex < configuration.axles.size();
+                     ++axleIndex) {
+                    if (configuration.axles[axleIndex].driven) {
+                        return corners[axleIndex * 2].wheelRadius;
+                    }
                 }
+                return corners.front().wheelRadius;
+            }();
+            const dReal wheelRpm =
+                std::abs(longitudinalSpeed) / (2.0 * PI * engineWheelRadius) * 60.0;
+            const dReal ratio = GEAR_RATIOS[currentGear] * FINAL_DRIVE;
+            const dReal engineRpm = std::clamp(wheelRpm * ratio, ENGINE_IDLE_RPM, ENGINE_REDLINE);
+            if (shiftTimer <= 0.0 && engineRpm > UPSHIFT_RPM && currentGear + 1 < NUM_GEARS) {
+                ++currentGear;
+                shiftTimer = SHIFT_LOCKOUT;
+                simulationLog.Log("Upshifted to gear " + std::to_string(currentGear + 1));
+            } else if (shiftTimer <= 0.0 && engineRpm < DOWNSHIFT_RPM && currentGear > 0) {
+                --currentGear;
+                shiftTimer = SHIFT_LOCKOUT;
+                simulationLog.Log("Downshifted to gear " + std::to_string(currentGear + 1));
             }
-            return corners.front().wheelRadius;
-        }();
-        const dReal wheelRpm = std::abs(longitudinalSpeed) / (2.0 * PI * engineWheelRadius) * 60.0;
-        const dReal ratio = GEAR_RATIOS[currentGear] * FINAL_DRIVE;
-        const dReal engineRpm = std::clamp(wheelRpm * ratio, ENGINE_IDLE_RPM, ENGINE_REDLINE);
-        if (shiftTimer <= 0.0 && engineRpm > UPSHIFT_RPM && currentGear + 1 < NUM_GEARS) {
-            ++currentGear;
-            shiftTimer = SHIFT_LOCKOUT;
-            simulationLog.Log("Upshifted to gear " + std::to_string(currentGear + 1));
-        } else if (shiftTimer <= 0.0 && engineRpm < DOWNSHIFT_RPM && currentGear > 0) {
-            --currentGear;
-            shiftTimer = SHIFT_LOCKOUT;
-            simulationLog.Log("Downshifted to gear " + std::to_string(currentGear + 1));
-        }
-        shiftTimer = std::max(0.0, shiftTimer - fixedStep);
+            shiftTimer = std::max(0.0, shiftTimer - fixedStep);
 
-        const dReal torqueFactor = std::clamp(1.0 - std::abs(engineRpm - ENGINE_RATED_RPM) /
-                                                        (ENGINE_REDLINE - ENGINE_IDLE_RPM),
-                                              0.35, 1.0);
-        const dReal engineTorque = PEAK_TORQUE * torqueFactor;
-        const dReal throttleValue = std::clamp(static_cast<dReal>(throttle), -1.0, 1.0);
-        const dReal driveTorque = throttleValue * engineTorque * ratio * DRIVETRAIN_EFF;
+            const dReal torqueFactor = std::clamp(1.0 - std::abs(engineRpm - ENGINE_RATED_RPM) /
+                                                            (ENGINE_REDLINE - ENGINE_IDLE_RPM),
+                                                  0.35, 1.0);
+            const dReal engineTorque = PEAK_TORQUE * torqueFactor;
+            const dReal throttleValue = std::clamp(static_cast<dReal>(driveCommand), -1.0, 1.0);
+            driveTorque = throttleValue * engineTorque * ratio * DRIVETRAIN_EFF;
+        }
         std::size_t drivenAxles = 0;
         for (const BusAxle& axle : configuration.axles) {
             drivenAxles += axle.driven ? 1U : 0U;
@@ -799,28 +801,53 @@ struct BusSimulation::Impl {
                               localAngularY * BODY_ATTITUDE_DAMPING,
                           0.0);
 
-        if (std::abs(throttle) < 0.01 && (brake < 0.01 || std::abs(longitudinalSpeed) < 0.15) &&
+        if (std::abs(driveTorque) < 0.01 && (brake < 0.01 || std::abs(longitudinalSpeed) < 0.15) &&
             std::abs(longitudinalSpeed) < 0.08 && std::abs(lateralSpeed) < 0.08 &&
             std::abs(yawRate) < 0.08) {
             dBodySetLinearVel(chassis, 0.0, 0.0, velocity[2]);
             dBodySetAngularVel(chassis, 0.0, 0.0, 0.0);
         }
     }
-    void fixedUpdate(double throttle, double steering, double brake) {
+    void fixedUpdate(double driveCommand, double steering, double brake, bool scriptDriven) {
         openbus::rendering::TraceScope trace("physics", "BusSimulation::fixedUpdate");
-        applyCornerForces(throttle, steering, brake);
+        applyCornerForces(driveCommand, steering, brake, scriptDriven);
         dSpaceCollide(ode.space, this, &nearCallback);
         dWorldStep(ode.world, fixedStep);
         dJointGroupEmpty(ode.contacts);
         refreshWheelTelemetry();
         simulationTime += fixedStep;
     }
+
+    void update(double elapsedSeconds, double driveCommand, double steering, double brake,
+                bool scriptDriven) {
+        openbus::rendering::TraceScope trace("physics", "BusSimulation::update");
+        accumulator += std::clamp(elapsedSeconds, 0.0, MAX_FRAME_SECONDS);
+        lastSteps = 0;
+        dropped = false;
+        while (accumulator >= fixedStep && lastSteps < maxCatchUpSteps) {
+            fixedUpdate(driveCommand, steering, brake, scriptDriven);
+            accumulator -= fixedStep;
+            ++lastSteps;
+        }
+        if (accumulator >= fixedStep) {
+            dropped = true;
+            if (!dropReported) {
+                simulationLog.Log("Dropped accumulated simulation time after exceeding catch-up "
+                                  "limit. Dropped frames: " +
+                                  std::to_string(accumulator));
+                dropReported = true;
+            }
+            accumulator = std::fmod(accumulator, fixedStep);
+        } else {
+            dropReported = false;
+        }
+    }
 };
 
 BusSimulation::BusSimulation(BusConfiguration configuration, VehiclePlacement placement,
                              double physicsHz, int maxCatchUpSteps)
-    : impl_(std::make_unique<Impl>(std::move(configuration), placement, physicsHz,
-                                   maxCatchUpSteps)) {
+    : impl_(
+          std::make_unique<Impl>(std::move(configuration), placement, physicsHz, maxCatchUpSteps)) {
     openbus::rendering::TraceScope trace("startup", "BusSimulation::BusSimulation");
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }
@@ -831,42 +858,20 @@ BusSimulation::~BusSimulation() {
 }
 
 void BusSimulation::update(double elapsedSeconds, double throttle, double steering, double brake) {
-    openbus::rendering::TraceScope trace("physics", "BusSimulation::update");
-    {
-        openbus::rendering::TraceScope phase("physics", "BusSimulation::update.accumulate");
-        impl_->accumulator += std::clamp(elapsedSeconds, 0.0, MAX_FRAME_SECONDS);
-        impl_->lastSteps = 0;
-        impl_->dropped = false;
-    }
-    {
-        openbus::rendering::TraceScope phase("physics", "BusSimulation::update.fixedSteps");
-        while (impl_->accumulator >= impl_->fixedStep &&
-               impl_->lastSteps < impl_->maxCatchUpSteps) {
-            impl_->fixedUpdate(throttle, steering, brake);
-            impl_->accumulator -= impl_->fixedStep;
-            ++impl_->lastSteps;
-        }
-    }
-    {
-        openbus::rendering::TraceScope phase("physics", "BusSimulation::update.catchUpPolicy");
-        if (impl_->accumulator >= impl_->fixedStep) {
-            impl_->dropped = true;
-            if (!impl_->dropReported) {
-                simulationLog.Log("Dropped accumulated simulation time after exceeding catch-up "
-                                  "limit. Dropped frames: " +
-                                  std::to_string(impl_->accumulator));
-                impl_->dropReported = true;
-            }
+    impl_->update(elapsedSeconds, throttle, steering, brake, false);
+}
 
-            impl_->accumulator = std::fmod(impl_->accumulator, impl_->fixedStep);
-        } else {
-            impl_->dropReported = false;
-        }
-    }
+void BusSimulation::updateWithWheelTorque(double elapsedSeconds, double wheelTorque,
+                                          double steering, double brake) {
+    impl_->update(elapsedSeconds, wheelTorque, steering, brake, true);
 }
 
 void BusSimulation::step(double throttle, double steering, double brake) {
-    impl_->fixedUpdate(throttle, steering, brake);
+    impl_->fixedUpdate(throttle, steering, brake, false);
+}
+
+void BusSimulation::stepWithWheelTorque(double wheelTorque, double steering, double brake) {
+    impl_->fixedUpdate(wheelTorque, steering, brake, true);
 }
 
 void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, double throttle,
@@ -877,6 +882,8 @@ void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, doub
     variables.set("velocity_ground", speed());
     variables.set("steering", std::clamp(steering, -1.0, 1.0));
     variables.set("steeringangle", steeringAngle());
+    double drivenWheelSpeed = 0.0;
+    std::size_t drivenWheelCount = 0;
     for (std::size_t index = 0; index < impl_->corners.size(); ++index) {
         const std::size_t axleIndex = index / 2;
         const char* side = index % 2 == 0 ? "l" : "r";
@@ -886,7 +893,14 @@ void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, doub
         variables.set("axle_suspension" + prefix, impl_->corners[index].springCompression);
         variables.set("axle_steering_" + std::to_string(axleIndex) + "_" + side,
                       dJointGetHingeAngle(impl_->corners[index].steeringJoint));
+        if (impl_->configuration.axles[axleIndex].driven) {
+            drivenWheelSpeed += impl_->corners[index].wheelOmega;
+            ++drivenWheelCount;
+        }
     }
+    variables.set("n_wheel", drivenWheelCount == 0
+                                 ? 0.0
+                                 : drivenWheelSpeed / static_cast<double>(drivenWheelCount));
 }
 
 double BusSimulation::positionX() const {

@@ -1508,8 +1508,8 @@ class BytecodeCompiler {
                 consume();
             if (is("end"))
                 consume();
-            std::cerr << "Warning: treating stray {endif} as end of {" << header.val
-                      << "} at line " << strayEndif.line << "\n";
+            std::cerr << "Warning: treating stray {endif} as end of {" << header.val << "} at line "
+                      << strayEndif.line << "\n";
         } else if (peek().type == TT::Eof) {
             std::cerr << "Warning: EOF inside {" << header.val
                       << "}; treating it as an implicit {end}\n";

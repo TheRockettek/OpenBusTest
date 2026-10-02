@@ -27,6 +27,11 @@ against one unambiguous support matrix.
 - [x] Fixed-rate ODE stepping with bounded catch-up.
 - [x] Per-wheel suspension, steering, wheel rotation, braking, and telemetry.
 - [x] Independent axle suspension and live ODE wheel rendering mode.
+- [x] Raw W/A/S/D input seeds player throttle, steering, and brake variables
+  before each physics update. The live vehicle path runs scripts first, then
+  applies the script-produced `M_Wheel` as wheel torque; the E400 scripts own
+  engine state and Voith gear selection. The legacy throttle-based drivetrain
+  remains only for standalone physics probes.
 - [~] High-speed bump stability: local-axis damping, softened contact response,
   and steering-rate damping are implemented, but there is no automated stress
   test for repeated bumps while accelerating and steering.
@@ -113,6 +118,13 @@ change from their controlling variables without manual texture replacement.
   cameras, model assembly, animations, parents, visibility, and wheel data
   are loaded for the current vehicles. `[friendlyname]`, `[description]`,
   and `[type]` are still consumed without being exposed to the runtime.
+- [~] `[mouseevent]` identifiers are retained on model parts, and W/A/S/D
+  transitions are dispatched to the player script runtime as key state and
+  optional key-specific entry points. Exact transformed triangle picking is
+  active, including hand-cursor hover feedback, captured `trigger_<event>` /
+  `trigger_<event>_drag` callbacks, matching `trigger_<event>_off` release
+  callbacks, and the `I`-key clickable wireframe overlay; configurable key
+  maps remain incomplete.
 - [~] BUS asset references for `[paths]`, `[passengercabin]`, `[sound_ai]`,
   `[number]`, and `[registration_list]` are normalized and retained. The
   passenger-cabin CFG is now loaded for driver/passenger positions,
@@ -158,9 +170,12 @@ by parser alignment and should not be described as supported:
   initial `number` string are active and covered by `OpenBusVehicleConfigProbe`.
 - AI/network vehicle sections, coupling/cable behavior, and articulated
   multi-body physics despite the articulated flag being parsed.
-- `[texttexture]`/`[texttexture_enh]` font rasterization and text display
-  updates, plus `[interiorlight]`, `[light_enh]`, `[light_enh_2]`, and
-  `[spotlight]` light emission.
+- Authored OMSI font-file matching for `[texttexture]`/`[texttexture_enh]`; the
+  runtime uses its deterministic built-in bitmap font. `[interiorlight]`,
+  `[light_enh]`, `[light_enh_2]`, and `[spotlight]` light emission remain
+  incomplete.
+- Configurable keyboard binding files and the complete OMSI input action map;
+  the current runtime dispatches physical W/A/S/D transitions to scripts.
 - Remaining script system data providers such as route, terminus, ticket,
   passenger-count, ground-height, and arrival-board lookups; safe fallbacks
   remain in `ScriptRuntime`.

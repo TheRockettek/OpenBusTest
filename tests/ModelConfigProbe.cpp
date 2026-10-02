@@ -17,6 +17,7 @@ int main() {
     std::ofstream config(configPath);
     config << "[scripttexture]\n64\n16\n0\n"
               "[mesh]\ndisplay.obj\n"
+              "[mouseevent]\nRouteDisplay\n"
               "[matl]\ndisplay.bmp\n0\n"
               "[usescripttexture]\n0\n"
               "[texttexture]\nroute_display\nfont\n128\n32\n"
@@ -32,6 +33,7 @@ int main() {
         result.scriptTextures.size() != 1 || result.scriptTextures[0].slot != 0 ||
         result.scriptTextures[0].width != 64 || result.scriptTextures[0].height != 16 ||
         result.textTextures.size() != 1 || result.textTextures[0].slot != 0 ||
+        result.parts[0].mouseEvent != "routedisplay" ||
         result.parts[0].materialStatesInOrder.size() != 1 ||
         result.parts[0].materialStatesInOrder[0].scriptTextureIndex != 0 ||
         result.parts[0].materialStatesInOrder[0].textTextureIndex != 0) {

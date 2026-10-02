@@ -26,19 +26,19 @@ namespace {
 
 #ifdef _WIN32
 class ComInitializer {
-    public:
-        ComInitializer() : initialized_(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) {}
-        ~ComInitializer() {
-                if (initialized_) {
-                        CoUninitialize();
-                }
+  public:
+    ComInitializer() : initialized_(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) {}
+    ~ComInitializer() {
+        if (initialized_) {
+            CoUninitialize();
         }
+    }
 
-        ComInitializer(const ComInitializer&) = delete;
-        ComInitializer& operator=(const ComInitializer&) = delete;
+    ComInitializer(const ComInitializer&) = delete;
+    ComInitializer& operator=(const ComInitializer&) = delete;
 
-    private:
-        bool initialized_;
+  private:
+    bool initialized_;
 };
 #endif
 
@@ -56,7 +56,8 @@ AssetRequestManager::AssetRequestManager() {
     if (const char* configuredWorkers = std::getenv("OPENBUS_ASSET_WORKERS")) {
         try {
             workerCount = static_cast<std::size_t>(
-                std::clamp(std::stoi(configuredWorkers), 1, static_cast<int>(std::thread::hardware_concurrency())));
+                std::clamp(std::stoi(configuredWorkers), 1,
+                           static_cast<int>(std::thread::hardware_concurrency())));
         } catch (const std::exception&) {
             workerCount = 4;
         }
@@ -100,9 +101,8 @@ void AssetRequestManager::workerLoop() {
         std::function<void()> task;
         {
             std::unique_lock<std::mutex> lock(workerMutex_);
-            workerCondition_.wait(lock, [this] {
-                return stoppingWorkers_ || !workerQueue_.empty();
-            });
+            workerCondition_.wait(lock,
+                                  [this] { return stoppingWorkers_ || !workerQueue_.empty(); });
             if (stoppingWorkers_ && workerQueue_.empty()) {
                 return;
             }
@@ -134,23 +134,21 @@ std::string AssetRequestManager::textureAliasKey(const std::filesystem::path& ro
 }
 
 std::shared_future<std::shared_ptr<ParsedObj>>
-AssetRequestManager::requestObj(const std::filesystem::path& path,
-                                const std::string& bundleEntry) {
+AssetRequestManager::requestObj(const std::filesystem::path& path, const std::string& bundleEntry) {
     const std::string key = normalizedPathKey(path) + "|" + lower(bundleEntry);
     std::lock_guard<std::mutex> lock(parsedObjMutex_);
     const auto cached = parsedObjCache_.find(key);
     if (cached != parsedObjCache_.end()) {
         return cached->second;
     }
-    auto task = std::make_shared<std::packaged_task<std::shared_ptr<ParsedObj>()>>(
-        [path, bundleEntry] {
+    auto task =
+        std::make_shared<std::packaged_task<std::shared_ptr<ParsedObj>()>>([path, bundleEntry] {
             std::string extension = path.extension().string();
-            std::transform(extension.begin(), extension.end(), extension.begin(),
-                           [](unsigned char character) {
-                               return static_cast<char>(std::tolower(character));
-                           });
+            std::transform(
+                extension.begin(), extension.end(), extension.begin(),
+                [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
             return extension == ".o3d" ? O3DLoader::parse(path)
-                                        : ObjLoader::parse(path, bundleEntry);
+                                       : ObjLoader::parse(path, bundleEntry);
         });
     std::shared_future<std::shared_ptr<ParsedObj>> future = task->get_future().share();
     enqueue([task] { (*task)(); });

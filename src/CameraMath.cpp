@@ -110,10 +110,9 @@ void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double target
     const double correctedUpY = sideZ * forwardX - sideX * forwardZ;
     const double correctedUpZ = sideX * forwardY - sideY * forwardX;
 
-    const Matrix4 rotation = {sideX, correctedUpX, -forwardX, 0.0,
-                              sideY, correctedUpY, -forwardY, 0.0,
-                              sideZ, correctedUpZ, -forwardZ, 0.0,
-                              0.0,   0.0,          0.0,       1.0};
+    const Matrix4 rotation = {
+        sideX, correctedUpX, -forwardX, 0.0, sideY, correctedUpY, -forwardY, 0.0,
+        sideZ, correctedUpZ, -forwardZ, 0.0, 0.0,   0.0,          0.0,       1.0};
     const Matrix4 translation = {1.0, 0.0, 0.0, 0.0, 0.0,   1.0,   0.0,   0.0,
                                  0.0, 0.0, 1.0, 0.0, -eyeX, -eyeY, -eyeZ, 1.0};
     cachedModelViewMatrix = multiply(rotation, translation);

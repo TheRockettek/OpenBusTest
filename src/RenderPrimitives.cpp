@@ -99,6 +99,25 @@ void drawBox(double length, double width, double height, double red, double gree
     drawLineList(vertices);
 }
 
+void drawWireframeTriangles(const std::vector<std::array<double, 3>>& positions, double red,
+                            double green, double blue) {
+    if (positions.size() < 3) {
+        return;
+    }
+    const std::array<double, 3> color = {red, green, blue};
+    std::vector<PrimitiveVertex> vertices;
+    vertices.reserve((positions.size() / 3) * 6);
+    for (std::size_t index = 0; index + 2 < positions.size(); index += 3) {
+        const auto& first = positions[index];
+        const auto& second = positions[index + 1];
+        const auto& third = positions[index + 2];
+        for (const auto& point : {first, second, second, third, third, first}) {
+            vertices.push_back(vertex(point[0], point[1], point[2], color));
+        }
+    }
+    drawLineList(vertices, 1.5f);
+}
+
 void drawRoadBox(double centerX, double centerY, double length, double width, double height,
                  double bottomZ, const std::array<double, 3>& topColor,
                  const std::array<double, 3>& sideColor) {

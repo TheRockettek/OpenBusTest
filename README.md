@@ -182,9 +182,39 @@ derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
 
 ## Renderer controls
 
-- `W`: throttle
-- `S`: brake
-- `A` / `D`: steer
+Vehicle script bindings use named keyboard keys rather than OMSI numeric key
+codes. Pressing an action calls `trigger_<action>`; releasing it calls
+`trigger_<action>_off`.
+
+| Key | Vehicle actions |
+| --- | --- |
+| Num8 | `throttle` |
+| Num2 | `brake` |
+| Num4 / Num5 / Num6 | `steering_left` / `steering_neutral` / `steering_right` |
+| Tab | `clutch` |
+| Num+ | `throttle_amplify`, `bus_doorfront5` |
+| T | `ticket_give` |
+| Shift+T / Ctrl+T | `change_take` / `change_give` |
+| `.` | `parking_brake_toggle` |
+| Num7 / Num9 / Num. | `blinker_left_set` / `blinker_right_set` / `blinker_off` |
+| B | `blinker_warn_toggle` |
+| L / Shift+L | `kw_scheinwerfer_toggle` / `kw_standlicht_toggle` |
+| F / Ctrl+F | `kw_fernlicht_toggle` / `taster_nebelschluss` |
+| M | `kw_m_enginestart` |
+| W / Shift+W / Ctrl+W | `kw_wipermode_up` / `cp_wischer_intervall_toggle` / `cp_wischer_wascher_button` |
+| H | `horn` |
+| Q | `cp_microphone` |
+| E | `cp_batterietrennschalter_toggle` |
+| 6 / 7 / 8 / 9 | `cp_fahrerlicht_toggle` / `cp_licht_untenrechts_toggle` / `cp_licht_oberdeck_toggle` / `cp_licht_unterdeck_toggle` |
+| R / N | `kw_s_R`, `automatic_R` / `kw_s_N`, `automatic_N` |
+| 1 / 2 / 3 / 4 / 5 / 6 | `kw_s_1` / `kw_s_2` / `kw_s_3` / `kw_s_4` / `kw_s_5` / `kw_s_6` |
+| D | `automatic_D` |
+| Num/ / Num* / Num- / Scroll Lock | `bus_doorfront0` / `bus_doorfront1` / `bus_dooraft` / `bus_20h-switch` |
+| F5 / F6 / F7 / F8 | `bus_linie_minus` / `bus_ziel_minus` / `bus_ziel_plus` / `bus_linie_plus` |
+| F12 | `cp_schalter_kinderwagen` |
+| `[` / `/` | `kw_s_plus` / `kw_s_minus` |
+
+Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - `0`: outside orbit camera
 - `1`-`9`: cameras from the selected `.bus` file in driver/passenger order
 - Left/right arrow: step through driver/passenger cameras in file order

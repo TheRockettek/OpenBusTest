@@ -52,8 +52,8 @@ class AssetRequestManager {
     AssetRequestManager(const AssetRequestManager&) = delete;
     AssetRequestManager& operator=(const AssetRequestManager&) = delete;
 
-    std::shared_future<std::shared_ptr<ParsedObj>> requestObj(
-        const std::filesystem::path& path, const std::string& bundleEntry = {});
+    std::shared_future<std::shared_ptr<ParsedObj>> requestObj(const std::filesystem::path& path,
+                                                              const std::string& bundleEntry = {});
     std::shared_ptr<TextureCacheEntry> requestTexture(const std::filesystem::path& root,
                                                       const std::filesystem::path& path,
                                                       const std::string& name,

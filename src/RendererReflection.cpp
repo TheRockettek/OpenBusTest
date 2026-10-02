@@ -85,8 +85,7 @@ struct ReflectionRenderer::Impl {
         target.height = size;
 
         glBindTexture(GL_TEXTURE_2D, target.texture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                     nullptr);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glBindTexture(GL_TEXTURE_2D, target.depthTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, size, size, 0, GL_DEPTH_COMPONENT,
                      GL_FLOAT, nullptr);
@@ -137,8 +136,8 @@ void ReflectionRenderer::initialize(const std::vector<VehicleCamera>& cameras) {
         glBindTexture(GL_TEXTURE_2D, target.depthTexture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, impl_->maximumSize,
-                     impl_->maximumSize, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, impl_->maximumSize, impl_->maximumSize,
+                     0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
 
         pglGenFramebuffers(1, &target.framebuffer);
         pglBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
@@ -222,9 +221,8 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
             std::tan(std::clamp(reflectionFieldOfView, kMinFieldOfView, kMaxFieldOfView) *
                      3.141592653589793 / 360.0);
         const int desiredSize = std::max(
-            requirement.size,
-            static_cast<int>(std::ceil(requirement.size * referenceFovScale /
-                                       std::max(reflectionFovScale, 0.001))));
+            requirement.size, static_cast<int>(std::ceil(requirement.size * referenceFovScale /
+                                                         std::max(reflectionFovScale, 0.001))));
         int targetSize = kMinReflectionTargetSize;
         while (targetSize < desiredSize && targetSize < impl_->maximumSize) {
             targetSize *= 2;
@@ -279,8 +277,7 @@ void ReflectionRenderer::renderDebugOverlay(GLFWwindow* window, bool enabled) co
         const float leftPixels = gapPixels + column * (tilePixels + gapPixels);
         const float topPixels = gapPixels + row * (tilePixels + gapPixels);
         const float left = -1.0f + 2.0f * leftPixels / static_cast<float>(width);
-        const float bottom =
-            1.0f - 2.0f * (topPixels + tilePixels) / static_cast<float>(height);
+        const float bottom = 1.0f - 2.0f * (topPixels + tilePixels) / static_cast<float>(height);
         drawTextureQuad(impl_->targets[index].texture, left, bottom,
                         2.0f * tilePixels / static_cast<float>(width),
                         2.0f * tilePixels / static_cast<float>(height));

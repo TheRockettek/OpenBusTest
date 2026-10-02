@@ -32,7 +32,8 @@ int main() {
             modelConfigPath = modelConfigurationPathForBus(busConfigPath);
             const char* configuredAiBusPath = std::getenv("OPENBUS_AI_BUS_CONFIG");
             const char* configuredAiModelPath = std::getenv("OPENBUS_AI_MODEL_CONFIG");
-            const bool hasAiBusPath = configuredAiBusPath != nullptr && *configuredAiBusPath != '\0';
+            const bool hasAiBusPath =
+                configuredAiBusPath != nullptr && *configuredAiBusPath != '\0';
             const bool hasAiModelPath =
                 configuredAiModelPath != nullptr && *configuredAiModelPath != '\0';
             if (hasAiBusPath != hasAiModelPath) {
@@ -84,9 +85,9 @@ int main() {
         BusSimulation simulation(configuration, busPlacement);
 
         RenderLoop renderer(1280, 720, "OpenBus");
-        Vehicle* playerVehicle = renderer.AddVehicle(
-            busConfigPath, modelConfigPath, busPlacement,
-            {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+        Vehicle* playerVehicle =
+            renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
+                                {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
         renderer.SetPlayerVehicle(playerVehicle);
         if (!aiBusConfigPath.empty()) {
             renderer.AddVehicle(aiBusConfigPath, aiModelConfigPath, aiPlacement,
@@ -112,9 +113,11 @@ int main() {
             const std::vector<KeyEvent> frameKeyEvents = renderer.consumeKeyEvents();
             pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(),
                                     frameKeyEvents.end());
-            simulation.update(elapsed, renderer.throttle(), renderer.steering(), renderer.brake());
             renderer.updatePlayerVariables(simulation, renderer.throttle(), renderer.steering(),
                                            renderer.brake());
+            simulation.updateWithWheelTorque(elapsed, renderer.physicsWheelTorque(),
+                                             renderer.physicsSteering(), renderer.physicsBrake());
+            renderer.updatePostPhysicsVariables(simulation);
             renderer.draw(simulation);
 
             if (renderer.consumeCaptureRequest()) {

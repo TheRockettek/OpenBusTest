@@ -69,7 +69,7 @@ Envir_Brightness 🔒
 StreetCond 🔒
 Spot_Select
 Colorscheme 🔒
-M_Wheel
+M_Wheel (script-produced wheel torque consumed by the live physics path)
 n_Wheel 🔒
 Throttle, Brake & Clutch 🔒
 Brakeforce

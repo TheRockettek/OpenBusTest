@@ -145,6 +145,8 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
         writeJsonString(output, part.meshIdentifier);
         output << ",\n      \"animation_parent\": ";
         writeJsonString(output, part.animationParent);
+        output << ",\n      \"mouse_event\": ";
+        writeJsonString(output, part.mouseEvent);
         output << ",\n      \"visibility\": {\"variable\": ";
         writeJsonString(output, part.visibleVariable);
         output << ",\"value\": " << part.visibleValue
@@ -214,8 +216,8 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
             writeJsonString(output, material.lightmapStrengthVariable);
             output << ",\"free_texture_variable\":";
             writeJsonString(output, material.freeTextureVariable);
-                        output << ",\"script_texture_index\":" << material.scriptTextureIndex
-                                     << ",\"text_texture_index\":" << material.textTextureIndex;
+            output << ",\"script_texture_index\":" << material.scriptTextureIndex
+                   << ",\"text_texture_index\":" << material.textTextureIndex;
             output << ",\"texcoord_trans_x_variable\":";
             writeJsonString(output, material.texcoordTransXVariable);
             output << ",\"texcoord_trans_y_variable\":";

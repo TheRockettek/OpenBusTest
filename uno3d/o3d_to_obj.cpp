@@ -928,7 +928,8 @@ int convertCfgSingle(const fs::path& cfgPath, const fs::path& outBaseDir, bool f
             std::unordered_map<int, float> resolvedOpacityOverrides;
             std::unordered_set<int> resolvedHiddenMaterialIds;
             for (const auto& sel : job.entry.materialSelectors) {
-                const int matId = findMaterialIdByTextureOccurrence(mesh, sel.textureRef, sel.occurrence);
+                const int matId =
+                    findMaterialIdByTextureOccurrence(mesh, sel.textureRef, sel.occurrence);
                 if (matId < 0) {
                     std::cerr << "WARN " << job.source << ": [matl] target not found for texture '"
                               << sel.textureRef << "' occurrence " << sel.occurrence << "\n";
@@ -1012,7 +1013,7 @@ void printUsage(const char* exeName) {
               << "  --flip-winding       Flip triangle winding in generated OBJ\n"
               << "  --convert-textures   Rewrite all texture references in MTL "
                  "to convert non-DDS textures to PNG and reference the converted files\n"
-                  << "  --workers <count>    Concurrent directory O3D conversions (default 4, max 8)\n"
+              << "  --workers <count>    Concurrent directory O3D conversions (default 4, max 8)\n"
               << "  -h, --help           Show this message\n";
 }
 
@@ -1118,8 +1119,8 @@ int run(const CliOptions& opt) {
         const fs::path outDir =
             opt.out.has_value() ? opt.out.value()
                                 : (opt.input.parent_path() / (opt.input.stem().string() + "_obj"));
-        errors += convertCfgSingle(opt.input, outDir, opt.flipWinding, opt.convertTextures,
-                       opt.workers);
+        errors +=
+            convertCfgSingle(opt.input, outDir, opt.flipWinding, opt.convertTextures, opt.workers);
         return errors == 0 ? 0 : 1;
     }
 
@@ -1135,7 +1136,7 @@ int run(const CliOptions& opt) {
         conversions.reserve(workerCount);
         for (unsigned int worker = 0; worker < workerCount; ++worker) {
             conversions.push_back(std::async(std::launch::async, [&opt, &outDir, &o3dFiles,
-                                                                    &nextO3D] {
+                                                                  &nextO3D] {
                 int workerErrors = 0;
                 while (true) {
                     const std::size_t index = nextO3D.fetch_add(1, std::memory_order_relaxed);

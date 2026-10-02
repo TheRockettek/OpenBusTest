@@ -45,130 +45,133 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* excepti
     try {
         crashLog.Log("Crash detected: " + std::string(reason));
 
-    std::ofstream report("game.crash", std::ios::out | std::ios::trunc);
-    if (!report.is_open()) {
-        return;
-    }
-
-    report << "OpenBus crash report\n"
-           << "Reason: " << reason << "\n";
-    if (exceptionCode != 0) {
-        report << "Exception: " << exceptionName(exceptionCode) << " (0x" << std::hex
-               << exceptionCode << std::dec << ")\n";
-    }
-    if (exceptionAddress != nullptr) {
-        report << "Exception address: " << exceptionAddress << "\n";
-    }
-    if (exceptionInfo != nullptr && exceptionInfo->ExceptionRecord != nullptr &&
-        exceptionCode == EXCEPTION_ACCESS_VIOLATION &&
-        exceptionInfo->ExceptionRecord->NumberParameters >= 2) {
-        const ULONG_PTR operation = exceptionInfo->ExceptionRecord->ExceptionInformation[0];
-        const ULONG_PTR target = exceptionInfo->ExceptionRecord->ExceptionInformation[1];
-        report << "Access: "
-               << (operation == 0   ? "read"
-                   : operation == 1 ? "write"
-                                    : "execute")
-               << " at " << reinterpret_cast<const void*>(target) << "\n";
-    }
-
-    if (exceptionInfo != nullptr && exceptionInfo->ExceptionRecord != nullptr) {
-        const EXCEPTION_RECORD& record = *exceptionInfo->ExceptionRecord;
-        report << "Exception flags: 0x" << std::hex << record.ExceptionFlags << std::dec << "\n";
-        report << "Exception parameters: " << record.NumberParameters << "\n";
-        for (ULONG index = 0; index < record.NumberParameters; ++index) {
-            report << "  parameter[" << index << "]: 0x" << std::hex
-                   << record.ExceptionInformation[index] << std::dec << "\n";
+        std::ofstream report("game.crash", std::ios::out | std::ios::trunc);
+        if (!report.is_open()) {
+            return;
         }
-    }
 
-    if (exceptionInfo != nullptr && exceptionInfo->ContextRecord != nullptr) {
-        const CONTEXT& context = *exceptionInfo->ContextRecord;
-        report << "Thread ID: " << GetCurrentThreadId() << "\n"
-               << "Registers: RIP=0x" << std::hex << context.Rip << " RSP=0x" << context.Rsp
-               << " RBP=0x" << context.Rbp << " RAX=0x" << context.Rax << " RBX=0x" << context.Rbx
-               << " RCX=0x" << context.Rcx << " RDX=0x" << context.Rdx << " RSI=0x" << context.Rsi
-               << " RDI=0x" << context.Rdi << " R8=0x" << context.R8 << " R9=0x" << context.R9
-               << " R10=0x" << context.R10 << " R11=0x" << context.R11 << " R12=0x" << context.R12
-               << " R13=0x" << context.R13 << " R14=0x" << context.R14 << " R15=0x" << context.R15
-               << std::dec << "\n";
-    }
-
-    HANDLE process = GetCurrentProcess();
-    SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-    if (SymInitialize(process, nullptr, TRUE)) {
-        CONTEXT context = {};
-        STACKFRAME64 frame = {};
-        DWORD machineType = IMAGE_FILE_MACHINE_AMD64;
-        if (exceptionInfo != nullptr && exceptionInfo->ContextRecord != nullptr) {
-            context = *exceptionInfo->ContextRecord;
-            frame.AddrPC.Offset = context.Rip;
-            frame.AddrFrame.Offset = context.Rbp;
-            frame.AddrStack.Offset = context.Rsp;
-        } else {
-            RtlCaptureContext(&context);
-            frame.AddrPC.Offset = context.Rip;
-            frame.AddrFrame.Offset = context.Rbp;
-            frame.AddrStack.Offset = context.Rsp;
+        report << "OpenBus crash report\n"
+               << "Reason: " << reason << "\n";
+        if (exceptionCode != 0) {
+            report << "Exception: " << exceptionName(exceptionCode) << " (0x" << std::hex
+                   << exceptionCode << std::dec << ")\n";
         }
-        frame.AddrPC.Mode = AddrModeFlat;
-        frame.AddrFrame.Mode = AddrModeFlat;
-        frame.AddrStack.Mode = AddrModeFlat;
-        report << "Stack trace:\n";
-        for (int index = 0; index < 64; ++index) {
-            const DWORD64 address = frame.AddrPC.Offset;
-            if (address == 0) {
-                break;
+        if (exceptionAddress != nullptr) {
+            report << "Exception address: " << exceptionAddress << "\n";
+        }
+        if (exceptionInfo != nullptr && exceptionInfo->ExceptionRecord != nullptr &&
+            exceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+            exceptionInfo->ExceptionRecord->NumberParameters >= 2) {
+            const ULONG_PTR operation = exceptionInfo->ExceptionRecord->ExceptionInformation[0];
+            const ULONG_PTR target = exceptionInfo->ExceptionRecord->ExceptionInformation[1];
+            report << "Access: "
+                   << (operation == 0   ? "read"
+                       : operation == 1 ? "write"
+                                        : "execute")
+                   << " at " << reinterpret_cast<const void*>(target) << "\n";
+        }
+
+        if (exceptionInfo != nullptr && exceptionInfo->ExceptionRecord != nullptr) {
+            const EXCEPTION_RECORD& record = *exceptionInfo->ExceptionRecord;
+            report << "Exception flags: 0x" << std::hex << record.ExceptionFlags << std::dec
+                   << "\n";
+            report << "Exception parameters: " << record.NumberParameters << "\n";
+            for (ULONG index = 0; index < record.NumberParameters; ++index) {
+                report << "  parameter[" << index << "]: 0x" << std::hex
+                       << record.ExceptionInformation[index] << std::dec << "\n";
             }
-            alignas(SYMBOL_INFO) char symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME] = {};
-            auto* symbol = reinterpret_cast<PSYMBOL_INFO>(symbolBuffer);
-            symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
-            symbol->MaxNameLen = MAX_SYM_NAME;
-            DWORD64 displacement = 0;
-            IMAGEHLP_LINE64 line = {};
-            line.SizeOfStruct = sizeof(line);
-            DWORD lineDisplacement = 0;
-            IMAGEHLP_MODULE64 module = {};
-            module.SizeOfStruct = sizeof(module);
-            const bool hasModule = SymGetModuleInfo64(process, address, &module) != FALSE;
-            report << "  #" << index << " 0x" << std::hex << address << std::dec;
-            if (SymFromAddr(process, address, &displacement, symbol)) {
-                report << " " << (hasModule ? module.ModuleName : "?") << "!" << symbol->Name
-                       << "+0x" << std::hex << displacement << std::dec;
-                if (SymGetLineFromAddr64(process, address, &lineDisplacement, &line)) {
-                    report << " (" << line.FileName << ":" << line.LineNumber << ")";
+        }
+
+        if (exceptionInfo != nullptr && exceptionInfo->ContextRecord != nullptr) {
+            const CONTEXT& context = *exceptionInfo->ContextRecord;
+            report << "Thread ID: " << GetCurrentThreadId() << "\n"
+                   << "Registers: RIP=0x" << std::hex << context.Rip << " RSP=0x" << context.Rsp
+                   << " RBP=0x" << context.Rbp << " RAX=0x" << context.Rax << " RBX=0x"
+                   << context.Rbx << " RCX=0x" << context.Rcx << " RDX=0x" << context.Rdx
+                   << " RSI=0x" << context.Rsi << " RDI=0x" << context.Rdi << " R8=0x" << context.R8
+                   << " R9=0x" << context.R9 << " R10=0x" << context.R10 << " R11=0x" << context.R11
+                   << " R12=0x" << context.R12 << " R13=0x" << context.R13 << " R14=0x"
+                   << context.R14 << " R15=0x" << context.R15 << std::dec << "\n";
+        }
+
+        HANDLE process = GetCurrentProcess();
+        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+        if (SymInitialize(process, nullptr, TRUE)) {
+            CONTEXT context = {};
+            STACKFRAME64 frame = {};
+            DWORD machineType = IMAGE_FILE_MACHINE_AMD64;
+            if (exceptionInfo != nullptr && exceptionInfo->ContextRecord != nullptr) {
+                context = *exceptionInfo->ContextRecord;
+                frame.AddrPC.Offset = context.Rip;
+                frame.AddrFrame.Offset = context.Rbp;
+                frame.AddrStack.Offset = context.Rsp;
+            } else {
+                RtlCaptureContext(&context);
+                frame.AddrPC.Offset = context.Rip;
+                frame.AddrFrame.Offset = context.Rbp;
+                frame.AddrStack.Offset = context.Rsp;
+            }
+            frame.AddrPC.Mode = AddrModeFlat;
+            frame.AddrFrame.Mode = AddrModeFlat;
+            frame.AddrStack.Mode = AddrModeFlat;
+            report << "Stack trace:\n";
+            for (int index = 0; index < 64; ++index) {
+                const DWORD64 address = frame.AddrPC.Offset;
+                if (address == 0) {
+                    break;
+                }
+                alignas(SYMBOL_INFO) char symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME] = {};
+                auto* symbol = reinterpret_cast<PSYMBOL_INFO>(symbolBuffer);
+                symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+                symbol->MaxNameLen = MAX_SYM_NAME;
+                DWORD64 displacement = 0;
+                IMAGEHLP_LINE64 line = {};
+                line.SizeOfStruct = sizeof(line);
+                DWORD lineDisplacement = 0;
+                IMAGEHLP_MODULE64 module = {};
+                module.SizeOfStruct = sizeof(module);
+                const bool hasModule = SymGetModuleInfo64(process, address, &module) != FALSE;
+                report << "  #" << index << " 0x" << std::hex << address << std::dec;
+                if (SymFromAddr(process, address, &displacement, symbol)) {
+                    report << " " << (hasModule ? module.ModuleName : "?") << "!" << symbol->Name
+                           << "+0x" << std::hex << displacement << std::dec;
+                    if (SymGetLineFromAddr64(process, address, &lineDisplacement, &line)) {
+                        report << " (" << line.FileName << ":" << line.LineNumber << ")";
+                    }
+                }
+                if (hasModule) {
+                    report << " [" << module.ImageName << "]";
+                }
+                report << "\n";
+                const DWORD64 previousAddress = frame.AddrPC.Offset;
+                if (!StackWalk64(machineType, process, GetCurrentThread(), &frame, &context,
+                                 nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr) ||
+                    frame.AddrPC.Offset == previousAddress) {
+                    break;
                 }
             }
-            if (hasModule) {
-                report << " [" << module.ImageName << "]";
-            }
-            report << "\n";
-            const DWORD64 previousAddress = frame.AddrPC.Offset;
-            if (!StackWalk64(machineType, process, GetCurrentThread(), &frame, &context, nullptr,
-                             SymFunctionTableAccess64, SymGetModuleBase64, nullptr) ||
-                frame.AddrPC.Offset == previousAddress) {
-                break;
-            }
+            SymCleanup(process);
+        } else {
+            report << "Stack trace unavailable (SymInitialize failed, error " << GetLastError()
+                   << ").\n";
         }
-        SymCleanup(process);
-    } else {
-        report << "Stack trace unavailable (SymInitialize failed, error " << GetLastError()
-               << ").\n";
-    }
-    report.flush();
+        report.flush();
 
-    HANDLE dumpFile = CreateFileW(L"game.crash.dmp", GENERIC_WRITE, FILE_SHARE_READ, nullptr,
-                                  CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (dumpFile != INVALID_HANDLE_VALUE) {
-        MINIDUMP_EXCEPTION_INFORMATION dumpException = {};
-        dumpException.ThreadId = GetCurrentThreadId();
-        dumpException.ExceptionPointers = const_cast<EXCEPTION_POINTERS*>(exceptionInfo);
-        dumpException.ClientPointers = FALSE;
-        const MINIDUMP_TYPE dumpType = static_cast<MINIDUMP_TYPE>(
-            MiniDumpWithIndirectlyReferencedMemory | MiniDumpScanMemory | MiniDumpWithThreadInfo);
-        MiniDumpWriteDump(process, GetCurrentProcessId(), dumpFile, dumpType,
-                          exceptionInfo != nullptr ? &dumpException : nullptr, nullptr, nullptr);
-        CloseHandle(dumpFile);
-    }
+        HANDLE dumpFile = CreateFileW(L"game.crash.dmp", GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                                      CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (dumpFile != INVALID_HANDLE_VALUE) {
+            MINIDUMP_EXCEPTION_INFORMATION dumpException = {};
+            dumpException.ThreadId = GetCurrentThreadId();
+            dumpException.ExceptionPointers = const_cast<EXCEPTION_POINTERS*>(exceptionInfo);
+            dumpException.ClientPointers = FALSE;
+            const MINIDUMP_TYPE dumpType =
+                static_cast<MINIDUMP_TYPE>(MiniDumpWithIndirectlyReferencedMemory |
+                                           MiniDumpScanMemory | MiniDumpWithThreadInfo);
+            MiniDumpWriteDump(process, GetCurrentProcessId(), dumpFile, dumpType,
+                              exceptionInfo != nullptr ? &dumpException : nullptr, nullptr,
+                              nullptr);
+            CloseHandle(dumpFile);
+        }
     } catch (...) {
         // Crash reporting must never replace or obscure the original failure.
     }

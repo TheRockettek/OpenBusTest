@@ -33,6 +33,7 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
         part.visibleValue = source.visibleValue;
         part.meshIdentifier = source.meshIdentifier;
         part.animationParent = source.animationParent;
+        part.mouseEvent = source.mouseEvent;
         part.animations = source.animations;
         part.lodIndex = source.lodIndex;
         part.wheelAnimation.rotationVariable = source.wheelAnimation.rotationVariable;

@@ -3,8 +3,11 @@ setlocal
 
 taskkill.exe /F /IM OpenBus.exe
 
-set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
-set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
+set "OPENBUS_BUS_CONFIG=Vehicles\[SP] Studio Polygon 400MMC\E400MMC_ADL_10.9m_Voith_LowHeight.bus"
+set "OPENBUS_MODEL_CONFIG=Vehicles\[SP] Studio Polygon 400MMC\Model\Configuration Files\E400MMC_ADL_10.9m_Voith_LowHeight.cfg"
+
+@REM set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
+@REM set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
 
 set "OPENBUS_VSYNC=off"
 

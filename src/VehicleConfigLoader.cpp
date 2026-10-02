@@ -175,8 +175,7 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
     Reader reader(source.passengerCabinConfigPath);
     if (!reader.isOpen()) {
         result.diagnostics.error(0, "passengercabin",
-                                 "unable to open " +
-                                     source.passengerCabinConfigPath.string());
+                                 "unable to open " + source.passengerCabinConfigPath.string());
         return;
     }
 
@@ -241,8 +240,7 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
                                          "expected a non-negative path-point index");
                 continue;
             }
-            (keyword == "entry" ? result.passengerEntryPathPoints
-                                 : result.passengerExitPathPoints)
+            (keyword == "entry" ? result.passengerEntryPathPoints : result.passengerExitPathPoints)
                 .push_back(pathPoint);
             result.passengerCabinLoaded = true;
             continue;
@@ -259,8 +257,7 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
     }
     Reader reader(source.pathsConfigPath);
     if (!reader.isOpen()) {
-        result.diagnostics.error(0, "paths",
-                                 "unable to open " + source.pathsConfigPath.string());
+        result.diagnostics.error(0, "paths", "unable to open " + source.pathsConfigPath.string());
         return;
     }
 
@@ -296,8 +293,8 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
                 continue;
             }
             PassengerPathLink link;
-            if (!parseInt(values[0], link.from) || !parseInt(values[1], link.to) ||
-                link.from < 0 || link.to < 0) {
+            if (!parseInt(values[0], link.from) || !parseInt(values[1], link.to) || link.from < 0 ||
+                link.to < 0) {
                 result.diagnostics.error(line.number, keyword,
                                          "expected two non-negative path-point indexes");
                 continue;
@@ -359,8 +356,8 @@ void loadRegistrationList(const std::filesystem::path& path, VehicleConfig& resu
         if (value.empty() || value.front() == ';' || value.front() == '/') {
             continue;
         }
-        if (std::find(result.registrationNumbers.begin(), result.registrationNumbers.end(), value) ==
-            result.registrationNumbers.end()) {
+        if (std::find(result.registrationNumbers.begin(), result.registrationNumbers.end(),
+                      value) == result.registrationNumbers.end()) {
             result.registrationNumbers.push_back(value);
         }
     }
@@ -557,8 +554,7 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             continue;
         }
         if (keyword == "sound" || keyword == "sound_ai" || keyword == "paths" ||
-            keyword == "passengercabin" || keyword == "number" ||
-            keyword == "registration_list") {
+            keyword == "passengercabin" || keyword == "number" || keyword == "registration_list") {
             std::string referencedPath;
             if (readOneString(reader, keyword, referencedPath, result.diagnostics)) {
                 const std::filesystem::path resolved =

@@ -28,7 +28,7 @@ namespace openbus::rendering {
 namespace {
 
 bool checkedBufferSize(std::size_t width, std::size_t height, std::size_t bytesPerPixel,
-                      std::size_t& size) {
+                       std::size_t& size) {
     if (width == 0 || height == 0 || bytesPerPixel == 0 ||
         width > std::numeric_limits<std::size_t>::max() / height) {
         return false;
@@ -139,10 +139,11 @@ bool readTgaImage(const std::filesystem::path& path, Image& image) {
     const std::size_t pixelCount = static_cast<std::size_t>(image.width) * image.height;
     std::size_t sourceSize = 0;
     std::size_t rgbaSize = 0;
-    if (!checkedBufferSize(static_cast<std::size_t>(image.width), static_cast<std::size_t>(image.height),
+    if (!checkedBufferSize(static_cast<std::size_t>(image.width),
+                           static_cast<std::size_t>(image.height),
                            static_cast<std::size_t>(pixelBytes), sourceSize) ||
-        !checkedBufferSize(static_cast<std::size_t>(image.width), static_cast<std::size_t>(image.height),
-                           4, rgbaSize)) {
+        !checkedBufferSize(static_cast<std::size_t>(image.width),
+                           static_cast<std::size_t>(image.height), 4, rgbaSize)) {
         return false;
     }
     std::vector<std::uint8_t> source(sourceSize);
@@ -254,8 +255,8 @@ bool readBmpImage(const std::filesystem::path& path, Image& image) {
         return false;
     }
     const std::size_t rowStride = ((rowBytes + 3) / 4) * 4;
-    if (rowStride > std::numeric_limits<std::size_t>::max() /
-                        static_cast<std::size_t>(absoluteHeight) ||
+    if (rowStride >
+            std::numeric_limits<std::size_t>::max() / static_cast<std::size_t>(absoluteHeight) ||
         rowStride * static_cast<std::size_t>(absoluteHeight) > MAX_TEXTURE_BUFFER_BYTES) {
         return false;
     }
@@ -268,8 +269,8 @@ bool readBmpImage(const std::filesystem::path& path, Image& image) {
     image.width = width;
     image.height = absoluteHeight;
     std::size_t rgbaSize = 0;
-    if (!checkedBufferSize(static_cast<std::size_t>(width), static_cast<std::size_t>(absoluteHeight),
-                           4, rgbaSize)) {
+    if (!checkedBufferSize(static_cast<std::size_t>(width),
+                           static_cast<std::size_t>(absoluteHeight), 4, rgbaSize)) {
         return false;
     }
     image.rgba.resize(rgbaSize);

@@ -112,51 +112,96 @@ struct ScriptRuntime::Impl {
 
     static std::array<std::uint8_t, 7> glyph(char character) {
         switch (static_cast<char>(std::toupper(static_cast<unsigned char>(character)))) {
-        case 'A': return {14, 17, 17, 31, 17, 17, 17};
-        case 'B': return {30, 17, 17, 30, 17, 17, 30};
-        case 'C': return {14, 17, 16, 16, 16, 17, 14};
-        case 'D': return {30, 17, 17, 17, 17, 17, 30};
-        case 'E': return {31, 16, 16, 30, 16, 16, 31};
-        case 'F': return {31, 16, 16, 30, 16, 16, 16};
-        case 'G': return {14, 17, 16, 23, 17, 17, 14};
-        case 'H': return {17, 17, 17, 31, 17, 17, 17};
-        case 'I': return {14, 4, 4, 4, 4, 4, 14};
-        case 'J': return {7, 2, 2, 2, 2, 18, 12};
-        case 'K': return {17, 18, 20, 24, 20, 18, 17};
-        case 'L': return {16, 16, 16, 16, 16, 16, 31};
-        case 'M': return {17, 27, 21, 21, 17, 17, 17};
-        case 'N': return {17, 25, 25, 21, 19, 19, 17};
-        case 'O': return {14, 17, 17, 17, 17, 17, 14};
-        case 'P': return {30, 17, 17, 30, 16, 16, 16};
-        case 'Q': return {14, 17, 17, 17, 21, 18, 13};
-        case 'R': return {30, 17, 17, 30, 20, 18, 17};
-        case 'S': return {15, 16, 16, 14, 1, 1, 30};
-        case 'T': return {31, 4, 4, 4, 4, 4, 4};
-        case 'U': return {17, 17, 17, 17, 17, 17, 14};
-        case 'V': return {17, 17, 17, 17, 17, 10, 4};
-        case 'W': return {17, 17, 17, 21, 21, 27, 17};
-        case 'X': return {17, 17, 10, 4, 10, 17, 17};
-        case 'Y': return {17, 17, 10, 4, 4, 4, 4};
-        case 'Z': return {31, 1, 2, 4, 8, 16, 31};
-        case '0': return {14, 17, 19, 21, 25, 17, 14};
-        case '1': return {4, 12, 4, 4, 4, 4, 14};
-        case '2': return {14, 17, 1, 2, 4, 8, 31};
-        case '3': return {30, 1, 1, 14, 1, 1, 30};
-        case '4': return {2, 6, 10, 18, 31, 2, 2};
-        case '5': return {31, 16, 16, 30, 1, 1, 30};
-        case '6': return {14, 16, 16, 30, 17, 17, 14};
-        case '7': return {31, 1, 2, 4, 8, 8, 8};
-        case '8': return {14, 17, 17, 14, 17, 17, 14};
-        case '9': return {14, 17, 17, 15, 1, 1, 14};
-        case '-': return {0, 0, 0, 31, 0, 0, 0};
-        case '_': return {0, 0, 0, 0, 0, 0, 31};
-        case '.': return {0, 0, 0, 0, 0, 0, 4};
-        case ':': return {0, 4, 0, 0, 0, 4, 0};
-        case '/': return {1, 2, 2, 4, 8, 8, 16};
-        case '+': return {0, 4, 4, 31, 4, 4, 0};
-        case '?': return {14, 17, 1, 2, 4, 0, 4};
-        case ' ': return {0, 0, 0, 0, 0, 0, 0};
-        default: return {14, 17, 1, 2, 4, 0, 4};
+        case 'A':
+            return {14, 17, 17, 31, 17, 17, 17};
+        case 'B':
+            return {30, 17, 17, 30, 17, 17, 30};
+        case 'C':
+            return {14, 17, 16, 16, 16, 17, 14};
+        case 'D':
+            return {30, 17, 17, 17, 17, 17, 30};
+        case 'E':
+            return {31, 16, 16, 30, 16, 16, 31};
+        case 'F':
+            return {31, 16, 16, 30, 16, 16, 16};
+        case 'G':
+            return {14, 17, 16, 23, 17, 17, 14};
+        case 'H':
+            return {17, 17, 17, 31, 17, 17, 17};
+        case 'I':
+            return {14, 4, 4, 4, 4, 4, 14};
+        case 'J':
+            return {7, 2, 2, 2, 2, 18, 12};
+        case 'K':
+            return {17, 18, 20, 24, 20, 18, 17};
+        case 'L':
+            return {16, 16, 16, 16, 16, 16, 31};
+        case 'M':
+            return {17, 27, 21, 21, 17, 17, 17};
+        case 'N':
+            return {17, 25, 25, 21, 19, 19, 17};
+        case 'O':
+            return {14, 17, 17, 17, 17, 17, 14};
+        case 'P':
+            return {30, 17, 17, 30, 16, 16, 16};
+        case 'Q':
+            return {14, 17, 17, 17, 21, 18, 13};
+        case 'R':
+            return {30, 17, 17, 30, 20, 18, 17};
+        case 'S':
+            return {15, 16, 16, 14, 1, 1, 30};
+        case 'T':
+            return {31, 4, 4, 4, 4, 4, 4};
+        case 'U':
+            return {17, 17, 17, 17, 17, 17, 14};
+        case 'V':
+            return {17, 17, 17, 17, 17, 10, 4};
+        case 'W':
+            return {17, 17, 17, 21, 21, 27, 17};
+        case 'X':
+            return {17, 17, 10, 4, 10, 17, 17};
+        case 'Y':
+            return {17, 17, 10, 4, 4, 4, 4};
+        case 'Z':
+            return {31, 1, 2, 4, 8, 16, 31};
+        case '0':
+            return {14, 17, 19, 21, 25, 17, 14};
+        case '1':
+            return {4, 12, 4, 4, 4, 4, 14};
+        case '2':
+            return {14, 17, 1, 2, 4, 8, 31};
+        case '3':
+            return {30, 1, 1, 14, 1, 1, 30};
+        case '4':
+            return {2, 6, 10, 18, 31, 2, 2};
+        case '5':
+            return {31, 16, 16, 30, 1, 1, 30};
+        case '6':
+            return {14, 16, 16, 30, 17, 17, 14};
+        case '7':
+            return {31, 1, 2, 4, 8, 8, 8};
+        case '8':
+            return {14, 17, 17, 14, 17, 17, 14};
+        case '9':
+            return {14, 17, 17, 15, 1, 1, 14};
+        case '-':
+            return {0, 0, 0, 31, 0, 0, 0};
+        case '_':
+            return {0, 0, 0, 0, 0, 0, 31};
+        case '.':
+            return {0, 0, 0, 0, 0, 0, 4};
+        case ':':
+            return {0, 4, 0, 0, 0, 4, 0};
+        case '/':
+            return {1, 2, 2, 4, 8, 8, 16};
+        case '+':
+            return {0, 4, 4, 31, 4, 4, 0};
+        case '?':
+            return {14, 17, 1, 2, 4, 0, 4};
+        case ' ':
+            return {0, 0, 0, 0, 0, 0, 0};
+        default:
+            return {14, 17, 1, 2, 4, 0, 4};
         }
     }
 
@@ -673,14 +718,12 @@ struct ScriptRuntime::Impl {
                     executeSystemMacro(instruction.name);
                     break;
                 case OscOpcode::SoundTrigger:
-                    log("sound_trigger(" + instruction.name + ")");
                     if (onSoundTrigger) {
                         onSoundTrigger(instruction.name, {}, nativePeekFloat());
                     }
                     break;
                 case OscOpcode::SoundTriggerFile: {
                     const std::string file = nativePopString();
-                    log("sound_trigger_file(" + instruction.name + ", " + file + ")");
                     if (onSoundTrigger) {
                         onSoundTrigger(instruction.name, file, nativePeekFloat());
                     }
@@ -759,16 +802,6 @@ struct ScriptRuntime::Impl {
 
     void log(const std::string& message) const {
         scriptRuntimeLogger.Log("[" + scriptIdentity + "] " + message);
-    }
-
-    void log(lua_State* lua, const std::string& message) const {
-        lua_Debug debug{};
-        std::string location = scriptIdentity;
-        if (lua_getstack(lua, 1, &debug) != 0 && lua_getinfo(lua, "Sl", &debug) != 0 &&
-            debug.currentline > 0) {
-            location += ":" + std::to_string(debug.currentline);
-        }
-        scriptRuntimeLogger.Log("[" + location + "] " + message);
     }
 
     static int panicHandler(lua_State* lua) {
@@ -943,7 +976,6 @@ struct ScriptRuntime::Impl {
     static int soundTrigger(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
         const std::string name = luaL_checkstring(lua, 1);
-        runtime->log(lua, "sound_trigger(" + name + ")");
         if (runtime->onSoundTrigger) {
             runtime->onSoundTrigger(name, {},
                                     runtime->floatStack.empty() ? 0.0 : runtime->floatStack.back());
@@ -955,7 +987,6 @@ struct ScriptRuntime::Impl {
         Impl* runtime = runtimeFor(lua);
         const std::string name = luaL_checkstring(lua, 1);
         const std::string file = luaL_checkstring(lua, 2);
-        runtime->log(lua, "sound_trigger_file(" + name + ", " + file + ")");
         if (runtime->onSoundTrigger) {
             runtime->onSoundTrigger(name, file,
                                     runtime->floatStack.empty() ? 0.0 : runtime->floatStack.back());
@@ -965,7 +996,7 @@ struct ScriptRuntime::Impl {
 
     static int debug(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        runtime->log(lua, "omsi_debug(" + std::string(luaL_checkstring(lua, 1)) + ")");
+        runtime->log("omsi_debug(" + std::string(luaL_checkstring(lua, 1)) + ")");
         return 0;
     }
 
@@ -1045,8 +1076,8 @@ struct ScriptRuntime::Impl {
     static int safeNrSpecRandom(lua_State* lua) {
         double seed = popSystemFloat(runtimeFor(lua));
         std::minstd_rand rand(static_cast<unsigned int>(seed));
-        return returnSystemFloat(
-            lua, static_cast<double>(rand()) / static_cast<double>(std::minstd_rand::max()));
+        return returnSystemFloat(lua, static_cast<double>(rand()) /
+                                          static_cast<double>(std::minstd_rand::max()));
     }
 
     // TODO: Implement currency configuration and change-coin issuance.
@@ -1135,7 +1166,12 @@ struct ScriptRuntime::Impl {
         if (texture.locked || value.empty() || texture.width <= 0 || texture.height <= 0) {
             return;
         }
-        const int scale = std::max(1, std::min(8, (texture.height - 2) / 7));
+        const int heightScale = std::max(1, (texture.height - 2) / 7);
+        const int availableWidth = std::max(
+            1, texture.width - 2 - std::max(0, letterSpacing) * static_cast<int>(value.size()));
+        const int widthScale =
+            std::max(1, availableWidth / std::max(1, 6 * static_cast<int>(value.size())));
+        const int scale = std::max(1, std::min({8, heightScale, widthScale}));
         const int advance = 6 * scale + letterSpacing;
         for (std::size_t characterIndex = 0; characterIndex < value.size(); ++characterIndex) {
             const auto rows = glyph(value[characterIndex]);
@@ -1470,7 +1506,6 @@ struct ScriptRuntime::Impl {
     }
 
     void loadScripts() {
-        std::size_t loadedScriptCount = 0;
         lua_newtable(state);
         lua_newtable(state);
         lua_pushvalue(state, LUA_GLOBALSINDEX);
@@ -1505,9 +1540,7 @@ struct ScriptRuntime::Impl {
                 lua_pop(state, 1);
                 continue;
             }
-            ++loadedScriptCount;
         }
-        log("Loaded " + std::to_string(loadedScriptCount) + " Lua scripts before init()");
     }
 
     bool invoke(const char* functionName) {
@@ -1524,7 +1557,6 @@ struct ScriptRuntime::Impl {
                 lua_pop(state, 1);
             }
         } else {
-            log(std::string(functionName) + " not found");
             lua_pop(state, 1);
         }
         lua_pop(state, 1);
@@ -1593,8 +1625,7 @@ ScriptRuntime::ScriptRuntime(
 
 ScriptRuntime::~ScriptRuntime() = default;
 
-void ScriptRuntime::configureScriptTextures(
-    const std::vector<ModelScriptTexture>& definitions) {
+void ScriptRuntime::configureScriptTextures(const std::vector<ModelScriptTexture>& definitions) {
     if (!impl_) {
         return;
     }
@@ -1603,8 +1634,7 @@ void ScriptRuntime::configureScriptTextures(
             continue;
         }
         impl_->scriptTextureDimensions[definition.slot] = {definition.width, definition.height};
-        impl_->scriptTextures[definition.slot] =
-            impl_->configuredScriptTexture(definition.slot);
+        impl_->scriptTextures[definition.slot] = impl_->configuredScriptTexture(definition.slot);
     }
 }
 
@@ -1634,8 +1664,8 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
                 if (value >= 0.0 && value <= 1.0) {
                     value *= 255.0;
                 }
-                configured.color[channel] = static_cast<std::uint8_t>(
-                    std::clamp(value, 0.0, 255.0));
+                configured.color[channel] =
+                    static_cast<std::uint8_t>(std::clamp(value, 0.0, 255.0));
             } catch (const std::exception&) {
                 continue;
             }
@@ -1674,10 +1704,10 @@ void ScriptRuntime::invokeEntryPoint(const std::string& functionName) {
     if (impl_ && (impl_->nativeBackend || impl_->state) && !functionName.empty()) {
         impl_->floatStack.clear();
         impl_->stringStack.clear();
-        if (impl_->nativeBackend) {
-            impl_->executeNativeFunction(functionName);
-        } else {
-            impl_->invoke(functionName.c_str());
+        const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
+                                                  : impl_->invoke(functionName.c_str());
+        if (!invoked) {
+            impl_->log("warning: entry point " + functionName + " not found");
         }
     }
 }
@@ -1688,10 +1718,150 @@ void ScriptRuntime::invokeSystemTrigger(const std::string& triggerName) {
         impl_->floatStack.clear();
         impl_->stringStack.clear();
         const std::string functionName = "trigger_" + scriptName(triggerName);
-        if (impl_->nativeBackend) {
-            impl_->executeNativeFunction(functionName);
-        } else {
-            impl_->invoke(functionName.c_str());
+        const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
+                                                  : impl_->invoke(functionName.c_str());
+        if (!invoked) {
+            impl_->log("warning: system trigger " + triggerName + " -> " + functionName +
+                       " not found");
+        }
+    }
+}
+
+void ScriptRuntime::invokeInputEvent(const std::string& keyName, bool pressed) {
+    if (!impl_ || keyName.empty()) {
+        return;
+    }
+    const std::string normalized = lower(keyName);
+    impl_->localState.set("key_pressed", pressed ? 1.0 : 0.0);
+    impl_->localState.setString("key_name", normalized);
+    const std::string functionName =
+        "key_" + scriptName(normalized) + (pressed ? "_pressed" : "_released");
+    if (impl_->nativeBackend || impl_->state) {
+        impl_->floatStack.clear();
+        impl_->stringStack.clear();
+        const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
+                                                  : impl_->invoke(functionName.c_str());
+        if (!invoked) {
+            impl_->log("warning: key event " + normalized + (pressed ? " pressed" : " released") +
+                       " -> " + functionName + " not found");
+        }
+    }
+}
+
+void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool pressed) {
+    if (!impl_ || bindingName.empty()) {
+        return;
+    }
+    const std::string normalized = lower(bindingName);
+    impl_->localState.set("key_pressed", pressed ? 1.0 : 0.0);
+    impl_->localState.setString("key_name", normalized);
+    const std::string functionName = "trigger_" + scriptName(normalized) + (pressed ? "" : "_off");
+    if (impl_->nativeBackend || impl_->state) {
+        impl_->floatStack.clear();
+        impl_->stringStack.clear();
+        const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
+                                                  : impl_->invoke(functionName.c_str());
+        if (!invoked) {
+            impl_->log("warning: key binding " + normalized + (pressed ? " pressed" : " released") +
+                       " -> " + functionName + " not found");
+        }
+    }
+}
+
+void ScriptRuntime::invokeMouseEvent(const std::string& eventName) {
+    if (!impl_ || eventName.empty()) {
+        return;
+    }
+    const std::string normalized = lower(eventName);
+    impl_->localState.setString("mouse_event", normalized);
+    if (impl_->nativeBackend || impl_->state) {
+        impl_->floatStack.clear();
+        impl_->stringStack.clear();
+        const std::string functionName = "trigger_" + scriptName(normalized);
+        const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
+                                                  : impl_->invoke(functionName.c_str());
+        if (!invoked) {
+            impl_->log("warning: mouse event " + normalized + " -> " + functionName + " not found");
+        }
+        if (normalized == "alcolockelec" || normalized == "alcolockcheck") {
+            if (invoked) {
+                impl_->log(
+                    "alcolock state elec_busbar_main=" +
+                    std::to_string(impl_->localState.get("elec_busbar_main")) +
+                    " alcolock_elec=" + std::to_string(impl_->localState.get("alcolock_elec")) +
+                    " alcolock_ready=" + std::to_string(impl_->localState.get("alcolock_ready")) +
+                    " alcolock_pass=" + std::to_string(impl_->localState.get("alcolock_pass")) +
+                    " alcolock_blow=" + std::to_string(impl_->localState.get("alcolock_blow")) +
+                    " alcodisp=" + impl_->localState.getString("alcodisp"));
+            }
+        }
+    }
+}
+
+bool ScriptRuntime::hasScriptEntryPoint(const std::string& functionName) const {
+    if (!impl_ || functionName.empty()) {
+        return false;
+    }
+    if (impl_->nativeBackend) {
+        for (const OscProgram& program : impl_->nativePrograms) {
+            if (program.functions.find(functionName) != program.functions.end()) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (!impl_->state) {
+        return false;
+    }
+    lua_rawgeti(impl_->state, LUA_REGISTRYINDEX, impl_->scriptEnvironment.reference);
+    lua_getfield(impl_->state, -1, functionName.c_str());
+    const bool found = lua_isfunction(impl_->state, -1) != 0;
+    lua_pop(impl_->state, 2);
+    return found;
+}
+
+void ScriptRuntime::invokeMouseRelease(const std::string& eventName) {
+    if (!impl_ || eventName.empty()) {
+        return;
+    }
+    const std::string normalized = lower(eventName);
+    impl_->localState.setString("mouse_event", normalized);
+    if (impl_->nativeBackend || impl_->state) {
+        impl_->floatStack.clear();
+        impl_->stringStack.clear();
+        const std::string functionName = "trigger_" + scriptName(normalized) + "_off";
+        const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
+                                                  : impl_->invoke(functionName.c_str());
+        if (!invoked) {
+            impl_->log("warning: mouse release " + normalized + " -> " + functionName +
+                       " not found");
+        }
+    }
+}
+
+void ScriptRuntime::invokeMouseDrag(const std::string& eventName, double deltaX, double deltaY,
+                                    double cursorX, double cursorY) {
+    if (!impl_ || eventName.empty()) {
+        return;
+    }
+    const std::string normalized = lower(eventName);
+    impl_->localState.set("mouse_drag_x", deltaX);
+    impl_->localState.set("mouse_drag_y", deltaY);
+    impl_->localState.set("mouse_cursor_x", cursorX);
+    impl_->localState.set("mouse_cursor_y", cursorY);
+    // E400/OMSI drag handlers apply their own axis sign (for example, the two
+    // paired cab windows use mouse_x / 500 and mouse_x / -500).
+    impl_->sharedState.sharedVariables().set("mouse_x", deltaX);
+    impl_->sharedState.sharedVariables().set("mouse_y", deltaY);
+    impl_->localState.setString("mouse_event", normalized);
+    if (impl_->nativeBackend || impl_->state) {
+        impl_->floatStack.clear();
+        impl_->stringStack.clear();
+        const std::string functionName = "trigger_" + scriptName(normalized) + "_drag";
+        const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
+                                                  : impl_->invoke(functionName.c_str());
+        if (!invoked) {
+            impl_->log("warning: mouse drag " + normalized + " -> " + functionName + " not found");
         }
     }
 }

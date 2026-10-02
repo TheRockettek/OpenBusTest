@@ -145,6 +145,100 @@ constexpr double DEFAULT_FIELD_OF_VIEW = 60.0;
 constexpr double MIN_FIELD_OF_VIEW = 20.0;
 constexpr double MAX_FIELD_OF_VIEW = 120.0;
 
+struct VehicleKeyBinding {
+    const char* action;
+    int key;
+    int flags;
+};
+
+constexpr int kBindingHeld = 1;
+constexpr int kBindingShift = 2;
+constexpr int kBindingControl = 4;
+
+// OpenBus vehicle defaults. Cashdesk, IBIS, and rollband actions are
+// intentionally omitted until their dedicated input surfaces are wired.
+const std::vector<VehicleKeyBinding>& vehicleKeyBindings() {
+    static const std::vector<VehicleKeyBinding> bindings = {
+        {"throttle", GLFW_KEY_KP_8, kBindingHeld},
+        {"brake", GLFW_KEY_KP_2, kBindingHeld},
+        {"throttle_amplify", GLFW_KEY_KP_ADD, kBindingHeld},
+        {"clutch", GLFW_KEY_TAB, kBindingHeld},
+        {"steering_left", GLFW_KEY_KP_4, kBindingHeld},
+        {"steering_neutral", GLFW_KEY_KP_5, kBindingHeld},
+        {"steering_right", GLFW_KEY_KP_6, kBindingHeld},
+        {"ticket_give", GLFW_KEY_T, 0},
+        {"change_give", GLFW_KEY_T, kBindingControl},
+        {"change_take", GLFW_KEY_T, kBindingShift},
+        {"parking_brake_toggle", GLFW_KEY_PERIOD, 0},
+        {"blinker_left_set", GLFW_KEY_KP_7, kBindingHeld},
+        {"blinker_right_set", GLFW_KEY_KP_9, kBindingHeld},
+        {"blinker_off", GLFW_KEY_KP_DECIMAL, 0},
+        {"blinker_warn_toggle", GLFW_KEY_B, 0},
+        {"kw_scheinwerfer_toggle", GLFW_KEY_L, 0},
+        {"kw_standlicht_toggle", GLFW_KEY_L, kBindingShift},
+        {"kw_fernlicht_toggle", GLFW_KEY_F, 0},
+        {"kw_m_enginestart", GLFW_KEY_M, 0},
+        {"kw_wipermode_up", GLFW_KEY_W, 0},
+        {"horn", GLFW_KEY_H, kBindingHeld},
+        {"cp_microphone", GLFW_KEY_Q, kBindingHeld},
+        {"cp_fahrerlicht_toggle", GLFW_KEY_6, 0},
+        {"cp_licht_untenrechts_toggle", GLFW_KEY_7, 0},
+        {"cp_licht_oberdeck_toggle", GLFW_KEY_8, 0},
+        {"cp_licht_unterdeck_toggle", GLFW_KEY_9, 0},
+        {"kw_s_R", GLFW_KEY_R, 0},
+        {"kw_s_N", GLFW_KEY_N, 0},
+        {"kw_s_1", GLFW_KEY_1, 0},
+        {"kw_s_2", GLFW_KEY_2, 0},
+        {"kw_s_3", GLFW_KEY_3, 0},
+        {"kw_s_4", GLFW_KEY_4, 0},
+        {"kw_s_5", GLFW_KEY_5, 0},
+        {"kw_s_6", GLFW_KEY_6, 0},
+        {"automatic_R", GLFW_KEY_R, 0},
+        {"automatic_N", GLFW_KEY_N, 0},
+        {"automatic_1", GLFW_KEY_1, 0},
+        {"automatic_2", GLFW_KEY_2, 0},
+        {"automatic_D", GLFW_KEY_D, 0},
+        {"bus_doorfront0", GLFW_KEY_KP_DIVIDE, 0},
+        {"bus_doorfront1", GLFW_KEY_KP_MULTIPLY, 0},
+        {"bus_dooraft", GLFW_KEY_KP_SUBTRACT, 0},
+        {"bus_20h-switch", GLFW_KEY_SCROLL_LOCK, 0},
+        {"bus_doorfront5", GLFW_KEY_KP_ADD, 0},
+        {"bus_linie_plus", GLFW_KEY_F8, 0},
+        {"bus_linie_minus", GLFW_KEY_F5, 0},
+        {"bus_ziel_plus", GLFW_KEY_F7, 0},
+        {"bus_ziel_minus", GLFW_KEY_F6, 0},
+        {"cp_wischer_intervall_toggle", GLFW_KEY_W, kBindingShift},
+        {"cp_wischer_wascher_button", GLFW_KEY_W, kBindingControl},
+        {"cp_batterietrennschalter_toggle", GLFW_KEY_E, 0},
+        {"taster_nebelschluss", GLFW_KEY_F, kBindingControl},
+        {"cp_schalter_kinderwagen", GLFW_KEY_F12, 0},
+        {"kw_s_plus", GLFW_KEY_LEFT_BRACKET, 0},
+        {"kw_s_minus", GLFW_KEY_SLASH, 0},
+    };
+    return bindings;
+}
+
+const VehicleKeyBinding* findVehicleKeyBinding(const char* action) {
+    const auto& bindings = vehicleKeyBindings();
+    const auto found =
+        std::find_if(bindings.begin(), bindings.end(), [action](const VehicleKeyBinding& binding) {
+            return std::string_view(binding.action) == action;
+        });
+    return found == bindings.end() ? nullptr : &*found;
+}
+
+bool vehicleBindingPressed(GLFWwindow* window, const VehicleKeyBinding& binding) {
+    if (glfwGetKey(window, binding.key) != GLFW_PRESS) {
+        return false;
+    }
+    const bool shift = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                       glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+    const bool control = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+                         glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+    return shift == ((binding.flags & kBindingShift) != 0) &&
+           control == ((binding.flags & kBindingControl) != 0);
+}
+
 GLenum textureAddressModeToGl(TextureAddressMode mode) {
     switch (mode) {
     case TextureAddressMode::Clamp:
@@ -345,6 +439,7 @@ using openbus::rendering::drawEnvironmentBatch;
 using openbus::rendering::drawGround;
 using openbus::rendering::drawMaterialBatch;
 using openbus::rendering::drawModelBatch;
+using openbus::rendering::drawWireframeTriangles;
 using openbus::rendering::lookAt;
 using openbus::rendering::multiplyMatrix;
 using openbus::rendering::parseEnabledFlag;
@@ -479,6 +574,7 @@ struct Vehicle {
         int visibleValue = 0;
         std::string meshIdentifier;
         std::string animationParent;
+        std::string mouseEvent;
         int odeWheelIndex = -1;
         bool backFaceCulling = false;
         std::array<double, 3> center;
@@ -516,6 +612,7 @@ struct Vehicle {
     int activeLod = -1;
     double animationTimeStep = 0.0;
     std::uint64_t animationGeneration = 1;
+    std::uint64_t clickableStateRevision = 1;
     bool wheelsFromOde = false;
     const BusSimulation* odeSimulation = nullptr;
     std::chrono::steady_clock::time_point textureUploadStart;
@@ -583,6 +680,7 @@ struct Vehicle {
         TraceScope trace("render", "Vehicle::updateAnimationStates");
         ++animationGeneration;
         const double timeStep = std::clamp(animationTimeStep, 0.0, 0.25);
+        bool changed = false;
         for (DisplayPart& part : displayLists) {
             if (part.animationStates.size() != part.animations.size()) {
                 part.animationStates.resize(part.animations.size());
@@ -590,14 +688,28 @@ struct Vehicle {
             for (std::size_t index = 0; index < part.animations.size(); ++index) {
                 const ModelAnimation& animation = part.animations[index];
                 DisplayPart::AnimationState& state = part.animationStates[index];
+                const double previousAmount = state.currentAmount;
+                const double previousTarget = state.targetAmount;
+                const bool previousInitialized = state.initialized;
                 if (animation.type.empty()) {
                     state.currentAmount = 0.0;
                     state.targetAmount = 0.0;
                     state.initialized = true;
                     continue;
                 }
-                const double targetAmount =
-                    variables.get(animation.variable) * animation.scale + animation.offset;
+                const double variableValue = variables.get(animation.variable);
+                const double targetAmount = variableValue * animation.scale + animation.offset;
+                const bool targetChanged = !state.initialized || targetAmount != state.targetAmount;
+                if (animation.type == "anim_trans" && targetChanged &&
+                    std::abs(targetAmount - state.currentAmount) > 0.5) {
+                    gameLog.Log("Animation translation variable=" + animation.variable +
+                                " value=" + std::to_string(variableValue) +
+                                " scale=" + std::to_string(animation.scale) +
+                                " offset=" + std::to_string(animation.offset) +
+                                " target=" + std::to_string(targetAmount) +
+                                " current=" + std::to_string(state.currentAmount) +
+                                " mesh=" + part.meshIdentifier + " mouse_event=" + part.mouseEvent);
+                }
                 if (!state.initialized) {
                     state.currentAmount = targetAmount;
                     state.targetAmount = targetAmount;
@@ -620,7 +732,13 @@ struct Vehicle {
                 } else {
                     state.currentAmount = nextAmount;
                 }
+                changed = changed || state.currentAmount != previousAmount ||
+                          state.targetAmount != previousTarget ||
+                          state.initialized != previousInitialized;
             }
+        }
+        if (changed) {
+            ++clickableStateRevision;
         }
     }
 
@@ -633,13 +751,13 @@ struct Vehicle {
                 operationMatrix = translationMatrix(operation.value);
                 break;
             case ModelAnimationOriginType::RotationX:
-                operationMatrix = rotationMatrix(-operation.value[0], 0.0, -1.0, 0.0);
+                operationMatrix = rotationMatrix(operation.value[0], 0.0, -1.0, 0.0);
                 break;
             case ModelAnimationOriginType::RotationY:
-                operationMatrix = rotationMatrix(-operation.value[0], 1.0, 0.0, 0.0);
+                operationMatrix = rotationMatrix(operation.value[0], 1.0, 0.0, 0.0);
                 break;
             case ModelAnimationOriginType::RotationZ:
-                operationMatrix = rotationMatrix(-operation.value[0], 0.0, 0.0, 1.0);
+                operationMatrix = rotationMatrix(operation.value[0], 0.0, 0.0, 1.0);
                 break;
             case ModelAnimationOriginType::FromMesh:
                 if (animation.hasMeshTransform) {
@@ -659,7 +777,7 @@ struct Vehicle {
         const Matrix4 origin = animationOriginMatrix(animation);
         Matrix4 inverseOrigin = identityMatrix();
         invertAffineMatrix(origin, inverseOrigin);
-        const Matrix4 local = animation.type == "anim_rot" ? rotationMatrix(-amount, 0.0, -1.0, 0.0)
+        const Matrix4 local = animation.type == "anim_rot" ? rotationMatrix(amount, 0.0, -1.0, 0.0)
                               : animation.type == "anim_trans"
                                   ? translationMatrix({0.0, amount, 0.0})
                                   : identityMatrix();
@@ -806,8 +924,7 @@ struct Vehicle {
         std::unordered_set<int> uniqueReflectionIndices;
         for (const Batch& batch : part.batches) {
             const auto registerReflection = [&](const std::string& textureName) {
-                const int reflectionIndex =
-                    openbus::rendering::reflectionTextureIndex(textureName);
+                const int reflectionIndex = openbus::rendering::reflectionTextureIndex(textureName);
                 if (reflectionIndex >= 0) {
                     uniqueReflectionIndices.insert(reflectionIndex);
                 }
@@ -913,9 +1030,9 @@ struct Vehicle {
                         : std::clamp((maximumNdcY - minimumNdcY) * 0.5 * viewportHeight, 0.0,
                                      viewportHeight);
                 const double screenBoundedDiameter = std::max(projectedWidth, projectedHeight);
-                const int requiredSize = std::max(
-                    openbus::rendering::kMinReflectionTargetSize,
-                    static_cast<int>(std::ceil(screenBoundedDiameter)));
+                const int requiredSize =
+                    std::max(openbus::rendering::kMinReflectionTargetSize,
+                             static_cast<int>(std::ceil(screenBoundedDiameter)));
 
                 for (const int reflectionIndex : partReflectionIndices) {
                     visibleReflectionTextureIndices.insert(reflectionIndex);
@@ -934,8 +1051,8 @@ struct Vehicle {
     int requiredReflectionSize(std::size_t reflectionIndex) const {
         const auto required = reflectionRequiredSizes.find(static_cast<int>(reflectionIndex));
         return required == reflectionRequiredSizes.end()
-               ? openbus::rendering::kMinReflectionTargetSize
-                                                         : required->second;
+                   ? openbus::rendering::kMinReflectionTargetSize
+                   : required->second;
     }
 
     void updateSimulationVariables(const BusSimulation& simulation, double throttle,
@@ -947,6 +1064,260 @@ struct Vehicle {
         odeSimulation = &simulation;
     }
 
+    bool clickablePartVisible(const DisplayPart& part, std::size_t partIndex,
+                              RenderViewContext context) const {
+        const bool visible =
+            partIndex < variableVisibleParts.size()
+                ? variableVisibleParts[partIndex]
+                : part.visibleVariable.empty() ||
+                      variables.get(part.visibleVariable) == static_cast<double>(part.visibleValue);
+        if (!visible || (part.viewpoint != 0 && (part.viewpoint & viewpointMask(context)) == 0)) {
+            return false;
+        }
+        return activeLod < 0 || part.lodIndex < 0 || part.lodIndex == activeLod;
+    }
+
+    const DisplayPart* pickClickable(double cursorX, double cursorY, int viewportWidth,
+                                     int viewportHeight, RenderViewContext context,
+                                     bool exactTriangles, const Batch** hitBatch = nullptr,
+                                     std::size_t* hitTriangle = nullptr) const {
+        TraceScope trace("input", "Vehicle::pickClickable");
+        if (viewportWidth <= 0 || viewportHeight <= 0) {
+            return nullptr;
+        }
+        const auto& modelView = openbus::rendering::modelViewMatrix();
+        const auto& projection = openbus::rendering::projectionMatrix();
+        const double normalizedX = cursorX / static_cast<double>(viewportWidth) * 2.0 - 1.0;
+        const double normalizedY = 1.0 - cursorY / static_cast<double>(viewportHeight) * 2.0;
+        std::array<double, 3> rayOrigin = {};
+        std::array<double, 3> rayDirection = {};
+        if (exactTriangles) {
+            const double nearZ = -projection[14] / (projection[10] - 1.0);
+            const double farZ = -projection[14] / (projection[10] + 1.0);
+            const auto viewPoint = [&](double depth) {
+                return std::array<double, 3>{-normalizedX * depth / projection[0],
+                                             -normalizedY * depth / projection[5], depth};
+            };
+            rayOrigin = viewPoint(nearZ);
+            const std::array<double, 3> rayEnd = viewPoint(farZ);
+            rayDirection = {rayEnd[0] - rayOrigin[0], rayEnd[1] - rayOrigin[1],
+                            rayEnd[2] - rayOrigin[2]};
+        }
+        const auto rayTriangleDistance = [&](const std::array<double, 3>& first,
+                                             const std::array<double, 3>& second,
+                                             const std::array<double, 3>& third) {
+            const std::array<double, 3> edgeA = {second[0] - first[0], second[1] - first[1],
+                                                 second[2] - first[2]};
+            const std::array<double, 3> edgeB = {third[0] - first[0], third[1] - first[1],
+                                                 third[2] - first[2]};
+            const std::array<double, 3> cross = {
+                rayDirection[1] * edgeB[2] - rayDirection[2] * edgeB[1],
+                rayDirection[2] * edgeB[0] - rayDirection[0] * edgeB[2],
+                rayDirection[0] * edgeB[1] - rayDirection[1] * edgeB[0]};
+            const double determinant =
+                edgeA[0] * cross[0] + edgeA[1] * cross[1] + edgeA[2] * cross[2];
+            if (std::abs(determinant) <= 1.0e-10) {
+                return std::numeric_limits<double>::max();
+            }
+            const double inverseDeterminant = 1.0 / determinant;
+            const std::array<double, 3> originToFirst = {
+                rayOrigin[0] - first[0], rayOrigin[1] - first[1], rayOrigin[2] - first[2]};
+            const double u = (originToFirst[0] * cross[0] + originToFirst[1] * cross[1] +
+                              originToFirst[2] * cross[2]) *
+                             inverseDeterminant;
+            if (u < 0.0 || u > 1.0) {
+                return std::numeric_limits<double>::max();
+            }
+            const std::array<double, 3> crossSecond = {
+                originToFirst[1] * edgeA[2] - originToFirst[2] * edgeA[1],
+                originToFirst[2] * edgeA[0] - originToFirst[0] * edgeA[2],
+                originToFirst[0] * edgeA[1] - originToFirst[1] * edgeA[0]};
+            const double v = (rayDirection[0] * crossSecond[0] + rayDirection[1] * crossSecond[1] +
+                              rayDirection[2] * crossSecond[2]) *
+                             inverseDeterminant;
+            if (v < 0.0 || u + v > 1.0) {
+                return std::numeric_limits<double>::max();
+            }
+            const double distance = (edgeB[0] * crossSecond[0] + edgeB[1] * crossSecond[1] +
+                                     edgeB[2] * crossSecond[2]) *
+                                    inverseDeterminant;
+            return distance >= 0.0 ? distance : std::numeric_limits<double>::max();
+        };
+        double closestDepth = std::numeric_limits<double>::max();
+        const DisplayPart* selected = nullptr;
+        const Batch* selectedBatch = nullptr;
+        std::size_t selectedTriangle = 0;
+        for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+            const DisplayPart& part = displayLists[partIndex];
+            if (part.mouseEvent.empty() || !clickablePartVisible(part, partIndex, context)) {
+                continue;
+            }
+            const Matrix4 modelViewPart = multiplyMatrix4(
+                modelView, multiplyMatrix4(translationMatrix({0.0, 0.0, modelOffsetZ}),
+                                           animationTransformForPart(part)));
+            const std::array<double, 3> center = {part.center[0], part.center[1], part.center[2]};
+            const std::array<double, 4> viewCenter =
+                transformPoint(modelViewPart, {center[0], center[1], center[2], 1.0});
+            const std::array<double, 4> clipCenter = transformPoint(
+                projection, {viewCenter[0], viewCenter[1], viewCenter[2], viewCenter[3]});
+            if (std::abs(clipCenter[3]) <= 1.0e-8) {
+                continue;
+            }
+            const double centerX = clipCenter[0] / clipCenter[3];
+            const double centerY = clipCenter[1] / clipCenter[3];
+            const std::array<double, 4> viewEdge =
+                transformPoint(modelViewPart, {center[0] + part.radius, center[1], center[2], 1.0});
+            const std::array<double, 4> clipEdge =
+                transformPoint(projection, {viewEdge[0], viewEdge[1], viewEdge[2], viewEdge[3]});
+            const double radiusPixels = std::max(
+                8.0, std::abs(clipEdge[0] / std::max(std::abs(clipEdge[3]), 1.0e-8) - centerX) *
+                         static_cast<double>(viewportWidth) * 0.5);
+            const double distanceX = (normalizedX - centerX) * viewportWidth * 0.5;
+            const double distanceY = (normalizedY - centerY) * viewportHeight * 0.5;
+            if (distanceX * distanceX + distanceY * distanceY > radiusPixels * radiusPixels) {
+                continue;
+            }
+            if (!exactTriangles) {
+                const double partDepth = -viewCenter[2];
+                if (partDepth < closestDepth) {
+                    closestDepth = partDepth;
+                    selected = &part;
+                }
+                continue;
+            }
+            double partDistance = std::numeric_limits<double>::max();
+            const Batch* partBatch = nullptr;
+            std::size_t partTriangle = 0;
+            for (const Batch& batch : part.batches) {
+                for (std::size_t index = 0; index + 2 < batch.vertices.size(); index += 3) {
+                    const auto transformVertex = [&](const Vertex& vertex) {
+                        const std::array<double, 4> transformed =
+                            transformPoint(modelViewPart, {vertex.x, vertex.y, vertex.z, 1.0});
+                        return std::array<double, 3>{transformed[0], transformed[1],
+                                                     transformed[2]};
+                    };
+                    const double triangleDistance =
+                        rayTriangleDistance(transformVertex(batch.vertices[index]),
+                                            transformVertex(batch.vertices[index + 1]),
+                                            transformVertex(batch.vertices[index + 2]));
+                    if (triangleDistance < partDistance) {
+                        partDistance = triangleDistance;
+                        partBatch = &batch;
+                        partTriangle = index;
+                    }
+                }
+            }
+            if (partDistance >= closestDepth) {
+                continue;
+            }
+            if (partDistance == std::numeric_limits<double>::max()) {
+                continue;
+            }
+            closestDepth = partDistance;
+            selected = &part;
+            selectedBatch = partBatch;
+            selectedTriangle = partTriangle;
+            if (hitBatch != nullptr) {
+                *hitBatch = selectedBatch;
+            }
+            if (hitTriangle != nullptr) {
+                *hitTriangle = selectedTriangle;
+            }
+        }
+        return selected;
+    }
+
+    bool hasClickableAt(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
+                        RenderViewContext context) const {
+        return pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, true) !=
+               nullptr;
+    }
+
+    bool hasVisibleClickable(RenderViewContext context) const {
+        for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+            const DisplayPart& part = displayLists[partIndex];
+            if (part.mouseEvent.empty() || !clickablePartVisible(part, partIndex, context)) {
+                continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    std::uint64_t clickableRevision() const {
+        return clickableStateRevision + displayLists.size();
+    }
+
+    std::string mouseEventAt(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
+                             RenderViewContext context) const {
+        const DisplayPart* selected =
+            pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, true);
+        return selected == nullptr ? std::string() : selected->mouseEvent;
+    }
+
+    bool handleMouseClick(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
+                          RenderViewContext context) {
+        if (!scripts) {
+            return false;
+        }
+        const std::string eventName =
+            mouseEventAt(cursorX, cursorY, viewportWidth, viewportHeight, context);
+        if (eventName.empty()) {
+            return false;
+        }
+        if (scripts->hasScriptEntryPoint("trigger_" + lower(eventName))) {
+            scripts->invokeMouseEvent(eventName);
+        }
+        return true;
+    }
+
+    void drawClickableDebug(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
+                            RenderViewContext context) const {
+        TraceScope trace("debug", "Vehicle::drawClickableDebug");
+        const Batch* selectedBatch = nullptr;
+        std::size_t selectedTriangle = 0;
+        const DisplayPart* selected =
+            pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, true,
+                          &selectedBatch, &selectedTriangle);
+        for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+            const DisplayPart& part = displayLists[partIndex];
+            if (part.mouseEvent.empty() || !clickablePartVisible(part, partIndex, context)) {
+                continue;
+            }
+            std::vector<std::array<double, 3>> vertices;
+            for (const Batch& batch : part.batches) {
+                vertices.reserve(vertices.size() + batch.vertices.size());
+                for (const Vertex& vertex : batch.vertices) {
+                    vertices.push_back({vertex.x, vertex.y, vertex.z});
+                }
+            }
+            const bool isSelected = &part == selected;
+            pushMatrix();
+            translate(0.0, 0.0, modelOffsetZ);
+            applyAnimations(part);
+            if (vertices.empty()) {
+                translate(part.center[0], part.center[1], part.center[2]);
+                drawBox(part.size[0], part.size[1], part.size[2], isSelected ? 1.0 : 1.0,
+                        isSelected ? 0.1 : 0.85, isSelected ? 0.05 : 0.05);
+            } else {
+                drawWireframeTriangles(vertices, 1.0, 0.85, 0.05);
+                if (isSelected && selectedBatch != nullptr) {
+                    const std::size_t triangleEnd = selectedTriangle + 2;
+                    if (triangleEnd < selectedBatch->vertices.size()) {
+                        std::vector<std::array<double, 3>> selectedVertices;
+                        selectedVertices.reserve(3);
+                        for (std::size_t index = selectedTriangle; index <= triangleEnd; ++index) {
+                            const Vertex& vertex = selectedBatch->vertices[index];
+                            selectedVertices.push_back({vertex.x, vertex.y, vertex.z});
+                        }
+                        drawWireframeTriangles(selectedVertices, 1.0, 0.1, 0.05);
+                    }
+                }
+            }
+            popMatrix();
+        }
+    }
+
     void joinTextureWorkers() {
         assets->join();
     }
@@ -955,12 +1326,12 @@ struct Vehicle {
     bool comInitialized = false;
 #endif
 
-        explicit Vehicle(const std::filesystem::path& busConfigPath,
-                                         const std::filesystem::path& modelConfigPath,
-                                         const VehiclePlacement& configuredPlacement, double configuredModelOffsetZ,
-                                         ModelLoadingPolicy policy, AssetRequestManager& manager,
+    explicit Vehicle(const std::filesystem::path& busConfigPath,
+                     const std::filesystem::path& modelConfigPath,
+                     const VehiclePlacement& configuredPlacement, double configuredModelOffsetZ,
+                     ModelLoadingPolicy policy, AssetRequestManager& manager,
                      SimulationState& simulationState, SoundEngine& soundEngine)
-                : loadingPolicy(policy), variables(), assets(&manager), placement(configuredPlacement),
+        : loadingPolicy(policy), variables(), assets(&manager), placement(configuredPlacement),
           modelOffsetZ(configuredModelOffsetZ),
           wheelsFromOde(parseEnabledFlag(std::getenv("OPENBUS_WHEELS_FROM_ODE"))) {
         if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
@@ -1575,8 +1946,8 @@ struct Vehicle {
                 std::max(1, static_cast<int>(std::lround(image.height * textureScale)));
             std::size_t scaledSize = 0;
             if (!openbus::rendering::checkedTextureBufferSize(
-                    static_cast<std::size_t>(scaledWidth), static_cast<std::size_t>(scaledHeight), 4,
-                    scaledSize)) {
+                    static_cast<std::size_t>(scaledWidth), static_cast<std::size_t>(scaledHeight),
+                    4, scaledSize)) {
                 gameLog.Log("Texture scaling exceeds the decoded image size limit: " +
                             path.generic_string());
                 return 0;
@@ -1972,8 +2343,8 @@ struct Vehicle {
             snapshot.pixels.empty()) {
             return;
         }
-        const bool dimensionsChanged = batch.freeTextureWidth != snapshot.width ||
-                                       batch.freeTextureHeight != snapshot.height;
+        const bool dimensionsChanged =
+            batch.freeTextureWidth != snapshot.width || batch.freeTextureHeight != snapshot.height;
         const bool textureChanged = batch.freeTexture == 0 || dimensionsChanged ||
                                     batch.freeTextureIndex != index ||
                                     batch.freeTextureRevision != snapshot.revision;
@@ -2734,6 +3105,7 @@ struct Vehicle {
         displayPart.visibleValue = part.visibleValue;
         displayPart.meshIdentifier = part.meshIdentifier;
         displayPart.animationParent = part.animationParent;
+        displayPart.mouseEvent = part.mouseEvent;
         displayPart.backFaceCulling = parsed->backFaceCulling;
         displayPart.center = boundsCenter;
         displayPart.size = boundsSize;
@@ -2773,8 +3145,7 @@ struct Vehicle {
                             " vertices=" + std::to_string(batch.vertexCount) +
                             " alpha=" + std::to_string(batch.alphaMode) +
                             " noZwrite=" + (batch.noZwrite ? "true" : "false") +
-                            " texture=" + batch.textureName +
-                            " transmap=" + batch.transmap.name);
+                            " texture=" + batch.textureName + " transmap=" + batch.transmap.name);
             }
         }
     }
@@ -2967,8 +3338,8 @@ void RenderLoop::scrollCallback(GLFWwindow* window, double, double yOffset) {
 }
 
 RenderLoop::RenderLoop(int width, int height, const char* title)
-        : window_(nullptr), assetRequestManager_(std::make_unique<AssetRequestManager>()),
-            reflectionRenderer_(std::make_unique<openbus::rendering::ReflectionRenderer>()) {
+    : window_(nullptr), assetRequestManager_(std::make_unique<AssetRequestManager>()),
+      reflectionRenderer_(std::make_unique<openbus::rendering::ReflectionRenderer>()) {
     TraceScope trace("startup", "RenderLoop::RenderLoop");
     if (const char* scriptRate = std::getenv("OPENBUS_SCRIPT_HZ")) {
         try {
@@ -2999,6 +3370,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         throw std::runtime_error("Failed to create OpenGL window");
     }
     glfwMakeContextCurrent(window_);
+    clickableCursor_ = glfwCreateStandardCursor(GLFW_HAND_CURSOR);
     glfwSetWindowUserPointer(window_, this);
     glfwSetScrollCallback(window_, &RenderLoop::scrollCallback);
     const char* vsyncSetting = std::getenv("OPENBUS_VSYNC");
@@ -3032,6 +3404,10 @@ RenderLoop::~RenderLoop() {
     vehicles_.clear();
     openbus::rendering::shutdownCoreRenderer();
     assetRequestManager_.reset();
+    if (clickableCursor_ != nullptr) {
+        glfwDestroyCursor(clickableCursor_);
+        clickableCursor_ = nullptr;
+    }
     if (window_) {
         glfwDestroyWindow(window_);
     }
@@ -3042,8 +3418,7 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& busConfigPath,
                                 const std::filesystem::path& modelConfigPath,
                                 const VehiclePlacement& placement,
                                 ModelLoadingPolicy loadingPolicy) {
-    const std::filesystem::path resolvedBusConfigPath =
-        busConfigurationPathFor(busConfigPath);
+    const std::filesystem::path resolvedBusConfigPath = busConfigurationPathFor(busConfigPath);
     const std::filesystem::path resolvedModelConfigPath =
         modelConfigurationPathForBus(resolvedBusConfigPath, modelConfigPath);
     const VehicleConfig vehicleConfiguration = loadBusConfig(resolvedBusConfigPath);
@@ -3087,13 +3462,21 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
 }
 
 void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
-                                     double steering, double brake) {
+                                       double steering, double brake) {
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
     soundEngine_.setListenerDistance(cameraView_ == 0 ? cameraDistance_ : 0.0);
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(simulation, throttle, steering, brake);
     }
     updateScripts();
+}
+
+void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
+    if (playerVehicle_ != nullptr) {
+        playerVehicle_->updateSimulationVariables(
+            simulation, playerVehicle_->variables.get("throttle"),
+            playerVehicle_->variables.get("steering"), playerVehicle_->variables.get("brake"));
+    }
 }
 
 void RenderLoop::updateScripts() {
@@ -3194,8 +3577,8 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
                            currentFieldOfView());
             draw(reflectionSimulation);
         },
-        [this, previousCameraView, previousFovOffset, previousLookYaw, previousLookPitch](
-            int width, int height) {
+        [this, previousCameraView, previousFovOffset, previousLookYaw,
+         previousLookPitch](int width, int height) {
             cameraView_ = previousCameraView;
             fieldOfViewOffset_ = previousFovOffset;
             viewLookYaw_ = previousLookYaw;
@@ -3234,15 +3617,21 @@ void RenderLoop::beginFrame() {
     frameTimeStep_ = timegap;
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.keyboardInput");
-        const std::array<int, 4> keys = {GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D};
-        const std::array<const char*, 4> keyNames = {"W", "A", "S", "D"};
-        for (std::size_t index = 0; index < keys.size(); ++index) {
-            const bool pressed = glfwGetKey(window_, keys[index]) == GLFW_PRESS;
-            if (pressed != previousKeyStates_[index]) {
-                keyEvents_.push_back({keyNames[index], pressed, glfwGetTime()});
-                gameLog.Log(std::string("Key ") + keyNames[index] +
+        const auto& bindings = vehicleKeyBindings();
+        if (previousVehicleKeyStates_.size() != bindings.size()) {
+            previousVehicleKeyStates_.assign(bindings.size(), false);
+        }
+        for (std::size_t index = 0; index < bindings.size(); ++index) {
+            const VehicleKeyBinding& binding = bindings[index];
+            const bool pressed = vehicleBindingPressed(window_, binding);
+            if (pressed != previousVehicleKeyStates_[index]) {
+                keyEvents_.push_back({binding.action, pressed, glfwGetTime()});
+                if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
+                    playerVehicle_->scripts->invokeKeyBinding(binding.action, pressed);
+                }
+                gameLog.Log(std::string("Key binding ") + binding.action +
                             (pressed ? " pressed" : " released"));
-                previousKeyStates_[index] = pressed;
+                previousVehicleKeyStates_[index] = pressed;
             }
         }
     }
@@ -3297,6 +3686,13 @@ void RenderLoop::beginFrame() {
                         (collisionDebugOverlay_ ? "enabled" : "disabled"));
         }
         previousCollisionDebugKeyState_ = collisionDebugKeyPressed;
+        const bool clickableDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS;
+        if (clickableDebugKeyPressed && !previousClickableDebugKeyState_) {
+            clickableDebugOverlay_ = !clickableDebugOverlay_;
+            gameLog.Log(std::string("Clickable component overlay ") +
+                        (clickableDebugOverlay_ ? "enabled" : "disabled"));
+        }
+        previousClickableDebugKeyState_ = clickableDebugKeyPressed;
     }
     int width = 1;
     int height = 1;
@@ -3349,6 +3745,14 @@ void RenderLoop::beginFrame() {
         draggingCamera_ = middleMouse;
         previousCursorX_ = cursorX;
         previousCursorY_ = cursorY;
+        const bool leftMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        leftMousePressed_ = leftMouse;
+        if (leftMouse && !previousLeftMouseState_ && !rightMouse && !middleMouse) {
+            pendingMouseClick_ = true;
+            pendingMouseClickX_ = cursorX;
+            pendingMouseClickY_ = cursorY;
+        }
+        previousLeftMouseState_ = leftMouse;
     }
     {
         TraceScope phase("render", "RenderLoop::beginFrame.setupView");
@@ -3390,9 +3794,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                                        camera->position[2] + modelOffsetZ};
             const std::array<double, 3> direction = {
                 std::cos(tilt) * std::cos(pan), std::cos(tilt) * std::sin(pan), std::sin(tilt)};
-            const std::array<double, 3> upLocal = {
-                -std::sin(tilt) * std::cos(pan), -std::sin(tilt) * std::sin(pan),
-                std::cos(tilt)};
+            const std::array<double, 3> upLocal = {-std::sin(tilt) * std::cos(pan),
+                                                   -std::sin(tilt) * std::sin(pan), std::cos(tilt)};
             const std::array<double, 3> eyeLocal = {
                 centerLocal[0] - direction[0] * camera->orbitDistance,
                 centerLocal[1] - direction[1] * camera->orbitDistance,
@@ -3467,6 +3870,93 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             lookAt(eye[0], eye[1], eye[2], target[0], target[1], target[2]);
         }
     }
+    if (!renderingReflection_ && playerVehicle_ != nullptr) {
+        TraceScope phase("input", "RenderLoop::draw.interaction");
+        GLint viewport[4] = {};
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        double cursorX = 0.0;
+        double cursorY = 0.0;
+        glfwGetCursorPos(window_, &cursorX, &cursorY);
+        int windowWidth = 1;
+        int windowHeight = 1;
+        glfwGetWindowSize(window_, &windowWidth, &windowHeight);
+        const double framebufferScaleX =
+            static_cast<double>(viewport[2]) / static_cast<double>(std::max(windowWidth, 1));
+        const double framebufferScaleY =
+            static_cast<double>(viewport[3]) / static_cast<double>(std::max(windowHeight, 1));
+        const double framebufferCursorX = cursorX * framebufferScaleX;
+        const double framebufferCursorY = cursorY * framebufferScaleY;
+        pushMatrix();
+        applyPose(chassis);
+        const RenderViewContext interactionContext = isExteriorView()
+                                                         ? RenderViewContext::PlayerExterior
+                                                         : RenderViewContext::PlayerInterior;
+        const int interactionContextValue = static_cast<int>(interactionContext);
+        const std::uint64_t clickableRevision = playerVehicle_->clickableRevision();
+        const auto samePose = [&] {
+            return clickableHoverCachePosition_ == chassis.position &&
+                   clickableHoverCacheRotation_ == chassis.rotation;
+        };
+        const bool hoverCacheMatches =
+            clickableHoverCacheValid_ && clickableHoverCacheX_ == framebufferCursorX &&
+            clickableHoverCacheY_ == framebufferCursorY &&
+            clickableHoverCacheWidth_ == viewport[2] && clickableHoverCacheHeight_ == viewport[3] &&
+            clickableHoverCacheContext_ == interactionContextValue &&
+            clickableHoverCacheCameraView_ == cameraView_ &&
+            clickableHoverCacheCameraYaw_ == cameraYaw_ &&
+            clickableHoverCacheCameraPitch_ == cameraPitch_ &&
+            clickableHoverCacheLookYaw_ == viewLookYaw_ &&
+            clickableHoverCacheLookPitch_ == viewLookPitch_ && samePose() &&
+            clickableHoverCacheRevision_ == clickableRevision;
+        if (!hoverCacheMatches) {
+            clickableHoverCacheValid_ = true;
+            clickableHoverCacheX_ = framebufferCursorX;
+            clickableHoverCacheY_ = framebufferCursorY;
+            clickableHoverCacheWidth_ = viewport[2];
+            clickableHoverCacheHeight_ = viewport[3];
+            clickableHoverCacheContext_ = interactionContextValue;
+            clickableHoverCacheCameraView_ = cameraView_;
+            clickableHoverCacheCameraYaw_ = cameraYaw_;
+            clickableHoverCacheCameraPitch_ = cameraPitch_;
+            clickableHoverCacheLookYaw_ = viewLookYaw_;
+            clickableHoverCacheLookPitch_ = viewLookPitch_;
+            clickableHoverCachePosition_ = chassis.position;
+            clickableHoverCacheRotation_ = chassis.rotation;
+            clickableHoverCacheRevision_ = clickableRevision;
+            clickableHoverCacheHit_ =
+                playerVehicle_->hasVisibleClickable(interactionContext) &&
+                playerVehicle_->hasClickableAt(framebufferCursorX, framebufferCursorY, viewport[2],
+                                               viewport[3], interactionContext);
+        }
+        const bool hoveringClickable = clickableHoverCacheHit_;
+        glfwSetCursor(window_, hoveringClickable ? clickableCursor_ : nullptr);
+        if (pendingMouseClick_) {
+            activeMouseEvent_ = playerVehicle_->mouseEventAt(
+                pendingMouseClickX_ * framebufferScaleX, pendingMouseClickY_ * framebufferScaleY,
+                viewport[2], viewport[3], interactionContext);
+            playerVehicle_->handleMouseClick(pendingMouseClickX_ * framebufferScaleX,
+                                             pendingMouseClickY_ * framebufferScaleY, viewport[2],
+                                             viewport[3], interactionContext);
+            previousMouseInteractionX_ = pendingMouseClickX_;
+            previousMouseInteractionY_ = pendingMouseClickY_;
+            pendingMouseClick_ = false;
+        } else if (!leftMousePressed_) {
+            if (!activeMouseEvent_.empty()) {
+                playerVehicle_->scripts->invokeMouseRelease(activeMouseEvent_);
+            }
+            activeMouseEvent_.clear();
+        } else if (!activeMouseEvent_.empty()) {
+            const double deltaX = cursorX - previousMouseInteractionX_;
+            const double deltaY = cursorY - previousMouseInteractionY_;
+            if (deltaX != 0.0 || deltaY != 0.0) {
+                playerVehicle_->scripts->invokeMouseDrag(activeMouseEvent_, deltaX, deltaY, cursorX,
+                                                         cursorY);
+                previousMouseInteractionX_ = cursorX;
+                previousMouseInteractionY_ = cursorY;
+            }
+        }
+        popMatrix();
+    }
     {
         TraceScope phase("render", "RenderLoop::draw.visibility");
         if (!renderingReflection_) {
@@ -3516,9 +4006,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                     continue;
                 }
                 pushMatrix();
-                const RenderViewContext vehicleContext = vehicle.get() == playerVehicle_
-                                                             ? context
-                                                             : RenderViewContext::NonPlayer;
+                const RenderViewContext vehicleContext =
+                    vehicle.get() == playerVehicle_ ? context : RenderViewContext::NonPlayer;
                 if (vehicle.get() == playerVehicle_) {
                     applyPose(chassis);
                     if (renderPass == VehicleRenderPass::Opaque) {
@@ -3533,6 +4022,27 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         };
         drawVehicles(VehicleRenderPass::Opaque);
         drawVehicles(VehicleRenderPass::Transparent);
+        if (clickableDebugOverlay_ && playerVehicle_ != nullptr) {
+            GLint viewport[4] = {};
+            glGetIntegerv(GL_VIEWPORT, viewport);
+            double cursorX = 0.0;
+            double cursorY = 0.0;
+            glfwGetCursorPos(window_, &cursorX, &cursorY);
+            int windowWidth = 1;
+            int windowHeight = 1;
+            glfwGetWindowSize(window_, &windowWidth, &windowHeight);
+            const double framebufferCursorX = cursorX * static_cast<double>(viewport[2]) /
+                                              static_cast<double>(std::max(windowWidth, 1));
+            const double framebufferCursorY = cursorY * static_cast<double>(viewport[3]) /
+                                              static_cast<double>(std::max(windowHeight, 1));
+            pushMatrix();
+            applyPose(chassis);
+            playerVehicle_->drawClickableDebug(
+                framebufferCursorX, framebufferCursorY, viewport[2], viewport[3],
+                isExteriorView() ? RenderViewContext::PlayerExterior
+                                 : RenderViewContext::PlayerInterior);
+            popMatrix();
+        }
         if (!playerDrawn) {
             pushMatrix();
             applyPose(chassis);
@@ -3587,7 +4097,7 @@ void RenderLoop::endFrame() {
 }
 
 void RenderLoop::captureViews(const BusSimulation& simulation,
-                            const std::filesystem::path& directory) {
+                              const std::filesystem::path& directory) {
     TraceScope trace("capture", "RenderLoop::captureViews");
     std::filesystem::create_directories(directory);
     int width = 1;
@@ -3660,17 +4170,37 @@ bool RenderLoop::isCaptureReady() const {
 }
 
 double RenderLoop::throttle() const {
-    return glfwGetKey(window_, GLFW_KEY_W) == GLFW_PRESS ? 1.0 : 0.0;
+    const VehicleKeyBinding* binding = findVehicleKeyBinding("throttle");
+    return binding != nullptr && vehicleBindingPressed(window_, *binding) ? 1.0 : 0.0;
 }
 
 double RenderLoop::steering() const {
-    const bool left = glfwGetKey(window_, GLFW_KEY_A) == GLFW_PRESS;
-    const bool right = glfwGetKey(window_, GLFW_KEY_D) == GLFW_PRESS;
+    const VehicleKeyBinding* leftBinding = findVehicleKeyBinding("steering_left");
+    const VehicleKeyBinding* rightBinding = findVehicleKeyBinding("steering_right");
+    const bool left = leftBinding != nullptr && vehicleBindingPressed(window_, *leftBinding);
+    const bool right = rightBinding != nullptr && vehicleBindingPressed(window_, *rightBinding);
     return static_cast<double>(right) - static_cast<double>(left);
 }
 
 double RenderLoop::brake() const {
-    return glfwGetKey(window_, GLFW_KEY_S) == GLFW_PRESS ? 1.0 : 0.0;
+    const VehicleKeyBinding* binding = findVehicleKeyBinding("brake");
+    return binding != nullptr && vehicleBindingPressed(window_, *binding) ? 1.0 : 0.0;
+}
+
+double RenderLoop::physicsThrottle() const {
+    return playerVehicle_ == nullptr ? throttle() : playerVehicle_->variables.get("throttle");
+}
+
+double RenderLoop::physicsWheelTorque() const {
+    return playerVehicle_ == nullptr ? 0.0 : playerVehicle_->variables.get("m_wheel");
+}
+
+double RenderLoop::physicsSteering() const {
+    return playerVehicle_ == nullptr ? steering() : playerVehicle_->variables.get("steering");
+}
+
+double RenderLoop::physicsBrake() const {
+    return playerVehicle_ == nullptr ? brake() : playerVehicle_->variables.get("brake");
 }
 
 std::vector<KeyEvent> RenderLoop::consumeKeyEvents() {

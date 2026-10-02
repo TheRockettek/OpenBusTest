@@ -111,11 +111,11 @@ std::string_view nextToken(std::string_view& input) {
     return token;
 }
 
-template <typename Number>
-Number parseNumber(std::string_view value, Number fallback) {
+template <typename Number> Number parseNumber(std::string_view value, Number fallback) {
     Number result = fallback;
     const auto parsed = std::from_chars(value.data(), value.data() + value.size(), result);
-    return parsed.ec == std::errc() && parsed.ptr == value.data() + value.size() ? result : fallback;
+    return parsed.ec == std::errc() && parsed.ptr == value.data() + value.size() ? result
+                                                                                 : fallback;
 }
 
 std::vector<ObjIndex> parseFace(std::string_view value, int positionCount, int texCoordCount,
@@ -169,28 +169,33 @@ void writeString(std::ostream& output, const std::string& value) {
     output.write(value.data(), static_cast<std::streamsize>(value.size()));
 }
 
-template <typename T>
-void writeValue(std::ostream& output, const T& value) {
+template <typename T> void writeValue(std::ostream& output, const T& value) {
     output.write(reinterpret_cast<const char*>(&value), sizeof(value));
 }
 
 void writeParsed(std::ostream& output, const ParsedObj& object) {
     writeU32(output, static_cast<std::uint32_t>(object.positions.size()));
     for (const ObjPosition& value : object.positions) {
-        writeValue(output, value.x); writeValue(output, value.y); writeValue(output, value.z);
+        writeValue(output, value.x);
+        writeValue(output, value.y);
+        writeValue(output, value.z);
     }
     writeU32(output, static_cast<std::uint32_t>(object.normals.size()));
     for (const ObjNormal& value : object.normals) {
-        writeValue(output, value.x); writeValue(output, value.y); writeValue(output, value.z);
+        writeValue(output, value.x);
+        writeValue(output, value.y);
+        writeValue(output, value.z);
     }
     writeU32(output, static_cast<std::uint32_t>(object.texCoords.size()));
     for (const ObjTexCoord& value : object.texCoords) {
-        writeValue(output, value.u); writeValue(output, value.v);
+        writeValue(output, value.u);
+        writeValue(output, value.v);
     }
     writeU32(output, static_cast<std::uint32_t>(object.triangles.size()));
     for (const ObjTriangle& triangle : object.triangles) {
         for (const ObjIndex& index : triangle.indices) {
-            writeValue(output, index.position); writeValue(output, index.texCoord);
+            writeValue(output, index.position);
+            writeValue(output, index.texCoord);
             writeValue(output, index.normal);
         }
         writeString(output, triangle.material);
@@ -201,15 +206,23 @@ void writeParsed(std::ostream& output, const ParsedObj& object) {
         writeValue(output, material.materialIndex);
         writeString(output, material.texturePath.generic_string());
         writeString(output, material.textureName);
-        for (double value : material.color) writeValue(output, value);
-        for (double value : material.specular) writeValue(output, value);
-        for (double value : material.emission) writeValue(output, value);
-        writeValue(output, material.specularPower); writeValue(output, material.alpha);
+        for (double value : material.color)
+            writeValue(output, value);
+        for (double value : material.specular)
+            writeValue(output, value);
+        for (double value : material.emission)
+            writeValue(output, value);
+        writeValue(output, material.specularPower);
+        writeValue(output, material.alpha);
     }
-    for (double value : object.transform) writeValue(output, value);
-    writeValue(output, object.hasTransform); writeValue(output, object.backFaceCulling);
-    for (double value : object.boundsCenter) writeValue(output, value);
-    for (double value : object.boundsSize) writeValue(output, value);
+    for (double value : object.transform)
+        writeValue(output, value);
+    writeValue(output, object.hasTransform);
+    writeValue(output, object.backFaceCulling);
+    for (double value : object.boundsCenter)
+        writeValue(output, value);
+    for (double value : object.boundsSize)
+        writeValue(output, value);
     writeValue(output, object.boundsRadius);
 }
 
@@ -225,8 +238,7 @@ class BundleReader {
         return value;
     }
 
-    template <typename T>
-    T value() {
+    template <typename T> T value() {
         ensure(sizeof(T));
         T result;
         std::memcpy(&result, data_.data() + offset_, sizeof(T));
@@ -255,25 +267,32 @@ class BundleReader {
 std::shared_ptr<ParsedObj> readParsed(BundleReader& reader) {
     auto result = std::make_shared<ParsedObj>();
     const auto readCount = [](std::uint32_t count) {
-        if (count > 100000000) throw std::runtime_error("Object bundle count is too large");
+        if (count > 100000000)
+            throw std::runtime_error("Object bundle count is too large");
         return static_cast<std::size_t>(count);
     };
     result->positions.resize(readCount(reader.u32()));
     for (ObjPosition& value : result->positions) {
-        value.x = reader.value<double>(); value.y = reader.value<double>(); value.z = reader.value<double>();
+        value.x = reader.value<double>();
+        value.y = reader.value<double>();
+        value.z = reader.value<double>();
     }
     result->normals.resize(readCount(reader.u32()));
     for (ObjNormal& value : result->normals) {
-        value.x = reader.value<double>(); value.y = reader.value<double>(); value.z = reader.value<double>();
+        value.x = reader.value<double>();
+        value.y = reader.value<double>();
+        value.z = reader.value<double>();
     }
     result->texCoords.resize(readCount(reader.u32()));
     for (ObjTexCoord& value : result->texCoords) {
-        value.u = reader.value<double>(); value.v = reader.value<double>();
+        value.u = reader.value<double>();
+        value.v = reader.value<double>();
     }
     result->triangles.resize(readCount(reader.u32()));
     for (ObjTriangle& triangle : result->triangles) {
         for (ObjIndex& index : triangle.indices) {
-            index.position = reader.value<int>(); index.texCoord = reader.value<int>();
+            index.position = reader.value<int>();
+            index.texCoord = reader.value<int>();
             index.normal = reader.value<int>();
         }
         triangle.material = reader.string();
@@ -283,17 +302,26 @@ std::shared_ptr<ParsedObj> readParsed(BundleReader& reader) {
         const std::string name = reader.string();
         ObjMaterial material;
         material.materialIndex = reader.value<int>();
-        material.texturePath = reader.string(); material.textureName = reader.string();
-        for (double& value : material.color) value = reader.value<double>();
-        for (double& value : material.specular) value = reader.value<double>();
-        for (double& value : material.emission) value = reader.value<double>();
-        material.specularPower = reader.value<double>(); material.alpha = reader.value<double>();
+        material.texturePath = reader.string();
+        material.textureName = reader.string();
+        for (double& value : material.color)
+            value = reader.value<double>();
+        for (double& value : material.specular)
+            value = reader.value<double>();
+        for (double& value : material.emission)
+            value = reader.value<double>();
+        material.specularPower = reader.value<double>();
+        material.alpha = reader.value<double>();
         result->materials.emplace(name, std::move(material));
     }
-    for (double& value : result->transform) value = reader.value<double>();
-    result->hasTransform = reader.value<bool>(); result->backFaceCulling = reader.value<bool>();
-    for (double& value : result->boundsCenter) value = reader.value<double>();
-    for (double& value : result->boundsSize) value = reader.value<double>();
+    for (double& value : result->transform)
+        value = reader.value<double>();
+    result->hasTransform = reader.value<bool>();
+    result->backFaceCulling = reader.value<bool>();
+    for (double& value : result->boundsCenter)
+        value = reader.value<double>();
+    for (double& value : result->boundsSize)
+        value = reader.value<double>();
     result->boundsRadius = reader.value<double>();
     return result;
 }
@@ -307,15 +335,18 @@ std::shared_ptr<ParsedObj> parseBundle(const std::filesystem::path& path,
     {
         std::lock_guard<std::mutex> lock(cacheMutex);
         auto found = cache.find(key);
-        if (found != cache.end()) data = found->second;
+        if (found != cache.end())
+            data = found->second;
     }
     if (!data) {
         std::ifstream input(path, std::ios::binary);
-        if (!input) return {};
+        if (!input)
+            return {};
         input.seekg(0, std::ios::end);
         const std::streamoff length = input.tellg();
         input.seekg(0, std::ios::beg);
-        if (length < static_cast<std::streamoff>(sizeof(BUNDLE_MAGIC) - 1)) return {};
+        if (length < static_cast<std::streamoff>(sizeof(BUNDLE_MAGIC) - 1))
+            return {};
         data = std::make_shared<std::vector<std::uint8_t>>(static_cast<std::size_t>(length));
         input.read(reinterpret_cast<char*>(data->data()), length);
         std::lock_guard<std::mutex> lock(cacheMutex);
@@ -323,7 +354,8 @@ std::shared_ptr<ParsedObj> parseBundle(const std::filesystem::path& path,
     }
     BundleReader reader(*data);
     for (const char expected : std::string(BUNDLE_MAGIC)) {
-        if (reader.value<std::uint8_t>() != static_cast<std::uint8_t>(expected)) return {};
+        if (reader.value<std::uint8_t>() != static_cast<std::uint8_t>(expected))
+            return {};
     }
     const std::uint32_t count = reader.u32();
     for (std::uint32_t index = 0; index < count; ++index) {
@@ -331,11 +363,13 @@ std::shared_ptr<ParsedObj> parseBundle(const std::filesystem::path& path,
         const std::uint32_t size = reader.u32();
         if (name == entryName) {
             std::vector<std::uint8_t> objectData(size);
-            for (std::uint8_t& value : objectData) value = reader.value<std::uint8_t>();
+            for (std::uint8_t& value : objectData)
+                value = reader.value<std::uint8_t>();
             BundleReader objectReader(objectData);
             return readParsed(objectReader);
         }
-        for (std::uint32_t byte = 0; byte < size; ++byte) reader.value<std::uint8_t>();
+        for (std::uint32_t byte = 0; byte < size; ++byte)
+            reader.value<std::uint8_t>();
     }
     return {};
 }
@@ -399,10 +433,10 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path,
             } else if (type == "usemtl") {
                 currentMaterial.assign(nextToken(remaining));
             } else if (type == "f") {
-                const std::vector<ObjIndex> face = parseFace(
-                    remaining, static_cast<int>(result->positions.size()),
-                    static_cast<int>(result->texCoords.size()),
-                    static_cast<int>(result->normals.size()));
+                const std::vector<ObjIndex> face =
+                    parseFace(remaining, static_cast<int>(result->positions.size()),
+                              static_cast<int>(result->texCoords.size()),
+                              static_cast<int>(result->normals.size()));
                 for (std::size_t index = 2; index < face.size(); ++index) {
                     result->triangles.push_back(
                         {{{face[0], face[index - 1], face[index]}}, currentMaterial});
@@ -415,8 +449,7 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path,
     }
     {
         TraceScope phase("obj", "parseObj.validateWinding");
-        const bool mirrored =
-            result->hasTransform && transformDeterminant(result->transform) > 0.0;
+        const bool mirrored = result->hasTransform && transformDeterminant(result->transform) > 0.0;
         std::size_t against = 0;
         std::size_t againstTurned = 0;
         std::size_t counted = 0;
@@ -440,8 +473,9 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path,
                 continue;
             }
             const std::array<double, 3> face = cross(
-                subtract(result->positions[static_cast<std::size_t>(triangle.indices[1].position - 1)],
-                         result->positions[static_cast<std::size_t>(triangle.indices[0].position - 1)]),
+                subtract(
+                    result->positions[static_cast<std::size_t>(triangle.indices[1].position - 1)],
+                    result->positions[static_cast<std::size_t>(triangle.indices[0].position - 1)]),
                 subtract(
                     result->positions[static_cast<std::size_t>(triangle.indices[2].position - 1)],
                     result->positions[static_cast<std::size_t>(triangle.indices[0].position - 1)]));
@@ -495,8 +529,7 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path,
             const double x = position.y - result->boundsCenter[0];
             const double y = -position.x - result->boundsCenter[1];
             const double z = position.z - result->boundsCenter[2];
-            result->boundsRadius =
-                std::max(result->boundsRadius, std::sqrt(x * x + y * y + z * z));
+            result->boundsRadius = std::max(result->boundsRadius, std::sqrt(x * x + y * y + z * z));
         }
     }
     if (!materialLibrary.empty()) {
@@ -549,23 +582,25 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path,
     return result;
 }
 
-bool ObjLoader::writeBundle(const std::filesystem::path& output,
-                            const std::filesystem::path& root,
+bool ObjLoader::writeBundle(const std::filesystem::path& output, const std::filesystem::path& root,
                             const std::vector<std::filesystem::path>& objects) {
     std::vector<std::pair<std::string, std::shared_ptr<ParsedObj>>> entries;
     entries.reserve(objects.size());
     for (const std::filesystem::path& objectPath : objects) {
         const std::shared_ptr<ParsedObj> parsed = parse(objectPath);
-        if (!parsed) continue;
+        if (!parsed)
+            continue;
         std::string name = objectPath.lexically_relative(root).generic_string();
         std::transform(name.begin(), name.end(), name.begin(), [](unsigned char character) {
             return static_cast<char>(std::tolower(character));
         });
         entries.emplace_back(std::move(name), parsed);
     }
-    if (entries.empty()) return false;
+    if (entries.empty())
+        return false;
     std::ofstream file(output, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
+    if (!file)
+        return false;
     file.write(BUNDLE_MAGIC, sizeof(BUNDLE_MAGIC) - 1);
     writeU32(file, static_cast<std::uint32_t>(entries.size()));
     for (const auto& entry : entries) {

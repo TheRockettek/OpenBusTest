@@ -70,6 +70,7 @@ struct BusModelPart {
     int visibleValue = 0;
     std::string meshIdentifier;
     std::string animationParent;
+    std::string mouseEvent;
     std::unordered_map<std::string, BusModelMaterialState> materialStates;
     std::vector<BusModelMaterialState> materialStatesInOrder;
     std::vector<ModelAnimation> animations;
