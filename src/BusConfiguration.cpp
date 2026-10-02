@@ -20,6 +20,7 @@ namespace {
 
 constexpr double DEFAULT_WHEEL_HALF_WIDTH = 0.145;
 constexpr const char* DEFAULT_OMSI_ROOT = R"(C:\Program Files (x86)\Steam\steamapps\common\OMSI 2)";
+} // namespace
 
 std::filesystem::path omsiRootPath() {
     if (const char* configuredRoot = std::getenv("OPENBUS_OMSI_ROOT");
@@ -28,6 +29,8 @@ std::filesystem::path omsiRootPath() {
     }
     return DEFAULT_OMSI_ROOT;
 }
+
+namespace {
 
 std::filesystem::path normalizedPath(const std::filesystem::path& path) {
     std::string value = path.string();

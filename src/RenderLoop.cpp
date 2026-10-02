@@ -157,7 +157,7 @@ constexpr int kBindingControl = 4;
 
 // OpenBus vehicle defaults. Cashdesk, IBIS, and rollband actions are
 // intentionally omitted until their dedicated input surfaces are wired.
-const std::vector<VehicleKeyBinding>& vehicleKeyBindings() {
+const std::vector<VehicleKeyBinding>& defaultVehicleKeyBindings() {
     static const std::vector<VehicleKeyBinding> bindings = {
         {"throttle", GLFW_KEY_KP_8, kBindingHeld},
         {"brake", GLFW_KEY_KP_2, kBindingHeld},
@@ -215,6 +215,171 @@ const std::vector<VehicleKeyBinding>& vehicleKeyBindings() {
         {"kw_s_plus", GLFW_KEY_LEFT_BRACKET, 0},
         {"kw_s_minus", GLFW_KEY_SLASH, 0},
     };
+    return bindings;
+}
+
+int glfwKeyFromKeyboardConfigCode(int code) {
+    if (code >= 2 && code <= 11) {
+        return GLFW_KEY_1 + (code - 2);
+    }
+    switch (code) {
+    case 15:
+        return GLFW_KEY_TAB;
+    case 16:
+        return GLFW_KEY_Q;
+    case 17:
+        return GLFW_KEY_W;
+    case 18:
+        return GLFW_KEY_E;
+    case 19:
+        return GLFW_KEY_R;
+    case 20:
+        return GLFW_KEY_T;
+    case 26:
+        return GLFW_KEY_LEFT_BRACKET;
+    case 32:
+        return GLFW_KEY_D;
+    case 33:
+        return GLFW_KEY_F;
+    case 35:
+        return GLFW_KEY_H;
+    case 38:
+        return GLFW_KEY_L;
+    case 48:
+        return GLFW_KEY_B;
+    case 49:
+        return GLFW_KEY_N;
+    case 50:
+        return GLFW_KEY_M;
+    case 52:
+        return GLFW_KEY_PERIOD;
+    case 53:
+        return GLFW_KEY_SLASH;
+    case 55:
+        return GLFW_KEY_KP_MULTIPLY;
+    case 63:
+        return GLFW_KEY_F5;
+    case 64:
+        return GLFW_KEY_F6;
+    case 65:
+        return GLFW_KEY_F7;
+    case 66:
+        return GLFW_KEY_F8;
+    case 70:
+        return GLFW_KEY_SCROLL_LOCK;
+    case 71:
+        return GLFW_KEY_KP_7;
+    case 72:
+        return GLFW_KEY_KP_8;
+    case 73:
+        return GLFW_KEY_KP_9;
+    case 74:
+        return GLFW_KEY_KP_SUBTRACT;
+    case 75:
+        return GLFW_KEY_KP_4;
+    case 76:
+        return GLFW_KEY_KP_5;
+    case 77:
+        return GLFW_KEY_KP_6;
+    case 78:
+        return GLFW_KEY_KP_ADD;
+    case 80:
+        return GLFW_KEY_KP_2;
+    case 83:
+        return GLFW_KEY_KP_DECIMAL;
+    case 88:
+        return GLFW_KEY_F12;
+    case 181:
+        return GLFW_KEY_KP_DIVIDE;
+    default:
+        return GLFW_KEY_UNKNOWN;
+    }
+}
+
+std::string trimKeyBindingText(std::string value) {
+    const std::size_t first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return {};
+    }
+    const std::size_t last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+void inheritVehicleKeyBindingsFromOmsi(std::vector<VehicleKeyBinding>& bindings) {
+    const std::filesystem::path configPath = omsiRootPath() / "Inputs" / "keyboard.cfg";
+    std::ifstream input(configPath);
+    if (!input) {
+        gameLog.Log("OMSI keybindings not found, using OpenBus defaults: " +
+                    configPath.generic_string());
+        return;
+    }
+
+    bool inVehiclesSection = false;
+    bool readingEntry = false;
+    int valueIndex = 0;
+    std::string action;
+    int keyCode = 0;
+    int flags = 0;
+    std::string line;
+    while (std::getline(input, line)) {
+        line = trimKeyBindingText(line);
+        if (line.empty()) {
+            continue;
+        }
+        if (line.front() == '[' && line.back() == ']') {
+            const std::string section = line.substr(1, line.size() - 2);
+            if (section == "vehicles") {
+                inVehiclesSection = true;
+                readingEntry = false;
+            } else if (section == "entry") {
+                readingEntry = inVehiclesSection;
+            } else {
+                inVehiclesSection = false;
+                readingEntry = false;
+            }
+            valueIndex = 0;
+            continue;
+        }
+        if (!inVehiclesSection || !readingEntry) {
+            continue;
+        }
+        if (valueIndex == 0) {
+            action = line;
+        } else if (valueIndex == 1) {
+            try {
+                keyCode = std::stoi(line);
+            } catch (const std::exception&) {
+                readingEntry = false;
+                continue;
+            }
+        } else if (valueIndex == 2) {
+            try {
+                flags = std::stoi(line);
+            } catch (const std::exception&) {
+                readingEntry = false;
+                continue;
+            }
+            const auto found = std::find_if(
+                bindings.begin(), bindings.end(),
+                [&action](const VehicleKeyBinding& binding) { return action == binding.action; });
+            if (found != bindings.end()) {
+                found->key = glfwKeyFromKeyboardConfigCode(keyCode);
+                found->flags = flags;
+            }
+            readingEntry = false;
+            continue;
+        }
+        ++valueIndex;
+    }
+    gameLog.Log("Inherited OMSI vehicle keybindings from " + configPath.generic_string());
+}
+
+const std::vector<VehicleKeyBinding>& vehicleKeyBindings() {
+    static const std::vector<VehicleKeyBinding> bindings = [] {
+        std::vector<VehicleKeyBinding> result = defaultVehicleKeyBindings();
+        inheritVehicleKeyBindingsFromOmsi(result);
+        return result;
+    }();
     return bindings;
 }
 

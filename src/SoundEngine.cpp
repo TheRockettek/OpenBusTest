@@ -312,6 +312,13 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
             }
             continue;
         }
+        if (keyword == "noloop") {
+            if (hasSound) {
+                current.loop = false;
+                updateCurrentTriggers();
+            }
+            continue;
+        }
         if (keyword == "viewpoint") {
             openbus::config::Line value;
             ConfigurationDiagnostics diagnostics;

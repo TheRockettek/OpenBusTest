@@ -184,7 +184,9 @@ derived from `Axle_Steering_X_L/R` variables in the referenced model.cfg.
 
 Vehicle script bindings use named keyboard keys rather than OMSI numeric key
 codes. Pressing an action calls `trigger_<action>`; releasing it calls
-`trigger_<action>_off`.
+`trigger_<action>_off`. At startup, matching vehicle actions inherit their key
+and modifier assignments from `Inputs/keyboard.cfg` under `OPENBUS_OMSI_ROOT`;
+the documented table below is the fallback when that file is unavailable.
 
 | Key | Vehicle actions |
 | --- | --- |

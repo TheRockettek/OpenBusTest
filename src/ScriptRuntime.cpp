@@ -521,27 +521,22 @@ struct ScriptRuntime::Impl {
                     floatStack.push_back(std::ceil(nativePopFloat()));
                     break;
                 case OscOpcode::Sine:
-                    floatStack.push_back(
-                        std::sin(nativePopFloat() * 3.14159265358979323846 / 180.0));
+                    floatStack.push_back(std::sin(nativePopFloat()));
                     break;
                 case OscOpcode::Cosine:
-                    floatStack.push_back(
-                        std::cos(nativePopFloat() * 3.14159265358979323846 / 180.0));
+                    floatStack.push_back(std::cos(nativePopFloat()));
                     break;
                 case OscOpcode::Tangent:
-                    floatStack.push_back(
-                        std::tan(nativePopFloat() * 3.14159265358979323846 / 180.0));
+                    floatStack.push_back(std::tan(nativePopFloat()));
                     break;
                 case OscOpcode::ArcTangent:
-                    floatStack.push_back(std::atan(nativePopFloat()) * 180.0 /
-                                         3.14159265358979323846);
+                    floatStack.push_back(std::atan(nativePopFloat()));
                     break;
                 case OscOpcode::SquareRoot:
                     floatStack.push_back(std::sqrt(std::max(0.0, nativePopFloat())));
                     break;
                 case OscOpcode::ArcSine:
-                    floatStack.push_back(std::asin(std::clamp(nativePopFloat(), -1.0, 1.0)) *
-                                         180.0 / 3.14159265358979323846);
+                    floatStack.push_back(std::asin(std::clamp(nativePopFloat(), -1.0, 1.0)));
                     break;
                 case OscOpcode::Exponential:
                     floatStack.push_back(std::exp(nativePopFloat()));

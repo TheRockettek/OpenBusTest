@@ -7,6 +7,7 @@
 
 struct ModelConfig;
 
+std::filesystem::path omsiRootPath();
 std::filesystem::path busConfigurationPathFor();
 std::filesystem::path busConfigurationPathFor(const std::filesystem::path& configuredPath);
 BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath);

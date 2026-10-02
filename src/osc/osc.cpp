@@ -842,21 +842,18 @@ class Emitter {
 
         // ---- math functions (unary, fold or in-place)
         if (op == "sin") {
-            fold_unary_wrap(out, depth, "math.sin(", ")*math.pi/180",
-                            ind(depth) + "_pushf(math.sin(" + pop_float_expr() +
-                                "*math.pi/180))\n");
+            fold_unary_fn(out, depth, "math.sin",
+                          ind(depth) + "_pushf(math.sin(" + pop_float_expr() + "))\n");
             return;
         }
         if (op == "arcsin") {
-            fold_unary_wrap(out, depth, "math.asin(", ")*180/math.pi",
-                            ind(depth) + "_pushf(math.asin(" + pop_float_expr() +
-                                ")*180/math.pi)\n");
+            fold_unary_fn(out, depth, "math.asin",
+                          ind(depth) + "_pushf(math.asin(" + pop_float_expr() + "))\n");
             return;
         }
         if (op == "arctan") {
-            fold_unary_wrap(out, depth, "math.atan(", ")*180/math.pi",
-                            ind(depth) + "_pushf(math.atan(" + pop_float_expr() +
-                                ")*180/math.pi)\n");
+            fold_unary_fn(out, depth, "math.atan",
+                          ind(depth) + "_pushf(math.atan(" + pop_float_expr() + "))\n");
             return;
         }
         if (op == "exp") {
