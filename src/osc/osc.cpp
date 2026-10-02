@@ -1502,6 +1502,17 @@ class BytecodeCompiler {
         compileBody(code);
         if (is("end")) {
             consume();
+        } else if (is("endif")) {
+            const Token strayEndif = consume();
+            while (is("endif"))
+                consume();
+            if (is("end"))
+                consume();
+            std::cerr << "Warning: treating stray {endif} as end of {" << header.val
+                      << "} at line " << strayEndif.line << "\n";
+        } else if (peek().type == TT::Eof) {
+            std::cerr << "Warning: EOF inside {" << header.val
+                      << "}; treating it as an implicit {end}\n";
         } else if (error_.empty()) {
             unsupported(header, "missing {end}");
         }
