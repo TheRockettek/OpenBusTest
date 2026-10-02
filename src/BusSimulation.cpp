@@ -76,6 +76,13 @@ std::array<dReal, 3> configuredOdeInertia(const BusConfiguration& configuration)
             static_cast<dReal>(configuration.momentOfInertia[2] * OMSI_INERTIA_SCALE)};
 }
 
+int checkedOdeCount(std::size_t count, const char* label) {
+    if (!std::in_range<int>(count)) {
+        throw std::runtime_error(std::string(label) + " exceeds ODE's integer limit");
+    }
+    return static_cast<int>(count);
+}
+
 class OdeRuntime {
   public:
     OdeRuntime() {
@@ -275,8 +282,9 @@ struct BusSimulation::Impl {
             throw std::runtime_error("Failed to create incline mesh data");
         }
         dGeomTriMeshDataBuildDouble(meshData, storedVertices.data(), 3 * sizeof(double),
-                                    static_cast<int>(storedVertices.size() / 3),
-                                    storedIndices.data(), static_cast<int>(storedIndices.size()),
+                                    checkedOdeCount(storedVertices.size() / 3, "vertex count"),
+                                    storedIndices.data(), checkedOdeCount(storedIndices.size(),
+                                                                          "index count"),
                                     3 * sizeof(int));
         const dGeomID geometry = dCreateTriMesh(ode.space, meshData, nullptr, nullptr, nullptr);
         if (!geometry) {
@@ -346,8 +354,9 @@ struct BusSimulation::Impl {
         const auto& storedVertices = roadMeshVertices.back();
         const auto& storedIndices = roadMeshIndices.back();
         dGeomTriMeshDataBuildDouble(meshData, storedVertices.data(), 3 * sizeof(double),
-                                    static_cast<int>(storedVertices.size() / 3),
-                                    storedIndices.data(), static_cast<int>(storedIndices.size()),
+                                    checkedOdeCount(storedVertices.size() / 3, "vertex count"),
+                                    storedIndices.data(), checkedOdeCount(storedIndices.size(),
+                                                                          "index count"),
                                     3 * sizeof(int));
         const dGeomID geometry = dCreateTriMesh(ode.space, meshData, nullptr, nullptr, nullptr);
         if (!geometry) {

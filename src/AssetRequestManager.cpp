@@ -5,10 +5,12 @@
 #include "Logger.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cstdlib>
 #include <exception>
 #include <stdexcept>
+#include <string_view>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -49,19 +51,30 @@ std::string lower(std::string value) {
     return value;
 }
 
+std::size_t configuredWorkerCount() {
+    const std::size_t hardwareWorkers =
+        std::max<std::size_t>(1, std::thread::hardware_concurrency());
+    const std::size_t defaultWorkers = std::min<std::size_t>(4, hardwareWorkers);
+    const char* configuredWorkers = std::getenv("OPENBUS_ASSET_WORKERS");
+    if (configuredWorkers == nullptr || *configuredWorkers == '\0') {
+        return defaultWorkers;
+    }
+
+    const std::string_view value(configuredWorkers);
+    std::size_t requestedWorkers = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(),
+                                        requestedWorkers);
+    if (parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() ||
+        requestedWorkers == 0) {
+        return defaultWorkers;
+    }
+    return std::clamp(requestedWorkers, std::size_t{1}, hardwareWorkers);
+}
+
 } // namespace
 
 AssetRequestManager::AssetRequestManager() {
-    std::size_t workerCount = 4;
-    if (const char* configuredWorkers = std::getenv("OPENBUS_ASSET_WORKERS")) {
-        try {
-            workerCount = static_cast<std::size_t>(
-                std::clamp(std::stoi(configuredWorkers), 1,
-                           static_cast<int>(std::thread::hardware_concurrency())));
-        } catch (const std::exception&) {
-            workerCount = 4;
-        }
-    }
+    const std::size_t workerCount = configuredWorkerCount();
     workers_.reserve(workerCount);
     for (std::size_t index = 0; index < workerCount; ++index) {
         workers_.emplace_back(&AssetRequestManager::workerLoop, this);

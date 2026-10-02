@@ -555,12 +555,10 @@ SoundEngine::SoundEngine()
 SoundEngine::~SoundEngine() = default;
 
 void SoundEngine::load(const std::filesystem::path& configPath) {
-    triggers_.clear();
-    untriggeredLoopSounds_.clear();
-    basePath_ = configPath.parent_path();
     if (configPath.empty()) {
         return;
     }
+    basePath_ = configPath.parent_path();
 
     openbus::config::Reader reader(configPath);
     if (!reader.isOpen()) {
@@ -697,6 +695,7 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
         return;
     }
     std::vector<SoundTriggerDefinition> definitions;
+    std::vector<std::filesystem::path> inferredLoopFiles;
     if (found != triggers_.end()) {
         definitions = found->second;
     }
@@ -717,6 +716,7 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
                                      return existing.file == loop.file;
                                  })) {
                     inferredLoops.push_back(loop);
+                    inferredLoopFiles.push_back(loop.file);
                 }
             }
         }
@@ -752,10 +752,17 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
 #endif
     for (const SoundTriggerDefinition& definition : definitions) {
         const bool loop = definition.loop;
+        const bool inferredLoop = std::find(inferredLoopFiles.begin(), inferredLoopFiles.end(),
+                                            definition.file) != inferredLoopFiles.end();
         const std::filesystem::path file =
             definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
         double gain = 1.0;
-        if (!definition.volumeCurve.empty()) {
+        // A start-triggered loop is commonly paired with a volume curve driven by a
+        // script variable. The trigger itself carries no value, so evaluating that
+        // curve at zero would suppress the loop permanently; its level cannot be
+        // updated until another sound event is emitted. Start the inferred loop at
+        // full volume and let the configured end trigger stop it.
+        if (!definition.volumeCurve.empty() && !(inferredLoop && controlValue <= 0.0)) {
             const auto& points = definition.volumeCurve;
             if (controlValue <= points.front().x) {
                 gain = points.front().y;

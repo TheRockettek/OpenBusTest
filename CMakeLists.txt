@@ -4,10 +4,26 @@ project(OpenBus VERSION 0.1.0 LANGUAGES CXX)
 
 enable_testing()
 
-set(CMAKE_CXX_STANDARD 23)
+set(OPENBUS_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD ${OPENBUS_CXX_STANDARD})
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    message(FATAL_ERROR
+        "OpenBus requires an exact C++23 compiler mode. Native MSVC has no "
+        "/std:c++23 switch and CMake maps C++23 to /std:c++latest. Configure "
+        "with Clang-cl 17+ or another compiler that exposes an exact C++23 mode.")
+endif()
+
+if(NOT DEFINED CMAKE_CXX23_STANDARD_COMPILE_OPTION OR
+   CMAKE_CXX23_STANDARD_COMPILE_OPTION STREQUAL "" OR
+   CMAKE_CXX23_STANDARD_COMPILE_OPTION MATCHES "latest|2b")
+    message(FATAL_ERROR
+        "OpenBus requires CMake to provide an exact C++23 compiler option; "
+        "the selected compiler does not meet that requirement.")
+endif()
 
 option(OPENBUS_ENABLE_CLANG_TIDY
        "Run clang-tidy during compilation"
@@ -227,6 +243,24 @@ add_executable(OpenBusVariablesProbe
 )
 target_include_directories(OpenBusVariablesProbe PRIVATE src)
 add_test(NAME OpenBusVariablesProbe COMMAND OpenBusVariablesProbe)
+
+add_executable(OpenBusConfigurationParserProbe
+    tests/ConfigurationParserProbe.cpp
+    src/ConfigurationParser.cpp
+)
+target_include_directories(OpenBusConfigurationParserProbe PRIVATE src)
+add_test(NAME OpenBusConfigurationParserProbe COMMAND OpenBusConfigurationParserProbe)
+
+add_executable(OpenBusTextureLoaderProbe
+    tests/TextureLoaderProbe.cpp
+    src/Logger.cpp
+    src/PerfTrace.cpp
+    src/TextureLoader.cpp
+)
+target_include_directories(OpenBusTextureLoaderProbe PRIVATE src)
+target_include_directories(OpenBusTextureLoaderProbe SYSTEM PRIVATE ${stb_SOURCE_DIR})
+add_test(NAME OpenBusTextureLoaderProbe COMMAND OpenBusTextureLoaderProbe)
+
 add_test(NAME OpenBusPhysicsProbe COMMAND OpenBusPhysicsProbe)
 add_test(NAME OpenBusStabilityProbe COMMAND OpenBusStabilityProbe)
 

@@ -3,7 +3,7 @@
 // get/set APIs for local, system, and constants.
 //
 // Build (example, Windows):
-//   cl /EHsc /std:c++17 lua_runtime_example.cpp /I"C:\path\to\lua\include"
+//   clang-cl /EHsc /std:c++23preview lua_runtime_example.cpp /I"C:\path\to\lua\include"
 //   /I"C:\path\to\sol2\include" /link /LIBPATH:"C:\path\to\lua\lib" lua54.lib
 //
 // sol2 is header-only; download from https://github.com/ThePhD/sol2

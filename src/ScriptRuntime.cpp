@@ -371,6 +371,28 @@ struct ScriptRuntime::Impl {
         return floatStack.empty() ? 0.0 : floatStack.back();
     }
 
+    double soundControlValue(const std::string& name) const {
+        double value = nativePeekFloat();
+        std::string positionVariable;
+        std::string lastPositionVariable;
+        if (name == "ev_cabwindow_cls" || name == "ev_cabwindow_opn") {
+            positionVariable = "cp_cabwindow_pos";
+            lastPositionVariable = "cp_cabwindow_lastpos";
+        } else if (name == "ev_cabwindow2_cls" || name == "ev_cabwindow2_opn") {
+            positionVariable = "cp_cabwindow2_pos";
+            lastPositionVariable = "cp_cabwindow2_lastpos";
+        }
+        if (!positionVariable.empty()) {
+            const double timegap = sharedState.sharedVariables().get("timegap");
+            if (timegap > 0.0) {
+                value = (std::max)(value, std::abs(localState.get(positionVariable) -
+                                                    localState.get(lastPositionVariable)) /
+                                             timegap);
+            }
+        }
+        return value;
+    }
+
     std::string nativePopString() {
         if (stringStack.empty()) {
             return {};
@@ -867,13 +889,14 @@ struct ScriptRuntime::Impl {
                     break;
                 case OscOpcode::SoundTrigger:
                     if (onSoundTrigger) {
-                        onSoundTrigger(instruction.name, {}, nativePeekFloat());
+                        onSoundTrigger(instruction.name, {}, soundControlValue(instruction.name));
                     }
                     break;
                 case OscOpcode::SoundTriggerFile: {
                     const std::string file = nativePopString();
                     if (onSoundTrigger) {
-                        onSoundTrigger(instruction.name, file, nativePeekFloat());
+                        onSoundTrigger(instruction.name, file,
+                                       soundControlValue(instruction.name));
                     }
                     break;
                 }
@@ -1125,8 +1148,7 @@ struct ScriptRuntime::Impl {
         Impl* runtime = runtimeFor(lua);
         const std::string name = luaL_checkstring(lua, 1);
         if (runtime->onSoundTrigger) {
-            runtime->onSoundTrigger(name, {},
-                                    runtime->floatStack.empty() ? 0.0 : runtime->floatStack.back());
+            runtime->onSoundTrigger(name, {}, runtime->soundControlValue(name));
         }
         return 0;
     }
@@ -1136,8 +1158,7 @@ struct ScriptRuntime::Impl {
         const std::string name = luaL_checkstring(lua, 1);
         const std::string file = luaL_checkstring(lua, 2);
         if (runtime->onSoundTrigger) {
-            runtime->onSoundTrigger(name, file,
-                                    runtime->floatStack.empty() ? 0.0 : runtime->floatStack.back());
+            runtime->onSoundTrigger(name, file, runtime->soundControlValue(name));
         }
         return 0;
     }
@@ -2015,15 +2036,19 @@ void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool presse
     const std::string normalized = lower(bindingName);
     impl_->localState.set("key_pressed", pressed ? 1.0 : 0.0);
     impl_->localState.setString("key_name", normalized);
+    bool invoked = false;
     const std::string functionName = "trigger_" + scriptName(normalized) + (pressed ? "" : "_off");
     if (impl_->nativeBackend || impl_->state) {
         impl_->floatStack.clear();
         impl_->stringStack.clear();
-        const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
-                                                  : impl_->invoke(functionName.c_str());
+        invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
+                                       : impl_->invoke(functionName.c_str());
         if (!invoked) {
-            impl_->log("warning: key binding " + normalized + (pressed ? " pressed" : " released") +
-                       " -> " + functionName + " not found");
+            if (hasScriptEntryPoint(functionName)) {
+                impl_->log("warning: key binding " + normalized +
+                           (pressed ? " pressed" : " released") + " -> " + functionName +
+                           " not found");
+            }
         } else {
             impl_->log("trigger ran: " + functionName + " (key binding " + normalized +
                        (pressed ? " pressed)" : " released)"));
@@ -2039,7 +2064,7 @@ void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool presse
             }
         }
     }
-    if (!pressed && normalized == "horn" && impl_->onSoundTrigger) {
+    if (!pressed && normalized == "horn" && !invoked && impl_->onSoundTrigger) {
         impl_->onSoundTrigger("horn_off", {}, 0.0);
     }
 }

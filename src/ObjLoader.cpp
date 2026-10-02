@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 namespace {
 
@@ -118,8 +119,15 @@ template <typename Number> Number parseNumber(std::string_view value, Number fal
                                                                                  : fallback;
 }
 
-std::vector<ObjIndex> parseFace(std::string_view value, int positionCount, int texCoordCount,
-                                int normalCount) {
+std::vector<ObjIndex> parseFace(std::string_view value, std::size_t positionCount,
+                                std::size_t texCoordCount, std::size_t normalCount) {
+    if (!std::in_range<int>(positionCount) || !std::in_range<int>(texCoordCount) ||
+        !std::in_range<int>(normalCount)) {
+        return {};
+    }
+    const int positionLimit = static_cast<int>(positionCount);
+    const int texCoordLimit = static_cast<int>(texCoordCount);
+    const int normalLimit = static_cast<int>(normalCount);
     std::vector<ObjIndex> result;
     result.reserve(4);
     for (std::string_view token = nextToken(value); !token.empty(); token = nextToken(value)) {
@@ -138,13 +146,13 @@ std::vector<ObjIndex> parseFace(std::string_view value, int positionCount, int t
             index.normal = parseNumber(token.substr(secondSlash + 1), 0);
         }
         if (index.position < 0) {
-            index.position += positionCount + 1;
+            index.position += positionLimit + 1;
         }
         if (index.texCoord < 0) {
-            index.texCoord += texCoordCount + 1;
+            index.texCoord += texCoordLimit + 1;
         }
         if (index.normal < 0) {
-            index.normal += normalCount + 1;
+            index.normal += normalLimit + 1;
         }
         result.push_back(index);
     }
@@ -434,9 +442,8 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path,
                 currentMaterial.assign(nextToken(remaining));
             } else if (type == "f") {
                 const std::vector<ObjIndex> face =
-                    parseFace(remaining, static_cast<int>(result->positions.size()),
-                              static_cast<int>(result->texCoords.size()),
-                              static_cast<int>(result->normals.size()));
+                    parseFace(remaining, result->positions.size(), result->texCoords.size(),
+                              result->normals.size());
                 for (std::size_t index = 2; index < face.size(); ++index) {
                     result->triangles.push_back(
                         {{{face[0], face[index - 1], face[index]}}, currentMaterial});
@@ -459,9 +466,9 @@ std::shared_ptr<ParsedObj> ObjLoader::parse(const std::filesystem::path& path,
             for (std::size_t index = 0; index < 3; ++index) {
                 const ObjIndex& objIndex = triangle.indices[index];
                 if (objIndex.position <= 0 ||
-                    objIndex.position > static_cast<int>(result->positions.size()) ||
+                    static_cast<std::size_t>(objIndex.position) > result->positions.size() ||
                     objIndex.normal <= 0 ||
-                    objIndex.normal > static_cast<int>(result->normals.size())) {
+                    static_cast<std::size_t>(objIndex.normal) > result->normals.size()) {
                     valid = false;
                     break;
                 }

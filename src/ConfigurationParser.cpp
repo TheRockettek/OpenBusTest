@@ -1,10 +1,8 @@
 #include "ConfigurationParser.h"
 
+#include <charconv>
 #include <cctype>
-#include <cerrno>
 #include <cmath>
-#include <cstdlib>
-#include <limits>
 
 namespace openbus::config {
 
@@ -31,34 +29,47 @@ std::string lower(std::string value) {
 }
 
 bool parseInt(const std::string& value, int& result) {
-    // Require the entire trimmed payload to be an integer; partial conversions
-    // such as "12px" are rejected.
     const std::string normalized = trim(value);
     if (normalized.empty()) {
         return false;
     }
-    char* end = nullptr;
-    errno = 0;
-    const long parsed = std::strtol(normalized.c_str(), &end, 10);
-    if (errno != 0 || end == normalized.c_str() || *end != '\0' ||
-        parsed < std::numeric_limits<int>::min() || parsed > std::numeric_limits<int>::max()) {
+
+    const char* begin = normalized.data();
+    const char* end = begin + normalized.size();
+    if (*begin == '+') {
+        ++begin;
+    }
+    if (begin == end) {
         return false;
     }
-    result = static_cast<int>(parsed);
+
+    int parsed = 0;
+    const auto conversion = std::from_chars(begin, end, parsed, 10);
+    if (conversion.ec != std::errc() || conversion.ptr != end) {
+        return false;
+    }
+    result = parsed;
     return true;
 }
 
 bool parseDouble(const std::string& value, double& result) {
-    // As with integers, reject trailing characters instead of accepting a
-    // partially parsed numeric value.
     const std::string normalized = trim(value);
     if (normalized.empty()) {
         return false;
     }
-    char* end = nullptr;
-    errno = 0;
-    const double parsed = std::strtod(normalized.c_str(), &end);
-    if (errno != 0 || end == normalized.c_str() || *end != '\0' || !std::isfinite(parsed)) {
+
+    const char* begin = normalized.data();
+    const char* end = begin + normalized.size();
+    if (*begin == '+') {
+        ++begin;
+    }
+    if (begin == end) {
+        return false;
+    }
+
+    double parsed = 0.0;
+    const auto conversion = std::from_chars(begin, end, parsed);
+    if (conversion.ec != std::errc() || conversion.ptr != end || !std::isfinite(parsed)) {
         return false;
     }
     result = parsed;

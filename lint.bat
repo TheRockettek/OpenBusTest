@@ -14,8 +14,11 @@ if not exist C:\vcpkg\scripts\buildsystems\vcpkg.cmake (
     exit /b 1
 )
 
-cmake -S . -B build-lint -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DODE_DIR=C:/vcpkg/installed/x64-windows/share/ode -DOPENBUS_ENABLE_CLANG_TIDY=ON -DOPENBUS_ENABLE_PERF_TRACE=OFF %*
+call "%~dp0windows_clang_env.bat"
 if errorlevel 1 exit /b %errorlevel%
 
-cmake --build build-lint --config Release
+cmake -S . -B build-lint -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DODE_DIR=C:/vcpkg/installed/x64-windows/share/ode -DOPENBUS_ENABLE_CLANG_TIDY=ON -DOPENBUS_ENABLE_PERF_TRACE=OFF %*
+if errorlevel 1 exit /b %errorlevel%
+
+cmake --build build-lint
 exit /b %errorlevel%

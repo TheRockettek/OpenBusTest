@@ -351,7 +351,10 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
     bool hasPendingInteriorLightIndexes = false;
     std::unordered_set<std::string> meshIdentifiers;
     Line line;
+    Line previousLine;
     while (reader.next(line)) {
+        const Line precedingLine = previousLine;
+        previousLine = line;
         if (!line.isKeyword()) {
             continue;
         }
@@ -1018,6 +1021,10 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (keyword == "texttexture" || keyword == "texttexture_enh") {
             ModelTextTexture texture;
             texture.slot = static_cast<int>(result.textTextures.size());
+            int explicitSlot = -1;
+            if (parseInt(precedingLine.text, explicitSlot) && explicitSlot >= 0) {
+                texture.slot = explicitSlot;
+            }
             texture.enhanced = keyword == "texttexture_enh";
             Line value;
             while (reader.next(value)) {

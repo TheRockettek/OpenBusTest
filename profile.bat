@@ -24,5 +24,7 @@ set "OPENBUS_TRACE_MIN_US=1"
 
 set "OPENBUS_ASSET_WORKERS=4"
 
+call "%~dp0windows_clang_env.bat"
+if errorlevel 1 exit /b %errorlevel%
 
-cmake -S . -B build-ode -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DOPENBUS_ENABLE_PERF_TRACE=ON && cmake --build build-ode --config Release && .\build-ode\Release\OpenBus.exe
+cmake -S . -B build-ode -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DOPENBUS_ENABLE_PERF_TRACE=ON && cmake --build build-ode --target OpenBus && .\build-ode\OpenBus.exe

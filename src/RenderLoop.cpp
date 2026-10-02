@@ -1265,60 +1265,92 @@ struct Vehicle {
         const auto& projection = openbus::rendering::projectionMatrix();
         const double normalizedX = cursorX / static_cast<double>(viewportWidth) * 2.0 - 1.0;
         const double normalizedY = 1.0 - cursorY / static_cast<double>(viewportHeight) * 2.0;
-        std::array<double, 3> rayOrigin = {};
-        std::array<double, 3> rayDirection = {};
-        if (exactTriangles) {
-            const double nearZ = -projection[14] / (projection[10] - 1.0);
-            const double farZ = -projection[14] / (projection[10] + 1.0);
-            const auto viewPoint = [&](double depth) {
-                return std::array<double, 3>{normalizedX * depth / projection[0],
-                                             normalizedY * depth / projection[5], -depth};
-            };
-            rayOrigin = viewPoint(nearZ);
-            const std::array<double, 3> rayEnd = viewPoint(farZ);
-            rayDirection = {rayEnd[0] - rayOrigin[0], rayEnd[1] - rayOrigin[1],
-                            rayEnd[2] - rayOrigin[2]};
-        }
-        const auto rayTriangleDistance = [&](const std::array<double, 3>& first,
-                                             const std::array<double, 3>& second,
-                                             const std::array<double, 3>& third) {
-            const std::array<double, 3> edgeA = {second[0] - first[0], second[1] - first[1],
-                                                 second[2] - first[2]};
-            const std::array<double, 3> edgeB = {third[0] - first[0], third[1] - first[1],
-                                                 third[2] - first[2]};
-            const std::array<double, 3> cross = {
-                rayDirection[1] * edgeB[2] - rayDirection[2] * edgeB[1],
-                rayDirection[2] * edgeB[0] - rayDirection[0] * edgeB[2],
-                rayDirection[0] * edgeB[1] - rayDirection[1] * edgeB[0]};
-            const double determinant =
-                edgeA[0] * cross[0] + edgeA[1] * cross[1] + edgeA[2] * cross[2];
-            if (std::abs(determinant) <= 1.0e-10) {
-                return std::numeric_limits<double>::max();
-            }
-            const double inverseDeterminant = 1.0 / determinant;
-            const std::array<double, 3> originToFirst = {
-                rayOrigin[0] - first[0], rayOrigin[1] - first[1], rayOrigin[2] - first[2]};
-            const double u = (originToFirst[0] * cross[0] + originToFirst[1] * cross[1] +
-                              originToFirst[2] * cross[2]) *
-                             inverseDeterminant;
-            if (u < 0.0 || u > 1.0) {
-                return std::numeric_limits<double>::max();
-            }
-            const std::array<double, 3> crossSecond = {
-                originToFirst[1] * edgeA[2] - originToFirst[2] * edgeA[1],
-                originToFirst[2] * edgeA[0] - originToFirst[0] * edgeA[2],
-                originToFirst[0] * edgeA[1] - originToFirst[1] * edgeA[0]};
-            const double v = (rayDirection[0] * crossSecond[0] + rayDirection[1] * crossSecond[1] +
-                              rayDirection[2] * crossSecond[2]) *
-                             inverseDeterminant;
-            if (v < 0.0 || u + v > 1.0) {
-                return std::numeric_limits<double>::max();
-            }
-            const double distance = (edgeB[0] * crossSecond[0] + edgeB[1] * crossSecond[1] +
-                                     edgeB[2] * crossSecond[2]) *
-                                    inverseDeterminant;
-            return distance >= 0.0 ? distance : std::numeric_limits<double>::max();
+        struct ProjectedVertex {
+            double x = 0.0;
+            double y = 0.0;
+            double depth = 0.0;
+            bool valid = false;
         };
+        const auto projectVertex = [&](const Matrix4& modelViewPart, const Vertex& vertex) {
+            const std::array<double, 4> view =
+                transformPoint(modelViewPart, {vertex.x, vertex.y, vertex.z, 1.0});
+            const std::array<double, 4> clip = transformPoint(projection, view);
+            if (clip[3] <= 1.0e-8) {
+                return ProjectedVertex{};
+            }
+            return ProjectedVertex{clip[0] / clip[3], clip[1] / clip[3], -view[2], true};
+        };
+        const auto cross2d = [](double ax, double ay, double bx, double by) {
+            return ax * by - ay * bx;
+        };
+        const auto triangleDepthAtCursor = [&](const Matrix4& modelViewPart,
+                                               const DisplayPart& part, const Batch& batch,
+                                               std::size_t index, double& depth) {
+            const ProjectedVertex first = projectVertex(modelViewPart, batch.vertices[index]);
+            const ProjectedVertex second =
+                projectVertex(modelViewPart, batch.vertices[index + 1]);
+            const ProjectedVertex third = projectVertex(modelViewPart, batch.vertices[index + 2]);
+            if (!first.valid || !second.valid || !third.valid) {
+                return false;
+            }
+            const double denominator = cross2d(second.x - first.x, second.y - first.y,
+                                               third.x - first.x, third.y - first.y);
+            if (std::abs(denominator) <= 1.0e-12 ||
+                (part.backFaceCulling && denominator >= 0.0)) {
+                return false;
+            }
+            const double firstWeight =
+                cross2d(second.x - normalizedX, second.y - normalizedY,
+                        third.x - normalizedX, third.y - normalizedY) /
+                denominator;
+            const double secondWeight =
+                cross2d(third.x - normalizedX, third.y - normalizedY,
+                        first.x - normalizedX, first.y - normalizedY) /
+                denominator;
+            const double thirdWeight = 1.0 - firstWeight - secondWeight;
+            constexpr double triangleTolerance = 1.0e-7;
+            if (firstWeight < -triangleTolerance || secondWeight < -triangleTolerance ||
+                thirdWeight < -triangleTolerance) {
+                return false;
+            }
+            depth = firstWeight * first.depth + secondWeight * second.depth +
+                    thirdWeight * third.depth;
+            return depth >= 0.0;
+        };
+        const auto partIsVisible = [&](const DisplayPart& part, std::size_t partIndex) {
+            const bool visible =
+                partIndex < variableVisibleParts.size()
+                    ? variableVisibleParts[partIndex]
+                    : part.visibleVariable.empty() ||
+                          variables.get(part.visibleVariable) == static_cast<double>(part.visibleValue);
+            return visible && (part.viewpoint == 0 ||
+                               (part.viewpoint & viewpointMask(context)) != 0) &&
+                   (activeLod < 0 || part.lodIndex < 0 || part.lodIndex == activeLod);
+        };
+        double closestOccluderDepth = std::numeric_limits<double>::max();
+        if (exactTriangles) {
+            for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+                const DisplayPart& part = displayLists[partIndex];
+                if (!partIsVisible(part, partIndex)) {
+                    continue;
+                }
+                const Matrix4 modelViewPart = multiplyMatrix4(
+                    modelView, multiplyMatrix4(translationMatrix({0.0, 0.0, modelOffsetZ}),
+                                               animationTransformForPart(part)));
+                for (const Batch& batch : part.batches) {
+                    if (batch.alphaMode != 0 || batch.noZwrite || batch.noZcheck) {
+                        continue;
+                    }
+                    for (std::size_t index = 0; index + 2 < batch.vertices.size(); index += 3) {
+                        double triangleDepth = 0.0;
+                        if (triangleDepthAtCursor(modelViewPart, part, batch, index,
+                                                  triangleDepth)) {
+                            closestOccluderDepth = std::min(closestOccluderDepth, triangleDepth);
+                        }
+                    }
+                }
+            }
+        }
         double closestDepth = std::numeric_limits<double>::max();
         const DisplayPart* selected = nullptr;
         const Batch* selectedBatch = nullptr;
@@ -1366,16 +1398,11 @@ struct Vehicle {
             std::size_t partTriangle = 0;
             for (const Batch& batch : part.batches) {
                 for (std::size_t index = 0; index + 2 < batch.vertices.size(); index += 3) {
-                    const auto transformVertex = [&](const Vertex& vertex) {
-                        const std::array<double, 4> transformed =
-                            transformPoint(modelViewPart, {vertex.x, vertex.y, vertex.z, 1.0});
-                        return std::array<double, 3>{transformed[0], transformed[1],
-                                                     transformed[2]};
-                    };
-                    const double triangleDistance =
-                        rayTriangleDistance(transformVertex(batch.vertices[index]),
-                                            transformVertex(batch.vertices[index + 1]),
-                                            transformVertex(batch.vertices[index + 2]));
+                    double triangleDistance = 0.0;
+                    if (!triangleDepthAtCursor(modelViewPart, part, batch, index,
+                                               triangleDistance)) {
+                        continue;
+                    }
                     if (triangleDistance < partDistance) {
                         partDistance = triangleDistance;
                         partBatch = &batch;
@@ -1387,6 +1414,10 @@ struct Vehicle {
                 continue;
             }
             if (partDistance == std::numeric_limits<double>::max()) {
+                continue;
+            }
+            if (partDistance > closestOccluderDepth +
+                                   1.0e-4 * std::max(1.0, closestOccluderDepth)) {
                 continue;
             }
             closestDepth = partDistance;
@@ -2925,15 +2956,16 @@ struct Vehicle {
                 }
                 return value;
             };
+            const auto validIndex = [](int index, std::size_t count) {
+                return index > 0 && static_cast<std::size_t>(index) <= count;
+            };
             {
                 TraceScope vertexTrace("obj", "loadObj.buildVertices");
                 for (const ObjTriangle* triangle : source) {
                     std::array<double, 3> fallbackNormal = {0.0, 0.0, 1.0};
-                    if (triangle->indices[0].position > 0 && triangle->indices[1].position > 0 &&
-                        triangle->indices[2].position > 0 &&
-                        triangle->indices[0].position <= static_cast<int>(positions.size()) &&
-                        triangle->indices[1].position <= static_cast<int>(positions.size()) &&
-                        triangle->indices[2].position <= static_cast<int>(positions.size())) {
+                    if (validIndex(triangle->indices[0].position, positions.size()) &&
+                        validIndex(triangle->indices[1].position, positions.size()) &&
+                        validIndex(triangle->indices[2].position, positions.size())) {
                         const std::array<double, 3> first = convertPosition(
                             positions[static_cast<std::size_t>(triangle->indices[0].position - 1)]);
                         const std::array<double, 3> second = convertPosition(
@@ -2950,22 +2982,20 @@ struct Vehicle {
                                              edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]});
                     }
                     for (const ObjIndex& index : triangle->indices) {
-                        if (index.position <= 0 ||
-                            index.position > static_cast<int>(positions.size())) {
+                        if (!validIndex(index.position, positions.size())) {
                             continue;
                         }
                         const ObjPosition& position =
                             positions[static_cast<std::size_t>(index.position - 1)];
                         std::array<double, 3> normal = fallbackNormal;
-                        if (index.normal > 0 && index.normal <= static_cast<int>(normals.size())) {
+                        if (validIndex(index.normal, normals.size())) {
                             const ObjNormal& sourceNormal =
                                 normals[static_cast<std::size_t>(index.normal - 1)];
                             normal =
                                 normalizeVector({sourceNormal.y, -sourceNormal.x, sourceNormal.z});
                         }
                         const ObjTexCoord* texCoord = nullptr;
-                        if (index.texCoord > 0 &&
-                            index.texCoord <= static_cast<int>(texCoords.size())) {
+                        if (validIndex(index.texCoord, texCoords.size())) {
                             texCoord = &texCoords[static_cast<std::size_t>(index.texCoord - 1)];
                         }
                         vertices.push_back(
@@ -4086,6 +4116,27 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             lookAt(eye[0], eye[1], eye[2], target[0], target[1], target[2]);
         }
     }
+    {
+        TraceScope phase("render", "RenderLoop::draw.visibility");
+        if (!renderingReflection_) {
+            const RenderViewContext context = isExteriorView() ? RenderViewContext::PlayerExterior
+                                                               : RenderViewContext::PlayerInterior;
+            if (playerVehicle_ != nullptr) {
+                playerVehicle_->setOdeSimulation(simulation);
+            }
+            for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+                pushMatrix();
+                if (vehicle.get() == playerVehicle_) {
+                    applyPose(chassis);
+                    vehicle->prepareFrameVisibility(context);
+                } else {
+                    applyVehiclePlacement(vehicle->placement);
+                    vehicle->prepareFrameVisibility(RenderViewContext::NonPlayer);
+                }
+                popMatrix();
+            }
+        }
+    }
     if (!renderingReflection_ && playerVehicle_ != nullptr) {
         TraceScope phase("input", "RenderLoop::draw.interaction");
         GLint viewport[4] = {};
@@ -4172,27 +4223,6 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             }
         }
         popMatrix();
-    }
-    {
-        TraceScope phase("render", "RenderLoop::draw.visibility");
-        if (!renderingReflection_) {
-            const RenderViewContext context = isExteriorView() ? RenderViewContext::PlayerExterior
-                                                               : RenderViewContext::PlayerInterior;
-            if (playerVehicle_ != nullptr) {
-                playerVehicle_->setOdeSimulation(simulation);
-            }
-            for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-                pushMatrix();
-                if (vehicle.get() == playerVehicle_) {
-                    applyPose(chassis);
-                    vehicle->prepareFrameVisibility(context);
-                } else {
-                    applyVehiclePlacement(vehicle->placement);
-                    vehicle->prepareFrameVisibility(RenderViewContext::NonPlayer);
-                }
-                popMatrix();
-            }
-        }
     }
     {
         TraceScope phase("render", "RenderLoop::draw.reflections");

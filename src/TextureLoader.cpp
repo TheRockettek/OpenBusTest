@@ -312,8 +312,15 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
     if (!input || std::string(data.begin(), data.begin() + 4) != "DDS ") {
         return false;
     }
-    image.width = static_cast<int>(readU32(data, 16));
-    image.height = static_cast<int>(readU32(data, 12));
+    const std::uint32_t width = readU32(data, 16);
+    const std::uint32_t height = readU32(data, 12);
+    if (width == 0 || height == 0 ||
+        width > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
+        height > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+        return false;
+    }
+    image.width = static_cast<int>(width);
+    image.height = static_cast<int>(height);
     const std::uint32_t pixelFormatFlags = readU32(data, 80);
     const std::string fourCC(data.begin() + 84, data.begin() + 88);
     const bool dxt1 = fourCC == "DXT1";
@@ -326,9 +333,6 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
     const std::uint32_t blueMask = readU32(data, 100);
     const std::uint32_t alphaMask = readU32(data, 104);
     const bool dxt1HasAlpha = dxt1 && (pixelFormatFlags & 0x1U) != 0;
-    if (image.width <= 0 || image.height <= 0) {
-        return false;
-    }
     if (!dxt1 && !dxt2 && !dxt3 && !dxt5) {
         if ((pixelFormatFlags & 0x40U) == 0 || (rgbBitCount != 24 && rgbBitCount != 32)) {
             return false;

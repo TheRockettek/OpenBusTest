@@ -363,7 +363,7 @@ std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
         for (const ObjTriangle& triangle : result->triangles) {
             for (const ObjIndex& index : triangle.indices) {
                 if (index.position <= 0 ||
-                    index.position > static_cast<int>(result->positions.size())) {
+                    static_cast<std::size_t>(index.position) > result->positions.size()) {
                     return {};
                 }
             }

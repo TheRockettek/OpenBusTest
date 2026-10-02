@@ -13,7 +13,8 @@ solver.
 - ODE
 - GLFW and OpenGL
 
-On Windows with vcpkg:
+On Windows with vcpkg, install standalone LLVM (for `clang-cl.exe`) and the
+Visual Studio C++ build tools (for the MSVC headers, libraries, and linker):
 
 ```powershell
 vcpkg install ode:x64-windows glfw3:x64-windows
@@ -38,16 +39,27 @@ Use a new build directory so old artifacts from previous experiments are not
 reused:
 
 ```powershell
-cmake -S . -B build-ode -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
-cmake --build build-ode --config Release
+.\run.bat
+```
+
+Native MSVC is rejected because its CMake C++23 mapping is
+`/std:c++latest`, not an exact C++23 mode. The Windows helper initializes the
+MSVC x64 environment and uses standalone Clang-cl with the NMake generator.
+For a manual configure from `cmd.exe`:
+
+```bat
+call windows_clang_env.bat
+cmake -S . -B build-ode -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake --build build-ode --target OpenBus
 ```
 
 Release and RelWithDebInfo builds enable interprocedural/link-time optimization
 for `OpenBus` by default. Disable it when comparing profiler call boundaries or
 when using a toolchain that does not support IPO:
 
-```powershell
-cmake -S . -B build-ode -DOPENBUS_ENABLE_IPO=OFF
+```bat
+call windows_clang_env.bat
+cmake -S . -B build-ode -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DOPENBUS_ENABLE_IPO=OFF
 ```
 
 On Linux, use a native build directory and the provided shell helpers:
