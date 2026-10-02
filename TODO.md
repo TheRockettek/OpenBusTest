@@ -112,6 +112,37 @@ it.
 Done when a configured display changes from script input and interior lights
 change from their controlling variables without manual texture replacement.
 
+### E400 OMSI/OpenBus comparison gaps
+
+- [ ] Implement `[VFDmaxmin]` display limits and `[tex_detail_factor]` instead
+  of consuming them only for parser alignment; verify the dashboard LCD,
+  odometer, and center display against the OMSI reference capture.
+- [ ] Implement `[CTC]` and `[CTCTexture]` template selection and texture
+  substitution. The active E400 configuration uses these records for dashboard
+  and body variants, so retaining their payloads is not sufficient for visual
+  parity.
+- [ ] Implement `[illumination_interior]`, `[interiorlight]`, `[light_enh_2]`,
+  and `[spotlight]` runtime emission and controller behavior. The comparison
+  shows the OpenBus dashboard lighting and warning/detail illumination do not
+  match OMSI.
+- [ ] Implement `[matl_bumpmap]` and complete `[matl_envmap]` material
+  semantics, including strength and lighting interaction, then compare the
+  dashboard binnacle and cab surfaces again.
+- [ ] Complete `[texttexture]`/`[texttexture_enh]` compatibility with authored
+  OMSI fonts, layout, alignment, and display-background/alpha semantics. The
+  current fallback rasterizer produces different dashboard and ticketer output.
+- [ ] Complete `[registration_automatic]`, `[registration_free]`, and
+  `[kmcounter_init]` runtime state so the odometer and registration displays
+  match the OMSI capture rather than remaining blank or using initialization
+  fallbacks.
+- [ ] Add a repeatable OMSI/OpenBus screenshot comparison for the E400 cockpit
+  that checks the dashboard LCD, odometer, warning lamps, illumination, and
+  text surfaces independently of camera framing.
+
+The keyword audit for the active E400 CFG found no completely unknown keywords
+for the current parser. The remaining visual differences are therefore mostly
+recognized-but-incomplete semantics, not missing keyword dispatch entries.
+
 ## 5. Complete vehicle/model configuration coverage
 
 - [~] Core bus identity, mass, bounding box, center of gravity, axles,

@@ -81,6 +81,7 @@ struct ScriptRuntime::Impl {
     std::unordered_map<int, std::pair<int, int>> scriptTextureDimensions;
     struct TextTextureDefinition {
         std::string variable;
+        std::string font;
         int width = 0;
         int height = 0;
         std::array<std::uint8_t, 4> color = {255, 255, 255, 255};
@@ -1157,20 +1158,48 @@ struct ScriptRuntime::Impl {
     }
 
     static void drawText(ScriptTexture& texture, const std::string& value, int x, int y,
-                         std::array<std::uint8_t, 4> color, int letterSpacing = 0) {
+                         std::array<std::uint8_t, 4> color, int letterSpacing = 0,
+                         int maximumScale = 8) {
         if (texture.locked || value.empty() || texture.width <= 0 || texture.height <= 0) {
             return;
         }
+        std::size_t lineCount = 1;
+        std::size_t longestLine = 0;
+        std::size_t currentLineLength = 0;
+        for (const char character : value) {
+            if (character == '\n') {
+                longestLine = std::max(longestLine, currentLineLength);
+                currentLineLength = 0;
+                ++lineCount;
+            } else if (character != '\r') {
+                ++currentLineLength;
+            }
+        }
+        longestLine = std::max(longestLine, currentLineLength);
         const int heightScale = std::max(1, (texture.height - 2) / 7);
         const int availableWidth = std::max(
-            1, texture.width - 2 - std::max(0, letterSpacing) * static_cast<int>(value.size()));
+            1, texture.width - 2 - std::max(0, letterSpacing) * static_cast<int>(longestLine));
         const int widthScale =
-            std::max(1, availableWidth / std::max(1, 6 * static_cast<int>(value.size())));
-        const int scale = std::max(1, std::min({8, heightScale, widthScale}));
+            std::max(1, availableWidth / std::max(1, 6 * static_cast<int>(longestLine)));
+        const int multilineHeight =
+            std::max(1, (texture.height - 2) / static_cast<int>(7 * lineCount));
+        const int scale = std::max(1, std::min({maximumScale, heightScale, widthScale}));
         const int advance = 6 * scale + letterSpacing;
-        for (std::size_t characterIndex = 0; characterIndex < value.size(); ++characterIndex) {
-            const auto rows = glyph(value[characterIndex]);
-            const int originX = x + static_cast<int>(characterIndex) * advance;
+        const int lineScale = std::max(1, std::min(scale, multilineHeight));
+        int line = 0;
+        int columnIndex = 0;
+        for (const char character : value) {
+            if (character == '\n') {
+                ++line;
+                columnIndex = 0;
+                continue;
+            }
+            if (character == '\r') {
+                continue;
+            }
+            const auto rows = glyph(character);
+            const int originX = x + columnIndex * advance;
+            const int originY = y + line * 8 * lineScale;
             for (int row = 0; row < 7; ++row) {
                 for (int column = 0; column < 5; ++column) {
                     if ((rows[static_cast<std::size_t>(row)] & (1 << (4 - column))) == 0) {
@@ -1179,7 +1208,7 @@ struct ScriptRuntime::Impl {
                     for (int offsetY = 0; offsetY < scale; ++offsetY) {
                         for (int offsetX = 0; offsetX < scale; ++offsetX) {
                             const int pixelX = originX + column * scale + offsetX;
-                            const int pixelY = y + row * scale + offsetY;
+                            const int pixelY = originY + row * lineScale + offsetY;
                             if (pixelX < 0 || pixelY < 0 || pixelX >= texture.width ||
                                 pixelY >= texture.height) {
                                 continue;
@@ -1190,6 +1219,7 @@ struct ScriptRuntime::Impl {
                     }
                 }
             }
+            ++columnIndex;
         }
         ++texture.revision;
     }
@@ -1208,7 +1238,8 @@ struct ScriptRuntime::Impl {
             texture.width = definition.width;
             texture.height = definition.height;
             clearTexture(texture);
-            drawText(texture, value, 0, 0, definition.color);
+            const int maximumScale = definition.font == "sp_ticketerfont" ? 4 : 8;
+            drawText(texture, value, 0, 0, definition.color, 0, maximumScale);
             if (value.empty()) {
                 ++texture.revision;
             }
@@ -1643,6 +1674,7 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         }
         ScriptRuntime::Impl::TextTextureDefinition configured;
         configured.variable = definition.values[0];
+        configured.font = lower(definition.values[1]);
         try {
             configured.width = std::stoi(definition.values[2]);
             configured.height = std::stoi(definition.values[3]);
@@ -1759,6 +1791,19 @@ void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool presse
         if (!invoked) {
             impl_->log("warning: key binding " + normalized + (pressed ? " pressed" : " released") +
                        " -> " + functionName + " not found");
+        } else {
+            impl_->log("trigger ran: " + functionName + " (key binding " + normalized +
+                       (pressed ? " pressed)" : " released)"));
+            if (pressed &&
+                (normalized == "cp_batterietrennschalter_toggle" || normalized == "kw_s_plus" ||
+                 normalized == "kw_wipermode_up" || normalized == "cp_wischer_intervall_toggle")) {
+                impl_->log("wiper/power state after " + normalized +
+                           ": mode=" + std::to_string(impl_->localState.get("wiper_mode")) +
+                           " pos=" + std::to_string(impl_->localState.get("wiperpos")) +
+                           " busbar=" + std::to_string(impl_->localState.get("elec_busbar_main")) +
+                           " busbar_switch=" +
+                           std::to_string(impl_->localState.get("elec_busbar_main_sw")));
+            }
         }
     }
 }
@@ -1777,6 +1822,8 @@ void ScriptRuntime::invokeMouseEvent(const std::string& eventName) {
                                                   : impl_->invoke(functionName.c_str());
         if (!invoked) {
             impl_->log("warning: mouse event " + normalized + " -> " + functionName + " not found");
+        } else {
+            impl_->log("trigger ran: " + functionName + " (mouse event " + normalized + ")");
         }
         if (normalized == "alcolockelec" || normalized == "alcolockcheck") {
             if (invoked) {
@@ -1830,6 +1877,8 @@ void ScriptRuntime::invokeMouseRelease(const std::string& eventName) {
         if (!invoked) {
             impl_->log("warning: mouse release " + normalized + " -> " + functionName +
                        " not found");
+        } else {
+            impl_->log("trigger ran: " + functionName + " (mouse release " + normalized + ")");
         }
     }
 }

@@ -4,7 +4,10 @@
 #include "Logger.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -249,6 +252,227 @@ struct SoundEngine::Backend {
     }
 };
 
+#elif defined(_WIN32)
+
+struct SoundEngine::Backend {
+    struct Clip {
+        std::vector<float> samples;
+        std::uint32_t channels = 2;
+        std::uint32_t rate = 48000;
+    };
+
+    struct ActiveClip {
+        std::shared_ptr<Clip> clip;
+        double frame = 0.0;
+        bool loop = false;
+        float gain = 1.0f;
+    };
+
+    static std::uint32_t read32(const std::vector<std::uint8_t>& data, std::size_t offset) {
+        return static_cast<std::uint32_t>(data[offset]) |
+               (static_cast<std::uint32_t>(data[offset + 1]) << 8) |
+               (static_cast<std::uint32_t>(data[offset + 2]) << 16) |
+               (static_cast<std::uint32_t>(data[offset + 3]) << 24);
+    }
+
+    static std::uint16_t read16(const std::vector<std::uint8_t>& data, std::size_t offset) {
+        return static_cast<std::uint16_t>(data[offset]) |
+               (static_cast<std::uint16_t>(data[offset + 1]) << 8);
+    }
+
+    static std::shared_ptr<Clip> loadWav(const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        if (!input) {
+            return {};
+        }
+        std::vector<std::uint8_t> data((std::istreambuf_iterator<char>(input)), {});
+        if (data.size() < 44 || std::memcmp(data.data(), "RIFF", 4) != 0 ||
+            std::memcmp(data.data() + 8, "WAVE", 4) != 0) {
+            return {};
+        }
+        std::uint16_t format = 0;
+        std::uint16_t channels = 0;
+        std::uint32_t rate = 0;
+        std::uint16_t bits = 0;
+        std::size_t dataOffset = 0;
+        std::size_t dataSize = 0;
+        for (std::size_t offset = 12; offset + 8 <= data.size();) {
+            const std::uint32_t size = read32(data, offset + 4);
+            const std::size_t payload = offset + 8;
+            if (payload + size > data.size()) {
+                return {};
+            }
+            if (std::memcmp(data.data() + offset, "fmt ", 4) == 0 && size >= 16) {
+                format = read16(data, payload);
+                channels = read16(data, payload + 2);
+                rate = read32(data, payload + 4);
+                bits = read16(data, payload + 14);
+            } else if (std::memcmp(data.data() + offset, "data", 4) == 0) {
+                dataOffset = payload;
+                dataSize = size;
+            }
+            offset = payload + size + (size & 1u);
+        }
+        if ((format != 1 && format != 3) || channels == 0 || rate == 0 ||
+            (bits != 8 && bits != 16 && bits != 24 && bits != 32) || dataOffset == 0) {
+            return {};
+        }
+        const std::size_t bytesPerSample = bits / 8;
+        const std::size_t frameBytes = bytesPerSample * channels;
+        if (frameBytes == 0 || dataSize < frameBytes) {
+            return {};
+        }
+        auto clip = std::make_shared<Clip>();
+        clip->channels = channels;
+        clip->rate = rate;
+        clip->samples.resize((dataSize / frameBytes) * channels);
+        for (std::size_t sample = 0; sample < clip->samples.size(); ++sample) {
+            const std::size_t sampleOffset = dataOffset + sample * bytesPerSample;
+            float value = 0.0f;
+            if (format == 3 && bits == 32) {
+                std::memcpy(&value, data.data() + sampleOffset, sizeof(value));
+            } else if (bits == 8) {
+                value = (static_cast<float>(data[sampleOffset]) - 128.0f) / 128.0f;
+            } else if (bits == 16) {
+                value = static_cast<float>(static_cast<std::int16_t>(read16(data, sampleOffset))) /
+                        32768.0f;
+            } else if (bits == 24) {
+                std::int32_t integer = static_cast<std::int32_t>(data[sampleOffset]) |
+                                       (static_cast<std::int32_t>(data[sampleOffset + 1]) << 8) |
+                                       (static_cast<std::int32_t>(data[sampleOffset + 2]) << 16);
+                if ((integer & 0x00800000) != 0) {
+                    integer |= ~0x00ffffff;
+                }
+                value = static_cast<float>(integer) / 8388608.0f;
+            } else {
+                value = static_cast<float>(static_cast<std::int32_t>(read32(data, sampleOffset))) /
+                        2147483648.0f;
+            }
+            clip->samples[sample] = std::clamp(value, -1.0f, 1.0f);
+        }
+        return clip;
+    }
+
+    static constexpr std::size_t kBufferFrames = 2048;
+    static constexpr std::size_t kBufferCount = 3;
+    struct WaveBuffer {
+        WAVEHDR header = {};
+        std::array<std::int16_t, kBufferFrames * 2> samples = {};
+    };
+
+    HWAVEOUT output = nullptr;
+    std::array<WaveBuffer, kBufferCount> buffers = {};
+    std::mutex mutex;
+    std::vector<ActiveClip> active;
+    std::atomic<bool> shuttingDown = false;
+
+    static void CALLBACK callback(HWAVEOUT, UINT message, DWORD_PTR instance, DWORD_PTR parameter,
+                                  DWORD_PTR) {
+        if (message == WOM_DONE && instance != 0) {
+            auto* backend = static_cast<Backend*>(reinterpret_cast<void*>(instance));
+            if (!backend->shuttingDown.load(std::memory_order_acquire)) {
+                backend->refill(reinterpret_cast<WAVEHDR*>(parameter));
+            }
+        }
+    }
+
+    void refill(WAVEHDR* completed) {
+        WaveBuffer* buffer = nullptr;
+        for (WaveBuffer& candidate : buffers) {
+            if (&candidate.header == completed) {
+                buffer = &candidate;
+                break;
+            }
+        }
+        if (buffer == nullptr) {
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            std::fill(buffer->samples.begin(), buffer->samples.end(), 0);
+            for (std::size_t frame = 0; frame < kBufferFrames; ++frame) {
+                float left = 0.0f;
+                float right = 0.0f;
+                for (auto voice = active.begin(); voice != active.end();) {
+                    const std::size_t sourceFrames =
+                        voice->clip->samples.size() / voice->clip->channels;
+                    if (voice->frame >= static_cast<double>(sourceFrames)) {
+                        if (voice->loop) {
+                            voice->frame = 0.0;
+                        } else {
+                            voice = active.erase(voice);
+                            continue;
+                        }
+                    }
+                    const std::size_t sourceFrame = static_cast<std::size_t>(voice->frame);
+                    const Clip& clip = *voice->clip;
+                    left += clip.samples[sourceFrame * clip.channels] * voice->gain;
+                    right += (clip.channels > 1 ? clip.samples[sourceFrame * clip.channels + 1]
+                                                : clip.samples[sourceFrame * clip.channels]) *
+                             voice->gain;
+                    voice->frame += static_cast<double>(clip.rate) / 48000.0;
+                    ++voice;
+                }
+                buffer->samples[frame * 2] = static_cast<std::int16_t>(
+                    std::lround(std::clamp(left, -1.0f, 1.0f) * 32767.0f));
+                buffer->samples[frame * 2 + 1] = static_cast<std::int16_t>(
+                    std::lround(std::clamp(right, -1.0f, 1.0f) * 32767.0f));
+            }
+        }
+        if (waveOutWrite(output, &buffer->header, sizeof(buffer->header)) != MMSYSERR_NOERROR) {
+            soundLog.Log("Unable to queue mixed audio buffer");
+        }
+    }
+
+    Backend() {
+        WAVEFORMATEX format = {};
+        format.wFormatTag = WAVE_FORMAT_PCM;
+        format.nChannels = 2;
+        format.nSamplesPerSec = 48000;
+        format.wBitsPerSample = 16;
+        format.nBlockAlign = format.nChannels * format.wBitsPerSample / 8;
+        format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
+        if (waveOutOpen(&output, WAVE_MAPPER, &format,
+                        reinterpret_cast<DWORD_PTR>(&Backend::callback),
+                        reinterpret_cast<DWORD_PTR>(this), CALLBACK_FUNCTION) != MMSYSERR_NOERROR) {
+            output = nullptr;
+            return;
+        }
+        for (WaveBuffer& buffer : buffers) {
+            buffer.header.lpData = reinterpret_cast<LPSTR>(buffer.samples.data());
+            buffer.header.dwBufferLength = static_cast<DWORD>(sizeof(buffer.samples));
+            waveOutPrepareHeader(output, &buffer.header, sizeof(buffer.header));
+            refill(&buffer.header);
+        }
+    }
+
+    ~Backend() {
+        if (output == nullptr) {
+            return;
+        }
+        shuttingDown.store(true, std::memory_order_release);
+        waveOutReset(output);
+        for (WaveBuffer& buffer : buffers) {
+            waveOutUnprepareHeader(output, &buffer.header, sizeof(buffer.header));
+        }
+        waveOutClose(output);
+    }
+
+    void play(const std::filesystem::path& path, bool looped, float gain) {
+        if (output == nullptr) {
+            soundLog.Log("Windows audio mixer is unavailable");
+            return;
+        }
+        std::shared_ptr<Clip> clip = loadWav(path);
+        if (!clip) {
+            soundLog.Log("Unable to decode sound: " + path.string());
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mutex);
+        active.push_back({std::move(clip), 0.0, looped, gain});
+    }
+};
+
 #else
 
 struct SoundEngine::Backend {};
@@ -256,7 +480,7 @@ struct SoundEngine::Backend {};
 #endif
 
 SoundEngine::SoundEngine()
-#if defined(OPENBUS_HAS_PIPEWIRE)
+#if defined(OPENBUS_HAS_PIPEWIRE) || defined(_WIN32)
     : backend_(std::make_unique<Backend>())
 #endif
 {
@@ -427,11 +651,7 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
                  " maxDistance=" + std::to_string(maxDistance) + " gain=" + std::to_string(gain) +
                  " loop=" + (loop ? "true" : "false"));
 #ifdef _WIN32
-    const std::wstring widePath = file.wstring();
-    const DWORD flags = SND_FILENAME | SND_ASYNC | SND_NODEFAULT | (loop ? SND_LOOP : 0);
-    if (!PlaySoundW(widePath.c_str(), nullptr, flags)) {
-        soundLog.Log("Unable to play sound: " + file.string());
-    }
+    backend_->play(file, loop, static_cast<float>(gain));
 #else
 #if defined(OPENBUS_HAS_PIPEWIRE)
     backend_->play(file, loop, static_cast<float>(gain));

@@ -214,6 +214,8 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
             writeJsonString(output, material.lightmapTextureName);
             output << ",\"lightmap_strength_variable\":";
             writeJsonString(output, material.lightmapStrengthVariable);
+            output << ",\"free_texture_name\":";
+            writeJsonString(output, material.freeTextureName);
             output << ",\"free_texture_variable\":";
             writeJsonString(output, material.freeTextureVariable);
             output << ",\"script_texture_index\":" << material.scriptTextureIndex

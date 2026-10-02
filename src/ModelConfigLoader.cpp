@@ -576,48 +576,88 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             continue;
         }
         // [interiorlight]: eight fields; field 0 is the controller, followed by
-        // position, colour, intensity, and mode data retained only for validation.
+        // position, colour, intensity, and mode data.
         if (keyword == "interiorlight") {
-            if (requirePart() != nullptr) {
-                std::vector<std::string> values;
-                if (readValues(reader, line.number, keyword, 8, values, result.diagnostics)) {
-                    // The first field controls the light; the remaining fields
-                    // are validated but are not rendered yet.
-                    declareIfVariable(values[0], variables);
+            std::vector<std::string> values;
+            if (readValues(reader, line.number, keyword, 8, values, result.diagnostics)) {
+                ModelInteriorLight light;
+                light.controller = lower(trim(values[0]));
+                declareIfVariable(light.controller, variables);
+                bool valid = true;
+                for (std::size_t index = 1; index < values.size(); ++index) {
+                    if (!parseDouble(values[index], light.parameters[index - 1])) {
+                        result.diagnostics.error(line.number, keyword,
+                                                 "expected numeric light parameters");
+                        valid = false;
+                    }
+                }
+                if (valid) {
+                    result.interiorLights.push_back(std::move(light));
                 }
             }
             continue;
         }
         // [light_enh]: 13 fields; [light_enh_2]: 23 or 24 fields. Each has a fixed
-        // controller-variable field, while the remaining light data is preserved
-        // by consuming the record but is not yet represented in the model.
+        // controller-variable field and numeric light parameters.
         if (keyword == "light_enh" || keyword == "light_enh_2") {
-            if (requirePart() != nullptr) {
-                std::vector<std::string> values;
-                const std::size_t count = keyword == "light_enh" ? 13 : 23;
-                if (readValues(reader, line.number, keyword, count, values, result.diagnostics)) {
-                    if (keyword == "light_enh_2") {
-                        Line optionalTexture;
-                        if (reader.next(optionalTexture)) {
-                            if (optionalTexture.isKeyword()) {
-                                reader.pushBack(std::move(optionalTexture));
-                            } else {
-                                values.push_back(std::move(optionalTexture.text));
-                            }
+            std::vector<std::string> values;
+            const std::size_t count = keyword == "light_enh" ? 13 : 23;
+            if (readValues(reader, line.number, keyword, count, values, result.diagnostics)) {
+                if (keyword == "light_enh_2") {
+                    Line optionalTexture;
+                    if (reader.next(optionalTexture)) {
+                        if (optionalTexture.isKeyword()) {
+                            reader.pushBack(std::move(optionalTexture));
+                        } else {
+                            values.push_back(std::move(optionalTexture.text));
                         }
                     }
-                    declareIfVariable(values[keyword == "light_enh" ? 7 : 17], variables);
+                }
+                const std::size_t controllerIndex = keyword == "light_enh" ? 7 : 17;
+                ModelEnhancedLight light;
+                light.enhanced = keyword == "light_enh_2";
+                light.controller = lower(trim(values[controllerIndex]));
+                declareIfVariable(light.controller, variables);
+                bool valid = true;
+                for (std::size_t index = 0; index < values.size(); ++index) {
+                    if (index == controllerIndex ||
+                        (light.enhanced && index == values.size() - 1)) {
+                        continue;
+                    }
+                    double value = 0.0;
+                    if (!parseDouble(values[index], value)) {
+                        result.diagnostics.error(line.number, keyword,
+                                                 "expected numeric light parameters");
+                        valid = false;
+                    } else {
+                        light.parameters.push_back(value);
+                    }
+                }
+                if (light.enhanced && values.size() == count + 1) {
+                    light.textureName = trim(values.back());
+                }
+                if (valid) {
+                    result.enhancedLights.push_back(std::move(light));
                 }
             }
             continue;
         }
         // [spotlight]: twelve position, direction, colour, range, and cone fields.
         if (keyword == "spotlight") {
-            if (requirePart() != nullptr) {
-                std::vector<std::string> values;
-                // Validate the complete record even though spotlight fields are
-                // not yet represented in the runtime model.
-                readValues(reader, line.number, keyword, 12, values, result.diagnostics);
+            std::vector<std::string> values;
+            if (readValues(reader, line.number, keyword, 12, values, result.diagnostics)) {
+                ModelSpotlight spotlight;
+                bool valid = true;
+                for (std::size_t index = 0; index < values.size(); ++index) {
+                    if (!parseDouble(values[index], spotlight.parameters[index])) {
+                        result.diagnostics.error(line.number, keyword,
+                                                 "expected numeric spotlight parameters");
+                        valid = false;
+                    }
+                }
+                if (valid) {
+                    result.spotlights.push_back(std::move(spotlight));
+                }
             }
             continue;
         }
@@ -759,6 +799,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 if (reader.readPayload(texture, result.diagnostics, keyword)) {
                     if (keyword == "matl_lightmap") {
                         current->lightmapTextureName = trim(texture.text);
+                    } else {
+                        current->freeTextureName = trim(texture.text);
                     }
                     Line variable;
                     // Push keywords back because the optional variable may be absent.
@@ -911,16 +953,37 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             readValues(reader, line.number, keyword, 1, values, result.diagnostics);
             continue;
         }
-        // [ctc]: three texture/color-template values retained for record alignment.
+        // [ctc]: template name, source texture path, and template index.
         if (keyword == "ctc") {
             std::vector<std::string> values;
-            readValues(reader, line.number, keyword, 3, values, result.diagnostics);
+            if (readValues(reader, line.number, keyword, 3, values, result.diagnostics)) {
+                ModelCtcTemplate ctc;
+                ctc.name = trim(values[0]);
+                ctc.texturePath = trim(values[1]);
+                if (!parseInt(values[2], ctc.index) || ctc.name.empty() ||
+                    ctc.texturePath.empty() || ctc.index < 0) {
+                    result.diagnostics.error(line.number, keyword,
+                                             "expected template name, texture path, and index");
+                } else {
+                    result.ctcTemplates.push_back(std::move(ctc));
+                }
+            }
             continue;
         }
-        // [ctctexture]: texture name plus template slot/index.
+        // [ctctexture]: texture slot plus replacement texture name.
         if (keyword == "ctctexture") {
             std::vector<std::string> values;
-            readValues(reader, line.number, keyword, 2, values, result.diagnostics);
+            if (readValues(reader, line.number, keyword, 2, values, result.diagnostics)) {
+                ModelCtcTexture texture;
+                texture.slot = lower(trim(values[0]));
+                texture.textureName = trim(values[1]);
+                if (texture.slot.empty() || texture.textureName.empty()) {
+                    result.diagnostics.error(line.number, keyword,
+                                             "expected texture slot and replacement name");
+                } else {
+                    result.ctcTextures.push_back(std::move(texture));
+                }
+            }
             continue;
         }
         // [scripttexture]: dimensions followed by model-version-specific options.
@@ -958,6 +1021,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     break;
                 }
                 texture.values.push_back(trim(value.text));
+            }
+            if (!texture.values.empty()) {
+                texture.values[0] = lower(texture.values[0]);
             }
             result.textTextures.push_back(std::move(texture));
             continue;

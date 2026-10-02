@@ -16,8 +16,62 @@ int main() {
     std::filesystem::create_directories(root);
     const std::filesystem::path scriptPath = root / "probe.osc";
     std::ofstream source(scriptPath);
-    source << "[probe]\n";
+    source << "{InIt}\n"
+              "(L.L.MixedNumeric)\n"
+              "(S.L.MixedNumericOut)\n"
+              "(L.$.MixedString)\n"
+              "(S.$.MixedStringOut)\n"
+              "(M.L.MixedMacro)\n"
+              "{end}\n"
+              "{MaCrO:MixedMacro}\n"
+              "(M.V.MixedSystemMacro)\n"
+              "(M.L.AnotherMacro)\n"
+              "{end}\n"
+              "{TrIgGeR:MixedTrigger}\n"
+              "(L.L.TriggerVariable)\n"
+              "{end}\n";
     source.close();
+
+    OscProgram parsedProgram;
+    std::string parseError;
+    if (!compileOscToBytecode(scriptPath, parsedProgram, parseError) ||
+        parsedProgram.functions.find("init") == parsedProgram.functions.end() ||
+        parsedProgram.functions.find("macro_mixedmacro") == parsedProgram.functions.end() ||
+        parsedProgram.functions.find("trigger_mixedtrigger") == parsedProgram.functions.end()) {
+        std::cerr << "mixed-case OSC blocks did not normalize at parse time: " << parseError
+                  << "\n";
+        return 1;
+    }
+    const auto& initCode = parsedProgram.functions.at("init");
+    const std::vector<std::string> expectedNames = {
+        "mixednumeric", "mixednumericout", "mixedstring", "mixedstringout", "macro_mixedmacro"};
+    std::size_t nameIndex = 0;
+    for (const OscInstruction& instruction : initCode) {
+        if (instruction.name.empty()) {
+            continue;
+        }
+        if (nameIndex >= expectedNames.size() || instruction.name != expectedNames[nameIndex++]) {
+            std::cerr << "OSC identifier was not normalized at parse time: " << instruction.name
+                      << "\n";
+            return 1;
+        }
+    }
+    if (nameIndex != expectedNames.size() ||
+        parsedProgram.functions.find("macro_mixedmacro") == parsedProgram.functions.end()) {
+        std::cerr << "not all mixed-case OSC identifiers were validated\n";
+        return 1;
+    }
+    const auto& macroCode = parsedProgram.functions.at("macro_mixedmacro");
+    if (macroCode.size() != 2 || macroCode[0].name != "mixedsystemmacro" ||
+        macroCode[1].name != "macro_anothermacro") {
+        std::cerr << "macro identifiers were not normalized at parse time\n";
+        return 1;
+    }
+    const auto& triggerCode = parsedProgram.functions.at("trigger_mixedtrigger");
+    if (triggerCode.size() != 1 || triggerCode[0].name != "triggervariable") {
+        std::cerr << "trigger identifiers were not normalized at parse time\n";
+        return 1;
+    }
     std::ofstream generated(generatedLuaPath(scriptPath));
     generated << "function init()\n"
                  "_pushf(3)\n"
@@ -89,7 +143,7 @@ int main() {
     runtime.configureScriptTextures({ModelScriptTexture{3, 4, 5, {"4", "5"}}});
     runtime.configureTextTextures({
         ModelTextTexture{0, false, {"display", "probe-font", "32", "16", "0", "255", "0", "0"}}});
-    variables.setString("display", "HELLO 123");
+    variables.setString("display", "HELLO\n123");
     runtime.initialize();
     runtime.update(false);
 
@@ -119,6 +173,23 @@ int main() {
     }
     if (!hasRenderedPixel) {
         std::cerr << "text texture remained blank after string update\n";
+        return 1;
+    }
+    bool hasSecondLine = false;
+    for (int y = 8; y < textTexture.height; ++y) {
+        for (int x = 0; x < textTexture.width; ++x) {
+            const std::size_t offset = (static_cast<std::size_t>(y) * textTexture.width + x) * 4;
+            if (textTexture.pixels[offset + 3] != 0) {
+                hasSecondLine = true;
+                break;
+            }
+        }
+        if (hasSecondLine) {
+            break;
+        }
+    }
+    if (!hasSecondLine) {
+        std::cerr << "multiline text did not render its second line\n";
         return 1;
     }
     const std::uint64_t firstTextRevision = textTexture.revision;

@@ -604,6 +604,7 @@ using openbus::rendering::drawEnvironmentBatch;
 using openbus::rendering::drawGround;
 using openbus::rendering::drawMaterialBatch;
 using openbus::rendering::drawModelBatch;
+using openbus::rendering::drawSolidTriangles;
 using openbus::rendering::drawWireframeTriangles;
 using openbus::rendering::lookAt;
 using openbus::rendering::multiplyMatrix;
@@ -697,7 +698,9 @@ struct Vehicle {
         AuxiliaryTexture nightmap;
         AuxiliaryTexture transmap;
         std::string lightmapStrengthVariable;
+        std::string freeTextureName;
         std::string freeTextureVariable;
+        AuxiliaryTexture freeTextureAsset;
         int scriptTextureIndex = -1;
         int textTextureIndex = -1;
         std::string texcoordTransXVariable;
@@ -768,6 +771,7 @@ struct Vehicle {
     double textureScale = 1;
     bool frustumCulling = true;
     std::vector<double> lodThresholds;
+    std::unordered_map<std::string, std::string> ctcTextureReplacements;
     std::size_t opaqueDisplayCount = 0;
     mutable std::size_t lastRenderedTriangles = 0;
     std::uint64_t viewDepthGeneration = 0;
@@ -781,6 +785,11 @@ struct Vehicle {
     bool wheelsFromOde = false;
     const BusSimulation* odeSimulation = nullptr;
     std::chrono::steady_clock::time_point textureUploadStart;
+
+    std::string resolveCtcTextureName(const std::string& textureName) const {
+        const auto found = ctcTextureReplacements.find(lower(textureName));
+        return found == ctcTextureReplacements.end() ? textureName : found->second;
+    }
 
     void updateMaterialChange(Batch& batch) {
         TraceScope phase("texture", "updateMaterialChange");
@@ -799,8 +808,8 @@ struct Vehicle {
 
         const std::filesystem::path texturePath =
             selected == nullptr ? batch.baseTexturePath : selected->texturePath;
-        const std::string textureName =
-            selected == nullptr ? batch.baseTextureName : selected->textureName;
+        const std::string textureName = resolveCtcTextureName(
+            selected == nullptr ? batch.baseTextureName : selected->textureName);
         const int requestedLayer = selected == nullptr ? batch.baseTextureLayer : selected->layer;
         const int layer =
             batch.textureArray
@@ -1328,21 +1337,21 @@ struct Vehicle {
             if (std::abs(clipCenter[3]) <= 1.0e-8) {
                 continue;
             }
-            const double centerX = clipCenter[0] / clipCenter[3];
-            const double centerY = clipCenter[1] / clipCenter[3];
-            const std::array<double, 4> viewEdge =
-                transformPoint(modelViewPart, {center[0] + part.radius, center[1], center[2], 1.0});
-            const std::array<double, 4> clipEdge =
-                transformPoint(projection, {viewEdge[0], viewEdge[1], viewEdge[2], viewEdge[3]});
-            const double radiusPixels = std::max(
-                8.0, std::abs(clipEdge[0] / std::max(std::abs(clipEdge[3]), 1.0e-8) - centerX) *
-                         static_cast<double>(viewportWidth) * 0.5);
-            const double distanceX = (normalizedX - centerX) * viewportWidth * 0.5;
-            const double distanceY = (normalizedY - centerY) * viewportHeight * 0.5;
-            if (distanceX * distanceX + distanceY * distanceY > radiusPixels * radiusPixels) {
-                continue;
-            }
             if (!exactTriangles) {
+                const double centerX = clipCenter[0] / clipCenter[3];
+                const double centerY = clipCenter[1] / clipCenter[3];
+                const std::array<double, 4> viewEdge = transformPoint(
+                    modelViewPart, {center[0] + part.radius, center[1], center[2], 1.0});
+                const std::array<double, 4> clipEdge = transformPoint(
+                    projection, {viewEdge[0], viewEdge[1], viewEdge[2], viewEdge[3]});
+                const double radiusPixels = std::max(
+                    8.0, std::abs(clipEdge[0] / std::max(std::abs(clipEdge[3]), 1.0e-8) - centerX) *
+                             static_cast<double>(viewportWidth) * 0.5);
+                const double distanceX = (normalizedX - centerX) * viewportWidth * 0.5;
+                const double distanceY = (normalizedY - centerY) * viewportHeight * 0.5;
+                if (distanceX * distanceX + distanceY * distanceY > radiusPixels * radiusPixels) {
+                    continue;
+                }
                 const double partDepth = -viewCenter[2];
                 if (partDepth < closestDepth) {
                     closestDepth = partDepth;
@@ -1439,6 +1448,8 @@ struct Vehicle {
     void drawClickableDebug(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
                             RenderViewContext context) const {
         TraceScope trace("debug", "Vehicle::drawClickableDebug");
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
         const Batch* selectedBatch = nullptr;
         std::size_t selectedTriangle = 0;
         const DisplayPart* selected =
@@ -1460,11 +1471,11 @@ struct Vehicle {
             pushMatrix();
             translate(0.0, 0.0, modelOffsetZ);
             applyAnimations(part);
-            if (vertices.empty()) {
-                translate(part.center[0], part.center[1], part.center[2]);
-                drawBox(part.size[0], part.size[1], part.size[2], isSelected ? 1.0 : 1.0,
-                        isSelected ? 0.1 : 0.85, isSelected ? 0.05 : 0.05);
-            } else {
+            translate(part.center[0], part.center[1], part.center[2]);
+            drawBox(part.size[0], part.size[1], part.size[2], isSelected ? 1.0 : 0.0,
+                    isSelected ? 0.15 : 0.75, isSelected ? 0.05 : 0.95);
+            translate(-part.center[0], -part.center[1], -part.center[2]);
+            if (!vertices.empty()) {
                 drawWireframeTriangles(vertices, 1.0, 0.85, 0.05);
                 if (isSelected && selectedBatch != nullptr) {
                     const std::size_t triangleEnd = selectedTriangle + 2;
@@ -1475,12 +1486,15 @@ struct Vehicle {
                             const Vertex& vertex = selectedBatch->vertices[index];
                             selectedVertices.push_back({vertex.x, vertex.y, vertex.z});
                         }
-                        drawWireframeTriangles(selectedVertices, 1.0, 0.1, 0.05);
+                        drawSolidTriangles(selectedVertices, 1.0, 0.15, 0.02);
+                        drawWireframeTriangles(selectedVertices, 1.0, 1.0, 0.2);
                     }
                 }
             }
             popMatrix();
         }
+        glDepthMask(GL_TRUE);
+        glEnable(GL_DEPTH_TEST);
     }
 
     void joinTextureWorkers() {
@@ -2486,6 +2500,18 @@ struct Vehicle {
     }
 
     void updateFreeTexture(Batch& batch) {
+        if (!batch.freeTextureName.empty() && !batch.freeTextureVariable.empty()) {
+            const std::string selectedName = variables.getString(batch.freeTextureVariable);
+            const std::string textureName =
+                selectedName.empty() ? batch.freeTextureName : selectedName;
+            if (batch.freeTextureAsset.name != textureName) {
+                batch.freeTextureAsset = {};
+                batch.freeTextureAsset.name = textureName;
+            }
+            ensureAuxiliaryTexture(batch, batch.freeTextureAsset);
+            batch.freeTexture = batch.freeTextureAsset.texture;
+            return;
+        }
         if ((batch.freeTextureVariable.empty() && batch.scriptTextureIndex < 0 &&
              batch.textTextureIndex < 0) ||
             !scripts) {
@@ -2945,16 +2971,17 @@ struct Vehicle {
             Batch batch;
             batch.vertices = std::move(vertices);
             batch.baseTexturePath = texturePath;
-            batch.baseTextureName = textureName;
+            batch.baseTextureName = resolveCtcTextureName(textureName);
             batch.texturePath = texturePath;
             batch.textureRoot = part.objPath.parent_path();
-            batch.textureName = textureName;
+            batch.textureName = batch.baseTextureName;
             batch.environmentTextureName = environmentTextureName;
             batch.environmentStrength = environmentStrength;
             batch.lightmap.name = materialState.lightmapTextureName;
             batch.nightmap.name = materialState.nightmapTextureName;
             batch.transmap.name = materialState.transmapTextureName;
             batch.lightmapStrengthVariable = lower(materialState.lightmapStrengthVariable);
+            batch.freeTextureName = materialState.freeTextureName;
             batch.freeTextureVariable = lower(materialState.freeTextureVariable);
             batch.scriptTextureIndex = materialState.scriptTextureIndex;
             batch.textTextureIndex = materialState.textTextureIndex;
@@ -2990,6 +3017,7 @@ struct Vehicle {
                        first.nightmap.name == second.nightmap.name &&
                        first.transmap.name == second.transmap.name &&
                        first.lightmapStrengthVariable == second.lightmapStrengthVariable &&
+                       first.freeTextureName == second.freeTextureName &&
                        first.freeTextureVariable == second.freeTextureVariable &&
                        first.scriptTextureIndex == second.scriptTextureIndex &&
                        first.textTextureIndex == second.textTextureIndex &&
@@ -3034,9 +3062,9 @@ struct Vehicle {
                    batch.textureWrapS == GL_REPEAT && batch.textureWrapT == GL_REPEAT &&
                    batch.lightmap.name.empty() && batch.nightmap.name.empty() &&
                    batch.transmap.name.empty() && batch.freeTextureVariable.empty() &&
-                   batch.scriptTextureIndex < 0 && batch.textTextureIndex < 0 &&
-                   batch.texcoordTransXVariable.empty() && batch.texcoordTransYVariable.empty() &&
-                   batch.alphaScaleVariable.empty();
+                   batch.freeTextureName.empty() && batch.scriptTextureIndex < 0 &&
+                   batch.textTextureIndex < 0 && batch.texcoordTransXVariable.empty() &&
+                   batch.texcoordTransYVariable.empty() && batch.alphaScaleVariable.empty();
         };
         const auto makeMaterialTexture = [](const Batch& source) {
             MaterialTextureSource result;
@@ -3469,6 +3497,10 @@ struct Vehicle {
             scripts->configureTextTextures(result.textTextures);
         }
         lodThresholds = std::move(result.lodThresholds);
+        ctcTextureReplacements.clear();
+        for (const ModelCtcTexture& texture : result.ctcTextures) {
+            ctcTextureReplacements[lower(texture.slot)] = texture.textureName;
+        }
         for (const ConfigurationDiagnostic& diagnostic : result.diagnostics.entries) {
             const std::string severity =
                 diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error"
@@ -3569,13 +3601,16 @@ RenderLoop::~RenderLoop() {
     vehicles_.clear();
     openbus::rendering::shutdownCoreRenderer();
     assetRequestManager_.reset();
+
     if (clickableCursor_ != nullptr) {
         glfwDestroyCursor(clickableCursor_);
         clickableCursor_ = nullptr;
     }
+
     if (window_) {
         glfwDestroyWindow(window_);
     }
+
     glfwTerminate();
 }
 

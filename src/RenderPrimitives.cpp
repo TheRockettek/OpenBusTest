@@ -99,6 +99,20 @@ void drawBox(double length, double width, double height, double red, double gree
     drawLineList(vertices);
 }
 
+void drawSolidTriangles(const std::vector<std::array<double, 3>>& positions, double red,
+                        double green, double blue) {
+    if (positions.size() < 3) {
+        return;
+    }
+    const std::array<double, 3> color = {red, green, blue};
+    std::vector<PrimitiveVertex> vertices;
+    vertices.reserve((positions.size() / 3) * 3);
+    for (const auto& point : positions) {
+        vertices.push_back(vertex(point[0], point[1], point[2], color));
+    }
+    drawPrimitives(vertices, GL_TRIANGLES);
+}
+
 void drawWireframeTriangles(const std::vector<std::array<double, 3>>& positions, double red,
                             double green, double blue) {
     if (positions.size() < 3) {

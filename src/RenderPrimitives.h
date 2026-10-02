@@ -9,6 +9,8 @@
 namespace openbus::rendering {
 
 void drawBox(double length, double width, double height, double red, double green, double blue);
+void drawSolidTriangles(const std::vector<std::array<double, 3>>& vertices, double red,
+                        double green, double blue);
 void drawWireframeTriangles(const std::vector<std::array<double, 3>>& vertices, double red,
                             double green, double blue);
 void drawRoadBox(double centerX, double centerY, double length, double width, double height,

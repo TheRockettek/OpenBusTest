@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
-inline constexpr char kOscConverterVersion[] = "10";
+inline constexpr char kOscConverterVersion[] = "11";
 
 enum class OscOpcode {
     PushNumber,

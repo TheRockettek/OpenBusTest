@@ -40,6 +40,7 @@ struct BusModelMaterialState {
     std::string nightmapTextureName;
     std::string lightmapTextureName;
     std::string lightmapStrengthVariable;
+    std::string freeTextureName;
     std::string freeTextureVariable;
     int scriptTextureIndex = -1;
     int textTextureIndex = -1;
@@ -68,6 +69,7 @@ struct BusModelPart {
     int renderType = 2;
     std::string visibleVariable;
     int visibleValue = 0;
+    std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
     std::string meshIdentifier;
     std::string animationParent;
     std::string mouseEvent;
@@ -80,6 +82,11 @@ struct BusModelPart {
 
 struct BusModelLoadResult {
     std::vector<BusModelPart> parts;
+    std::vector<ModelInteriorLight> interiorLights;
+    std::vector<ModelEnhancedLight> enhancedLights;
+    std::vector<ModelSpotlight> spotlights;
+    std::vector<ModelCtcTemplate> ctcTemplates;
+    std::vector<ModelCtcTexture> ctcTextures;
     std::vector<ModelScriptTexture> scriptTextures;
     std::vector<ModelTextTexture> textTextures;
     std::vector<double> lodThresholds;

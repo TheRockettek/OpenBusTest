@@ -117,21 +117,10 @@ class Tokenizer {
                     kw += src[pos++];
                 if (!at_end())
                     ++pos;
-                // normalise case for fixed keywords, but preserve macro/trigger names
-                auto lower_prefix = [](std::string s, size_t prefix_len) {
-                    for (size_t i = 0; i < prefix_len && i < s.size(); ++i)
-                        s[i] = (char)std::tolower((unsigned char)s[i]);
-                    return s;
-                };
-                // lowercase everything for keyword matching
+                // Lowercase keywords and identifier-bearing block names while parsing.
                 std::string lkw = kw;
                 for (char& ch : lkw)
                     ch = (char)std::tolower((unsigned char)ch);
-                // keep original case for macro:/trigger: suffix after the colon
-                if (kw.size() >= 7 && lkw.substr(0, 6) == "macro:")
-                    lkw = "macro:" + kw.substr(6);
-                else if (kw.size() >= 9 && lkw.substr(0, 8) == "trigger:")
-                    lkw = "trigger:" + kw.substr(8);
                 toks.push_back({TT::BlockKW, lkw, l});
                 continue;
             }
@@ -152,6 +141,12 @@ class Tokenizer {
                         ++pos;
                     } else {
                         cmd += src[pos++];
+                    }
+                }
+                for (std::size_t index = 0; index < cmd.size(); ++index) {
+                    if (index >= 4) {
+                        cmd[index] =
+                            static_cast<char>(std::tolower(static_cast<unsigned char>(cmd[index])));
                     }
                 }
                 toks.push_back({TT::Command, cmd, l});

@@ -26,6 +26,7 @@ struct ModelMaterialState {
     std::string nightmapTextureName;
     std::string lightmapTextureName;
     std::string lightmapStrengthVariable;
+    std::string freeTextureName;
     std::string freeTextureVariable;
     int scriptTextureIndex = -1;
     int textTextureIndex = -1;
@@ -95,6 +96,33 @@ struct ModelAnimation {
     bool hasMeshTransform = false;
 };
 
+struct ModelInteriorLight {
+    std::string controller;
+    std::array<double, 7> parameters = {};
+};
+
+struct ModelEnhancedLight {
+    bool enhanced = false;
+    std::string controller;
+    std::vector<double> parameters;
+    std::string textureName;
+};
+
+struct ModelSpotlight {
+    std::array<double, 12> parameters = {};
+};
+
+struct ModelCtcTemplate {
+    std::string name;
+    std::string texturePath;
+    int index = 0;
+};
+
+struct ModelCtcTexture {
+    std::string slot;
+    std::string textureName;
+};
+
 struct ModelPart {
     std::filesystem::path objPath;
     std::string bundleEntry;
@@ -119,6 +147,11 @@ struct ModelPart {
 
 struct ModelConfig {
     std::vector<ModelPart> parts;
+    std::vector<ModelInteriorLight> interiorLights;
+    std::vector<ModelEnhancedLight> enhancedLights;
+    std::vector<ModelSpotlight> spotlights;
+    std::vector<ModelCtcTemplate> ctcTemplates;
+    std::vector<ModelCtcTexture> ctcTextures;
     std::vector<ModelScriptTexture> scriptTextures;
     std::vector<ModelTextTexture> textTextures;
     std::vector<double> lodThresholds;

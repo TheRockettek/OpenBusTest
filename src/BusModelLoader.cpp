@@ -14,6 +14,11 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
     openbus::rendering::TraceScope trace("config", "loadBusModel");
     const ModelConfig configuration = loadBusModelConfig(configPath, modelRoot, variables);
     BusModelLoadResult result;
+    result.interiorLights = configuration.interiorLights;
+    result.enhancedLights = configuration.enhancedLights;
+    result.spotlights = configuration.spotlights;
+    result.ctcTemplates = configuration.ctcTemplates;
+    result.ctcTextures = configuration.ctcTextures;
     result.scriptTextures = configuration.scriptTextures;
     result.textTextures = configuration.textTextures;
     result.lodThresholds = configuration.lodThresholds;
@@ -31,6 +36,7 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
         part.renderType = source.renderType;
         part.visibleVariable = source.visibleVariable;
         part.visibleValue = source.visibleValue;
+        part.interiorLightIndexes = source.interiorLightIndexes;
         part.meshIdentifier = source.meshIdentifier;
         part.animationParent = source.animationParent;
         part.mouseEvent = source.mouseEvent;
@@ -59,6 +65,7 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
             state.nightmapTextureName = sourceState.nightmapTextureName;
             state.lightmapTextureName = sourceState.lightmapTextureName;
             state.lightmapStrengthVariable = sourceState.lightmapStrengthVariable;
+            state.freeTextureName = sourceState.freeTextureName;
             state.freeTextureVariable = sourceState.freeTextureVariable;
             state.scriptTextureIndex = sourceState.scriptTextureIndex;
             state.textTextureIndex = sourceState.textTextureIndex;
