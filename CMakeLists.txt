@@ -230,6 +230,13 @@ add_test(NAME OpenBusVariablesProbe COMMAND OpenBusVariablesProbe)
 add_test(NAME OpenBusPhysicsProbe COMMAND OpenBusPhysicsProbe)
 add_test(NAME OpenBusStabilityProbe COMMAND OpenBusStabilityProbe)
 
+add_executable(OpenBusCameraMathProbe
+    tests/CameraMathProbe.cpp
+    src/CameraMath.cpp
+)
+target_include_directories(OpenBusCameraMathProbe PRIVATE src)
+add_test(NAME OpenBusCameraMathProbe COMMAND OpenBusCameraMathProbe)
+
 add_executable(OpenBusRoadFeaturesProbe
     tests/RoadFeaturesProbe.cpp
     src/RoadFeatures.cpp

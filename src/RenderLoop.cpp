@@ -3356,6 +3356,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                                        camera->position[2] + modelOffsetZ};
             const std::array<double, 3> direction = {
                 std::cos(tilt) * std::cos(pan), std::cos(tilt) * std::sin(pan), std::sin(tilt)};
+            const std::array<double, 3> upLocal = {
+                -std::sin(tilt) * std::cos(pan), -std::sin(tilt) * std::sin(pan),
+                std::cos(tilt)};
             const std::array<double, 3> eyeLocal = {
                 centerLocal[0] - direction[0] * camera->orbitDistance,
                 centerLocal[1] - direction[1] * camera->orbitDistance,
@@ -3365,7 +3368,14 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                                        eyeLocal[2] + direction[2] * 3.0};
             const std::array<double, 3> eye = transformLocalPoint(chassis, eyeLocal);
             const std::array<double, 3> target = transformLocalPoint(chassis, targetLocal);
-            lookAt(eye[0], eye[1], eye[2], target[0], target[1], target[2]);
+            const std::array<double, 3> up = {
+                chassis.rotation[0] * upLocal[0] + chassis.rotation[1] * upLocal[1] +
+                    chassis.rotation[2] * upLocal[2],
+                chassis.rotation[3] * upLocal[0] + chassis.rotation[4] * upLocal[1] +
+                    chassis.rotation[5] * upLocal[2],
+                chassis.rotation[6] * upLocal[0] + chassis.rotation[7] * upLocal[1] +
+                    chassis.rotation[8] * upLocal[2]};
+            lookAt(eye[0], eye[1], eye[2], target[0], target[1], target[2], up[0], up[1], up[2]);
         } else {
             std::array<double, 3> eyeLocal = {5.65, 0.70, 0.70};
             std::array<double, 3> targetLocal = {8.65, 0.70, 0.72};

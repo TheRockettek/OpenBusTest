@@ -63,6 +63,11 @@ void setPerspective(double width, double height, double fieldOfView) {
 }
 
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ) {
+    lookAt(eyeX, eyeY, eyeZ, targetX, targetY, targetZ, 0.0, 0.0, 1.0);
+}
+
+void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ,
+            double upX, double upY, double upZ) {
     double forwardX = targetX - eyeX;
     double forwardY = targetY - eyeY;
     double forwardZ = targetZ - eyeZ;
@@ -72,17 +77,43 @@ void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double target
     forwardY /= forwardLength;
     forwardZ /= forwardLength;
 
-    double sideX = forwardY;
-    double sideY = -forwardX;
-    const double sideLength = std::sqrt(sideX * sideX + sideY * sideY);
+    const double upProjection = upX * forwardX + upY * forwardY + upZ * forwardZ;
+    upX -= upProjection * forwardX;
+    upY -= upProjection * forwardY;
+    upZ -= upProjection * forwardZ;
+    double upLength = std::sqrt(upX * upX + upY * upY + upZ * upZ);
+    if (upLength <= 1.0e-12) {
+        if (std::abs(forwardZ) < 0.9) {
+            upX = 0.0;
+            upY = 0.0;
+            upZ = 1.0;
+        } else {
+            upX = 1.0;
+            upY = 0.0;
+            upZ = 0.0;
+        }
+        const double fallbackProjection = upX * forwardX + upY * forwardY + upZ * forwardZ;
+        upX -= fallbackProjection * forwardX;
+        upY -= fallbackProjection * forwardY;
+        upZ -= fallbackProjection * forwardZ;
+        upLength = std::sqrt(upX * upX + upY * upY + upZ * upZ);
+    }
+
+    double sideX = forwardY * upZ - forwardZ * upY;
+    double sideY = forwardZ * upX - forwardX * upZ;
+    double sideZ = forwardX * upY - forwardY * upX;
+    const double sideLength = std::sqrt(sideX * sideX + sideY * sideY + sideZ * sideZ);
     sideX /= sideLength;
     sideY /= sideLength;
-    const double upX = sideY * forwardZ;
-    const double upY = -sideX * forwardZ;
-    const double upZ = sideX * forwardY - sideY * forwardX;
+    sideZ /= sideLength;
+    const double correctedUpX = sideY * forwardZ - sideZ * forwardY;
+    const double correctedUpY = sideZ * forwardX - sideX * forwardZ;
+    const double correctedUpZ = sideX * forwardY - sideY * forwardX;
 
-    const Matrix4 rotation = {sideX, upX, -forwardX, 0.0, sideY, upY, -forwardY, 0.0,
-                              0.0,   upZ, -forwardZ, 0.0, 0.0,   0.0, 0.0,       1.0};
+    const Matrix4 rotation = {sideX, correctedUpX, -forwardX, 0.0,
+                              sideY, correctedUpY, -forwardY, 0.0,
+                              sideZ, correctedUpZ, -forwardZ, 0.0,
+                              0.0,   0.0,          0.0,       1.0};
     const Matrix4 translation = {1.0, 0.0, 0.0, 0.0, 0.0,   1.0,   0.0,   0.0,
                                  0.0, 0.0, 1.0, 0.0, -eyeX, -eyeY, -eyeZ, 1.0};
     cachedModelViewMatrix = multiply(rotation, translation);
