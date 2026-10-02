@@ -19,6 +19,7 @@ extern "C" {
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <random>
@@ -85,11 +86,26 @@ struct ScriptRuntime::Impl {
         int width = 0;
         int height = 0;
         std::array<std::uint8_t, 4> color = {255, 255, 255, 255};
+        bool useBlockColor = false;
         std::string lastValue;
         bool hasRenderedValue = false;
     };
     std::unordered_map<int, TextTextureDefinition> textTextureDefinitions;
     std::unordered_map<int, ScriptTexture> textTextures;
+    struct FontGlyph {
+        int left = 0;
+        int right = 0;
+        int top = 0;
+        bool defined = false;
+    };
+    struct FontAsset {
+        int height = 0;
+        int horizontalGap = 0;
+        std::array<FontGlyph, 256> glyphs = {};
+        openbus::rendering::Image colorImage;
+        openbus::rendering::Image alphaImage;
+    };
+    std::unordered_map<std::string, std::shared_ptr<FontAsset>> fonts;
     std::uint64_t revisionCounter = 0;
     std::vector<std::unique_ptr<LuaFunctionBinding>> luaFunctionBindings;
     std::vector<OscProgram> nativePrograms;
@@ -204,6 +220,136 @@ struct ScriptRuntime::Impl {
         default:
             return {14, 17, 1, 2, 4, 0, 4};
         }
+    }
+
+    std::shared_ptr<FontAsset> loadFont(const std::string& requestedName) {
+        const std::string name = lower(requestedName);
+        const auto cached = fonts.find(name);
+        if (cached != fonts.end()) {
+            return cached->second;
+        }
+        const auto trimFontLine = [](const std::string& value) {
+            const std::size_t first = value.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos) {
+                return std::string();
+            }
+            const std::size_t last = value.find_last_not_of(" \t\r\n");
+            return value.substr(first, last - first + 1);
+        };
+        const auto readFontLines = [&trimFontLine](const std::filesystem::path& path) {
+            std::vector<std::string> lines;
+            std::ifstream input(path);
+            std::string line;
+            while (std::getline(input, line)) {
+                lines.push_back(trimFontLine(line));
+            }
+            return lines;
+        };
+        const auto parseInteger = [&trimFontLine](const std::string& value, int& result) {
+            try {
+                const std::string normalized = trimFontLine(value);
+                std::size_t consumed = 0;
+                const int parsed = std::stoi(normalized, &consumed);
+                if (consumed != normalized.size()) {
+                    return false;
+                }
+                result = parsed;
+                return true;
+            } catch (const std::exception&) {
+                return false;
+            }
+        };
+        std::vector<std::filesystem::path> fontDirectories;
+        const std::filesystem::path sourceDirectory = configuration.sourcePath.parent_path();
+        fontDirectories.push_back(sourceDirectory / "Fonts");
+        fontDirectories.push_back(sourceDirectory.parent_path() / "Fonts");
+        std::filesystem::path fontPath;
+        std::error_code error;
+        for (const auto& directory : fontDirectories) {
+            if (!std::filesystem::is_directory(directory, error)) {
+                continue;
+            }
+            for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
+                if (!entry.is_regular_file(error) ||
+                    lower(entry.path().extension().string()) != ".oft") {
+                    continue;
+                }
+                const std::vector<std::string> lines = readFontLines(entry.path());
+                for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+                    if (lower(lines[lineIndex]) != "[newfont]" || lineIndex + 5 >= lines.size()) {
+                        continue;
+                    }
+                    if (lower(lines[lineIndex + 1]) == name) {
+                        fontPath = entry.path();
+                    }
+                    break;
+                }
+                if (!fontPath.empty()) {
+                    break;
+                }
+            }
+            if (!fontPath.empty()) {
+                break;
+            }
+        }
+        if (fontPath.empty()) {
+            fonts.emplace(name, nullptr);
+            return nullptr;
+        }
+
+        auto font = std::make_shared<FontAsset>();
+        const std::vector<std::string> lines = readFontLines(fontPath);
+        for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+            if (lines[lineIndex] != "[newfont]" && lines[lineIndex] != "[char]") {
+                continue;
+            }
+            const std::size_t valueCount = lines[lineIndex] == "[newfont]" ? 5 : 4;
+            if (lineIndex + valueCount >= lines.size()) {
+                continue;
+            }
+            const bool isNewFont = lines[lineIndex] == "[newfont]";
+            std::vector<std::string> values(lines.begin() + lineIndex + 1,
+                                            lines.begin() + lineIndex + valueCount + 1);
+            lineIndex += valueCount;
+            if (isNewFont) {
+                int height = 0;
+                int horizontalGap = 0;
+                if (!parseInteger(values[3], height) || !parseInteger(values[4], horizontalGap) ||
+                    height <= 0) {
+                    continue;
+                }
+                font->height = height;
+                font->horizontalGap = horizontalGap;
+                if (!openbus::rendering::TextureLoader::readImage(
+                        fontPath.parent_path() / trimFontLine(values[1]), font->colorImage) ||
+                    !openbus::rendering::TextureLoader::readImage(
+                        fontPath.parent_path() / trimFontLine(values[2]), font->alphaImage)) {
+                    continue;
+                }
+            } else {
+                int left = 0;
+                int right = 0;
+                int top = 0;
+                if (!parseInteger(values[1], left) || !parseInteger(values[2], right) ||
+                    !parseInteger(values[3], top) || right <= left || left < 0 || top < 0 ||
+                    values[0].empty()) {
+                    continue;
+                }
+                int code = static_cast<unsigned char>(values[0][0]);
+                int numericCode = 0;
+                if (parseInteger(values[0], numericCode) && numericCode >= 0 &&
+                    numericCode <= 255) {
+                    code = numericCode;
+                }
+                font->glyphs[static_cast<std::size_t>(code)] = {left, right, top, true};
+            }
+        }
+        if (font->height <= 0 || font->colorImage.width <= 0 || font->alphaImage.width <= 0) {
+            fonts.emplace(name, nullptr);
+            return nullptr;
+        }
+        fonts.emplace(name, font);
+        return font;
     }
 
     double nativePopFloat() {
@@ -1224,6 +1370,71 @@ struct ScriptRuntime::Impl {
         ++texture.revision;
     }
 
+    static bool drawBitmapFontText(ScriptTexture& texture, const std::string& value, int x, int y,
+                                   const TextTextureDefinition& definition, const FontAsset& font) {
+        int fallbackCode = -1;
+        for (std::size_t index = 0; index < font.glyphs.size(); ++index) {
+            if (font.glyphs[index].defined) {
+                fallbackCode = static_cast<int>(index);
+                break;
+            }
+        }
+        if (fallbackCode < 0 || font.colorImage.width <= 0 || font.alphaImage.width <= 0) {
+            return false;
+        }
+        int cursorX = x;
+        int cursorY = y;
+        for (const char character : value) {
+            if (character == '@' || character == '\n') {
+                cursorX = x;
+                cursorY += font.height;
+                continue;
+            }
+            if (character == '\r') {
+                continue;
+            }
+            const int code = static_cast<unsigned char>(character);
+            const FontGlyph& glyph = font.glyphs[font.glyphs[static_cast<std::size_t>(code)].defined
+                                                     ? static_cast<std::size_t>(code)
+                                                     : static_cast<std::size_t>(fallbackCode)];
+            const int glyphWidth = glyph.right - glyph.left;
+            for (int row = 0; row < font.height && glyph.top + row < font.alphaImage.height;
+                 ++row) {
+                for (int column = 0; column < glyphWidth; ++column) {
+                    const int sourceX = glyph.left + column;
+                    const int sourceY = glyph.top + row;
+                    if (sourceX < 0 || sourceX >= font.colorImage.width ||
+                        sourceX >= font.alphaImage.width || cursorX + column < 0 ||
+                        cursorY + row < 0 || cursorX + column >= texture.width ||
+                        cursorY + row >= texture.height) {
+                        continue;
+                    }
+                    const std::size_t sourceOffset =
+                        (static_cast<std::size_t>(sourceY) * font.alphaImage.width + sourceX) * 4;
+                    const std::size_t colorOffset =
+                        (static_cast<std::size_t>(sourceY) * font.colorImage.width + sourceX) * 4;
+                    const std::size_t destinationOffset =
+                        pixelOffset(texture, cursorX + column, cursorY + row);
+                    if (definition.useBlockColor) {
+                        texture.pixels[destinationOffset] = definition.color[0];
+                        texture.pixels[destinationOffset + 1] = definition.color[1];
+                        texture.pixels[destinationOffset + 2] = definition.color[2];
+                    } else {
+                        texture.pixels[destinationOffset] = font.colorImage.rgba[colorOffset];
+                        texture.pixels[destinationOffset + 1] =
+                            font.colorImage.rgba[colorOffset + 1];
+                        texture.pixels[destinationOffset + 2] =
+                            font.colorImage.rgba[colorOffset + 2];
+                    }
+                    texture.pixels[destinationOffset + 3] = font.alphaImage.rgba[sourceOffset];
+                }
+            }
+            cursorX += glyphWidth + font.horizontalGap;
+        }
+        ++texture.revision;
+        return true;
+    }
+
     void updateTextTextures() {
         for (auto& entry : textTextureDefinitions) {
             const int index = entry.first;
@@ -1239,7 +1450,10 @@ struct ScriptRuntime::Impl {
             texture.height = definition.height;
             clearTexture(texture);
             const int maximumScale = definition.font == "sp_ticketerfont" ? 4 : 8;
-            drawText(texture, value, 0, 0, definition.color, 0, maximumScale);
+            const std::shared_ptr<FontAsset> font = loadFont(definition.font);
+            if (font == nullptr || !drawBitmapFontText(texture, value, 0, 0, definition, *font)) {
+                drawText(texture, value, 0, 0, definition.color, 0, maximumScale);
+            }
             if (value.empty()) {
                 ++texture.revision;
             }
@@ -1683,6 +1897,13 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         }
         if (configured.variable.empty() || configured.width <= 0 || configured.height <= 0) {
             continue;
+        }
+        if (definition.values.size() > 4) {
+            try {
+                configured.useBlockColor = std::stoi(definition.values[4]) != 0;
+            } catch (const std::exception&) {
+                configured.useBlockColor = false;
+            }
         }
         for (std::size_t channel = 0; channel < 3 && channel + 5 < definition.values.size();
              ++channel) {

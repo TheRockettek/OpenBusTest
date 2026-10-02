@@ -97,8 +97,9 @@ it.
   script-texture upload path. Update cadence remains script-driven.
 - [x] Implement `[texttexture]` and `[texttexture_enh]` runtime surfaces:
   bitmap text layout, color/alpha, sizing, material binding, and updates from
-  script string variables. The renderer uses a deterministic built-in bitmap
-  font; authored OMSI font-file matching remains incomplete.
+  script string variables. OFT fonts are loaded by internal name from the
+  direct `Fonts/` directory, including glyph rectangles, color/alpha bitmaps,
+  block-color mode, fallback glyphs, and `@` line breaks.
 - [x] Implement `[usescripttexture]` and `[usetexttexture]` material binding
   to live texture surfaces, including Lua/native pixel, rectangle, text, load,
   lock, readback, and filtering operations.
@@ -201,8 +202,8 @@ by parser alignment and should not be described as supported:
   initial `number` string are active and covered by `OpenBusVehicleConfigProbe`.
 - AI/network vehicle sections, coupling/cable behavior, and articulated
   multi-body physics despite the articulated flag being parsed.
-- Authored OMSI font-file matching for `[texttexture]`/`[texttexture_enh]`; the
-  runtime uses its deterministic built-in bitmap font. `[interiorlight]`,
+- Non-OMSI font edge cases such as Windows-1252 glyph validation and additional
+  text alignment semantics remain. `[interiorlight]`,
   `[light_enh]`, `[light_enh_2]`, and `[spotlight]` light emission remain
   incomplete.
 - Configurable keyboard binding files and the complete OMSI input action map;

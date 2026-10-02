@@ -2,18 +2,67 @@
 #include "Logger.h"
 #include "osc/OscConverter.h"
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <vector>
 
 Logger gameLog = Logger("Game");
+
+void writeTestBmp(const std::filesystem::path& path, int width, int height,
+                  const std::vector<std::uint8_t>& redValues) {
+    const int rowStride = (width * 3 + 3) & ~3;
+    const std::uint32_t pixelBytes = static_cast<std::uint32_t>(rowStride * height);
+    const std::uint32_t fileSize = 54 + pixelBytes;
+    std::array<std::uint8_t, 54> header = {};
+    header[0] = 'B';
+    header[1] = 'M';
+    auto write32 = [&header](std::size_t offset, std::uint32_t value) {
+        header[offset] = static_cast<std::uint8_t>(value);
+        header[offset + 1] = static_cast<std::uint8_t>(value >> 8);
+        header[offset + 2] = static_cast<std::uint8_t>(value >> 16);
+        header[offset + 3] = static_cast<std::uint8_t>(value >> 24);
+    };
+    write32(2, fileSize);
+    write32(10, 54);
+    write32(14, 40);
+    write32(18, static_cast<std::uint32_t>(width));
+    write32(22, static_cast<std::uint32_t>(height));
+    header[26] = 1;
+    header[28] = 24;
+    write32(34, pixelBytes);
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(header.data()), header.size());
+    std::vector<std::uint8_t> row(static_cast<std::size_t>(rowStride), 0);
+    for (int y = height - 1; y >= 0; --y) {
+        for (int x = 0; x < width; ++x) {
+            const std::uint8_t value = redValues[static_cast<std::size_t>(y * width + x)];
+            row[static_cast<std::size_t>(x) * 3] = value;
+            row[static_cast<std::size_t>(x) * 3 + 1] = value;
+            row[static_cast<std::size_t>(x) * 3 + 2] = value;
+        }
+        output.write(reinterpret_cast<const char*>(row.data()), row.size());
+    }
+}
 
 int main() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() / "openbus_script_texture_probe";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
+        const std::filesystem::path fonts = root / "Fonts";
+        std::filesystem::create_directories(fonts);
+        writeTestBmp(fonts / "probe.bmp", 4, 2, {255, 255, 80, 80, 255, 255, 80, 80});
+        writeTestBmp(fonts / "probe_alpha.bmp", 4, 2,
+             {255, 255, 128, 128, 255, 255, 128, 128});
+        std::ofstream font(fonts / "probe.oft");
+        font << "[newfont]\nProbeFont\nprobe.bmp\nprobe_alpha.bmp\n2\n0\n"
+            "[char]\nA\n0\n2\n0\n"
+            "[char]\nB\n2\n4\n0\n";
+        font.close();
     const std::filesystem::path scriptPath = root / "probe.osc";
     std::ofstream source(scriptPath);
     source << "{InIt}\n"
@@ -142,17 +191,22 @@ int main() {
 
     runtime.configureScriptTextures({ModelScriptTexture{3, 4, 5, {"4", "5"}}});
     runtime.configureTextTextures({
-        ModelTextTexture{0, false, {"display", "probe-font", "32", "16", "0", "255", "0", "0"}}});
+        ModelTextTexture{0, false, {"display", "probe-font", "32", "16", "0", "255", "0", "0"}},
+        ModelTextTexture{1, false, {"bitmapdisplay", "ProbeFont", "6", "4", "1", "10", "20", "30"}}});
     variables.setString("display", "HELLO\n123");
+    variables.setString("bitmapdisplay", "AC@B");
     runtime.initialize();
     runtime.update(false);
 
     ScriptRuntime::ScriptTextureSnapshot scriptTexture;
     ScriptRuntime::ScriptTextureSnapshot textTexture;
+    ScriptRuntime::ScriptTextureSnapshot bitmapTextTexture;
     if (!runtime.copyScriptTexture(3, scriptTexture) || scriptTexture.width != 4 ||
         scriptTexture.height != 5 || scriptTexture.pixels.size() != 4U * 5U * 4U ||
         !runtime.copyTextTexture(0, textTexture) || textTexture.width != 32 ||
-        textTexture.height != 16 || textTexture.pixels.size() != 32U * 16U * 4U) {
+        textTexture.height != 16 || textTexture.pixels.size() != 32U * 16U * 4U ||
+        !runtime.copyTextTexture(1, bitmapTextTexture) || bitmapTextTexture.width != 6 ||
+        bitmapTextTexture.height != 4 || bitmapTextTexture.pixels.size() != 6U * 4U * 4U) {
         std::cerr << "configured texture surfaces were not created\n";
         return 1;
     }
@@ -190,6 +244,19 @@ int main() {
     }
     if (!hasSecondLine) {
         std::cerr << "multiline text did not render its second line\n";
+        return 1;
+    }
+    const std::size_t firstBitmapPixel = 0;
+    const std::size_t secondBitmapPixel = (2U * 6U) * 4U;
+    if (bitmapTextTexture.pixels[firstBitmapPixel] != 10 ||
+        bitmapTextTexture.pixels[firstBitmapPixel + 1] != 20 ||
+        bitmapTextTexture.pixels[firstBitmapPixel + 2] != 30 ||
+        bitmapTextTexture.pixels[firstBitmapPixel + 3] != 255 ||
+        bitmapTextTexture.pixels[secondBitmapPixel] != 10 ||
+        bitmapTextTexture.pixels[secondBitmapPixel + 1] != 20 ||
+        bitmapTextTexture.pixels[secondBitmapPixel + 2] != 30 ||
+        bitmapTextTexture.pixels[secondBitmapPixel + 3] != 128) {
+        std::cerr << "OFT glyph color, alpha, or @ line layout was not applied\n";
         return 1;
     }
     const std::uint64_t firstTextRevision = textTexture.revision;
