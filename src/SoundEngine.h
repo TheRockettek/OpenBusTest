@@ -30,10 +30,12 @@ class SoundEngine {
     void setListenerDistance(double distance);
     void trigger(const std::string& name, const std::filesystem::path& overrideFile = {},
                  double controlValue = 0.0);
+    void stop(const std::string& name);
 
   private:
     struct Backend;
-    std::unordered_map<std::string, SoundTriggerDefinition> triggers_;
+    std::unordered_map<std::string, std::vector<SoundTriggerDefinition>> triggers_;
+    std::vector<SoundTriggerDefinition> untriggeredLoopSounds_;
     std::filesystem::path basePath_;
     double listenerDistance_ = 0.0;
     std::unique_ptr<Backend> backend_;

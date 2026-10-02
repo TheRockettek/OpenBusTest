@@ -124,7 +124,9 @@ using Matrix4 = openbus::rendering::Matrix4;
 namespace {
 
 enum class RenderViewContext {
-    PlayerExterior = 1,
+    // Exterior views need both regular outside meshes and meshes authored for
+    // the shared/reflection vehicle view used by OMSI model files.
+    PlayerExterior = 1 | 4,
     PlayerInterior = 2,
     NonPlayer = 4,
 };
@@ -1269,8 +1271,8 @@ struct Vehicle {
             const double nearZ = -projection[14] / (projection[10] - 1.0);
             const double farZ = -projection[14] / (projection[10] + 1.0);
             const auto viewPoint = [&](double depth) {
-                return std::array<double, 3>{-normalizedX * depth / projection[0],
-                                             -normalizedY * depth / projection[5], depth};
+                return std::array<double, 3>{normalizedX * depth / projection[0],
+                                             normalizedY * depth / projection[5], -depth};
             };
             rayOrigin = viewPoint(nearZ);
             const std::array<double, 3> rayEnd = viewPoint(farZ);
@@ -1539,7 +1541,16 @@ struct Vehicle {
         scripts = std::make_unique<ScriptRuntime>(
             vehicleConfiguration, variables, simulationState,
             [&soundEngine](const std::string& name, const std::string& file, double controlValue) {
-                soundEngine.trigger(name, file, controlValue);
+                if (name == "horn_off") {
+                    soundEngine.stop("ev_hupe_an");
+                    soundEngine.trigger("ev_hupe_aus");
+                    return;
+                }
+                if (name.size() > 4 && name.compare(name.size() - 4, 4, "_off") == 0) {
+                    soundEngine.stop(name.substr(0, name.size() - 4));
+                } else {
+                    soundEngine.trigger(name, file, controlValue);
+                }
             });
         for (const std::string& error : scripts->errors()) {
             gameLog.Log("Lua script error: " + error);
@@ -1549,6 +1560,7 @@ struct Vehicle {
         for (const std::string& error : scripts->errors()) {
             gameLog.Log("Lua initialization error: " + error);
         }
+        scripts->update(false);
         spawn();
     }
 
@@ -3832,6 +3844,10 @@ void RenderLoop::beginFrame() {
                 gameLog.Log(std::string("Key binding ") + binding.action +
                             (pressed ? " pressed" : " released"));
                 previousVehicleKeyStates_[index] = pressed;
+            }
+            if (pressed && std::string_view(binding.action) == "horn" && playerVehicle_ != nullptr &&
+                playerVehicle_->scripts) {
+                playerVehicle_->scripts->invokeKeyBinding(binding.action, true);
             }
         }
     }

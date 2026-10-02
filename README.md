@@ -9,7 +9,7 @@ solver.
 ## Prerequisites
 
 - CMake 3.20 or newer
-- A C++17 compiler
+- A C++23 compiler
 - ODE
 - GLFW and OpenGL
 

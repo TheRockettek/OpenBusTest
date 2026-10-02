@@ -21,6 +21,7 @@ int main() {
               "[mesh]\ndisplay.obj\n"
               "[mouseevent]\nRouteDisplay\n"
               "[matl]\ndisplay.bmp\n0\n"
+              "[matl_change]\ndisplay_lit.bmp\n0\nCockpit_Lights\n"
               "[usescripttexture]\n0\n"
               "[illumination_interior]\n2\n-1\n4\n5\n"
               "[interiorlight]\nCockpit_Lights\n1\n2\n3\n0.1\n0.2\n0.3\n4\n"
@@ -48,7 +49,10 @@ int main() {
         result.interiorLights[0].parameters[6] != 4.0 ||
         result.parts[0].materialStatesInOrder.size() != 1 ||
         result.parts[0].materialStatesInOrder[0].scriptTextureIndex != 0 ||
-        result.parts[0].materialStatesInOrder[0].textTextureIndex != 0) {
+        result.parts[0].materialStatesInOrder[0].textTextureIndex != 0 ||
+        result.parts[0].materialStatesInOrder[0].textureChanges.size() != 1 ||
+        result.parts[0].materialStatesInOrder[0].textureChanges[0].activationVariable !=
+            "cockpit_lights") {
         std::cerr << "model texture records were not retained and bound\n";
         return 1;
     }

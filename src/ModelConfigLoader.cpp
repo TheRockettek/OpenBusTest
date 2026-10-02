@@ -843,9 +843,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                             "texture name and activation variable are required");
                         continue;
                     }
+                    const std::size_t indexedMaterial = currentMaterialIndex;
                     currentMaterialKey =
                         lower(std::filesystem::path(textureName).filename().string());
-                    currentMaterialIndex = static_cast<std::size_t>(-1);
                     ModelMaterialState& state = current->materialStates[currentMaterialKey];
                     // A material change is retained as runtime data; activation
                     // variables are evaluated when the renderer draws the part.
@@ -854,6 +854,11 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                         state.texturePath = textureName;
                     }
                     state.textureChanges.push_back({{}, textureName, layer, activationVariable});
+                    if (indexedMaterial != static_cast<std::size_t>(-1) &&
+                        indexedMaterial < current->materialStatesInOrder.size()) {
+                        current->materialStatesInOrder[indexedMaterial].textureChanges.push_back(
+                            {{}, textureName, layer, activationVariable});
+                    }
                     declareIfVariable(activationVariable, variables);
                 }
             }

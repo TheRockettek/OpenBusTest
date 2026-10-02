@@ -214,31 +214,6 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
         }
 
         pglBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
-        const double reflectionFieldOfView =
-            camera.fieldOfView > 0.0 ? camera.fieldOfView : kDefaultFieldOfView;
-        const double referenceFovScale = std::tan(kDefaultFieldOfView * 3.141592653589793 / 360.0);
-        const double reflectionFovScale =
-            std::tan(std::clamp(reflectionFieldOfView, kMinFieldOfView, kMaxFieldOfView) *
-                     3.141592653589793 / 360.0);
-        const int desiredSize = std::max(
-            requirement.size, static_cast<int>(std::ceil(requirement.size * referenceFovScale /
-                                                         std::max(reflectionFovScale, 0.001))));
-        int targetSize = kMinReflectionTargetSize;
-        while (targetSize < desiredSize && targetSize < impl_->maximumSize) {
-            targetSize *= 2;
-        }
-        targetSize = std::min(targetSize, impl_->maximumSize);
-        if (targetSize < target.width && desiredSize > target.width / 2) {
-            targetSize = target.width;
-        }
-        if (target.width != targetSize || target.height != targetSize) {
-            gameLog.Log("Reflection target " + std::to_string(reflectionIndex) + " resized from " +
-                        std::to_string(target.width) + "x" + std::to_string(target.height) +
-                        " to " + std::to_string(targetSize) + "x" + std::to_string(targetSize) +
-                        " (max " + std::to_string(impl_->maximumSize) + "x" +
-                        std::to_string(impl_->maximumSize) + ")");
-        }
-        impl_->resizeTarget(target, targetSize);
         glViewport(0, 0, target.width, target.height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         draw(simulation, cameraIndex, target.width, target.height);

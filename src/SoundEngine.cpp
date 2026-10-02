@@ -14,6 +14,7 @@
 #include <iterator>
 #include <mutex>
 #include <sstream>
+#include <string_view>
 #include <thread>
 
 #ifdef _WIN32
@@ -42,6 +43,43 @@ std::filesystem::path resolve(const std::filesystem::path& base, std::string val
     return base / std::filesystem::path(value);
 }
 
+bool endsWith(const std::string& value, std::string_view suffix) {
+    return value.size() >= suffix.size() &&
+           value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+bool isLoopSoundFile(const std::filesystem::path& path) {
+    const std::string stem = lower(path.stem().string());
+    return stem == "loop" || endsWith(stem, "_loop") || endsWith(stem, "-loop");
+}
+
+bool isEndSoundFile(const std::filesystem::path& path) {
+    return endsWith(lower(path.stem().string()), "_end");
+}
+
+bool belongsToSoundFamily(const std::filesystem::path& loopPath,
+                          const std::filesystem::path& endPath) {
+    const std::string loopStem = lower(loopPath.stem().string());
+    const std::string endStem = lower(endPath.stem().string());
+    const std::string family = endStem.substr(0, endStem.size() - 4);
+    return loopPath.parent_path() == endPath.parent_path() &&
+           (loopStem == family + "_loop" || loopStem == family + "-loop");
+}
+
+bool belongsToStartFamily(const std::filesystem::path& loopPath,
+                          const std::filesystem::path& startPath) {
+    const std::string loopStem = lower(loopPath.stem().string());
+    const std::string startStem = lower(startPath.stem().string());
+    const std::string suffix = "_start";
+    if (startStem.size() <= suffix.size() ||
+        startStem.compare(startStem.size() - suffix.size(), suffix.size(), suffix) != 0) {
+        return false;
+    }
+    const std::string family = startStem.substr(0, startStem.size() - suffix.size());
+    return loopPath.parent_path() == startPath.parent_path() &&
+           (loopStem == family + "_loop" || loopStem == family + "-loop");
+}
+
 } // namespace
 
 #if defined(OPENBUS_HAS_PIPEWIRE)
@@ -54,6 +92,7 @@ struct SoundEngine::Backend {
     };
 
     struct ActiveClip {
+        std::filesystem::path path;
         std::shared_ptr<Clip> clip;
         std::size_t frame = 0;
         bool loop = false;
@@ -248,7 +287,20 @@ struct SoundEngine::Backend {
             return;
         }
         std::lock_guard<std::mutex> lock(mutex);
-        active.push_back({std::move(clip), 0, looped, gain});
+        if (looped && std::any_of(active.begin(), active.end(), [&path](const ActiveClip& voice) {
+                return voice.loop && voice.path == path;
+            })) {
+            return;
+        }
+        active.push_back({path, std::move(clip), 0, looped, gain});
+    }
+
+    void stop(const std::filesystem::path& path) {
+        std::lock_guard<std::mutex> lock(mutex);
+        active.erase(std::remove_if(active.begin(), active.end(), [&path](const ActiveClip& voice) {
+                         return voice.loop && voice.path == path;
+                     }),
+                     active.end());
     }
 };
 
@@ -262,6 +314,7 @@ struct SoundEngine::Backend {
     };
 
     struct ActiveClip {
+        std::filesystem::path path;
         std::shared_ptr<Clip> clip;
         double frame = 0.0;
         bool loop = false;
@@ -469,7 +522,20 @@ struct SoundEngine::Backend {
             return;
         }
         std::lock_guard<std::mutex> lock(mutex);
-        active.push_back({std::move(clip), 0.0, looped, gain});
+        if (looped && std::any_of(active.begin(), active.end(), [&path](const ActiveClip& voice) {
+                return voice.loop && voice.path == path;
+            })) {
+            return;
+        }
+        active.push_back({path, std::move(clip), 0.0, looped, gain});
+    }
+
+    void stop(const std::filesystem::path& path) {
+        std::lock_guard<std::mutex> lock(mutex);
+        active.erase(std::remove_if(active.begin(), active.end(), [&path](const ActiveClip& voice) {
+                         return voice.loop && voice.path == path;
+                     }),
+                     active.end());
     }
 };
 
@@ -489,6 +555,8 @@ SoundEngine::SoundEngine()
 SoundEngine::~SoundEngine() = default;
 
 void SoundEngine::load(const std::filesystem::path& configPath) {
+    triggers_.clear();
+    untriggeredLoopSounds_.clear();
     basePath_ = configPath.parent_path();
     if (configPath.empty()) {
         return;
@@ -505,7 +573,16 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
     std::vector<std::string> currentTriggerNames;
     const auto updateCurrentTriggers = [&]() {
         for (const std::string& name : currentTriggerNames) {
-            triggers_[lower(name)] = current;
+            std::vector<SoundTriggerDefinition>& definitions = triggers_[lower(name)];
+            const auto existing = std::find_if(
+                definitions.begin(), definitions.end(), [&](const SoundTriggerDefinition& value) {
+                    return value.file == current.file;
+                });
+            if (existing == definitions.end()) {
+                definitions.push_back(current);
+            } else {
+                *existing = current;
+            }
         }
     };
     openbus::config::Line line;
@@ -515,14 +592,17 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
         }
         const std::string keyword = (line.keyword());
         if (keyword == "sound" || keyword == "loopsound") {
+            if (hasSound && current.loop && currentTriggerNames.empty()) {
+                untriggeredLoopSounds_.push_back(current);
+            }
             openbus::config::Line value;
             ConfigurationDiagnostics diagnostics;
             if (!reader.readPayload(value, diagnostics, keyword)) {
                 continue;
             }
             current = {};
-            current.loop = keyword == "loopsound";
             current.file = resolve(configPath.parent_path(), openbus::config::trim(value.text));
+            current.loop = keyword == "loopsound" || isLoopSoundFile(current.file);
             currentTriggerNames.clear();
             hasSound = true;
             continue;
@@ -539,6 +619,13 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
         if (keyword == "noloop") {
             if (hasSound) {
                 current.loop = false;
+                updateCurrentTriggers();
+            }
+            continue;
+        }
+        if (keyword == "loop" || keyword == "looped") {
+            if (hasSound) {
+                current.loop = true;
                 updateCurrentTriggers();
             }
             continue;
@@ -593,6 +680,9 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
             updateCurrentTriggers();
         }
     }
+    if (hasSound && current.loop && currentTriggerNames.empty()) {
+        untriggeredLoopSounds_.push_back(current);
+    }
 }
 
 void SoundEngine::setListenerDistance(double distance) {
@@ -606,57 +696,132 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
         soundLog.Log("Skipping unknown sound trigger: " + name);
         return;
     }
-    const bool loop = found != triggers_.end() && found->second.loop && overrideFile.empty();
-    double gain = 1.0;
-    if (found != triggers_.end() && !found->second.volumeCurve.empty()) {
-        const auto& points = found->second.volumeCurve;
-        if (controlValue <= points.front().x) {
-            gain = points.front().y;
-        } else {
-            gain = points.back().y;
-            for (std::size_t index = 1; index < points.size(); ++index) {
-                if (controlValue <= points[index].x) {
-                    const auto& left = points[index - 1];
-                    const auto& right = points[index];
-                    const double fraction = (controlValue - left.x) / (right.x - left.x);
-                    gain = left.y + fraction * (right.y - left.y);
-                    break;
+    std::vector<SoundTriggerDefinition> definitions;
+    if (found != triggers_.end()) {
+        definitions = found->second;
+    }
+    if (overrideFile.empty()) {
+        std::vector<SoundTriggerDefinition> inferredLoops;
+        for (const SoundTriggerDefinition& definition : definitions) {
+            if (definition.loop) {
+                continue;
+            }
+            for (const SoundTriggerDefinition& loop : untriggeredLoopSounds_) {
+                if (belongsToStartFamily(loop.file, definition.file) &&
+                    std::none_of(definitions.begin(), definitions.end(),
+                                 [&loop](const SoundTriggerDefinition& existing) {
+                                     return existing.file == loop.file;
+                                 }) &&
+                    std::none_of(inferredLoops.begin(), inferredLoops.end(),
+                                 [&loop](const SoundTriggerDefinition& existing) {
+                                     return existing.file == loop.file;
+                                 })) {
+                    inferredLoops.push_back(loop);
+                }
+            }
+        }
+        definitions.insert(definitions.end(), inferredLoops.begin(), inferredLoops.end());
+    }
+    if (definitions.empty() && overrideFile.empty()) {
+        soundLog.Log("Skipping unknown sound trigger: " + name);
+        return;
+    }
+    if (!overrideFile.empty()) {
+        definitions = {SoundTriggerDefinition{overrideFile, false}};
+    }
+#if defined(OPENBUS_HAS_PIPEWIRE) || defined(_WIN32)
+    if (overrideFile.empty()) {
+        for (const SoundTriggerDefinition& definition : definitions) {
+            if (isEndSoundFile(definition.file)) {
+                for (const auto& entry : triggers_) {
+                    for (const SoundTriggerDefinition& candidate : entry.second) {
+                        if (candidate.loop &&
+                            belongsToSoundFamily(candidate.file, definition.file)) {
+                            backend_->stop(candidate.file);
+                        }
+                    }
+                }
+                for (const SoundTriggerDefinition& candidate : untriggeredLoopSounds_) {
+                    if (belongsToSoundFamily(candidate.file, definition.file)) {
+                        backend_->stop(candidate.file);
+                    }
+                }
+            }
+        }
+    }
+#endif
+    for (const SoundTriggerDefinition& definition : definitions) {
+        const bool loop = definition.loop;
+        const std::filesystem::path file =
+            definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
+        double gain = 1.0;
+        if (!definition.volumeCurve.empty()) {
+            const auto& points = definition.volumeCurve;
+            if (controlValue <= points.front().x) {
+                gain = points.front().y;
+            } else {
+                gain = points.back().y;
+                for (std::size_t index = 1; index < points.size(); ++index) {
+                    if (controlValue <= points[index].x) {
+                        const auto& left = points[index - 1];
+                        const auto& right = points[index];
+                        const double fraction = (controlValue - left.x) / (right.x - left.x);
+                        gain = left.y + fraction * (right.y - left.y);
+                        break;
+                    }
                 }
             }
         }
         gain = std::clamp(gain, 0.0, 1.0);
-    }
-    const double maxDistance = found != triggers_.end() ? found->second.maxDistance : 0.0;
-    if (maxDistance > 0.0) {
-        if (listenerDistance_ >= maxDistance) {
-            soundLog.Log("Skipping sound because listener is too far: trigger=" + name +
-                         " distance=" + std::to_string(listenerDistance_) +
-                         " maxDistance=" + std::to_string(maxDistance));
-            return;
+        const double maxDistance = definition.maxDistance;
+        if (maxDistance > 0.0) {
+            if (listenerDistance_ >= maxDistance) {
+                soundLog.Log("Skipping sound because listener is too far: trigger=" + name +
+                             " distance=" + std::to_string(listenerDistance_) +
+                             " maxDistance=" + std::to_string(maxDistance));
+                continue;
+            }
+            gain *= std::clamp(1.0 - listenerDistance_ / maxDistance, 0.0, 1.0);
         }
-        gain *= std::clamp(1.0 - listenerDistance_ / maxDistance, 0.0, 1.0);
-    }
-    if (gain <= 0.0) {
-        soundLog.Log("Skipping silent sound: trigger=" + name +
-                     " distance=" + std::to_string(listenerDistance_) + " maxDistance=" +
-                     std::to_string(maxDistance) + " gain=" + std::to_string(gain));
-        return;
-    }
-    const std::filesystem::path file =
-        overrideFile.empty()
-            ? found->second.file
-            : (overrideFile.is_absolute() ? overrideFile : basePath_ / overrideFile);
-    soundLog.Log("Attempting sound playback: trigger=" + name + " file=" + file.string() +
-                 " distance=" + std::to_string(listenerDistance_) +
-                 " maxDistance=" + std::to_string(maxDistance) + " gain=" + std::to_string(gain) +
-                 " loop=" + (loop ? "true" : "false"));
+        if (gain <= 0.0) {
+            soundLog.Log("Skipping silent sound: trigger=" + name +
+                         " distance=" + std::to_string(listenerDistance_) + " maxDistance=" +
+                         std::to_string(maxDistance) + " gain=" + std::to_string(gain));
+            continue;
+        }
+        soundLog.Log("Attempting sound playback: trigger=" + name + " file=" + file.string() +
+                     " distance=" + std::to_string(listenerDistance_) +
+                     " maxDistance=" + std::to_string(maxDistance) +
+                     " gain=" + std::to_string(gain) + " loop=" + (loop ? "true" : "false"));
 #ifdef _WIN32
-    backend_->play(file, loop, static_cast<float>(gain));
+        backend_->play(file, loop, static_cast<float>(gain));
 #else
 #if defined(OPENBUS_HAS_PIPEWIRE)
-    backend_->play(file, loop, static_cast<float>(gain));
+        backend_->play(file, loop, static_cast<float>(gain));
 #else
-    static_cast<void>(file);
+        static_cast<void>(file);
 #endif
+#endif
+    }
+}
+
+void SoundEngine::stop(const std::string& name) {
+    const auto found = triggers_.find(lower(name));
+    if (found == triggers_.end()) {
+        return;
+    }
+#if defined(OPENBUS_HAS_PIPEWIRE) || defined(_WIN32)
+    for (const SoundTriggerDefinition& definition : found->second) {
+        if (definition.loop) {
+            backend_->stop(definition.file);
+        }
+    }
+    for (const SoundTriggerDefinition& definition : untriggeredLoopSounds_) {
+        for (const SoundTriggerDefinition& trigger : found->second) {
+            if (belongsToStartFamily(definition.file, trigger.file)) {
+                backend_->stop(definition.file);
+            }
+        }
+    }
 #endif
 }

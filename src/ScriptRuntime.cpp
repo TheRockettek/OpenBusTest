@@ -260,9 +260,15 @@ struct ScriptRuntime::Impl {
             }
         };
         std::vector<std::filesystem::path> fontDirectories;
-        const std::filesystem::path sourceDirectory = configuration.sourcePath.parent_path();
-        fontDirectories.push_back(sourceDirectory / "Fonts");
-        fontDirectories.push_back(sourceDirectory.parent_path() / "Fonts");
+        std::filesystem::path sourceDirectory = configuration.sourcePath.parent_path();
+        while (!sourceDirectory.empty()) {
+            fontDirectories.push_back(sourceDirectory / "Fonts");
+            const std::filesystem::path parentDirectory = sourceDirectory.parent_path();
+            if (parentDirectory == sourceDirectory) {
+                break;
+            }
+            sourceDirectory = parentDirectory;
+        }
         std::filesystem::path fontPath;
         std::error_code error;
         for (const auto& directory : fontDirectories) {
@@ -1384,7 +1390,8 @@ struct ScriptRuntime::Impl {
         }
         int cursorX = x;
         int cursorY = y;
-        for (const char character : value) {
+        for (std::size_t characterIndex = 0; characterIndex < value.size(); ++characterIndex) {
+            const unsigned char character = static_cast<unsigned char>(value[characterIndex]);
             if (character == '@' || character == '\n') {
                 cursorX = x;
                 cursorY += font.height;
@@ -1393,7 +1400,12 @@ struct ScriptRuntime::Impl {
             if (character == '\r') {
                 continue;
             }
-            const int code = static_cast<unsigned char>(character);
+            int code = character;
+            if (character == 0xc2 && characterIndex + 1 < value.size() &&
+                static_cast<unsigned char>(value[characterIndex + 1]) == 0xb0) {
+                code = 176;
+                ++characterIndex;
+            }
             const FontGlyph& glyph = font.glyphs[font.glyphs[static_cast<std::size_t>(code)].defined
                                                      ? static_cast<std::size_t>(code)
                                                      : static_cast<std::size_t>(fallbackCode)];
@@ -1449,7 +1461,7 @@ struct ScriptRuntime::Impl {
             texture.width = definition.width;
             texture.height = definition.height;
             clearTexture(texture);
-            const int maximumScale = definition.font == "sp_ticketerfont" ? 4 : 8;
+            const int maximumScale = definition.font == "sp_ticketerfont" ? 2 : 8;
             const std::shared_ptr<FontAsset> font = loadFont(definition.font);
             if (font == nullptr || !drawBitmapFontText(texture, value, 0, 0, definition, *font)) {
                 drawText(texture, value, 0, 0, definition.color, 0, maximumScale);
@@ -2026,6 +2038,9 @@ void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool presse
                            std::to_string(impl_->localState.get("elec_busbar_main_sw")));
             }
         }
+    }
+    if (!pressed && normalized == "horn" && impl_->onSoundTrigger) {
+        impl_->onSoundTrigger("horn_off", {}, 0.0);
     }
 }
 
