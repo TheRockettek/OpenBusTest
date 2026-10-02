@@ -373,6 +373,7 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
                           double controlValue) {
     const auto found = triggers_.find((name));
     if (found == triggers_.end() && overrideFile.empty()) {
+        soundLog.Log("Skipping unknown sound trigger: " + name);
         return;
     }
     const bool loop = found != triggers_.end() && found->second.loop && overrideFile.empty();
@@ -395,16 +396,31 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
         }
         gain = std::clamp(gain, 0.0, 1.0);
     }
-    if (found != triggers_.end() && found->second.maxDistance > 0.0) {
-        gain *= std::clamp(1.0 - listenerDistance_ / found->second.maxDistance, 0.0, 1.0);
+    const double maxDistance = found != triggers_.end() ? found->second.maxDistance : 0.0;
+    if (maxDistance > 0.0) {
+        if (listenerDistance_ >= maxDistance) {
+            soundLog.Log("Skipping sound because listener is too far: trigger=" + name +
+                         " distance=" + std::to_string(listenerDistance_) +
+                         " maxDistance=" + std::to_string(maxDistance));
+            return;
+        }
+        gain *= std::clamp(1.0 - listenerDistance_ / maxDistance, 0.0, 1.0);
     }
     if (gain <= 0.0) {
+        soundLog.Log("Skipping silent sound: trigger=" + name +
+                     " distance=" + std::to_string(listenerDistance_) +
+                     " maxDistance=" + std::to_string(maxDistance) +
+                     " gain=" + std::to_string(gain));
         return;
     }
     const std::filesystem::path file =
         overrideFile.empty()
             ? found->second.file
             : (overrideFile.is_absolute() ? overrideFile : basePath_ / overrideFile);
+    soundLog.Log("Attempting sound playback: trigger=" + name + " file=" + file.string() +
+                 " distance=" + std::to_string(listenerDistance_) +
+                 " maxDistance=" + std::to_string(maxDistance) +
+                 " gain=" + std::to_string(gain) + " loop=" + (loop ? "true" : "false"));
 #ifdef _WIN32
     const std::wstring widePath = file.wstring();
     const DWORD flags = SND_FILENAME | SND_ASYNC | SND_NODEFAULT | (loop ? SND_LOOP : 0);
