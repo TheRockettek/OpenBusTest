@@ -6,6 +6,7 @@
 
 #include <array>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -31,6 +32,24 @@ struct ConstantCurvePoint {
 struct ConstantCurve {
     std::string name;
     std::vector<ConstantCurvePoint> points;
+};
+
+struct PassengerCabinPosition {
+    std::array<double, 3> position = {};
+    double seatHeight = 0.0;
+    double rotationDegrees = 0.0;
+    bool driver = false;
+    std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
+};
+
+struct PassengerPathPoint {
+    int index = -1;
+    std::array<double, 3> position = {};
+};
+
+struct PassengerPathLink {
+    int from = -1;
+    int to = -1;
 };
 
 struct VehicleConfig {
@@ -64,8 +83,22 @@ struct VehicleConfig {
     std::filesystem::path soundAiConfigPath;
     std::filesystem::path pathsConfigPath;
     std::filesystem::path passengerCabinConfigPath;
+    bool passengerCabinLoaded = false;
+    std::vector<PassengerCabinPosition> passengerPositions;
+    std::optional<PassengerCabinPosition> driverPosition;
+    std::vector<int> passengerEntryPathPoints;
+    std::vector<int> passengerExitPathPoints;
+    bool passengerPathsLoaded = false;
+    std::vector<PassengerPathPoint> passengerPathPoints;
+    std::vector<PassengerPathLink> passengerPathLinks;
+    std::vector<std::vector<std::string>> passengerStepSoundPacks;
+    int passengerPathNextStepSound = -1;
+    std::vector<double> passengerPathNextRoomHeights;
     std::filesystem::path numberConfigPath;
     std::filesystem::path registrationListConfigPath;
+    bool registrationListsLoaded = false;
+    std::vector<std::string> registrationNumbers;
+    std::string selectedRegistration;
     bool registrationAutomatic = false;
     std::string registrationPrefix;
     bool registrationFree = false;

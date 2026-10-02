@@ -168,6 +168,208 @@ void loadReferencedDefinitions(const std::filesystem::path& configPath, VehicleC
     }
 }
 
+void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
+    if (source.passengerCabinConfigPath.empty()) {
+        return;
+    }
+    Reader reader(source.passengerCabinConfigPath);
+    if (!reader.isOpen()) {
+        result.diagnostics.error(0, "passengercabin",
+                                 "unable to open " +
+                                     source.passengerCabinConfigPath.string());
+        return;
+    }
+
+    std::array<int, 4> pendingIllumination = {-1, -1, -1, -1};
+    bool hasPendingIllumination = false;
+    Line line;
+    while (reader.next(line)) {
+        if (!line.isKeyword()) {
+            continue;
+        }
+        const std::string keyword = lower(line.keyword());
+        if (keyword == "illumination_interior") {
+            std::vector<std::string> values;
+            if (!readValues(reader, keyword, 4, values, result.diagnostics)) {
+                continue;
+            }
+            std::array<int, 4> indexes = {-1, -1, -1, -1};
+            bool valid = true;
+            for (std::size_t index = 0; index < values.size(); ++index) {
+                if (!parseInt(values[index], indexes[index]) || indexes[index] < -1) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid) {
+                result.diagnostics.error(line.number, keyword,
+                                         "expected four light indexes of -1 or greater");
+            } else {
+                pendingIllumination = indexes;
+                hasPendingIllumination = true;
+            }
+            continue;
+        }
+        if (keyword == "passpos" || keyword == "drivpos") {
+            std::vector<double> values;
+            if (!readDoubleRecord(reader, keyword, 5, values, result.diagnostics)) {
+                continue;
+            }
+            PassengerCabinPosition position;
+            position.position = {values[0], values[1], values[2]};
+            position.seatHeight = values[3];
+            position.rotationDegrees = values[4];
+            position.driver = keyword == "drivpos";
+            if (hasPendingIllumination) {
+                position.interiorLightIndexes = pendingIllumination;
+                hasPendingIllumination = false;
+            }
+            if (position.driver) {
+                result.driverPosition = position;
+            } else {
+                result.passengerPositions.push_back(position);
+            }
+            result.passengerCabinLoaded = true;
+            continue;
+        }
+        if (keyword == "entry" || keyword == "exit") {
+            int pathPoint = -1;
+            Line value;
+            if (!reader.readPayload(value, result.diagnostics, keyword) ||
+                !parseInt(value.text, pathPoint) || pathPoint < 0) {
+                result.diagnostics.error(line.number, keyword,
+                                         "expected a non-negative path-point index");
+                continue;
+            }
+            (keyword == "entry" ? result.passengerEntryPathPoints
+                                 : result.passengerExitPathPoints)
+                .push_back(pathPoint);
+            result.passengerCabinLoaded = true;
+            continue;
+        }
+        if (keyword == "end") {
+            continue;
+        }
+    }
+}
+
+void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
+    if (source.pathsConfigPath.empty()) {
+        return;
+    }
+    Reader reader(source.pathsConfigPath);
+    if (!reader.isOpen()) {
+        result.diagnostics.error(0, "paths",
+                                 "unable to open " + source.pathsConfigPath.string());
+        return;
+    }
+
+    int pendingPointIndex = -1;
+    Line line;
+    while (reader.next(line)) {
+        if (!line.isKeyword()) {
+            int parsedIndex = -1;
+            if (parseInt(line.text, parsedIndex)) {
+                pendingPointIndex = parsedIndex;
+            }
+            continue;
+        }
+        const std::string keyword = lower(line.keyword());
+        if (keyword == "pathpnt") {
+            std::vector<double> values;
+            if (pendingPointIndex < 0 ||
+                !readDoubleRecord(reader, keyword, 3, values, result.diagnostics)) {
+                result.diagnostics.error(line.number, keyword,
+                                         "expected an index followed by three coordinates");
+                pendingPointIndex = -1;
+                continue;
+            }
+            result.passengerPathPoints.push_back(
+                {pendingPointIndex, {values[0], values[1], values[2]}});
+            result.passengerPathsLoaded = true;
+            pendingPointIndex = -1;
+            continue;
+        }
+        if (keyword == "pathlink") {
+            std::vector<std::string> values;
+            if (!readValues(reader, keyword, 2, values, result.diagnostics)) {
+                continue;
+            }
+            PassengerPathLink link;
+            if (!parseInt(values[0], link.from) || !parseInt(values[1], link.to) ||
+                link.from < 0 || link.to < 0) {
+                result.diagnostics.error(line.number, keyword,
+                                         "expected two non-negative path-point indexes");
+                continue;
+            }
+            result.passengerPathLinks.push_back(link);
+            result.passengerPathsLoaded = true;
+            continue;
+        }
+        if (keyword == "stepsoundpack") {
+            Line countLine;
+            int count = 0;
+            if (!reader.readPayload(countLine, result.diagnostics, keyword) ||
+                !parseInt(countLine.text, count) || count < 0) {
+                result.diagnostics.error(line.number, keyword,
+                                         "expected a non-negative sound count");
+                continue;
+            }
+            std::vector<std::string> sounds;
+            if (readValues(reader, keyword, static_cast<std::size_t>(count), sounds,
+                           result.diagnostics)) {
+                result.passengerStepSoundPacks.push_back(std::move(sounds));
+            }
+            continue;
+        }
+        if (keyword == "next_stepsound") {
+            Line value;
+            if (reader.readPayload(value, result.diagnostics, keyword) &&
+                parseInt(value.text, result.passengerPathNextStepSound) &&
+                result.passengerPathNextStepSound >= 0) {
+                continue;
+            }
+            result.diagnostics.error(line.number, keyword,
+                                     "expected a non-negative sound-pack index");
+            continue;
+        }
+        if (keyword == "next_roomheight") {
+            std::vector<double> values;
+            if (readDoubleRecord(reader, keyword, 1, values, result.diagnostics)) {
+                // The path format permits repeated room-height transitions.
+                result.passengerPathNextRoomHeights.push_back(values[0]);
+            }
+            continue;
+        }
+    }
+}
+
+void loadRegistrationList(const std::filesystem::path& path, VehicleConfig& result) {
+    if (path.empty()) {
+        return;
+    }
+    std::ifstream input(path);
+    if (!input) {
+        result.diagnostics.error(0, "registration", "unable to open " + path.string());
+        return;
+    }
+    std::string value;
+    while (std::getline(input, value)) {
+        value = trim(value);
+        if (value.empty() || value.front() == ';' || value.front() == '/') {
+            continue;
+        }
+        if (std::find(result.registrationNumbers.begin(), result.registrationNumbers.end(), value) ==
+            result.registrationNumbers.end()) {
+            result.registrationNumbers.push_back(value);
+        }
+    }
+    result.registrationListsLoaded = true;
+    if (result.selectedRegistration.empty() && !result.registrationNumbers.empty()) {
+        result.selectedRegistration = result.registrationNumbers.front();
+    }
+}
+
 void convertVehicleScripts(const std::filesystem::path& configPath, VehicleConfig& result) {
     for (const std::string& referencedPath : result.scripts) {
         const std::filesystem::path sourcePath = resolveReferencedPath(configPath, referencedPath);
@@ -588,6 +790,10 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                                  "must follow at least one [add_camera_driver]");
     }
     loadReferencedDefinitions(configPath, result);
+    loadPassengerCabin(result, result);
+    loadPassengerPaths(result, result);
+    loadRegistrationList(result.numberConfigPath, result);
+    loadRegistrationList(result.registrationListConfigPath, result);
     convertVehicleScripts(configPath, result);
     return result;
 }

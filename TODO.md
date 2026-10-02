@@ -114,19 +114,27 @@ change from their controlling variables without manual texture replacement.
   are loaded for the current vehicles. `[friendlyname]`, `[description]`,
   and `[type]` are still consumed without being exposed to the runtime.
 - [~] BUS asset references for `[paths]`, `[passengercabin]`, `[sound_ai]`,
-  `[number]`, and `[registration_list]` are normalized and retained; the
-  referenced path, cabin, AI sound, and registration files are not loaded.
+  `[number]`, and `[registration_list]` are normalized and retained. The
+  passenger-cabin CFG is now loaded for driver/passenger positions,
+  illumination groups, and entry/exit path points. The `[paths]` CFG is now
+  loaded for indexed path points/links, step-sound packs, and room-height
+  transitions. Registration list files are now loaded and deduplicated; AI
+  sound selection remains incomplete.
 - [~] `[registration_automatic]`, `[registration_free]`, and
-  `[kmcounter_init]` are parsed and validated, but there is no registration
-  selection/display or odometer runtime state.
+  `[kmcounter_init]` are parsed and validated. The first loaded registration
+  is exposed through the `number` script string, but automatic/free selection
+  and odometer runtime state are still incomplete.
 - [~] `collision_mesh` and `nocollision` records are parsed/diagnosed, but
   physics still uses the simplified chassis box and does not build model
   collision geometry.
 - [ ] Decide and document the collision policy. If model collision is in
   scope, load collision meshes and honor `nocollision`; otherwise mark these
   records unsupported and stop implying full CFG compatibility.
-- [ ] Implement or explicitly scope out passenger cabin/path loading,
-  passenger positions, entries/exits, boarding/alighting, passenger mass,
+- [~] Passenger-cabin CFG loading, driver/passenger positions, illumination
+  groups, entry/exit path points, and basic passenger path graph loading are
+  active. Boarding/alighting, passenger movement, passenger mass, route/path
+  selection, and HOF/timetable integration remain incomplete.
+- [ ] Implement or explicitly scope out
   registration/odometer behavior, AI/network sections, route/timetable/HOF
   data, and vehicle-specific view systems.
 - [ ] Implement sound configuration coverage beyond the current player sound
@@ -139,12 +147,15 @@ change from their controlling variables without manual texture replacement.
 The following OMSI BUS/model features are currently absent or only represented
 by parser alignment and should not be described as supported:
 
-- `[passengercabin]` CFG loading, passenger positions, entries/exits, cabin
-  connections, boarding, alighting, and passenger mass.
-- `[paths]` route/path graph loading, timetable/HOF lookup, stop announcements,
-  and arrival-board data used by the script system.
+- Passenger-cabin connection records, boarding, alighting, passenger movement,
+  and passenger mass. Basic `[passengercabin]` positions, illumination groups,
+  and entries/exits are loaded and covered by `OpenBusVehicleConfigProbe`.
+- Route/path selection, timetable/HOF lookup, stop announcements, and
+  arrival-board data used by the script system. Basic `[paths]` point/link
+  graphs and step metadata are loaded and covered by `OpenBusVehicleConfigProbe`.
 - Registration-number selection and display, automatic/free registration
-  behavior, and live odometer persistence.
+  behavior, and live odometer persistence. Registration list loading and the
+  initial `number` string are active and covered by `OpenBusVehicleConfigProbe`.
 - AI/network vehicle sections, coupling/cable behavior, and articulated
   multi-body physics despite the articulated flag being parsed.
 - `[texttexture]`/`[texttexture_enh]` font rasterization and text display

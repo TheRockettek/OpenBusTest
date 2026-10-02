@@ -738,6 +738,9 @@ struct ScriptRuntime::Impl {
                                      "yard", "file_schedule"}) {
             localState.declareString(variable);
         }
+        if (!configuration.selectedRegistration.empty()) {
+            localState.setString("number", configuration.selectedRegistration);
+        }
 
         if (tryInitializeNativeBackend()) {
             return;
