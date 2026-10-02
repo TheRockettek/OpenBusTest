@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "PerfTrace.h"
+#include "Environment.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
@@ -1025,7 +1026,7 @@ std::optional<CliOptions> parseArgs(int argc, char** argv) {
 
     CliOptions opt;
     opt.workers = defaultWorkerCount();
-    if (const char* configuredWorkers = std::getenv("OPENBUS_CONVERTER_WORKERS")) {
+    if (const char* configuredWorkers = openbus::getEnvironment("OPENBUS_CONVERTER_WORKERS")) {
         try {
             opt.workers = static_cast<unsigned int>(std::clamp(std::stoi(configuredWorkers), 1, 8));
         } catch (const std::exception&) {
@@ -1189,12 +1190,12 @@ int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
         _putenv_s("OPENBUS_TRACE", "1");
-        if (std::getenv("OPENBUS_TRACE_FILE") == nullptr) {
+        if (openbus::getEnvironment("OPENBUS_TRACE_FILE") == nullptr) {
             _putenv_s("OPENBUS_TRACE_FILE", "uno3d_trace.json");
         }
 #else
         setenv("OPENBUS_TRACE", "1", 1);
-        if (std::getenv("OPENBUS_TRACE_FILE") == nullptr) {
+        if (openbus::getEnvironment("OPENBUS_TRACE_FILE") == nullptr) {
             setenv("OPENBUS_TRACE_FILE", "uno3d_trace.json", 1);
         }
 #endif

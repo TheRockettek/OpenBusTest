@@ -1,5 +1,6 @@
 #include "TextureLoader.h"
 
+#include "Environment.h"
 #include "Logger.h"
 #include "PerfTrace.h"
 
@@ -412,8 +413,8 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
     }
     image.rgba.resize(rgbaSize);
     std::size_t sourceOffset = 128;
-    for (int blockY = 0; blockY < blocksY; ++blockY) {
-        for (int blockX = 0; blockX < blocksX; ++blockX) {
+    for (std::size_t blockY = 0; blockY < blocksY; ++blockY) {
+        for (std::size_t blockX = 0; blockX < blocksX; ++blockX) {
             std::array<std::uint8_t, 8> alphaValues = {};
             std::uint64_t alphaIndices = 0;
             if (explicitAlpha) {
@@ -476,14 +477,15 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
             }
             for (int row = 0; row < 4; ++row) {
                 for (int column = 0; column < 4; ++column) {
-                    const int x = blockX * 4 + column;
-                    const int y = blockY * 4 + row;
-                    if (x >= image.width || y >= image.height) {
+                    const std::size_t x = blockX * 4 + static_cast<std::size_t>(column);
+                    const std::size_t y = blockY * 4 + static_cast<std::size_t>(row);
+                    if (x >= static_cast<std::size_t>(image.width) ||
+                        y >= static_cast<std::size_t>(image.height)) {
                         continue;
                     }
                     const std::size_t colorIndex = (indices >> (2 * (row * 4 + column))) & 0x3;
                     const std::size_t pixelIndex = static_cast<std::size_t>(row * 4 + column);
-                    const std::size_t target = (static_cast<std::size_t>(y) * image.width + x) * 4;
+                    const std::size_t target = (y * static_cast<std::size_t>(image.width) + x) * 4;
                     std::copy(colors[colorIndex].begin(), colors[colorIndex].end(),
                               image.rgba.begin() + target);
                     if (explicitAlpha) {
@@ -510,7 +512,7 @@ bool checkedTextureBufferSize(std::size_t width, std::size_t height, std::size_t
 bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
     TraceScope trace("texture", "readImage");
     static const bool verboseTextureReadLogs =
-        parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_TEXTURE_READ"));
+        parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_READ"));
     if (verboseTextureReadLogs) {
         gameLog.Log("Reading image from path: " + path.string());
     }

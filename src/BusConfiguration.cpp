@@ -2,6 +2,7 @@
 
 #include "BusConfigLoader.h"
 #include "ConfigurationParser.h"
+#include "Environment.h"
 #include "ModelConfigLoader.h"
 #include "PerfTrace.h"
 #include "Variables.h"
@@ -23,7 +24,7 @@ constexpr const char* DEFAULT_OMSI_ROOT = R"(C:\Program Files (x86)\Steam\steama
 } // namespace
 
 std::filesystem::path omsiRootPath() {
-    if (const char* configuredRoot = std::getenv("OPENBUS_OMSI_ROOT");
+    if (const char* configuredRoot = openbus::getEnvironment("OPENBUS_OMSI_ROOT");
         configuredRoot != nullptr && *configuredRoot != '\0') {
         return configuredRoot;
     }
@@ -122,8 +123,8 @@ std::optional<std::size_t> steeringAxleIndex(const std::string& variable) {
         return {};
     }
     const std::size_t sideSeparator = normalized.find('_', prefixLength);
-    if (sideSeparator == std::string::npos || normalized.substr(sideSeparator + 1) != "l" &&
-                                                  normalized.substr(sideSeparator + 1) != "r") {
+    if (sideSeparator == std::string::npos || (normalized.substr(sideSeparator + 1) != "l" &&
+                                               normalized.substr(sideSeparator + 1) != "r")) {
         return {};
     }
 
@@ -151,7 +152,7 @@ void applyModelSteering(VehicleConfig& vehicle, const ModelConfig& model) {
 
 std::filesystem::path modelConfigurationPathForBus(const std::filesystem::path& busConfigPath) {
     openbus::rendering::TraceScope trace("config", "modelConfigurationPathForBus");
-    if (const char* configuredPath = std::getenv("OPENBUS_MODEL_CONFIG");
+    if (const char* configuredPath = openbus::getEnvironment("OPENBUS_MODEL_CONFIG");
         configuredPath != nullptr && *configuredPath != '\0') {
         return modelConfigurationPathForBus(busConfigPath, configuredPath);
     }
@@ -295,7 +296,7 @@ void writeBusConfigurationJson(std::ostream& output, const BusConfiguration& con
 }
 
 std::filesystem::path busConfigurationPathFor() {
-    if (const char* configuredPath = std::getenv("OPENBUS_BUS_CONFIG");
+    if (const char* configuredPath = openbus::getEnvironment("OPENBUS_BUS_CONFIG");
         configuredPath != nullptr && *configuredPath != '\0') {
         return busConfigurationPathFor(configuredPath);
     }

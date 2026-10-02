@@ -2,6 +2,7 @@
 
 #include "Logger.h"
 #include "Variables.h"
+#include "Environment.h"
 #include "PerfTrace.h"
 #include "TextureLoader.h"
 #include "osc/OscConverter.h"
@@ -386,8 +387,8 @@ struct ScriptRuntime::Impl {
             const double timegap = sharedState.sharedVariables().get("timegap");
             if (timegap > 0.0) {
                 value = (std::max)(value, std::abs(localState.get(positionVariable) -
-                                                    localState.get(lastPositionVariable)) /
-                                             timegap);
+                                                   localState.get(lastPositionVariable)) /
+                                              timegap);
             }
         }
         return value;
@@ -895,8 +896,7 @@ struct ScriptRuntime::Impl {
                 case OscOpcode::SoundTriggerFile: {
                     const std::string file = nativePopString();
                     if (onSoundTrigger) {
-                        onSoundTrigger(instruction.name, file,
-                                       soundControlValue(instruction.name));
+                        onSoundTrigger(instruction.name, file, soundControlValue(instruction.name));
                     }
                     break;
                 }
@@ -908,7 +908,7 @@ struct ScriptRuntime::Impl {
     }
 
     bool tryInitializeNativeBackend() {
-        const char* backend = std::getenv("OPENBUS_SCRIPT_BACKEND");
+        const char* backend = openbus::getEnvironment("OPENBUS_SCRIPT_BACKEND");
         if (!backend || std::string(backend) != "native") {
             return false;
         }
@@ -933,7 +933,7 @@ struct ScriptRuntime::Impl {
     }
 
     static bool compileOnlyRequested() {
-        const char* value = std::getenv("OPENBUS_SCRIPT_COMPILE_ONLY");
+        const char* value = openbus::getEnvironment("OPENBUS_SCRIPT_COMPILE_ONLY");
         return value && std::string(value) == "1";
     }
 
@@ -2150,6 +2150,9 @@ void ScriptRuntime::invokeMouseDrag(const std::string& eventName, double deltaX,
         return;
     }
     const std::string normalized = lower(eventName);
+    // GLFW reports cursor Y increasing down the window, while the original
+    // E400MMC TicketerGimble handler expects positive mouse_y upward.
+    const double scriptDeltaY = normalized == "ticketergimble" ? -deltaY : deltaY;
     impl_->localState.set("mouse_drag_x", deltaX);
     impl_->localState.set("mouse_drag_y", deltaY);
     impl_->localState.set("mouse_cursor_x", cursorX);
@@ -2157,7 +2160,7 @@ void ScriptRuntime::invokeMouseDrag(const std::string& eventName, double deltaX,
     // E400/OMSI drag handlers apply their own axis sign (for example, the two
     // paired cab windows use mouse_x / 500 and mouse_x / -500).
     impl_->sharedState.sharedVariables().set("mouse_x", deltaX);
-    impl_->sharedState.sharedVariables().set("mouse_y", deltaY);
+    impl_->sharedState.sharedVariables().set("mouse_y", scriptDeltaY);
     impl_->localState.setString("mouse_event", normalized);
     if (impl_->nativeBackend || impl_->state) {
         impl_->floatStack.clear();

@@ -30,13 +30,21 @@ struct Uniforms {
     GLint lightmap = -1;
     GLint nightmap = -1;
     GLint transmap = -1;
+    GLint bumpmap = -1;
     GLint freeTexture = -1;
+    GLint textTexture = -1;
     GLint useLightmap = -1;
     GLint useNightmap = -1;
     GLint useTransmap = -1;
+    GLint useBumpmap = -1;
     GLint useFreeTexture = -1;
+    GLint useTextTexture = -1;
+    GLint useInteriorLight = -1;
     GLint lightmapStrength = -1;
     GLint nightmapStrength = -1;
+    GLint bumpmapStrength = -1;
+    GLint interiorLightStrength = -1;
+    GLint interiorLightColor = -1;
     GLint texcoordOffset = -1;
     GLint flipTextureY = -1;
     std::array<GLint, MAX_MATERIAL_TEXTURES> materialFlipTextureY = {};
@@ -55,7 +63,10 @@ struct ModelUniformState {
     bool useLightmap = false;
     bool useNightmap = false;
     bool useTransmap = false;
+    bool useBumpmap = false;
     bool useFreeTexture = false;
+    bool useTextTexture = false;
+    bool useInteriorLight = false;
     bool flipTextureY = false;
     bool useMaterialColors = false;
     const void* materialColorData = nullptr;
@@ -66,6 +77,9 @@ struct ModelUniformState {
     int alphaMode = 0;
     float lightmapStrength = 0.0f;
     float nightmapStrength = 0.0f;
+    float bumpmapStrength = 0.0f;
+    float interiorLightStrength = 0.0f;
+    std::array<float, 3> interiorLightColor = {};
     float texcoordOffsetX = 0.0f;
     float texcoordOffsetY = 0.0f;
     std::array<float, 4> color = {};
@@ -138,21 +152,31 @@ uniform sampler2DArray uTextureArray;
 uniform sampler2D uLightmap;
 uniform sampler2D uNightmap;
 uniform sampler2D uTransmap;
+uniform sampler2D uBumpmap;
 uniform sampler2D uFreeTexture;
+uniform sampler2D uTextTexture;
 uniform bool uUseTexture;
 uniform bool uUseTextureArray;
 uniform bool uUseLightmap;
 uniform bool uUseNightmap;
 uniform bool uUseTransmap;
+uniform bool uUseBumpmap;
 uniform bool uUseFreeTexture;
+uniform bool uUseTextTexture;
+uniform bool uUseInteriorLight;
 uniform float uLightmapStrength;
 uniform float uNightmapStrength;
+uniform float uBumpmapStrength;
+uniform float uInteriorLightStrength;
+uniform vec3 uInteriorLightColor;
 uniform vec4 uColor;
 uniform int uAlphaMode;
 out vec4 fragmentColor;
 void main() {
     vec4 color = uColor;
-    if (uUseFreeTexture) {
+    if (uUseTextTexture) {
+        color *= texture(uTextTexture, vTexCoord.xy);
+    } else if (uUseFreeTexture) {
         color *= texture(uFreeTexture, vTexCoord.xy);
     } else if (uUseTextureArray) {
         color *= texture(uTextureArray, vTexCoord);
@@ -169,6 +193,39 @@ void main() {
     }
     if (uUseTransmap) {
         color.a = texture(uTransmap, vTexCoord.xy).a;
+    }
+    if (uUseBumpmap) {
+        vec3 surfaceNormal = normalize(vNormal);
+        vec3 positionDerivativeX = dFdx(vViewPosition);
+        vec3 positionDerivativeY = dFdy(vViewPosition);
+        vec2 coordinateDerivativeX = dFdx(vTexCoord.xy);
+        vec2 coordinateDerivativeY = dFdy(vTexCoord.xy);
+        float coordinateDeterminant = coordinateDerivativeX.x * coordinateDerivativeY.y -
+                                      coordinateDerivativeX.y * coordinateDerivativeY.x;
+        if (abs(coordinateDeterminant) > 0.00001) {
+            vec3 tangent = (positionDerivativeX * coordinateDerivativeY.y -
+                            positionDerivativeY * coordinateDerivativeX.y) /
+                           coordinateDeterminant;
+            vec3 bitangent = (-positionDerivativeX * coordinateDerivativeY.x +
+                              positionDerivativeY * coordinateDerivativeX.x) /
+                             coordinateDeterminant;
+            if (length(tangent) > 0.00001 && length(bitangent) > 0.00001) {
+                tangent = normalize(tangent);
+                bitangent = normalize(bitangent);
+                vec3 mapNormal = texture(uBumpmap, vTexCoord.xy).xyz * 2.0 - 1.0;
+                float strength = clamp(uBumpmapStrength, 0.0, 1.0);
+                mapNormal.xy *= strength;
+                surfaceNormal = normalize(tangent * mapNormal.x + bitangent * mapNormal.y +
+                                           surfaceNormal * mapNormal.z);
+                vec3 lightDirection = normalize(vec3(0.35, 0.55, 0.75));
+                float bumpLighting = 0.65 +
+                                     0.35 * max(dot(surfaceNormal, lightDirection), 0.0);
+                color.rgb *= mix(1.0, bumpLighting, strength);
+            }
+        }
+    }
+    if (uUseInteriorLight) {
+        color.rgb = clamp(color.rgb + uInteriorLightColor * uInteriorLightStrength, 0.0, 1.0);
     }
     if (uAlphaMode == 1 && color.a < 0.5) {
         discard;
@@ -347,13 +404,21 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.lightmap = pglGetUniformLocation(program, "uLightmap");
         uniforms.nightmap = pglGetUniformLocation(program, "uNightmap");
         uniforms.transmap = pglGetUniformLocation(program, "uTransmap");
+        uniforms.bumpmap = pglGetUniformLocation(program, "uBumpmap");
         uniforms.freeTexture = pglGetUniformLocation(program, "uFreeTexture");
+        uniforms.textTexture = pglGetUniformLocation(program, "uTextTexture");
         uniforms.useLightmap = pglGetUniformLocation(program, "uUseLightmap");
         uniforms.useNightmap = pglGetUniformLocation(program, "uUseNightmap");
         uniforms.useTransmap = pglGetUniformLocation(program, "uUseTransmap");
+        uniforms.useBumpmap = pglGetUniformLocation(program, "uUseBumpmap");
         uniforms.useFreeTexture = pglGetUniformLocation(program, "uUseFreeTexture");
+        uniforms.useTextTexture = pglGetUniformLocation(program, "uUseTextTexture");
+        uniforms.useInteriorLight = pglGetUniformLocation(program, "uUseInteriorLight");
         uniforms.lightmapStrength = pglGetUniformLocation(program, "uLightmapStrength");
         uniforms.nightmapStrength = pglGetUniformLocation(program, "uNightmapStrength");
+        uniforms.bumpmapStrength = pglGetUniformLocation(program, "uBumpmapStrength");
+        uniforms.interiorLightStrength = pglGetUniformLocation(program, "uInteriorLightStrength");
+        uniforms.interiorLightColor = pglGetUniformLocation(program, "uInteriorLightColor");
         uniforms.texcoordOffset = pglGetUniformLocation(program, "uTexcoordOffset");
         uniforms.flipTextureY = pglGetUniformLocation(program, "uFlipTextureY");
         uniforms.useMaterialColors = pglGetUniformLocation(program, "uUseMaterialColors");
@@ -468,7 +533,10 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         modelUniformState.useLightmap != material.useLightmap ||
         modelUniformState.useNightmap != material.useNightmap ||
         modelUniformState.useTransmap != material.useTransmap ||
-        modelUniformState.useFreeTexture != material.useFreeTexture;
+        modelUniformState.useBumpmap != material.useBumpmap ||
+        modelUniformState.useFreeTexture != material.useFreeTexture ||
+        modelUniformState.useTextTexture != material.useTextTexture ||
+        modelUniformState.useInteriorLight != material.useInteriorLight;
     if (flagsChanged) {
         pglUniform1i(modelUniforms.useTexture, material.textured ? 1 : 0);
         pglUniform1i(modelUniforms.useTextureArray,
@@ -476,7 +544,10 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         pglUniform1i(modelUniforms.useLightmap, material.useLightmap ? 1 : 0);
         pglUniform1i(modelUniforms.useNightmap, material.useNightmap ? 1 : 0);
         pglUniform1i(modelUniforms.useTransmap, material.useTransmap ? 1 : 0);
+        pglUniform1i(modelUniforms.useBumpmap, material.useBumpmap ? 1 : 0);
         pglUniform1i(modelUniforms.useFreeTexture, material.useFreeTexture ? 1 : 0);
+        pglUniform1i(modelUniforms.useTextTexture, material.useTextTexture ? 1 : 0);
+        pglUniform1i(modelUniforms.useInteriorLight, material.useInteriorLight ? 1 : 0);
     }
     if (!modelUniformState.valid || modelUniformState.alphaMode != alphaMode) {
         pglUniform1i(modelUniforms.alphaMode, alphaMode);
@@ -488,6 +559,18 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     if (!modelUniformState.valid ||
         modelUniformState.nightmapStrength != material.nightmapStrength) {
         pglUniform1f(modelUniforms.nightmapStrength, material.nightmapStrength);
+    }
+    if (!modelUniformState.valid || modelUniformState.bumpmapStrength != material.bumpmapStrength) {
+        pglUniform1f(modelUniforms.bumpmapStrength, material.bumpmapStrength);
+    }
+    if (!modelUniformState.valid ||
+        modelUniformState.interiorLightStrength != material.interiorLightStrength) {
+        pglUniform1f(modelUniforms.interiorLightStrength, material.interiorLightStrength);
+    }
+    if (!modelUniformState.valid ||
+        modelUniformState.interiorLightColor != material.interiorLightColor) {
+        pglUniform3f(modelUniforms.interiorLightColor, material.interiorLightColor[0],
+                     material.interiorLightColor[1], material.interiorLightColor[2]);
     }
     if (!modelUniformState.valid || modelUniformState.texcoordOffsetX != material.texcoordOffsetX ||
         modelUniformState.texcoordOffsetY != material.texcoordOffsetY) {
@@ -507,11 +590,17 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.useLightmap = material.useLightmap;
     modelUniformState.useNightmap = material.useNightmap;
     modelUniformState.useTransmap = material.useTransmap;
+    modelUniformState.useBumpmap = material.useBumpmap;
     modelUniformState.useFreeTexture = material.useFreeTexture;
+    modelUniformState.useTextTexture = material.useTextTexture;
+    modelUniformState.useInteriorLight = material.useInteriorLight;
     modelUniformState.flipTextureY = material.flipTextureY;
     modelUniformState.alphaMode = alphaMode;
     modelUniformState.lightmapStrength = material.lightmapStrength;
     modelUniformState.nightmapStrength = material.nightmapStrength;
+    modelUniformState.bumpmapStrength = material.bumpmapStrength;
+    modelUniformState.interiorLightStrength = material.interiorLightStrength;
+    modelUniformState.interiorLightColor = material.interiorLightColor;
     modelUniformState.texcoordOffsetX = material.texcoordOffsetX;
     modelUniformState.texcoordOffsetY = material.texcoordOffsetY;
     modelUniformState.color = colorValue;
@@ -561,7 +650,9 @@ bool initializeCoreRenderer() {
         pglUniform1i(modelUniforms.lightmap, 1);
         pglUniform1i(modelUniforms.nightmap, 2);
         pglUniform1i(modelUniforms.transmap, 3);
+        pglUniform1i(modelUniforms.bumpmap, 6);
         pglUniform1i(modelUniforms.freeTexture, 4);
+        pglUniform1i(modelUniforms.textTexture, 5);
         useProgram(materialProgram);
         for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
             pglUniform1i(materialUniforms.materialTextures[index], static_cast<GLint>(index));
@@ -668,8 +759,12 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     bindTexture(GL_TEXTURE_2D, material.nightmap);
     selectTextureUnit(GL_TEXTURE3);
     bindTexture(GL_TEXTURE_2D, material.transmap);
+    selectTextureUnit(GL_TEXTURE0 + 6);
+    bindTexture(GL_TEXTURE_2D, material.bumpmap);
     selectTextureUnit(GL_TEXTURE4);
     bindTexture(GL_TEXTURE_2D, material.freeTexture);
+    selectTextureUnit(GL_TEXTURE0 + 5);
+    bindTexture(GL_TEXTURE_2D, material.textTexture);
     selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));

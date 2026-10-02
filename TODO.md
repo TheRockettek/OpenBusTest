@@ -74,9 +74,9 @@ motion checks in both supported rendering modes.
   shader, but need representative assets and repeatable visual validation.
 - [~] Transparent and no-depth batches are sorted by render type and depth;
   validate difficult overlapping glass/decal cases and reflection passes.
-- [ ] Implement bump-map rendering. The CFG parser stores the texture and
-  strength, but the model material/shader contract does not currently apply a
-  normal/parallax contribution.
+- [~] Bump-map rendering now applies derivative-based normal-map shading from
+  the configured texture and strength. Representative OMSI visual parity and
+  parallax semantics still need validation.
 - [ ] Verify `matl_change`, CTC, and texture-array layer selection with a
   real vehicle configuration, including activation-variable changes over time.
 - [ ] Verify missing, delayed, and failed auxiliary textures do not leave
@@ -105,8 +105,10 @@ it.
   lock, readback, and filtering operations.
 - [x] Cache text source values and dynamic surface revisions so unchanged text
   is not rasterized or uploaded to OpenGL every frame.
-- [ ] Implement `[illumination_interior]` and `[interiorlight]` runtime
-  lighting, including controller variables and the four group assignments.
+- [~] Implemented the basic `[illumination_interior]`/`[interiorlight]`
+  runtime path: assigned mesh groups now receive bounded controller-driven
+  emissive colour. Positional falloff and enhanced/spotlight semantics remain
+  incomplete.
 - [ ] Add a focused E400 display/light test using real model CFG data and
   screenshots at day/night or brightness changes.
 
@@ -122,10 +124,9 @@ change from their controlling variables without manual texture replacement.
   substitution. The active E400 configuration uses these records for dashboard
   and body variants, so retaining their payloads is not sufficient for visual
   parity.
-- [ ] Implement `[illumination_interior]`, `[interiorlight]`, `[light_enh_2]`,
-  and `[spotlight]` runtime emission and controller behavior. The comparison
-  shows the OpenBus dashboard lighting and warning/detail illumination do not
-  match OMSI.
+- [~] Basic `[illumination_interior]`/`[interiorlight]` emission is active for
+  assigned meshes, but `[light_enh_2]` and `[spotlight]` remain storage-only;
+  the comparison still shows dashboard-lighting parity gaps.
 - [ ] Implement `[matl_bumpmap]` and complete `[matl_envmap]` material
   semantics, including strength and lighting interaction, then compare the
   dashboard binnacle and cab surfaces again.
@@ -165,9 +166,9 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   transitions. Registration list files are now loaded and deduplicated; AI
   sound selection remains incomplete.
 - [~] `[registration_automatic]`, `[registration_free]`, and
-  `[kmcounter_init]` are parsed and validated. The first loaded registration
-  is exposed through the `number` script string, but automatic/free selection
-  and odometer runtime state are still incomplete.
+  `[kmcounter_init]` now seed runtime registration and split odometer state.
+  Explicit registration/index overrides and deterministic automatic numbers
+  are available; persistence and full OMSI selection UI remain incomplete.
 - [~] `collision_mesh` and `nocollision` records are parsed/diagnosed, but
   physics still uses the simplified chassis box and does not build model
   collision geometry.
@@ -197,9 +198,10 @@ by parser alignment and should not be described as supported:
 - Route/path selection, timetable/HOF lookup, stop announcements, and
   arrival-board data used by the script system. Basic `[paths]` point/link
   graphs and step metadata are loaded and covered by `OpenBusVehicleConfigProbe`.
-- Registration-number selection and display, automatic/free registration
-  behavior, and live odometer persistence. Registration list loading and the
-  initial `number` string are active and covered by `OpenBusVehicleConfigProbe`.
+- Registration-number persistence and full selection UI. Registration list
+  loading, runtime automatic/free selection, the `number` string, and live
+  odometer publication are active; parser coverage remains in
+  `OpenBusVehicleConfigProbe`.
 - AI/network vehicle sections, coupling/cable behavior, and articulated
   multi-body physics despite the articulated flag being parsed.
 - Non-OMSI font edge cases such as Windows-1252 glyph validation and additional
@@ -214,6 +216,140 @@ by parser alignment and should not be described as supported:
 
 Done when unsupported configuration is visible in diagnostics and the README
 claims only behavior that is active in the runtime.
+
+### Documented keyword gap register
+
+The reference documents cover more OMSI dialects than the current
+vehicle-centric runtime consumes. The following records are documented but
+are either unknown, parser-only, or missing their runtime behavior. Keep these
+items separate from the active E400 completion work above so parsing a record
+for alignment is not mistaken for supporting it.
+
+#### BUS vehicle configuration
+
+- [ ] Preserve and expose `[friendlyname]`, `[description]`, and `[type]`;
+  `[friendlyname]` and `[description]` are currently consumed without
+  metadata storage, while `[type]` is not parsed.
+- [ ] Implement BUS-level `[fixed]` and `[scriptshare]` semantics.
+- [ ] Retain the labels and implement the view selection behavior for
+  `[view_schedule]` and `[view_ticketselling]`; current parsing only records
+  that the keyword occurred and validates that a driver camera exists.
+- [ ] Parse and use `[cog]` in a consistent way with `[schwerpunkt]`.
+- [ ] Store and apply `[rollwiderstand]` and `[rot_pnt_long]`; both are
+  currently consumed without physics semantics.
+- [ ] Apply the parsed `[inv_min_turnradius]` steering constraint and
+  `[ai_deltaheight]` correction to the corresponding runtime paths.
+- [ ] Add the documented vehicle-family records `[rowdy_factor]`, `[boogies]`,
+  `[ai_brakeperformance]`, `[ai_veh_type]`, and `[sinus]`, or explicitly mark
+  them unsupported when their family-specific semantics cannot be preserved.
+- [ ] Implement articulated/coupled records: `[coupling_front]`,
+  `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, and
+  `[couple_front_open_for_sound]`.
+- [ ] Implement `[control_cable_front]` and `[control_cable_back]` for
+  electrical/control-variable transfer between coupled vehicles.
+- [ ] Implement `[new_attachment]` attachment transforms and the rail/trolley
+  records `[contact_shoe]` and `[rail_body_osc]`, or explicitly scope them out
+  with diagnostics.
+- [ ] Complete `[sound_ai]` selection for AI vehicles; the path is retained,
+  but the AI sound runtime is not selected.
+- [ ] Complete `[registration_automatic]`, `[registration_free]`, and
+  `[kmcounter_init]` runtime selection/persistence as tracked in the E400
+  comparison section.
+
+#### Bus-model configuration
+
+- [~] Complete runtime material semantics for `[matl_bumpmap]`,
+  `[matl_envmap]`, `[matl_freetex]`, `[matl_lightmap]`, `[matl_nightmap]`, and
+  `[matl_transmap]`; these records are parsed or retained, but one or more
+  shader, blending, controller, or texture-binding stages remain incomplete.
+- [ ] Define the behavior of `[matl_item]` instead of treating it as a
+  no-op material marker.
+- [ ] Apply full `[rendertype]`, `[fixed]`, and `[absheight]` semantics to
+  geometry transforms and passes; `[rendertype]` is currently only partially
+  honored and the markers do not alter all relevant runtime paths.
+- [ ] Make `[isshadow]`, `[collision_mesh]`, `[nocollision]`, and model
+  `[boundingbox]` affect shadow/collision construction. They are currently
+  stored or consumed for alignment while physics uses the simplified chassis
+  shape.
+- [~] Implement basic `[illumination_interior]`/`[interiorlight]` emission,
+  controller variables, and mesh assignments. `[light_enh]`, `[light_enh_2]`,
+  and `[spotlight]` geometry, falloff, and render ordering remain pending.
+- [ ] Implement `[smoke]` exhaust/particle emission instead of consuming its
+  nineteen fields for parser alignment.
+- [ ] Apply `[VFDmaxmin]` display bounds and `[tex_detail_factor]` to display
+  and texture rendering.
+- [ ] Implement runtime selection/substitution for `[CTC]` and `[CTCTexture]`
+  beyond retaining their parsed mappings.
+- [ ] Add the documented texture-change records `[texchanges]`,
+  `[newtexchangemaster]`, and `[entries]`, including count validation and
+  runtime replacement behavior.
+- [ ] Implement model `[terrainmapping]` when terrain/material CFGs are
+  supported; it is documented but currently not dispatched.
+- [ ] Finish OMSI-compatible `[texttexture]` and `[texttexture_enh]` layout,
+  font, alignment, and alpha semantics; the current runtime surface exists
+  but is not yet a complete compatibility implementation.
+
+#### General CFG dialects
+
+- [ ] Add a surface/material CFG path for `[puddles]`, `[moisture]`,
+  `[surface]`, and `[NightMapMode]`, including wetness and surface-type data.
+- [ ] Complete passenger-cabin behavior for `[linkToNextVeh]`,
+  `[linkToPrevVeh]`, and `[stamper]`; basic `[drivpos]`, `[passpos]`,
+  `[entry]`, `[exit]`, and illumination records do not yet provide passenger
+  movement, boarding, or ticket interaction.
+- [ ] Complete path runtime use of extended `[pathpnt]` records and
+  `[stepsoundpack]`; loading the basic graph is not equivalent to passenger
+  route selection or step-sound playback.
+- [ ] Complete sound spatialization and control semantics for `[loopsound]`
+  and `[3d]` beyond the current player sound loading/trigger path.
+- [ ] Add AI/network configuration support for `[ailist]`, `[aigroup_2]`,
+  `[aigroup_depot]`, `[busstop]`, `[signalroute]`, and `[StnLink]`.
+- [ ] Add environment configuration support for `[sky_textures]`,
+  `[cloudtype]`, and `[startdate]`.
+- [ ] Add fare/currency support for `[currency]` and `[coin]`.
+- [ ] Add configurable input CFG support for `[game]`, `[ctrl]`, `[axis]`,
+  and keyboard-context `[entry]`; current controls are hardcoded to the
+  runtime key map.
+- [ ] Define safe handling for general metadata `[friendlyname]`,
+  `[description]`, and `[usrinfo]`; never copy `[usrinfo]` values into logs,
+  diagnostics, or source control.
+
+#### Documented script API gaps
+
+The following documented system macros still dispatch to safe placeholder
+handlers rather than real route, timetable, ticket, passenger, terrain, or
+arrival-board data:
+
+- [ ] HOF/route lookups: `GetTerminusIndex`, `GetTerminusCode`,
+  `GetTerminusString`, `GetBusstopIndex`, `GetBusstopString`, `GetRouteIndex`,
+  `GetRouteTerminusIndex`, `GetBusstopCount`, and `GetRouteBusstopIdent`.
+- [ ] Timetable lookups: `GetTTLineString`, `GetTTTerminusIndex`,
+  `GetTTBusstopCount`, `GetTTBusstopIndex`, `GetTTDelay`, `GetTTBusstopName`,
+  `GetTTBusstopArr`, and `GetTTBusstopDep`.
+- [ ] Ticket/passenger lookups: `GiveChangeCoin`, `GetTicketName`,
+  `GetTicketValue`, `GetHumanCountOnPathLink`, and `GetHumanCountOnSeat`.
+- [ ] World and depot lookups: `GetHeightAbovePoint`, `GetDepotStringGlobal`,
+  `GetArrBusLine`, `GetArrBusTerminus`, and `GetArrBusTimeDiff`.
+- [~] Verify OMSI parity for `NrSpecRandom`; OpenBus now provides deterministic
+  seeded output, but its algorithm and range still need compatibility evidence.
+- [ ] Add host-owned updates for default-only documented system variables:
+  `Time`, `Day`, `Month`, `Year`, `DayOfYear`, `Pause`, `NoSound`,
+  `PrecipType`, `PrecipRate`, `coll_pos_*`, `coll_energy`,
+  `Weather_Temperature`, `Weather_AbsHum`, `AutoClutch`, `SunAlt`, and
+  `wearlifespan`.
+- [ ] Replace default-only values for documented variable families whose
+  producers are absent: `AI_*`, `AI_Scheduled_*`, `PAX_Entry#_*`,
+  `PAX_Exit#_*`, `GivenTicket`, `humans_count`, `FF_Vib_*`, `Snd_*`,
+  `Cabinair_*`, `Dirt_*`, `TrafficPriority*`, `Axle_Springfactor_*`,
+  `Axle_Brakeforce_*`, `Axle_SurfaceID_*`, `articulation_*`, `boogie_*`, and
+  `contactshoe_*`.
+- [ ] Add runtime producers for documented vehicle/scenery/human strings and
+  state such as `act_route`, `act_busstop`, `SetLineTo`, `yard`,
+  `file_schedule`, `Refresh_Strings`, `Switch`, `LastMovedDist`, `PAX_State`,
+  and `HeightOfSeat`, or document their supported default-only behavior.
+
+Each item above needs a parser/runtime test or an explicit unsupported-status
+diagnostic before it can be moved to the implemented baseline.
 
 ## 6. Rendering and platform completeness
 

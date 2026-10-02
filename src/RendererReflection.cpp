@@ -2,6 +2,7 @@
 
 #include "BusSimulation.h"
 #include "CoreRenderer.h"
+#include "Environment.h"
 #include "Logger.h"
 #include "OpenGLFunctions.h"
 #include "PerfTrace.h"
@@ -51,7 +52,7 @@ std::unordered_map<int, unsigned int> activeReflectionTextures;
 bool activeReflectionPass = false;
 
 int reflectionSizeFromEnvironment() {
-    const char* value = std::getenv("OPENBUS_REFLECTION_SIZE");
+    const char* value = openbus::getEnvironment("OPENBUS_REFLECTION_SIZE");
     if (value == nullptr) {
         return 1024;
     }
@@ -60,7 +61,7 @@ int reflectionSizeFromEnvironment() {
 }
 
 int reflectionIntervalFromEnvironment() {
-    const char* value = std::getenv("OPENBUS_REFLECTION_INTERVAL");
+    const char* value = openbus::getEnvironment("OPENBUS_REFLECTION_INTERVAL");
     return value == nullptr ? 1 : std::max(1, std::atoi(value));
 }
 
@@ -288,7 +289,7 @@ int reflectionTextureIndex(const std::string& textureName) {
 }
 
 bool reflectionTransparentEnabled() {
-    const char* value = std::getenv("OPENBUS_REFLECTION_TRANSPARENT");
+    const char* value = openbus::getEnvironment("OPENBUS_REFLECTION_TRANSPARENT");
     return value == nullptr || parseEnabledFlag(value);
 }
 

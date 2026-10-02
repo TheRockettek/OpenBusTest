@@ -45,6 +45,7 @@
 #include <functional>
 #include <future>
 #include <gli/gli.hpp>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -633,6 +634,50 @@ void applyVehiclePlacement(const VehiclePlacement& placement) {
     rotate(placement.yawDegrees, 0.0, 0.0, 1.0);
 }
 
+void selectRuntimeRegistration(VehicleConfig& configuration, const VehiclePlacement& placement) {
+    if (const char* overrideValue = std::getenv("OPENBUS_REGISTRATION");
+        overrideValue != nullptr && *overrideValue != '\0') {
+        configuration.selectedRegistration = overrideValue;
+        return;
+    }
+
+    if (configuration.registrationFree && !configuration.registrationNumbers.empty()) {
+        std::size_t selectedIndex = 0;
+        if (const char* indexValue = std::getenv("OPENBUS_REGISTRATION_INDEX");
+            indexValue != nullptr && *indexValue != '\0') {
+            try {
+                selectedIndex = std::stoull(indexValue);
+            } catch (const std::exception&) {
+                selectedIndex = 0;
+            }
+        }
+        configuration.selectedRegistration =
+            configuration
+                .registrationNumbers[selectedIndex % configuration.registrationNumbers.size()];
+        return;
+    }
+
+    if (configuration.registrationAutomatic) {
+        // Keep automatic numbers repeatable for a vehicle placement while avoiding
+        // process-global random state. The explicit override remains available for
+        // multiplayer/replay workflows that need a prescribed registration.
+        std::string seed = configuration.sourcePath.generic_string();
+        seed += ':' + std::to_string(placement.position[0]);
+        seed += ':' + std::to_string(placement.position[1]);
+        seed += ':' + std::to_string(placement.position[2]);
+        seed += ':' + std::to_string(placement.yawDegrees);
+        std::uint32_t hash = 2166136261U;
+        for (const unsigned char character : seed) {
+            hash ^= character;
+            hash *= 16777619U;
+        }
+        std::ostringstream generated;
+        generated << configuration.registrationPrefix << std::setfill('0') << std::setw(3)
+                  << (hash % 1000U);
+        configuration.selectedRegistration = generated.str();
+    }
+}
+
 struct Vehicle {
     ModelLoadingPolicy loadingPolicy;
     using TextureRequest = AssetRequestManager::TextureRequest;
@@ -699,6 +744,9 @@ struct Vehicle {
         AuxiliaryTexture lightmap;
         AuxiliaryTexture nightmap;
         AuxiliaryTexture transmap;
+        AuxiliaryTexture bumpmap;
+        double bumpmapStrength = 0.0;
+        std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
         std::string lightmapStrengthVariable;
         std::string freeTextureName;
         std::string freeTextureVariable;
@@ -752,6 +800,7 @@ struct Vehicle {
         double radius;
         std::size_t triangleCount;
         std::vector<ModelAnimation> animations;
+        std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
         std::vector<AnimationState> animationStates;
         std::vector<int> reflectionTextureIndices;
         mutable std::uint64_t animationCacheGeneration = 0;
@@ -767,10 +816,14 @@ struct Vehicle {
     openbus::scripting::Vehicle variables;
     std::unique_ptr<ScriptRuntime> scripts;
     std::vector<Part> pendingParts;
+    std::vector<ModelInteriorLight> interiorLights;
     AssetRequestManager* assets;
     VehiclePlacement placement;
     double modelOffsetZ = 0.0;
     double textureScale = 1;
+    double odometerMetres = 0.0;
+    std::array<double, 2> odometerPosition = {};
+    bool odometerPositionInitialized = false;
     bool frustumCulling = true;
     std::vector<double> lodThresholds;
     std::unordered_map<std::string, std::string> ctcTextureReplacements;
@@ -795,8 +848,6 @@ struct Vehicle {
 
     void updateMaterialChange(Batch& batch) {
         TraceScope phase("texture", "updateMaterialChange");
-        static const bool verboseMaterialChangeLogs =
-            parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_MATERIAL_CHANGES"));
 
         // Select the last active material change, then reset only the texture
         // request state so the new texture is resolved and uploaded.
@@ -1234,6 +1285,22 @@ struct Vehicle {
     void updateSimulationVariables(const BusSimulation& simulation, double throttle,
                                    double steering, double brake) {
         simulation.updateVariables(variables, throttle, steering, brake);
+        const double currentX = simulation.positionX();
+        const double currentY = simulation.positionY();
+        if (!odometerPositionInitialized) {
+            odometerPosition = {currentX, currentY};
+            odometerPositionInitialized = true;
+        } else {
+            const double distance =
+                std::hypot(currentX - odometerPosition[0], currentY - odometerPosition[1]);
+            if (std::isfinite(distance) && distance <= 100.0) {
+                odometerMetres += distance;
+            }
+            odometerPosition = {currentX, currentY};
+        }
+        odometerMetres = std::max(0.0, odometerMetres);
+        variables.set("kmcounter_km", std::floor(odometerMetres / 1000.0));
+        variables.set("kmcounter_m", std::fmod(odometerMetres, 1000.0));
     }
 
     void setOdeSimulation(const BusSimulation& simulation) {
@@ -1287,44 +1354,40 @@ struct Vehicle {
                                                const DisplayPart& part, const Batch& batch,
                                                std::size_t index, double& depth) {
             const ProjectedVertex first = projectVertex(modelViewPart, batch.vertices[index]);
-            const ProjectedVertex second =
-                projectVertex(modelViewPart, batch.vertices[index + 1]);
+            const ProjectedVertex second = projectVertex(modelViewPart, batch.vertices[index + 1]);
             const ProjectedVertex third = projectVertex(modelViewPart, batch.vertices[index + 2]);
             if (!first.valid || !second.valid || !third.valid) {
                 return false;
             }
             const double denominator = cross2d(second.x - first.x, second.y - first.y,
                                                third.x - first.x, third.y - first.y);
-            if (std::abs(denominator) <= 1.0e-12 ||
-                (part.backFaceCulling && denominator >= 0.0)) {
+            if (std::abs(denominator) <= 1.0e-12 || (part.backFaceCulling && denominator >= 0.0)) {
                 return false;
             }
-            const double firstWeight =
-                cross2d(second.x - normalizedX, second.y - normalizedY,
-                        third.x - normalizedX, third.y - normalizedY) /
-                denominator;
-            const double secondWeight =
-                cross2d(third.x - normalizedX, third.y - normalizedY,
-                        first.x - normalizedX, first.y - normalizedY) /
-                denominator;
+            const double firstWeight = cross2d(second.x - normalizedX, second.y - normalizedY,
+                                               third.x - normalizedX, third.y - normalizedY) /
+                                       denominator;
+            const double secondWeight = cross2d(third.x - normalizedX, third.y - normalizedY,
+                                                first.x - normalizedX, first.y - normalizedY) /
+                                        denominator;
             const double thirdWeight = 1.0 - firstWeight - secondWeight;
             constexpr double triangleTolerance = 1.0e-7;
             if (firstWeight < -triangleTolerance || secondWeight < -triangleTolerance ||
                 thirdWeight < -triangleTolerance) {
                 return false;
             }
-            depth = firstWeight * first.depth + secondWeight * second.depth +
-                    thirdWeight * third.depth;
+            depth =
+                firstWeight * first.depth + secondWeight * second.depth + thirdWeight * third.depth;
             return depth >= 0.0;
         };
         const auto partIsVisible = [&](const DisplayPart& part, std::size_t partIndex) {
             const bool visible =
                 partIndex < variableVisibleParts.size()
                     ? variableVisibleParts[partIndex]
-                    : part.visibleVariable.empty() ||
-                          variables.get(part.visibleVariable) == static_cast<double>(part.visibleValue);
-            return visible && (part.viewpoint == 0 ||
-                               (part.viewpoint & viewpointMask(context)) != 0) &&
+                    : part.visibleVariable.empty() || variables.get(part.visibleVariable) ==
+                                                          static_cast<double>(part.visibleValue);
+            return visible &&
+                   (part.viewpoint == 0 || (part.viewpoint & viewpointMask(context)) != 0) &&
                    (activeLod < 0 || part.lodIndex < 0 || part.lodIndex == activeLod);
         };
         double closestOccluderDepth = std::numeric_limits<double>::max();
@@ -1416,8 +1479,8 @@ struct Vehicle {
             if (partDistance == std::numeric_limits<double>::max()) {
                 continue;
             }
-            if (partDistance > closestOccluderDepth +
-                                   1.0e-4 * std::max(1.0, closestOccluderDepth)) {
+            if (partDistance >
+                closestOccluderDepth + 1.0e-4 * std::max(1.0, closestOccluderDepth)) {
                 continue;
             }
             closestDepth = partDistance;
@@ -1567,7 +1630,12 @@ struct Vehicle {
                 : modelConfigDirectory;
         gameLog.Log("Loading bus model with config: " + modelConfigPath.string() +
                     " and model root: " + modelRoot.string());
-        const VehicleConfig vehicleConfiguration = loadBusConfig(busConfigPath);
+        VehicleConfig vehicleConfiguration = loadBusConfig(busConfigPath);
+        selectRuntimeRegistration(vehicleConfiguration, configuredPlacement);
+        odometerMetres =
+            vehicleConfiguration.hasOdometerInitial
+                ? std::max(0.0, vehicleConfiguration.odometerInitialKilometres) * 1000.0
+                : 0.0;
         soundEngine.load(vehicleConfiguration.soundConfigPath);
         scripts = std::make_unique<ScriptRuntime>(
             vehicleConfiguration, variables, simulationState,
@@ -1612,6 +1680,45 @@ struct Vehicle {
             CoUninitialize();
         }
 #endif
+    }
+
+    void applyInteriorLightMaterial(const Batch& batch,
+                                    openbus::rendering::ModelMaterial& material) const {
+        double totalWeight = 0.0;
+        double totalIntensity = 0.0;
+        std::array<double, 3> weightedColor = {};
+        for (const int lightIndex : batch.interiorLightIndexes) {
+            if (lightIndex < 0 || static_cast<std::size_t>(lightIndex) >= interiorLights.size()) {
+                continue;
+            }
+            const ModelInteriorLight& light = interiorLights[static_cast<std::size_t>(lightIndex)];
+            if (light.parameters.size() < 4) {
+                continue;
+            }
+            const double activation = std::clamp(variables.get(light.controller), 0.0, 1.0);
+            const double intensity = std::clamp(light.parameters[0], 0.0, 4.0);
+            const double weight = activation * intensity;
+            if (weight <= 0.0) {
+                continue;
+            }
+            totalWeight += weight;
+            totalIntensity += weight;
+            for (std::size_t channel = 0; channel < 3; ++channel) {
+                const double component = light.parameters[channel + 1];
+                weightedColor[channel] +=
+                    weight * (component > 1.0 ? component / 255.0 : component);
+            }
+        }
+        if (totalWeight <= 0.0) {
+            return;
+        }
+        material.useInteriorLight = true;
+        material.interiorLightStrength =
+            static_cast<float>(std::clamp(totalIntensity * 0.35, 0.0, 1.0));
+        for (std::size_t channel = 0; channel < 3; ++channel) {
+            material.interiorLightColor[channel] =
+                static_cast<float>(std::clamp(weightedColor[channel] / totalWeight, 0.0, 1.0));
+        }
     }
 
     void drawBatch(Batch& batch, double alpha, bool forceUntextured = false,
@@ -1667,6 +1774,7 @@ struct Vehicle {
         ensureAuxiliaryTexture(batch, batch.lightmap);
         ensureAuxiliaryTexture(batch, batch.nightmap);
         ensureAuxiliaryTexture(batch, batch.transmap);
+        ensureAuxiliaryTexture(batch, batch.bumpmap);
         updateFreeTexture(batch);
         const std::array<double, 3>& color =
             overrideColor == nullptr ? batch.color : *overrideColor;
@@ -1679,11 +1787,16 @@ struct Vehicle {
         material.lightmap = batch.lightmap.texture;
         material.nightmap = batch.nightmap.texture;
         material.transmap = batch.transmap.texture;
+        material.bumpmap = batch.bumpmap.texture;
         material.freeTexture = batch.freeTexture;
         material.useLightmap = !forceUntextured && material.lightmap != 0;
         material.useNightmap = !forceUntextured && material.nightmap != 0;
         material.useTransmap = !forceUntextured && material.transmap != 0;
+        material.useBumpmap = !forceUntextured && material.bumpmap != 0;
         material.useFreeTexture = !forceUntextured && material.freeTexture != 0;
+        if (!forceUntextured) {
+            applyInteriorLightMaterial(batch, material);
+        }
         material.lightmapStrength = static_cast<float>(
             batch.lightmapStrengthVariable.empty()
                 ? 1.0
@@ -1691,6 +1804,7 @@ struct Vehicle {
         const double nightlight =
             std::max(variables.get("nightlighta"), 1.0 - variables.get("envir_brightness"));
         material.nightmapStrength = static_cast<float>(std::clamp(nightlight, 0.0, 1.0));
+        material.bumpmapStrength = static_cast<float>(std::clamp(batch.bumpmapStrength, 0.0, 1.0));
         material.texcoordOffsetX = static_cast<float>(
             batch.texcoordTransXVariable.empty() ? 0.0
                                                  : variables.get(batch.texcoordTransXVariable));
@@ -2077,7 +2191,7 @@ struct Vehicle {
                         }
                     }
                     for (const AuxiliaryTexture* auxiliary :
-                         {&batch.lightmap, &batch.nightmap, &batch.transmap}) {
+                         {&batch.lightmap, &batch.nightmap, &batch.transmap, &batch.bumpmap}) {
                         if (auxiliary->name.empty()) {
                             continue;
                         }
@@ -2850,6 +2964,7 @@ struct Vehicle {
                     ensureAuxiliaryTexture(batch, batch.lightmap);
                     ensureAuxiliaryTexture(batch, batch.nightmap);
                     ensureAuxiliaryTexture(batch, batch.transmap);
+                    ensureAuxiliaryTexture(batch, batch.bumpmap);
                 }
             }
         };
@@ -3022,6 +3137,9 @@ struct Vehicle {
             batch.lightmap.name = materialState.lightmapTextureName;
             batch.nightmap.name = materialState.nightmapTextureName;
             batch.transmap.name = materialState.transmapTextureName;
+            batch.bumpmap.name = materialState.bumpmapTextureName;
+            batch.bumpmapStrength = materialState.bumpmapStrength;
+            batch.interiorLightIndexes = part.interiorLightIndexes;
             batch.lightmapStrengthVariable = lower(materialState.lightmapStrengthVariable);
             batch.freeTextureName = materialState.freeTextureName;
             batch.freeTextureVariable = lower(materialState.freeTextureVariable);
@@ -3058,6 +3176,9 @@ struct Vehicle {
                        first.lightmap.name == second.lightmap.name &&
                        first.nightmap.name == second.nightmap.name &&
                        first.transmap.name == second.transmap.name &&
+                       first.bumpmap.name == second.bumpmap.name &&
+                       first.bumpmapStrength == second.bumpmapStrength &&
+                       first.interiorLightIndexes == second.interiorLightIndexes &&
                        first.lightmapStrengthVariable == second.lightmapStrengthVariable &&
                        first.freeTextureName == second.freeTextureName &&
                        first.freeTextureVariable == second.freeTextureVariable &&
@@ -3104,6 +3225,9 @@ struct Vehicle {
                    batch.textureWrapS == GL_REPEAT && batch.textureWrapT == GL_REPEAT &&
                    batch.lightmap.name.empty() && batch.nightmap.name.empty() &&
                    batch.transmap.name.empty() && batch.freeTextureVariable.empty() &&
+                   batch.bumpmap.name.empty() &&
+                   std::all_of(batch.interiorLightIndexes.begin(), batch.interiorLightIndexes.end(),
+                               [](int index) { return index < 0; }) &&
                    batch.freeTextureName.empty() && batch.scriptTextureIndex < 0 &&
                    batch.textTextureIndex < 0 && batch.texcoordTransXVariable.empty() &&
                    batch.texcoordTransYVariable.empty() && batch.alphaScaleVariable.empty();
@@ -3347,6 +3471,7 @@ struct Vehicle {
         displayPart.radius = boundsRadius;
         displayPart.triangleCount = renderedTriangleCount;
         displayPart.animations = std::move(animations);
+        displayPart.interiorLightIndexes = part.interiorLightIndexes;
         const std::string wheelVariable = lower(part.wheelAnimation.rotationVariable);
         if (wheelVariable.rfind("wheel_rotation_", 0) == 0) {
             const std::size_t axleStart = std::string("wheel_rotation_").size();
@@ -3538,6 +3663,7 @@ struct Vehicle {
             scripts->configureScriptTextures(result.scriptTextures);
             scripts->configureTextTextures(result.textTextures);
         }
+        interiorLights = std::move(result.interiorLights);
         lodThresholds = std::move(result.lodThresholds);
         ctcTextureReplacements.clear();
         for (const ModelCtcTexture& texture : result.ctcTextures) {
@@ -3875,8 +4001,8 @@ void RenderLoop::beginFrame() {
                             (pressed ? " pressed" : " released"));
                 previousVehicleKeyStates_[index] = pressed;
             }
-            if (pressed && std::string_view(binding.action) == "horn" && playerVehicle_ != nullptr &&
-                playerVehicle_->scripts) {
+            if (pressed && std::string_view(binding.action) == "horn" &&
+                playerVehicle_ != nullptr && playerVehicle_->scripts) {
                 playerVehicle_->scripts->invokeKeyBinding(binding.action, true);
             }
         }

@@ -29,6 +29,7 @@ inline void Flush() noexcept {}
 class TraceScope {
   public:
     constexpr TraceScope(const char*, const char*) noexcept {}
+    ~TraceScope() noexcept {}
 };
 #endif
 

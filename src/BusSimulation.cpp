@@ -62,7 +62,6 @@ constexpr dReal SHIFT_LOCKOUT = 0.0;
 constexpr dReal PI = 3.14159265358979323846;
 constexpr dReal MAX_FRAME_SECONDS = 0.25;
 constexpr int ROAD_BUMP_SEGMENTS = 12;
-constexpr int ROAD_RAMP_SEGMENTS = 6;
 constexpr int ROAD_INCLINE_SEGMENTS = 128;
 
 bool hasValidMomentOfInertia(const BusConfiguration& configuration) {
@@ -281,11 +280,10 @@ struct BusSimulation::Impl {
         if (!meshData) {
             throw std::runtime_error("Failed to create incline mesh data");
         }
-        dGeomTriMeshDataBuildDouble(meshData, storedVertices.data(), 3 * sizeof(double),
-                                    checkedOdeCount(storedVertices.size() / 3, "vertex count"),
-                                    storedIndices.data(), checkedOdeCount(storedIndices.size(),
-                                                                          "index count"),
-                                    3 * sizeof(int));
+        dGeomTriMeshDataBuildDouble(
+            meshData, storedVertices.data(), 3 * sizeof(double),
+            checkedOdeCount(storedVertices.size() / 3, "vertex count"), storedIndices.data(),
+            checkedOdeCount(storedIndices.size(), "index count"), 3 * sizeof(int));
         const dGeomID geometry = dCreateTriMesh(ode.space, meshData, nullptr, nullptr, nullptr);
         if (!geometry) {
             dGeomTriMeshDataDestroy(meshData);
@@ -353,11 +351,10 @@ struct BusSimulation::Impl {
         }
         const auto& storedVertices = roadMeshVertices.back();
         const auto& storedIndices = roadMeshIndices.back();
-        dGeomTriMeshDataBuildDouble(meshData, storedVertices.data(), 3 * sizeof(double),
-                                    checkedOdeCount(storedVertices.size() / 3, "vertex count"),
-                                    storedIndices.data(), checkedOdeCount(storedIndices.size(),
-                                                                          "index count"),
-                                    3 * sizeof(int));
+        dGeomTriMeshDataBuildDouble(
+            meshData, storedVertices.data(), 3 * sizeof(double),
+            checkedOdeCount(storedVertices.size() / 3, "vertex count"), storedIndices.data(),
+            checkedOdeCount(storedIndices.size(), "index count"), 3 * sizeof(int));
         const dGeomID geometry = dCreateTriMesh(ode.space, meshData, nullptr, nullptr, nullptr);
         if (!geometry) {
             dGeomTriMeshDataDestroy(meshData);

@@ -1,4 +1,5 @@
 #include "O3DLoader.h"
+#include "Environment.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -27,7 +28,7 @@ int main(int argc, char** argv) {
             }
         }
     }
-    if (std::getenv("OPENBUS_O3D_PROBE_VERBOSE") != nullptr) {
+    if (openbus::getEnvironment("OPENBUS_O3D_PROBE_VERBOSE") != nullptr) {
         double minimumEdge = std::numeric_limits<double>::max();
         double maximumEdge = 0.0;
         std::vector<std::pair<double, std::size_t>> longestEdges;

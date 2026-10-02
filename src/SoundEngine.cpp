@@ -297,9 +297,10 @@ struct SoundEngine::Backend {
 
     void stop(const std::filesystem::path& path) {
         std::lock_guard<std::mutex> lock(mutex);
-        active.erase(std::remove_if(active.begin(), active.end(), [&path](const ActiveClip& voice) {
-                         return voice.loop && voice.path == path;
-                     }),
+        active.erase(std::remove_if(active.begin(), active.end(),
+                                    [&path](const ActiveClip& voice) {
+                                        return voice.loop && voice.path == path;
+                                    }),
                      active.end());
     }
 };
@@ -532,9 +533,10 @@ struct SoundEngine::Backend {
 
     void stop(const std::filesystem::path& path) {
         std::lock_guard<std::mutex> lock(mutex);
-        active.erase(std::remove_if(active.begin(), active.end(), [&path](const ActiveClip& voice) {
-                         return voice.loop && voice.path == path;
-                     }),
+        active.erase(std::remove_if(active.begin(), active.end(),
+                                    [&path](const ActiveClip& voice) {
+                                        return voice.loop && voice.path == path;
+                                    }),
                      active.end());
     }
 };
@@ -573,9 +575,8 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
         for (const std::string& name : currentTriggerNames) {
             std::vector<SoundTriggerDefinition>& definitions = triggers_[lower(name)];
             const auto existing = std::find_if(
-                definitions.begin(), definitions.end(), [&](const SoundTriggerDefinition& value) {
-                    return value.file == current.file;
-                });
+                definitions.begin(), definitions.end(),
+                [&](const SoundTriggerDefinition& value) { return value.file == current.file; });
             if (existing == definitions.end()) {
                 definitions.push_back(current);
             } else {
@@ -727,7 +728,7 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
         return;
     }
     if (!overrideFile.empty()) {
-        definitions = {SoundTriggerDefinition{overrideFile, false}};
+        definitions = {SoundTriggerDefinition{overrideFile, false, 0, 0.0, {}}};
     }
 #if defined(OPENBUS_HAS_PIPEWIRE) || defined(_WIN32)
     if (overrideFile.empty()) {

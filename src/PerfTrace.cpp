@@ -1,5 +1,7 @@
 #include "PerfTrace.h"
 
+#include "Environment.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -37,9 +39,10 @@ struct TraceEvent {
 class PerfTraceState {
   public:
     PerfTraceState()
-        : traceEnabled(parseEnabledFlag(std::getenv("OPENBUS_TRACE"))), enabled(traceEnabled),
-          maxEvents(parseMaxEvents(std::getenv("OPENBUS_TRACE_MAX_EVENTS"))),
-          minDurationUs(parseMinDuration(std::getenv("OPENBUS_TRACE_MIN_US"))),
+        : traceEnabled(parseEnabledFlag(openbus::getEnvironment("OPENBUS_TRACE"))),
+          enabled(traceEnabled),
+          maxEvents(parseMaxEvents(openbus::getEnvironment("OPENBUS_TRACE_MAX_EVENTS"))),
+          minDurationUs(parseMinDuration(openbus::getEnvironment("OPENBUS_TRACE_MIN_US"))),
           start(std::chrono::steady_clock::now()) {
         events.reserve(std::min<std::size_t>(maxEvents, 8192));
         if (traceEnabled) {
@@ -110,7 +113,7 @@ class PerfTraceState {
 
   private:
     static std::filesystem::path configuredTracePath() {
-        if (const char* configuredPath = std::getenv("OPENBUS_TRACE_FILE")) {
+        if (const char* configuredPath = openbus::getEnvironment("OPENBUS_TRACE_FILE")) {
             if (*configuredPath != '\0') {
                 return configuredPath;
             }

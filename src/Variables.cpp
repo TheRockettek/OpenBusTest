@@ -119,9 +119,11 @@ bool Variables::supportsSystemTrigger(const std::string& name) const {
 SystemVariables::SystemVariables() : Variables(ScriptObjectKind::System) {
     const std::time_t now = std::time(nullptr);
     std::tm localDate = {};
-    if (const std::tm* currentDate = std::localtime(&now)) {
-        localDate = *currentDate;
-    }
+#ifdef _WIN32
+    localtime_s(&localDate, &now);
+#else
+    localtime_r(&now, &localDate);
+#endif
     setValues({
         {"timegap", 0.0},
         {"gettime", 0.0},

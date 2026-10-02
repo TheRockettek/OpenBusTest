@@ -1,6 +1,7 @@
 #include "BusConfiguration.h"
 #include "BusSimulation.h"
 #include "CrashHandler.h"
+#include "Environment.h"
 #include "Logger.h"
 #include "ModelConfigLoader.h"
 #include "PerfTrace.h"
@@ -30,8 +31,8 @@ int main() {
             openbus::rendering::TraceScope trace("config", "main.resolveConfigurationPaths");
             busConfigPath = busConfigurationPathFor();
             modelConfigPath = modelConfigurationPathForBus(busConfigPath);
-            const char* configuredAiBusPath = std::getenv("OPENBUS_AI_BUS_CONFIG");
-            const char* configuredAiModelPath = std::getenv("OPENBUS_AI_MODEL_CONFIG");
+            const char* configuredAiBusPath = openbus::getEnvironment("OPENBUS_AI_BUS_CONFIG");
+            const char* configuredAiModelPath = openbus::getEnvironment("OPENBUS_AI_MODEL_CONFIG");
             const bool hasAiBusPath =
                 configuredAiBusPath != nullptr && *configuredAiBusPath != '\0';
             const bool hasAiModelPath =
@@ -95,7 +96,7 @@ int main() {
         }
 
         double previousTime = glfwGetTime();
-        bool captureOnStartup = std::getenv("OPENBUS_CAPTURE_VIEWS") != nullptr;
+        bool captureOnStartup = openbus::getEnvironment("OPENBUS_CAPTURE_VIEWS") != nullptr;
         bool pendingCaptureRequest = captureOnStartup;
         std::vector<KeyEvent> pendingKeyEvents;
 

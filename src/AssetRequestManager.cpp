@@ -2,6 +2,7 @@
 
 #include "O3DLoader.h"
 
+#include "Environment.h"
 #include "Logger.h"
 
 #include <algorithm>
@@ -55,15 +56,15 @@ std::size_t configuredWorkerCount() {
     const std::size_t hardwareWorkers =
         std::max<std::size_t>(1, std::thread::hardware_concurrency());
     const std::size_t defaultWorkers = std::min<std::size_t>(4, hardwareWorkers);
-    const char* configuredWorkers = std::getenv("OPENBUS_ASSET_WORKERS");
+    const char* configuredWorkers = openbus::getEnvironment("OPENBUS_ASSET_WORKERS");
     if (configuredWorkers == nullptr || *configuredWorkers == '\0') {
         return defaultWorkers;
     }
 
     const std::string_view value(configuredWorkers);
     std::size_t requestedWorkers = 0;
-    const auto parsed = std::from_chars(value.data(), value.data() + value.size(),
-                                        requestedWorkers);
+    const auto parsed =
+        std::from_chars(value.data(), value.data() + value.size(), requestedWorkers);
     if (parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() ||
         requestedWorkers == 0) {
         return defaultWorkers;

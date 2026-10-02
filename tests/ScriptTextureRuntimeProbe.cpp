@@ -145,6 +145,9 @@ int main() {
                  "function trigger_routedisplay_off()\n"
                  "set_local_var(\"mouse_release_seen\", 1)\n"
                  "end\n"
+                 "function trigger_ticketergimble_drag()\n"
+                 "set_local_var(\"ticketer_drag_seen\", 1)\n"
+                 "end\n"
                  "function trigger_kw_m_enginestart()\n"
                  "set_local_var(\"key_binding_seen\", 1)\n"
                  "end\n"
@@ -186,6 +189,14 @@ int main() {
         simulation.sharedVariables().get("mouse_x") != 3.0 ||
         simulation.sharedVariables().get("mouse_y") != -2.0) {
         std::cerr << "input events were not exposed to the script state\n";
+        return 1;
+    }
+    runtime.invokeMouseDrag("TicketerGimble", 3.0, -2.0, 120.0, 80.0);
+    if (variables.get("ticketer_drag_seen") != 1.0 ||
+        variables.get("mouse_drag_x") != 3.0 || variables.get("mouse_drag_y") != -2.0 ||
+        simulation.sharedVariables().get("mouse_x") != 3.0 ||
+        simulation.sharedVariables().get("mouse_y") != 2.0) {
+        std::cerr << "ticketer vertical drag did not use the expected Y direction\n";
         return 1;
     }
 
