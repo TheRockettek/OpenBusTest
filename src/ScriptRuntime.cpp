@@ -3,6 +3,7 @@
 #include "Logger.h"
 #include "Variables.h"
 #include "PerfTrace.h"
+#include "TextureLoader.h"
 #include "osc/OscConverter.h"
 
 extern "C" {
@@ -12,6 +13,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -53,6 +55,7 @@ struct ScriptRuntime::Impl {
         std::array<std::uint8_t, 4> color = {255, 0, 0, 0};
         bool locked = false;
         bool filtered = false;
+        std::uint64_t revision = 0;
     };
 
     struct ScriptEnvironment {
@@ -75,10 +78,87 @@ struct ScriptRuntime::Impl {
     std::vector<double> floatStack;
     std::vector<std::string> stringStack;
     std::unordered_map<int, ScriptTexture> scriptTextures;
+    std::unordered_map<int, std::pair<int, int>> scriptTextureDimensions;
+    struct TextTextureDefinition {
+        std::string variable;
+        int width = 0;
+        int height = 0;
+        std::array<std::uint8_t, 4> color = {255, 255, 255, 255};
+        std::string lastValue;
+        bool hasRenderedValue = false;
+    };
+    std::unordered_map<int, TextTextureDefinition> textTextureDefinitions;
+    std::unordered_map<int, ScriptTexture> textTextures;
+    std::uint64_t revisionCounter = 0;
     std::vector<std::unique_ptr<LuaFunctionBinding>> luaFunctionBindings;
     std::vector<OscProgram> nativePrograms;
     std::array<double, 8> nativeRegisters = {};
     bool nativeBackend = false;
+
+    ScriptTexture configuredScriptTexture(int index) {
+        ScriptTexture texture;
+        texture.revision = ++revisionCounter;
+        const auto found = scriptTextureDimensions.find(index);
+        if (found == scriptTextureDimensions.end()) {
+            return texture;
+        }
+        texture.width = found->second.first;
+        texture.height = found->second.second;
+        texture.pixels.assign(static_cast<std::size_t>(texture.width) *
+                                  static_cast<std::size_t>(texture.height) * 4,
+                              0);
+        return texture;
+    }
+
+    static std::array<std::uint8_t, 7> glyph(char character) {
+        switch (static_cast<char>(std::toupper(static_cast<unsigned char>(character)))) {
+        case 'A': return {14, 17, 17, 31, 17, 17, 17};
+        case 'B': return {30, 17, 17, 30, 17, 17, 30};
+        case 'C': return {14, 17, 16, 16, 16, 17, 14};
+        case 'D': return {30, 17, 17, 17, 17, 17, 30};
+        case 'E': return {31, 16, 16, 30, 16, 16, 31};
+        case 'F': return {31, 16, 16, 30, 16, 16, 16};
+        case 'G': return {14, 17, 16, 23, 17, 17, 14};
+        case 'H': return {17, 17, 17, 31, 17, 17, 17};
+        case 'I': return {14, 4, 4, 4, 4, 4, 14};
+        case 'J': return {7, 2, 2, 2, 2, 18, 12};
+        case 'K': return {17, 18, 20, 24, 20, 18, 17};
+        case 'L': return {16, 16, 16, 16, 16, 16, 31};
+        case 'M': return {17, 27, 21, 21, 17, 17, 17};
+        case 'N': return {17, 25, 25, 21, 19, 19, 17};
+        case 'O': return {14, 17, 17, 17, 17, 17, 14};
+        case 'P': return {30, 17, 17, 30, 16, 16, 16};
+        case 'Q': return {14, 17, 17, 17, 21, 18, 13};
+        case 'R': return {30, 17, 17, 30, 20, 18, 17};
+        case 'S': return {15, 16, 16, 14, 1, 1, 30};
+        case 'T': return {31, 4, 4, 4, 4, 4, 4};
+        case 'U': return {17, 17, 17, 17, 17, 17, 14};
+        case 'V': return {17, 17, 17, 17, 17, 10, 4};
+        case 'W': return {17, 17, 17, 21, 21, 27, 17};
+        case 'X': return {17, 17, 10, 4, 10, 17, 17};
+        case 'Y': return {17, 17, 10, 4, 4, 4, 4};
+        case 'Z': return {31, 1, 2, 4, 8, 16, 31};
+        case '0': return {14, 17, 19, 21, 25, 17, 14};
+        case '1': return {4, 12, 4, 4, 4, 4, 14};
+        case '2': return {14, 17, 1, 2, 4, 8, 31};
+        case '3': return {30, 1, 1, 14, 1, 1, 30};
+        case '4': return {2, 6, 10, 18, 31, 2, 2};
+        case '5': return {31, 16, 16, 30, 1, 1, 30};
+        case '6': return {14, 16, 16, 30, 17, 17, 14};
+        case '7': return {31, 1, 2, 4, 8, 8, 8};
+        case '8': return {14, 17, 17, 14, 17, 17, 14};
+        case '9': return {14, 17, 17, 15, 1, 1, 14};
+        case '-': return {0, 0, 0, 31, 0, 0, 0};
+        case '_': return {0, 0, 0, 0, 0, 0, 31};
+        case '.': return {0, 0, 0, 0, 0, 0, 4};
+        case ':': return {0, 4, 0, 0, 0, 4, 0};
+        case '/': return {1, 2, 2, 4, 8, 8, 16};
+        case '+': return {0, 4, 4, 31, 4, 4, 0};
+        case '?': return {14, 17, 1, 2, 4, 0, 4};
+        case ' ': return {0, 0, 0, 0, 0, 0, 0};
+        default: return {14, 17, 1, 2, 4, 0, 4};
+        }
+    }
 
     double nativePopFloat() {
         if (floatStack.empty()) {
@@ -153,7 +233,7 @@ struct ScriptRuntime::Impl {
             pushNumber(0.0);
         } else if (name == "stnewtex") {
             const int index = static_cast<int>(nativePopFloat());
-            scriptTextures[index] = ScriptTexture();
+            scriptTextures[index] = configuredScriptTexture(index);
         } else if (name == "stlock" || name == "stunlock" || name == "stfilter") {
             const int index = static_cast<int>(nativePopFloat());
             ScriptTexture& texture = scriptTextures[index];
@@ -161,8 +241,10 @@ struct ScriptRuntime::Impl {
                 texture.locked = true;
             if (name == "stunlock")
                 texture.locked = false;
-            if (name == "stfilter" && !texture.locked)
+            if (name == "stfilter" && !texture.locked && !texture.filtered) {
                 texture.filtered = true;
+                ++texture.revision;
+            }
         } else if (name == "stsetcolor") {
             const auto channel = [this] {
                 return static_cast<std::uint8_t>(std::clamp(nativePopFloat(), 0.0, 255.0));
@@ -174,12 +256,37 @@ struct ScriptRuntime::Impl {
             const int index = static_cast<int>(nativePopFloat());
             scriptTextures[index].color = {alpha, red, green, blue};
         } else if (name == "stdrawpixel") {
-            popFloats(3);
+            const int y = static_cast<int>(nativePopFloat());
+            const int x = static_cast<int>(nativePopFloat());
+            const int index = static_cast<int>(nativePopFloat());
+            setPixel(scriptTextures[index], x, y);
         } else if (name == "stdrawrect") {
-            popFloats(5);
+            const int y2 = static_cast<int>(nativePopFloat());
+            const int x2 = static_cast<int>(nativePopFloat());
+            const int y1 = static_cast<int>(nativePopFloat());
+            const int x1 = static_cast<int>(nativePopFloat());
+            const int index = static_cast<int>(nativePopFloat());
+            ScriptTexture& texture = scriptTextures[index];
+            for (int y = std::min(y1, y2); y <= std::max(y1, y2); ++y) {
+                for (int x = std::min(x1, x2); x <= std::max(x1, x2); ++x) {
+                    setPixel(texture, x, y);
+                }
+            }
         } else if (name == "sttextout") {
-            popFloats(6);
-            popStrings(1);
+            const int letterSpacing = static_cast<int>(nativePopFloat());
+            const std::uint32_t packedColor =
+                static_cast<std::uint32_t>(std::max(0.0, nativePopFloat()));
+            nativePopFloat();
+            const int y = static_cast<int>(nativePopFloat());
+            const int x = static_cast<int>(nativePopFloat());
+            const int index = static_cast<int>(nativePopFloat());
+            const std::string value = nativePopString();
+            const std::array<std::uint8_t, 4> color = {
+                static_cast<std::uint8_t>((packedColor >> 16) & 0xffU),
+                static_cast<std::uint8_t>((packedColor >> 8) & 0xffU),
+                static_cast<std::uint8_t>(packedColor & 0xffU),
+                static_cast<std::uint8_t>((packedColor >> 24) & 0xffU)};
+            drawText(scriptTextures[index], value, x, y, color, letterSpacing);
         } else if (name == "streadpixel") {
             popFloats(3);
         } else if (name == "stcopycolor") {
@@ -187,8 +294,8 @@ struct ScriptRuntime::Impl {
             const int origin = static_cast<int>(nativePopFloat());
             scriptTextures[destination].color = scriptTextures[origin].color;
         } else if (name == "stloadtex") {
-            popFloats(1);
-            popStrings(1);
+            const int index = static_cast<int>(nativePopFloat());
+            loadScriptTexture(index, nativePopString());
         } else if (name == "stgetr" || name == "stgetg" || name == "stgetb" || name == "stgeta") {
             const int index = static_cast<int>(nativePopFloat());
             const std::size_t channel = name == "stgeta"   ? 0
@@ -200,9 +307,9 @@ struct ScriptRuntime::Impl {
             popStrings(1);
             pushNumber(0.0);
         } else if (name == "textlength") {
-            popFloats(1);
-            popStrings(1);
-            pushNumber(0.0);
+            nativePopFloat();
+            const std::string value = nativePopString();
+            pushNumber(static_cast<double>(value.size() * 6));
         }
     }
 
@@ -869,6 +976,15 @@ struct ScriptRuntime::Impl {
         return value;
     }
 
+    static std::string popSystemString(Impl* runtime) {
+        if (runtime->stringStack.empty()) {
+            return {};
+        }
+        std::string value = std::move(runtime->stringStack.back());
+        runtime->stringStack.pop_back();
+        return value;
+    }
+
     static int returnSystemFloat(lua_State* lua, double value) {
         Impl* runtime = runtimeFor(lua);
         runtime->floatStack.push_back(value);
@@ -993,12 +1109,94 @@ struct ScriptRuntime::Impl {
     }
 
     static void setPixel(ScriptTexture& texture, int x, int y) {
-        if (x < 0 || y < 0) {
+        if (texture.locked || x < 0 || y < 0) {
             return;
         }
         resizeScriptTexture(texture, x + 1, y + 1);
         const std::size_t offset = pixelOffset(texture, x, y);
-        std::copy(texture.color.begin(), texture.color.end(), texture.pixels.begin() + offset);
+        texture.pixels[offset] = texture.color[1];
+        texture.pixels[offset + 1] = texture.color[2];
+        texture.pixels[offset + 2] = texture.color[3];
+        texture.pixels[offset + 3] = texture.color[0];
+        ++texture.revision;
+    }
+
+    static void clearTexture(ScriptTexture& texture) {
+        texture.pixels.assign(static_cast<std::size_t>(texture.width) *
+                                  static_cast<std::size_t>(texture.height) * 4,
+                              0);
+    }
+
+    static void drawText(ScriptTexture& texture, const std::string& value, int x, int y,
+                         std::array<std::uint8_t, 4> color, int letterSpacing = 0) {
+        if (texture.locked || value.empty() || texture.width <= 0 || texture.height <= 0) {
+            return;
+        }
+        const int scale = std::max(1, std::min(8, (texture.height - 2) / 7));
+        const int advance = 6 * scale + letterSpacing;
+        for (std::size_t characterIndex = 0; characterIndex < value.size(); ++characterIndex) {
+            const auto rows = glyph(value[characterIndex]);
+            const int originX = x + static_cast<int>(characterIndex) * advance;
+            for (int row = 0; row < 7; ++row) {
+                for (int column = 0; column < 5; ++column) {
+                    if ((rows[static_cast<std::size_t>(row)] & (1 << (4 - column))) == 0) {
+                        continue;
+                    }
+                    for (int offsetY = 0; offsetY < scale; ++offsetY) {
+                        for (int offsetX = 0; offsetX < scale; ++offsetX) {
+                            const int pixelX = originX + column * scale + offsetX;
+                            const int pixelY = y + row * scale + offsetY;
+                            if (pixelX < 0 || pixelY < 0 || pixelX >= texture.width ||
+                                pixelY >= texture.height) {
+                                continue;
+                            }
+                            const std::size_t offset = pixelOffset(texture, pixelX, pixelY);
+                            std::copy(color.begin(), color.end(), texture.pixels.begin() + offset);
+                        }
+                    }
+                }
+            }
+        }
+        ++texture.revision;
+    }
+
+    void updateTextTextures() {
+        for (auto& entry : textTextureDefinitions) {
+            const int index = entry.first;
+            TextTextureDefinition& definition = entry.second;
+            const std::string value = localState.getString(definition.variable);
+            if (definition.hasRenderedValue && value == definition.lastValue) {
+                continue;
+            }
+            definition.lastValue = value;
+            definition.hasRenderedValue = true;
+            ScriptTexture& texture = textTextures[index];
+            texture.width = definition.width;
+            texture.height = definition.height;
+            clearTexture(texture);
+            drawText(texture, value, 0, 0, definition.color);
+            if (value.empty()) {
+                ++texture.revision;
+            }
+        }
+    }
+
+    bool loadScriptTexture(int index, const std::string& requestedPath) {
+        std::string normalized = requestedPath;
+        std::replace(normalized.begin(), normalized.end(), '\\', '/');
+        const std::filesystem::path path = configuration.sourcePath.parent_path() / normalized;
+        openbus::rendering::Image image;
+        if (!openbus::rendering::TextureLoader::readImage(path, image) || image.width <= 0 ||
+            image.height <= 0 || image.rgba.empty()) {
+            return false;
+        }
+        ScriptTexture texture;
+        texture.width = image.width;
+        texture.height = image.height;
+        texture.pixels = std::move(image.rgba);
+        texture.revision = ++revisionCounter;
+        scriptTextures[index] = std::move(texture);
+        return true;
     }
 
     static int safeScriptTextureAction(lua_State* lua) {
@@ -1013,7 +1211,7 @@ struct ScriptRuntime::Impl {
     static int safeScriptTextureNew(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
         const int index = static_cast<int>(popSystemFloat(runtime));
-        runtime->scriptTextures[index] = ScriptTexture();
+        runtime->scriptTextures[index] = runtime->configuredScriptTexture(index);
         return 0;
     }
 
@@ -1034,7 +1232,10 @@ struct ScriptRuntime::Impl {
         const int index = static_cast<int>(popSystemFloat(runtime));
         ScriptTexture& texture = scriptTexture(runtime, index);
         if (!texture.locked) {
-            texture.filtered = true;
+            if (!texture.filtered) {
+                texture.filtered = true;
+                ++texture.revision;
+            }
         }
         return 0;
     }
@@ -1071,7 +1272,8 @@ struct ScriptRuntime::Impl {
         ScriptTexture& texture = scriptTexture(runtime, index);
         if (x >= 0 && y >= 0 && x < texture.width && y < texture.height) {
             const std::size_t offset = pixelOffset(texture, x, y);
-            std::copy_n(texture.pixels.begin() + offset, 4, texture.color.begin());
+            texture.color = {texture.pixels[offset + 3], texture.pixels[offset],
+                             texture.pixels[offset + 1], texture.pixels[offset + 2]};
         }
         return 0;
     }
@@ -1092,11 +1294,22 @@ struct ScriptRuntime::Impl {
         return 0;
     }
 
-    // TODO: Implement STTextOut using the configured font raster data.
     static int safeScriptTextureText(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        discardSystemFloats(runtime, 6);
-        discardSystemStrings(runtime, 1);
+        const int letterSpacing = static_cast<int>(popSystemFloat(runtime));
+        const std::uint32_t packedColor =
+            static_cast<std::uint32_t>(std::max(0.0, popSystemFloat(runtime)));
+        popSystemFloat(runtime);
+        const int y = static_cast<int>(popSystemFloat(runtime));
+        const int x = static_cast<int>(popSystemFloat(runtime));
+        const int index = static_cast<int>(popSystemFloat(runtime));
+        const std::string value = popSystemString(runtime);
+        const std::array<std::uint8_t, 4> color = {
+            static_cast<std::uint8_t>((packedColor >> 16) & 0xffU),
+            static_cast<std::uint8_t>((packedColor >> 8) & 0xffU),
+            static_cast<std::uint8_t>(packedColor & 0xffU),
+            static_cast<std::uint8_t>((packedColor >> 24) & 0xffU)};
+        drawText(scriptTexture(runtime, index), value, x, y, color, letterSpacing);
         return 0;
     }
 
@@ -1108,11 +1321,10 @@ struct ScriptRuntime::Impl {
         return 0;
     }
 
-    // TODO: Implement STLoadTex with asynchronous texture loading.
     static int safeScriptTextureLoad(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        discardSystemFloats(runtime, 1);
-        discardSystemStrings(runtime, 1);
+        const int index = static_cast<int>(popSystemFloat(runtime));
+        runtime->loadScriptTexture(index, popSystemString(runtime));
         return 0;
     }
 
@@ -1139,18 +1351,16 @@ struct ScriptRuntime::Impl {
         return safeScriptTextureChannel(lua, 0);
     }
 
-    // TODO: Implement font registration and exact internal-name lookup.
     static int safeFontIndex(lua_State* lua) {
         discardSystemStrings(runtimeFor(lua), 1);
         return returnSystemFloat(lua, 0.0);
     }
 
-    // TODO: Implement text measurement using the selected font.
     static int safeTextLength(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
         discardSystemFloats(runtime, 1);
-        discardSystemStrings(runtime, 1);
-        return returnSystemFloat(lua, 0.0);
+        const std::string value = popSystemString(runtime);
+        return returnSystemFloat(lua, static_cast<double>(value.size() * 6));
     }
 
     static int tracedLuaFunction(lua_State* lua) {
@@ -1352,6 +1562,21 @@ struct ScriptRuntime::Impl {
         snapshot.width = found->second.width;
         snapshot.height = found->second.height;
         snapshot.pixels = found->second.pixels;
+        snapshot.filtered = found->second.filtered;
+        snapshot.revision = found->second.revision;
+        return true;
+    }
+
+    bool copyTextTexture(int index, ScriptRuntime::ScriptTextureSnapshot& snapshot) const {
+        const auto found = textTextures.find(index);
+        if (found == textTextures.end()) {
+            return false;
+        }
+        snapshot.width = found->second.width;
+        snapshot.height = found->second.height;
+        snapshot.pixels = found->second.pixels;
+        snapshot.filtered = found->second.filtered;
+        snapshot.revision = found->second.revision;
         return true;
     }
 };
@@ -1364,6 +1589,62 @@ ScriptRuntime::ScriptRuntime(
 }
 
 ScriptRuntime::~ScriptRuntime() = default;
+
+void ScriptRuntime::configureScriptTextures(
+    const std::vector<ModelScriptTexture>& definitions) {
+    if (!impl_) {
+        return;
+    }
+    for (const ModelScriptTexture& definition : definitions) {
+        if (definition.slot < 0 || definition.width <= 0 || definition.height <= 0) {
+            continue;
+        }
+        impl_->scriptTextureDimensions[definition.slot] = {definition.width, definition.height};
+        impl_->scriptTextures[definition.slot] =
+            impl_->configuredScriptTexture(definition.slot);
+    }
+}
+
+void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& definitions) {
+    if (!impl_) {
+        return;
+    }
+    for (const ModelTextTexture& definition : definitions) {
+        if (definition.slot < 0 || definition.values.size() < 4) {
+            continue;
+        }
+        ScriptRuntime::Impl::TextTextureDefinition configured;
+        configured.variable = definition.values[0];
+        try {
+            configured.width = std::stoi(definition.values[2]);
+            configured.height = std::stoi(definition.values[3]);
+        } catch (const std::exception&) {
+            continue;
+        }
+        if (configured.variable.empty() || configured.width <= 0 || configured.height <= 0) {
+            continue;
+        }
+        for (std::size_t channel = 0; channel < 3 && channel + 5 < definition.values.size();
+             ++channel) {
+            try {
+                double value = std::stod(definition.values[channel + 5]);
+                if (value >= 0.0 && value <= 1.0) {
+                    value *= 255.0;
+                }
+                configured.color[channel] = static_cast<std::uint8_t>(
+                    std::clamp(value, 0.0, 255.0));
+            } catch (const std::exception&) {
+                continue;
+            }
+        }
+        impl_->textTextureDefinitions[definition.slot] = configured;
+        ScriptRuntime::Impl::ScriptTexture texture;
+        texture.width = configured.width;
+        texture.height = configured.height;
+        impl_->textTextures[definition.slot] = std::move(texture);
+    }
+    impl_->updateTextTextures();
+}
 
 bool ScriptRuntime::valid() const {
     return impl_ && impl_->errors.empty();
@@ -1382,6 +1663,7 @@ void ScriptRuntime::initialize() {
         } else {
             impl_->invoke("init");
         }
+        impl_->updateTextTextures();
     }
 }
 
@@ -1415,6 +1697,10 @@ bool ScriptRuntime::copyScriptTexture(int index, ScriptTextureSnapshot& snapshot
     return impl_ && impl_->copyScriptTexture(index, snapshot);
 }
 
+bool ScriptRuntime::copyTextTexture(int index, ScriptTextureSnapshot& snapshot) const {
+    return impl_ && impl_->copyTextTexture(index, snapshot);
+}
+
 void ScriptRuntime::update(bool isAiVehicle) {
     if (impl_ && (impl_->nativeBackend || impl_->state)) {
         impl_->floatStack.clear();
@@ -1428,5 +1714,6 @@ void ScriptRuntime::update(bool isAiVehicle) {
         } else {
             impl_->invokeFrame(isAiVehicle);
         }
+        impl_->updateTextTextures();
     }
 }

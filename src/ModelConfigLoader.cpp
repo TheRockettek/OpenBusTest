@@ -854,9 +854,19 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         // [usetexttexture]/[usescripttexture]: one numeric texture-slot index.
         if (keyword == "usetexttexture" || keyword == "usescripttexture") {
-            if (requireMaterial() != nullptr) {
+            ModelMaterialState* current = requireMaterial();
+            if (current != nullptr) {
                 int index = 0;
-                readIntValue(reader, keyword, index, result.diagnostics);
+                if (readIntValue(reader, keyword, index, result.diagnostics)) {
+                    if (index < 0) {
+                        result.diagnostics.error(line.number, keyword,
+                                                 "texture slot must be non-negative");
+                    } else if (keyword == "usescripttexture") {
+                        current->scriptTextureIndex = index;
+                    } else {
+                        current->textTextureIndex = index;
+                    }
+                }
             }
             continue;
         }
@@ -912,22 +922,43 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             readValues(reader, line.number, keyword, 2, values, result.diagnostics);
             continue;
         }
-        // [scripttexture]: texture name plus script texture index.
+        // [scripttexture]: dimensions followed by model-version-specific options.
         if (keyword == "scripttexture") {
-            std::vector<std::string> values;
-            readValues(reader, line.number, keyword, 2, values, result.diagnostics);
-            continue;
-        }
-        // [texttexture]/[texttexture_enh]: variable-length text-display blocks;
-        // consume until the next keyword because their field layout varies.
-        if (keyword == "texttexture" || keyword == "texttexture_enh") {
+            ModelScriptTexture texture;
+            texture.slot = static_cast<int>(result.scriptTextures.size());
             Line value;
             while (reader.next(value)) {
                 if (value.isKeyword()) {
                     reader.pushBack(std::move(value));
                     break;
                 }
+                texture.options.push_back(trim(value.text));
             }
+            if (texture.options.size() < 2 || !parseInt(texture.options[0], texture.width) ||
+                !parseInt(texture.options[1], texture.height) || texture.width <= 0 ||
+                texture.height <= 0) {
+                result.diagnostics.error(line.number, keyword,
+                                         "expected positive width and height");
+            } else {
+                result.scriptTextures.push_back(std::move(texture));
+            }
+            continue;
+        }
+        // [texttexture]/[texttexture_enh]: retain variable-length display metadata;
+        // font rasterization is applied by the text-display runtime later.
+        if (keyword == "texttexture" || keyword == "texttexture_enh") {
+            ModelTextTexture texture;
+            texture.slot = static_cast<int>(result.textTextures.size());
+            texture.enhanced = keyword == "texttexture_enh";
+            Line value;
+            while (reader.next(value)) {
+                if (value.isKeyword()) {
+                    reader.pushBack(std::move(value));
+                    break;
+                }
+                texture.values.push_back(trim(value.text));
+            }
+            result.textTextures.push_back(std::move(texture));
             continue;
         }
     }

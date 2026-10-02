@@ -254,6 +254,45 @@ target_include_directories(OpenBusO3DLoaderProbe PRIVATE src)
 add_test(NAME OpenBusO3DLoaderProbe
          COMMAND OpenBusO3DLoaderProbe ${CMAKE_CURRENT_SOURCE_DIR}/uno3d/SitzeU.o3d)
 
+add_executable(OpenBusModelConfigProbe
+    tests/ModelConfigProbe.cpp
+    src/ConfigurationParser.cpp
+    src/ModelConfigLoader.cpp
+    src/PerfTrace.cpp
+    src/Variables.cpp
+)
+target_include_directories(OpenBusModelConfigProbe PRIVATE src)
+add_test(NAME OpenBusModelConfigProbe COMMAND OpenBusModelConfigProbe)
+
+add_executable(OpenBusVehicleConfigProbe
+    tests/VehicleConfigProbe.cpp
+    src/ConfigurationParser.cpp
+    src/ModelConfigLoader.cpp
+    src/PerfTrace.cpp
+    src/Variables.cpp
+    src/VehicleConfigLoader.cpp
+    src/osc/osc.cpp
+)
+target_include_directories(OpenBusVehicleConfigProbe PRIVATE src src/osc)
+add_test(NAME OpenBusVehicleConfigProbe COMMAND OpenBusVehicleConfigProbe)
+
+add_executable(OpenBusScriptTextureRuntimeProbe
+    tests/ScriptTextureRuntimeProbe.cpp
+    src/Logger.cpp
+    src/PerfTrace.cpp
+    src/ScriptRuntime.cpp
+    src/TextureLoader.cpp
+    src/Variables.cpp
+    src/osc/osc.cpp
+)
+target_include_directories(OpenBusScriptTextureRuntimeProbe PRIVATE src src/osc)
+target_include_directories(OpenBusScriptTextureRuntimeProbe SYSTEM PRIVATE
+    ${gli_SOURCE_DIR}
+    ${gli_SOURCE_DIR}/external/glm
+    ${stb_SOURCE_DIR})
+target_link_libraries(OpenBusScriptTextureRuntimeProbe PRIVATE OpenBusLua)
+add_test(NAME OpenBusScriptTextureRuntimeProbe COMMAND OpenBusScriptTextureRuntimeProbe)
+
 add_executable(uno3d_converter
     uno3d/o3d_to_obj.cpp
     src/PerfTrace.cpp

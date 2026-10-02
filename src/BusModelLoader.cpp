@@ -14,6 +14,8 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
     openbus::rendering::TraceScope trace("config", "loadBusModel");
     const ModelConfig configuration = loadBusModelConfig(configPath, modelRoot, variables);
     BusModelLoadResult result;
+    result.scriptTextures = configuration.scriptTextures;
+    result.textTextures = configuration.textTextures;
     result.lodThresholds = configuration.lodThresholds;
     result.diagnostics = configuration.diagnostics;
     result.parts.reserve(configuration.parts.size());
@@ -57,6 +59,8 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
             state.lightmapTextureName = sourceState.lightmapTextureName;
             state.lightmapStrengthVariable = sourceState.lightmapStrengthVariable;
             state.freeTextureVariable = sourceState.freeTextureVariable;
+            state.scriptTextureIndex = sourceState.scriptTextureIndex;
+            state.textTextureIndex = sourceState.textTextureIndex;
             state.texcoordTransXVariable = sourceState.texcoordTransXVariable;
             state.texcoordTransYVariable = sourceState.texcoordTransYVariable;
             state.bumpmapTextureName = sourceState.bumpmapTextureName;

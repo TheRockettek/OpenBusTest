@@ -355,12 +355,38 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             continue;
         }
         if (keyword == "sound" || keyword == "sound_ai" || keyword == "paths" ||
-            keyword == "passengercabin" || keyword == "number" || keyword == "registration_list") {
-            std::string ignored;
-            if (readOneString(reader, keyword, ignored, result.diagnostics) && keyword == "sound") {
-                std::replace(ignored.begin(), ignored.end(), '\\', '/');
-                result.soundConfigPath = result.sourcePath.parent_path() / ignored;
+            keyword == "passengercabin" || keyword == "number" ||
+            keyword == "registration_list") {
+            std::string referencedPath;
+            if (readOneString(reader, keyword, referencedPath, result.diagnostics)) {
+                const std::filesystem::path resolved =
+                    resolveReferencedPath(result.sourcePath, referencedPath);
+                if (keyword == "sound") {
+                    result.soundConfigPath = resolved;
+                } else if (keyword == "sound_ai") {
+                    result.soundAiConfigPath = resolved;
+                } else if (keyword == "paths") {
+                    result.pathsConfigPath = resolved;
+                } else if (keyword == "passengercabin") {
+                    result.passengerCabinConfigPath = resolved;
+                } else if (keyword == "number") {
+                    result.numberConfigPath = resolved;
+                } else {
+                    result.registrationListConfigPath = resolved;
+                }
             }
+            continue;
+        }
+        if (keyword == "registration_automatic") {
+            std::string prefix;
+            if (readOneString(reader, keyword, prefix, result.diagnostics)) {
+                result.registrationAutomatic = true;
+                result.registrationPrefix = prefix;
+            }
+            continue;
+        }
+        if (keyword == "registration_free") {
+            result.registrationFree = true;
             continue;
         }
         if (keyword == "script" || keyword == "varnamelist" || keyword == "stringvarnamelist" ||
@@ -502,7 +528,15 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
         }
         if (keyword == "kmcounter_init") {
             std::vector<std::string> values;
-            readValues(reader, keyword, 2, values, result.diagnostics);
+            if (readValues(reader, keyword, 2, values, result.diagnostics) &&
+                parseInt(values[0], result.odometerInitialYear) &&
+                parseDouble(values[1], result.odometerInitialKilometres) &&
+                result.odometerInitialYear >= 0 && result.odometerInitialKilometres >= 0.0) {
+                result.hasOdometerInitial = true;
+            } else {
+                result.diagnostics.error(line.number, keyword,
+                                         "expected a non-negative year and odometer value");
+            }
             continue;
         }
         if (keyword == "rollwiderstand" || keyword == "rot_pnt_long" ||

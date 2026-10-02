@@ -2,6 +2,7 @@
 
 #include "Variables.h"
 #include "VehicleConfigLoader.h"
+#include "ModelConfigTypes.h"
 
 #include <filesystem>
 #include <cstdint>
@@ -18,6 +19,8 @@ class ScriptRuntime {
         int width = 0;
         int height = 0;
         std::vector<std::uint8_t> pixels;
+        bool filtered = false;
+        std::uint64_t revision = 0;
     };
 
     ScriptRuntime(
@@ -34,7 +37,10 @@ class ScriptRuntime {
     void update(bool isAiVehicle);
     void invokeEntryPoint(const std::string& functionName);
     void invokeSystemTrigger(const std::string& triggerName);
+    void configureScriptTextures(const std::vector<ModelScriptTexture>& definitions);
+    void configureTextTextures(const std::vector<ModelTextTexture>& definitions);
     bool copyScriptTexture(int index, ScriptTextureSnapshot& snapshot) const;
+    bool copyTextTexture(int index, ScriptTextureSnapshot& snapshot) const;
 
   private:
     struct Impl;

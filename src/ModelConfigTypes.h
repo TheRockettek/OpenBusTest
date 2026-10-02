@@ -27,6 +27,8 @@ struct ModelMaterialState {
     std::string lightmapTextureName;
     std::string lightmapStrengthVariable;
     std::string freeTextureVariable;
+    int scriptTextureIndex = -1;
+    int textTextureIndex = -1;
     std::string texcoordTransXVariable;
     std::string texcoordTransYVariable;
     std::string bumpmapTextureName;
@@ -40,6 +42,19 @@ struct ModelMaterialState {
         std::string activationVariable;
     };
     std::vector<TextureChange> textureChanges;
+};
+
+struct ModelScriptTexture {
+    int slot = -1;
+    int width = 0;
+    int height = 0;
+    std::vector<std::string> options;
+};
+
+struct ModelTextTexture {
+    int slot = -1;
+    bool enhanced = false;
+    std::vector<std::string> values;
 };
 
 struct ModelWheelAnimation {
@@ -103,6 +118,8 @@ struct ModelPart {
 
 struct ModelConfig {
     std::vector<ModelPart> parts;
+    std::vector<ModelScriptTexture> scriptTextures;
+    std::vector<ModelTextTexture> textTextures;
     std::vector<double> lodThresholds;
     ConfigurationDiagnostics diagnostics;
 };

@@ -438,12 +438,15 @@ struct Vehicle {
         AuxiliaryTexture transmap;
         std::string lightmapStrengthVariable;
         std::string freeTextureVariable;
+        int scriptTextureIndex = -1;
+        int textTextureIndex = -1;
         std::string texcoordTransXVariable;
         std::string texcoordTransYVariable;
         GLuint freeTexture = 0;
         int freeTextureIndex = -1;
         int freeTextureWidth = 0;
         int freeTextureHeight = 0;
+        std::uint64_t freeTextureRevision = 0;
         int alphaMode = 0;
         bool noZwrite = false;
         bool noZcheck = false;
@@ -1947,13 +1950,34 @@ struct Vehicle {
     }
 
     void updateFreeTexture(Batch& batch) {
-        if (batch.freeTextureVariable.empty() || !scripts) {
+        if ((batch.freeTextureVariable.empty() && batch.scriptTextureIndex < 0 &&
+             batch.textTextureIndex < 0) ||
+            !scripts) {
             return;
         }
-        const int index = static_cast<int>(std::lround(variables.get(batch.freeTextureVariable)));
         ScriptRuntime::ScriptTextureSnapshot snapshot;
-        if (index < 0 || !scripts->copyScriptTexture(index, snapshot) || snapshot.width <= 0 ||
-            snapshot.height <= 0 || snapshot.pixels.empty()) {
+        int index = -1;
+        bool copied = false;
+        if (batch.scriptTextureIndex >= 0) {
+            index = batch.scriptTextureIndex;
+            copied = scripts->copyScriptTexture(index, snapshot);
+        } else if (batch.textTextureIndex >= 0) {
+            index = batch.textTextureIndex;
+            copied = scripts->copyTextTexture(index, snapshot);
+        } else {
+            index = static_cast<int>(std::lround(variables.get(batch.freeTextureVariable)));
+            copied = scripts->copyScriptTexture(index, snapshot);
+        }
+        if (index < 0 || !copied || snapshot.width <= 0 || snapshot.height <= 0 ||
+            snapshot.pixels.empty()) {
+            return;
+        }
+        const bool dimensionsChanged = batch.freeTextureWidth != snapshot.width ||
+                                       batch.freeTextureHeight != snapshot.height;
+        const bool textureChanged = batch.freeTexture == 0 || dimensionsChanged ||
+                                    batch.freeTextureIndex != index ||
+                                    batch.freeTextureRevision != snapshot.revision;
+        if (!textureChanged) {
             return;
         }
         if (batch.freeTexture == 0) {
@@ -1962,12 +1986,12 @@ struct Vehicle {
         }
         glBindTexture(GL_TEXTURE_2D, batch.freeTexture);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        const GLint filter = snapshot.filtered ? GL_LINEAR : GL_NEAREST;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        if (batch.freeTextureWidth != snapshot.width ||
-            batch.freeTextureHeight != snapshot.height) {
+        if (batch.freeTexture == 0 || dimensionsChanged) {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, snapshot.width, snapshot.height, 0, GL_RGBA,
                          GL_UNSIGNED_BYTE, snapshot.pixels.data());
             batch.freeTextureWidth = snapshot.width;
@@ -1978,6 +2002,7 @@ struct Vehicle {
         }
         openbus::rendering::invalidateTextureBindings();
         batch.freeTextureIndex = index;
+        batch.freeTextureRevision = snapshot.revision;
     }
 
     void startTextureRequest(const std::shared_ptr<TextureCacheEntry>& entry) {
@@ -2395,6 +2420,8 @@ struct Vehicle {
             batch.transmap.name = materialState.transmapTextureName;
             batch.lightmapStrengthVariable = lower(materialState.lightmapStrengthVariable);
             batch.freeTextureVariable = lower(materialState.freeTextureVariable);
+            batch.scriptTextureIndex = materialState.scriptTextureIndex;
+            batch.textTextureIndex = materialState.textTextureIndex;
             batch.texcoordTransXVariable = lower(materialState.texcoordTransXVariable);
             batch.texcoordTransYVariable = lower(materialState.texcoordTransYVariable);
             batch.color = color;
@@ -2428,6 +2455,8 @@ struct Vehicle {
                        first.transmap.name == second.transmap.name &&
                        first.lightmapStrengthVariable == second.lightmapStrengthVariable &&
                        first.freeTextureVariable == second.freeTextureVariable &&
+                       first.scriptTextureIndex == second.scriptTextureIndex &&
+                       first.textTextureIndex == second.textTextureIndex &&
                        first.texcoordTransXVariable == second.texcoordTransXVariable &&
                        first.texcoordTransYVariable == second.texcoordTransYVariable &&
                        first.alphaScaleVariable == second.alphaScaleVariable &&
@@ -2469,6 +2498,7 @@ struct Vehicle {
                    batch.textureWrapS == GL_REPEAT && batch.textureWrapT == GL_REPEAT &&
                    batch.lightmap.name.empty() && batch.nightmap.name.empty() &&
                    batch.transmap.name.empty() && batch.freeTextureVariable.empty() &&
+                   batch.scriptTextureIndex < 0 && batch.textTextureIndex < 0 &&
                    batch.texcoordTransXVariable.empty() && batch.texcoordTransYVariable.empty() &&
                    batch.alphaScaleVariable.empty();
         };
@@ -2898,6 +2928,10 @@ struct Vehicle {
 
     void load(const std::filesystem::path& configPath, const std::filesystem::path& modelRoot) {
         auto result = openbus::rendering::loadBusModel(configPath, modelRoot, variables);
+        if (scripts) {
+            scripts->configureScriptTextures(result.scriptTextures);
+            scripts->configureTextTextures(result.textTextures);
+        }
         lodThresholds = std::move(result.lodThresholds);
         for (const ConfigurationDiagnostic& diagnostic : result.diagnostics.entries) {
             const std::string severity =

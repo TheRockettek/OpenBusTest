@@ -41,6 +41,8 @@ struct BusModelMaterialState {
     std::string lightmapTextureName;
     std::string lightmapStrengthVariable;
     std::string freeTextureVariable;
+    int scriptTextureIndex = -1;
+    int textTextureIndex = -1;
     std::string texcoordTransXVariable;
     std::string texcoordTransYVariable;
     std::string bumpmapTextureName;
@@ -77,6 +79,8 @@ struct BusModelPart {
 
 struct BusModelLoadResult {
     std::vector<BusModelPart> parts;
+    std::vector<ModelScriptTexture> scriptTextures;
+    std::vector<ModelTextTexture> textTextures;
     std::vector<double> lodThresholds;
     ConfigurationDiagnostics diagnostics;
 };

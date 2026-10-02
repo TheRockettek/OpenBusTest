@@ -89,6 +89,24 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
         }
         output << configuration.lodThresholds[index];
     }
+    output << "],\n  \"script_textures\": [";
+    for (std::size_t index = 0; index < configuration.scriptTextures.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        const ModelScriptTexture& texture = configuration.scriptTextures[index];
+        output << "{\"slot\":" << texture.slot << ",\"width\":" << texture.width
+               << ",\"height\":" << texture.height << "}";
+    }
+    output << "],\n  \"text_textures\": [";
+    for (std::size_t index = 0; index < configuration.textTextures.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        const ModelTextTexture& texture = configuration.textTextures[index];
+        output << "{\"slot\":" << texture.slot
+               << ",\"enhanced\":" << (texture.enhanced ? "true" : "false") << "}";
+    }
     output << "],\n  \"parts\": [\n";
 
     for (std::size_t index = 0; index < configuration.parts.size(); ++index) {
@@ -196,6 +214,8 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
             writeJsonString(output, material.lightmapStrengthVariable);
             output << ",\"free_texture_variable\":";
             writeJsonString(output, material.freeTextureVariable);
+                        output << ",\"script_texture_index\":" << material.scriptTextureIndex
+                                     << ",\"text_texture_index\":" << material.textTextureIndex;
             output << ",\"texcoord_trans_x_variable\":";
             writeJsonString(output, material.texcoordTransXVariable);
             output << ",\"texcoord_trans_y_variable\":";

@@ -13,9 +13,6 @@ configuration behavior, and regression evidence all exist.
 
 ## 0. Establish the completion baseline
 
-- [ ] Define the supported scope explicitly: MAN DL05 and SP E400 MMC first;
-  broader OMSI compatibility is a later goal.
-- [ ] Record a clean baseline build and smoke run for both vehicles.
 - [ ] Make `Docs/SCREENSHOT_VALIDATION_PLAN.md` truthful: environment maps and
   any other features marked fully supported must either have evidence or be
   moved to the incomplete section.
@@ -88,15 +85,20 @@ it.
 
 ## 4. Implement dynamic displays and lighting
 
-- [~] Lua script texture storage and pixel operations exist in
-  `ScriptRuntime`; model CFG records are still largely consumed for alignment.
-- [ ] Retain and connect `[scripttexture]` definitions to model materials,
-  including dimensions, slot/index, update cadence, and texture lifetime.
-- [ ] Implement `[texttexture]` and `[texttexture_enh]` end to end: font/text
-  layout, color/alpha, sizing, material binding, and updates from script
-  variables.
-- [ ] Implement `[usescripttexture]` and `[usetexttexture]` material binding
-  instead of only consuming the slot index.
+- [x] Lua script texture storage and pixel operations exist in `ScriptRuntime`,
+  and authored script-texture dimensions are initialized before scripts run.
+- [x] Retain and connect `[scripttexture]` definitions to model materials,
+  including dimensions, slot/index, and texture lifetime through the live
+  script-texture upload path. Update cadence remains script-driven.
+- [x] Implement `[texttexture]` and `[texttexture_enh]` runtime surfaces:
+  bitmap text layout, color/alpha, sizing, material binding, and updates from
+  script string variables. The renderer uses a deterministic built-in bitmap
+  font; authored OMSI font-file matching remains incomplete.
+- [x] Implement `[usescripttexture]` and `[usetexttexture]` material binding
+  to live texture surfaces, including Lua/native pixel, rectangle, text, load,
+  lock, readback, and filtering operations.
+- [x] Cache text source values and dynamic surface revisions so unchanged text
+  is not rasterized or uploaded to OpenGL every frame.
 - [ ] Implement `[illumination_interior]` and `[interiorlight]` runtime
   lighting, including controller variables and the four group assignments.
 - [ ] Add a focused E400 display/light test using real model CFG data and
@@ -107,22 +109,50 @@ change from their controlling variables without manual texture replacement.
 
 ## 5. Complete vehicle/model configuration coverage
 
-- [x] Core bus identity, mass, bounding box, center of gravity, axles,
+- [~] Core bus identity, mass, bounding box, center of gravity, axles,
   cameras, model assembly, animations, parents, visibility, and wheel data
-  are loaded for the current vehicles.
+  are loaded for the current vehicles. `[friendlyname]`, `[description]`,
+  and `[type]` are still consumed without being exposed to the runtime.
+- [~] BUS asset references for `[paths]`, `[passengercabin]`, `[sound_ai]`,
+  `[number]`, and `[registration_list]` are normalized and retained; the
+  referenced path, cabin, AI sound, and registration files are not loaded.
+- [~] `[registration_automatic]`, `[registration_free]`, and
+  `[kmcounter_init]` are parsed and validated, but there is no registration
+  selection/display or odometer runtime state.
 - [~] `collision_mesh` and `nocollision` records are parsed/diagnosed, but
   physics still uses the simplified chassis box and does not build model
   collision geometry.
 - [ ] Decide and document the collision policy. If model collision is in
   scope, load collision meshes and honor `nocollision`; otherwise mark these
   records unsupported and stop implying full CFG compatibility.
-- [ ] Implement or explicitly scope out passenger cabin/path data,
-  registration/odometer behavior, AI/network sections, route/timetable data,
-  and vehicle-specific view systems.
-- [ ] Implement sound configuration coverage beyond the current sound-runtime
-  path, including `sound_ai` where relevant.
+- [ ] Implement or explicitly scope out passenger cabin/path loading,
+  passenger positions, entries/exits, boarding/alighting, passenger mass,
+  registration/odometer behavior, AI/network sections, route/timetable/HOF
+  data, and vehicle-specific view systems.
+- [ ] Implement sound configuration coverage beyond the current player sound
+  runtime path, including selecting `sound_ai` for AI vehicles.
 - [ ] Add diagnostics that distinguish "recognized and active" from
   "recognized but ignored" for every parsed configuration record.
+
+### Bus features still absent from the runtime
+
+The following OMSI BUS/model features are currently absent or only represented
+by parser alignment and should not be described as supported:
+
+- `[passengercabin]` CFG loading, passenger positions, entries/exits, cabin
+  connections, boarding, alighting, and passenger mass.
+- `[paths]` route/path graph loading, timetable/HOF lookup, stop announcements,
+  and arrival-board data used by the script system.
+- Registration-number selection and display, automatic/free registration
+  behavior, and live odometer persistence.
+- AI/network vehicle sections, coupling/cable behavior, and articulated
+  multi-body physics despite the articulated flag being parsed.
+- `[texttexture]`/`[texttexture_enh]` font rasterization and text display
+  updates, plus `[interiorlight]`, `[light_enh]`, `[light_enh_2]`, and
+  `[spotlight]` light emission.
+- Remaining script system data providers such as route, terminus, ticket,
+  passenger-count, ground-height, and arrival-board lookups; safe fallbacks
+  remain in `ScriptRuntime`.
 
 Done when unsupported configuration is visible in diagnostics and the README
 claims only behavior that is active in the runtime.

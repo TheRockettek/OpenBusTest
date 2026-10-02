@@ -61,6 +61,17 @@ struct VehicleConfig {
     std::vector<std::string> stringVariableLists;
     std::vector<std::string> constantFiles;
     std::filesystem::path soundConfigPath;
+    std::filesystem::path soundAiConfigPath;
+    std::filesystem::path pathsConfigPath;
+    std::filesystem::path passengerCabinConfigPath;
+    std::filesystem::path numberConfigPath;
+    std::filesystem::path registrationListConfigPath;
+    bool registrationAutomatic = false;
+    std::string registrationPrefix;
+    bool registrationFree = false;
+    int odometerInitialYear = 0;
+    double odometerInitialKilometres = 0.0;
+    bool hasOdometerInitial = false;
     std::vector<std::string> floatVariables;
     std::vector<std::string> stringVariables;
     std::unordered_map<std::string, double> constants;
