@@ -101,6 +101,7 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source) {
     configuration.inverseMinimumTurnRadius = source.inverseMinimumTurnRadius;
     configuration.length = boundingBox[1];
     configuration.mass = source.massTonnes * 1000.0;
+    configuration.momentOfInertia = source.momentOfInertia;
     configuration.wheelHalfWidth = source.wheelHalfWidth;
     configuration.wheelRadius = source.axles.front().wheelDiameter * 0.5;
     configuration.width = boundingBox[0];

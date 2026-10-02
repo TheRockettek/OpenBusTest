@@ -41,6 +41,7 @@ struct BusConfiguration {
     double collisionOffsetZ;
     std::array<double, 3> outsideCameraCenter = {};
     bool hasOutsideCameraCenter = false;
+    std::array<double, 3> momentOfInertia = {};
     double centerOfGravityHeight;
     bool articulated;
     std::vector<BusAxle> axles;

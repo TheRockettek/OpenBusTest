@@ -47,7 +47,7 @@ int main() {
         }
 
         const VehiclePlacement busPlacement{{0.0, 0.0, 0.0}, 0.0};
-        const VehiclePlacement aiPlacement{{5.0, 2.0, 0.0}, 180.0};
+        const VehiclePlacement aiPlacement{{5.0, 5.0, 0.0}, 0};
 
         BusConfiguration configuration;
         {

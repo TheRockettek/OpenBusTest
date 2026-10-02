@@ -208,6 +208,19 @@ openbus_configure_perf_trace(OpenBusPhysicsProbe)
 target_include_directories(OpenBusPhysicsProbe PRIVATE src)
 target_link_libraries(OpenBusPhysicsProbe PRIVATE ${OPENBUS_ODE_TARGET})
 
+add_executable(OpenBusStabilityProbe
+    tests/BusSimulationStabilityProbe.cpp
+    src/BusSimulation.cpp
+    src/Logger.cpp
+    src/PerfTrace.cpp
+    src/RoadFeatures.cpp
+    src/Variables.cpp
+)
+
+openbus_configure_perf_trace(OpenBusStabilityProbe)
+target_include_directories(OpenBusStabilityProbe PRIVATE src)
+target_link_libraries(OpenBusStabilityProbe PRIVATE ${OPENBUS_ODE_TARGET})
+
 add_executable(OpenBusVariablesProbe
     tests/VariablesProbe.cpp
     src/Variables.cpp
@@ -215,6 +228,7 @@ add_executable(OpenBusVariablesProbe
 target_include_directories(OpenBusVariablesProbe PRIVATE src)
 add_test(NAME OpenBusVariablesProbe COMMAND OpenBusVariablesProbe)
 add_test(NAME OpenBusPhysicsProbe COMMAND OpenBusPhysicsProbe)
+add_test(NAME OpenBusStabilityProbe COMMAND OpenBusStabilityProbe)
 
 add_executable(OpenBusRoadFeaturesProbe
     tests/RoadFeaturesProbe.cpp

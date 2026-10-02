@@ -27,6 +27,7 @@ constexpr dReal ROLLING_RESIST = 0.012;
 constexpr dReal WHEEL_MASS = 180.0;
 constexpr dReal KNUCKLE_MASS = 40.0;
 constexpr dReal ROAD_FRICTION_COEFFICIENT = 0.85;
+constexpr dReal OMSI_INERTIA_SCALE = 1000.0;
 constexpr dReal WHEELSPIN_SLIP_RATIO = 0.15;
 constexpr dReal ARB_STIFFNESS_FRONT = 35000.0;
 constexpr dReal ARB_STIFFNESS_REAR = 28000.0;
@@ -63,6 +64,18 @@ constexpr dReal MAX_FRAME_SECONDS = 0.25;
 constexpr int ROAD_BUMP_SEGMENTS = 12;
 constexpr int ROAD_RAMP_SEGMENTS = 6;
 constexpr int ROAD_INCLINE_SEGMENTS = 128;
+
+bool hasValidMomentOfInertia(const BusConfiguration& configuration) {
+    return std::all_of(configuration.momentOfInertia.begin(),
+                       configuration.momentOfInertia.end(),
+                       [](double value) { return std::isfinite(value) && value > 0.0; });
+}
+
+std::array<dReal, 3> configuredOdeInertia(const BusConfiguration& configuration) {
+    return {static_cast<dReal>(configuration.momentOfInertia[1] * OMSI_INERTIA_SCALE),
+            static_cast<dReal>(configuration.momentOfInertia[0] * OMSI_INERTIA_SCALE),
+            static_cast<dReal>(configuration.momentOfInertia[2] * OMSI_INERTIA_SCALE)};
+}
 
 class OdeRuntime {
   public:
@@ -453,6 +466,12 @@ struct BusSimulation::Impl {
         }
         dMassSetBoxTotal(&mass, chassisMass, configuration.collisionLength,
                          configuration.collisionWidth, configuration.collisionHeight);
+        if (hasValidMomentOfInertia(configuration)) {
+            const std::array<dReal, 3> configuredInertia = configuredOdeInertia(configuration);
+            mass.I[0] = std::max(mass.I[0], configuredInertia[0]);
+            mass.I[5] = std::max(mass.I[5], configuredInertia[1]);
+            mass.I[10] = std::max(mass.I[10], configuredInertia[2]);
+        }
         dBodySetMass(chassis, &mass);
         const dReal averageSpringRate = [&] {
             dReal total = 0.0;
@@ -763,7 +782,7 @@ struct BusSimulation::Impl {
 
         const dReal* chassisRotation = dBodyGetRotation(chassis);
         const dReal* chassisAngularVelocity = dBodyGetAngularVel(chassis);
-        const dReal rollAngle = std::atan2(-chassisRotation[6], chassisRotation[10]);
+        const dReal rollAngle = std::atan2(chassisRotation[9], chassisRotation[10]);
         const dReal pitchAngle =
             std::atan2(chassisRotation[2], std::sqrt(chassisRotation[0] * chassisRotation[0] +
                                                      chassisRotation[1] * chassisRotation[1]));
