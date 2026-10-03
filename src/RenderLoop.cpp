@@ -803,6 +803,7 @@ struct Vehicle {
         std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
         std::vector<AnimationState> animationStates;
         std::vector<int> reflectionTextureIndices;
+        bool pickOccluder = false;
         mutable std::uint64_t animationCacheGeneration = 0;
         mutable Matrix4 cachedAnimationTransform = {};
         mutable std::uint64_t viewDepthCacheGeneration = 0;
@@ -811,6 +812,8 @@ struct Vehicle {
 
     std::vector<DisplayPart> displayLists;
     std::vector<bool> variableVisibleParts;
+    std::vector<std::size_t> visibleClickablePartIndices;
+    std::vector<std::size_t> visibleOpaquePickPartIndices;
     std::unordered_set<int> visibleReflectionTextureIndices;
     std::unordered_map<int, int> reflectionRequiredSizes;
     openbus::scripting::Vehicle variables;
@@ -1180,6 +1183,8 @@ struct Vehicle {
     void prepareFrameVisibility(RenderViewContext context) {
         TraceScope trace("render", "Vehicle::prepareFrameVisibility");
         variableVisibleParts.resize(displayLists.size());
+        visibleClickablePartIndices.clear();
+        visibleOpaquePickPartIndices.clear();
         visibleReflectionTextureIndices.clear();
         reflectionRequiredSizes.clear();
         GLint viewport[4] = {};
@@ -1203,6 +1208,14 @@ struct Vehicle {
                 if (!visible ||
                     (part.viewpoint != 0 && (part.viewpoint & viewpointMask(context)) == 0)) {
                     continue;
+                }
+                const bool lodMatches = activeLod < 0 || part.lodIndex < 0 ||
+                                        part.lodIndex == activeLod;
+                if (lodMatches && !part.mouseEvent.empty()) {
+                    visibleClickablePartIndices.push_back(partIndex);
+                }
+                if (lodMatches && part.pickOccluder) {
+                    visibleOpaquePickPartIndices.push_back(partIndex);
                 }
                 const std::vector<int>& partReflectionIndices =
                     reflectionTextureIndicesForPart(part);
@@ -1331,8 +1344,13 @@ struct Vehicle {
     const DisplayPart* pickClickable(double cursorX, double cursorY, int viewportWidth,
                                      int viewportHeight, RenderViewContext context,
                                      bool exactTriangles, const Batch** hitBatch = nullptr,
-                                     std::size_t* hitTriangle = nullptr) const {
+                                     std::size_t* hitTriangle = nullptr,
+                                     bool* boundsOverlap = nullptr) const {
         TraceScope trace("input", "Vehicle::pickClickable");
+                        (void)context;
+        if (boundsOverlap != nullptr) {
+            *boundsOverlap = false;
+        }
         if (viewportWidth <= 0 || viewportHeight <= 0) {
             return nullptr;
         }
@@ -1388,26 +1406,62 @@ struct Vehicle {
                 firstWeight * first.depth + secondWeight * second.depth + thirdWeight * third.depth;
             return depth >= 0.0;
         };
-        const auto partIsVisible = [&](const DisplayPart& part, std::size_t partIndex) {
-            const bool visible =
-                partIndex < variableVisibleParts.size()
-                    ? variableVisibleParts[partIndex]
-                    : part.visibleVariable.empty() || variables.get(part.visibleVariable) ==
-                                                          static_cast<double>(part.visibleValue);
-            return visible &&
-                   (part.viewpoint == 0 || (part.viewpoint & viewpointMask(context)) != 0) &&
-                   (activeLod < 0 || part.lodIndex < 0 || part.lodIndex == activeLod);
+        const auto cursorWithinProjectedBounds = [&](const Matrix4& modelViewPart,
+                                                     const DisplayPart& part,
+                                                     std::array<double, 4>& viewCenter,
+                                                     std::array<double, 4>& clipCenter) {
+            const std::array<double, 3> center = {part.center[0], part.center[1], part.center[2]};
+            viewCenter = transformPoint(modelViewPart, {center[0], center[1], center[2], 1.0});
+            clipCenter = transformPoint(projection, viewCenter);
+            double minimumNdcX = std::numeric_limits<double>::max();
+            double maximumNdcX = std::numeric_limits<double>::lowest();
+            double minimumNdcY = std::numeric_limits<double>::max();
+            double maximumNdcY = std::numeric_limits<double>::lowest();
+            const std::array<double, 3> halfSize = {
+                std::max(part.size[0] * 0.5, 0.0), std::max(part.size[1] * 0.5, 0.0),
+                std::max(part.size[2] * 0.5, 0.0)};
+            bool hasProjectedCorner = false;
+            for (int corner = 0; corner < 8; ++corner) {
+                const std::array<double, 4> local = {
+                    center[0] + ((corner & 1) == 0 ? -halfSize[0] : halfSize[0]),
+                    center[1] + ((corner & 2) == 0 ? -halfSize[1] : halfSize[1]),
+                    center[2] + ((corner & 4) == 0 ? -halfSize[2] : halfSize[2]), 1.0};
+                const std::array<double, 4> view = transformPoint(modelViewPart, local);
+                const std::array<double, 4> clip = transformPoint(projection, view);
+                if (!std::isfinite(clip[0]) || !std::isfinite(clip[1]) ||
+                    !std::isfinite(clip[3]) || clip[3] <= 1.0e-8) {
+                    // Retain eye-plane and invalid cases for the exact path.
+                    return true;
+                }
+                const double ndcX = clip[0] / clip[3];
+                const double ndcY = clip[1] / clip[3];
+                if (!std::isfinite(ndcX) || !std::isfinite(ndcY)) {
+                    return true;
+                }
+                minimumNdcX = std::min(minimumNdcX, ndcX);
+                maximumNdcX = std::max(maximumNdcX, ndcX);
+                minimumNdcY = std::min(minimumNdcY, ndcY);
+                maximumNdcY = std::max(maximumNdcY, ndcY);
+                hasProjectedCorner = true;
+            }
+            if (!hasProjectedCorner) {
+                return true;
+            }
+            return normalizedX >= minimumNdcX && normalizedX <= maximumNdcX &&
+                   normalizedY >= minimumNdcY && normalizedY <= maximumNdcY;
         };
         double closestOccluderDepth = std::numeric_limits<double>::max();
         if (exactTriangles) {
-            for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+            for (const std::size_t partIndex : visibleOpaquePickPartIndices) {
                 const DisplayPart& part = displayLists[partIndex];
-                if (!partIsVisible(part, partIndex)) {
-                    continue;
-                }
                 const Matrix4 modelViewPart = multiplyMatrix4(
                     modelView, multiplyMatrix4(translationMatrix({0.0, 0.0, modelOffsetZ}),
                                                animationTransformForPart(part)));
+                std::array<double, 4> viewCenter = {};
+                std::array<double, 4> clipCenter = {};
+                if (!cursorWithinProjectedBounds(modelViewPart, part, viewCenter, clipCenter)) {
+                    continue;
+                }
                 for (const Batch& batch : part.batches) {
                     if (batch.alphaMode != 0 || batch.noZwrite || batch.noZcheck) {
                         continue;
@@ -1422,41 +1476,43 @@ struct Vehicle {
                 }
             }
         }
+        std::size_t overlappingNonClickableOccluders = 0;
+        if (!exactTriangles && boundsOverlap != nullptr) {
+            for (const std::size_t partIndex : visibleOpaquePickPartIndices) {
+                const DisplayPart& part = displayLists[partIndex];
+                if (!part.mouseEvent.empty()) {
+                    continue;
+                }
+                const Matrix4 modelViewPart = multiplyMatrix4(
+                    modelView, multiplyMatrix4(translationMatrix({0.0, 0.0, modelOffsetZ}),
+                                               animationTransformForPart(part)));
+                std::array<double, 4> viewCenter = {};
+                std::array<double, 4> clipCenter = {};
+                if (cursorWithinProjectedBounds(modelViewPart, part, viewCenter, clipCenter)) {
+                    ++overlappingNonClickableOccluders;
+                }
+            }
+        }
         double closestDepth = std::numeric_limits<double>::max();
         const DisplayPart* selected = nullptr;
         const Batch* selectedBatch = nullptr;
         std::size_t selectedTriangle = 0;
-        for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+        std::size_t overlappingClickableParts = 0;
+        for (const std::size_t partIndex : visibleClickablePartIndices) {
             const DisplayPart& part = displayLists[partIndex];
-            if (part.mouseEvent.empty() || !clickablePartVisible(part, partIndex, context)) {
-                continue;
-            }
             const Matrix4 modelViewPart = multiplyMatrix4(
                 modelView, multiplyMatrix4(translationMatrix({0.0, 0.0, modelOffsetZ}),
                                            animationTransformForPart(part)));
-            const std::array<double, 3> center = {part.center[0], part.center[1], part.center[2]};
-            const std::array<double, 4> viewCenter =
-                transformPoint(modelViewPart, {center[0], center[1], center[2], 1.0});
-            const std::array<double, 4> clipCenter = transformPoint(
-                projection, {viewCenter[0], viewCenter[1], viewCenter[2], viewCenter[3]});
+            std::array<double, 4> viewCenter = {};
+            std::array<double, 4> clipCenter = {};
+            if (!cursorWithinProjectedBounds(modelViewPart, part, viewCenter, clipCenter)) {
+                continue;
+            }
+            ++overlappingClickableParts;
             if (std::abs(clipCenter[3]) <= 1.0e-8) {
                 continue;
             }
             if (!exactTriangles) {
-                const double centerX = clipCenter[0] / clipCenter[3];
-                const double centerY = clipCenter[1] / clipCenter[3];
-                const std::array<double, 4> viewEdge = transformPoint(
-                    modelViewPart, {center[0] + part.radius, center[1], center[2], 1.0});
-                const std::array<double, 4> clipEdge = transformPoint(
-                    projection, {viewEdge[0], viewEdge[1], viewEdge[2], viewEdge[3]});
-                const double radiusPixels = std::max(
-                    8.0, std::abs(clipEdge[0] / std::max(std::abs(clipEdge[3]), 1.0e-8) - centerX) *
-                             static_cast<double>(viewportWidth) * 0.5);
-                const double distanceX = (normalizedX - centerX) * viewportWidth * 0.5;
-                const double distanceY = (normalizedY - centerY) * viewportHeight * 0.5;
-                if (distanceX * distanceX + distanceY * distanceY > radiusPixels * radiusPixels) {
-                    continue;
-                }
                 const double partDepth = -viewCenter[2];
                 if (partDepth < closestDepth) {
                     closestDepth = partDepth;
@@ -1502,24 +1558,21 @@ struct Vehicle {
                 *hitTriangle = selectedTriangle;
             }
         }
+        if (boundsOverlap != nullptr && selected != nullptr) {
+            *boundsOverlap = overlappingClickableParts + overlappingNonClickableOccluders > 1;
+        }
         return selected;
     }
 
     bool hasClickableAt(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
                         RenderViewContext context) const {
-        return pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, true) !=
+        return pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, false) !=
                nullptr;
     }
 
     bool hasVisibleClickable(RenderViewContext context) const {
-        for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
-            const DisplayPart& part = displayLists[partIndex];
-            if (part.mouseEvent.empty() || !clickablePartVisible(part, partIndex, context)) {
-                continue;
-            }
-            return true;
-        }
-        return false;
+        (void)context;
+        return !visibleClickablePartIndices.empty();
     }
 
     std::uint64_t clickableRevision() const {
@@ -1528,18 +1581,20 @@ struct Vehicle {
 
     std::string mouseEventAt(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
                              RenderViewContext context) const {
-        const DisplayPart* selected =
-            pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, true);
+        bool boundsOverlap = false;
+        const DisplayPart* selected = pickClickable(cursorX, cursorY, viewportWidth, viewportHeight,
+                                                    context, false, nullptr, nullptr,
+                                                    &boundsOverlap);
+        if (selected != nullptr && boundsOverlap) {
+            selected = pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, true);
+        }
         return selected == nullptr ? std::string() : selected->mouseEvent;
     }
 
-    bool handleMouseClick(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
-                          RenderViewContext context) {
+    bool handleMouseClick(const std::string& eventName) {
         if (!scripts) {
             return false;
         }
-        const std::string eventName =
-            mouseEventAt(cursorX, cursorY, viewportWidth, viewportHeight, context);
         if (eventName.empty()) {
             return false;
         }
@@ -3536,6 +3591,12 @@ struct Vehicle {
                          [](const DisplayPart& first, const DisplayPart& second) {
                              return first.transparent < second.transparent;
                          });
+        for (DisplayPart& part : displayLists) {
+            part.pickOccluder = std::any_of(
+                part.batches.begin(), part.batches.end(), [](const Batch& batch) {
+                    return batch.alphaMode == 0 && !batch.noZwrite && !batch.noZcheck;
+                });
+        }
         opaqueDisplayCount = 0;
         while (opaqueDisplayCount < displayLists.size() &&
                !displayLists[opaqueDisplayCount].transparent) {
@@ -4335,9 +4396,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             activeMouseEvent_ = playerVehicle_->mouseEventAt(
                 pendingMouseClickX_ * framebufferScaleX, pendingMouseClickY_ * framebufferScaleY,
                 viewport[2], viewport[3], interactionContext);
-            playerVehicle_->handleMouseClick(pendingMouseClickX_ * framebufferScaleX,
-                                             pendingMouseClickY_ * framebufferScaleY, viewport[2],
-                                             viewport[3], interactionContext);
+            playerVehicle_->handleMouseClick(activeMouseEvent_);
             previousMouseInteractionX_ = pendingMouseClickX_;
             previousMouseInteractionY_ = pendingMouseClickY_;
             pendingMouseClick_ = false;
