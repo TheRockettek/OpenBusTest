@@ -221,7 +221,13 @@ void main() {
     }
     if (!uUseTextTexture && uUseNightmap) {
         vec4 nightmap = texture(uNightmap, vTexCoord.xy);
-        color.rgb = mix(color.rgb, nightmap.rgb * uColor.rgb, uNightmapStrength);
+        // OMSI nightmaps are authored as self-lit overlays: black texels mean
+        // "no emission", not an opaque black replacement for the base surface.
+        // Derive coverage from the map itself so this works for any material
+        // without relying on texture or variable names.
+        float nightmapCoverage = max(max(nightmap.r, nightmap.g), nightmap.b);
+        color.rgb = mix(color.rgb, nightmap.rgb * uColor.rgb,
+                        uNightmapStrength * nightmapCoverage);
     }
     if (!uUseTextTexture && uUseTransmap) {
         color.a = texture(uTransmap, vTexCoord.xy).a;

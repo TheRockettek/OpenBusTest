@@ -163,6 +163,13 @@ Enhanced text texture definition. The examples commonly contain a texture
 name, font name/size/style, dimensions, colour channels, and alignment/format
 flags.
 
+OpenBus currently interprets the enhanced record's horizontal alignment value
+after the RGB channels as `0` = left, `1` = center, and `2` = right. Each line
+is measured separately before glyph placement. Text surfaces are refreshed
+after scripts run only when the local `Refresh_Strings` request is nonzero and
+the associated string has changed; OpenBus consumes that request after the
+script pass. Other trailing enhanced-format flags remain model-version-specific.
+
 ### `[VFDmaxmin]`
 
 Six bounds for a variable display or viewable model region:

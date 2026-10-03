@@ -1218,16 +1218,16 @@ struct Vehicle {
         if (!scripts) {
             return;
         }
-        if (variables.get("batterymasterswitchstate") == 0.0 &&
-            scripts->hasScriptEntryPoint("trigger_batterymasterswitch")) {
-            scripts->invokeKeyBinding("batteryMasterSwitch", true);
-        }
-        // The authored ignition trigger advances StartMode and starts the
-        // dashboard test/electrical busbar sequence after the master switch.
-        if (variables.get("mmc_ignitionswitchstate") == 0.0 &&
-            scripts->hasScriptEntryPoint("trigger_mmc_ignitionswitch")) {
-            scripts->invokeKeyBinding("MMC_ignitionSwitch", true);
-        }
+        // if (variables.get("batterymasterswitchstate") == 0.0 &&
+        //     scripts->hasScriptEntryPoint("trigger_batterymasterswitch")) {
+        //     scripts->invokeKeyBinding("batteryMasterSwitch", true);
+        // }
+        // // The authored ignition trigger advances StartMode and starts the
+        // // dashboard test/electrical busbar sequence after the master switch.
+        // if (variables.get("mmc_ignitionswitchstate") == 0.0 &&
+        //     scripts->hasScriptEntryPoint("trigger_mmc_ignitionswitch")) {
+        //     scripts->invokeKeyBinding("MMC_ignitionSwitch", true);
+        // }
         logPlayerStartupState = true;
     }
 

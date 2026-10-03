@@ -130,9 +130,10 @@ change from their controlling variables without manual texture replacement.
 - [ ] Implement `[matl_bumpmap]` and complete `[matl_envmap]` material
   semantics, including strength and lighting interaction, then compare the
   dashboard binnacle and cab surfaces again.
-- [ ] Complete `[texttexture]`/`[texttexture_enh]` compatibility with authored
-  OMSI fonts, layout, alignment, and display-background/alpha semantics. The
-  current fallback rasterizer produces different dashboard and ticketer output.
+- [~] Complete `[texttexture]`/`[texttexture_enh]` compatibility with authored
+  OMSI fonts, layout, and display-background/alpha semantics. Enhanced horizontal
+  alignment and `Refresh_Strings`-gated changed-string updates are implemented;
+  the fallback rasterizer and remaining format details still differ from OMSI.
 - [ ] Complete `[registration_automatic]`, `[registration_free]`, and
   `[kmcounter_init]` runtime state so the odometer and registration displays
   match the OMSI capture rather than remaining blank or using initialization
@@ -285,9 +286,9 @@ for alignment is not mistaken for supporting it.
   runtime replacement behavior.
 - [ ] Implement model `[terrainmapping]` when terrain/material CFGs are
   supported; it is documented but currently not dispatched.
-- [ ] Finish OMSI-compatible `[texttexture]` and `[texttexture_enh]` layout,
-  font, alignment, and alpha semantics; the current runtime surface exists
-  but is not yet a complete compatibility implementation.
+- [ ] Finish OMSI-compatible `[texttexture]` and `[texttexture_enh]` font,
+  vertical/layout, and alpha semantics; horizontal alignment and refresh gating
+  are supported, but the runtime is not yet a complete compatibility implementation.
 
 #### General CFG dialects
 

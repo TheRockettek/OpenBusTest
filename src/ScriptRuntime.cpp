@@ -81,11 +81,14 @@ struct ScriptRuntime::Impl {
     std::vector<std::string> stringStack;
     std::unordered_map<int, ScriptTexture> scriptTextures;
     std::unordered_map<int, std::pair<int, int>> scriptTextureDimensions;
+    enum class TextAlignment { Left, Center, Right };
+
     struct TextTextureDefinition {
         std::string variable;
         std::string font;
         int width = 0;
         int height = 0;
+        TextAlignment alignment = TextAlignment::Left;
         std::array<std::uint8_t, 4> color = {255, 255, 255, 255};
         bool useBlockColor = false;
         std::string lastValue;
@@ -1415,13 +1418,11 @@ struct ScriptRuntime::Impl {
         if (fallbackCode < 0 || font.colorImage.width <= 0 || font.alphaImage.width <= 0) {
             return false;
         }
-        int cursorX = x;
-        int cursorY = y;
+        std::vector<std::vector<const FontGlyph*>> lines(1);
         for (std::size_t characterIndex = 0; characterIndex < value.size(); ++characterIndex) {
             const unsigned char character = static_cast<unsigned char>(value[characterIndex]);
             if (character == '@' || character == '\n') {
-                cursorX = x;
-                cursorY += font.height;
+                lines.emplace_back();
                 continue;
             }
             if (character == '\r') {
@@ -1433,48 +1434,81 @@ struct ScriptRuntime::Impl {
                 code = 176;
                 ++characterIndex;
             }
-            const FontGlyph& glyph = font.glyphs[font.glyphs[static_cast<std::size_t>(code)].defined
-                                                     ? static_cast<std::size_t>(code)
-                                                     : static_cast<std::size_t>(fallbackCode)];
-            const int glyphWidth = glyph.right - glyph.left;
-            for (int row = 0; row < font.height && glyph.top + row < font.alphaImage.height;
-                 ++row) {
-                for (int column = 0; column < glyphWidth; ++column) {
-                    const int sourceX = glyph.left + column;
-                    const int sourceY = glyph.top + row;
-                    if (sourceX < 0 || sourceX >= font.colorImage.width ||
-                        sourceX >= font.alphaImage.width || cursorX + column < 0 ||
-                        cursorY + row < 0 || cursorX + column >= texture.width ||
-                        cursorY + row >= texture.height) {
-                        continue;
-                    }
-                    const std::size_t sourceOffset =
-                        (static_cast<std::size_t>(sourceY) * font.alphaImage.width + sourceX) * 4;
-                    const std::size_t colorOffset =
-                        (static_cast<std::size_t>(sourceY) * font.colorImage.width + sourceX) * 4;
-                    const std::size_t destinationOffset =
-                        pixelOffset(texture, cursorX + column, cursorY + row);
-                    if (definition.useBlockColor) {
-                        texture.pixels[destinationOffset] = definition.color[0];
-                        texture.pixels[destinationOffset + 1] = definition.color[1];
-                        texture.pixels[destinationOffset + 2] = definition.color[2];
-                    } else {
-                        texture.pixels[destinationOffset] = font.colorImage.rgba[colorOffset];
-                        texture.pixels[destinationOffset + 1] =
-                            font.colorImage.rgba[colorOffset + 1];
-                        texture.pixels[destinationOffset + 2] =
-                            font.colorImage.rgba[colorOffset + 2];
-                    }
-                    texture.pixels[destinationOffset + 3] = font.alphaImage.rgba[sourceOffset];
+            const std::size_t glyphIndex =
+                font.glyphs[static_cast<std::size_t>(code)].defined
+                    ? static_cast<std::size_t>(code)
+                    : static_cast<std::size_t>(fallbackCode);
+            lines.back().push_back(&font.glyphs[glyphIndex]);
+        }
+
+        for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+            const std::vector<const FontGlyph*>& line = lines[lineIndex];
+            int lineWidth = 0;
+            for (std::size_t glyphIndex = 0; glyphIndex < line.size(); ++glyphIndex) {
+                lineWidth += line[glyphIndex]->right - line[glyphIndex]->left;
+                if (glyphIndex + 1 < line.size()) {
+                    lineWidth += font.horizontalGap;
                 }
             }
-            cursorX += glyphWidth + font.horizontalGap;
+            lineWidth = std::max(0, lineWidth);
+            const int remainingWidth = std::max(0, texture.width - lineWidth);
+            int cursorX = x;
+            if (definition.alignment == TextAlignment::Center) {
+                cursorX += remainingWidth / 2;
+            } else if (definition.alignment == TextAlignment::Right) {
+                cursorX += remainingWidth;
+            }
+            const int cursorY = y + static_cast<int>(lineIndex) * font.height;
+
+            for (const FontGlyph* glyph : line) {
+                const int glyphWidth = glyph->right - glyph->left;
+                for (int row = 0; row < font.height; ++row) {
+                    const int sourceY = glyph->top + row;
+                    if (sourceY < 0 || sourceY >= font.alphaImage.height ||
+                        sourceY >= font.colorImage.height) {
+                        continue;
+                    }
+                    for (int column = 0; column < glyphWidth; ++column) {
+                        const int sourceX = glyph->left + column;
+                        if (sourceX < 0 || sourceX >= font.colorImage.width ||
+                            sourceX >= font.alphaImage.width || cursorX + column < 0 ||
+                            cursorY + row < 0 || cursorX + column >= texture.width ||
+                            cursorY + row >= texture.height) {
+                            continue;
+                        }
+                        const std::size_t sourceOffset =
+                            (static_cast<std::size_t>(sourceY) * font.alphaImage.width + sourceX) *
+                            4;
+                        const std::size_t colorOffset =
+                            (static_cast<std::size_t>(sourceY) * font.colorImage.width + sourceX) *
+                            4;
+                        const std::size_t destinationOffset =
+                            pixelOffset(texture, cursorX + column, cursorY + row);
+                        if (definition.useBlockColor) {
+                            texture.pixels[destinationOffset] = definition.color[0];
+                            texture.pixels[destinationOffset + 1] = definition.color[1];
+                            texture.pixels[destinationOffset + 2] = definition.color[2];
+                        } else {
+                            texture.pixels[destinationOffset] = font.colorImage.rgba[colorOffset];
+                            texture.pixels[destinationOffset + 1] =
+                                font.colorImage.rgba[colorOffset + 1];
+                            texture.pixels[destinationOffset + 2] =
+                                font.colorImage.rgba[colorOffset + 2];
+                        }
+                        texture.pixels[destinationOffset + 3] = font.alphaImage.rgba[sourceOffset];
+                    }
+                }
+                cursorX += glyphWidth + font.horizontalGap;
+            }
         }
         ++texture.revision;
         return true;
     }
 
     void updateTextTextures() {
+        if (localState.get("refresh_strings") == 0.0) {
+            return;
+        }
         for (auto& entry : textTextureDefinitions) {
             const int index = entry.first;
             TextTextureDefinition& definition = entry.second;
@@ -1490,13 +1524,17 @@ struct ScriptRuntime::Impl {
             clearTexture(texture);
             const int maximumScale = definition.font == "sp_ticketerfont" ? 2 : 8;
             const std::shared_ptr<FontAsset> font = loadFont(definition.font);
-            if (font == nullptr || !drawBitmapFontText(texture, value, 0, 0, definition, *font)) {
+            const bool bitmapFontRendered =
+                font != nullptr && drawBitmapFontText(texture, value, 0, 0, definition, *font);
+            if (!bitmapFontRendered && !value.empty()) {
                 drawText(texture, value, 0, 0, definition.color, 0, maximumScale);
-            }
-            if (value.empty()) {
+            } else if (!bitmapFontRendered) {
                 ++texture.revision;
             }
         }
+        // Refresh_Strings is a one-shot request, consumed after the script pass
+        // even if all configured strings were unchanged.
+        localState.set("refresh_strings", 0.0);
     }
 
     bool loadScriptTexture(int index, const std::string& requestedPath) {
@@ -1937,11 +1975,31 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         if (configured.variable.empty() || configured.width <= 0 || configured.height <= 0) {
             continue;
         }
+        std::size_t pixelBytes = 0;
+        if (!openbus::rendering::checkedTextureBufferSize(
+                static_cast<std::size_t>(configured.width),
+                static_cast<std::size_t>(configured.height), 4, pixelBytes)) {
+            continue;
+        }
         if (definition.values.size() > 4) {
             try {
                 configured.useBlockColor = std::stoi(definition.values[4]) != 0;
             } catch (const std::exception&) {
                 configured.useBlockColor = false;
+            }
+        }
+        // Enhanced text records carry the horizontal alignment after RGB:
+        // 0=left, 1=center, 2=right. Older/basic records default to left.
+        if (definition.enhanced && definition.values.size() > 8) {
+            try {
+                const int alignment = std::stoi(definition.values[8]);
+                if (alignment == 1) {
+                    configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
+                } else if (alignment == 2) {
+                    configured.alignment = ScriptRuntime::Impl::TextAlignment::Right;
+                }
+            } catch (const std::exception&) {
+                configured.alignment = ScriptRuntime::Impl::TextAlignment::Left;
             }
         }
         for (std::size_t channel = 0; channel < 3 && channel + 5 < definition.values.size();
@@ -1961,9 +2019,10 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         ScriptRuntime::Impl::ScriptTexture texture;
         texture.width = configured.width;
         texture.height = configured.height;
+        texture.pixels.assign(pixelBytes, 0);
+        texture.revision = ++impl_->revisionCounter;
         impl_->textTextures[definition.slot] = std::move(texture);
     }
-    impl_->updateTextTextures();
 }
 
 bool ScriptRuntime::valid() const {

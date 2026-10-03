@@ -97,7 +97,9 @@ Two values: lightmap filename and the controlling light/brightness variable.
 ### `[matl_nightmap]`
 
 One night-texture filename. The texture is used when the relevant night
-lighting state is active.
+lighting state is active. It is treated as a self-lit overlay: black texels
+leave the base material visible, while brighter texels contribute the
+nightmap's authored colour.
 
 ### `[matl_transmap]`
 

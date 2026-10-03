@@ -220,21 +220,43 @@ int main() {
     runtime.configureScriptTextures({ModelScriptTexture{3, 4, 5, {"4", "5"}}});
     runtime.configureTextTextures({
         ModelTextTexture{0, false, {"display", "probe-font", "32", "16", "0", "255", "0", "0"}},
-        ModelTextTexture{1, false, {"bitmapdisplay", "ProbeFont", "6", "4", "1", "10", "20", "30"}}});
+        ModelTextTexture{1, true, {"bitmapdisplay", "ProbeFont", "6", "4", "1", "10", "20", "30", "2"}},
+        ModelTextTexture{2, true, {"centerdisplay", "ProbeFont", "6", "2", "1", "10", "20", "30", "1"}}});
     variables.setString("display", "HELLO\n123");
-    variables.setString("bitmapdisplay", "AC@B");
+    variables.setString("bitmapdisplay", "A@AB");
+    variables.setString("centerdisplay", "A");
     runtime.initialize();
+    ScriptRuntime::ScriptTextureSnapshot unrefreshedText;
+    const bool copiedUnrefreshedText = runtime.copyTextTexture(0, unrefreshedText);
+    bool hasUnrequestedText = false;
+    for (std::size_t offset = 3; copiedUnrefreshedText && offset < unrefreshedText.pixels.size();
+         offset += 4) {
+        hasUnrequestedText = hasUnrequestedText || unrefreshedText.pixels[offset] != 0;
+    }
+    if (!copiedUnrefreshedText || hasUnrequestedText ||
+        unrefreshedText.pixels.size() != 32U * 16U * 4U) {
+        std::cerr << "text texture was rasterized without a refresh request\n";
+        return 1;
+    }
+    variables.set("refresh_strings", 1.0);
     runtime.update(false);
+    if (variables.get("refresh_strings") != 0.0) {
+        std::cerr << "text refresh request was not consumed\n";
+        return 1;
+    }
 
     ScriptRuntime::ScriptTextureSnapshot scriptTexture;
     ScriptRuntime::ScriptTextureSnapshot textTexture;
     ScriptRuntime::ScriptTextureSnapshot bitmapTextTexture;
+    ScriptRuntime::ScriptTextureSnapshot centerTextTexture;
     if (!runtime.copyScriptTexture(3, scriptTexture) || scriptTexture.width != 4 ||
         scriptTexture.height != 5 || scriptTexture.pixels.size() != 4U * 5U * 4U ||
         !runtime.copyTextTexture(0, textTexture) || textTexture.width != 32 ||
         textTexture.height != 16 || textTexture.pixels.size() != 32U * 16U * 4U ||
         !runtime.copyTextTexture(1, bitmapTextTexture) || bitmapTextTexture.width != 6 ||
-        bitmapTextTexture.height != 4 || bitmapTextTexture.pixels.size() != 6U * 4U * 4U) {
+        bitmapTextTexture.height != 4 || bitmapTextTexture.pixels.size() != 6U * 4U * 4U ||
+        !runtime.copyTextTexture(2, centerTextTexture) || centerTextTexture.width != 6 ||
+        centerTextTexture.height != 2 || centerTextTexture.pixels.size() != 6U * 2U * 4U) {
         std::cerr << "configured texture surfaces were not created\n";
         return 1;
     }
@@ -274,8 +296,9 @@ int main() {
         std::cerr << "multiline text did not render its second line\n";
         return 1;
     }
-    const std::size_t firstBitmapPixel = 0;
-    const std::size_t secondBitmapPixel = (2U * 6U) * 4U;
+    const std::size_t firstBitmapPixel = (4U * 4U);
+    const std::size_t secondBitmapPixel = (2U * 6U + 2U) * 4U;
+    const std::size_t secondLineBPixel = (2U * 6U + 4U) * 4U;
     if (bitmapTextTexture.pixels[firstBitmapPixel] != 10 ||
         bitmapTextTexture.pixels[firstBitmapPixel + 1] != 20 ||
         bitmapTextTexture.pixels[firstBitmapPixel + 2] != 30 ||
@@ -283,29 +306,55 @@ int main() {
         bitmapTextTexture.pixels[secondBitmapPixel] != 10 ||
         bitmapTextTexture.pixels[secondBitmapPixel + 1] != 20 ||
         bitmapTextTexture.pixels[secondBitmapPixel + 2] != 30 ||
-        bitmapTextTexture.pixels[secondBitmapPixel + 3] != 128) {
-        std::cerr << "OFT glyph color, alpha, or @ line layout was not applied\n";
+        bitmapTextTexture.pixels[secondBitmapPixel + 3] != 255 ||
+        bitmapTextTexture.pixels[secondLineBPixel + 3] != 128) {
+        std::cerr << "OFT glyph color, alpha, @ line layout, or right alignment was not applied\n";
+        return 1;
+    }
+    if (centerTextTexture.pixels[(2U * 4U) + 3U] != 255 ||
+        centerTextTexture.pixels[3] != 0) {
+        std::cerr << "OFT center alignment did not position the line in the texture\n";
         return 1;
     }
     const std::uint64_t firstTextRevision = textTexture.revision;
-    variables.setString("bitmapdisplay", "01");
-    runtime.update(false);
-    ScriptRuntime::ScriptTextureSnapshot digits;
-    if (!runtime.copyTextTexture(1, digits) || digits.pixels[3] != 255 ||
-        digits.pixels[2U * 4U + 3U] != 128) {
-        std::cerr << "OFT digit glyphs were interpreted as numeric character codes\n";
-        return 1;
-    }
+    variables.set("refresh_strings", 1.0);
     runtime.update(false);
     ScriptRuntime::ScriptTextureSnapshot unchangedTextTexture;
     if (!runtime.copyTextTexture(0, unchangedTextTexture) ||
-        unchangedTextTexture.revision != firstTextRevision) {
-        std::cerr << "unchanged text texture was regenerated\n";
+        unchangedTextTexture.revision != firstTextRevision ||
+        variables.get("refresh_strings") != 0.0) {
+        std::cerr << "unchanged text was regenerated or refresh flag was not consumed\n";
+        return 1;
+    }
+
+    const std::uint64_t firstBitmapRevision = bitmapTextTexture.revision;
+    variables.setString("bitmapdisplay", "01");
+    runtime.update(false);
+    if (!runtime.copyTextTexture(1, bitmapTextTexture) ||
+        bitmapTextTexture.revision != firstBitmapRevision) {
+        std::cerr << "text changed without refresh_strings being incorrectly rasterized\n";
+        return 1;
+    }
+    variables.set("refresh_strings", 1.0);
+    runtime.update(false);
+    ScriptRuntime::ScriptTextureSnapshot digits;
+    if (!runtime.copyTextTexture(1, digits) ||
+        digits.pixels[(2U * 4U) + 3U] != 255 ||
+        digits.pixels[(4U * 4U) + 3U] != 128 ||
+        digits.revision == firstBitmapRevision) {
+        std::cerr << "OFT digit glyphs, right alignment, or refresh gating failed\n";
         return 1;
     }
     variables.setString("display", "WORLD 456");
     runtime.update(false);
     ScriptRuntime::ScriptTextureSnapshot changedTextTexture;
+    if (!runtime.copyTextTexture(0, changedTextTexture) ||
+        changedTextTexture.revision != firstTextRevision) {
+        std::cerr << "text changed without refresh_strings being incorrectly rasterized\n";
+        return 1;
+    }
+    variables.set("refresh_strings", 1.0);
+    runtime.update(false);
     if (!runtime.copyTextTexture(0, changedTextTexture) ||
         changedTextTexture.revision == firstTextRevision) {
         std::cerr << "changed text texture was not regenerated\n";
