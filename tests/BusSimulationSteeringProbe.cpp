@@ -1,4 +1,5 @@
 #include "BusSimulation.h"
+#include "MouseControlMapping.h"
 #include "Variables.h"
 
 #include <cmath>
@@ -37,6 +38,23 @@ double steeringHeading(const BodyPose& pose) {
 } // namespace
 
 int main() {
+    const auto centerMouse = openbus::input::mouseControlInputs(400.0, 300.0, 800.0, 600.0);
+    const auto topMouse = openbus::input::mouseControlInputs(400.0, 0.0, 800.0, 600.0);
+    const auto bottomMouse = openbus::input::mouseControlInputs(400.0, 600.0, 800.0, 600.0);
+    const auto leftMouse = openbus::input::mouseControlInputs(0.0, 300.0, 800.0, 600.0);
+    const auto rightMouse = openbus::input::mouseControlInputs(800.0, 300.0, 800.0, 600.0);
+    const auto partialMouse = openbus::input::mouseControlInputs(600.0, 150.0, 800.0, 600.0);
+    const auto invalidMouse = openbus::input::mouseControlInputs(400.0, 300.0, 0.0, 600.0);
+    if (centerMouse.throttle != 0.0 || centerMouse.steering != 0.0 ||
+        centerMouse.brake != 0.0 || topMouse.throttle != 1.0 || topMouse.brake != 0.0 ||
+        bottomMouse.throttle != 0.0 || bottomMouse.brake != 1.0 || leftMouse.steering != -1.0 ||
+        rightMouse.steering != 1.0 || partialMouse.throttle != 0.5 ||
+        partialMouse.steering != 0.5 || invalidMouse.throttle != 0.0 ||
+        invalidMouse.steering != 0.0 || invalidMouse.brake != 0.0) {
+        std::cerr << "mouse position did not map to throttle, steering, and brake as expected\n";
+        return 1;
+    }
+
     BusSimulation simulation(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
     const BodyPose rearStartPose = simulation.wheelPose(2);
     for (int step = 0; step < 180; ++step) {

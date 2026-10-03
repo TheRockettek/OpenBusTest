@@ -8,6 +8,7 @@
 #include "CameraMath.h"
 #include "CoreRenderer.h"
 #include "Logger.h"
+#include "MouseControlMapping.h"
 #include "ObjLoader.h"
 #include "OpenGLFunctions.h"
 #include "PerfTrace.h"
@@ -217,6 +218,7 @@ const std::vector<VehicleKeyBinding>& defaultVehicleKeyBindings() {
         {"cp_schalter_kinderwagen", GLFW_KEY_F12, 0},
         {"kw_s_plus", GLFW_KEY_LEFT_BRACKET, 0},
         {"kw_s_minus", GLFW_KEY_SLASH, 0},
+        {"mouse_control_toggle", GLFW_KEY_O, 0},
     };
     return bindings;
 }
@@ -238,6 +240,8 @@ int glfwKeyFromKeyboardConfigCode(int code) {
         return GLFW_KEY_R;
     case 20:
         return GLFW_KEY_T;
+    case 24:
+        return GLFW_KEY_O;
     case 26:
         return GLFW_KEY_LEFT_BRACKET;
     case 32:
@@ -1953,10 +1957,10 @@ struct Vehicle {
                 : std::clamp(variables.get(batch.lightmapStrengthVariable), 0.0, 1.0));
         // Script-selected emissive items illuminate even in daytime. Ordinary
         // base nightmaps still follow the host's environmental lighting.
-        const double nightlight = batch.selectedMaterialItem
-                          ? 1.0
-                          : std::max(variables.get("nightlighta"),
-                             1.0 - variables.get("envir_brightness"));
+        const double nightlight =
+            batch.selectedMaterialItem
+                ? 1.0
+                : std::max(variables.get("nightlighta"), 1.0 - variables.get("envir_brightness"));
         material.nightmapStrength = static_cast<float>(std::clamp(nightlight, 0.0, 1.0));
         material.bumpmapStrength = static_cast<float>(std::clamp(batch.bumpmapStrength, 0.0, 1.0));
         material.texcoordOffsetX = static_cast<float>(
@@ -3903,6 +3907,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     }
     glfwMakeContextCurrent(window_);
     clickableCursor_ = glfwCreateStandardCursor(GLFW_HAND_CURSOR);
+    mouseSteeringCursor_ = glfwCreateStandardCursor(GLFW_CROSSHAIR_CURSOR);
     glfwSetWindowUserPointer(window_, this);
     glfwSetScrollCallback(window_, &RenderLoop::scrollCallback);
     const char* vsyncSetting = std::getenv("OPENBUS_VSYNC");
@@ -3940,6 +3945,10 @@ RenderLoop::~RenderLoop() {
     if (clickableCursor_ != nullptr) {
         glfwDestroyCursor(clickableCursor_);
         clickableCursor_ = nullptr;
+    }
+    if (mouseSteeringCursor_ != nullptr) {
+        glfwDestroyCursor(mouseSteeringCursor_);
+        mouseSteeringCursor_ = nullptr;
     }
 
     if (window_) {
@@ -4167,11 +4176,20 @@ void RenderLoop::beginFrame() {
             const bool pressed = vehicleBindingPressed(window_, binding);
             if (pressed != previousVehicleKeyStates_[index]) {
                 keyEvents_.push_back({binding.action, pressed, glfwGetTime()});
-                if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
+                const bool mouseControlToggle =
+                    std::string_view(binding.action) == "mouse_control_toggle";
+                if (mouseControlToggle && pressed) {
+                    mouseControlEnabled_ = !mouseControlEnabled_;
+                    gameLog.Log(std::string("Mouse bus control ") +
+                                (mouseControlEnabled_ ? "enabled" : "disabled"));
+                } else if (!mouseControlToggle && playerVehicle_ != nullptr &&
+                           playerVehicle_->scripts) {
                     playerVehicle_->scripts->invokeKeyBinding(binding.action, pressed);
                 }
-                gameLog.Log(std::string("Key binding ") + binding.action +
-                            (pressed ? " pressed" : " released"));
+                if (!mouseControlToggle) {
+                    gameLog.Log(std::string("Key binding ") + binding.action +
+                                (pressed ? " pressed" : " released"));
+                }
                 previousVehicleKeyStates_[index] = pressed;
             }
             if (pressed && std::string_view(binding.action) == "horn" &&
@@ -4249,6 +4267,17 @@ void RenderLoop::beginFrame() {
         framebufferWidth_ = std::max(width, 1);
         framebufferHeight_ = std::max(height, 1);
         glfwGetCursorPos(window_, &cursorX, &cursorY);
+        if (mouseControlEnabled_) {
+            int windowWidth = 1;
+            int windowHeight = 1;
+            glfwGetWindowSize(window_, &windowWidth, &windowHeight);
+            const openbus::input::MouseControlInputs inputs = openbus::input::mouseControlInputs(
+                cursorX, cursorY, static_cast<double>(windowWidth),
+                static_cast<double>(windowHeight));
+            mouseThrottle_ = inputs.throttle;
+            mouseSteering_ = inputs.steering;
+            mouseBrake_ = inputs.brake;
+        }
         simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
             const bool isAiVehicle = vehicle.get() != playerVehicle_;
@@ -4525,9 +4554,18 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                           framebufferCursorX, framebufferCursorY, framebufferWidth_,
                                           framebufferHeight_, interactionContext);
         }
-        const bool hoveringClickable = clickableHoverCacheHit_;
-        glfwSetCursor(window_, hoveringClickable ? clickableCursor_ : nullptr);
-        if (pendingMouseClick_) {
+        const bool hoveringClickable = !mouseControlEnabled_ && clickableHoverCacheHit_;
+        GLFWcursor* cursor = mouseControlEnabled_ ? mouseSteeringCursor_
+                             : hoveringClickable  ? clickableCursor_
+                                                  : nullptr;
+        glfwSetCursor(window_, cursor);
+        if (mouseControlEnabled_) {
+            pendingMouseClick_ = false;
+            if (!activeMouseEvent_.empty() && playerVehicle_->scripts) {
+                playerVehicle_->scripts->invokeMouseRelease(activeMouseEvent_);
+            }
+            activeMouseEvent_.clear();
+        } else if (pendingMouseClick_) {
             activeMouseEvent_ = playerVehicle_->mouseEventAt(
                 pendingMouseClickX_ * framebufferScaleX, pendingMouseClickY_ * framebufferScaleY,
                 framebufferWidth_, framebufferHeight_, interactionContext);
@@ -4747,11 +4785,17 @@ bool RenderLoop::isCaptureReady() const {
 }
 
 double RenderLoop::throttle() const {
+    if (mouseControlEnabled_) {
+        return mouseThrottle_;
+    }
     const VehicleKeyBinding* binding = findVehicleKeyBinding("throttle");
     return binding != nullptr && vehicleBindingPressed(window_, *binding) ? 1.0 : 0.0;
 }
 
 double RenderLoop::steering() const {
+    if (mouseControlEnabled_) {
+        return mouseSteering_;
+    }
     const VehicleKeyBinding* leftBinding = findVehicleKeyBinding("steering_left");
     const VehicleKeyBinding* rightBinding = findVehicleKeyBinding("steering_right");
     const bool left = leftBinding != nullptr && vehicleBindingPressed(window_, *leftBinding);
@@ -4760,6 +4804,9 @@ double RenderLoop::steering() const {
 }
 
 double RenderLoop::brake() const {
+    if (mouseControlEnabled_) {
+        return mouseBrake_;
+    }
     const VehicleKeyBinding* binding = findVehicleKeyBinding("brake");
     return binding != nullptr && vehicleBindingPressed(window_, *binding) ? 1.0 : 0.0;
 }

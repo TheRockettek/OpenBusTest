@@ -863,12 +863,13 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     const std::string filename =
                         lower(std::filesystem::path(textureName).filename().string());
                     auto& states = current->materialStatesInOrder;
-                    auto target = std::find_if(states.begin(), states.end(),
-                                              [&](const ModelMaterialState& state) {
-                        return state.materialIndex == layer &&
-                               lower(std::filesystem::path(state.textureName).filename().string()) ==
-                                   filename;
-                    });
+                    auto target = std::find_if(
+                        states.begin(), states.end(), [&](const ModelMaterialState& state) {
+                            return state.materialIndex == layer &&
+                                   lower(std::filesystem::path(state.textureName)
+                                             .filename()
+                                             .string()) == filename;
+                        });
                     // A change can identify an earlier material, or introduce an
                     // unmodified base without a preceding [matl] declaration.
                     if (target == states.end()) {
@@ -893,10 +894,12 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         // or is accepted for compatibility with the source format.
         if (keyword == "matl_item") {
             ModelPart* current = requirePart();
-            if (current != nullptr && currentMaterialIndex < current->materialStatesInOrder.size()) {
+            if (current != nullptr &&
+                currentMaterialIndex < current->materialStatesInOrder.size()) {
                 ModelMaterialState& base = current->materialStatesInOrder[currentMaterialIndex];
                 if (base.textureChanges.empty()) {
-                    result.diagnostics.error(line.number, keyword, "item must follow [matl_change]");
+                    result.diagnostics.error(line.number, keyword,
+                                             "item must follow [matl_change]");
                 } else {
                     auto item = std::make_shared<ModelMaterialState>(base);
                     item->textureChanges.clear();

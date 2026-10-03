@@ -91,6 +91,10 @@ class RenderLoop {
     bool draggingCamera_ = false;
     double previousFovCursorY_ = 0.0;
     bool draggingFov_ = false;
+    bool mouseControlEnabled_ = false;
+    double mouseThrottle_ = 0.0;
+    double mouseSteering_ = 0.0;
+    double mouseBrake_ = 0.0;
     std::vector<bool> previousVehicleKeyStates_;
     std::array<bool, 10> previousViewKeyStates_ = {};
     std::array<bool, 2> previousCameraNavigationStates_ = {};
@@ -142,4 +146,5 @@ class RenderLoop {
     std::vector<std::unique_ptr<Vehicle>> vehicles_;
     Vehicle* playerVehicle_ = nullptr;
     GLFWcursor* clickableCursor_ = nullptr;
+    GLFWcursor* mouseSteeringCursor_ = nullptr;
 };

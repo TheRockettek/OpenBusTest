@@ -349,8 +349,8 @@ struct ScriptRuntime::Impl {
                 int numericCode = 0;
                 // OFT [char] stores a literal character: "0" is the digit,
                 // not codepoint zero. Keep multi-digit numeric extensions only.
-                if (values[0].size() > 1 && parseInteger(values[0], numericCode) && numericCode >= 0 &&
-                    numericCode <= 255) {
+                if (values[0].size() > 1 && parseInteger(values[0], numericCode) &&
+                    numericCode >= 0 && numericCode <= 255) {
                     code = numericCode;
                 }
                 font->glyphs[static_cast<std::size_t>(code)] = {left, right, top, true};
@@ -1389,14 +1389,12 @@ struct ScriptRuntime::Impl {
             }
             const auto rows = glyph(character);
             const std::size_t lineLength = lineLengths[static_cast<std::size_t>(line)];
-            const int lineWidth = lineLength == 0
-                                      ? 0
-                                      : static_cast<int>((lineLength - 1) * advance + 5 * scale);
+            const int lineWidth =
+                lineLength == 0 ? 0 : static_cast<int>((lineLength - 1) * advance + 5 * scale);
             const int remainingWidth = std::max(0, texture.width - lineWidth);
-            const int horizontalOffset =
-                alignment == TextAlignment::Center
-                    ? remainingWidth / 2
-                    : alignment == TextAlignment::Right ? remainingWidth : 0;
+            const int horizontalOffset = alignment == TextAlignment::Center  ? remainingWidth / 2
+                                         : alignment == TextAlignment::Right ? remainingWidth
+                                                                             : 0;
             const int originX = x + horizontalOffset + columnIndex * advance;
             const int originY = y + verticalOffset + line * 8 * lineScale;
             for (int row = 0; row < 7; ++row) {
@@ -1451,10 +1449,9 @@ struct ScriptRuntime::Impl {
                 code = 176;
                 ++characterIndex;
             }
-            const std::size_t glyphIndex =
-                font.glyphs[static_cast<std::size_t>(code)].defined
-                    ? static_cast<std::size_t>(code)
-                    : static_cast<std::size_t>(fallbackCode);
+            const std::size_t glyphIndex = font.glyphs[static_cast<std::size_t>(code)].defined
+                                               ? static_cast<std::size_t>(code)
+                                               : static_cast<std::size_t>(fallbackCode);
             lines.back().push_back(&font.glyphs[glyphIndex]);
         }
 
