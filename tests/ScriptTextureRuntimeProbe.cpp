@@ -223,7 +223,7 @@ int main() {
         ModelTextTexture{0, false, {"display", "probe-font", "32", "16", "0", "255", "0", "0"}},
         ModelTextTexture{1, true, {"bitmapdisplay", "ProbeFont", "6", "4", "0", "10", "20", "30", "2"}},
         ModelTextTexture{2, true, {"centerdisplay", "ProbeFont", "6", "8", "1", "10", "20", "30", "0"}},
-        ModelTextTexture{3, false, {"blockcolordisplay", "ProbeFont", "6", "6", "0", "10", "20", "30"}},
+        ModelTextTexture{3, true, {"blockcolordisplay", "ProbeFont", "6", "6", "0", "1", "1", "1", "0"}},
         ModelTextTexture{4, true, {"leftdisplay", "ProbeFont", "8", "4", "1", "10", "20", "30", "1"}}});
     variables.setString("display", "HELLO\n123");
     variables.setString("bitmapdisplay", "A@AB");
@@ -344,9 +344,9 @@ int main() {
         centerTextTexture.pixels[centeredFontPixel + 1] != 255 ||
         centerTextTexture.pixels[centeredFontPixel + 2] != 255 ||
         centerTextTexture.pixels[centeredFontPixel + 3] != 255 ||
-        centerTextTexture.pixels[3] != 0 || blockColorTextTexture.pixels[centeredBlockColorPixel] != 10 ||
-        blockColorTextTexture.pixels[centeredBlockColorPixel + 1] != 20 ||
-        blockColorTextTexture.pixels[centeredBlockColorPixel + 2] != 30 ||
+        centerTextTexture.pixels[3] != 0 || blockColorTextTexture.pixels[centeredBlockColorPixel] != 1 ||
+        blockColorTextTexture.pixels[centeredBlockColorPixel + 1] != 1 ||
+        blockColorTextTexture.pixels[centeredBlockColorPixel + 2] != 1 ||
         blockColorTextTexture.pixels[centeredBlockColorPixel + 3] != 255 ||
         leftTextTexture.pixels[leftAlignedPixel] != 255 ||
         leftTextTexture.pixels[leftAlignedPixel + 1] != 255 ||

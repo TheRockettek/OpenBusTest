@@ -2027,10 +2027,7 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         for (std::size_t channel = 0; channel < 3 && channel + 5 < definition.values.size();
              ++channel) {
             try {
-                double value = std::stod(definition.values[channel + 5]);
-                if (value >= 0.0 && value <= 1.0) {
-                    value *= 255.0;
-                }
+                const double value = std::stod(definition.values[channel + 5]);
                 configured.color[channel] =
                     static_cast<std::uint8_t>(std::clamp(value, 0.0, 255.0));
             } catch (const std::exception&) {

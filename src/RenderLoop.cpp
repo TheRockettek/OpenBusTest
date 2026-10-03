@@ -3142,9 +3142,9 @@ struct Vehicle {
     void loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed) {
         TraceScope trace("obj", "loadObj");
         const std::string sourceStem = lower(part.objPath.stem().string());
-        // if (sourceStem == "shadow") {
-        //     return;
-        // }
+        if (sourceStem == "shadow") {
+            return;
+        }
         static const bool verboseObjLoadLogs =
             parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_OBJ_LOAD"));
         static const bool materialBatchingEnabled =

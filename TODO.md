@@ -74,6 +74,9 @@ motion checks in both supported rendering modes.
   shader, but need representative assets and repeatable visual validation.
 - [~] Transparent and no-depth batches are sorted by render type and depth;
   validate difficult overlapping glass/decal cases and reflection passes.
+- [ ] Match the documented `[matl_alpha]` mode-2 depth behavior. The current
+  transparent pass disables depth writes, so blended surfaces do not occlude
+  later transparent geometry as OMSI specifies; add an overlap regression.
 - [~] Bump-map rendering now applies derivative-based normal-map shading from
   the configured texture and strength. Representative OMSI visual parity and
   parallax semantics still need validation.
@@ -107,8 +110,8 @@ it.
   is not rasterized or uploaded to OpenGL every frame.
 - [~] Implemented the basic `[illumination_interior]`/`[interiorlight]`
   runtime path: assigned mesh groups now receive bounded controller-driven
-  emissive colour. Positional falloff and enhanced/spotlight semantics remain
-  incomplete.
+  emissive colour. Positional falloff and `[light_enh]`, `[light_enh_2]`, and
+  `[spotlight]` runtime semantics remain incomplete.
 - [ ] Add a focused E400 display/light test using real model CFG data and
   screenshots at day/night or brightness changes.
 
@@ -157,8 +160,9 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   optional key-specific entry points. Exact transformed triangle picking is
   active, including hand-cursor hover feedback, captured `trigger_<event>` /
   `trigger_<event>_drag` callbacks, matching `trigger_<event>_off` release
-  callbacks, and the `I`-key clickable wireframe overlay; configurable key
-  maps remain incomplete.
+  callbacks, and the `I`-key clickable wireframe overlay. Scenery-object
+  mouse-event dispatch is not connected; configurable key maps remain
+  incomplete.
 - [~] BUS asset references for `[paths]`, `[passengercabin]`, `[sound_ai]`,
   `[number]`, and `[registration_list]` are normalized and retained. The
   passenger-cabin CFG is now loaded for driver/passenger positions,
@@ -206,9 +210,9 @@ by parser alignment and should not be described as supported:
 - AI/network vehicle sections, coupling/cable behavior, and articulated
   multi-body physics despite the articulated flag being parsed.
 - Non-OMSI font edge cases such as Windows-1252 glyph validation and additional
-  text alignment semantics remain. `[interiorlight]`,
-  `[light_enh]`, `[light_enh_2]`, and `[spotlight]` light emission remain
-  incomplete.
+  text alignment semantics remain. `[texttexture_enh]` alignments 3–5 and its
+  grid spacing are not implemented. `[interiorlight]`, `[light_enh]`,
+  `[light_enh_2]`, and `[spotlight]` light emission remain incomplete.
 - Configurable keyboard binding files and the complete OMSI input action map;
   the current runtime dispatches physical W/A/S/D transitions to scripts.
 - Remaining script system data providers such as route, terminus, ticket,
@@ -260,21 +264,34 @@ for alignment is not mistaken for supporting it.
 #### Bus-model configuration
 
 - [~] Complete runtime material semantics for `[matl_bumpmap]`,
-  `[matl_envmap]`, `[matl_freetex]`, `[matl_lightmap]`, `[matl_nightmap]`, and
-  `[matl_transmap]`; these records are parsed or retained, but one or more
-  shader, blending, controller, or texture-binding stages remain incomplete.
+  `[matl_envmap]`, `[matl_freetex]`, `[matl_lightmap]`, and `[matl_nightmap]`;
+  one or more shader, blending, controller, or texture-binding stages remain
+  incomplete. `[matl_transmap]` alpha sampling is implemented, but its
+  interaction with blended depth behavior still needs regression coverage.
 - [ ] Define the behavior of `[matl_item]` instead of treating it as a
   no-op material marker.
 - [ ] Apply full `[rendertype]`, `[fixed]`, and `[absheight]` semantics to
-  geometry transforms and passes; `[rendertype]` is currently only partially
-  honored and the markers do not alter all relevant runtime paths.
+  geometry transforms and passes. `[rendertype]` currently recognizes
+  `surface` and numeric values, but not the documented `presurface` and
+  `on_surface` names; the scenery-object loader also discards the value.
 - [ ] Make `[isshadow]`, `[collision_mesh]`, `[nocollision]`, and model
   `[boundingbox]` affect shadow/collision construction. They are currently
   stored or consumed for alignment while physics uses the simplified chassis
-  shape.
+  shape; additionally, `[isshadow]` meshes are skipped by `BusModelLoader`
+  rather than rendered as ground-clamped fake shadows.
 - [~] Implement basic `[illumination_interior]`/`[interiorlight]` emission,
   controller variables, and mesh assignments. `[light_enh]`, `[light_enh_2]`,
   and `[spotlight]` geometry, falloff, and render ordering remain pending.
+  Fix parsing as part of this work: `[light_enh]` currently treats its alpha
+  bitmap path as numeric, and `[light_enh_2]` drops the time constant when the
+  optional bitmap field is absent.
+- [ ] Correct `[viewpoint]` filtering: player-exterior rendering currently
+  uses mask `1 | 4`, allowing non-player-only meshes (flag 4) in the player
+  exterior view. Apply the documented mask consistently to sound playback;
+  sound viewpoint values are currently stored but not used to filter playback.
+- [ ] Apply `origin_from_mesh` from mesh transformation metadata in every
+  supported mesh path; the current origin operation is identity when that
+  metadata is unavailable.
 - [ ] Implement `[smoke]` exhaust/particle emission instead of consuming its
   nineteen fields for parser alignment.
 - [ ] Apply `[VFDmaxmin]` display bounds and `[tex_detail_factor]` to display
@@ -288,12 +305,23 @@ for alignment is not mistaken for supporting it.
   supported; it is documented but currently not dispatched.
 - [ ] Finish OMSI-compatible `[texttexture]` and `[texttexture_enh]` font,
   vertical/layout, and alpha semantics; horizontal alignment and refresh gating
-  are supported, but the runtime is not yet a complete compatibility implementation.
+  are supported, but enhanced alignments 3–5 and `grid` alignment remain
+  unsupported, and the runtime is not yet a complete compatibility
+  implementation.
 
 #### General CFG dialects
 
 - [ ] Add a surface/material CFG path for `[puddles]`, `[moisture]`,
-  `[surface]`, and `[NightMapMode]`, including wetness and surface-type data.
+  texture `[surface]`, and `[NightMapMode]`, including wetness and
+  surface-type data. Scenery `[surface]` and `[nocollision]` are currently
+  retained as flags without a runtime collision consumer; `[NightMapMode]` is
+  parsed but discarded. `[maplight]` is also consumed without generating
+  tile lightmaps.
+- [ ] Implement passenger-cabin `[noticketsale]` eligibility for ticket
+  interactions; the keyword is currently unhandled.
+- [ ] Connect scenery-object `[model]`, `[script]`, `[varnamelist]`,
+  `[stringvarnamelist]`, and `[mouseevent]` records to an active runtime, or
+  diagnose them as unsupported instead of retaining parse-only state.
 - [ ] Complete passenger-cabin behavior for `[linkToNextVeh]`,
   `[linkToPrevVeh]`, and `[stamper]`; basic `[drivpos]`, `[passpos]`,
   `[entry]`, `[exit]`, and illumination records do not yet provide passenger
