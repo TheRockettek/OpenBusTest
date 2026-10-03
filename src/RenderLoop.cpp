@@ -1012,8 +1012,7 @@ struct Vehicle {
         // X axis. Model X converts to render -Y. OpenOMSI's -amount rotation
         // therefore becomes +amount around render +Y; translation converts to
         // negative render Y.
-        const Matrix4 local = animation.type == "anim_rot"
-                                  ? rotationMatrix(amount, 0.0, 1.0, 0.0)
+        const Matrix4 local = animation.type == "anim_rot" ? rotationMatrix(amount, 0.0, 1.0, 0.0)
                               : animation.type == "anim_trans"
                                   ? translationMatrix({0.0, -amount, 0.0})
                                   : identityMatrix();
