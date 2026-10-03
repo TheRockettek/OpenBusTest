@@ -12,6 +12,11 @@ struct SoundCurvePoint {
     double y = 0.0;
 };
 
+struct SoundVolumeCurve {
+  std::string variable;
+  std::vector<SoundCurvePoint> points;
+};
+
 struct SoundTriggerDefinition {
     std::filesystem::path file;
     bool loop = false;
@@ -21,7 +26,10 @@ struct SoundTriggerDefinition {
     std::string controlVariable;
     double controlCenter = 0.0;
     std::vector<SoundCurvePoint> volumeCurve;
+    std::vector<SoundVolumeCurve> volumeCurves;
 };
+
+  class Variables;
 
 class SoundEngine {
   public:
@@ -33,6 +41,7 @@ class SoundEngine {
     void load(const std::filesystem::path& configPath);
     void setListenerPose(const std::array<double, 3>& position,
                          const std::array<double, 3>& forward, const std::array<double, 3>& up);
+    void updateLoops(const Variables& variables, int viewpoint);
     void trigger(const std::string& name, const std::filesystem::path& overrideFile = {},
                  double controlValue = 0.0);
     void stop(const std::string& name);

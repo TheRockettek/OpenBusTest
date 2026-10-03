@@ -4092,6 +4092,7 @@ void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
         playerVehicle_->updateSimulationVariables(
             simulation, playerVehicle_->variables.get("throttle"),
             playerVehicle_->variables.get("steering"), playerVehicle_->variables.get("brake"));
+        soundEngine_.updateLoops(playerVehicle_->variables, isExteriorView() ? 5 : 2);
     }
 }
 

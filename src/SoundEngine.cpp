@@ -2,6 +2,7 @@
 
 #include "ConfigurationParser.h"
 #include "Logger.h"
+#include "Variables.h"
 
 #include <AL/al.h>
 #include <AL/alc.h>
@@ -75,6 +76,28 @@ bool belongsToStartFamily(const std::filesystem::path& loopPath,
     const std::string family = startStem.substr(0, startStem.size() - suffix.size());
     return loopPath.parent_path() == startPath.parent_path() &&
            (loopStem == family + "_loop" || loopStem == family + "-loop");
+}
+
+double evaluateCurve(const std::vector<SoundCurvePoint>& points, double value) {
+    if (points.empty()) {
+        return 1.0;
+    }
+    if (value <= points.front().x) {
+        return points.front().y;
+    }
+    for (std::size_t index = 1; index < points.size(); ++index) {
+        if (value <= points[index].x) {
+            const SoundCurvePoint& left = points[index - 1];
+            const SoundCurvePoint& right = points[index];
+            const double range = right.x - left.x;
+            if (range == 0.0) {
+                return right.y;
+            }
+            const double fraction = (value - left.x) / range;
+            return left.y + fraction * (right.y - left.y);
+        }
+    }
+    return points.back().y;
 }
 
 } // namespace
@@ -347,6 +370,30 @@ struct SoundEngine::Backend {
             }
         }
     }
+
+    void updateLoop(const std::filesystem::path& path, float gain,
+                    const std::array<double, 3>& position, double maxDistance) {
+        if (gain <= 0.0f) {
+            stop(path);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            cleanupStoppedSourcesLocked();
+            for (const ActiveSource& source : active) {
+                if (source.loop && source.path == path) {
+                    alSourcef(source.source, AL_GAIN, gain);
+                    alSource3f(source.source, AL_POSITION, static_cast<float>(position[0]),
+                               static_cast<float>(position[1]), static_cast<float>(position[2]));
+                    if (maxDistance > 0.0) {
+                        alSourcef(source.source, AL_MAX_DISTANCE, static_cast<float>(maxDistance));
+                    }
+                    return;
+                }
+            }
+        }
+        play(path, true, gain, position, maxDistance);
+    }
 };
 
 SoundEngine::SoundEngine() : backend_(std::make_unique<Backend>()) {}
@@ -475,6 +522,13 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
             continue;
         }
         if (keyword == "volcurve") {
+            SoundVolumeCurve curve;
+            openbus::config::Line curveVariable;
+            if (reader.next(curveVariable) && !curveVariable.isKeyword()) {
+                curve.variable = lower(openbus::config::trim(curveVariable.text));
+            } else if (curveVariable.isKeyword()) {
+                reader.pushBack(std::move(curveVariable));
+            }
             while (reader.next(line)) {
                 if (line.isKeyword() && line.keyword() != "pnt") {
                     reader.pushBack(std::move(line));
@@ -489,15 +543,21 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
                     SoundCurvePoint point;
                     if (openbus::config::parseDouble(values[0], point.x) &&
                         openbus::config::parseDouble(values[1], point.y)) {
-                        current.volumeCurve.push_back(point);
+                        curve.points.push_back(point);
                     }
                     continue;
                 }
                 std::istringstream values(line.text);
                 SoundCurvePoint point;
                 if (values >> point.x >> point.y) {
-                    current.volumeCurve.push_back(point);
+                    curve.points.push_back(point);
                 }
+            }
+            if (!curve.points.empty()) {
+                if (current.volumeCurve.empty()) {
+                    current.volumeCurve = curve.points;
+                }
+                current.volumeCurves.push_back(std::move(curve));
             }
             updateCurrentTriggers();
         }
@@ -511,6 +571,31 @@ void SoundEngine::setListenerPose(const std::array<double, 3>& position,
                                   const std::array<double, 3>& forward,
                                   const std::array<double, 3>& up) {
     backend_->setListenerPose(position, forward, up);
+}
+
+void SoundEngine::updateLoops(const Variables& variables, int viewpoint) {
+    for (const SoundTriggerDefinition& definition : untriggeredLoopSounds_) {
+        const std::filesystem::path file =
+            definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
+        if (definition.viewpoint != 0 && definition.viewpoint != viewpoint) {
+            backend_->stop(file);
+            continue;
+        }
+
+        double gain = 1.0;
+        if (!definition.volumeCurves.empty()) {
+            for (const SoundVolumeCurve& curve : definition.volumeCurves) {
+                gain *= evaluateCurve(curve.points, variables.get(curve.variable));
+            }
+        } else if (!definition.controlVariable.empty() && definition.controlCenter > 0.0) {
+            gain = std::clamp(variables.get(definition.controlVariable) /
+                                  definition.controlCenter,
+                              0.0, 1.0);
+        }
+        gain = std::clamp(gain, 0.0, 1.0);
+        backend_->updateLoop(file, static_cast<float>(gain), definition.position,
+                             definition.maxDistance);
+    }
 }
 
 void SoundEngine::trigger(const std::string& name, const std::filesystem::path& overrideFile,
@@ -551,7 +636,7 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
         return;
     }
     if (!overrideFile.empty()) {
-        definitions = {SoundTriggerDefinition{overrideFile, false, 0, 0.0, {}, {}, 0.0, {}}};
+        definitions = {SoundTriggerDefinition{overrideFile, false, 0, 0.0, {}, {}, 0.0, {}, {}}};
     }
     if (overrideFile.empty()) {
         for (const SoundTriggerDefinition& definition : definitions) {
@@ -577,21 +662,7 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
             definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
         double gain = 1.0;
         if (!definition.volumeCurve.empty()) {
-            const auto& points = definition.volumeCurve;
-            if (controlValue <= points.front().x) {
-                gain = points.front().y;
-            } else {
-                gain = points.back().y;
-                for (std::size_t index = 1; index < points.size(); ++index) {
-                    if (controlValue <= points[index].x) {
-                        const auto& left = points[index - 1];
-                        const auto& right = points[index];
-                        const double fraction = (controlValue - left.x) / (right.x - left.x);
-                        gain = left.y + fraction * (right.y - left.y);
-                        break;
-                    }
-                }
-            }
+            gain = evaluateCurve(definition.volumeCurve, controlValue);
         }
         gain = std::clamp(gain, 0.0, 1.0);
         if (gain <= 0.0) {
