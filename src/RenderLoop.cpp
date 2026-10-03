@@ -872,6 +872,7 @@ struct Vehicle {
     std::unordered_map<int, int> reflectionRequiredSizes;
     openbus::scripting::Vehicle variables;
     std::unique_ptr<ScriptRuntime> scripts;
+    bool soundEventsEnabled = false;
     std::vector<Part> pendingParts;
     std::vector<ModelInteriorLight> interiorLights;
     AssetRequestManager* assets;
@@ -1834,7 +1835,11 @@ struct Vehicle {
         soundEngine.load(vehicleConfiguration.soundConfigPath);
         scripts = std::make_unique<ScriptRuntime>(
             vehicleConfiguration, variables, simulationState,
-            [&soundEngine](const std::string& name, const std::string& file, double controlValue) {
+            [this, &soundEngine](const std::string& name, const std::string& file,
+                                 double controlValue) {
+                if (!soundEventsEnabled) {
+                    return;
+                }
                 if (name.size() > 4 && name.compare(name.size() - 4, 4, "_off") == 0) {
                     soundEngine.stop(name.substr(0, name.size() - 4));
                 } else {
@@ -1851,6 +1856,8 @@ struct Vehicle {
         }
         scripts->update(false);
         spawn();
+        // Suppress sound callbacks caused by scripts settling initial state.
+        soundEventsEnabled = true;
     }
 
     ~Vehicle() {

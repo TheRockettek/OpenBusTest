@@ -2,6 +2,7 @@
 
 #include "ConfigurationParser.h"
 #include "Logger.h"
+#include "PerfTrace.h"
 #include "Variables.h"
 
 #include <AL/al.h>
@@ -116,11 +117,24 @@ struct SoundEngine::Backend {
         bool loop = false;
     };
 
+    struct LoopUpdate {
+        std::filesystem::path path;
+        float gain = 0.0f;
+        float pitch = 1.0f;
+        std::array<double, 3> position = {};
+        double maxDistance = 0.0;
+    };
+
     ALCdevice* device = nullptr;
     ALCcontext* context = nullptr;
     std::mutex mutex;
     std::unordered_map<std::string, std::shared_ptr<Clip>> clips;
     std::vector<ActiveSource> active;
+    std::unordered_map<std::string, ALuint> activeLoops;
+
+    static std::string sourceKey(const std::filesystem::path& path) {
+        return path.lexically_normal().string();
+    }
 
     static std::uint32_t read32(const std::vector<std::uint8_t>& data, std::size_t offset) {
         return static_cast<std::uint32_t>(data[offset]) |
@@ -224,6 +238,10 @@ struct SoundEngine::Backend {
 
     void cleanupStoppedSourcesLocked() {
         for (auto source = active.begin(); source != active.end();) {
+            if (source->loop) {
+                ++source;
+                continue;
+            }
             ALint state = AL_STOPPED;
             alGetSourcei(source->source, AL_SOURCE_STATE, &state);
             if (state == AL_STOPPED) {
@@ -236,6 +254,7 @@ struct SoundEngine::Backend {
     }
 
     std::shared_ptr<Clip> loadClipLocked(const std::filesystem::path& path) {
+        openbus::rendering::TraceScope trace("sound", "Backend::loadClipLocked");
         const std::string key = path.lexically_normal().string();
         const auto found = clips.find(key);
         if (found != clips.end()) {
@@ -273,7 +292,9 @@ struct SoundEngine::Backend {
             device = nullptr;
             return;
         }
-        alDistanceModel(AL_INVERSE_DISTANCE_CLAMPED);
+        // Do not clamp at AL_MAX_DISTANCE: OMSI's 3D field is not an audio cutoff,
+        // and clamping here makes distant sources retain a constant audible level.
+        alDistanceModel(AL_INVERSE_DISTANCE);
         alDopplerFactor(0.0f);
         alListenerf(AL_GAIN, 1.0f);
     }
@@ -300,6 +321,7 @@ struct SoundEngine::Backend {
 
     void setListenerPose(const std::array<double, 3>& position,
                          const std::array<double, 3>& forward, const std::array<double, 3>& up) {
+        openbus::rendering::TraceScope trace("sound", "Backend::setListenerPose");
         if (context == nullptr) {
             return;
         }
@@ -313,22 +335,15 @@ struct SoundEngine::Backend {
         alListenerfv(AL_ORIENTATION, orientation.data());
     }
 
-    void play(const std::filesystem::path& path, bool looped, float gain,
-              const std::array<double, 3>& position, double maxDistance) {
-        if (context == nullptr) {
-            return;
-        }
-        std::lock_guard<std::mutex> lock(mutex);
-        cleanupStoppedSourcesLocked();
+    void createSourceLocked(const std::filesystem::path& path, bool looped, float gain, float pitch,
+                            const std::array<double, 3>& position, double maxDistance) {
         const std::shared_ptr<Clip> clip = loadClipLocked(path);
         if (!clip) {
             soundLog.Log("Unable to decode sound: " + path.string());
             return;
         }
-        if (looped &&
-            std::any_of(active.begin(), active.end(), [&path](const ActiveSource& source) {
-                return source.loop && source.path == path;
-            })) {
+        const std::string key = sourceKey(path);
+        if (looped && activeLoops.contains(key)) {
             return;
         }
         ALuint source = 0;
@@ -340,9 +355,12 @@ struct SoundEngine::Backend {
         alSourcei(source, AL_BUFFER, static_cast<ALint>(clip->buffer));
         alSourcei(source, AL_LOOPING, looped ? AL_TRUE : AL_FALSE);
         alSourcef(source, AL_GAIN, gain);
+        alSourcef(source, AL_PITCH, pitch);
+        alSourcei(source, AL_SOURCE_RELATIVE, AL_FALSE);
         alSource3f(source, AL_POSITION, static_cast<float>(position[0]),
                    static_cast<float>(position[1]), static_cast<float>(position[2]));
         alSourcef(source, AL_REFERENCE_DISTANCE, 1.0f);
+        alSourcef(source, AL_ROLLOFF_FACTOR, 1.0f);
         if (maxDistance > 0.0) {
             alSourcef(source, AL_MAX_DISTANCE, static_cast<float>(maxDistance));
         }
@@ -353,6 +371,20 @@ struct SoundEngine::Backend {
             return;
         }
         active.push_back({path, source, looped});
+        if (looped) {
+            activeLoops.emplace(key, source);
+        }
+    }
+
+    void play(const std::filesystem::path& path, bool looped, float gain, float pitch,
+              const std::array<double, 3>& position, double maxDistance) {
+        openbus::rendering::TraceScope trace("sound", "Backend::play");
+        if (context == nullptr) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mutex);
+        cleanupStoppedSourcesLocked();
+        createSourceLocked(path, looped, gain, pitch, position, maxDistance);
     }
 
     void stop(const std::filesystem::path& path) {
@@ -360,39 +392,61 @@ struct SoundEngine::Backend {
             return;
         }
         std::lock_guard<std::mutex> lock(mutex);
-        for (auto source = active.begin(); source != active.end();) {
-            if (source->loop && source->path == path) {
-                alSourceStop(source->source);
-                alDeleteSources(1, &source->source);
-                source = active.erase(source);
-            } else {
-                ++source;
-            }
-        }
-    }
-
-    void updateLoop(const std::filesystem::path& path, float gain,
-                    const std::array<double, 3>& position, double maxDistance) {
-        if (gain <= 0.0f) {
-            stop(path);
+        const auto loop = activeLoops.find(sourceKey(path));
+        if (loop == activeLoops.end()) {
             return;
         }
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            cleanupStoppedSourcesLocked();
-            for (const ActiveSource& source : active) {
-                if (source.loop && source.path == path) {
-                    alSourcef(source.source, AL_GAIN, gain);
-                    alSource3f(source.source, AL_POSITION, static_cast<float>(position[0]),
-                               static_cast<float>(position[1]), static_cast<float>(position[2]));
-                    if (maxDistance > 0.0) {
-                        alSourcef(source.source, AL_MAX_DISTANCE, static_cast<float>(maxDistance));
-                    }
-                    return;
-                }
-            }
+        const ALuint sourceId = loop->second;
+        alSourceStop(sourceId);
+        alDeleteSources(1, &sourceId);
+        activeLoops.erase(loop);
+        active.erase(std::remove_if(active.begin(), active.end(), [sourceId](const ActiveSource& s) {
+                         return s.source == sourceId;
+                     }),
+                     active.end());
+    }
+
+    void updateLoops(const std::vector<LoopUpdate>& updates) {
+        openbus::rendering::TraceScope trace("sound", "Backend::updateLoops");
+        if (context == nullptr) {
+            return;
         }
-        play(path, true, gain, position, maxDistance);
+        std::lock_guard<std::mutex> lock(mutex);
+        cleanupStoppedSourcesLocked();
+        std::unordered_map<std::string, const LoopUpdate*> desired;
+        desired.reserve(updates.size());
+        for (const LoopUpdate& update : updates) {
+            desired.emplace(sourceKey(update.path), &update);
+        }
+
+        for (auto source = active.begin(); source != active.end();) {
+            if (!source->loop) {
+                ++source;
+                continue;
+            }
+            const std::string key = sourceKey(source->path);
+            const auto target = desired.find(key);
+            if (target == desired.end()) {
+                alSourceStop(source->source);
+                alDeleteSources(1, &source->source);
+                activeLoops.erase(key);
+                source = active.erase(source);
+                continue;
+            }
+            const LoopUpdate& update = *target->second;
+            alSourcef(source->source, AL_GAIN, update.gain);
+            alSourcef(source->source, AL_PITCH, update.pitch);
+            alSource3f(source->source, AL_POSITION, static_cast<float>(update.position[0]),
+                       static_cast<float>(update.position[1]),
+                       static_cast<float>(update.position[2]));
+            desired.erase(target);
+            ++source;
+        }
+        for (const auto& [key, update] : desired) {
+            (void)key;
+            createSourceLocked(update->path, true, update->gain, update->pitch,
+                               update->position, update->maxDistance);
+        }
     }
 };
 
@@ -574,11 +628,13 @@ void SoundEngine::setListenerPose(const std::array<double, 3>& position,
 }
 
 void SoundEngine::updateLoops(const Variables& variables, int viewpoint) {
+    openbus::rendering::TraceScope trace("sound", "SoundEngine::updateLoops");
+    std::vector<Backend::LoopUpdate> updates;
+    updates.reserve(untriggeredLoopSounds_.size());
     for (const SoundTriggerDefinition& definition : untriggeredLoopSounds_) {
         const std::filesystem::path file =
             definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
         if (definition.viewpoint != 0 && definition.viewpoint != viewpoint) {
-            backend_->stop(file);
             continue;
         }
 
@@ -593,13 +649,24 @@ void SoundEngine::updateLoops(const Variables& variables, int viewpoint) {
                               0.0, 1.0);
         }
         gain = std::clamp(gain, 0.0, 1.0);
-        backend_->updateLoop(file, static_cast<float>(gain), definition.position,
-                             definition.maxDistance);
+        if (gain <= 0.0) {
+            continue;
+        }
+        double pitch = 1.0;
+        if (!definition.controlVariable.empty() && definition.controlCenter > 0.0) {
+            pitch = std::clamp(variables.get(definition.controlVariable) /
+                                   definition.controlCenter,
+                               0.5, 2.0);
+        }
+        updates.push_back({file, static_cast<float>(gain), static_cast<float>(pitch),
+                           definition.position, definition.maxDistance});
     }
+    backend_->updateLoops(updates);
 }
 
 void SoundEngine::trigger(const std::string& name, const std::filesystem::path& overrideFile,
                           double controlValue) {
+    openbus::rendering::TraceScope trace("sound", "SoundEngine::trigger");
     const auto found = triggers_.find(lower(name));
     if (found == triggers_.end() && overrideFile.empty()) {
         soundLog.Log("Skipping unknown sound trigger: " + name);
@@ -673,8 +740,8 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
         soundLog.Log("Attempting sound playback: trigger=" + name + " file=" + file.string() +
                      " gain=" + std::to_string(gain) +
                      " loop=" + (definition.loop ? "true" : "false"));
-        backend_->play(file, definition.loop, static_cast<float>(gain), definition.position,
-                       definition.maxDistance);
+        backend_->play(file, definition.loop, static_cast<float>(gain), 1.0f,
+                   definition.position, definition.maxDistance);
     }
 }
 
