@@ -23,4 +23,10 @@ inline MouseControlInputs mouseControlInputs(double cursorX, double cursorY, dou
     return {std::max(0.0, -vertical), horizontal, std::max(0.0, vertical)};
 }
 
+inline double slewSteeringInput(double current, double requested, double elapsedSeconds,
+                                double maxChangePerSecond) {
+    const double maxChange = std::max(0.0, elapsedSeconds) * maxChangePerSecond;
+    return current + std::clamp(requested - current, -maxChange, maxChange);
+}
+
 } // namespace openbus::input

@@ -884,8 +884,10 @@ void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, doub
                                     double steering, double brake) const {
     variables.set("throttle", std::clamp(throttle, -1.0, 1.0));
     variables.set("brake", std::clamp(brake, 0.0, 1.0));
-    variables.set("velocity", speed());
-    variables.set("velocity_ground", speed());
+    // OMSI vehicle scripts expect velocity in km/h, while ODE reports m/s.
+    const double speedKmh = speed() * 3.6;
+    variables.set("velocity", speedKmh);
+    variables.set("velocity_ground", speedKmh);
     variables.set("steering", std::clamp(steering, -1.0, 1.0));
     variables.set("steeringangle", steeringAngle());
     double drivenWheelSpeed = 0.0;

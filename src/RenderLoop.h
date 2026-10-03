@@ -94,6 +94,7 @@ class RenderLoop {
     bool mouseControlEnabled_ = false;
     double mouseThrottle_ = 0.0;
     double mouseSteering_ = 0.0;
+    double smoothedSteering_ = 0.0;
     double mouseBrake_ = 0.0;
     std::vector<bool> previousVehicleKeyStates_;
     std::array<bool, 10> previousViewKeyStates_ = {};

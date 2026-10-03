@@ -158,6 +158,7 @@ struct VehicleKeyBinding {
 constexpr int kBindingHeld = 1;
 constexpr int kBindingShift = 2;
 constexpr int kBindingControl = 4;
+constexpr int kBindingAlt = 8;
 
 // OpenBus vehicle defaults. Cashdesk, IBIS, and rollband actions are
 // intentionally omitted until their dedicated input surfaces are wired.
@@ -197,11 +198,11 @@ const std::vector<VehicleKeyBinding>& defaultVehicleKeyBindings() {
         {"kw_s_4", GLFW_KEY_4, 0},
         {"kw_s_5", GLFW_KEY_5, 0},
         {"kw_s_6", GLFW_KEY_6, 0},
-        {"automatic_R", GLFW_KEY_R, 0},
-        {"automatic_N", GLFW_KEY_N, 0},
-        {"automatic_1", GLFW_KEY_1, 0},
-        {"automatic_2", GLFW_KEY_2, 0},
-        {"automatic_D", GLFW_KEY_D, 0},
+        {"automatic_1", GLFW_KEY_1, kBindingShift},
+        {"automatic_2", GLFW_KEY_2, kBindingShift},
+        {"automatic_D", GLFW_KEY_LEFT_SHIFT, kBindingShift},
+        {"automatic_R", GLFW_KEY_LEFT_ALT, 0},
+        {"automatic_N", GLFW_KEY_LEFT_CONTROL, kBindingControl},
         {"bus_doorfront0", GLFW_KEY_KP_DIVIDE, 0},
         {"bus_doorfront1", GLFW_KEY_KP_MULTIPLY, 0},
         {"bus_dooraft", GLFW_KEY_KP_SUBTRACT, 0},
@@ -244,6 +245,8 @@ int glfwKeyFromKeyboardConfigCode(int code) {
         return GLFW_KEY_O;
     case 26:
         return GLFW_KEY_LEFT_BRACKET;
+    case 29:
+        return GLFW_KEY_LEFT_CONTROL;
     case 32:
         return GLFW_KEY_D;
     case 33:
@@ -252,6 +255,8 @@ int glfwKeyFromKeyboardConfigCode(int code) {
         return GLFW_KEY_H;
     case 38:
         return GLFW_KEY_L;
+    case 42:
+        return GLFW_KEY_LEFT_SHIFT;
     case 48:
         return GLFW_KEY_B;
     case 49:
@@ -264,6 +269,8 @@ int glfwKeyFromKeyboardConfigCode(int code) {
         return GLFW_KEY_SLASH;
     case 55:
         return GLFW_KEY_KP_MULTIPLY;
+    case 56:
+        return GLFW_KEY_LEFT_ALT;
     case 63:
         return GLFW_KEY_F5;
     case 64:
@@ -407,8 +414,17 @@ bool vehicleBindingPressed(GLFWwindow* window, const VehicleKeyBinding& binding)
                        glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
     const bool control = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
                          glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
-    return shift == ((binding.flags & kBindingShift) != 0) &&
-           control == ((binding.flags & kBindingControl) != 0);
+    const bool alt = glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+                     glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
+    const bool primaryShift = binding.key == GLFW_KEY_LEFT_SHIFT ||
+                              binding.key == GLFW_KEY_RIGHT_SHIFT;
+    const bool primaryControl = binding.key == GLFW_KEY_LEFT_CONTROL ||
+                                binding.key == GLFW_KEY_RIGHT_CONTROL;
+    const bool primaryAlt =
+        binding.key == GLFW_KEY_LEFT_ALT || binding.key == GLFW_KEY_RIGHT_ALT;
+    return shift == (((binding.flags & kBindingShift) != 0) || primaryShift) &&
+           control == (((binding.flags & kBindingControl) != 0) || primaryControl) &&
+           alt == (((binding.flags & kBindingAlt) != 0) || primaryAlt);
 }
 
 GLenum textureAddressModeToGl(TextureAddressMode mode) {
@@ -4011,8 +4027,10 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
 void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
                                        double steering, double brake) {
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
+    smoothedSteering_ = openbus::input::slewSteeringInput(
+        smoothedSteering_, steering, std::clamp(frameTimeStep_, 0.0, 0.25), 6.0);
     if (playerVehicle_ != nullptr) {
-        playerVehicle_->updateSimulationVariables(simulation, throttle, steering, brake);
+        playerVehicle_->updateSimulationVariables(simulation, throttle, smoothedSteering_, brake);
     }
     updateScripts();
 }
@@ -4200,10 +4218,20 @@ void RenderLoop::beginFrame() {
     }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.viewInput");
+        const auto& bindings = vehicleKeyBindings();
         for (std::size_t index = 0; index < previousViewKeyStates_.size(); ++index) {
             const int key = GLFW_KEY_0 + static_cast<int>(index);
-            const bool pressed = glfwGetKey(window_, key) == GLFW_PRESS;
-            if (pressed && !previousViewKeyStates_[index]) {
+            const bool keyDown = glfwGetKey(window_, key) == GLFW_PRESS;
+            bool vehicleBindingPressedForKey = false;
+            for (std::size_t bindingIndex = 0;
+                 bindingIndex < bindings.size() && bindingIndex < previousVehicleKeyStates_.size();
+                 ++bindingIndex) {
+                if (bindings[bindingIndex].key == key && previousVehicleKeyStates_[bindingIndex]) {
+                    vehicleBindingPressedForKey = true;
+                    break;
+                }
+            }
+            if (keyDown && !previousViewKeyStates_[index] && !vehicleBindingPressedForKey) {
                 if (index == 0 || index <= vehicleCameras_.size()) {
                     cameraView_ = static_cast<int>(index);
                     viewLookYaw_ = 0.0;
@@ -4211,7 +4239,7 @@ void RenderLoop::beginFrame() {
                     gameLog.Log("Changed camera view to " + std::to_string(cameraView_));
                 }
             }
-            previousViewKeyStates_[index] = pressed;
+            previousViewKeyStates_[index] = keyDown;
         }
     }
     {
@@ -4235,7 +4263,7 @@ void RenderLoop::beginFrame() {
     }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.debugInput");
-        const bool reflectionDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_R) == GLFW_PRESS;
+        const bool reflectionDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_F10) == GLFW_PRESS;
         if (reflectionDebugKeyPressed && !previousReflectionDebugKeyState_) {
             reflectionDebugOverlay_ = !reflectionDebugOverlay_;
             gameLog.Log(std::string("Reflection texture overlay ") +
@@ -4662,8 +4690,12 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         }
     }
     if (!renderingReflection_ && playerVehicle_ && glfwGetTime() - lastStatsTitleTime_ > 0.25) {
+        const double speedMetresPerSecond = simulation.speed();
+        const long speedMph = std::lround(speedMetresPerSecond * 2.2369362921);
+        const long speedKmh = std::lround(speedMetresPerSecond * 3.6);
         std::ostringstream title;
-        title << "OpenBus - " << playerVehicle_->renderedTriangles() << " triangles";
+        title << "OpenBus - " << speedMph << " mph / " << speedKmh << " km/h - "
+              << playerVehicle_->renderedTriangles() << " triangles";
         glfwSetWindowTitle(window_, title.str().c_str());
         lastStatsTitleTime_ = glfwGetTime();
     }
@@ -4820,7 +4852,7 @@ double RenderLoop::physicsWheelTorque() const {
 }
 
 double RenderLoop::physicsSteering() const {
-    return playerVehicle_ == nullptr ? steering() : playerVehicle_->variables.get("steering");
+    return playerVehicle_ == nullptr ? smoothedSteering_ : playerVehicle_->variables.get("steering");
 }
 
 double RenderLoop::physicsBrake() const {

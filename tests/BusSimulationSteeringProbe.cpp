@@ -45,13 +45,17 @@ int main() {
     const auto rightMouse = openbus::input::mouseControlInputs(800.0, 300.0, 800.0, 600.0);
     const auto partialMouse = openbus::input::mouseControlInputs(600.0, 150.0, 800.0, 600.0);
     const auto invalidMouse = openbus::input::mouseControlInputs(400.0, 300.0, 0.0, 600.0);
+    const double steeringStep = openbus::input::slewSteeringInput(0.0, 1.0, 0.1, 6.0);
+    const double steeringReversal = openbus::input::slewSteeringInput(1.0, -1.0, 0.1, 6.0);
     if (centerMouse.throttle != 0.0 || centerMouse.steering != 0.0 ||
         centerMouse.brake != 0.0 || topMouse.throttle != 1.0 || topMouse.brake != 0.0 ||
         bottomMouse.throttle != 0.0 || bottomMouse.brake != 1.0 || leftMouse.steering != -1.0 ||
         rightMouse.steering != 1.0 || partialMouse.throttle != 0.5 ||
         partialMouse.steering != 0.5 || invalidMouse.throttle != 0.0 ||
-        invalidMouse.steering != 0.0 || invalidMouse.brake != 0.0) {
-        std::cerr << "mouse position did not map to throttle, steering, and brake as expected\n";
+        invalidMouse.steering != 0.0 || invalidMouse.brake != 0.0 ||
+        std::abs(steeringStep - 0.6) > 1.0e-9 ||
+        std::abs(steeringReversal - 0.4) > 1.0e-9) {
+        std::cerr << "input mapping or steering rate limiting produced an unexpected value\n";
         return 1;
     }
 
@@ -90,6 +94,12 @@ int main() {
     const double leftHeight = simulation.wheelPose(0).position[2];
     openbus::scripting::Vehicle variables;
     simulation.updateVariables(variables, 0.6, -1.0, 0.0);
+    const double expectedSpeedKmh = simulation.speed() * 3.6;
+    if (std::abs(variables.get("velocity") - expectedSpeedKmh) > 1.0e-9 ||
+        std::abs(variables.get("velocity_ground") - expectedSpeedKmh) > 1.0e-9) {
+        std::cerr << "script velocity variables were not expressed in km/h\n";
+        return 1;
+    }
     if (!variables.has("axle_steering_0_l") ||
         std::abs(variables.get("axle_steering_0_l")) < 1.0e-3) {
         std::cerr << "axle_steering_0_l was not populated from the steering joint\n";
