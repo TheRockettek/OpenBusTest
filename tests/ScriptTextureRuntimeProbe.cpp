@@ -147,6 +147,10 @@ int main() {
                  "end\n"
                  "function trigger_ticketergimble_drag()\n"
                  "set_local_var(\"ticketer_drag_seen\", 1)\n"
+                 "local value = get_local_var(\"ticketer_pos\") + get_sys_var(\"mouse_y\") / 250\n"
+                 "if value < -0.2 then value = -0.2 end\n"
+                 "if value > 1.5 then value = 1.5 end\n"
+                 "set_local_var(\"ticketer_pos\", value)\n"
                  "end\n"
                  "function trigger_kw_m_enginestart()\n"
                  "set_local_var(\"key_binding_seen\", 1)\n"
@@ -195,8 +199,19 @@ int main() {
     if (variables.get("ticketer_drag_seen") != 1.0 ||
         variables.get("mouse_drag_x") != 3.0 || variables.get("mouse_drag_y") != -2.0 ||
         simulation.sharedVariables().get("mouse_x") != 3.0 ||
-        simulation.sharedVariables().get("mouse_y") != 2.0) {
+        simulation.sharedVariables().get("mouse_y") != -2.0) {
         std::cerr << "ticketer vertical drag did not use the expected Y direction\n";
+        return 1;
+    }
+    variables.set("ticketer_pos", 0.0);
+    runtime.invokeMouseDrag("TicketerGimble", 0.0, -500.0, 120.0, 80.0);
+    if (variables.get("ticketer_pos") != -0.2) {
+        std::cerr << "upward ticketer drag did not clamp at the lower limit\n";
+        return 1;
+    }
+    runtime.invokeMouseDrag("TicketerGimble", 0.0, 500.0, 120.0, 80.0);
+    if (variables.get("ticketer_pos") != 1.5) {
+        std::cerr << "downward ticketer drag did not clamp at the upper limit\n";
         return 1;
     }
 

@@ -26,7 +26,9 @@ DayOfYear
 A couple of default sound cubes use this to mute themselves at certain times of year.
 
 mouse_x & mouse_y
-Position of the cursor on the screen (pixels) for mouse drag interactions.
+Mouse drag deltas in pixels for script interactions. `mouse_x` is positive to
+the right; `mouse_y` is positive down, matching the screen-space convention
+used by the renderer and authored OMSI drag handlers.
 
 PrecipType
 What kind of water is falling from the sky?

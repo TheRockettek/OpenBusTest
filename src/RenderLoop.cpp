@@ -978,13 +978,17 @@ struct Vehicle {
                 operationMatrix = translationMatrix(operation.value);
                 break;
             case ModelAnimationOriginType::RotationX:
-                operationMatrix = rotationMatrix(operation.value[0], 0.0, -1.0, 0.0);
+                // OpenOMSI applies -angle around model X. Model X converts to
+                // render -Y, which is equivalent to +angle around render +Y.
+                operationMatrix = rotationMatrix(operation.value[0], 0.0, 1.0, 0.0);
                 break;
             case ModelAnimationOriginType::RotationY:
-                operationMatrix = rotationMatrix(operation.value[0], 1.0, 0.0, 0.0);
+                // Model Y converts to render +X.
+                operationMatrix = rotationMatrix(-operation.value[0], 1.0, 0.0, 0.0);
                 break;
             case ModelAnimationOriginType::RotationZ:
-                operationMatrix = rotationMatrix(operation.value[0], 0.0, 0.0, 1.0);
+                // Model Z converts directly to render +Z.
+                operationMatrix = rotationMatrix(-operation.value[0], 0.0, 0.0, 1.0);
                 break;
             case ModelAnimationOriginType::FromMesh:
                 if (animation.hasMeshTransform) {
@@ -1004,9 +1008,14 @@ struct Vehicle {
         const Matrix4 origin = animationOriginMatrix(animation);
         Matrix4 inverseOrigin = identityMatrix();
         invertAffineMatrix(origin, inverseOrigin);
-        const Matrix4 local = animation.type == "anim_rot" ? rotationMatrix(amount, 0.0, -1.0, 0.0)
+        // anim_rot and anim_trans both use the animation frame's local model
+        // X axis. Model X converts to render -Y. OpenOMSI's -amount rotation
+        // therefore becomes +amount around render +Y; translation converts to
+        // negative render Y.
+        const Matrix4 local = animation.type == "anim_rot"
+                                  ? rotationMatrix(amount, 0.0, 1.0, 0.0)
                               : animation.type == "anim_trans"
-                                  ? translationMatrix({0.0, amount, 0.0})
+                                  ? translationMatrix({0.0, -amount, 0.0})
                                   : identityMatrix();
         return multiplyMatrix4(multiplyMatrix4(origin, local), inverseOrigin);
     }

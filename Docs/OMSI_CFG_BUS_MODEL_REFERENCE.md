@@ -279,6 +279,13 @@ origin_rot_y -> render +X
 origin_rot_z -> render +Z
 ```
 
+OpenOMSI evaluates these rotations with a negative angle. Because the
+render-coordinate conversion is handed, the equivalent OpenBus operations are
+positive angle around render `+Y`, negative angle around render `+X`, and
+negative angle around render `+Z`, respectively. Both
+`anim_rot` and `anim_trans` use the animation frame's source X axis; this is
+render `-Y`, so animated translation is negative render Y.
+
 Each `[newanim]` appends one animation record in configuration order. Its
 `origin_trans`, `origin_rot_x`, `origin_rot_y`, `origin_rot_z`, and
 `origin_from_mesh` commands are also retained and composed in the order in

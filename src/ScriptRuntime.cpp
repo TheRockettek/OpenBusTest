@@ -2150,17 +2150,15 @@ void ScriptRuntime::invokeMouseDrag(const std::string& eventName, double deltaX,
         return;
     }
     const std::string normalized = lower(eventName);
-    // GLFW reports cursor Y increasing down the window, while the original
-    // E400MMC TicketerGimble handler expects positive mouse_y upward.
-    const double scriptDeltaY = normalized == "ticketergimble" ? -deltaY : deltaY;
     impl_->localState.set("mouse_drag_x", deltaX);
     impl_->localState.set("mouse_drag_y", deltaY);
     impl_->localState.set("mouse_cursor_x", cursorX);
     impl_->localState.set("mouse_cursor_y", cursorY);
-    // E400/OMSI drag handlers apply their own axis sign (for example, the two
-    // paired cab windows use mouse_x / 500 and mouse_x / -500).
+    // GLFW and the authored OMSI drag handlers use screen-space Y deltas: positive
+    // means moving down. Keep that convention unchanged for every mouse event;
+    // object scripts provide any control-specific scale or sign themselves.
     impl_->sharedState.sharedVariables().set("mouse_x", deltaX);
-    impl_->sharedState.sharedVariables().set("mouse_y", scriptDeltaY);
+    impl_->sharedState.sharedVariables().set("mouse_y", deltaY);
     impl_->localState.setString("mouse_event", normalized);
     if (impl_->nativeBackend || impl_->state) {
         impl_->floatStack.clear();
