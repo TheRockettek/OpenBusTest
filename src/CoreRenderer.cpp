@@ -45,6 +45,9 @@ struct Uniforms {
     GLint bumpmapStrength = -1;
     GLint interiorLightStrength = -1;
     GLint interiorLightColor = -1;
+    GLint lightDirection = -1;
+    GLint ambientLight = -1;
+    GLint diffuseLight = -1;
     GLint texcoordOffset = -1;
     GLint flipTextureY = -1;
     std::array<GLint, MAX_MATERIAL_TEXTURES> materialFlipTextureY = {};
@@ -136,7 +139,9 @@ void main() {
     float textureY = uFlipTextureY ? 1.0 - aTexCoord.y : aTexCoord.y;
     vTexCoord = vec3(aTexCoord.x + uTexcoordOffset.x, textureY + uTexcoordOffset.y,
                      aTexCoord.z);
-    vNormal = mat3(uModelView) * aNormal;
+    // Normals must use the inverse-transpose so animated parts with non-uniform
+    // scale still receive lighting from the correct surface direction.
+    vNormal = mat3(transpose(inverse(uModelView))) * aNormal;
     vViewPosition = viewPosition.xyz;
     gl_Position = uProjection * viewPosition;
 }
@@ -147,6 +152,9 @@ const char* modelFragmentShader = R"GLSL(
 in vec3 vTexCoord;
 in vec3 vNormal;
 in vec3 vViewPosition;
+uniform vec3 uLightDirection;
+uniform float uAmbientLight;
+uniform float uDiffuseLight;
 uniform sampler2D uTexture;
 uniform sampler2DArray uTextureArray;
 uniform sampler2D uLightmap;
@@ -183,21 +191,29 @@ void main() {
     } else if (uUseTexture) {
         color *= texture(uTexture, vTexCoord.xy);
     }
-    if (uUseLightmap) {
+    if (!uUseTextTexture && !uUseFreeTexture) {
+        vec3 surfaceNormal = normalize(vNormal);
+        float diffuse = max(dot(surfaceNormal, normalize(uLightDirection)), 0.0);
+        color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
+    }
+    // Text textures already contain their final glyph colour and alpha.  Some
+    // dashboard materials attach a white lightmap for the surrounding display;
+    // applying it to the transparent text background turns the whole quad white.
+    if (!uUseTextTexture && uUseLightmap) {
         vec4 lightmap = texture(uLightmap, vTexCoord.xy);
         // OMSI lightmaps are emissive contributions: black leaves the base
         // material unchanged while coloured pixels illuminate indicators and
         // switch legends. Multiplication incorrectly made those pixels darker.
         color.rgb = clamp(color.rgb + lightmap.rgb * uLightmapStrength, 0.0, 1.0);
     }
-    if (uUseNightmap) {
+    if (!uUseTextTexture && uUseNightmap) {
         vec4 nightmap = texture(uNightmap, vTexCoord.xy);
         color.rgb = mix(color.rgb, color.rgb * nightmap.rgb, uNightmapStrength);
     }
-    if (uUseTransmap) {
+    if (!uUseTextTexture && uUseTransmap) {
         color.a = texture(uTransmap, vTexCoord.xy).a;
     }
-    if (uUseBumpmap) {
+    if (!uUseTextTexture && uUseBumpmap) {
         vec3 surfaceNormal = normalize(vNormal);
         vec3 positionDerivativeX = dFdx(vViewPosition);
         vec3 positionDerivativeY = dFdy(vViewPosition);
@@ -227,7 +243,7 @@ void main() {
             }
         }
     }
-    if (uUseInteriorLight) {
+    if (!uUseTextTexture && uUseInteriorLight) {
         color.rgb = clamp(color.rgb + uInteriorLightColor * uInteriorLightStrength, 0.0, 1.0);
     }
     if (uAlphaMode == 1 && color.a < 0.5) {
@@ -243,9 +259,13 @@ void main() {
 const char* materialFragmentShader = R"GLSL(
 #version 330 core
 in vec3 vTexCoord;
+in vec3 vNormal;
 uniform vec4 uMaterialColors[128];
 uniform sampler2D uMaterialTextures[8];
 uniform bool uFlipTextureY[8];
+uniform vec3 uLightDirection;
+uniform float uAmbientLight;
+uniform float uDiffuseLight;
 out vec4 fragmentColor;
 void main() {
     int materialIndex = clamp(int(vTexCoord.z + 0.5), 0, 127);
@@ -271,6 +291,9 @@ void main() {
     } else {
         color *= texture(uMaterialTextures[7], textureCoord);
     }
+    vec3 surfaceNormal = normalize(vNormal);
+    float diffuse = max(dot(surfaceNormal, normalize(uLightDirection)), 0.0);
+    color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
     fragmentColor = color;
 }
 )GLSL";
@@ -422,6 +445,9 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.bumpmapStrength = pglGetUniformLocation(program, "uBumpmapStrength");
         uniforms.interiorLightStrength = pglGetUniformLocation(program, "uInteriorLightStrength");
         uniforms.interiorLightColor = pglGetUniformLocation(program, "uInteriorLightColor");
+        uniforms.lightDirection = pglGetUniformLocation(program, "uLightDirection");
+        uniforms.ambientLight = pglGetUniformLocation(program, "uAmbientLight");
+        uniforms.diffuseLight = pglGetUniformLocation(program, "uDiffuseLight");
         uniforms.texcoordOffset = pglGetUniformLocation(program, "uTexcoordOffset");
         uniforms.flipTextureY = pglGetUniformLocation(program, "uFlipTextureY");
         uniforms.useMaterialColors = pglGetUniformLocation(program, "uUseMaterialColors");
@@ -440,6 +466,9 @@ Uniforms materialUniformsFor(GLuint program) {
     uniforms.projection = pglGetUniformLocation(program, "uProjection");
     uniforms.modelView = pglGetUniformLocation(program, "uModelView");
     uniforms.materialColors = pglGetUniformLocation(program, "uMaterialColors");
+    uniforms.lightDirection = pglGetUniformLocation(program, "uLightDirection");
+    uniforms.ambientLight = pglGetUniformLocation(program, "uAmbientLight");
+    uniforms.diffuseLight = pglGetUniformLocation(program, "uDiffuseLight");
     for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
         uniforms.materialFlipTextureY[index] = pglGetUniformLocation(
             program, ("uFlipTextureY[" + std::to_string(index) + "]").c_str());
@@ -648,6 +677,9 @@ bool initializeCoreRenderer() {
         pglEnableVertexAttribArray(1);
         pglBindVertexArray(0);
         useProgram(modelProgram);
+        pglUniform3f(modelUniforms.lightDirection, -0.35f, 0.5f, 0.8f);
+        pglUniform1f(modelUniforms.ambientLight, 0.58f);
+        pglUniform1f(modelUniforms.diffuseLight, 0.42f);
         pglUniform1i(modelUniforms.texture, 0);
         pglUniform1i(modelUniforms.textureArray, 0);
         pglUniform1i(modelUniforms.lightmap, 1);
@@ -657,6 +689,9 @@ bool initializeCoreRenderer() {
         pglUniform1i(modelUniforms.freeTexture, 4);
         pglUniform1i(modelUniforms.textTexture, 5);
         useProgram(materialProgram);
+        pglUniform3f(materialUniforms.lightDirection, -0.35f, 0.5f, 0.8f);
+        pglUniform1f(materialUniforms.ambientLight, 0.58f);
+        pglUniform1f(materialUniforms.diffuseLight, 0.42f);
         for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
             pglUniform1i(materialUniforms.materialTextures[index], static_cast<GLint>(index));
         }

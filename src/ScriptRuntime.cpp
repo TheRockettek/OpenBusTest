@@ -953,6 +953,10 @@ struct ScriptRuntime::Impl {
             localState.declareString(variable);
         }
         if (!configuration.selectedRegistration.empty()) {
+            // OMSI uses both names for the configured vehicle registration.  The
+            // model text texture commonly references `ident`, while scripts and
+            // other model parts commonly reference `number`.
+            localState.setString("ident", configuration.selectedRegistration);
             localState.setString("number", configuration.selectedRegistration);
         }
 
