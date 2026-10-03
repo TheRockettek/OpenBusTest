@@ -2,6 +2,7 @@
 #include "Logger.h"
 #include "osc/OscConverter.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -220,11 +221,15 @@ int main() {
     runtime.configureScriptTextures({ModelScriptTexture{3, 4, 5, {"4", "5"}}});
     runtime.configureTextTextures({
         ModelTextTexture{0, false, {"display", "probe-font", "32", "16", "0", "255", "0", "0"}},
-        ModelTextTexture{1, true, {"bitmapdisplay", "ProbeFont", "6", "4", "1", "10", "20", "30", "2"}},
-        ModelTextTexture{2, true, {"centerdisplay", "ProbeFont", "6", "2", "1", "10", "20", "30", "1"}}});
+        ModelTextTexture{1, true, {"bitmapdisplay", "ProbeFont", "6", "4", "0", "10", "20", "30", "2"}},
+        ModelTextTexture{2, true, {"centerdisplay", "ProbeFont", "6", "8", "1", "10", "20", "30", "0"}},
+        ModelTextTexture{3, false, {"blockcolordisplay", "ProbeFont", "6", "6", "0", "10", "20", "30"}},
+        ModelTextTexture{4, true, {"leftdisplay", "ProbeFont", "8", "4", "1", "10", "20", "30", "1"}}});
     variables.setString("display", "HELLO\n123");
     variables.setString("bitmapdisplay", "A@AB");
     variables.setString("centerdisplay", "A");
+    variables.setString("blockcolordisplay", "A");
+    variables.setString("leftdisplay", "A");
     runtime.initialize();
     ScriptRuntime::ScriptTextureSnapshot unrefreshedText;
     const bool copiedUnrefreshedText = runtime.copyTextTexture(0, unrefreshedText);
@@ -249,6 +254,8 @@ int main() {
     ScriptRuntime::ScriptTextureSnapshot textTexture;
     ScriptRuntime::ScriptTextureSnapshot bitmapTextTexture;
     ScriptRuntime::ScriptTextureSnapshot centerTextTexture;
+    ScriptRuntime::ScriptTextureSnapshot blockColorTextTexture;
+    ScriptRuntime::ScriptTextureSnapshot leftTextTexture;
     if (!runtime.copyScriptTexture(3, scriptTexture) || scriptTexture.width != 4 ||
         scriptTexture.height != 5 || scriptTexture.pixels.size() != 4U * 5U * 4U ||
         !runtime.copyTextTexture(0, textTexture) || textTexture.width != 32 ||
@@ -256,7 +263,11 @@ int main() {
         !runtime.copyTextTexture(1, bitmapTextTexture) || bitmapTextTexture.width != 6 ||
         bitmapTextTexture.height != 4 || bitmapTextTexture.pixels.size() != 6U * 4U * 4U ||
         !runtime.copyTextTexture(2, centerTextTexture) || centerTextTexture.width != 6 ||
-        centerTextTexture.height != 2 || centerTextTexture.pixels.size() != 6U * 2U * 4U) {
+        centerTextTexture.height != 8 || centerTextTexture.pixels.size() != 6U * 8U * 4U ||
+        !runtime.copyTextTexture(3, blockColorTextTexture) || blockColorTextTexture.width != 6 ||
+        blockColorTextTexture.height != 6 || blockColorTextTexture.pixels.size() != 6U * 6U * 4U ||
+        !runtime.copyTextTexture(4, leftTextTexture) || leftTextTexture.width != 8 ||
+        leftTextTexture.height != 4 || leftTextTexture.pixels.size() != 8U * 4U * 4U) {
         std::cerr << "configured texture surfaces were not created\n";
         return 1;
     }
@@ -296,7 +307,7 @@ int main() {
         std::cerr << "multiline text did not render its second line\n";
         return 1;
     }
-    const std::size_t firstBitmapPixel = (4U * 4U);
+    const std::size_t firstBitmapPixel = 4U * 4U;
     const std::size_t secondBitmapPixel = (2U * 6U + 2U) * 4U;
     const std::size_t secondLineBPixel = (2U * 6U + 4U) * 4U;
     if (bitmapTextTexture.pixels[firstBitmapPixel] != 10 ||
@@ -311,9 +322,52 @@ int main() {
         std::cerr << "OFT glyph color, alpha, @ line layout, or right alignment was not applied\n";
         return 1;
     }
-    if (centerTextTexture.pixels[(2U * 4U) + 3U] != 255 ||
-        centerTextTexture.pixels[3] != 0) {
-        std::cerr << "OFT center alignment did not position the line in the texture\n";
+    const std::size_t centeredFontPixel = (3U * 6U + 2U) * 4U;
+    const std::size_t centeredBlockColorPixel = (2U * 6U + 2U) * 4U;
+    const std::size_t leftAlignedPixel = (1U * 8U) * 4U;
+    int blockMinX = 6;
+    int blockMinY = 6;
+    int blockMaxX = -1;
+    int blockMaxY = -1;
+    for (int y = 0; y < blockColorTextTexture.height; ++y) {
+        for (int x = 0; x < blockColorTextTexture.width; ++x) {
+            const std::size_t offset = (static_cast<std::size_t>(y) * 6U + x) * 4U;
+            if (blockColorTextTexture.pixels[offset + 3] != 0) {
+                blockMinX = std::min(blockMinX, x);
+                blockMinY = std::min(blockMinY, y);
+                blockMaxX = std::max(blockMaxX, x);
+                blockMaxY = std::max(blockMaxY, y);
+            }
+        }
+    }
+    if (centerTextTexture.pixels[centeredFontPixel] != 255 ||
+        centerTextTexture.pixels[centeredFontPixel + 1] != 255 ||
+        centerTextTexture.pixels[centeredFontPixel + 2] != 255 ||
+        centerTextTexture.pixels[centeredFontPixel + 3] != 255 ||
+        centerTextTexture.pixels[3] != 0 || blockColorTextTexture.pixels[centeredBlockColorPixel] != 10 ||
+        blockColorTextTexture.pixels[centeredBlockColorPixel + 1] != 20 ||
+        blockColorTextTexture.pixels[centeredBlockColorPixel + 2] != 30 ||
+        blockColorTextTexture.pixels[centeredBlockColorPixel + 3] != 255 ||
+        leftTextTexture.pixels[leftAlignedPixel] != 255 ||
+        leftTextTexture.pixels[leftAlignedPixel + 1] != 255 ||
+        leftTextTexture.pixels[leftAlignedPixel + 2] != 255 ||
+        leftTextTexture.pixels[leftAlignedPixel + 3] != 255 ||
+        leftTextTexture.pixels[(1U * 8U + 3U) * 4U + 3U] != 0) {
+        std::cerr << "OMSI text layout/color mismatch: centered font RGBA="
+                  << static_cast<int>(centerTextTexture.pixels[centeredFontPixel]) << ','
+                  << static_cast<int>(centerTextTexture.pixels[centeredFontPixel + 1]) << ','
+                  << static_cast<int>(centerTextTexture.pixels[centeredFontPixel + 2]) << ','
+                  << static_cast<int>(centerTextTexture.pixels[centeredFontPixel + 3])
+                  << ", block-color RGBA="
+                  << static_cast<int>(blockColorTextTexture.pixels[centeredBlockColorPixel])
+                  << ','
+                  << static_cast<int>(blockColorTextTexture.pixels[centeredBlockColorPixel + 1])
+                  << ','
+                  << static_cast<int>(blockColorTextTexture.pixels[centeredBlockColorPixel + 2])
+                  << ','
+                  << static_cast<int>(blockColorTextTexture.pixels[centeredBlockColorPixel + 3])
+                  << ", block bounds=" << blockMinX << ',' << blockMinY << "-" << blockMaxX
+                  << ',' << blockMaxY << ", revision=" << blockColorTextTexture.revision << '\n';
         return 1;
     }
     const std::uint64_t firstTextRevision = textTexture.revision;
@@ -339,8 +393,8 @@ int main() {
     runtime.update(false);
     ScriptRuntime::ScriptTextureSnapshot digits;
     if (!runtime.copyTextTexture(1, digits) ||
-        digits.pixels[(2U * 4U) + 3U] != 255 ||
-        digits.pixels[(4U * 4U) + 3U] != 128 ||
+        digits.pixels[(1U * 6U + 2U) * 4U + 3U] != 255 ||
+        digits.pixels[(1U * 6U + 4U) * 4U + 3U] != 128 ||
         digits.revision == firstBitmapRevision) {
         std::cerr << "OFT digit glyphs, right alignment, or refresh gating failed\n";
         return 1;

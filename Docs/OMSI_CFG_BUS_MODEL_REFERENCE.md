@@ -172,12 +172,15 @@ height in pixels, followed by display/alpha options.
 ### `[texttexture]`
 
 Defines a named text-rendering surface. Common fields include name, font,
-width, height, alignment, colour, and transparency/format flags.
+width, height, font-colour mode, and RGB colour. Basic text is centered
+horizontally; OpenBus vertically centers the rendered line block in the surface.
 
 ### `[texttexture_enh]`
 
 Enhanced text texture definition. It commonly adds font style/size, colour
-channels, and formatting flags to the basic text texture record.
+channels, and formatting flags to the basic text texture record. Its horizontal
+alignment value is `0` = center, `1` = left, and `2` = right. Font-colour mode
+`0` uses the configured RGB colour; `1` preserves the font's colour image.
 
 ### `[useTextTexture]`
 

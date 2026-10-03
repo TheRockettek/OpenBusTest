@@ -146,14 +146,17 @@ blocks define displays such as LED/VFD signs.
 
 ### `[texttexture]`
 
-Defines a named text-rendering surface. Common values include:
+Defines a named text-rendering surface. The runtime creates a transparent
+texture and writes the variable's text using the internal font name. Basic
+text textures are horizontally center-aligned. Common values include:
 
 1. Texture identifier
 2. Font identifier or font family
 3. Width in pixels
 4. Height in pixels
-5. Alignment/format flags
-6. Colour or transparency options
+5. Font-colour mode (`0` uses the configured RGB colour; `1` uses the font's
+  colour image)
+6. RGB colour channels (0–255)
 
 Exact trailing values vary by model version.
 
@@ -163,12 +166,15 @@ Enhanced text texture definition. The examples commonly contain a texture
 name, font name/size/style, dimensions, colour channels, and alignment/format
 flags.
 
-OpenBus currently interprets the enhanced record's horizontal alignment value
-after the RGB channels as `0` = left, `1` = center, and `2` = right. Each line
-is measured separately before glyph placement. Text surfaces are refreshed
-after scripts run only when the local `Refresh_Strings` request is nonzero and
-the associated string has changed; OpenBus consumes that request after the
-script pass. Other trailing enhanced-format flags remain model-version-specific.
+The font-colour mode has the same meaning as in `[texttexture]`. OpenBus reads
+the enhanced record's horizontal alignment after the RGB channels as `0` =
+center, `1` = left, and `2` = right; each line is measured independently.
+OpenBus also vertically centers the rendered line block in the text surface
+(an OpenBus layout behavior; standard OMSI texttexture records do not provide a
+vertical-alignment field). Text surfaces are refreshed after scripts run only
+when the local `Refresh_Strings` request is nonzero and the associated string
+has changed; OpenBus consumes that request after the script pass. Other trailing
+enhanced-format flags remain model-version-specific.
 
 ### `[VFDmaxmin]`
 

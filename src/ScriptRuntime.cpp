@@ -88,9 +88,9 @@ struct ScriptRuntime::Impl {
         std::string font;
         int width = 0;
         int height = 0;
-        TextAlignment alignment = TextAlignment::Left;
+        TextAlignment alignment = TextAlignment::Center;
         std::array<std::uint8_t, 4> color = {255, 255, 255, 255};
-        bool useBlockColor = false;
+        bool useFontColor = false;
         std::string lastValue;
         bool hasRenderedValue = false;
     };
@@ -1341,20 +1341,24 @@ struct ScriptRuntime::Impl {
 
     static void drawText(ScriptTexture& texture, const std::string& value, int x, int y,
                          std::array<std::uint8_t, 4> color, int letterSpacing = 0,
-                         int maximumScale = 8) {
+                         int maximumScale = 8, TextAlignment alignment = TextAlignment::Left,
+                         bool centerVertically = false) {
         if (texture.locked || value.empty() || texture.width <= 0 || texture.height <= 0) {
             return;
         }
         std::size_t lineCount = 1;
         std::size_t longestLine = 0;
         std::size_t currentLineLength = 0;
+        std::vector<std::size_t> lineLengths(1, 0);
         for (const char character : value) {
             if (character == '\n') {
                 longestLine = std::max(longestLine, currentLineLength);
                 currentLineLength = 0;
                 ++lineCount;
+                lineLengths.emplace_back(0);
             } else if (character != '\r') {
                 ++currentLineLength;
+                ++lineLengths.back();
             }
         }
         longestLine = std::max(longestLine, currentLineLength);
@@ -1368,6 +1372,10 @@ struct ScriptRuntime::Impl {
         const int scale = std::max(1, std::min({maximumScale, heightScale, widthScale}));
         const int advance = 6 * scale + letterSpacing;
         const int lineScale = std::max(1, std::min(scale, multilineHeight));
+        const int textBlockHeight =
+            static_cast<int>((lineCount - 1) * 8 * lineScale + 6 * lineScale + scale);
+        const int verticalOffset =
+            centerVertically ? std::max(0, (texture.height - textBlockHeight) / 2) : 0;
         int line = 0;
         int columnIndex = 0;
         for (const char character : value) {
@@ -1380,8 +1388,17 @@ struct ScriptRuntime::Impl {
                 continue;
             }
             const auto rows = glyph(character);
-            const int originX = x + columnIndex * advance;
-            const int originY = y + line * 8 * lineScale;
+            const std::size_t lineLength = lineLengths[static_cast<std::size_t>(line)];
+            const int lineWidth = lineLength == 0
+                                      ? 0
+                                      : static_cast<int>((lineLength - 1) * advance + 5 * scale);
+            const int remainingWidth = std::max(0, texture.width - lineWidth);
+            const int horizontalOffset =
+                alignment == TextAlignment::Center
+                    ? remainingWidth / 2
+                    : alignment == TextAlignment::Right ? remainingWidth : 0;
+            const int originX = x + horizontalOffset + columnIndex * advance;
+            const int originY = y + verticalOffset + line * 8 * lineScale;
             for (int row = 0; row < 7; ++row) {
                 for (int column = 0; column < 5; ++column) {
                     if ((rows[static_cast<std::size_t>(row)] & (1 << (4 - column))) == 0) {
@@ -1441,6 +1458,8 @@ struct ScriptRuntime::Impl {
             lines.back().push_back(&font.glyphs[glyphIndex]);
         }
 
+        const int textBlockHeight = static_cast<int>(lines.size()) * font.height;
+        const int verticalOffset = std::max(0, (texture.height - textBlockHeight) / 2);
         for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
             const std::vector<const FontGlyph*>& line = lines[lineIndex];
             int lineWidth = 0;
@@ -1458,7 +1477,7 @@ struct ScriptRuntime::Impl {
             } else if (definition.alignment == TextAlignment::Right) {
                 cursorX += remainingWidth;
             }
-            const int cursorY = y + static_cast<int>(lineIndex) * font.height;
+            const int cursorY = y + verticalOffset + static_cast<int>(lineIndex) * font.height;
 
             for (const FontGlyph* glyph : line) {
                 const int glyphWidth = glyph->right - glyph->left;
@@ -1484,7 +1503,7 @@ struct ScriptRuntime::Impl {
                             4;
                         const std::size_t destinationOffset =
                             pixelOffset(texture, cursorX + column, cursorY + row);
-                        if (definition.useBlockColor) {
+                        if (!definition.useFontColor) {
                             texture.pixels[destinationOffset] = definition.color[0];
                             texture.pixels[destinationOffset + 1] = definition.color[1];
                             texture.pixels[destinationOffset + 2] = definition.color[2];
@@ -1522,12 +1541,13 @@ struct ScriptRuntime::Impl {
             texture.width = definition.width;
             texture.height = definition.height;
             clearTexture(texture);
-            const int maximumScale = definition.font == "sp_ticketerfont" ? 2 : 8;
+            const int maximumScale = 8;
             const std::shared_ptr<FontAsset> font = loadFont(definition.font);
             const bool bitmapFontRendered =
                 font != nullptr && drawBitmapFontText(texture, value, 0, 0, definition, *font);
             if (!bitmapFontRendered && !value.empty()) {
-                drawText(texture, value, 0, 0, definition.color, 0, maximumScale);
+                drawText(texture, value, 0, 0, definition.color, 0, maximumScale,
+                         definition.alignment, true);
             } else if (!bitmapFontRendered) {
                 ++texture.revision;
             }
@@ -1983,23 +2003,25 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         }
         if (definition.values.size() > 4) {
             try {
-                configured.useBlockColor = std::stoi(definition.values[4]) != 0;
+                configured.useFontColor = std::stoi(definition.values[4]) != 0;
             } catch (const std::exception&) {
-                configured.useBlockColor = false;
+                configured.useFontColor = false;
             }
         }
-        // Enhanced text records carry the horizontal alignment after RGB:
-        // 0=left, 1=center, 2=right. Older/basic records default to left.
+        // Basic text textures are center-aligned. Enhanced records append an
+        // alignment code after RGB: 0=center, 1=left, 2=right.
         if (definition.enhanced && definition.values.size() > 8) {
             try {
                 const int alignment = std::stoi(definition.values[8]);
-                if (alignment == 1) {
+                if (alignment == 0) {
                     configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
+                } else if (alignment == 1) {
+                    configured.alignment = ScriptRuntime::Impl::TextAlignment::Left;
                 } else if (alignment == 2) {
                     configured.alignment = ScriptRuntime::Impl::TextAlignment::Right;
                 }
             } catch (const std::exception&) {
-                configured.alignment = ScriptRuntime::Impl::TextAlignment::Left;
+                configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
             }
         }
         for (std::size_t channel = 0; channel < 3 && channel + 5 < definition.values.size();
@@ -2129,9 +2151,9 @@ void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool presse
             }
         }
     }
-    if (!pressed && normalized == "horn" && !invoked && impl_->onSoundTrigger) {
-        impl_->onSoundTrigger("horn_off", {}, 0.0);
-    }
+    // if (!pressed && normalized == "horn" && !invoked && impl_->onSoundTrigger) {
+    //     impl_->onSoundTrigger("horn_off", {}, 0.0);
+    // }
 }
 
 void ScriptRuntime::invokeMouseEvent(const std::string& eventName) {
@@ -2150,18 +2172,6 @@ void ScriptRuntime::invokeMouseEvent(const std::string& eventName) {
             impl_->log("warning: mouse event " + normalized + " -> " + functionName + " not found");
         } else {
             impl_->log("trigger ran: " + functionName + " (mouse event " + normalized + ")");
-        }
-        if (normalized == "alcolockelec" || normalized == "alcolockcheck") {
-            if (invoked) {
-                impl_->log(
-                    "alcolock state elec_busbar_main=" +
-                    std::to_string(impl_->localState.get("elec_busbar_main")) +
-                    " alcolock_elec=" + std::to_string(impl_->localState.get("alcolock_elec")) +
-                    " alcolock_ready=" + std::to_string(impl_->localState.get("alcolock_ready")) +
-                    " alcolock_pass=" + std::to_string(impl_->localState.get("alcolock_pass")) +
-                    " alcolock_blow=" + std::to_string(impl_->localState.get("alcolock_blow")) +
-                    " alcodisp=" + impl_->localState.getString("alcodisp"));
-            }
         }
     }
 }

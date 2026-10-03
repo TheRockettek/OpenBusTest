@@ -1785,11 +1785,6 @@ struct Vehicle {
         scripts = std::make_unique<ScriptRuntime>(
             vehicleConfiguration, variables, simulationState,
             [&soundEngine](const std::string& name, const std::string& file, double controlValue) {
-                if (name == "horn_off") {
-                    soundEngine.stop("ev_hupe_an");
-                    soundEngine.trigger("ev_hupe_aus");
-                    return;
-                }
                 if (name.size() > 4 && name.compare(name.size() - 4, 4, "_off") == 0) {
                     soundEngine.stop(name.substr(0, name.size() - 4));
                 } else {
@@ -2873,8 +2868,11 @@ struct Vehicle {
         const GLint filter = snapshot.filtered ? GL_LINEAR : GL_NEAREST;
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        // Dynamic script/text textures replace the material texture but must
+        // keep its address mode. OMSI O3D UVs commonly span 1..2; clamping
+        // those out-of-range coordinates collapses glyph sampling to an edge.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, batch.textureWrapS);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, batch.textureWrapT);
         if (textureCreated || dimensionsChanged) {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, snapshot.width, snapshot.height, 0, GL_RGBA,
                          GL_UNSIGNED_BYTE, snapshot.pixels.data());
@@ -3144,9 +3142,9 @@ struct Vehicle {
     void loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed) {
         TraceScope trace("obj", "loadObj");
         const std::string sourceStem = lower(part.objPath.stem().string());
-        if (sourceStem == "shadow") {
-            return;
-        }
+        // if (sourceStem == "shadow") {
+        //     return;
+        // }
         static const bool verboseObjLoadLogs =
             parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_OBJ_LOAD"));
         static const bool materialBatchingEnabled =
