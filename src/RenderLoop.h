@@ -129,6 +129,8 @@ class RenderLoop {
     double previousMouseInteractionX_ = 0.0;
     double previousMouseInteractionY_ = 0.0;
     double frameTimeStep_ = 0.0;
+    int framebufferWidth_ = 1;
+    int framebufferHeight_ = 1;
     double scriptRateHz_ = 0.0;
     double scriptAccumulator_ = 0.0;
     std::vector<KeyEvent> keyEvents_;

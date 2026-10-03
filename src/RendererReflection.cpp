@@ -214,6 +214,11 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
             continue;
         }
 
+        const int requestedTargetSize =
+            std::clamp(requirement.size, kMinReflectionTargetSize, impl_->maximumSize);
+        if (target.width != requestedTargetSize || target.height != requestedTargetSize) {
+            impl_->resizeTarget(target, requestedTargetSize);
+        }
         pglBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
         glViewport(0, 0, target.width, target.height);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

@@ -1180,22 +1180,26 @@ struct Vehicle {
                                              uniqueReflectionIndices.end());
     }
 
-    void prepareFrameVisibility(RenderViewContext context) {
+    void prepareFrameVisibility(RenderViewContext context, int viewportWidth, int viewportHeight) {
         TraceScope trace("render", "Vehicle::prepareFrameVisibility");
-        variableVisibleParts.resize(displayLists.size());
-        visibleClickablePartIndices.clear();
-        visibleOpaquePickPartIndices.clear();
-        visibleReflectionTextureIndices.clear();
-        reflectionRequiredSizes.clear();
-        GLint viewport[4] = {};
-        glGetIntegerv(GL_VIEWPORT, viewport);
+        {
+            TraceScope phase("render", "Vehicle::prepareFrameVisibility.reset");
+            variableVisibleParts.resize(displayLists.size());
+            visibleClickablePartIndices.clear();
+            visibleOpaquePickPartIndices.clear();
+            visibleReflectionTextureIndices.clear();
+            reflectionRequiredSizes.clear();
+        }
         const auto& modelView = openbus::rendering::modelViewMatrix();
         const auto& projection = openbus::rendering::projectionMatrix();
-        const double viewportWidth = static_cast<double>(std::max(viewport[2], 1));
-        const double viewportHeight = static_cast<double>(std::max(viewport[3], 1));
+        const double viewportWidthPixels = static_cast<double>(std::max(viewportWidth, 1));
+        const double viewportHeightPixels = static_cast<double>(std::max(viewportHeight, 1));
         ViewFrustum frustum;
-        if (frustumCulling) {
-            frustum = buildViewFrustum(projection);
+        {
+            TraceScope phase("render", "Vehicle::prepareFrameVisibility.frustum");
+            if (frustumCulling) {
+                frustum = buildViewFrustum(projection);
+            }
         }
         {
             TraceScope phase("render", "Vehicle::prepareFrameVisibility.scanParts");
@@ -1209,8 +1213,8 @@ struct Vehicle {
                     (part.viewpoint != 0 && (part.viewpoint & viewpointMask(context)) == 0)) {
                     continue;
                 }
-                const bool lodMatches = activeLod < 0 || part.lodIndex < 0 ||
-                                        part.lodIndex == activeLod;
+                const bool lodMatches =
+                    activeLod < 0 || part.lodIndex < 0 || part.lodIndex == activeLod;
                 if (lodMatches && !part.mouseEvent.empty()) {
                     visibleClickablePartIndices.push_back(partIndex);
                 }
@@ -1269,14 +1273,14 @@ struct Vehicle {
                 }
                 const double projectedWidth =
                     intersectsNearPlane
-                        ? viewportWidth
-                        : std::clamp((maximumNdcX - minimumNdcX) * 0.5 * viewportWidth, 0.0,
-                                     viewportWidth);
+                        ? viewportWidthPixels
+                        : std::clamp((maximumNdcX - minimumNdcX) * 0.5 * viewportWidthPixels, 0.0,
+                                     viewportWidthPixels);
                 const double projectedHeight =
                     intersectsNearPlane
-                        ? viewportHeight
-                        : std::clamp((maximumNdcY - minimumNdcY) * 0.5 * viewportHeight, 0.0,
-                                     viewportHeight);
+                        ? viewportHeightPixels
+                        : std::clamp((maximumNdcY - minimumNdcY) * 0.5 * viewportHeightPixels, 0.0,
+                                     viewportHeightPixels);
                 const double screenBoundedDiameter = std::max(projectedWidth, projectedHeight);
                 const int requiredSize =
                     std::max(openbus::rendering::kMinReflectionTargetSize,
@@ -1347,7 +1351,7 @@ struct Vehicle {
                                      std::size_t* hitTriangle = nullptr,
                                      bool* boundsOverlap = nullptr) const {
         TraceScope trace("input", "Vehicle::pickClickable");
-                        (void)context;
+        (void)context;
         if (boundsOverlap != nullptr) {
             *boundsOverlap = false;
         }
@@ -1417,9 +1421,9 @@ struct Vehicle {
             double maximumNdcX = std::numeric_limits<double>::lowest();
             double minimumNdcY = std::numeric_limits<double>::max();
             double maximumNdcY = std::numeric_limits<double>::lowest();
-            const std::array<double, 3> halfSize = {
-                std::max(part.size[0] * 0.5, 0.0), std::max(part.size[1] * 0.5, 0.0),
-                std::max(part.size[2] * 0.5, 0.0)};
+            const std::array<double, 3> halfSize = {std::max(part.size[0] * 0.5, 0.0),
+                                                    std::max(part.size[1] * 0.5, 0.0),
+                                                    std::max(part.size[2] * 0.5, 0.0)};
             bool hasProjectedCorner = false;
             for (int corner = 0; corner < 8; ++corner) {
                 const std::array<double, 4> local = {
@@ -1428,8 +1432,8 @@ struct Vehicle {
                     center[2] + ((corner & 4) == 0 ? -halfSize[2] : halfSize[2]), 1.0};
                 const std::array<double, 4> view = transformPoint(modelViewPart, local);
                 const std::array<double, 4> clip = transformPoint(projection, view);
-                if (!std::isfinite(clip[0]) || !std::isfinite(clip[1]) ||
-                    !std::isfinite(clip[3]) || clip[3] <= 1.0e-8) {
+                if (!std::isfinite(clip[0]) || !std::isfinite(clip[1]) || !std::isfinite(clip[3]) ||
+                    clip[3] <= 1.0e-8) {
                     // Retain eye-plane and invalid cases for the exact path.
                     return true;
                 }
@@ -1582,11 +1586,12 @@ struct Vehicle {
     std::string mouseEventAt(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
                              RenderViewContext context) const {
         bool boundsOverlap = false;
-        const DisplayPart* selected = pickClickable(cursorX, cursorY, viewportWidth, viewportHeight,
-                                                    context, false, nullptr, nullptr,
-                                                    &boundsOverlap);
+        const DisplayPart* selected =
+            pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, false, nullptr,
+                          nullptr, &boundsOverlap);
         if (selected != nullptr && boundsOverlap) {
-            selected = pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, true);
+            selected =
+                pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, true);
         }
         return selected == nullptr ? std::string() : selected->mouseEvent;
     }
@@ -1852,11 +1857,18 @@ struct Vehicle {
         material.transmap = batch.transmap.texture;
         material.bumpmap = batch.bumpmap.texture;
         material.freeTexture = batch.freeTexture;
+        // Text textures use their own shader sampler. They share the dynamic
+        // upload storage with script/free textures, but must not be left only
+        // in the free-texture sampler or the shader will never display them.
+        material.textTexture = batch.textTextureIndex >= 0 ? batch.freeTexture : 0;
         material.useLightmap = !forceUntextured && material.lightmap != 0;
         material.useNightmap = !forceUntextured && material.nightmap != 0;
         material.useTransmap = !forceUntextured && material.transmap != 0;
         material.useBumpmap = !forceUntextured && material.bumpmap != 0;
-        material.useFreeTexture = !forceUntextured && material.freeTexture != 0;
+        material.useFreeTexture =
+            !forceUntextured && batch.textTextureIndex < 0 && material.freeTexture != 0;
+        material.useTextTexture =
+            !forceUntextured && batch.textTextureIndex >= 0 && material.textTexture != 0;
         if (!forceUntextured) {
             applyInteriorLightMaterial(batch, material);
         }
@@ -2762,7 +2774,8 @@ struct Vehicle {
         if (!textureChanged) {
             return;
         }
-        if (batch.freeTexture == 0) {
+        const bool textureCreated = batch.freeTexture == 0;
+        if (textureCreated) {
             glGenTextures(1, &batch.freeTexture);
             assets->trackTexture(batch.freeTexture);
         }
@@ -2773,7 +2786,7 @@ struct Vehicle {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        if (batch.freeTexture == 0 || dimensionsChanged) {
+        if (textureCreated || dimensionsChanged) {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, snapshot.width, snapshot.height, 0, GL_RGBA,
                          GL_UNSIGNED_BYTE, snapshot.pixels.data());
             batch.freeTextureWidth = snapshot.width;
@@ -3592,8 +3605,8 @@ struct Vehicle {
                              return first.transparent < second.transparent;
                          });
         for (DisplayPart& part : displayLists) {
-            part.pickOccluder = std::any_of(
-                part.batches.begin(), part.batches.end(), [](const Batch& batch) {
+            part.pickOccluder =
+                std::any_of(part.batches.begin(), part.batches.end(), [](const Batch& batch) {
                     return batch.alphaMode == 0 && !batch.noZwrite && !batch.noZcheck;
                 });
         }
@@ -4006,6 +4019,8 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
         },
         [this](const BusSimulation& reflectionSimulation, std::size_t cameraIndex, int width,
                int height) {
+            framebufferWidth_ = std::max(width, 1);
+            framebufferHeight_ = std::max(height, 1);
             cameraView_ = static_cast<int>(cameraIndex + 1);
             fieldOfViewOffset_ = 0.0;
             viewLookYaw_ = 0.0;
@@ -4016,6 +4031,8 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
         },
         [this, previousCameraView, previousFovOffset, previousLookYaw,
          previousLookPitch](int width, int height) {
+            framebufferWidth_ = std::max(width, 1);
+            framebufferHeight_ = std::max(height, 1);
             cameraView_ = previousCameraView;
             fieldOfViewOffset_ = previousFovOffset;
             viewLookYaw_ = previousLookYaw;
@@ -4142,6 +4159,8 @@ void RenderLoop::beginFrame() {
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.windowAndVariables");
         glfwGetFramebufferSize(window_, &width, &height);
+        framebufferWidth_ = std::max(width, 1);
+        framebufferHeight_ = std::max(height, 1);
         glfwGetCursorPos(window_, &cursorX, &cursorY);
         simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
@@ -4323,10 +4342,11 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 pushMatrix();
                 if (vehicle.get() == playerVehicle_) {
                     applyPose(chassis);
-                    vehicle->prepareFrameVisibility(context);
+                    vehicle->prepareFrameVisibility(context, framebufferWidth_, framebufferHeight_);
                 } else {
                     applyVehiclePlacement(vehicle->placement);
-                    vehicle->prepareFrameVisibility(RenderViewContext::NonPlayer);
+                    vehicle->prepareFrameVisibility(RenderViewContext::NonPlayer, framebufferWidth_,
+                                                    framebufferHeight_);
                 }
                 popMatrix();
             }
@@ -4334,8 +4354,6 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     }
     if (!renderingReflection_ && playerVehicle_ != nullptr) {
         TraceScope phase("input", "RenderLoop::draw.interaction");
-        GLint viewport[4] = {};
-        glGetIntegerv(GL_VIEWPORT, viewport);
         double cursorX = 0.0;
         double cursorY = 0.0;
         glfwGetCursorPos(window_, &cursorX, &cursorY);
@@ -4343,9 +4361,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         int windowHeight = 1;
         glfwGetWindowSize(window_, &windowWidth, &windowHeight);
         const double framebufferScaleX =
-            static_cast<double>(viewport[2]) / static_cast<double>(std::max(windowWidth, 1));
-        const double framebufferScaleY =
-            static_cast<double>(viewport[3]) / static_cast<double>(std::max(windowHeight, 1));
+            static_cast<double>(framebufferWidth_) / static_cast<double>(std::max(windowWidth, 1));
+        const double framebufferScaleY = static_cast<double>(framebufferHeight_) /
+                                         static_cast<double>(std::max(windowHeight, 1));
         const double framebufferCursorX = cursorX * framebufferScaleX;
         const double framebufferCursorY = cursorY * framebufferScaleY;
         pushMatrix();
@@ -4362,7 +4380,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         const bool hoverCacheMatches =
             clickableHoverCacheValid_ && clickableHoverCacheX_ == framebufferCursorX &&
             clickableHoverCacheY_ == framebufferCursorY &&
-            clickableHoverCacheWidth_ == viewport[2] && clickableHoverCacheHeight_ == viewport[3] &&
+            clickableHoverCacheWidth_ == framebufferWidth_ &&
+            clickableHoverCacheHeight_ == framebufferHeight_ &&
             clickableHoverCacheContext_ == interactionContextValue &&
             clickableHoverCacheCameraView_ == cameraView_ &&
             clickableHoverCacheCameraYaw_ == cameraYaw_ &&
@@ -4374,8 +4393,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             clickableHoverCacheValid_ = true;
             clickableHoverCacheX_ = framebufferCursorX;
             clickableHoverCacheY_ = framebufferCursorY;
-            clickableHoverCacheWidth_ = viewport[2];
-            clickableHoverCacheHeight_ = viewport[3];
+            clickableHoverCacheWidth_ = framebufferWidth_;
+            clickableHoverCacheHeight_ = framebufferHeight_;
             clickableHoverCacheContext_ = interactionContextValue;
             clickableHoverCacheCameraView_ = cameraView_;
             clickableHoverCacheCameraYaw_ = cameraYaw_;
@@ -4385,17 +4404,17 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             clickableHoverCachePosition_ = chassis.position;
             clickableHoverCacheRotation_ = chassis.rotation;
             clickableHoverCacheRevision_ = clickableRevision;
-            clickableHoverCacheHit_ =
-                playerVehicle_->hasVisibleClickable(interactionContext) &&
-                playerVehicle_->hasClickableAt(framebufferCursorX, framebufferCursorY, viewport[2],
-                                               viewport[3], interactionContext);
+            clickableHoverCacheHit_ = playerVehicle_->hasVisibleClickable(interactionContext) &&
+                                      playerVehicle_->hasClickableAt(
+                                          framebufferCursorX, framebufferCursorY, framebufferWidth_,
+                                          framebufferHeight_, interactionContext);
         }
         const bool hoveringClickable = clickableHoverCacheHit_;
         glfwSetCursor(window_, hoveringClickable ? clickableCursor_ : nullptr);
         if (pendingMouseClick_) {
             activeMouseEvent_ = playerVehicle_->mouseEventAt(
                 pendingMouseClickX_ * framebufferScaleX, pendingMouseClickY_ * framebufferScaleY,
-                viewport[2], viewport[3], interactionContext);
+                framebufferWidth_, framebufferHeight_, interactionContext);
             playerVehicle_->handleMouseClick(activeMouseEvent_);
             previousMouseInteractionX_ = pendingMouseClickX_;
             previousMouseInteractionY_ = pendingMouseClickY_;
@@ -4462,22 +4481,20 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         drawVehicles(VehicleRenderPass::Opaque);
         drawVehicles(VehicleRenderPass::Transparent);
         if (clickableDebugOverlay_ && playerVehicle_ != nullptr) {
-            GLint viewport[4] = {};
-            glGetIntegerv(GL_VIEWPORT, viewport);
             double cursorX = 0.0;
             double cursorY = 0.0;
             glfwGetCursorPos(window_, &cursorX, &cursorY);
             int windowWidth = 1;
             int windowHeight = 1;
             glfwGetWindowSize(window_, &windowWidth, &windowHeight);
-            const double framebufferCursorX = cursorX * static_cast<double>(viewport[2]) /
+            const double framebufferCursorX = cursorX * static_cast<double>(framebufferWidth_) /
                                               static_cast<double>(std::max(windowWidth, 1));
-            const double framebufferCursorY = cursorY * static_cast<double>(viewport[3]) /
+            const double framebufferCursorY = cursorY * static_cast<double>(framebufferHeight_) /
                                               static_cast<double>(std::max(windowHeight, 1));
             pushMatrix();
             applyPose(chassis);
             playerVehicle_->drawClickableDebug(
-                framebufferCursorX, framebufferCursorY, viewport[2], viewport[3],
+                framebufferCursorX, framebufferCursorY, framebufferWidth_, framebufferHeight_,
                 isExteriorView() ? RenderViewContext::PlayerExterior
                                  : RenderViewContext::PlayerInterior);
             popMatrix();
@@ -4542,6 +4559,8 @@ void RenderLoop::captureViews(const BusSimulation& simulation,
     int width = 1;
     int height = 1;
     glfwGetFramebufferSize(window_, &width, &height);
+    framebufferWidth_ = std::max(width, 1);
+    framebufferHeight_ = std::max(height, 1);
 
     const int previousCameraView = cameraView_;
     const double previousCameraYaw = cameraYaw_;

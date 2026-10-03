@@ -185,7 +185,10 @@ void main() {
     }
     if (uUseLightmap) {
         vec4 lightmap = texture(uLightmap, vTexCoord.xy);
-        color.rgb = mix(color.rgb, color.rgb * lightmap.rgb, uLightmapStrength);
+        // OMSI lightmaps are emissive contributions: black leaves the base
+        // material unchanged while coloured pixels illuminate indicators and
+        // switch legends. Multiplication incorrectly made those pixels darker.
+        color.rgb = clamp(color.rgb + lightmap.rgb * uLightmapStrength, 0.0, 1.0);
     }
     if (uUseNightmap) {
         vec4 nightmap = texture(uNightmap, vTexCoord.xy);
