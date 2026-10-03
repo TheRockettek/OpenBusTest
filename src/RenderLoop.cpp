@@ -4749,8 +4749,13 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         const double speedMetresPerSecond = simulation.speed();
         const long speedMph = std::lround(speedMetresPerSecond * 2.2369362921);
         const long speedKmh = std::lround(speedMetresPerSecond * 3.6);
+        const long throttlePercent = std::lround(
+            std::clamp(playerVehicle_->variables.get("throttle"), 0.0, 1.0) * 100.0);
+        const long brakePercent = std::lround(
+            std::clamp(playerVehicle_->variables.get("brake"), 0.0, 1.0) * 100.0);
         std::ostringstream title;
-        title << "OpenBus - " << speedMph << " mph / " << speedKmh << " km/h - "
+        title << "OpenBus - " << speedMph << " mph / " << speedKmh << " km/h - Throttle "
+              << throttlePercent << "% - Brake " << brakePercent << "% - "
               << playerVehicle_->renderedTriangles() << " triangles";
         glfwSetWindowTitle(window_, title.str().c_str());
         lastStatsTitleTime_ = glfwGetTime();

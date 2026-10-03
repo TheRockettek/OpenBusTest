@@ -105,6 +105,35 @@ int main() {
         std::cerr << "script velocity variables were not expressed in km/h\n";
         return 1;
     }
+
+    BusSimulation wheelSpeedCheck(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    for (int step = 0; step < 600; ++step) {
+        wheelSpeedCheck.stepWithWheelTorque(0.0, 0.0, 0.0);
+    }
+    const double initialWheelRotation = wheelSpeedCheck.wheelRotation(2);
+    constexpr int wheelSpeedSampleSteps = 5;
+    for (int step = 0; step < wheelSpeedSampleSteps; ++step) {
+        wheelSpeedCheck.stepWithWheelTorque(1000.0, 0.0, 0.0);
+    }
+    openbus::scripting::Vehicle wheelSpeedVariables;
+    wheelSpeedCheck.updateVariables(wheelSpeedVariables, 0.0, 0.0, 0.0);
+    const double expectedWheelSpeedRpm =
+        std::abs(wheelSpeedCheck.wheelRotation(2) - initialWheelRotation) *
+        wheelSpeedCheck.physicsHz() / wheelSpeedSampleSteps * 60.0 /
+        (2.0 * 3.141592653589793);
+    const double actualWheelSpeedRpm = wheelSpeedVariables.get("wheel_rotationspeed_1_l");
+    const double averageDrivenWheelRpm =
+        (wheelSpeedVariables.get("wheel_rotationspeed_1_l") +
+         wheelSpeedVariables.get("wheel_rotationspeed_1_r")) /
+        2.0;
+    if (expectedWheelSpeedRpm < 1.0 || actualWheelSpeedRpm <= 0.0 ||
+        std::abs(actualWheelSpeedRpm - expectedWheelSpeedRpm) > expectedWheelSpeedRpm * 0.75 ||
+        std::abs(wheelSpeedVariables.get("n_wheel") - averageDrivenWheelRpm) > 1.0e-9) {
+        std::cerr << "script wheel speeds were not expressed in forward rpm: expected about "
+                  << expectedWheelSpeedRpm << " rpm, got " << actualWheelSpeedRpm << " rpm\n";
+        return 1;
+    }
+
     if (!variables.has("axle_steering_0_l") ||
         std::abs(variables.get("axle_steering_0_l")) < 1.0e-3) {
         std::cerr << "axle_steering_0_l was not populated from the steering joint\n";

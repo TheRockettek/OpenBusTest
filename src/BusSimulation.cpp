@@ -920,6 +920,8 @@ void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, doub
     variables.set("velocity_ground", speedKmh);
     variables.set("steering", std::clamp(steering, -1.0, 1.0));
     variables.set("steeringangle", steeringAngle());
+    // OMSI scripts expect wheel rotation speeds in rpm; ODE reports rad/s.
+    constexpr double radiansPerSecondToRpm = 60.0 / (2.0 * PI);
     double drivenWheelSpeed = 0.0;
     std::size_t drivenWheelCount = 0;
     for (std::size_t index = 0; index < impl_->corners.size(); ++index) {
@@ -927,12 +929,13 @@ void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, doub
         const char* side = index % 2 == 0 ? "l" : "r";
         const std::string prefix = "_" + std::to_string(axleIndex) + "_" + side;
         variables.set("wheel_rotation" + prefix, impl_->corners[index].wheelRotation);
-        variables.set("wheel_rotationspeed" + prefix, impl_->corners[index].wheelOmega);
+        const double wheelSpeedRpm = impl_->corners[index].wheelOmega * radiansPerSecondToRpm;
+        variables.set("wheel_rotationspeed" + prefix, wheelSpeedRpm);
         variables.set("axle_suspension" + prefix, impl_->corners[index].springCompression);
         variables.set("axle_steering_" + std::to_string(axleIndex) + "_" + side,
                       dJointGetHingeAngle(impl_->corners[index].steeringJoint));
         if (impl_->configuration.axles[axleIndex].driven) {
-            drivenWheelSpeed += impl_->corners[index].wheelOmega;
+            drivenWheelSpeed += wheelSpeedRpm;
             ++drivenWheelCount;
         }
     }
