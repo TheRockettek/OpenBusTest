@@ -1,8 +1,9 @@
-MAN_DL05
-SP_E400MMC
-build
-build-lint
-build-local
-build-ode
+.gitignore
 *.log
+build-ode
+build
+OpenBus_configuration.json
+OpenBus_model_configuration.json
+openbus_trace.json
+uno3d_trace.json
 screenshots/*
