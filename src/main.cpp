@@ -116,8 +116,9 @@ int main() {
                                     frameKeyEvents.end());
             renderer.updatePlayerVariables(simulation, renderer.throttle(), renderer.steering(),
                                            renderer.brake());
-            simulation.updateWithWheelTorque(elapsed, renderer.physicsWheelTorque(),
-                                             renderer.physicsSteering(), renderer.physicsBrake());
+            simulation.updateWithWheelTorqueAndBrakeForces(
+                elapsed, renderer.physicsWheelTorque(), renderer.physicsSteering(),
+                renderer.physicsWheelBrakeForces(simulation.axleCount()));
             renderer.updatePostPhysicsVariables(simulation);
             renderer.draw(simulation);
 

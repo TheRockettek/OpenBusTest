@@ -654,7 +654,8 @@ struct BusSimulation::Impl {
         }
     }
 
-    void applyCornerForces(double driveCommand, double steering, double brake, bool scriptDriven) {
+    void applyCornerForces(double driveCommand, double steering,
+                           const std::vector<double>& wheelBrakeForces, bool scriptDriven) {
         openbus::rendering::TraceScope trace("physics", "BusSimulation::applyCornerForces");
         refreshWheelTelemetry();
         const dReal* velocity = dBodyGetLinearVel(chassis);
@@ -702,11 +703,17 @@ struct BusSimulation::Impl {
             const dReal throttleValue = std::clamp(static_cast<dReal>(driveCommand), -1.0, 1.0);
             driveTorque = throttleValue * engineTorque * ratio * DRIVETRAIN_EFF;
         }
+        bool brakesApplied = false;
+        for (const double force : wheelBrakeForces) {
+            brakesApplied = brakesApplied || (std::isfinite(force) && force > 1.0);
+        }
+        if (brakesApplied) {
+            driveTorque = 0.0;
+        }
         std::size_t drivenAxles = 0;
         for (const BusAxle& axle : configuration.axles) {
             drivenAxles += axle.driven ? 1U : 0U;
         }
-        const dReal brakeValue = std::clamp(static_cast<dReal>(brake), 0.0, 1.0);
         std::vector<dReal> compression(corners.size());
         for (std::size_t index = 0; index < corners.size(); ++index) {
             compression[index] = corners[index].springCompression;
@@ -749,8 +756,11 @@ struct BusSimulation::Impl {
             const dReal driveTorquePerWheel =
                 std::copysign(std::min(std::abs(requestedDriveTorquePerWheel), driveTorqueLimit),
                               requestedDriveTorquePerWheel);
-            const dReal brakeCapacity =
-                brakeValue * MAX_BRAKE_FORCE * 0.5 * corners[index].wheelRadius;
+            const dReal wheelBrakeForce =
+                index < wheelBrakeForces.size() && std::isfinite(wheelBrakeForces[index])
+                    ? std::max(0.0, static_cast<dReal>(wheelBrakeForces[index]))
+                    : 0.0;
+            const dReal brakeCapacity = wheelBrakeForce * corners[index].wheelRadius;
             const dReal stoppingTorque = 0.5 * WHEEL_MASS * corners[index].wheelRadius *
                                          corners[index].wheelRadius *
                                          std::abs(corners[index].wheelOmega) / fixedStep;
@@ -783,7 +793,7 @@ struct BusSimulation::Impl {
                 : 0.0;
         dBodyAddRelForce(chassis, drag + rolling, 0.0, 0.0);
         dBodyAddRelTorque(chassis, 0.0, 0.0, -yawRate * YAW_DAMPING);
-        if (brakeValue > 0.01 && std::abs(longitudinalSpeed) < 1.0) {
+        if (brakesApplied && std::abs(longitudinalSpeed) < 1.0) {
             dBodyAddRelForce(chassis, 0.0, -lateralSpeed * STOP_LATERAL_DAMPING, 0.0);
             dBodyAddRelTorque(chassis, 0.0, 0.0, -yawRate * STOP_YAW_DAMPING);
         }
@@ -807,16 +817,17 @@ struct BusSimulation::Impl {
                               localAngularY * BODY_ATTITUDE_DAMPING,
                           0.0);
 
-        if (std::abs(driveTorque) < 0.01 && (brake < 0.01 || std::abs(longitudinalSpeed) < 0.15) &&
+        if (std::abs(driveTorque) < 0.01 && (!brakesApplied || std::abs(longitudinalSpeed) < 0.15) &&
             std::abs(longitudinalSpeed) < 0.08 && std::abs(lateralSpeed) < 0.08 &&
             std::abs(yawRate) < 0.08) {
             dBodySetLinearVel(chassis, 0.0, 0.0, velocity[2]);
             dBodySetAngularVel(chassis, 0.0, 0.0, 0.0);
         }
     }
-    void fixedUpdate(double driveCommand, double steering, double brake, bool scriptDriven) {
+    void fixedUpdate(double driveCommand, double steering,
+                     const std::vector<double>& wheelBrakeForces, bool scriptDriven) {
         openbus::rendering::TraceScope trace("physics", "BusSimulation::fixedUpdate");
-        applyCornerForces(driveCommand, steering, brake, scriptDriven);
+        applyCornerForces(driveCommand, steering, wheelBrakeForces, scriptDriven);
         dSpaceCollide(ode.space, this, &nearCallback);
         dWorldStep(ode.world, fixedStep);
         dJointGroupEmpty(ode.contacts);
@@ -824,14 +835,14 @@ struct BusSimulation::Impl {
         simulationTime += fixedStep;
     }
 
-    void update(double elapsedSeconds, double driveCommand, double steering, double brake,
-                bool scriptDriven) {
+    void update(double elapsedSeconds, double driveCommand, double steering,
+                const std::vector<double>& wheelBrakeForces, bool scriptDriven) {
         openbus::rendering::TraceScope trace("physics", "BusSimulation::update");
         accumulator += std::clamp(elapsedSeconds, 0.0, MAX_FRAME_SECONDS);
         lastSteps = 0;
         dropped = false;
         while (accumulator >= fixedStep && lastSteps < maxCatchUpSteps) {
-            fixedUpdate(driveCommand, steering, brake, scriptDriven);
+            fixedUpdate(driveCommand, steering, wheelBrakeForces, scriptDriven);
             accumulator -= fixedStep;
             ++lastSteps;
         }
@@ -864,20 +875,39 @@ BusSimulation::~BusSimulation() {
 }
 
 void BusSimulation::update(double elapsedSeconds, double throttle, double steering, double brake) {
-    impl_->update(elapsedSeconds, throttle, steering, brake, false);
+    const double forcePerWheel = std::clamp(brake, 0.0, 1.0) * MAX_BRAKE_FORCE * 0.5;
+    impl_->update(elapsedSeconds, throttle, steering,
+                  std::vector<double>(impl_->corners.size(), forcePerWheel), false);
 }
 
 void BusSimulation::updateWithWheelTorque(double elapsedSeconds, double wheelTorque,
                                           double steering, double brake) {
-    impl_->update(elapsedSeconds, wheelTorque, steering, brake, true);
+    const double forcePerWheel = std::clamp(brake, 0.0, 1.0) * MAX_BRAKE_FORCE * 0.5;
+    impl_->update(elapsedSeconds, wheelTorque, steering,
+                  std::vector<double>(impl_->corners.size(), forcePerWheel), true);
+}
+
+void BusSimulation::updateWithWheelTorqueAndBrakeForces(
+    double elapsedSeconds, double wheelTorque, double steering,
+    const std::vector<double>& wheelBrakeForces) {
+    impl_->update(elapsedSeconds, wheelTorque, steering, wheelBrakeForces, true);
 }
 
 void BusSimulation::step(double throttle, double steering, double brake) {
-    impl_->fixedUpdate(throttle, steering, brake, false);
+    const double forcePerWheel = std::clamp(brake, 0.0, 1.0) * MAX_BRAKE_FORCE * 0.5;
+    impl_->fixedUpdate(throttle, steering,
+                       std::vector<double>(impl_->corners.size(), forcePerWheel), false);
 }
 
 void BusSimulation::stepWithWheelTorque(double wheelTorque, double steering, double brake) {
-    impl_->fixedUpdate(wheelTorque, steering, brake, true);
+    const double forcePerWheel = std::clamp(brake, 0.0, 1.0) * MAX_BRAKE_FORCE * 0.5;
+    impl_->fixedUpdate(wheelTorque, steering,
+                       std::vector<double>(impl_->corners.size(), forcePerWheel), true);
+}
+
+void BusSimulation::stepWithWheelTorqueAndBrakeForces(
+    double wheelTorque, double steering, const std::vector<double>& wheelBrakeForces) {
+    impl_->fixedUpdate(wheelTorque, steering, wheelBrakeForces, true);
 }
 
 void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, double throttle,

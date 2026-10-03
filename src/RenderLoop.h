@@ -63,7 +63,7 @@ class RenderLoop {
     double physicsThrottle() const;
     double physicsWheelTorque() const;
     double physicsSteering() const;
-    double physicsBrake() const;
+    std::vector<double> physicsWheelBrakeForces(std::size_t axleCount) const;
     std::vector<KeyEvent> consumeKeyEvents();
 
   private:
@@ -72,6 +72,7 @@ class RenderLoop {
     const VehicleCamera* currentVehicleCamera() const;
     void selectVehicleCamera(int direction);
     void updateScripts();
+    void logDiagnosticVariables() const;
     double currentFieldOfView() const;
     void renderReflectionViews(const BusSimulation& simulation);
     void renderReflectionDebugOverlay();
@@ -94,7 +95,6 @@ class RenderLoop {
     bool mouseControlEnabled_ = false;
     double mouseThrottle_ = 0.0;
     double mouseSteering_ = 0.0;
-    double smoothedSteering_ = 0.0;
     double mouseBrake_ = 0.0;
     std::vector<bool> previousVehicleKeyStates_;
     std::array<bool, 10> previousViewKeyStates_ = {};
@@ -138,6 +138,8 @@ class RenderLoop {
     int framebufferHeight_ = 1;
     double scriptRateHz_ = 0.0;
     double scriptAccumulator_ = 0.0;
+    double steeringSmoothingRate_ = 6.0;
+    double smoothedSteering_ = 0.0;
     std::vector<KeyEvent> keyEvents_;
     std::vector<VehicleCamera> vehicleCameras_;
     SimulationState simulationState_;

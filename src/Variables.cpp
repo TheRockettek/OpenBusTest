@@ -49,6 +49,10 @@ void Variables::set(const std::string& name, double value) {
     values_[name] = value;
 }
 
+const std::unordered_map<std::string, double>& Variables::numericValues() const {
+    return values_;
+}
+
 void Variables::setValues(std::initializer_list<VariableDefinition> values) {
     for (const VariableDefinition& value : values) {
         if (!value.name.empty()) {
@@ -59,6 +63,10 @@ void Variables::setValues(std::initializer_list<VariableDefinition> values) {
 
 void Variables::setString(const std::string& name, const std::string& value) {
     strings_[name] = value;
+}
+
+const std::unordered_map<std::string, std::string>& Variables::stringValues() const {
+    return strings_;
 }
 
 ScriptObjectKind Variables::objectKind() const {

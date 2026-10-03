@@ -42,6 +42,10 @@ int main() {
     vehicle.setString("ident", "probe");
     valid &= require(vehicle.hasString("ident") && vehicle.getString("ident") == "probe",
                      "vehicle string state");
+    valid &= require(vehicle.numericValues().count("throttle") == 1,
+                     "numeric variable snapshot");
+    valid &= require(vehicle.stringValues().count("ident") == 1,
+                     "string variable snapshot");
     vehicle.set("steeringwheeloffset", 0.25);
     vehicle.updateFrame();
     valid &= require(vehicle.get("steeringwheeloffset") == 0.25,

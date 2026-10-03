@@ -29,10 +29,12 @@ class Variables {
     bool has(const std::string& name) const;
     double get(const std::string& name) const;
     void set(const std::string& name, double value);
+    const std::unordered_map<std::string, double>& numericValues() const;
 
     bool hasString(const std::string& name) const;
     std::string getString(const std::string& name) const;
     void setString(const std::string& name, const std::string& value);
+    const std::unordered_map<std::string, std::string>& stringValues() const;
 
     ScriptObjectKind objectKind() const;
     bool supportsSystemMacro(const std::string& name) const;

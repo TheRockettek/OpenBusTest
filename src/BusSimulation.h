@@ -3,6 +3,7 @@
 #include "BusConfiguration.h"
 
 #include <memory>
+#include <vector>
 
 namespace openbus::scripting {
 class Vehicle;
@@ -22,8 +23,14 @@ class BusSimulation {
     // Applies script-produced total wheel torque while retaining ODE tire/contact physics.
     void updateWithWheelTorque(double elapsedSeconds, double wheelTorque, double steering = 0.0,
                                double brake = 0.0);
+    // Applies script-produced wheel torque and per-wheel brake forces (N).
+    void updateWithWheelTorqueAndBrakeForces(double elapsedSeconds, double wheelTorque,
+                         double steering,
+                         const std::vector<double>& wheelBrakeForces);
     void step(double throttle, double steering = 0.0, double brake = 0.0);
     void stepWithWheelTorque(double wheelTorque, double steering = 0.0, double brake = 0.0);
+    void stepWithWheelTorqueAndBrakeForces(double wheelTorque, double steering,
+                         const std::vector<double>& wheelBrakeForces);
     void updateVariables(openbus::scripting::Vehicle& variables, double throttle, double steering,
                          double brake) const;
     double positionX() const;

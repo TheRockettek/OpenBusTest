@@ -160,6 +160,35 @@ constexpr int kBindingShift = 2;
 constexpr int kBindingControl = 4;
 constexpr int kBindingAlt = 8;
 
+void logVariableSet(const std::string& scope, const Variables& variables) {
+    std::vector<std::string> numericNames;
+    numericNames.reserve(variables.numericValues().size());
+    for (const auto& [name, value] : variables.numericValues()) {
+        (void)value;
+        numericNames.push_back(name);
+    }
+    std::sort(numericNames.begin(), numericNames.end());
+    gameLog.Log(scope + " numeric variables: " + std::to_string(numericNames.size()));
+    for (const std::string& name : numericNames) {
+        std::ostringstream line;
+        line << scope << '.' << name << " = " << std::setprecision(12)
+             << variables.numericValues().at(name);
+        gameLog.Log(line.str());
+    }
+
+    std::vector<std::string> stringNames;
+    stringNames.reserve(variables.stringValues().size());
+    for (const auto& [name, value] : variables.stringValues()) {
+        (void)value;
+        stringNames.push_back(name);
+    }
+    std::sort(stringNames.begin(), stringNames.end());
+    gameLog.Log(scope + " string variables: " + std::to_string(stringNames.size()));
+    for (const std::string& name : stringNames) {
+        gameLog.Log(scope + "." + name + " = " + variables.stringValues().at(name));
+    }
+}
+
 // OpenBus vehicle defaults. Cashdesk, IBIS, and rollband actions are
 // intentionally omitted until their dedicated input surfaces are wired.
 const std::vector<VehicleKeyBinding>& defaultVehicleKeyBindings() {
@@ -212,6 +241,7 @@ const std::vector<VehicleKeyBinding>& defaultVehicleKeyBindings() {
         {"bus_linie_minus", GLFW_KEY_F5, 0},
         {"bus_ziel_plus", GLFW_KEY_F7, 0},
         {"bus_ziel_minus", GLFW_KEY_F6, 0},
+        {"debug_dump_variables", GLFW_KEY_F9, 0},
         {"cp_wischer_intervall_toggle", GLFW_KEY_W, kBindingShift},
         {"cp_wischer_wascher_button", GLFW_KEY_W, kBindingControl},
         {"cp_batterietrennschalter_toggle", GLFW_KEY_E, 0},
@@ -3900,11 +3930,22 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
             scriptRateHz_ = 0.0;
         }
     }
+    if (const char* steeringSmoothing = std::getenv("OPENBUS_STEERING_SMOOTHING")) {
+        try {
+            steeringSmoothingRate_ = std::clamp(std::stod(steeringSmoothing), 0.0, 1000.0);
+        } catch (const std::exception&) {
+            steeringSmoothingRate_ = 0.0;
+        }
+    }
     if (scriptRateHz_ > 0.0) {
         gameLog.Log("Script rate limited to " + std::to_string(scriptRateHz_) + " Hz");
     } else {
         gameLog.Log("Scripts follow the render rate");
     }
+    gameLog.Log(steeringSmoothingRate_ > 0.0
+                    ? "Steering smoothing limited to " + std::to_string(steeringSmoothingRate_) +
+                          " input units/s"
+                    : "Steering smoothing disabled");
     if (!glfwInit()) {
         gameLog.Log("Failed to initialize GLFW");
         throw std::runtime_error("Failed to initialize GLFW");
@@ -4024,11 +4065,22 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
     }
 }
 
+void RenderLoop::logDiagnosticVariables() const {
+    gameLog.Log("Variable dump requested (F9)");
+    if (playerVehicle_ != nullptr) {
+        logVariableSet("vehicle", playerVehicle_->variables);
+    } else {
+        gameLog.Log("No player vehicle is available for the variable dump");
+    }
+    logVariableSet("system", simulationState_.sharedVariables());
+}
+
 void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
                                        double steering, double brake) {
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
-    smoothedSteering_ = openbus::input::slewSteeringInput(
-        smoothedSteering_, steering, std::clamp(frameTimeStep_, 0.0, 0.25), 6.0);
+    smoothedSteering_ = openbus::input::smoothSteeringInput(
+        smoothedSteering_, steering, std::clamp(frameTimeStep_, 0.0, 0.25),
+        steeringSmoothingRate_);
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(simulation, throttle, smoothedSteering_, brake);
     }
@@ -4196,11 +4248,15 @@ void RenderLoop::beginFrame() {
                 keyEvents_.push_back({binding.action, pressed, glfwGetTime()});
                 const bool mouseControlToggle =
                     std::string_view(binding.action) == "mouse_control_toggle";
+                const bool dumpVariables =
+                    std::string_view(binding.action) == "debug_dump_variables";
                 if (mouseControlToggle && pressed) {
                     mouseControlEnabled_ = !mouseControlEnabled_;
                     gameLog.Log(std::string("Mouse bus control ") +
                                 (mouseControlEnabled_ ? "enabled" : "disabled"));
-                } else if (!mouseControlToggle && playerVehicle_ != nullptr &&
+                } else if (dumpVariables && pressed) {
+                    logDiagnosticVariables();
+                } else if (!mouseControlToggle && !dumpVariables && playerVehicle_ != nullptr &&
                            playerVehicle_->scripts) {
                     playerVehicle_->scripts->invokeKeyBinding(binding.action, pressed);
                 }
@@ -4855,8 +4911,17 @@ double RenderLoop::physicsSteering() const {
     return playerVehicle_ == nullptr ? smoothedSteering_ : playerVehicle_->variables.get("steering");
 }
 
-double RenderLoop::physicsBrake() const {
-    return playerVehicle_ == nullptr ? brake() : playerVehicle_->variables.get("brake");
+std::vector<double> RenderLoop::physicsWheelBrakeForces(std::size_t axleCount) const {
+    std::vector<double> forces(axleCount * 2, 0.0);
+    if (playerVehicle_ == nullptr) {
+        return forces;
+    }
+    for (std::size_t axle = 0; axle < axleCount; ++axle) {
+        const std::string prefix = "axle_brakeforce_" + std::to_string(axle) + "_";
+        forces[axle * 2] = playerVehicle_->variables.get(prefix + "l");
+        forces[axle * 2 + 1] = playerVehicle_->variables.get(prefix + "r");
+    }
+    return forces;
 }
 
 std::vector<KeyEvent> RenderLoop::consumeKeyEvents() {
