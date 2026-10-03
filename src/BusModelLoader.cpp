@@ -51,36 +51,7 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
         part.wheelAnimation.origin = source.wheelAnimation.origin;
         part.wheelAnimation.hasOrigin = source.wheelAnimation.hasOrigin;
         const auto copyMaterialState = [](const ModelMaterialState& sourceState) {
-            BusModelMaterialState state;
-            state.texturePath = sourceState.texturePath;
-            state.textureName = sourceState.textureName;
-            state.materialIndex = sourceState.materialIndex;
-            state.environmentTextureName = sourceState.environmentTextureName;
-            state.environmentStrength = sourceState.environmentStrength;
-            state.alphaMode = sourceState.alphaMode;
-            state.noZwrite = sourceState.noZwrite;
-            state.noZcheck = sourceState.noZcheck;
-            state.alphaScaleVariable = sourceState.alphaScaleVariable;
-            state.transmapTextureName = sourceState.transmapTextureName;
-            state.nightmapTextureName = sourceState.nightmapTextureName;
-            state.lightmapTextureName = sourceState.lightmapTextureName;
-            state.lightmapStrengthVariable = sourceState.lightmapStrengthVariable;
-            state.freeTextureName = sourceState.freeTextureName;
-            state.freeTextureVariable = sourceState.freeTextureVariable;
-            state.scriptTextureIndex = sourceState.scriptTextureIndex;
-            state.textTextureIndex = sourceState.textTextureIndex;
-            state.texcoordTransXVariable = sourceState.texcoordTransXVariable;
-            state.texcoordTransYVariable = sourceState.texcoordTransYVariable;
-            state.bumpmapTextureName = sourceState.bumpmapTextureName;
-            state.bumpmapStrength = sourceState.bumpmapStrength;
-            state.textureAddressS = sourceState.textureAddressS;
-            state.textureAddressT = sourceState.textureAddressT;
-            state.textureChanges.reserve(sourceState.textureChanges.size());
-            for (const auto& change : sourceState.textureChanges) {
-                state.textureChanges.push_back({change.texturePath, change.textureName,
-                                                change.layer, change.activationVariable});
-            }
-            return state;
+            return sourceState;
         };
         for (const auto& materialEntry : source.materialStates) {
             part.materialStates.emplace(materialEntry.first,

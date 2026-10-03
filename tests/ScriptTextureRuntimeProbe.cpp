@@ -62,6 +62,8 @@ int main() {
         font << "[newfont]\nProbeFont\nprobe.bmp\nprobe_alpha.bmp\n2\n0\n"
             "[char]\nA\n0\n2\n0\n"
             "[char]\nB\n2\n4\n0\n";
+            font << "[char]\n0\n0\n2\n0\n"
+                "[char]\n1\n2\n4\n0\n";
         font.close();
     const std::filesystem::path scriptPath = root / "probe.osc";
     std::ofstream source(scriptPath);
@@ -286,6 +288,14 @@ int main() {
         return 1;
     }
     const std::uint64_t firstTextRevision = textTexture.revision;
+    variables.setString("bitmapdisplay", "01");
+    runtime.update(false);
+    ScriptRuntime::ScriptTextureSnapshot digits;
+    if (!runtime.copyTextTexture(1, digits) || digits.pixels[3] != 255 ||
+        digits.pixels[2U * 4U + 3U] != 128) {
+        std::cerr << "OFT digit glyphs were interpreted as numeric character codes\n";
+        return 1;
+    }
     runtime.update(false);
     ScriptRuntime::ScriptTextureSnapshot unchangedTextTexture;
     if (!runtime.copyTextTexture(0, unchangedTextTexture) ||

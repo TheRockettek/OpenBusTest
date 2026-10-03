@@ -3,7 +3,9 @@
 #include "ConfigurationTypes.h"
 
 #include <array>
+#include <cmath>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -41,9 +43,27 @@ struct ModelMaterialState {
         std::string textureName;
         int layer = 0;
         std::string activationVariable;
+        // The controller selects the base (0) or one of these authored items (1..N).
+        std::vector<std::shared_ptr<ModelMaterialState>> items;
     };
     std::vector<TextureChange> textureChanges;
 };
+
+template <typename VariableLookup>
+const ModelMaterialState& selectModelMaterial(const ModelMaterialState& base,
+                                              VariableLookup lookup) {
+    const ModelMaterialState* selected = &base;
+    for (const auto& change : base.textureChanges) {
+        const double value = std::round(lookup(change.activationVariable));
+        if (value >= 1.0 && value < static_cast<double>(change.items.size()) + 1.0) {
+            const auto& item = change.items[static_cast<std::size_t>(value) - 1];
+            if (item) {
+                selected = item.get();
+            }
+        }
+    }
+    return *selected;
+}
 
 struct ModelScriptTexture {
     int slot = -1;

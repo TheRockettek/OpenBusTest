@@ -338,13 +338,15 @@ struct ScriptRuntime::Impl {
                 int right = 0;
                 int top = 0;
                 if (!parseInteger(values[1], left) || !parseInteger(values[2], right) ||
-                    !parseInteger(values[3], top) || right <= left || left < 0 || top < 0 ||
-                    values[0].empty()) {
+                    !parseInteger(values[3], top) || right <= left || left < 0 || top < 0) {
                     continue;
                 }
-                int code = static_cast<unsigned char>(values[0][0]);
+                // Whitespace trimming leaves the literal space glyph empty.
+                int code = values[0].empty() ? ' ' : static_cast<unsigned char>(values[0][0]);
                 int numericCode = 0;
-                if (parseInteger(values[0], numericCode) && numericCode >= 0 &&
+                // OFT [char] stores a literal character: "0" is the digit,
+                // not codepoint zero. Keep multi-digit numeric extensions only.
+                if (values[0].size() > 1 && parseInteger(values[0], numericCode) && numericCode >= 0 &&
                     numericCode <= 255) {
                     code = numericCode;
                 }

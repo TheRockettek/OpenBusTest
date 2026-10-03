@@ -757,6 +757,7 @@ struct Vehicle {
         std::string texcoordTransXVariable;
         std::string texcoordTransYVariable;
         GLuint freeTexture = 0;
+        GLuint dynamicTexture = 0;
         int freeTextureIndex = -1;
         int freeTextureWidth = 0;
         int freeTextureHeight = 0;
@@ -772,6 +773,8 @@ struct Vehicle {
         std::vector<MaterialTextureSource> materialTextures;
         std::vector<GLuint> materialTextureIds;
         std::vector<MaterialState::TextureChange> textureChanges;
+        MaterialState baseMaterial;
+        bool selectedMaterialItem = false;
         std::size_t vertexCount = 0;
     };
 
@@ -837,6 +840,7 @@ struct Vehicle {
     bool loaded = false;
     bool hasLoadedInitialView = false;
     bool loggedAllObjectsLoaded = false;
+    bool logPlayerStartupState = false;
     int activeLod = -1;
     double animationTimeStep = 0.0;
     std::uint64_t animationGeneration = 1;
@@ -852,22 +856,57 @@ struct Vehicle {
 
     void updateMaterialChange(Batch& batch) {
         TraceScope phase("texture", "updateMaterialChange");
-
-        // Select the last active material change, then reset only the texture
-        // request state so the new texture is resolved and uploaded.
-        const MaterialState::TextureChange* selected = nullptr;
-        for (const MaterialState::TextureChange& change : batch.textureChanges) {
-            const double activationValue = variables.get(change.activationVariable);
-            if (activationValue != 0.0) {
-                selected = &change;
+        const MaterialState& selected = selectModelMaterial(
+            batch.baseMaterial, [this](const std::string& name) { return variables.get(name); });
+        batch.selectedMaterialItem = &selected != &batch.baseMaterial;
+        const auto auxiliary = [](AuxiliaryTexture& texture, const std::string& name) {
+            if (texture.name != name) {
+                texture = {};
+                texture.name = name;
             }
+        };
+        auxiliary(batch.lightmap, selected.lightmapTextureName);
+        auxiliary(batch.nightmap, selected.nightmapTextureName);
+        auxiliary(batch.transmap, selected.transmapTextureName);
+        auxiliary(batch.bumpmap, selected.bumpmapTextureName);
+        batch.bumpmapStrength = selected.bumpmapStrength;
+        if (batch.environmentTextureName != selected.environmentTextureName) {
+            batch.environmentTexture = 0;
+            batch.environmentTextureCacheEntry.reset();
+            batch.environmentLoadAttempted = false;
         }
+        batch.environmentTextureName = selected.environmentTextureName;
+        batch.environmentStrength = selected.environmentStrength;
+        batch.lightmapStrengthVariable = selected.lightmapStrengthVariable;
+        if (batch.freeTextureName != selected.freeTextureName ||
+            batch.freeTextureVariable != selected.freeTextureVariable ||
+            batch.scriptTextureIndex != selected.scriptTextureIndex ||
+            batch.textTextureIndex != selected.textTextureIndex) {
+            // Text, script and file textures can reuse the same slot number,
+            // but they are different sources. Never retain a previous binding.
+            batch.freeTexture = 0;
+            batch.freeTextureIndex = -1;
+            batch.freeTextureRevision = 0;
+            batch.freeTextureAsset = {};
+        }
+        batch.freeTextureName = selected.freeTextureName;
+        batch.freeTextureVariable = selected.freeTextureVariable;
+        batch.scriptTextureIndex = selected.scriptTextureIndex;
+        batch.textTextureIndex = selected.textTextureIndex;
+        batch.texcoordTransXVariable = selected.texcoordTransXVariable;
+        batch.texcoordTransYVariable = selected.texcoordTransYVariable;
+        batch.alphaMode = selected.alphaMode;
+        batch.noZwrite = selected.noZwrite;
+        batch.noZcheck = selected.noZcheck;
+        batch.alphaScaleVariable = selected.alphaScaleVariable;
+        batch.textureWrapS = textureAddressModeToGl(selected.textureAddressS);
+        batch.textureWrapT = textureAddressModeToGl(selected.textureAddressT);
 
-        const std::filesystem::path texturePath =
-            selected == nullptr ? batch.baseTexturePath : selected->texturePath;
-        const std::string textureName = resolveCtcTextureName(
-            selected == nullptr ? batch.baseTextureName : selected->textureName);
-        const int requestedLayer = selected == nullptr ? batch.baseTextureLayer : selected->layer;
+        // matl_change's index identifies a texture occurrence in the mesh,
+        // not a DDS array layer or a replacement texture.
+        const std::filesystem::path texturePath = batch.baseTexturePath;
+        const std::string textureName = batch.baseTextureName;
+        const int requestedLayer = batch.baseTextureLayer;
         const int layer =
             batch.textureArray
                 ? std::clamp(requestedLayer, 0, static_cast<int>(batch.textureArrayLayers) - 1)
@@ -1153,6 +1192,43 @@ struct Vehicle {
                 gameLog.Log("Lua frame error: " + scripts->errors()[index]);
             }
         }
+        if (!isAiVehicle && logPlayerStartupState) {
+            gameLog.Log(
+                "Player startup states: battery=" +
+                std::to_string(variables.get("batterymasterswitchstate")) +
+                " busbar=" + std::to_string(variables.get("elec_busbar_main")) +
+                " busbar_sw=" + std::to_string(variables.get("elec_busbar_main_sw")) +
+                " ignition=" + std::to_string(variables.get("mmc_ignitionswitchstate")) +
+                " test_lights=" + std::to_string(variables.get("mmc_startupdashtestlights")) +
+                " test_run=" + std::to_string(variables.get("mmc_startupdashtestrun")) +
+                " screen=" + std::to_string(variables.get("dashscreenisinitialised")) +
+                " marker=" + std::to_string(variables.get("markerlightstate")) +
+                " dash_mode=" + std::to_string(variables.get("mmc_dashlightswitch_rot_mode")) +
+                " dash_rot=" + std::to_string(variables.get("mmc_dashlightswitch_rot")) +
+                " driver_light=" + std::to_string(variables.get("lights_fahrerlicht")) +
+                " battery_v=" + std::to_string(variables.get("elec_v_battery")) +
+                " battery_load=" + std::to_string(variables.get("elec_battery_load")) +
+                " battery_avail=" + std::to_string(variables.get("elec_busbar_avail")) +
+                " battery_failure=" + std::to_string(variables.get("elec_failure_general")));
+            logPlayerStartupState = false;
+        }
+    }
+
+    void initializePlayerSystems() {
+        if (!scripts) {
+            return;
+        }
+        if (variables.get("batterymasterswitchstate") == 0.0 &&
+            scripts->hasScriptEntryPoint("trigger_batterymasterswitch")) {
+            scripts->invokeKeyBinding("batteryMasterSwitch", true);
+        }
+        // The authored ignition trigger advances StartMode and starts the
+        // dashboard test/electrical busbar sequence after the master switch.
+        if (variables.get("mmc_ignitionswitchstate") == 0.0 &&
+            scripts->hasScriptEntryPoint("trigger_mmc_ignitionswitch")) {
+            scripts->invokeKeyBinding("MMC_ignitionSwitch", true);
+        }
+        logPlayerStartupState = true;
     }
 
     const std::vector<int>& reflectionTextureIndicesForPart(const DisplayPart& part) const {
@@ -1753,9 +1829,10 @@ struct Vehicle {
 
     void applyInteriorLightMaterial(const Batch& batch,
                                     openbus::rendering::ModelMaterial& material) const {
-        double totalWeight = 0.0;
-        double totalIntensity = 0.0;
-        std::array<double, 3> weightedColor = {};
+        material.interiorLightCount = 0;
+        material.interiorLightPositions = {};
+        material.interiorLightColors = {};
+        material.interiorLightStrengths = {};
         for (const int lightIndex : batch.interiorLightIndexes) {
             if (lightIndex < 0 || static_cast<std::size_t>(lightIndex) >= interiorLights.size()) {
                 continue;
@@ -1764,30 +1841,32 @@ struct Vehicle {
             if (light.parameters.size() < 4) {
                 continue;
             }
-            const double activation = std::clamp(variables.get(light.controller), 0.0, 1.0);
-            const double intensity = std::clamp(light.parameters[0], 0.0, 4.0);
-            const double weight = activation * intensity;
-            if (weight <= 0.0) {
+            char* parsedEnd = nullptr;
+            const double numericBrightness = std::strtod(light.controller.c_str(), &parsedEnd);
+            const bool isNumericBrightness =
+                parsedEnd != light.controller.c_str() && *parsedEnd == '\0';
+            const double brightness = std::max(
+                0.0, isNumericBrightness ? numericBrightness : variables.get(light.controller));
+            const double strength = brightness * std::max(0.0, light.parameters[0]);
+            if (strength <= 0.0 || material.interiorLightCount >=
+                                       static_cast<int>(openbus::rendering::MAX_INTERIOR_LIGHTS)) {
                 continue;
             }
-            totalWeight += weight;
-            totalIntensity += weight;
+            const int outputIndex = material.interiorLightCount++;
             for (std::size_t channel = 0; channel < 3; ++channel) {
-                const double component = light.parameters[channel + 1];
-                weightedColor[channel] +=
-                    weight * (component > 1.0 ? component / 255.0 : component);
+                material.interiorLightColors[outputIndex][channel] =
+                    static_cast<float>(std::clamp(light.parameters[channel + 1] / 255.0, 0.0, 1.0));
             }
+            // Interior-light positions use the same OMSI CFG coordinates as
+            // mesh vertices: x=lateral, y=longitudinal, z=height.  Convert
+            // them to the renderer's longitudinal/lateral/height basis before
+            // the shader transforms the point into view space.
+            material.interiorLightPositions[outputIndex] = {
+                static_cast<float>(light.parameters[5]), static_cast<float>(-light.parameters[4]),
+                static_cast<float>(light.parameters[6])};
+            material.interiorLightStrengths[outputIndex] = static_cast<float>(strength);
         }
-        if (totalWeight <= 0.0) {
-            return;
-        }
-        material.useInteriorLight = true;
-        material.interiorLightStrength =
-            static_cast<float>(std::clamp(totalIntensity * 0.35, 0.0, 1.0));
-        for (std::size_t channel = 0; channel < 3; ++channel) {
-            material.interiorLightColor[channel] =
-                static_cast<float>(std::clamp(weightedColor[channel] / totalWeight, 0.0, 1.0));
-        }
+        material.useInteriorLight = material.interiorLightCount > 0;
     }
 
     void drawBatch(Batch& batch, double alpha, bool forceUntextured = false,
@@ -1877,8 +1956,12 @@ struct Vehicle {
             batch.lightmapStrengthVariable.empty()
                 ? 1.0
                 : std::clamp(variables.get(batch.lightmapStrengthVariable), 0.0, 1.0));
-        const double nightlight =
-            std::max(variables.get("nightlighta"), 1.0 - variables.get("envir_brightness"));
+        // Script-selected emissive items illuminate even in daytime. Ordinary
+        // base nightmaps still follow the host's environmental lighting.
+        const double nightlight = batch.selectedMaterialItem
+                          ? 1.0
+                          : std::max(variables.get("nightlighta"),
+                             1.0 - variables.get("envir_brightness"));
         material.nightmapStrength = static_cast<float>(std::clamp(nightlight, 0.0, 1.0));
         material.bumpmapStrength = static_cast<float>(std::clamp(batch.bumpmapStrength, 0.0, 1.0));
         material.texcoordOffsetX = static_cast<float>(
@@ -2054,6 +2137,9 @@ struct Vehicle {
                     part.viewpoint == 0 || (part.viewpoint & viewpointMask(context)) != 0;
                 if (!viewpointMatches || !visible(part, partIndex)) {
                     continue;
+                }
+                for (Batch& batch : part.batches) {
+                    updateMaterialChange(batch);
                 }
                 const bool hasOpaqueBatch =
                     std::any_of(part.batches.begin(), part.batches.end(), [](const Batch& batch) {
@@ -2733,7 +2819,8 @@ struct Vehicle {
     }
 
     void updateFreeTexture(Batch& batch) {
-        if (!batch.freeTextureName.empty() && !batch.freeTextureVariable.empty()) {
+        if (batch.textTextureIndex < 0 && batch.scriptTextureIndex < 0 &&
+            !batch.freeTextureName.empty() && !batch.freeTextureVariable.empty()) {
             const std::string selectedName = variables.getString(batch.freeTextureVariable);
             const std::string textureName =
                 selectedName.empty() ? batch.freeTextureName : selectedName;
@@ -2753,12 +2840,12 @@ struct Vehicle {
         ScriptRuntime::ScriptTextureSnapshot snapshot;
         int index = -1;
         bool copied = false;
-        if (batch.scriptTextureIndex >= 0) {
-            index = batch.scriptTextureIndex;
-            copied = scripts->copyScriptTexture(index, snapshot);
-        } else if (batch.textTextureIndex >= 0) {
+        if (batch.textTextureIndex >= 0) {
             index = batch.textTextureIndex;
             copied = scripts->copyTextTexture(index, snapshot);
+        } else if (batch.scriptTextureIndex >= 0) {
+            index = batch.scriptTextureIndex;
+            copied = scripts->copyScriptTexture(index, snapshot);
         } else {
             index = static_cast<int>(std::lround(variables.get(batch.freeTextureVariable)));
             copied = scripts->copyScriptTexture(index, snapshot);
@@ -2775,11 +2862,12 @@ struct Vehicle {
         if (!textureChanged) {
             return;
         }
-        const bool textureCreated = batch.freeTexture == 0;
+        const bool textureCreated = batch.dynamicTexture == 0;
         if (textureCreated) {
-            glGenTextures(1, &batch.freeTexture);
-            assets->trackTexture(batch.freeTexture);
+            glGenTextures(1, &batch.dynamicTexture);
+            assets->trackTexture(batch.dynamicTexture);
         }
+        batch.freeTexture = batch.dynamicTexture;
         glBindTexture(GL_TEXTURE_2D, batch.freeTexture);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         const GLint filter = snapshot.filtered ? GL_LINEAR : GL_NEAREST;
@@ -3233,6 +3321,7 @@ struct Vehicle {
             batch.noZcheck = noZcheck;
             batch.alphaScaleVariable = lower(alphaScaleVariable);
             batch.textureChanges = textureChanges;
+            batch.baseMaterial = materialState;
             for (MaterialState::TextureChange& change : batch.textureChanges) {
                 change.activationVariable = lower(change.activationVariable);
             }
@@ -3517,9 +3606,6 @@ struct Vehicle {
                 }
                 if (!state.textureName.empty()) {
                     textureName = state.textureName;
-                }
-                if (state.alphaMode == 0) {
-                    state.noZwrite = false;
                 }
                 groups[key].push_back(&triangle);
                 groupTextures[key] = texturePath;
@@ -3910,6 +3996,9 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& busConfigPath,
 
 void RenderLoop::SetPlayerVehicle(Vehicle* model) {
     playerVehicle_ = model;
+    if (playerVehicle_ != nullptr) {
+        playerVehicle_->initializePlayerSystems();
+    }
 }
 
 void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
@@ -4605,16 +4694,19 @@ void RenderLoop::captureViews(const BusSimulation& simulation,
 
     struct CaptureView {
         const char* name;
+        int cameraView;
         double yaw;
         double pitch;
         double distance;
     };
-    const std::array<CaptureView, 4> views = {{{"three-quarter", 0.55, 0.08, 11.0},
-                                               {"front", 0.0, 0.08, 10.5},
-                                               {"left", 1.5707963267948966, 0.08, 10.5},
-                                               {"right", -1.5707963267948966, 0.08, 10.5}}};
+    const std::array<CaptureView, 5> views = {{{"dashboard", 1, 0.0, 0.0, 0.0},
+                                               {"three-quarter", 0, 0.55, 0.08, 11.0},
+                                               {"front", 0, 0.0, 0.08, 10.5},
+                                               {"left", 0, 1.5707963267948966, 0.08, 10.5},
+                                               {"right", 0, -1.5707963267948966, 0.08, 10.5}}};
     for (const CaptureView& view : views) {
         TraceScope viewTrace("capture", "RenderLoop::captureViews.view");
+        cameraView_ = view.cameraView;
         cameraYaw_ = view.yaw;
         cameraPitch_ = view.pitch;
         cameraDistance_ = view.distance;

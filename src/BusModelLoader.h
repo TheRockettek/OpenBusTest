@@ -26,38 +26,7 @@ struct WheelAnimation {
     bool hasOrigin = false;
 };
 
-struct BusModelMaterialState {
-    std::filesystem::path texturePath;
-    std::string textureName;
-    int materialIndex = -1;
-    std::string environmentTextureName;
-    double environmentStrength = 0.0;
-    int alphaMode = 0;
-    bool noZwrite = false;
-    bool noZcheck = false;
-    std::string alphaScaleVariable;
-    std::string transmapTextureName;
-    std::string nightmapTextureName;
-    std::string lightmapTextureName;
-    std::string lightmapStrengthVariable;
-    std::string freeTextureName;
-    std::string freeTextureVariable;
-    int scriptTextureIndex = -1;
-    int textTextureIndex = -1;
-    std::string texcoordTransXVariable;
-    std::string texcoordTransYVariable;
-    std::string bumpmapTextureName;
-    double bumpmapStrength = 0.0;
-    TextureAddressMode textureAddressS = TextureAddressMode::Repeat;
-    TextureAddressMode textureAddressT = TextureAddressMode::Repeat;
-    struct TextureChange {
-        std::filesystem::path texturePath;
-        std::string textureName;
-        int layer = 0;
-        std::string activationVariable;
-    };
-    std::vector<TextureChange> textureChanges;
-};
+using BusModelMaterialState = ModelMaterialState;
 
 struct BusModelPart {
     std::filesystem::path objPath;

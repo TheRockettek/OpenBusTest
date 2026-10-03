@@ -37,6 +37,8 @@
 
 namespace openbus::rendering {
 
+constexpr std::size_t MAX_INTERIOR_LIGHTS = 4;
+
 struct PrimitiveVertex {
     float x;
     float y;
@@ -69,8 +71,10 @@ struct ModelMaterial {
     float lightmapStrength = 0.0f;
     float nightmapStrength = 0.0f;
     float bumpmapStrength = 0.0f;
-    float interiorLightStrength = 0.0f;
-    std::array<float, 3> interiorLightColor = {};
+    int interiorLightCount = 0;
+    std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightPositions = {};
+    std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightColors = {};
+    std::array<float, MAX_INTERIOR_LIGHTS> interiorLightStrengths = {};
     float texcoordOffsetX = 0.0f;
     float texcoordOffsetY = 0.0f;
 };

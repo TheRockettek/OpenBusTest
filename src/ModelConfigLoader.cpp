@@ -346,7 +346,11 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
     std::size_t currentPartIndex = static_cast<std::size_t>(-1);
     std::string currentMaterialKey;
     std::size_t currentMaterialIndex = static_cast<std::size_t>(-1);
+    ModelMaterialState* currentItem = nullptr;
     int currentLodIndex = -1;
+    // OMSI meshes inherit the previous illumination assignment.  The first
+    // mesh receives the first four interior lights when no assignment exists.
+    std::array<int, 4> inheritedInteriorLightIndexes = {0, 1, 2, 3};
     std::array<int, 4> pendingInteriorLightIndexes = {-1, -1, -1, -1};
     bool hasPendingInteriorLightIndexes = false;
     std::unordered_set<std::string> meshIdentifiers;
@@ -382,6 +386,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             return current;
         };
         const auto material = [&]() -> ModelMaterialState* {
+            if (currentItem != nullptr) {
+                return currentItem;
+            }
             ModelPart* current = part();
             if (current == nullptr) {
                 return nullptr;
@@ -411,6 +418,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         // current mesh/material context.
         // [lod]: one threshold; subsequent meshes use the new LOD index.
         if (keyword == "lod") {
+            currentItem = nullptr;
             double threshold = 0.0;
             if (!readDoubleValue(reader, "LOD", threshold, result.diagnostics)) {
                 continue;
@@ -424,6 +432,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         // [mesh]: prefer a converted OBJ, with direct O3D loading as fallback.
         if (keyword == "mesh") {
+            currentItem = nullptr;
             Line meshLine;
             if (!reader.readPayload(meshLine, result.diagnostics, "mesh")) {
                 continue;
@@ -459,6 +468,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             if (hasPendingInteriorLightIndexes) {
                 newPart.interiorLightIndexes = pendingInteriorLightIndexes;
                 hasPendingInteriorLightIndexes = false;
+            } else {
+                newPart.interiorLightIndexes = inheritedInteriorLightIndexes;
             }
             result.parts.push_back(std::move(newPart));
             currentPartIndex = result.parts.size() - 1;
@@ -575,6 +586,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     pendingInteriorLightIndexes = indexes;
                     hasPendingInteriorLightIndexes = true;
                 }
+                inheritedInteriorLightIndexes = indexes;
             }
             continue;
         }
@@ -695,6 +707,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         // [matl]: texture name plus material mode; the texture name keys following
         // material modifiers and supplies the part fallback texture.
         if (keyword == "matl") {
+            currentItem = nullptr;
             ModelPart* current = requirePart();
             std::vector<std::string> values;
             if (current != nullptr &&
@@ -826,8 +839,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
-        // [matl_change]: replacement texture, texture-array layer, activation variable.
+        // [matl_change]: texture occurrence, material index, item-selector variable.
         if (keyword == "matl_change") {
+            currentItem = nullptr;
             ModelPart* current = requirePart();
             if (current != nullptr) {
                 std::vector<std::string> values;
@@ -836,7 +850,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     int layer = 0;
                     if (!parseInt(values[1], layer) || layer < 0) {
                         result.diagnostics.error(line.number, keyword,
-                                                 "expected a non-negative texture layer");
+                                                 "expected a non-negative material index");
                         continue;
                     }
                     const std::string activationVariable = lower(trim(values[2]));
@@ -846,22 +860,30 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                             "texture name and activation variable are required");
                         continue;
                     }
-                    const std::size_t indexedMaterial = currentMaterialIndex;
-                    currentMaterialKey =
+                    const std::string filename =
                         lower(std::filesystem::path(textureName).filename().string());
-                    ModelMaterialState& state = current->materialStates[currentMaterialKey];
-                    // A material change is retained as runtime data; activation
-                    // variables are evaluated when the renderer draws the part.
-                    if (state.textureName.empty()) {
-                        state.textureName = textureName;
-                        state.texturePath = textureName;
+                    auto& states = current->materialStatesInOrder;
+                    auto target = std::find_if(states.begin(), states.end(),
+                                              [&](const ModelMaterialState& state) {
+                        return state.materialIndex == layer &&
+                               lower(std::filesystem::path(state.textureName).filename().string()) ==
+                                   filename;
+                    });
+                    // A change can identify an earlier material, or introduce an
+                    // unmodified base without a preceding [matl] declaration.
+                    if (target == states.end()) {
+                        ModelMaterialState base;
+                        base.textureName = textureName;
+                        base.texturePath = textureName;
+                        base.materialIndex = layer;
+                        states.push_back(std::move(base));
+                        currentMaterialIndex = states.size() - 1;
+                    } else {
+                        currentMaterialIndex = static_cast<std::size_t>(target - states.begin());
                     }
-                    state.textureChanges.push_back({{}, textureName, layer, activationVariable});
-                    if (indexedMaterial != static_cast<std::size_t>(-1) &&
-                        indexedMaterial < current->materialStatesInOrder.size()) {
-                        current->materialStatesInOrder[indexedMaterial].textureChanges.push_back(
-                            {{}, textureName, layer, activationVariable});
-                    }
+                    currentMaterialKey = filename + "#" + std::to_string(currentMaterialIndex);
+                    states[currentMaterialIndex].textureChanges.push_back(
+                        {{}, textureName, layer, activationVariable, {}});
                     declareIfVariable(activationVariable, variables);
                 }
             }
@@ -870,7 +892,20 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         // These material flags have no payload; their presence changes renderer state
         // or is accepted for compatibility with the source format.
         if (keyword == "matl_item") {
-            requireMaterial();
+            ModelPart* current = requirePart();
+            if (current != nullptr && currentMaterialIndex < current->materialStatesInOrder.size()) {
+                ModelMaterialState& base = current->materialStatesInOrder[currentMaterialIndex];
+                if (base.textureChanges.empty()) {
+                    result.diagnostics.error(line.number, keyword, "item must follow [matl_change]");
+                } else {
+                    auto item = std::make_shared<ModelMaterialState>(base);
+                    item->textureChanges.clear();
+                    base.textureChanges.back().items.push_back(item);
+                    currentItem = item.get();
+                }
+            } else if (current != nullptr) {
+                result.diagnostics.error(line.number, keyword, "item must follow [matl_change]");
+            }
             continue;
         }
         if (keyword == "matl_texadress_border" || keyword == "matl_texadress_clamp" ||
