@@ -57,6 +57,7 @@ include(FetchContent)
 
 find_package(ODE CONFIG QUIET)
 find_package(glfw3 CONFIG QUIET)
+find_package(OpenAL CONFIG REQUIRED)
 
 if(TARGET glfw3::glfw AND NOT TARGET glfw)
     add_library(OpenBus::GLFW ALIAS glfw3::glfw)
@@ -115,13 +116,6 @@ if(NOT TARGET glfw)
 endif()
 
 find_package(OpenGL REQUIRED)
-
-if(UNIX AND NOT APPLE)
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(PIPEWIRE QUIET IMPORTED_TARGET libpipewire-0.3)
-    endif()
-endif()
 
 if(TARGET ODE::ODE)
     set(OPENBUS_ODE_TARGET ODE::ODE)
@@ -190,14 +184,14 @@ target_include_directories(OpenBus SYSTEM PRIVATE
     ${gli_SOURCE_DIR}
     ${gli_SOURCE_DIR}/external/glm
     ${stb_SOURCE_DIR})
-target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} OpenBus::GLFW OpenGL::GL OpenBusLua)
+target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} OpenBus::GLFW OpenGL::GL OpenBusLua
+                                      OpenAL::OpenAL)
 
-if(TARGET PkgConfig::PIPEWIRE)
-    target_compile_definitions(OpenBus PRIVATE OPENBUS_HAS_PIPEWIRE=1)
-    target_link_libraries(OpenBus PRIVATE PkgConfig::PIPEWIRE)
-    message(STATUS "PipeWire audio backend enabled")
-else()
-    message(STATUS "PipeWire audio backend disabled (libpipewire-0.3 not found)")
+if(WIN32)
+    add_custom_command(TARGET OpenBus POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy -t "$<TARGET_FILE_DIR:OpenBus>"
+            "$<TARGET_FILE:OpenAL::OpenAL>"
+        COMMAND_EXPAND_LISTS)
 endif()
 
 if(OPENBUS_ENABLE_IPO)

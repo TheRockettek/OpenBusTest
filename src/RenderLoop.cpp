@@ -610,6 +610,7 @@ using openbus::rendering::drawModelBatch;
 using openbus::rendering::drawSolidTriangles;
 using openbus::rendering::drawWireframeTriangles;
 using openbus::rendering::lookAt;
+using openbus::rendering::modelViewMatrix;
 using openbus::rendering::multiplyMatrix;
 using openbus::rendering::parseEnabledFlag;
 using openbus::rendering::popMatrix;
@@ -3914,7 +3915,6 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
 void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
                                        double steering, double brake) {
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
-    soundEngine_.setListenerDistance(cameraView_ == 0 ? cameraDistance_ : 0.0);
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(simulation, throttle, steering, brake);
     }
@@ -4328,6 +4328,35 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                           eyeLocal[1] + distance * std::cos(lookPitch) * std::sin(lookYaw),
                           eyeLocal[2] + distance * std::sin(lookPitch)});
             lookAt(eye[0], eye[1], eye[2], target[0], target[1], target[2]);
+        }
+        if (!renderingReflection_) {
+            const auto& view = modelViewMatrix();
+            const std::array<double, 3> eyeWorld = {
+                -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]),
+                -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]),
+                -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14])};
+            const std::array<double, 3> forwardWorld = {-view[2], -view[6], -view[10]};
+            const std::array<double, 3> upWorld = {view[1], view[5], view[9]};
+            const auto toLocalPoint = [&chassis](const std::array<double, 3>& world) {
+                const double x = world[0] - chassis.position[0];
+                const double y = world[1] - chassis.position[1];
+                const double z = world[2] - chassis.position[2];
+                return std::array<double, 3>{
+                    chassis.rotation[0] * x + chassis.rotation[3] * y + chassis.rotation[6] * z,
+                    chassis.rotation[1] * x + chassis.rotation[4] * y + chassis.rotation[7] * z,
+                    chassis.rotation[2] * x + chassis.rotation[5] * y + chassis.rotation[8] * z};
+            };
+            const auto toLocalDirection = [&chassis](const std::array<double, 3>& world) {
+                return std::array<double, 3>{
+                    chassis.rotation[0] * world[0] + chassis.rotation[3] * world[1] +
+                        chassis.rotation[6] * world[2],
+                    chassis.rotation[1] * world[0] + chassis.rotation[4] * world[1] +
+                        chassis.rotation[7] * world[2],
+                    chassis.rotation[2] * world[0] + chassis.rotation[5] * world[1] +
+                        chassis.rotation[8] * world[2]};
+            };
+            soundEngine_.setListenerPose(toLocalPoint(eyeWorld), toLocalDirection(forwardWorld),
+                                         toLocalDirection(upWorld));
         }
     }
     {

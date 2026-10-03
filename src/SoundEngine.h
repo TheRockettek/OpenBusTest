@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -16,6 +17,9 @@ struct SoundTriggerDefinition {
     bool loop = false;
     int viewpoint = 0;
     double maxDistance = 0.0;
+    std::array<double, 3> position = {};
+    std::string controlVariable;
+    double controlCenter = 0.0;
     std::vector<SoundCurvePoint> volumeCurve;
 };
 
@@ -27,7 +31,8 @@ class SoundEngine {
     SoundEngine& operator=(const SoundEngine&) = delete;
 
     void load(const std::filesystem::path& configPath);
-    void setListenerDistance(double distance);
+    void setListenerPose(const std::array<double, 3>& position,
+                         const std::array<double, 3>& forward, const std::array<double, 3>& up);
     void trigger(const std::string& name, const std::filesystem::path& overrideFile = {},
                  double controlValue = 0.0);
     void stop(const std::string& name);
@@ -37,6 +42,5 @@ class SoundEngine {
     std::unordered_map<std::string, std::vector<SoundTriggerDefinition>> triggers_;
     std::vector<SoundTriggerDefinition> untriggeredLoopSounds_;
     std::filesystem::path basePath_;
-    double listenerDistance_ = 0.0;
     std::unique_ptr<Backend> backend_;
 };
