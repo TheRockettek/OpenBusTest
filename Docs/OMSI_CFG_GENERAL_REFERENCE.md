@@ -182,8 +182,10 @@ name, font name/size/style, dimensions, colour channels, and alignment/format
 flags.
 
 The font-colour mode has the same meaning as in `[texttexture]`. OpenBus reads
-the enhanced record's horizontal alignment after the RGB channels as `0` =
-center, `1` = left, and `2` = right; each line is measured independently.
+the enhanced record's horizontal alignment after the RGB channels as `0`/`3` =
+center, `1`/`4` = left, and `2`/`5` = right; each line is measured
+independently. The next numeric field adds that many pixels between adjacent
+glyphs (clamped to 0–64) on the text grid.
 OpenBus also vertically centers the rendered line block in the text surface
 (an OpenBus layout behavior; standard OMSI texttexture records do not provide a
 vertical-alignment field). Text surfaces are refreshed after scripts run only

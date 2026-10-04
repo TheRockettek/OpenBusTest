@@ -21,6 +21,7 @@
 #include "SoundEngine.h"
 #include "TextureAssetLoader.h"
 #include "TextureLoader.h"
+#include "Viewpoint.h"
 #include "Variables.h"
 
 #ifndef GLFW_INCLUDE_NONE
@@ -126,23 +127,13 @@ using Matrix4 = openbus::rendering::Matrix4;
 
 namespace {
 
-enum class RenderViewContext {
-    // Exterior views need both regular outside meshes and meshes authored for
-    // the shared/reflection vehicle view used by OMSI model files.
-    PlayerExterior = 1 | 4,
-    PlayerInterior = 2,
-    NonPlayer = 4,
-};
+using RenderViewContext = openbus::rendering::ViewpointContext;
 
 enum class VehicleRenderPass {
     All,
     Opaque,
     Transparent,
 };
-
-constexpr int viewpointMask(RenderViewContext context) {
-    return static_cast<int>(context);
-}
 
 constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
 constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 8;
@@ -1250,8 +1241,7 @@ struct Vehicle {
         multiplyMatrix(animationTransformForPart(part));
     }
 
-    void applyDrawTransform(const DisplayPart& part,
-                            const Matrix4* groundShadowTransform) const {
+    void applyDrawTransform(const DisplayPart& part, const Matrix4* groundShadowTransform) const {
         if (part.isShadow && groundShadowTransform != nullptr) {
             multiplyMatrix(*groundShadowTransform);
         }
@@ -1387,8 +1377,7 @@ struct Vehicle {
                     part.visibleVariable.empty() ||
                     variables.get(part.visibleVariable) == static_cast<double>(part.visibleValue);
                 variableVisibleParts[partIndex] = visible;
-                if (!visible ||
-                    (part.viewpoint != 0 && (part.viewpoint & viewpointMask(context)) == 0)) {
+                if (!visible || !openbus::rendering::viewpointMatches(part.viewpoint, context)) {
                     continue;
                 }
                 const bool lodMatches =
@@ -1517,7 +1506,7 @@ struct Vehicle {
                 ? variableVisibleParts[partIndex]
                 : part.visibleVariable.empty() ||
                       variables.get(part.visibleVariable) == static_cast<double>(part.visibleValue);
-        if (!visible || (part.viewpoint != 0 && (part.viewpoint & viewpointMask(context)) == 0)) {
+        if (!visible || !openbus::rendering::viewpointMatches(part.viewpoint, context)) {
             return false;
         }
         return activeLod < 0 || part.lodIndex < 0 || part.lodIndex == activeLod;
@@ -2249,7 +2238,7 @@ struct Vehicle {
                 for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
                     DisplayPart& part = displayLists[partIndex];
                     const bool viewpointMatches =
-                        part.viewpoint == 0 || (part.viewpoint & viewpointMask(context)) != 0;
+                        openbus::rendering::viewpointMatches(part.viewpoint, context);
                     if (!viewpointMatches || !visible(part, partIndex)) {
                         continue;
                     }
@@ -3883,7 +3872,7 @@ struct Vehicle {
 
         for (Part& part : pendingParts) {
             const bool viewpointMatches =
-                part.viewpoint == 0 || (part.viewpoint & viewpointMask(context)) != 0;
+                openbus::rendering::viewpointMatches(part.viewpoint, context);
             const bool lodMatches = selectedLod < 0 || part.lodIndex == selectedLod;
             if (part.objRequest || (viewpointMatches && lodMatches)) {
                 continue;
@@ -3903,7 +3892,7 @@ struct Vehicle {
                 break;
             }
             const bool viewpointMatches =
-                part->viewpoint == 0 || (part->viewpoint & viewpointMask(context)) != 0;
+                openbus::rendering::viewpointMatches(part->viewpoint, context);
             const bool shouldLoad =
                 viewpointMatches && (selectedLod < 0 || part->lodIndex == selectedLod);
             if (!shouldLoad) {
@@ -3927,8 +3916,8 @@ struct Vehicle {
             if (budgetReached() && loadedThisFrame > 0) {
                 break;
             }
-            const bool viewpointMatches = backgroundPart->viewpoint == 0 ||
-                                          (backgroundPart->viewpoint & viewpointMask(context)) != 0;
+            const bool viewpointMatches =
+                openbus::rendering::viewpointMatches(backgroundPart->viewpoint, context);
             const bool lodMatches = selectedLod < 0 || backgroundPart->lodIndex == selectedLod;
             if ((viewpointMatches && lodMatches) || !backgroundPart->objRequest ||
                 backgroundPart->objRequest->future.wait_for(std::chrono::milliseconds(0)) !=
@@ -4174,6 +4163,8 @@ void RenderLoop::logDiagnosticVariables() const {
 void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
                                        double steering, double brake) {
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
+    soundEngine_.setViewpoint(isExteriorView() ? RenderViewContext::PlayerExterior
+                                               : RenderViewContext::PlayerInterior);
     smoothedSteering_ = openbus::input::smoothSteeringInput(
         smoothedSteering_, steering, std::clamp(frameTimeStep_, 0.0, 0.25), steeringSmoothingRate_);
     if (playerVehicle_ != nullptr) {
@@ -4187,7 +4178,7 @@ void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
         playerVehicle_->updateSimulationVariables(
             simulation, playerVehicle_->variables.get("throttle"),
             playerVehicle_->variables.get("steering"), playerVehicle_->variables.get("brake"));
-        soundEngine_.updateLoops(playerVehicle_->variables, isExteriorView() ? 5 : 2);
+        soundEngine_.updateLoops(playerVehicle_->variables);
     }
 }
 
@@ -4622,21 +4613,18 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     const BodyPose chassis = simulation.chassisPose();
     const ChassisCollisionBox collision = simulation.chassisCollisionBox();
     constexpr double radiansToDegrees = 180.0 / 3.14159265358979323846;
-    const Matrix4 playerModelBase =
-        multiplyMatrix4(poseMatrix(chassis), translationMatrix({0.0, 0.0,
-                                                               playerVehicle_ != nullptr
-                                                                   ? playerVehicle_->modelOffsetZ
-                                                                   : 0.0}));
-    const Matrix4 shadowGroundBase = multiplyMatrix4(
-        translationMatrix({chassis.position[0], chassis.position[1], 0.015}),
-        rotationMatrix(simulation.yaw() * radiansToDegrees, 0.0, 0.0, 1.0));
+    const Matrix4 playerModelBase = multiplyMatrix4(
+        poseMatrix(chassis),
+        translationMatrix(
+            {0.0, 0.0, playerVehicle_ != nullptr ? playerVehicle_->modelOffsetZ : 0.0}));
+    const Matrix4 shadowGroundBase =
+        multiplyMatrix4(translationMatrix({chassis.position[0], chassis.position[1], 0.015}),
+                        rotationMatrix(simulation.yaw() * radiansToDegrees, 0.0, 0.0, 1.0));
     Matrix4 inversePlayerModelBase = identityMatrix();
-    const bool canGroundClampShadow =
-        invertAffineMatrix(playerModelBase, inversePlayerModelBase);
+    const bool canGroundClampShadow = invertAffineMatrix(playerModelBase, inversePlayerModelBase);
     const Matrix4 groundShadowTransform =
-        canGroundClampShadow
-            ? multiplyMatrix4(inversePlayerModelBase, shadowGroundBase)
-            : identityMatrix();
+        canGroundClampShadow ? multiplyMatrix4(inversePlayerModelBase, shadowGroundBase)
+                             : identityMatrix();
     {
         TraceScope phase("render", "RenderLoop::draw.camera");
         if (cameraView_ == 0) {
@@ -4954,9 +4942,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                     applyVehiclePlacement(vehicle->placement);
                 }
                 const Matrix4* shadowTransform =
-                    vehicle.get() == playerVehicle_ && canGroundClampShadow
-                        ? &groundShadowTransform
-                        : nullptr;
+                    vehicle.get() == playerVehicle_ && canGroundClampShadow ? &groundShadowTransform
+                                                                            : nullptr;
                 vehicle->draw(vehicleContext, renderPass, shadowTransform);
                 popMatrix();
             }

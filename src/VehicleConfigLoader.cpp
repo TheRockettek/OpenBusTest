@@ -341,8 +341,8 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
     }
 }
 
-void loadRegistrationEntries(const std::filesystem::path& path,
-                             std::vector<std::string>& entries, VehicleConfig& result) {
+void loadRegistrationEntries(const std::filesystem::path& path, std::vector<std::string>& entries,
+                             VehicleConfig& result) {
     if (path.empty()) {
         return;
     }
@@ -839,10 +839,9 @@ void selectRegistrationAtIndex(VehicleConfig& configuration, std::size_t index) 
     configuration.selectedRegistrationIndex = index;
     configuration.selectedVehicleNumber =
         index < configuration.vehicleNumbers.size() ? configuration.vehicleNumbers[index] : "";
-    configuration.selectedRegistration =
-        index < configuration.registrationNumbers.size()
-            ? configuration.registrationNumbers[index]
-            : configuration.selectedVehicleNumber;
+    configuration.selectedRegistration = index < configuration.registrationNumbers.size()
+                                             ? configuration.registrationNumbers[index]
+                                             : configuration.selectedVehicleNumber;
 }
 
 ModelConfig loadVehicleModelConfig(const std::filesystem::path& configPath,

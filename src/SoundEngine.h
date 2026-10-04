@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Viewpoint.h"
+
 #include <array>
 #include <filesystem>
 #include <memory>
@@ -20,13 +22,13 @@ struct SoundVolumeCurve {
 struct SoundTriggerDefinition {
     std::filesystem::path file;
     bool loop = false;
-  bool loopDisabled = false;
+    bool loopDisabled = false;
     int viewpoint = 0;
     double maxDistance = 0.0;
     std::array<double, 3> position = {};
     std::string controlVariable;
     double controlCenter = 0.0;
-  double baseGain = 1.0;
+    double baseGain = 1.0;
     std::vector<SoundCurvePoint> volumeCurve;
     std::vector<SoundVolumeCurve> volumeCurves;
 };
@@ -41,9 +43,10 @@ class SoundEngine {
     SoundEngine& operator=(const SoundEngine&) = delete;
 
     void load(const std::filesystem::path& configPath);
+    void setViewpoint(openbus::rendering::ViewpointContext viewpoint);
     void setListenerPose(const std::array<double, 3>& position,
                          const std::array<double, 3>& forward, const std::array<double, 3>& up);
-    void updateLoops(const Variables& variables, int viewpoint);
+    void updateLoops(const Variables& variables);
     void trigger(const std::string& name, const std::filesystem::path& overrideFile = {},
                  double controlValue = 0.0);
     void stop(const std::string& name);
@@ -55,5 +58,7 @@ class SoundEngine {
     std::unordered_map<std::string, std::vector<SoundTriggerDefinition>> triggers_;
     std::vector<SoundTriggerDefinition> untriggeredLoopSounds_;
     std::filesystem::path basePath_;
+    openbus::rendering::ViewpointContext viewpoint_ =
+        openbus::rendering::ViewpointContext::PlayerExterior;
     std::unique_ptr<Backend> backend_;
 };

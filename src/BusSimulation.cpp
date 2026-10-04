@@ -521,8 +521,8 @@ struct BusSimulation::Impl {
                 configuration.collisionMeshIndices.data(),
                 checkedOdeCount(configuration.collisionMeshIndices.size(), "index count"),
                 3 * sizeof(int));
-            chassisGeom = dCreateTriMesh(ode.space, chassisCollisionMeshData, nullptr, nullptr,
-                                         nullptr);
+            chassisGeom =
+                dCreateTriMesh(ode.space, chassisCollisionMeshData, nullptr, nullptr, nullptr);
             if (!chassisGeom) {
                 dGeomTriMeshDataDestroy(chassisCollisionMeshData);
                 chassisCollisionMeshData = nullptr;
@@ -531,8 +531,7 @@ struct BusSimulation::Impl {
             dGeomSetBody(chassisGeom, chassis);
             // Mesh vertices use the visible model's origin; the ODE body origin
             // is at the configured centre of gravity.
-            dGeomSetOffsetPosition(chassisGeom, 0.0, 0.0,
-                                   -configuration.centerOfGravityHeight);
+            dGeomSetOffsetPosition(chassisGeom, 0.0, 0.0, -configuration.centerOfGravityHeight);
         } else if (configuration.collisionEnabled) {
             chassisGeom = dCreateBox(ode.space, configuration.collisionLength,
                                      configuration.collisionWidth, configuration.collisionHeight);
@@ -1044,9 +1043,12 @@ BodyPose BusSimulation::chassisPose() const {
 }
 
 ChassisCollisionBox BusSimulation::chassisCollisionBox() const {
-    return {impl_->configuration.collisionLength,  impl_->configuration.collisionWidth,
-            impl_->configuration.collisionHeight,  impl_->configuration.collisionOffsetX,
-            impl_->configuration.collisionOffsetY, impl_->configuration.collisionOffsetZ,
+    return {impl_->configuration.collisionLength,
+            impl_->configuration.collisionWidth,
+            impl_->configuration.collisionHeight,
+            impl_->configuration.collisionOffsetX,
+            impl_->configuration.collisionOffsetY,
+            impl_->configuration.collisionOffsetZ,
             impl_->configuration.collisionEnabled,
             impl_->configuration.hasCollisionMesh && impl_->configuration.collisionEnabled};
 }

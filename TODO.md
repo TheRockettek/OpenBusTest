@@ -135,8 +135,9 @@ change from their controlling variables without manual texture replacement.
   dashboard binnacle and cab surfaces again.
 - [~] Complete `[texttexture]`/`[texttexture_enh]` compatibility with authored
   OMSI fonts, layout, and display-background/alpha semantics. Enhanced horizontal
-  alignment and `Refresh_Strings`-gated changed-string updates are implemented;
-  the fallback rasterizer and remaining format details still differ from OMSI.
+  alignments 0–5, authored grid spacing, and `Refresh_Strings`-gated changed-string
+  updates are implemented; the fallback rasterizer and remaining format details
+  still differ from OMSI.
 - [x] Pair the selected number-list entry with `[registration_list]`, expose
   the plate as `ident`, and rasterize its text texture on initialization; the
   default E400 plate is visible on the real model capture.
@@ -210,9 +211,9 @@ by parser alignment and should not be described as supported:
   `OpenBusVehicleConfigProbe`.
 - AI/network vehicle sections, coupling/cable behavior, and articulated
   multi-body physics despite the articulated flag being parsed.
-- Non-OMSI font edge cases such as Windows-1252 glyph validation and additional
-  text alignment semantics remain. `[texttexture_enh]` alignments 3–5 and its
-  grid spacing are not implemented. `[interiorlight]`, `[light_enh]`,
+- Non-OMSI font edge cases such as Windows-1252 glyph validation and remaining
+  text format semantics remain. `[texttexture_enh]` alignments 0–5 and grid
+  spacing are handled by the text runtime. `[interiorlight]`, `[light_enh]`,
   `[light_enh_2]`, and `[spotlight]` light emission remain incomplete.
 - Configurable keyboard binding files and the complete OMSI input action map;
   the current runtime dispatches physical W/A/S/D transitions to scripts.
@@ -286,10 +287,13 @@ for alignment is not mistaken for supporting it.
   Fix parsing as part of this work: `[light_enh]` currently treats its alpha
   bitmap path as numeric, and `[light_enh_2]` drops the time constant when the
   optional bitmap field is absent.
-- [ ] Correct `[viewpoint]` filtering: player-exterior rendering currently
-  uses mask `1 | 4`, allowing non-player-only meshes (flag 4) in the player
-  exterior view. Apply the documented mask consistently to sound playback;
-  sound viewpoint values are currently stored but not used to filter playback.
+- [x] Correct `[viewpoint]` filtering: player exterior, player interior, and
+  non-player vehicles now use their individual documented bits (`1`, `2`, and
+  `4`). Model visibility and sound playback share zero-means-all,
+  any-overlapping-bit mask matching; triggered sounds and ambient loops are
+  filtered against the active player view. `OpenBusViewpointProbe` covers
+  individual and combined masks, including exclusion of non-player-only meshes
+  from player exterior views.
 - [ ] Apply `origin_from_mesh` from mesh transformation metadata in every
   supported mesh path; the current origin operation is identity when that
   metadata is unavailable.
@@ -305,10 +309,9 @@ for alignment is not mistaken for supporting it.
 - [ ] Implement model `[terrainmapping]` when terrain/material CFGs are
   supported; it is documented but currently not dispatched.
 - [ ] Finish OMSI-compatible `[texttexture]` and `[texttexture_enh]` font,
-  vertical/layout, and alpha semantics; horizontal alignment and refresh gating
-  are supported, but enhanced alignments 3–5 and `grid` alignment remain
-  unsupported, and the runtime is not yet a complete compatibility
-  implementation.
+  vertical/layout, and alpha semantics; horizontal alignments 0–5 and authored
+  grid spacing are supported, but the fallback font rasterizer and remaining
+  enhanced-format flags are still not fully compatible.
 
 #### General CFG dialects
 

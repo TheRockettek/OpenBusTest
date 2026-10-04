@@ -40,10 +40,9 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
         part.viewpoint = source.viewpoint;
         part.renderType = source.renderType;
         std::string meshStem = source.objPath.stem().string();
-        std::transform(meshStem.begin(), meshStem.end(), meshStem.begin(),
-                       [](unsigned char character) {
-                           return static_cast<char>(std::tolower(character));
-                       });
+        std::transform(
+            meshStem.begin(), meshStem.end(), meshStem.begin(),
+            [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
         part.isShadow = source.isShadow || meshStem == "shadow";
         part.noCollision = source.noCollision;
         part.visibleVariable = source.visibleVariable;

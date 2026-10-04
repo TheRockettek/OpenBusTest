@@ -648,14 +648,18 @@ void SoundEngine::setListenerPose(const std::array<double, 3>& position,
     backend_->setListenerPose(position, forward, up);
 }
 
-void SoundEngine::updateLoops(const Variables& variables, int viewpoint) {
+void SoundEngine::setViewpoint(openbus::rendering::ViewpointContext viewpoint) {
+    viewpoint_ = viewpoint;
+}
+
+void SoundEngine::updateLoops(const Variables& variables) {
     openbus::rendering::TraceScope trace("sound", "SoundEngine::updateLoops");
     std::vector<Backend::LoopUpdate> updates;
     updates.reserve(untriggeredLoopSounds_.size());
     for (const SoundTriggerDefinition& definition : untriggeredLoopSounds_) {
         const std::filesystem::path file =
             definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
-        if (definition.viewpoint != 0 && definition.viewpoint != viewpoint) {
+        if (!openbus::rendering::viewpointMatches(definition.viewpoint, viewpoint_)) {
             continue;
         }
 
@@ -665,8 +669,7 @@ void SoundEngine::updateLoops(const Variables& variables, int viewpoint) {
                 gain *= evaluateCurve(curve.points, variables.get(curve.variable));
             }
         } else if (!definition.controlVariable.empty() && definition.controlCenter > 0.0) {
-            gain *= std::clamp(variables.get(definition.controlVariable) /
-                                   definition.controlCenter,
+            gain *= std::clamp(variables.get(definition.controlVariable) / definition.controlCenter,
                                0.0, 1.0);
         }
         gain = std::clamp(gain, 0.0, 1.0);
@@ -726,6 +729,15 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
         SoundTriggerDefinition overrideDefinition;
         overrideDefinition.file = overrideFile;
         definitions = {std::move(overrideDefinition)};
+    }
+    definitions.erase(std::remove_if(definitions.begin(), definitions.end(),
+                                     [this](const auto& definition) {
+                                         return !openbus::rendering::viewpointMatches(
+                                             definition.viewpoint, viewpoint_);
+                                     }),
+                      definitions.end());
+    if (definitions.empty()) {
+        return;
     }
     if (overrideFile.empty()) {
         for (const SoundTriggerDefinition& definition : definitions) {

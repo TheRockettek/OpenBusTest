@@ -9,7 +9,8 @@
       "cacheVariables": {
         "CMAKE_CXX_COMPILER": "C:/Program Files/LLVM/bin/clang-cl.exe",
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_TOOLCHAIN_FILE": "C:/vcpkg/scripts/buildsystems/vcpkg.cmake"
+        "CMAKE_TOOLCHAIN_FILE": "C:/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "OPENBUS_BUILD_BGFX_LIGHTING_PROBE": "OFF"
       },
       "environment": {
         "PATH": "C:/Program Files/LLVM/bin;C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64;$penv{PATH}",
@@ -25,11 +26,21 @@
       "cacheVariables": {
         "OPENBUS_ENABLE_PERF_TRACE": "ON"
       }
+    },
+    {
+      "name": "windows-clang-bgfx",
+      "displayName": "Windows Clang Release (bgfx Lighting Probe)",
+      "inherits": "windows-clang-release",
+      "binaryDir": "${sourceDir}/build-bgfx",
+      "cacheVariables": {
+        "OPENBUS_BUILD_BGFX_LIGHTING_PROBE": "ON"
+      }
     }
   ],
   "buildPresets": [
     { "name": "windows-clang-release", "configurePreset": "windows-clang-release" },
-    { "name": "windows-clang-benchmark", "configurePreset": "windows-clang-benchmark" }
+    { "name": "windows-clang-benchmark", "configurePreset": "windows-clang-benchmark" },
+    { "name": "windows-clang-bgfx", "configurePreset": "windows-clang-bgfx" }
   ],
   "testPresets": [
     { "name": "windows-clang-release", "configurePreset": "windows-clang-release", "output": { "outputOnFailure": true } }

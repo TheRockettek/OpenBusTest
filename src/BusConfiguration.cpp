@@ -84,7 +84,7 @@ std::filesystem::path resolveConfiguredModelPath(const std::filesystem::path& bu
 }
 
 BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
-                                                 const ModelConfig& model) {
+                                                const ModelConfig& model) {
     const std::array<double, 6>& boundingBox =
         model.hasBoundingBox ? model.boundingBox : source.boundingBox;
 
@@ -132,7 +132,7 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
             parsed = openbus::rendering::O3DLoader::parse(collisionMesh.resolvedPath);
         } else {
             parsed = openbus::rendering::ObjLoader::parse(collisionMesh.resolvedPath,
-                                                         collisionMesh.bundleEntry);
+                                                          collisionMesh.bundleEntry);
         }
         if (!parsed || parsed->triangles.empty()) {
             throw std::runtime_error("Bus model collision mesh has no triangles: " +
@@ -167,8 +167,7 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
                 }
                 configuration.collisionMeshVertices.insert(
                     configuration.collisionMeshVertices.end(), converted.begin(), converted.end());
-                configuration.collisionMeshIndices.push_back(
-                    static_cast<int>(nextVertex + corner));
+                configuration.collisionMeshIndices.push_back(static_cast<int>(nextVertex + corner));
             }
             if (!validTriangle) {
                 configuration.collisionMeshVertices.resize(nextVertex * 3);

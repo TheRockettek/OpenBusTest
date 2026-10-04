@@ -37,6 +37,10 @@ option(OPENBUS_ENABLE_PERF_TRACE
        "Compile performance tracing instrumentation"
        OFF)
 
+option(OPENBUS_BUILD_BGFX_LIGHTING_PROBE
+    "Build the opt-in bgfx OpenGL/GLSL lighting preview"
+    OFF)
+
 if(OPENBUS_ENABLE_PERF_TRACE)
     set(OPENBUS_PERF_TRACE_DEFINE 1)
 else()
@@ -58,6 +62,16 @@ include(FetchContent)
 find_package(ODE CONFIG QUIET)
 find_package(glfw3 CONFIG QUIET)
 find_package(OpenAL CONFIG REQUIRED)
+
+if(OPENBUS_BUILD_BGFX_LIGHTING_PROBE)
+    if(NOT WIN32)
+        message(FATAL_ERROR "The bgfx lighting probe currently uses GLFW's Win32 native handle.")
+    endif()
+    find_package(bgfx CONFIG REQUIRED)
+    if(NOT TARGET bgfx::shaderc)
+        message(FATAL_ERROR "bgfx was found without its tools feature; bgfx::shaderc is required.")
+    endif()
+endif()
 
 if(TARGET glfw3::glfw AND NOT TARGET glfw)
     add_library(OpenBus::GLFW ALIAS glfw3::glfw)
@@ -187,6 +201,50 @@ target_include_directories(OpenBus SYSTEM PRIVATE
 target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} OpenBus::GLFW OpenGL::GL OpenBusLua
                                       OpenAL::OpenAL)
 
+if(OPENBUS_BUILD_BGFX_LIGHTING_PROBE)
+    set(OPENBUS_BGFX_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders/bgfx")
+    set(OPENBUS_BGFX_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/bgfx-shaders")
+    file(MAKE_DIRECTORY "${OPENBUS_BGFX_SHADER_OUTPUT_DIR}")
+
+    foreach(shader IN ITEMS vs_lit_cube fs_lit_cube)
+        if(shader STREQUAL "vs_lit_cube")
+            set(shader_type vertex)
+        else()
+            set(shader_type fragment)
+        endif()
+        add_custom_command(
+            OUTPUT "${OPENBUS_BGFX_SHADER_OUTPUT_DIR}/${shader}.bin"
+            COMMAND $<TARGET_FILE:bgfx::shaderc>
+                -f "${OPENBUS_BGFX_SHADER_SOURCE_DIR}/${shader}.sc"
+                -o "${OPENBUS_BGFX_SHADER_OUTPUT_DIR}/${shader}.bin"
+                --type ${shader_type}
+                --platform windows
+                --profile 150
+                --varyingdef "${OPENBUS_BGFX_SHADER_SOURCE_DIR}/varying.def.sc"
+                -i "${BGFX_SHADER_INCLUDE_PATH}"
+            DEPENDS
+                "${OPENBUS_BGFX_SHADER_SOURCE_DIR}/${shader}.sc"
+                "${OPENBUS_BGFX_SHADER_SOURCE_DIR}/varying.def.sc"
+                bgfx::shaderc
+            COMMENT "Compiling bgfx GLSL 1.50 shader ${shader}"
+            VERBATIM
+        )
+        list(APPEND OPENBUS_BGFX_SHADER_BINARIES
+             "${OPENBUS_BGFX_SHADER_OUTPUT_DIR}/${shader}.bin")
+    endforeach()
+
+    add_custom_target(OpenBusBgfxShaders DEPENDS ${OPENBUS_BGFX_SHADER_BINARIES})
+    add_executable(OpenBusBgfxLightingProbe src/BgfxLightingProbe.cpp)
+    add_dependencies(OpenBusBgfxLightingProbe OpenBusBgfxShaders)
+    target_link_libraries(OpenBusBgfxLightingProbe PRIVATE bgfx::bgfx OpenBus::GLFW)
+    target_compile_features(OpenBusBgfxLightingProbe PRIVATE cxx_std_23)
+    add_custom_command(TARGET OpenBusBgfxLightingProbe POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${OPENBUS_BGFX_SHADER_OUTPUT_DIR}"
+            "$<TARGET_FILE_DIR:OpenBusBgfxLightingProbe>/bgfx-shaders"
+        VERBATIM)
+endif()
+
 if(WIN32)
     add_custom_command(TARGET OpenBus POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy -t "$<TARGET_FILE_DIR:OpenBus>"
@@ -264,6 +322,10 @@ add_executable(OpenBusCameraMathProbe
 )
 target_include_directories(OpenBusCameraMathProbe PRIVATE src)
 add_test(NAME OpenBusCameraMathProbe COMMAND OpenBusCameraMathProbe)
+
+add_executable(OpenBusViewpointProbe tests/ViewpointProbe.cpp)
+target_include_directories(OpenBusViewpointProbe PRIVATE src)
+add_test(NAME OpenBusViewpointProbe COMMAND OpenBusViewpointProbe)
 
 add_executable(OpenBusRoadFeaturesProbe
     tests/RoadFeaturesProbe.cpp

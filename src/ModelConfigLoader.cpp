@@ -981,8 +981,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     }
                 }
                 if (!valid || bounds[0] <= 0.0 || bounds[1] <= 0.0 || bounds[2] <= 0.0) {
-                    result.diagnostics.error(line.number, keyword,
-                                             "expected positive finite box sizes and finite center coordinates");
+                    result.diagnostics.error(
+                        line.number, keyword,
+                        "expected positive finite box sizes and finite center coordinates");
                 } else {
                     result.boundingBox = bounds;
                     result.hasBoundingBox = true;

@@ -284,12 +284,18 @@ int main() {
         ModelTextTexture{2, true, {"centerdisplay", "ProbeFont", "6", "8", "1", "10", "20", "30", "0"}},
         ModelTextTexture{3, true, {"blockcolordisplay", "ProbeFont", "6", "6", "0", "1", "1", "1", "0"}},
         ModelTextTexture{4, true, {"leftdisplay", "ProbeFont", "8", "4", "1", "10", "20", "30", "1"}},
-        ModelTextTexture{5, false, {"ident", "probe-font", "32", "16", "0", "255", "255", "255"}}});
+        ModelTextTexture{5, false, {"ident", "probe-font", "32", "16", "0", "255", "255", "255"}},
+        ModelTextTexture{6, true, {"gridcenterdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "3", "1"}},
+        ModelTextTexture{7, true, {"gridleftdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "4", "1"}},
+        ModelTextTexture{8, true, {"gridrightdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "5", "0"}}});
     variables.setString("display", "HELLO\n123");
     variables.setString("bitmapdisplay", "A@AB");
     variables.setString("centerdisplay", "A");
     variables.setString("blockcolordisplay", "A");
     variables.setString("leftdisplay", "A");
+    variables.setString("gridcenterdisplay", "AB");
+    variables.setString("gridleftdisplay", "AB");
+    variables.setString("gridrightdisplay", "AB");
     runtime.initialize();
     ScriptRuntime::ScriptTextureSnapshot initialText;
     ScriptRuntime::ScriptTextureSnapshot initialPlateText;
@@ -327,6 +333,9 @@ int main() {
     ScriptRuntime::ScriptTextureSnapshot centerTextTexture;
     ScriptRuntime::ScriptTextureSnapshot blockColorTextTexture;
     ScriptRuntime::ScriptTextureSnapshot leftTextTexture;
+    ScriptRuntime::ScriptTextureSnapshot gridCenterTextTexture;
+    ScriptRuntime::ScriptTextureSnapshot gridLeftTextTexture;
+    ScriptRuntime::ScriptTextureSnapshot gridRightTextTexture;
     if (!runtime.copyScriptTexture(3, scriptTexture) || scriptTexture.width != 4 ||
         scriptTexture.height != 5 || scriptTexture.pixels.size() != 4U * 5U * 4U ||
         !runtime.copyTextTexture(0, textTexture) || textTexture.width != 32 ||
@@ -340,7 +349,10 @@ int main() {
         !runtime.copyTextTexture(3, blockColorTextTexture) || blockColorTextTexture.width != 6 ||
         blockColorTextTexture.height != 6 || blockColorTextTexture.pixels.size() != 6U * 6U * 4U ||
         !runtime.copyTextTexture(4, leftTextTexture) || leftTextTexture.width != 8 ||
-        leftTextTexture.height != 4 || leftTextTexture.pixels.size() != 8U * 4U * 4U) {
+        leftTextTexture.height != 4 || leftTextTexture.pixels.size() != 8U * 4U * 4U ||
+        !runtime.copyTextTexture(6, gridCenterTextTexture) ||
+        !runtime.copyTextTexture(7, gridLeftTextTexture) ||
+        !runtime.copyTextTexture(8, gridRightTextTexture)) {
         std::cerr << "configured texture surfaces were not created\n";
         return 1;
     }
@@ -398,6 +410,11 @@ int main() {
     const std::size_t centeredFontPixel = (3U * 6U + 2U) * 4U;
     const std::size_t centeredBlockColorPixel = (2U * 6U + 2U) * 4U;
     const std::size_t leftAlignedPixel = (1U * 8U) * 4U;
+    const std::size_t gridCenterFirstPixel = (1U * 8U + 1U) * 4U;
+    const std::size_t gridCenterSecondPixel = (1U * 8U + 4U) * 4U;
+    const std::size_t gridLeftSecondPixel = (1U * 8U + 3U) * 4U;
+    const std::size_t gridRightFirstPixel = (1U * 8U + 4U) * 4U;
+    const std::size_t gridRightSecondPixel = (1U * 8U + 6U) * 4U;
     int blockMinX = 6;
     int blockMinY = 6;
     int blockMaxX = -1;
@@ -425,7 +442,12 @@ int main() {
         leftTextTexture.pixels[leftAlignedPixel + 1] != 255 ||
         leftTextTexture.pixels[leftAlignedPixel + 2] != 255 ||
         leftTextTexture.pixels[leftAlignedPixel + 3] != 255 ||
-        leftTextTexture.pixels[(1U * 8U + 3U) * 4U + 3U] != 0) {
+        leftTextTexture.pixels[(1U * 8U + 3U) * 4U + 3U] != 0 ||
+        gridCenterTextTexture.pixels[gridCenterFirstPixel + 3] != 255 ||
+        gridCenterTextTexture.pixels[gridCenterSecondPixel + 3] != 128 ||
+        gridLeftTextTexture.pixels[gridLeftSecondPixel + 3] != 128 ||
+        gridRightTextTexture.pixels[gridRightFirstPixel + 3] != 255 ||
+        gridRightTextTexture.pixels[gridRightSecondPixel + 3] != 128) {
         std::cerr << "OMSI text layout/color mismatch: centered font RGBA="
                   << static_cast<int>(centerTextTexture.pixels[centeredFontPixel]) << ','
                   << static_cast<int>(centerTextTexture.pixels[centeredFontPixel + 1]) << ','

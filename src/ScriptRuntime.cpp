@@ -89,6 +89,7 @@ struct ScriptRuntime::Impl {
         int width = 0;
         int height = 0;
         TextAlignment alignment = TextAlignment::Center;
+        int gridSpacing = 0;
         std::array<std::uint8_t, 4> color = {255, 255, 255, 255};
         bool useFontColor = false;
         std::string lastValue;
@@ -967,10 +968,9 @@ struct ScriptRuntime::Impl {
             // The plate text surface reads `ident`; scripts and fleet-number
             // surfaces read `number`.
             localState.setString("ident", configuration.selectedRegistration);
-            localState.setString(
-                "number", configuration.selectedVehicleNumber.empty()
-                              ? configuration.selectedRegistration
-                              : configuration.selectedVehicleNumber);
+            localState.setString("number", configuration.selectedVehicleNumber.empty()
+                                               ? configuration.selectedRegistration
+                                               : configuration.selectedVehicleNumber);
         }
 
         if (tryInitializeNativeBackend()) {
@@ -1371,8 +1371,10 @@ struct ScriptRuntime::Impl {
         }
         longestLine = std::max(longestLine, currentLineLength);
         const int heightScale = std::max(1, (texture.height - 2) / 7);
-        const int availableWidth = std::max(
-            1, texture.width - 2 - std::max(0, letterSpacing) * static_cast<int>(longestLine));
+        const int spacing = std::max(0, letterSpacing);
+        const int availableWidth =
+            std::max(1, texture.width - 2 -
+                            spacing * static_cast<int>(longestLine > 0 ? longestLine - 1 : 0));
         const int widthScale =
             std::max(1, availableWidth / std::max(1, 6 * static_cast<int>(longestLine)));
         const int multilineHeight =
@@ -1464,6 +1466,7 @@ struct ScriptRuntime::Impl {
         }
 
         const int textBlockHeight = static_cast<int>(lines.size()) * font.height;
+        const int horizontalGap = font.horizontalGap + definition.gridSpacing;
         const int verticalOffset = std::max(0, (texture.height - textBlockHeight) / 2);
         for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
             const std::vector<const FontGlyph*>& line = lines[lineIndex];
@@ -1471,7 +1474,7 @@ struct ScriptRuntime::Impl {
             for (std::size_t glyphIndex = 0; glyphIndex < line.size(); ++glyphIndex) {
                 lineWidth += line[glyphIndex]->right - line[glyphIndex]->left;
                 if (glyphIndex + 1 < line.size()) {
-                    lineWidth += font.horizontalGap;
+                    lineWidth += horizontalGap;
                 }
             }
             lineWidth = std::max(0, lineWidth);
@@ -1522,7 +1525,7 @@ struct ScriptRuntime::Impl {
                         texture.pixels[destinationOffset + 3] = font.alphaImage.rgba[sourceOffset];
                     }
                 }
-                cursorX += glyphWidth + font.horizontalGap;
+                cursorX += glyphWidth + horizontalGap;
             }
         }
         ++texture.revision;
@@ -1551,8 +1554,8 @@ struct ScriptRuntime::Impl {
             const bool bitmapFontRendered =
                 font != nullptr && drawBitmapFontText(texture, value, 0, 0, definition, *font);
             if (!bitmapFontRendered && !value.empty()) {
-                drawText(texture, value, 0, 0, definition.color, 0, maximumScale,
-                         definition.alignment, true);
+                drawText(texture, value, 0, 0, definition.color, definition.gridSpacing,
+                         maximumScale, definition.alignment, true);
             } else if (!bitmapFontRendered) {
                 ++texture.revision;
             }
@@ -2013,20 +2016,40 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
                 configured.useFontColor = false;
             }
         }
-        // Basic text textures are center-aligned. Enhanced records append an
-        // alignment code after RGB: 0=center, 1=left, 2=right.
+        // Enhanced alignment values are two sets of the same horizontal modes:
+        // 0/3=center, 1/4=left, and 2/5=right. The following field is the
+        // additional per-character grid spacing used by enhanced displays.
         if (definition.enhanced && definition.values.size() > 8) {
             try {
                 const int alignment = std::stoi(definition.values[8]);
-                if (alignment == 0) {
-                    configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
-                } else if (alignment == 1) {
+                switch (alignment) {
+                case 1:
+                case 4:
                     configured.alignment = ScriptRuntime::Impl::TextAlignment::Left;
-                } else if (alignment == 2) {
+                    break;
+                case 2:
+                case 5:
                     configured.alignment = ScriptRuntime::Impl::TextAlignment::Right;
+                    break;
+                case 0:
+                case 3:
+                default:
+                    configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
+                    break;
                 }
             } catch (const std::exception&) {
                 configured.alignment = ScriptRuntime::Impl::TextAlignment::Center;
+            }
+        }
+        if (definition.enhanced && definition.values.size() > 9) {
+            try {
+                std::size_t consumed = 0;
+                const int spacing = std::stoi(definition.values[9], &consumed);
+                if (consumed == definition.values[9].size()) {
+                    configured.gridSpacing = std::clamp(spacing, 0, 64);
+                }
+            } catch (const std::exception&) {
+                configured.gridSpacing = 0;
             }
         }
         for (std::size_t channel = 0; channel < 3 && channel + 5 < definition.values.size();
