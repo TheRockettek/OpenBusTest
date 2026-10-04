@@ -914,7 +914,8 @@ struct ScriptRuntime::Impl {
 
     bool tryInitializeNativeBackend() {
         const char* backend = openbus::getEnvironment("OPENBUS_SCRIPT_BACKEND");
-        if (!backend || std::string(backend) != "native") {
+        if (backend && lower(backend) == "lua") {
+            scriptRuntimeLogger.Log("Lua script backend explicitly selected");
             return false;
         }
 
@@ -934,6 +935,10 @@ struct ScriptRuntime::Impl {
             nativePrograms.push_back(std::move(program));
         }
         nativeBackend = !nativePrograms.empty();
+        if (nativeBackend) {
+            scriptRuntimeLogger.Log("Native OSC backend enabled for " +
+                                    std::to_string(nativePrograms.size()) + " script(s)");
+        }
         return nativeBackend;
     }
 

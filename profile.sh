@@ -9,6 +9,7 @@ cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DOPENBUS_ENABLE_PERF_TRAC
 cmake --build "$BUILD_DIR" --target OpenBus --parallel
 
 export OPENBUS_VSYNC="${OPENBUS_VSYNC:-off}"
+export OPENBUS_SCRIPT_BACKEND="${OPENBUS_SCRIPT_BACKEND:-native}"
 export OPENBUS_TRACE=1
 export OPENBUS_TRACE_COLLAPSED=1
 export OPENBUS_TRACE_FILE="${OPENBUS_TRACE_FILE:-${ROOT_DIR}/openbus_trace.json}"

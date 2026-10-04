@@ -25,7 +25,7 @@ EXECUTABLE = BUILD_DIR / "OpenBus.exe"
 CACHE_FILE = BUILD_DIR / "CMakeCache.txt"
 DEFAULT_RESOLUTIONS = ("1280x720", "1920x1080", "2560x1440", "3840x2160", "5120x1440")
 PHASES = ("baseline", "cameraCycle", "thirdPersonZoom", "drivingControls", "dashboardInteraction")
-TRACE_MAX_EVENTS = 1_000_000
+TRACE_MAX_EVENTS = 2_000_000
 FRAME_SCOPES = (
     "RenderLoop::draw",
     "RenderLoop::draw.reflections",
@@ -59,6 +59,7 @@ class TraceSummary:
     frame_rows: list[dict[str, Any]]
     measurement_ms: float
     frame_count: int
+    phase_repeat_count: int
     measured_event_count: int
     total_event_count: int
 
@@ -169,7 +170,9 @@ def summarize_trace(
         framebuffer_scale_x = ""
         framebuffer_scale_y = ""
 
-    def add_summary(group_events: list[TraceEvent], phase_name: str) -> None:
+    def add_summary(
+        group_events: list[TraceEvent], phase_name: str, phase_repeat: int | str = ""
+    ) -> None:
         grouped: dict[tuple[str, str], list[TraceEvent]] = defaultdict(list)
         for event in group_events:
             grouped[(event.category, event.name)].append(event)
@@ -186,6 +189,7 @@ def summarize_trace(
                     "FramebufferMatchesRequested": framebuffer_matches_requested,
                     "Run": run_number,
                     "Phase": phase_name,
+                    "PhaseRepeat": phase_repeat,
                     "Category": category,
                     "Scope": name,
                     "Count": len(items),
@@ -215,14 +219,17 @@ def summarize_trace(
         thread: [event.start_us for event in thread_events]
         for thread, thread_events in events_by_thread.items()
     }
+    phase_repeat_counts: dict[str, int] = defaultdict(int)
     for marker in sorted(phase_markers, key=lambda event: event.start_us):
         phase_name = marker.name.removeprefix("Benchmark.phase.")
+        phase_repeat_counts[phase_name] += 1
+        phase_repeat = phase_repeat_counts[phase_name]
         phase_events = [
             event
             for event in measured_events
             if event.start_us >= marker.start_us and event.end_us <= marker.end_us
         ]
-        add_summary(phase_events, phase_name)
+        add_summary(phase_events, phase_name, phase_repeat)
 
         phase_frames = sorted(
             (
@@ -242,6 +249,7 @@ def summarize_trace(
                 "FramebufferMatchesRequested": framebuffer_matches_requested,
                 "Run": run_number,
                 "Phase": phase_name,
+                "PhaseRepeat": phase_repeat,
                 "Frame": frame_index,
                 "FrameStartUs": round(frame.start_us, 3),
                 "EventStartUs": round(frame.start_us, 3),
@@ -278,11 +286,15 @@ def summarize_trace(
     frame_count = sum(
         event.category == "frame" and event.name == "main" for event in measured_events
     )
+    repeat_counts = {phase_repeat_counts[phase] for phase in PHASES}
+    if len(repeat_counts) != 1:
+        raise RuntimeError("Trace phase repeat counts are incomplete or unbalanced.")
     return TraceSummary(
         rows=summary_rows,
         frame_rows=frame_rows,
         measurement_ms=round(measurement.duration_us / 1000.0, 3),
         frame_count=frame_count,
+        phase_repeat_count=next(iter(repeat_counts)),
         measured_event_count=len(measured_events),
         total_event_count=len(events),
     )
@@ -320,7 +332,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=60,
         help="total warm-up frames distributed across all benchmark phases",
     )
-    parser.add_argument("--phase-frames", type=int, default=60)
+    parser.add_argument(
+        "--phase-frames",
+        type=int,
+        default=120,
+        help="fixed-step measured frames per phase visit (120 is two seconds at 60 Hz)",
+    )
+    parser.add_argument(
+        "--phase-repeats",
+        type=int,
+        default=2,
+        help="number of times to measure the full set of phases in each resolution run",
+    )
     parser.add_argument("--ready-timeout-seconds", type=int, default=180)
     parser.add_argument(
         "--bus-config",
@@ -344,6 +367,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
         raise ValueError("--warmup-frames must be between 0 and 10000")
     if not 1 <= args.phase_frames <= 100_000:
         raise ValueError("--phase-frames must be between 1 and 100000")
+    if not 1 <= args.phase_repeats <= 100:
+        raise ValueError("--phase-repeats must be between 1 and 100")
     if not 1 <= args.ready_timeout_seconds <= 3600:
         raise ValueError("--ready-timeout-seconds must be between 1 and 3600")
 
@@ -386,7 +411,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
         log_path = output_path / f"log_{case_name}.txt"
         print(
             f"[{run_order}/{total_runs}] {resolution} run {run_number}/{args.runs} "
-            f"(seed {args.seed})"
+            f"(seed {args.seed}; {args.phase_repeats} phase repeats × "
+            f"{args.phase_frames} frames)"
         )
 
         environment = os.environ.copy()
@@ -397,7 +423,9 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "OPENBUS_BENCHMARK_HEIGHT": str(height),
                 "OPENBUS_BENCHMARK_WARMUP_FRAMES": str(args.warmup_frames),
                 "OPENBUS_BENCHMARK_PHASE_FRAMES": str(args.phase_frames),
+                "OPENBUS_BENCHMARK_PHASE_REPEATS": str(args.phase_repeats),
                 "OPENBUS_BENCHMARK_READY_TIMEOUT": str(args.ready_timeout_seconds),
+                "OPENBUS_SCRIPT_BACKEND": "native",
                 "OPENBUS_BUS_CONFIG": args.bus_config,
                 "OPENBUS_MODEL_CONFIG": args.model_config,
                 "OPENBUS_TRACE": "1",
@@ -442,6 +470,14 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 f"OpenBus did not report its window size; rebuild the benchmark target. "
                 f"See {log_path}"
             )
+        reported_phase_repeats = int(
+            parse_log_value(r"BENCHMARK_PHASE_REPEATS=(\d+)", log_text, "0")
+        )
+        if reported_phase_repeats != args.phase_repeats:
+            raise RuntimeError(
+                f"Requested {args.phase_repeats} phase repeats but OpenBus reported "
+                f"{reported_phase_repeats}; rebuild the benchmark target. See {log_path}"
+            )
         framebuffer_width, framebuffer_height = parse_resolution(actual_resolution)
         actual_window_width, actual_window_height = parse_resolution(window_resolution)
         framebuffer_scale_x = round(framebuffer_width / actual_window_width, 4)
@@ -468,6 +504,17 @@ def run_benchmark(args: argparse.Namespace) -> int:
         trace_summary = summarize_trace(
             trace_path, resolution, actual_resolution, run_number, window_resolution
         )
+        if trace_summary.phase_repeat_count != args.phase_repeats:
+            raise RuntimeError(
+                f"Trace contains {trace_summary.phase_repeat_count} phase repeat(s), "
+                f"expected {args.phase_repeats}: {trace_path}"
+            )
+        expected_frame_count = len(PHASES) * args.phase_repeats * args.phase_frames
+        if trace_summary.frame_count != expected_frame_count:
+            raise RuntimeError(
+                f"Trace contains {trace_summary.frame_count} measured frames, expected "
+                f"{expected_frame_count}: {trace_path}"
+            )
         if trace_summary.total_event_count >= TRACE_MAX_EVENTS:
             warnings.warn(
                 f"Trace reached the {TRACE_MAX_EVENTS:,}-event cap: {trace_path}",
@@ -490,6 +537,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "WarmupFramesPerPhaseMin": warmup_min,
                 "WarmupFramesPerPhaseMax": warmup_max,
                 "MeasuredFramesPerPhase": args.phase_frames,
+                "PhaseRepeats": args.phase_repeats,
                 "MeasuredFrameCount": trace_summary.frame_count,
                 "MeasurementMs": trace_summary.measurement_ms,
                 "MeasuredTraceEventCount": trace_summary.measured_event_count,
@@ -509,6 +557,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FramebufferMatchesRequested",
         "Run",
         "Phase",
+        "PhaseRepeat",
         "Category",
         "Scope",
         "Count",
@@ -531,6 +580,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "WarmupFramesPerPhaseMin",
         "WarmupFramesPerPhaseMax",
         "MeasuredFramesPerPhase",
+        "PhaseRepeats",
         "MeasuredFrameCount",
         "MeasurementMs",
         "MeasuredTraceEventCount",
@@ -548,6 +598,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FramebufferMatchesRequested",
         "Run",
         "Phase",
+        "PhaseRepeat",
         "Frame",
         "FrameStartUs",
         "EventStartUs",
@@ -560,6 +611,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
             row["RequestedResolution"],
             row["Run"],
             row["Phase"],
+            row["PhaseRepeat"],
             row["Category"],
             row["Scope"],
         )
@@ -571,6 +623,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
             row["RequestedResolution"],
             row["Run"],
             row["Phase"],
+            row["PhaseRepeat"],
             row["Frame"],
             row["Scope"],
         )

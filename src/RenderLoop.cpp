@@ -3971,6 +3971,8 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    const bool benchmarkMode = parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
+    glfwWindowHint(GLFW_VISIBLE, benchmarkMode ? GLFW_FALSE : GLFW_TRUE);
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
@@ -3979,6 +3981,11 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         gameLog.Log("Failed to create OpenGL window");
         glfwTerminate();
         throw std::runtime_error("Failed to create OpenGL window");
+    }
+    if (benchmarkMode) {
+        gameLog.Log(
+            std::string("Benchmark window is ") +
+            (glfwGetWindowAttrib(window_, GLFW_VISIBLE) == GLFW_TRUE ? "visible" : "hidden"));
     }
     glfwMakeContextCurrent(window_);
     glfwGetFramebufferSize(window_, &framebufferWidth_, &framebufferHeight_);

@@ -111,8 +111,44 @@ class TraceSummaryTests(unittest.TestCase):
 
         self.assertFalse(summary.rows[0]["FramebufferMatchesRequested"])
 
+    def test_phase_repeats_are_numbered_independently(self):
+        events = [self.make_event("Benchmark.measure", "benchmark", 0, 1200)]
+        events.extend(
+            self.make_event("main", "frame", start, 20)
+            for start in (20, 520)
+        )
+        events.extend(
+            self.make_event(
+                f"Benchmark.phase.{phase}",
+                "benchmark",
+                10 + (repeat * len(benchmark_rendering.PHASES) + index) * 100,
+                60,
+            )
+            for repeat in range(2)
+            for index, phase in enumerate(benchmark_rendering.PHASES)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            trace_path = Path(directory) / "trace.json"
+            trace_path.write_text(json.dumps({"traceEvents": events}), encoding="utf-8")
+            summary = benchmark_rendering.summarize_trace(
+                trace_path, "1920x1080", "1920x1080", 1
+            )
+
+        baseline_markers = [
+            row
+            for row in summary.rows
+            if row["Phase"] == "baseline" and row["Scope"] == "Benchmark.phase.baseline"
+        ]
+        self.assertEqual(summary.phase_repeat_count, 2)
+        self.assertEqual([row["PhaseRepeat"] for row in baseline_markers], [1, 2])
+        baseline_frames = [row for row in summary.frame_rows if row["Phase"] == "baseline"]
+        self.assertEqual([row["PhaseRepeat"] for row in baseline_frames], [1, 2])
+
     def test_repeated_run_default_is_five(self):
-        self.assertEqual(benchmark_rendering.build_parser().parse_args([]).runs, 5)
+        args = benchmark_rendering.build_parser().parse_args([])
+        self.assertEqual(args.runs, 5)
+        self.assertEqual(args.phase_frames, 120)
+        self.assertEqual(args.phase_repeats, 2)
 
 
 if __name__ == "__main__":

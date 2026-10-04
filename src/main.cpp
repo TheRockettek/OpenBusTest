@@ -147,7 +147,9 @@ int main() {
             const int warmupFrames =
                 positiveEnvironmentInt("OPENBUS_BENCHMARK_WARMUP_FRAMES", 60, 10000);
             const int phaseFrames =
-                positiveEnvironmentInt("OPENBUS_BENCHMARK_PHASE_FRAMES", 60, 100000);
+                positiveEnvironmentInt("OPENBUS_BENCHMARK_PHASE_FRAMES", 120, 100000);
+            const int phaseRepeats =
+                positiveEnvironmentInt("OPENBUS_BENCHMARK_PHASE_REPEATS", 5, 100);
             const int readyTimeoutSeconds =
                 positiveEnvironmentInt("OPENBUS_BENCHMARK_READY_TIMEOUT", 180, 3600);
             const auto renderBenchmarkFrame = [&](RenderBenchmarkPhase phase, int frameInPhase,
@@ -185,6 +187,7 @@ int main() {
                       << '\n';
             std::cout << "BENCHMARK_FRAMEBUFFER=" << framebufferDimensions[0] << 'x'
                       << framebufferDimensions[1] << '\n';
+            std::cout << "BENCHMARK_PHASE_REPEATS=" << phaseRepeats << '\n';
             std::cout << "BENCHMARK_READINESS_FRAMES=" << readinessFrames << '\n';
 
             const int warmupFramesPerPhase = warmupFrames / static_cast<int>(phases.size());
@@ -200,11 +203,13 @@ int main() {
 
             {
                 openbus::rendering::TraceScope measurement("benchmark", "Benchmark.measure");
-                for (const RenderBenchmarkPhase phase : phases) {
-                    openbus::rendering::TraceScope phaseTrace("benchmark",
-                                                              benchmarkPhaseName(phase));
-                    for (int frame = 0; frame < phaseFrames; ++frame) {
-                        renderBenchmarkFrame(phase, frame, phaseFrames);
+                for (int repeat = 0; repeat < phaseRepeats; ++repeat) {
+                    for (const RenderBenchmarkPhase phase : phases) {
+                        openbus::rendering::TraceScope phaseTrace("benchmark",
+                                                                  benchmarkPhaseName(phase));
+                        for (int frame = 0; frame < phaseFrames; ++frame) {
+                            renderBenchmarkFrame(phase, frame, phaseFrames);
+                        }
                     }
                 }
             }

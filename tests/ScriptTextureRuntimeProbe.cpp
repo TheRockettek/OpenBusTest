@@ -6,12 +6,26 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#ifdef _WIN32
+#include <cstdlib>
+#else
+#include <stdlib.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <vector>
 
 Logger gameLog = Logger("Game");
+
+bool setScriptBackend(const char* backend) {
+#ifdef _WIN32
+    return _putenv_s("OPENBUS_SCRIPT_BACKEND", backend == nullptr ? "" : backend) == 0;
+#else
+    return backend == nullptr ? unsetenv("OPENBUS_SCRIPT_BACKEND") == 0
+                              : setenv("OPENBUS_SCRIPT_BACKEND", backend, 1) == 0;
+#endif
+}
 
 void writeTestBmp(const std::filesystem::path& path, int width, int height,
                   const std::vector<std::uint8_t>& redValues) {
@@ -166,6 +180,49 @@ int main() {
     VehicleConfig configuration;
     configuration.sourcePath = root / "probe.bus";
     configuration.scripts.push_back(scriptPath.filename().string());
+    if (!setScriptBackend(nullptr)) {
+        std::cerr << "could not clear script backend override for native-default test\n";
+        return 1;
+    }
+    {
+        Variables nativeVariables(ScriptObjectKind::Vehicle);
+        SimulationState nativeSimulation;
+        nativeVariables.set("mixednumeric", 42.0);
+        ScriptRuntime nativeRuntime(configuration, nativeVariables, nativeSimulation);
+        nativeRuntime.initialize();
+        if (nativeVariables.get("mixednumericout") != 42.0) {
+            std::cerr << "native OSC backend was not selected by default\n";
+            return 1;
+        }
+    }
+    const std::filesystem::path fallbackScriptPath = root / "fallback.osc";
+    {
+        std::ofstream invalidSource(fallbackScriptPath);
+        invalidSource << "not valid OSC bytecode input\n";
+        invalidSource.close();
+        std::ofstream fallbackLua(generatedLuaPath(fallbackScriptPath));
+        fallbackLua << "function init()\n"
+                       "set_local_var(\"lua_fallback_seen\", 1)\n"
+                       "end\n";
+    }
+    VehicleConfig fallbackConfiguration;
+    fallbackConfiguration.sourcePath = root / "fallback.bus";
+    fallbackConfiguration.scripts.push_back(fallbackScriptPath.filename().string());
+    {
+        Variables fallbackVariables(ScriptObjectKind::Vehicle);
+        SimulationState fallbackSimulation;
+        ScriptRuntime fallbackRuntime(fallbackConfiguration, fallbackVariables,
+                                      fallbackSimulation);
+        fallbackRuntime.initialize();
+        if (fallbackVariables.get("lua_fallback_seen") != 1.0) {
+            std::cerr << "native compilation failure did not fall back to Lua\n";
+            return 1;
+        }
+    }
+    if (!setScriptBackend("lua")) {
+        std::cerr << "could not select Lua backend for Lua-specific runtime probe\n";
+        return 1;
+    }
     Variables variables(ScriptObjectKind::Vehicle);
     SimulationState simulation;
     ScriptRuntime runtime(configuration, variables, simulation);

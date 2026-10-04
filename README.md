@@ -255,6 +255,9 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   auxiliary-texture batches remain on the standard path. It is disabled in
   `profile.bat` because the current E400 workload is GPU-bound and the extra
   material texture sampling is slower than the additional draw calls.
+- Native OSC bytecode is the default script backend. Scripts that cannot be
+  compiled fall back to Lua; set `OPENBUS_SCRIPT_BACKEND=lua` to force Lua for
+  debugging.
 - Scripts normally follow the render rate. Set `OPENBUS_SCRIPT_HZ=30` to run
   vehicle scripts at 30 Hz while rendering continues at the display rate;
   fixed-rate script ticks receive `Timegap=1/30` and catch up for short frame
@@ -363,12 +366,17 @@ seeded order; use `--runs 1` for a quick check or `--seed N` to change the order
 After building, the Python runner can also be launched directly with
 `python benchmark_rendering.py`. Each run measures baseline rendering,
 user-facing camera cycling, third-person zoom, driving controls, and dashboard
-interaction. The benchmark uses the normal visible GLFW window, a fixed 60 Hz
-simulation step, and disables VSync; it does not change the normal `build-ode`
-build or `profile.bat` settings.
+interaction. Benchmark mode creates a hidden GLFW window, uses a fixed 60 Hz
+simulation step, and disables VSync. Hiding the window may avoid OS work-area
+constraints; actual dimensions are still checked and mismatches remain flagged.
+Normal simulator launches remain visible and retain the standard `build-ode`
+build and `profile.bat` settings.
 
 `--warmup-frames` is a total distributed across the five phases (60 by default,
-12 per phase); measured frames remain 60 per phase. Results are written to
+12 per phase). Each phase is then measured twice per resolution run, with 120
+fixed-step frames per visit by default (two seconds at 60 Hz), slowing camera,
+zoom, steering, and dashboard-look progressions to half their previous rate.
+Use `--phase-repeats` and `--phase-frames` to adjust those values. Results are written to
 `render-benchmark-results/`. The `*_runs.csv` and `*_scopes.csv` files record
 requested window, actual window, framebuffer sizes, framebuffer/window scale
 factors, and flag any framebuffer that differs from the requested resolution.
