@@ -768,6 +768,11 @@ struct Vehicle {
         std::shared_ptr<TextureCacheEntry> textureCacheEntry;
     };
 
+    struct InteriorLightController {
+        bool isNumeric = false;
+        double numericValue = 0.0;
+    };
+
     struct Batch {
         GLuint buffer = 0;
         GLuint texture = 0;
@@ -822,9 +827,11 @@ struct Vehicle {
         std::vector<std::array<float, 4>> materialColors;
         std::vector<MaterialTextureSource> materialTextures;
         std::vector<GLuint> materialTextureIds;
+        std::vector<bool> materialTextureFlips;
         std::vector<MaterialState::TextureChange> textureChanges;
         MaterialState baseMaterial;
         bool selectedMaterialItem = false;
+        std::uint64_t materialSelectionGeneration = 0;
         std::size_t vertexCount = 0;
     };
 
@@ -885,6 +892,7 @@ struct Vehicle {
     bool soundEventsEnabled = false;
     std::vector<Part> pendingParts;
     std::vector<ModelInteriorLight> interiorLights;
+    std::vector<InteriorLightController> interiorLightControllers;
     AssetRequestManager* assets;
     VehiclePlacement placement;
     double modelOffsetZ = 0.0;
@@ -898,6 +906,17 @@ struct Vehicle {
     std::size_t opaqueDisplayCount = 0;
     mutable std::size_t lastRenderedTriangles = 0;
     std::uint64_t viewDepthGeneration = 0;
+    // The outer visibility pass advances this once; reflection views and the main
+    // view then share unchanged material selections for the rest of that frame.
+    std::uint64_t materialSelectionGeneration = 1;
+    bool preparedDrawListsValid = false;
+    RenderViewContext preparedDrawContext = RenderViewContext::PlayerExterior;
+    bool preparedDrawReflection = false;
+    bool preparedDrawTransparent = false;
+    std::uint64_t preparedDrawAnimationGeneration = 0;
+    std::uint64_t preparedDrawMaterialGeneration = 0;
+    Matrix4 preparedDrawModelView = {};
+    Matrix4 preparedDrawProjection = {};
     bool loaded = false;
     bool hasLoadedInitialView = false;
     bool loggedAllObjectsLoaded = false;
@@ -917,6 +936,9 @@ struct Vehicle {
 
     void updateMaterialChange(Batch& batch) {
         TraceScope phase("texture", "updateMaterialChange");
+        if (batch.materialSelectionGeneration == materialSelectionGeneration) {
+            return;
+        }
         const MaterialState& selected = selectModelMaterial(
             batch.baseMaterial, [this](const std::string& name) { return variables.get(name); });
         batch.selectedMaterialItem = &selected != &batch.baseMaterial;
@@ -976,6 +998,7 @@ struct Vehicle {
             textureName == batch.textureName &&
             (texturePath == batch.texturePath || batch.textureLoadAttempted);
         if (sameRequestedTexture && layer == batch.textureLayer) {
+            batch.materialSelectionGeneration = materialSelectionGeneration;
             return;
         }
         batch.textureName = textureName;
@@ -998,6 +1021,7 @@ struct Vehicle {
                 pglBindBuffer(GL_ARRAY_BUFFER, 0);
             }
         }
+        batch.materialSelectionGeneration = materialSelectionGeneration;
     }
 
     double alphaScale(const Batch& batch) const {
@@ -1320,6 +1344,7 @@ struct Vehicle {
 
     void prepareFrameVisibility(RenderViewContext context, int viewportWidth, int viewportHeight) {
         TraceScope trace("render", "Vehicle::prepareFrameVisibility");
+        ++materialSelectionGeneration;
         {
             TraceScope phase("render", "Vehicle::prepareFrameVisibility.reset");
             variableVisibleParts.resize(displayLists.size());
@@ -1899,16 +1924,15 @@ struct Vehicle {
             if (lightIndex < 0 || static_cast<std::size_t>(lightIndex) >= interiorLights.size()) {
                 continue;
             }
-            const ModelInteriorLight& light = interiorLights[static_cast<std::size_t>(lightIndex)];
+            const std::size_t index = static_cast<std::size_t>(lightIndex);
+            const ModelInteriorLight& light = interiorLights[index];
             if (light.parameters.size() < 4) {
                 continue;
             }
-            char* parsedEnd = nullptr;
-            const double numericBrightness = std::strtod(light.controller.c_str(), &parsedEnd);
-            const bool isNumericBrightness =
-                parsedEnd != light.controller.c_str() && *parsedEnd == '\0';
-            const double brightness = std::max(
-                0.0, isNumericBrightness ? numericBrightness : variables.get(light.controller));
+            const InteriorLightController& controller = interiorLightControllers[index];
+            const double brightness =
+                std::max(0.0, controller.isNumeric ? controller.numericValue
+                                                   : variables.get(light.controller));
             const double strength = brightness * std::max(0.0, light.parameters[0]);
             if (strength <= 0.0 || material.interiorLightCount >=
                                        static_cast<int>(openbus::rendering::MAX_INTERIOR_LIGHTS)) {
@@ -1957,13 +1981,16 @@ struct Vehicle {
         }
         const bool materialBatch = !batch.materialTextures.empty() && !forceUntextured;
         const std::vector<GLuint>* materialTextureIds = nullptr;
-        std::vector<bool> materialTextureFlips;
         {
             TraceScope phase("render", "Vehicle::drawBatch.resolveTextures");
             if (materialBatch) {
                 batch.materialTextureIds.resize(batch.materialTextures.size());
-                materialTextureFlips.resize(batch.materialTextures.size());
-                for (MaterialTextureSource& source : batch.materialTextures) {
+                batch.materialTextureFlips.resize(batch.materialTextures.size());
+                std::fill(batch.materialTextureFlips.begin(), batch.materialTextureFlips.end(),
+                          false);
+                for (std::size_t sourceIndex = 0; sourceIndex < batch.materialTextures.size();
+                     ++sourceIndex) {
+                    MaterialTextureSource& source = batch.materialTextures[sourceIndex];
                     ensureMaterialTexture(source);
                     if (!openbus::rendering::reflectionPassActive()) {
                         const int reflectionIndex =
@@ -1973,11 +2000,10 @@ struct Vehicle {
                         if (reflectionTexture != 0) {
                             source.texture = reflectionTexture;
                             source.textureArray = false;
-                            materialTextureFlips[&source - batch.materialTextures.data()] = true;
+                            batch.materialTextureFlips[sourceIndex] = true;
                         }
                     }
-                    batch.materialTextureIds[&source - batch.materialTextures.data()] =
-                        source.texture;
+                    batch.materialTextureIds[sourceIndex] = source.texture;
                 }
                 materialTextureIds = &batch.materialTextureIds;
             } else {
@@ -2050,7 +2076,7 @@ struct Vehicle {
         }
         if (materialBatch) {
             drawMaterialBatch(batch.buffer, batch.vertexCount, batch.materialColors,
-                              *materialTextureIds, materialTextureFlips);
+                              *materialTextureIds, batch.materialTextureFlips);
         } else {
             drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
                            forceUntextured ? 0 : alphaMode);
@@ -2103,12 +2129,12 @@ struct Vehicle {
         if (!loaded) {
             return;
         }
-        ++viewDepthGeneration;
         const bool reflectionPass = openbus::rendering::reflectionPassActive();
         const bool renderOpaque = renderPass != VehicleRenderPass::Transparent;
+        const bool classifyTransparent =
+            !reflectionPass || openbus::rendering::reflectionTransparentEnabled();
         const bool renderTransparent =
-            renderPass != VehicleRenderPass::Opaque &&
-            (!reflectionPass || openbus::rendering::reflectionTransparentEnabled());
+            renderPass != VehicleRenderPass::Opaque && classifyTransparent;
         if (!reflectionPass && renderPass != VehicleRenderPass::Transparent) {
             updateAnimationStates();
         }
@@ -2117,6 +2143,14 @@ struct Vehicle {
         textureUploadStart = std::chrono::steady_clock::now();
 
         const auto& modelView = openbus::rendering::modelViewMatrix();
+        const auto& projection = openbus::rendering::projectionMatrix();
+        const bool reusePreparedDraw =
+            renderPass == VehicleRenderPass::Transparent && preparedDrawListsValid &&
+            preparedDrawContext == context && preparedDrawReflection == reflectionPass &&
+            preparedDrawTransparent == classifyTransparent &&
+            preparedDrawAnimationGeneration == animationGeneration &&
+            preparedDrawMaterialGeneration == materialSelectionGeneration &&
+            preparedDrawModelView == modelView && preparedDrawProjection == projection;
         ViewFrustum frustum;
 
         {
@@ -2184,69 +2218,81 @@ struct Vehicle {
         std::vector<DisplayPart*>& opaqueParts = opaquePartsScratch;
         std::vector<TransparentBatch>& noDepthOpaqueBatches = noDepthOpaqueBatchesScratch;
         std::vector<TransparentBatch>& transparentBatches = transparentBatchesScratch;
-        opaqueParts.clear();
-        noDepthOpaqueBatches.clear();
-        transparentBatches.clear();
-        opaqueParts.reserve(displayLists.size());
-        if (renderTransparent) {
-            transparentBatches.reserve(displayLists.size());
-            noDepthOpaqueBatches.reserve(displayLists.size());
-        }
-        {
-            TraceScope phase("render", "Vehicle::draw.classifyParts");
-            for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
-                DisplayPart& part = displayLists[partIndex];
-                const bool viewpointMatches =
-                    part.viewpoint == 0 || (part.viewpoint & viewpointMask(context)) != 0;
-                if (!viewpointMatches || !visible(part, partIndex)) {
-                    continue;
-                }
-                for (Batch& batch : part.batches) {
-                    updateMaterialChange(batch);
-                }
-                const bool hasOpaqueBatch =
-                    std::any_of(part.batches.begin(), part.batches.end(), [](const Batch& batch) {
-                        return batch.alphaMode == 0 && !batch.noZwrite;
-                    });
-                for (Batch& batch : part.batches) {
-                    if (renderTransparent && (batch.alphaMode != 0 || batch.noZwrite)) {
-                        transparentBatches.push_back(
-                            {&batch, &part, viewDepth(part), part.renderType});
+        if (!reusePreparedDraw) {
+            ++viewDepthGeneration;
+            opaqueParts.clear();
+            noDepthOpaqueBatches.clear();
+            transparentBatches.clear();
+            opaqueParts.reserve(displayLists.size());
+            if (classifyTransparent) {
+                transparentBatches.reserve(displayLists.size());
+                noDepthOpaqueBatches.reserve(displayLists.size());
+            }
+            {
+                TraceScope phase("render", "Vehicle::draw.classifyParts");
+                for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+                    DisplayPart& part = displayLists[partIndex];
+                    const bool viewpointMatches =
+                        part.viewpoint == 0 || (part.viewpoint & viewpointMask(context)) != 0;
+                    if (!viewpointMatches || !visible(part, partIndex)) {
+                        continue;
+                    }
+                    for (Batch& batch : part.batches) {
+                        updateMaterialChange(batch);
+                    }
+                    const bool hasOpaqueBatch = std::any_of(
+                        part.batches.begin(), part.batches.end(),
+                        [](const Batch& batch) { return batch.alphaMode == 0 && !batch.noZwrite; });
+                    for (Batch& batch : part.batches) {
+                        if (classifyTransparent && (batch.alphaMode != 0 || batch.noZwrite)) {
+                            transparentBatches.push_back(
+                                {&batch, &part, viewDepth(part), part.renderType});
+                        }
+                    }
+                    if (renderOpaque && hasOpaqueBatch) {
+                        opaqueParts.push_back(&part);
                     }
                 }
-                if (renderOpaque && hasOpaqueBatch) {
-                    opaqueParts.push_back(&part);
+            }
+            {
+                TraceScope phase("render", "Vehicle::draw.sortBatches");
+                std::sort(opaqueParts.begin(), opaqueParts.end(),
+                          [&](const DisplayPart* first, const DisplayPart* second) {
+                              return viewDepth(*first) < viewDepth(*second);
+                          });
+                std::stable_sort(transparentBatches.begin(), transparentBatches.end(),
+                                 [](const TransparentBatch& first, const TransparentBatch& second) {
+                                     if (first.renderType != second.renderType) {
+                                         return first.renderType < second.renderType;
+                                     }
+                                     return first.depth > second.depth;
+                                 });
+                std::stable_sort(noDepthOpaqueBatches.begin(), noDepthOpaqueBatches.end(),
+                                 [](const TransparentBatch& first, const TransparentBatch& second) {
+                                     if (first.renderType != second.renderType) {
+                                         return first.renderType < second.renderType;
+                                     }
+                                     return first.depth > second.depth;
+                                 });
+                if (renderPass != VehicleRenderPass::Transparent) {
+                    lastRenderedTriangles = 0;
+                }
+                for (DisplayPart* part : opaqueParts) {
+                    lastRenderedTriangles += part->triangleCount;
+                }
+                for (const TransparentBatch& transparent : transparentBatches) {
+                    lastRenderedTriangles += transparent.batch->vertexCount / 3;
                 }
             }
-        }
-        {
-            TraceScope phase("render", "Vehicle::draw.sortBatches");
-            std::sort(opaqueParts.begin(), opaqueParts.end(),
-                      [&](const DisplayPart* first, const DisplayPart* second) {
-                          return viewDepth(*first) < viewDepth(*second);
-                      });
-            std::stable_sort(transparentBatches.begin(), transparentBatches.end(),
-                             [](const TransparentBatch& first, const TransparentBatch& second) {
-                                 if (first.renderType != second.renderType) {
-                                     return first.renderType < second.renderType;
-                                 }
-                                 return first.depth > second.depth;
-                             });
-            std::stable_sort(noDepthOpaqueBatches.begin(), noDepthOpaqueBatches.end(),
-                             [](const TransparentBatch& first, const TransparentBatch& second) {
-                                 if (first.renderType != second.renderType) {
-                                     return first.renderType < second.renderType;
-                                 }
-                                 return first.depth > second.depth;
-                             });
-            if (renderPass != VehicleRenderPass::Transparent) {
-                lastRenderedTriangles = 0;
-            }
-            for (DisplayPart* part : opaqueParts) {
-                lastRenderedTriangles += part->triangleCount;
-            }
-            for (const TransparentBatch& transparent : transparentBatches) {
-                lastRenderedTriangles += transparent.batch->vertexCount / 3;
+            preparedDrawListsValid = renderPass == VehicleRenderPass::Opaque;
+            if (preparedDrawListsValid) {
+                preparedDrawContext = context;
+                preparedDrawReflection = reflectionPass;
+                preparedDrawTransparent = classifyTransparent;
+                preparedDrawAnimationGeneration = animationGeneration;
+                preparedDrawMaterialGeneration = materialSelectionGeneration;
+                preparedDrawModelView = modelView;
+                preparedDrawProjection = projection;
             }
         }
         pushMatrix();
@@ -3899,6 +3945,14 @@ struct Vehicle {
             scripts->configureTextTextures(result.textTextures);
         }
         interiorLights = std::move(result.interiorLights);
+        interiorLightControllers.clear();
+        interiorLightControllers.reserve(interiorLights.size());
+        for (const ModelInteriorLight& light : interiorLights) {
+            char* parsedEnd = nullptr;
+            const double numericValue = std::strtod(light.controller.c_str(), &parsedEnd);
+            interiorLightControllers.push_back(
+                {parsedEnd != light.controller.c_str() && *parsedEnd == '\0', numericValue});
+        }
         lodThresholds = std::move(result.lodThresholds);
         ctcTextureReplacements.clear();
         for (const ModelCtcTexture& texture : result.ctcTextures) {

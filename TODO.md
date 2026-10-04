@@ -387,8 +387,30 @@ diagnostic before it can be moved to the implemented baseline.
   are present.
 - [~] Reflection, async loading, texture scaling, and material batching are
   opt-in/performance-sensitive paths and need repeatable comparison runs.
+- [ ] Compare the vehicle draw-list/material-selection reuse and static
+  ground/grid VBO changes using repeated, uninstrumented runs; report frame
+  p50/p95 and keep traced scope totals separate from frame time.
+- [ ] Add renderer regression coverage for opaque/transparent list reuse,
+  script-driven material changes, and view-specific reflection culling and
+  transparent sorting before broadening those caches.
+- [ ] Attribute `Vehicle::drawBatch.prepareAndSubmit` with finer-grained CPU
+  profiling; test same-view transmap depth-prepass reuse only if material
+  assembly is still material after the existing submission-state caches.
+- [ ] Measure road-feature mesh construction and upload separately; cache its
+  geometry only with explicit invalidation for changed `RoadBump` inputs.
+- [ ] Recheck reflection setup cost in a longer capture. If viewport querying
+  is confirmed as a bottleneck, track the app-owned viewport dimensions rather
+  than querying GL state, and verify framebuffer/context transitions.
+- [ ] Add GPU/presentation timing to reflection and draw benchmarks so CPU
+  submission time is not mistaken for GPU execution or swap/present wait.
 - [ ] Add repeatable performance captures for startup time, frame time, GPU
   workload, reflection intervals, texture scaling, and material batching.
+- [x] Audit the renderer for OpenGL compatibility-profile API use; see
+  `Docs/OPENGL_API_AUDIT.md` (no active compatibility API calls found).
+- [ ] Remove the unused compatibility-era texture-environment enum fallback
+  definitions in `src/RenderLoop.cpp` after confirming no platform header or
+  generated source relies on them; retain constants that have active core-GL
+  uses.
 - [ ] Validate Windows and Linux helper scripts from clean build directories.
 - [ ] Run clang-tidy/format checks and resolve relevant warnings in the final
   supported configuration.

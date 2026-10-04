@@ -14,6 +14,8 @@ namespace {
 constexpr int ROAD_BUMP_SEGMENTS = 12;
 constexpr int ROAD_RAMP_SEGMENTS = 6;
 constexpr int ROAD_INCLINE_SEGMENTS = 16;
+StaticPrimitiveBuffer groundBufferCache;
+StaticPrimitiveBuffer gridBufferCache;
 
 PrimitiveVertex vertex(double x, double y, double z, const std::array<double, 3>& color) {
     return {static_cast<float>(x),        static_cast<float>(y),
@@ -214,8 +216,8 @@ void drawGround(const std::vector<RoadBump>& bumps) {
             gridLines.push_back(vertex(100.0, coordinate, 0.02, color));
         }
     }
-    drawPrimitives(ground, GL_TRIANGLES);
-    drawLineList(gridLines);
+    drawStaticPrimitives(groundBufferCache, ground, GL_TRIANGLES);
+    drawStaticPrimitives(gridBufferCache, gridLines, GL_LINES);
 
     std::vector<PrimitiveVertex> surfaces;
     std::vector<PrimitiveVertex> lines;

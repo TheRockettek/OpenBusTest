@@ -102,6 +102,7 @@ GLuint textureQuadProgram = 0;
 GLuint modelVertexArray = 0;
 GLuint primitiveVertexArray = 0;
 GLuint primitiveBuffer = 0;
+std::vector<StaticPrimitiveBuffer*> staticPrimitiveBuffers;
 GLuint textureQuadVertexArray = 0;
 GLuint textureQuadBuffer = 0;
 Uniforms modelUniforms;
@@ -791,6 +792,16 @@ void shutdownCoreRenderer() {
     currentTextureUnit = GL_TEXTURE0;
     boundTexture2D.fill(0);
     boundTextureArray.fill(0);
+    for (StaticPrimitiveBuffer* cache : staticPrimitiveBuffers) {
+        if (cache == nullptr) {
+            continue;
+        }
+        if (cache->buffer != 0) {
+            pglDeleteBuffers(1, &cache->buffer);
+        }
+        *cache = {};
+    }
+    staticPrimitiveBuffers.clear();
     if (primitiveBuffer != 0) {
         pglDeleteBuffers(1, &primitiveBuffer);
         primitiveBuffer = 0;
@@ -949,6 +960,69 @@ void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primiti
     {
         TraceScope phase("render", "CoreRenderer::drawPrimitives.submit");
         glDrawArrays(primitive, 0, static_cast<GLsizei>(vertices.size()));
+    }
+}
+
+void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
+                          const std::vector<PrimitiveVertex>& vertices, GLenum primitive,
+                          float lineWidth) {
+    TraceScope trace("render", "CoreRenderer::drawStaticPrimitives");
+    if (primitiveProgram == 0 || vertices.empty()) {
+        return;
+    }
+    useProgram(primitiveProgram);
+    uploadMatrices(primitiveUniforms);
+    if (cache.buffer == 0) {
+        pglGenBuffers(1, &cache.buffer);
+        if (cache.buffer == 0) {
+            return;
+        }
+        staticPrimitiveBuffers.push_back(&cache);
+        cache.vertexCount = vertices.size();
+        if (currentVertexArray != primitiveVertexArray) {
+            pglBindVertexArray(primitiveVertexArray);
+            currentVertexArray = primitiveVertexArray;
+        }
+        pglBindBuffer(GL_ARRAY_BUFFER, cache.buffer);
+        currentArrayBuffer = cache.buffer;
+        {
+            TraceScope phase("render", "CoreRenderer::drawStaticPrimitives.upload");
+            pglBufferData(GL_ARRAY_BUFFER,
+                          static_cast<std::ptrdiff_t>(vertices.size() * sizeof(PrimitiveVertex)),
+                          vertices.data(), GL_STATIC_DRAW);
+        }
+    } else if (cache.vertexCount != vertices.size()) {
+        cache.vertexCount = vertices.size();
+        if (currentVertexArray != primitiveVertexArray) {
+            pglBindVertexArray(primitiveVertexArray);
+            currentVertexArray = primitiveVertexArray;
+        }
+        if (currentArrayBuffer != cache.buffer) {
+            pglBindBuffer(GL_ARRAY_BUFFER, cache.buffer);
+            currentArrayBuffer = cache.buffer;
+        }
+        {
+            TraceScope phase("render", "CoreRenderer::drawStaticPrimitives.upload");
+            pglBufferData(GL_ARRAY_BUFFER,
+                          static_cast<std::ptrdiff_t>(vertices.size() * sizeof(PrimitiveVertex)),
+                          vertices.data(), GL_STATIC_DRAW);
+        }
+    }
+    if (currentVertexArray != primitiveVertexArray) {
+        pglBindVertexArray(primitiveVertexArray);
+        currentVertexArray = primitiveVertexArray;
+    }
+    if (currentArrayBuffer != cache.buffer) {
+        pglBindBuffer(GL_ARRAY_BUFFER, cache.buffer);
+        currentArrayBuffer = cache.buffer;
+    }
+    pglVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), nullptr);
+    pglVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex),
+                           reinterpret_cast<const void*>(3 * sizeof(float)));
+    glLineWidth(lineWidth);
+    {
+        TraceScope phase("render", "CoreRenderer::drawStaticPrimitives.submit");
+        glDrawArrays(primitive, 0, static_cast<GLsizei>(cache.vertexCount));
     }
 }
 

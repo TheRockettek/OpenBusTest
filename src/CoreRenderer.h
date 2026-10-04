@@ -48,6 +48,12 @@ struct PrimitiveVertex {
     float b;
 };
 
+// Renderer-owned GL storage for immutable primitive vertices; shutdown resets the cache.
+struct StaticPrimitiveBuffer {
+    GLuint buffer = 0;
+    std::size_t vertexCount = 0;
+};
+
 struct ModelMaterial {
     GLuint texture = 0;
     bool textureArray = false;
@@ -91,6 +97,9 @@ void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
 void drawEnvironmentBatch(GLuint buffer, std::size_t vertexCount, GLuint texture, double alpha);
 void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primitive,
                     float lineWidth = 1.0f);
+void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
+                          const std::vector<PrimitiveVertex>& vertices, GLenum primitive,
+                          float lineWidth = 1.0f);
 void drawTextureQuad(GLuint texture, float x, float y, float width, float height,
                      bool flipTextureY = false);
 
