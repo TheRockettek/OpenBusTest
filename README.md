@@ -354,28 +354,39 @@ The main frame path begins with `frame:main`; expand it to compare
 
 ## Repeatable render benchmark
 
-Run `benchmark_rendering.bat --runs 3` to build an isolated Release executable
+Run `benchmark_rendering.bat` to build an isolated Release executable
 with tracing enabled, then benchmark 720p, 1080p, 1440p, 4K, and 5120x1440.
 The runner is `benchmark_rendering.py`, requires Python 3.9 or newer, and uses
 only the standard library; set `OPENBUS_PYTHON` if `python` is not on PATH.
+The runner performs five runs per resolution by default, in deterministic
+seeded order; use `--runs 1` for a quick check or `--seed N` to change the order.
 After building, the Python runner can also be launched directly with
-`python benchmark_rendering.py --runs 3`. Each run measures baseline rendering,
+`python benchmark_rendering.py`. Each run measures baseline rendering,
 user-facing camera cycling, third-person zoom, driving controls, and dashboard
-interaction. The benchmark uses a hidden window, a fixed 60 Hz simulation step,
-and disables VSync; it does
-not change the normal `build-ode` build or `profile.bat` settings.
+interaction. The benchmark uses the normal visible GLFW window, a fixed 60 Hz
+simulation step, and disables VSync; it does not change the normal `build-ode`
+build or `profile.bat` settings.
 
-Results are written to `render-benchmark-results/`. The `*_runs.csv` file records
-the requested and actual framebuffer sizes, readiness and measured frame counts,
-and whether a clickable dashboard target was found. The `*_scopes.csv` file
-groups Chrome trace scopes by phase and reports occurrence count, summed
-inclusive elapsed wall time, summed self time, average, and maximum duration.
-Durations are milliseconds converted from trace microseconds; they are CPU-side
-elapsed scope timings, not GPU timings. Self time subtracts the union of direct
-child intervals on the same thread, avoiding double subtraction for overlaps.
-Raw per-run traces and logs are retained alongside the CSV files. If the window
-system cannot provide a requested framebuffer size, both sizes are recorded and
-a warning is printed.
+`--warmup-frames` is a total distributed across the five phases (60 by default,
+12 per phase); measured frames remain 60 per phase. Results are written to
+`render-benchmark-results/`. The `*_runs.csv` and `*_scopes.csv` files record
+requested window, actual window, framebuffer sizes, framebuffer/window scale
+factors, and flag any framebuffer that differs from the requested resolution.
+Use `--require-exact-resolution` to
+return a failure status if any run is clamped. The `*_frames.csv` file records
+one row per main-frame or selected renderer-scope event, including timestamp,
+inclusive duration, and self time. Nested calls stay separate so reflection
+draws are not accidentally summed into a misleading per-frame total. High-volume
+`Vehicle::drawBatch.prepareAndSubmit` events are included only when they last at
+least 0.1 ms, keeping normal batch submissions from overwhelming the report.
+
+The `*_scopes.csv` file groups Chrome trace scopes by phase and reports
+occurrence count, summed inclusive elapsed wall time, summed self time, average,
+and maximum duration. Durations are milliseconds converted from trace
+microseconds; these are CPU-side elapsed scope timings, not GPU timings. Self
+time subtracts the union of direct child intervals on the same thread, avoiding
+double subtraction for overlaps. Raw per-run traces and logs are retained
+alongside the CSV files.
 
 ## OMSI bus-file reference
 

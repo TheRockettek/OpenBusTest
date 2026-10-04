@@ -817,7 +817,8 @@ struct BusSimulation::Impl {
                               localAngularY * BODY_ATTITUDE_DAMPING,
                           0.0);
 
-        if (std::abs(driveTorque) < 0.01 && (!brakesApplied || std::abs(longitudinalSpeed) < 0.15) &&
+        if (std::abs(driveTorque) < 0.01 &&
+            (!brakesApplied || std::abs(longitudinalSpeed) < 0.15) &&
             std::abs(longitudinalSpeed) < 0.08 && std::abs(lateralSpeed) < 0.08 &&
             std::abs(yawRate) < 0.08) {
             dBodySetLinearVel(chassis, 0.0, 0.0, velocity[2]);
@@ -905,8 +906,8 @@ void BusSimulation::stepWithWheelTorque(double wheelTorque, double steering, dou
                        std::vector<double>(impl_->corners.size(), forcePerWheel), true);
 }
 
-void BusSimulation::stepWithWheelTorqueAndBrakeForces(
-    double wheelTorque, double steering, const std::vector<double>& wheelBrakeForces) {
+void BusSimulation::stepWithWheelTorqueAndBrakeForces(double wheelTorque, double steering,
+                                                      const std::vector<double>& wheelBrakeForces) {
     impl_->fixedUpdate(wheelTorque, steering, wheelBrakeForces, true);
 }
 

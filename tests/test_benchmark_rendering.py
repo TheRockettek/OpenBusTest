@@ -64,6 +64,56 @@ class TraceSummaryTests(unittest.TestCase):
                     trace_path, "1920x1080", "1920x1080", 1
                 )
 
+    def test_frame_rows_correlate_scope_timings_and_resolution_match(self):
+        events = [
+            self.make_event("Benchmark.measure", "benchmark", 0, 500),
+            self.make_event("Benchmark.phase.baseline", "benchmark", 10, 100),
+            self.make_event("main", "frame", 20, 80),
+            self.make_event("RenderLoop::draw", "frame", 25, 50),
+            self.make_event("ReflectionRenderer::render", "render", 30, 15),
+            self.make_event("RenderLoop::endFrame.swapBuffers", "frame", 85, 5),
+        ]
+        events.extend(
+            self.make_event(f"Benchmark.phase.{phase}", "benchmark", 110 + index * 80, 70)
+            for index, phase in enumerate(benchmark_rendering.PHASES[1:])
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            trace_path = Path(directory) / "trace.json"
+            trace_path.write_text(json.dumps({"traceEvents": events}), encoding="utf-8")
+            summary = benchmark_rendering.summarize_trace(
+                trace_path, "1280x720", "1280x720", 1, "1280x720"
+            )
+
+        draw = next(
+            row
+            for row in summary.frame_rows
+            if row["Phase"] == "baseline" and row["Scope"] == "RenderLoop::draw"
+        )
+        self.assertEqual(draw["Frame"], 1)
+        self.assertEqual(draw["WallMs"], 0.05)
+        self.assertTrue(draw["FramebufferMatchesRequested"])
+
+    def test_mismatched_framebuffer_is_flagged(self):
+        events = [
+            self.make_event("Benchmark.measure", "benchmark", 0, 500),
+            self.make_event("Benchmark.phase.baseline", "benchmark", 10, 80),
+        ]
+        events.extend(
+            self.make_event(f"Benchmark.phase.{phase}", "benchmark", 100 + index * 80, 70)
+            for index, phase in enumerate(benchmark_rendering.PHASES[1:])
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            trace_path = Path(directory) / "trace.json"
+            trace_path.write_text(json.dumps({"traceEvents": events}), encoding="utf-8")
+            summary = benchmark_rendering.summarize_trace(
+                trace_path, "3840x2160", "2564x1421", 1, "2564x1421"
+            )
+
+        self.assertFalse(summary.rows[0]["FramebufferMatchesRequested"])
+
+    def test_repeated_run_default_is_five(self):
+        self.assertEqual(benchmark_rendering.build_parser().parse_args([]).runs, 5)
+
 
 if __name__ == "__main__":
     unittest.main()

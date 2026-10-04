@@ -1,4 +1,5 @@
 {
   "cmake.useCMakePresets": "always",
-  "cmake.buildDirectory": "${workspaceFolder}/build-ode"
+  "cmake.buildDirectory": "${workspaceFolder}/build-ode",
+  "python-envs.defaultEnvManager": "ms-python.python:system"
 }

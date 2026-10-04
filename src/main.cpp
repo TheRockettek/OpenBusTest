@@ -123,12 +123,10 @@ int main() {
 
         const bool benchmarkMode =
             openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
-        const int windowWidth = benchmarkMode
-                                    ? positiveEnvironmentInt("OPENBUS_BENCHMARK_WIDTH", 1280, 16384)
-                                    : 2560;
-        const int windowHeight = benchmarkMode
-                                     ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384)
-                                     : 1440;
+        const int windowWidth =
+            benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_WIDTH", 1280, 16384) : 2560;
+        const int windowHeight =
+            benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384) : 1440;
         RenderLoop renderer(windowWidth, windowHeight, "OpenBus");
         Vehicle* playerVehicle =
             renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
@@ -146,10 +144,10 @@ int main() {
                 RenderBenchmarkPhase::Baseline, RenderBenchmarkPhase::CameraCycle,
                 RenderBenchmarkPhase::ThirdPersonZoom, RenderBenchmarkPhase::DrivingControls,
                 RenderBenchmarkPhase::DashboardInteraction};
-            const int warmupFrames = positiveEnvironmentInt(
-                "OPENBUS_BENCHMARK_WARMUP_FRAMES", 60, 10000);
-            const int phaseFrames = positiveEnvironmentInt("OPENBUS_BENCHMARK_PHASE_FRAMES", 60,
-                                                           100000);
+            const int warmupFrames =
+                positiveEnvironmentInt("OPENBUS_BENCHMARK_WARMUP_FRAMES", 60, 10000);
+            const int phaseFrames =
+                positiveEnvironmentInt("OPENBUS_BENCHMARK_PHASE_FRAMES", 60, 100000);
             const int readyTimeoutSeconds =
                 positiveEnvironmentInt("OPENBUS_BENCHMARK_READY_TIMEOUT", 180, 3600);
             const auto renderBenchmarkFrame = [&](RenderBenchmarkPhase phase, int frameInPhase,
@@ -168,8 +166,8 @@ int main() {
                 renderer.endFrame();
             };
 
-            const auto readyDeadline = std::chrono::steady_clock::now() +
-                                       std::chrono::seconds(readyTimeoutSeconds);
+            const auto readyDeadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(readyTimeoutSeconds);
             int readinessFrames = 0;
             while (!renderer.isCaptureReady() && !renderer.shouldClose() &&
                    std::chrono::steady_clock::now() < readyDeadline) {
@@ -180,17 +178,21 @@ int main() {
                 throw std::runtime_error("Benchmark timed out waiting for vehicle assets");
             }
 
-            const auto dimensions = renderer.framebufferSize();
-            std::cout << "BENCHMARK_FRAMEBUFFER=" << dimensions[0] << 'x' << dimensions[1]
+            const auto windowDimensions = renderer.windowSize();
+            const auto framebufferDimensions = renderer.framebufferSize();
+            std::cout << "BENCHMARK_REQUESTED=" << windowWidth << 'x' << windowHeight << '\n';
+            std::cout << "BENCHMARK_WINDOW=" << windowDimensions[0] << 'x' << windowDimensions[1]
                       << '\n';
+            std::cout << "BENCHMARK_FRAMEBUFFER=" << framebufferDimensions[0] << 'x'
+                      << framebufferDimensions[1] << '\n';
             std::cout << "BENCHMARK_READINESS_FRAMES=" << readinessFrames << '\n';
 
             const int warmupFramesPerPhase = warmupFrames / static_cast<int>(phases.size());
             const int extraWarmupFrames = warmupFrames % static_cast<int>(phases.size());
             for (std::size_t phaseIndex = 0; phaseIndex < phases.size(); ++phaseIndex) {
-                const int framesThisPhase = warmupFramesPerPhase +
-                                            (static_cast<int>(phaseIndex) < extraWarmupFrames ? 1
-                                                                                             : 0);
+                const int framesThisPhase =
+                    warmupFramesPerPhase +
+                    (static_cast<int>(phaseIndex) < extraWarmupFrames ? 1 : 0);
                 for (int frame = 0; frame < framesThisPhase; ++frame) {
                     renderBenchmarkFrame(phases[phaseIndex], frame, framesThisPhase);
                 }
@@ -228,8 +230,8 @@ int main() {
                 const std::vector<KeyEvent> frameKeyEvents = renderer.consumeKeyEvents();
                 pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(),
                                         frameKeyEvents.end());
-                renderer.updatePlayerVariables(simulation, renderer.throttle(),
-                                               renderer.steering(), renderer.brake());
+                renderer.updatePlayerVariables(simulation, renderer.throttle(), renderer.steering(),
+                                               renderer.brake());
                 simulation.updateWithWheelTorqueAndBrakeForces(
                     elapsed, renderer.physicsWheelTorque(), renderer.physicsSteering(),
                     renderer.physicsWheelBrakeForces(simulation.axleCount()));

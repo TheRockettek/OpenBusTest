@@ -400,10 +400,10 @@ struct SoundEngine::Backend {
         alSourceStop(sourceId);
         alDeleteSources(1, &sourceId);
         activeLoops.erase(loop);
-        active.erase(std::remove_if(active.begin(), active.end(), [sourceId](const ActiveSource& s) {
-                         return s.source == sourceId;
-                     }),
-                     active.end());
+        active.erase(
+            std::remove_if(active.begin(), active.end(),
+                           [sourceId](const ActiveSource& s) { return s.source == sourceId; }),
+            active.end());
     }
 
     void updateLoops(const std::vector<LoopUpdate>& updates) {
@@ -444,8 +444,8 @@ struct SoundEngine::Backend {
         }
         for (const auto& [key, update] : desired) {
             (void)key;
-            createSourceLocked(update->path, true, update->gain, update->pitch,
-                               update->position, update->maxDistance);
+            createSourceLocked(update->path, true, update->gain, update->pitch, update->position,
+                               update->maxDistance);
         }
     }
 };
@@ -644,8 +644,7 @@ void SoundEngine::updateLoops(const Variables& variables, int viewpoint) {
                 gain *= evaluateCurve(curve.points, variables.get(curve.variable));
             }
         } else if (!definition.controlVariable.empty() && definition.controlCenter > 0.0) {
-            gain = std::clamp(variables.get(definition.controlVariable) /
-                                  definition.controlCenter,
+            gain = std::clamp(variables.get(definition.controlVariable) / definition.controlCenter,
                               0.0, 1.0);
         }
         gain = std::clamp(gain, 0.0, 1.0);
@@ -654,8 +653,7 @@ void SoundEngine::updateLoops(const Variables& variables, int viewpoint) {
         }
         double pitch = 1.0;
         if (!definition.controlVariable.empty() && definition.controlCenter > 0.0) {
-            pitch = std::clamp(variables.get(definition.controlVariable) /
-                                   definition.controlCenter,
+            pitch = std::clamp(variables.get(definition.controlVariable) / definition.controlCenter,
                                0.5, 2.0);
         }
         updates.push_back({file, static_cast<float>(gain), static_cast<float>(pitch),
@@ -740,8 +738,8 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
         soundLog.Log("Attempting sound playback: trigger=" + name + " file=" + file.string() +
                      " gain=" + std::to_string(gain) +
                      " loop=" + (definition.loop ? "true" : "false"));
-        backend_->play(file, definition.loop, static_cast<float>(gain), 1.0f,
-                   definition.position, definition.maxDistance);
+        backend_->play(file, definition.loop, static_cast<float>(gain), 1.0f, definition.position,
+                       definition.maxDistance);
     }
 }
 

@@ -33,17 +33,17 @@ struct ModelLoadingPolicy {
 };
 
 enum class RenderBenchmarkPhase {
-  Baseline,
-  CameraCycle,
-  ThirdPersonZoom,
-  DrivingControls,
-  DashboardInteraction,
+    Baseline,
+    CameraCycle,
+    ThirdPersonZoom,
+    DrivingControls,
+    DashboardInteraction,
 };
 
 struct RenderBenchmarkInput {
-  double throttle = 0.0;
-  double steering = 0.0;
-  double brake = 0.0;
+    double throttle = 0.0;
+    double steering = 0.0;
+    double brake = 0.0;
 };
 
 class RenderLoop {
@@ -56,9 +56,10 @@ class RenderLoop {
 
     bool shouldClose() const;
     void requestClose();
+    std::array<int, 2> windowSize() const;
     std::array<int, 2> framebufferSize() const;
     RenderBenchmarkInput setBenchmarkFrame(RenderBenchmarkPhase phase, int frameInPhase,
-                         int phaseFrameCount);
+                                           int phaseFrameCount);
     bool benchmarkClickTargetFound() const;
     Vehicle* AddVehicle(const std::filesystem::path& busConfigPath,
                         const std::filesystem::path& modelConfigPath,

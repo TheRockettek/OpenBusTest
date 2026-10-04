@@ -7,10 +7,12 @@ import csv
 import json
 import math
 import os
+import random
 import re
 import subprocess
 import sys
 import warnings
+from bisect import bisect_left
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +26,18 @@ CACHE_FILE = BUILD_DIR / "CMakeCache.txt"
 DEFAULT_RESOLUTIONS = ("1280x720", "1920x1080", "2560x1440", "3840x2160", "5120x1440")
 PHASES = ("baseline", "cameraCycle", "thirdPersonZoom", "drivingControls", "dashboardInteraction")
 TRACE_MAX_EVENTS = 1_000_000
+FRAME_SCOPES = (
+    "RenderLoop::draw",
+    "RenderLoop::draw.reflections",
+    "ReflectionRenderer::render",
+    "RenderLoop::draw.ground",
+    "RenderLoop::draw.model",
+    "RenderLoop::updateScripts",
+    "RenderLoop::endFrame.swapBuffers",
+    "Vehicle::pickClickable",
+    "Vehicle::drawBatch.prepareAndSubmit",
+)
+FRAME_SCOPE_MIN_DURATION_US = {"Vehicle::drawBatch.prepareAndSubmit": 100.0}
 
 
 @dataclass
@@ -42,6 +56,7 @@ class TraceEvent:
 @dataclass
 class TraceSummary:
     rows: list[dict[str, Any]]
+    frame_rows: list[dict[str, Any]]
     measurement_ms: float
     frame_count: int
     measured_event_count: int
@@ -63,6 +78,7 @@ def summarize_trace(
     requested_resolution: str,
     framebuffer_resolution: str,
     run_number: int,
+    window_resolution: str = "",
 ) -> TraceSummary:
     with trace_path.open("r", encoding="utf-8-sig") as trace_file:
         trace = json.load(trace_file)
@@ -110,11 +126,12 @@ def summarize_trace(
     for event in measured_events:
         events_by_thread[event.thread].append(event)
 
-    for thread_events in events_by_thread.values():
+    for thread, thread_events in events_by_thread.items():
         ordered = sorted(
             thread_events,
             key=lambda event: (event.start_us, -event.duration_us, event.sequence),
         )
+        events_by_thread[thread] = ordered
         stack: list[TraceEvent] = []
         for event in ordered:
             parent: TraceEvent | None = None
@@ -141,6 +158,16 @@ def summarize_trace(
         event.self_us = max(0.0, event.duration_us - child_duration)
 
     summary_rows: list[dict[str, Any]] = []
+    frame_rows: list[dict[str, Any]] = []
+    framebuffer_matches_requested = framebuffer_resolution == requested_resolution
+    framebuffer_width, framebuffer_height = parse_resolution(framebuffer_resolution)
+    if window_resolution:
+        window_width, window_height = parse_resolution(window_resolution)
+        framebuffer_scale_x = round(framebuffer_width / window_width, 4)
+        framebuffer_scale_y = round(framebuffer_height / window_height, 4)
+    else:
+        framebuffer_scale_x = ""
+        framebuffer_scale_y = ""
 
     def add_summary(group_events: list[TraceEvent], phase_name: str) -> None:
         grouped: dict[tuple[str, str], list[TraceEvent]] = defaultdict(list)
@@ -152,7 +179,11 @@ def summarize_trace(
             summary_rows.append(
                 {
                     "RequestedResolution": requested_resolution,
+                    "WindowResolution": window_resolution,
                     "FramebufferResolution": framebuffer_resolution,
+                    "FramebufferScaleX": framebuffer_scale_x,
+                    "FramebufferScaleY": framebuffer_scale_y,
+                    "FramebufferMatchesRequested": framebuffer_matches_requested,
                     "Run": run_number,
                     "Phase": phase_name,
                     "Category": category,
@@ -180,7 +211,11 @@ def summarize_trace(
             + "; the trace may be truncated."
         )
 
-    for marker in phase_markers:
+    thread_event_starts = {
+        thread: [event.start_us for event in thread_events]
+        for thread, thread_events in events_by_thread.items()
+    }
+    for marker in sorted(phase_markers, key=lambda event: event.start_us):
         phase_name = marker.name.removeprefix("Benchmark.phase.")
         phase_events = [
             event
@@ -189,11 +224,63 @@ def summarize_trace(
         ]
         add_summary(phase_events, phase_name)
 
+        phase_frames = sorted(
+            (
+                event
+                for event in phase_events
+                if event.category == "frame" and event.name == "main"
+            ),
+            key=lambda event: event.start_us,
+        )
+        for frame_index, frame in enumerate(phase_frames, start=1):
+            frame_metadata = {
+                "RequestedResolution": requested_resolution,
+                "WindowResolution": window_resolution,
+                "FramebufferResolution": framebuffer_resolution,
+                "FramebufferScaleX": framebuffer_scale_x,
+                "FramebufferScaleY": framebuffer_scale_y,
+                "FramebufferMatchesRequested": framebuffer_matches_requested,
+                "Run": run_number,
+                "Phase": phase_name,
+                "Frame": frame_index,
+                "FrameStartUs": round(frame.start_us, 3),
+                "EventStartUs": round(frame.start_us, 3),
+            }
+            frame_rows.append(
+                {
+                    **frame_metadata,
+                    "Scope": "main",
+                    "WallMs": round(frame.duration_us / 1000.0, 4),
+                    "SelfMs": round(frame.self_us / 1000.0, 4),
+                }
+            )
+
+            frame_thread_events = events_by_thread.get(frame.thread, [])
+            frame_event_starts = thread_event_starts.get(frame.thread, [])
+            first_event = bisect_left(frame_event_starts, frame.start_us)
+            after_last_event = bisect_left(frame_event_starts, frame.end_us)
+            for event in frame_thread_events[first_event:after_last_event]:
+                if (
+                    event.name in FRAME_SCOPES
+                    and event.end_us <= frame.end_us
+                    and event.duration_us >= FRAME_SCOPE_MIN_DURATION_US.get(event.name, 0.0)
+                ):
+                    frame_rows.append(
+                        {
+                            **frame_metadata,
+                            "Scope": event.name,
+                            "EventStartUs": round(event.start_us, 3),
+                            "WallMs": round(event.duration_us / 1000.0, 4),
+                            "SelfMs": round(event.self_us / 1000.0, 4),
+                        }
+                    )
+
     frame_count = sum(
         event.category == "frame" and event.name == "main" for event in measured_events
     )
     return TraceSummary(
         rows=summary_rows,
+        frame_rows=frame_rows,
         measurement_ms=round(measurement.duration_us / 1000.0, 3),
         frame_count=frame_count,
         measured_event_count=len(measured_events),
@@ -218,8 +305,21 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the OpenBus render-resolution sweep and export per-scope trace metrics."
     )
     parser.add_argument("--resolutions", nargs="+", default=list(DEFAULT_RESOLUTIONS))
-    parser.add_argument("--runs", type=int, default=1, help="runs per resolution (1-20)")
-    parser.add_argument("--warmup-frames", type=int, default=60)
+    parser.add_argument("--runs", type=int, default=5, help="runs per resolution (1-20)")
+    parser.add_argument(
+        "--seed", type=int, default=0, help="seed for deterministic resolution/run order"
+    )
+    parser.add_argument(
+        "--require-exact-resolution",
+        action="store_true",
+        help="return a nonzero status if any framebuffer differs from the requested size",
+    )
+    parser.add_argument(
+        "--warmup-frames",
+        type=int,
+        default=60,
+        help="total warm-up frames distributed across all benchmark phases",
+    )
     parser.add_argument("--phase-frames", type=int, default=60)
     parser.add_argument("--ready-timeout-seconds", type=int, default=180)
     parser.add_argument(
@@ -268,116 +368,145 @@ def run_benchmark(args: argparse.Namespace) -> int:
     output_path.mkdir(parents=True, exist_ok=True)
 
     summary_rows: list[dict[str, Any]] = []
+    frame_rows: list[dict[str, Any]] = []
     run_rows: list[dict[str, Any]] = []
-    total_runs = len(parsed_resolutions) * args.runs
-    run_index = 0
+    run_cases = [
+        (resolution, width, height, run_number)
+        for resolution, width, height in parsed_resolutions
+        for run_number in range(1, args.runs + 1)
+    ]
+    random.Random(args.seed).shuffle(run_cases)
+    total_runs = len(run_cases)
+    warmup_min, warmup_remainder = divmod(args.warmup_frames, len(PHASES))
+    warmup_max = warmup_min + int(warmup_remainder > 0)
 
-    for resolution, width, height in parsed_resolutions:
-        for run_number in range(1, args.runs + 1):
-            run_index += 1
-            case_name = f"{resolution}_run{run_number:02d}"
-            trace_path = output_path / f"trace_{case_name}.json"
-            log_path = output_path / f"log_{case_name}.txt"
-            print(f"[{run_index}/{total_runs}] {resolution} run {run_number}/{args.runs}")
+    for run_order, (resolution, width, height, run_number) in enumerate(run_cases, start=1):
+        case_name = f"{resolution}_run{run_number:02d}"
+        trace_path = output_path / f"trace_{case_name}.json"
+        log_path = output_path / f"log_{case_name}.txt"
+        print(
+            f"[{run_order}/{total_runs}] {resolution} run {run_number}/{args.runs} "
+            f"(seed {args.seed})"
+        )
 
-            environment = os.environ.copy()
-            environment.update(
-                {
-                    "OPENBUS_BENCHMARK": "1",
-                    "OPENBUS_BENCHMARK_WIDTH": str(width),
-                    "OPENBUS_BENCHMARK_HEIGHT": str(height),
-                    "OPENBUS_BENCHMARK_WARMUP_FRAMES": str(args.warmup_frames),
-                    "OPENBUS_BENCHMARK_PHASE_FRAMES": str(args.phase_frames),
-                    "OPENBUS_BENCHMARK_READY_TIMEOUT": str(args.ready_timeout_seconds),
-                    "OPENBUS_BUS_CONFIG": args.bus_config,
-                    "OPENBUS_MODEL_CONFIG": args.model_config,
-                    "OPENBUS_TRACE": "1",
-                    "OPENBUS_TRACE_FILE": str(trace_path),
-                    "OPENBUS_TRACE_MAX_EVENTS": str(TRACE_MAX_EVENTS),
-                    "OPENBUS_TRACE_MIN_US": "1",
-                    "OPENBUS_VSYNC": "off",
-                    "OPENBUS_SCRIPT_HZ": "60",
-                    "OPENBUS_REFLECTION_TRANSPARENT": "0",
-                    "OPENBUS_REFLECTION_INTERVAL": "1",
-                    "OPENBUS_REFLECTION_SIZE": "1024",
-                    "OPENBUS_MATERIAL_BATCHING": "1",
-                }
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "OPENBUS_BENCHMARK": "1",
+                "OPENBUS_BENCHMARK_WIDTH": str(width),
+                "OPENBUS_BENCHMARK_HEIGHT": str(height),
+                "OPENBUS_BENCHMARK_WARMUP_FRAMES": str(args.warmup_frames),
+                "OPENBUS_BENCHMARK_PHASE_FRAMES": str(args.phase_frames),
+                "OPENBUS_BENCHMARK_READY_TIMEOUT": str(args.ready_timeout_seconds),
+                "OPENBUS_BUS_CONFIG": args.bus_config,
+                "OPENBUS_MODEL_CONFIG": args.model_config,
+                "OPENBUS_TRACE": "1",
+                "OPENBUS_TRACE_FILE": str(trace_path),
+                "OPENBUS_TRACE_MAX_EVENTS": str(TRACE_MAX_EVENTS),
+                "OPENBUS_TRACE_MIN_US": "1",
+                "OPENBUS_VSYNC": "off",
+                "OPENBUS_SCRIPT_HZ": "60",
+                "OPENBUS_REFLECTION_TRANSPARENT": "0",
+                "OPENBUS_REFLECTION_INTERVAL": "1",
+                "OPENBUS_REFLECTION_SIZE": "1024",
+                "OPENBUS_MATERIAL_BATCHING": "1",
+            }
+        )
+        environment.pop("OPENBUS_CAPTURE_VIEWS", None)
+        environment.pop("OPENBUS_AI_BUS_CONFIG", None)
+        environment.pop("OPENBUS_AI_MODEL_CONFIG", None)
+
+        with log_path.open("w", encoding="utf-8") as log_file:
+            process = subprocess.run(
+                [str(EXECUTABLE)],
+                cwd=BUILD_DIR,
+                env=environment,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                check=False,
             )
-            environment.pop("OPENBUS_CAPTURE_VIEWS", None)
-            environment.pop("OPENBUS_AI_BUS_CONFIG", None)
-            environment.pop("OPENBUS_AI_MODEL_CONFIG", None)
-
-            with log_path.open("w", encoding="utf-8") as log_file:
-                process = subprocess.run(
-                    [str(EXECUTABLE)],
-                    cwd=BUILD_DIR,
-                    env=environment,
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    check=False,
-                )
-            if process.returncode != 0:
-                raise RuntimeError(
-                    f"OpenBus benchmark exited with status {process.returncode}; see {log_path}"
-                )
-
-            log_text = log_path.read_text(encoding="utf-8", errors="replace")
-            if "BENCHMARK_COMPLETE=1" not in log_text:
-                raise RuntimeError(f"Benchmark did not complete successfully; see {log_path}")
-            actual_resolution = parse_log_value(
-                r"BENCHMARK_FRAMEBUFFER=(\d+x\d+)", log_text
-            )
-            if not actual_resolution:
-                raise RuntimeError(f"OpenBus did not report its framebuffer size; see {log_path}")
-            if actual_resolution != resolution:
-                warnings.warn(
-                    f"Requested {resolution} but received framebuffer {actual_resolution}; "
-                    "both sizes will be recorded.",
-                    stacklevel=1,
-                )
-
-            click_target = (
-                "found" if "BENCHMARK_CLICK_TARGET=found" in log_text else "none"
-            )
-            if click_target == "none":
-                warnings.warn(
-                    f"No clickable dashboard target was found for {resolution} run {run_number}.",
-                    stacklevel=1,
-                )
-            readiness_frames = int(
-                parse_log_value(r"BENCHMARK_READINESS_FRAMES=(\d+)", log_text, "0")
+        if process.returncode != 0:
+            raise RuntimeError(
+                f"OpenBus benchmark exited with status {process.returncode}; see {log_path}"
             )
 
-            trace_summary = summarize_trace(
-                trace_path, resolution, actual_resolution, run_number
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        if "BENCHMARK_COMPLETE=1" not in log_text:
+            raise RuntimeError(f"Benchmark did not complete successfully; see {log_path}")
+        actual_resolution = parse_log_value(r"BENCHMARK_FRAMEBUFFER=(\d+x\d+)", log_text)
+        if not actual_resolution:
+            raise RuntimeError(f"OpenBus did not report its framebuffer size; see {log_path}")
+        window_resolution = parse_log_value(r"BENCHMARK_WINDOW=(\d+x\d+)", log_text)
+        if not window_resolution:
+            raise RuntimeError(
+                f"OpenBus did not report its window size; rebuild the benchmark target. "
+                f"See {log_path}"
             )
-            if trace_summary.total_event_count >= TRACE_MAX_EVENTS:
-                warnings.warn(
-                    f"Trace reached the {TRACE_MAX_EVENTS:,}-event cap: {trace_path}",
-                    stacklevel=1,
-                )
-            summary_rows.extend(trace_summary.rows)
-            run_rows.append(
-                {
-                    "RequestedResolution": resolution,
-                    "FramebufferResolution": actual_resolution,
-                    "Run": run_number,
-                    "ReadinessFrames": readiness_frames,
-                    "WarmupFramesPerPhase": args.warmup_frames,
-                    "MeasuredFramesPerPhase": args.phase_frames,
-                    "MeasuredFrameCount": trace_summary.frame_count,
-                    "MeasurementMs": trace_summary.measurement_ms,
-                    "MeasuredTraceEventCount": trace_summary.measured_event_count,
-                    "TraceEventCount": trace_summary.total_event_count,
-                    "ClickTarget": click_target,
-                    "TraceFile": str(trace_path),
-                    "LogFile": str(log_path),
-                }
+        framebuffer_width, framebuffer_height = parse_resolution(actual_resolution)
+        actual_window_width, actual_window_height = parse_resolution(window_resolution)
+        framebuffer_scale_x = round(framebuffer_width / actual_window_width, 4)
+        framebuffer_scale_y = round(framebuffer_height / actual_window_height, 4)
+        framebuffer_matches_requested = actual_resolution == resolution
+        if not framebuffer_matches_requested:
+            warnings.warn(
+                f"Requested framebuffer {resolution}, window is {window_resolution}, "
+                f"but received framebuffer {actual_resolution}; this run is marked "
+                "as a resolution mismatch.",
+                stacklevel=1,
             )
+
+        click_target = "found" if "BENCHMARK_CLICK_TARGET=found" in log_text else "none"
+        if click_target == "none":
+            warnings.warn(
+                f"No clickable dashboard target was found for {resolution} run {run_number}.",
+                stacklevel=1,
+            )
+        readiness_frames = int(
+            parse_log_value(r"BENCHMARK_READINESS_FRAMES=(\d+)", log_text, "0")
+        )
+
+        trace_summary = summarize_trace(
+            trace_path, resolution, actual_resolution, run_number, window_resolution
+        )
+        if trace_summary.total_event_count >= TRACE_MAX_EVENTS:
+            warnings.warn(
+                f"Trace reached the {TRACE_MAX_EVENTS:,}-event cap: {trace_path}",
+                stacklevel=1,
+            )
+        summary_rows.extend(trace_summary.rows)
+        frame_rows.extend(trace_summary.frame_rows)
+        run_rows.append(
+            {
+                "RequestedResolution": resolution,
+                "WindowResolution": window_resolution,
+                "FramebufferResolution": actual_resolution,
+                "FramebufferScaleX": framebuffer_scale_x,
+                "FramebufferScaleY": framebuffer_scale_y,
+                "FramebufferMatchesRequested": framebuffer_matches_requested,
+                "RunOrder": run_order,
+                "Run": run_number,
+                "ReadinessFrames": readiness_frames,
+                "WarmupFramesTotal": args.warmup_frames,
+                "WarmupFramesPerPhaseMin": warmup_min,
+                "WarmupFramesPerPhaseMax": warmup_max,
+                "MeasuredFramesPerPhase": args.phase_frames,
+                "MeasuredFrameCount": trace_summary.frame_count,
+                "MeasurementMs": trace_summary.measurement_ms,
+                "MeasuredTraceEventCount": trace_summary.measured_event_count,
+                "TraceEventCount": trace_summary.total_event_count,
+                "ClickTarget": click_target,
+                "TraceFile": str(trace_path),
+                "LogFile": str(log_path),
+            }
+        )
 
     summary_fields = [
         "RequestedResolution",
+        "WindowResolution",
         "FramebufferResolution",
+        "FramebufferScaleX",
+        "FramebufferScaleY",
+        "FramebufferMatchesRequested",
         "Run",
         "Phase",
         "Category",
@@ -390,10 +519,17 @@ def run_benchmark(args: argparse.Namespace) -> int:
     ]
     run_fields = [
         "RequestedResolution",
+        "WindowResolution",
         "FramebufferResolution",
+        "FramebufferScaleX",
+        "FramebufferScaleY",
+        "FramebufferMatchesRequested",
+        "RunOrder",
         "Run",
         "ReadinessFrames",
-        "WarmupFramesPerPhase",
+        "WarmupFramesTotal",
+        "WarmupFramesPerPhaseMin",
+        "WarmupFramesPerPhaseMax",
         "MeasuredFramesPerPhase",
         "MeasuredFrameCount",
         "MeasurementMs",
@@ -402,6 +538,22 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "ClickTarget",
         "TraceFile",
         "LogFile",
+    ]
+    frame_fields = [
+        "RequestedResolution",
+        "WindowResolution",
+        "FramebufferResolution",
+        "FramebufferScaleX",
+        "FramebufferScaleY",
+        "FramebufferMatchesRequested",
+        "Run",
+        "Phase",
+        "Frame",
+        "FrameStartUs",
+        "EventStartUs",
+        "Scope",
+        "WallMs",
+        "SelfMs",
     ]
     summary_rows.sort(
         key=lambda row: (
@@ -414,14 +566,36 @@ def run_benchmark(args: argparse.Namespace) -> int:
     )
     write_csv(output_path / "render_benchmark_scopes.csv", summary_rows, summary_fields)
     write_csv(output_path / "render_benchmark_runs.csv", run_rows, run_fields)
+    frame_rows.sort(
+        key=lambda row: (
+            row["RequestedResolution"],
+            row["Run"],
+            row["Phase"],
+            row["Frame"],
+            row["Scope"],
+        )
+    )
+    write_csv(output_path / "render_benchmark_frames.csv", frame_rows, frame_fields)
     print(f"Scope summary: {output_path / 'render_benchmark_scopes.csv'}")
     print(f"Run summary:   {output_path / 'render_benchmark_runs.csv'}")
+    print(f"Frame timings: {output_path / 'render_benchmark_frames.csv'}")
     for row in run_rows:
         print(
-            f"{row['RequestedResolution']:>9} actual {row['FramebufferResolution']:>9} "
+            f"{row['RequestedResolution']:>9} window {row['WindowResolution']:>9} "
+            f"framebuffer {row['FramebufferResolution']:>9} "
+            f"exact={'yes' if row['FramebufferMatchesRequested'] else 'no ':>3} "
             f"run {row['Run']:02d}: {row['MeasurementMs']:>9.3f} ms, "
             f"{row['MeasuredFrameCount']:>4} frames, click target {row['ClickTarget']}"
         )
+    if args.require_exact_resolution and any(
+        not row["FramebufferMatchesRequested"] for row in run_rows
+    ):
+        print(
+            "benchmark_rendering: at least one framebuffer did not match the requested "
+            "resolution; see the CSV files for completed runs.",
+            file=sys.stderr,
+        )
+        return 2
     return 0
 
 

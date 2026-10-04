@@ -13,8 +13,8 @@ struct SoundCurvePoint {
 };
 
 struct SoundVolumeCurve {
-  std::string variable;
-  std::vector<SoundCurvePoint> points;
+    std::string variable;
+    std::vector<SoundCurvePoint> points;
 };
 
 struct SoundTriggerDefinition {
@@ -29,7 +29,7 @@ struct SoundTriggerDefinition {
     std::vector<SoundVolumeCurve> volumeCurves;
 };
 
-  class Variables;
+class Variables;
 
 class SoundEngine {
   public:

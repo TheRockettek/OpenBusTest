@@ -25,12 +25,12 @@ class BusSimulation {
                                double brake = 0.0);
     // Applies script-produced wheel torque and per-wheel brake forces (N).
     void updateWithWheelTorqueAndBrakeForces(double elapsedSeconds, double wheelTorque,
-                         double steering,
-                         const std::vector<double>& wheelBrakeForces);
+                                             double steering,
+                                             const std::vector<double>& wheelBrakeForces);
     void step(double throttle, double steering = 0.0, double brake = 0.0);
     void stepWithWheelTorque(double wheelTorque, double steering = 0.0, double brake = 0.0);
     void stepWithWheelTorqueAndBrakeForces(double wheelTorque, double steering,
-                         const std::vector<double>& wheelBrakeForces);
+                                           const std::vector<double>& wheelBrakeForces);
     void updateVariables(openbus::scripting::Vehicle& variables, double throttle, double steering,
                          double brake) const;
     double positionX() const;

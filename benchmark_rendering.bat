@@ -14,7 +14,7 @@ if errorlevel 1 goto :failed
 if defined OPENBUS_PYTHON (
 	"%OPENBUS_PYTHON%" "benchmark_rendering.py" %*
 ) else (
-	python "benchmark_rendering.py" %*
+	py "benchmark_rendering.py" %*
 )
 set "EXIT_CODE=%ERRORLEVEL%"
 popd

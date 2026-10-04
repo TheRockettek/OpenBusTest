@@ -447,12 +447,11 @@ bool vehicleBindingPressed(GLFWwindow* window, const VehicleKeyBinding& binding)
                          glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
     const bool alt = glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
                      glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
-    const bool primaryShift = binding.key == GLFW_KEY_LEFT_SHIFT ||
-                              binding.key == GLFW_KEY_RIGHT_SHIFT;
-    const bool primaryControl = binding.key == GLFW_KEY_LEFT_CONTROL ||
-                                binding.key == GLFW_KEY_RIGHT_CONTROL;
-    const bool primaryAlt =
-        binding.key == GLFW_KEY_LEFT_ALT || binding.key == GLFW_KEY_RIGHT_ALT;
+    const bool primaryShift =
+        binding.key == GLFW_KEY_LEFT_SHIFT || binding.key == GLFW_KEY_RIGHT_SHIFT;
+    const bool primaryControl =
+        binding.key == GLFW_KEY_LEFT_CONTROL || binding.key == GLFW_KEY_RIGHT_CONTROL;
+    const bool primaryAlt = binding.key == GLFW_KEY_LEFT_ALT || binding.key == GLFW_KEY_RIGHT_ALT;
     return shift == (((binding.flags & kBindingShift) != 0) || primaryShift) &&
            control == (((binding.flags & kBindingControl) != 0) || primaryControl) &&
            alt == (((binding.flags & kBindingAlt) != 0) || primaryAlt);
@@ -3975,9 +3974,6 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
-    if (parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"))) {
-        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    }
     window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!window_) {
         gameLog.Log("Failed to create OpenGL window");
@@ -4102,8 +4098,7 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                                        double steering, double brake) {
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
     smoothedSteering_ = openbus::input::smoothSteeringInput(
-        smoothedSteering_, steering, std::clamp(frameTimeStep_, 0.0, 0.25),
-        steeringSmoothingRate_);
+        smoothedSteering_, steering, std::clamp(frameTimeStep_, 0.0, 0.25), steeringSmoothingRate_);
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(simulation, throttle, smoothedSteering_, brake);
     }
@@ -4247,6 +4242,13 @@ void RenderLoop::requestClose() {
     }
 }
 
+std::array<int, 2> RenderLoop::windowSize() const {
+    int width = 1;
+    int height = 1;
+    glfwGetWindowSize(window_, &width, &height);
+    return {width, height};
+}
+
 std::array<int, 2> RenderLoop::framebufferSize() const {
     return {framebufferWidth_, framebufferHeight_};
 }
@@ -4281,9 +4283,9 @@ RenderBenchmarkInput RenderLoop::setBenchmarkFrame(RenderBenchmarkPhase phase, i
             cameraView_ = 0;
             break;
         }
-        const std::size_t selectedCamera = std::min(
-            cameraCount - 1,
-            static_cast<std::size_t>(frame) * cameraCount / static_cast<std::size_t>(frameCount));
+        const std::size_t selectedCamera =
+            std::min(cameraCount - 1, static_cast<std::size_t>(frame) * cameraCount /
+                                          static_cast<std::size_t>(frameCount));
         std::size_t userCameraIndex = 0;
         for (std::size_t index = 0; index < vehicleCameras_.size(); ++index) {
             if (!isUserCamera(vehicleCameras_[index])) {
@@ -4314,13 +4316,12 @@ RenderBenchmarkInput RenderLoop::setBenchmarkFrame(RenderBenchmarkPhase phase, i
         break;
     case RenderBenchmarkPhase::DashboardInteraction: {
         const auto driverCamera = std::find_if(
-            vehicleCameras_.begin(), vehicleCameras_.end(), [](const VehicleCamera& camera) {
-                return camera.kind == VehicleCameraKind::Driver;
-            });
-        cameraView_ = driverCamera == vehicleCameras_.end()
-                          ? 0
-                          : static_cast<int>(std::distance(vehicleCameras_.begin(), driverCamera)) +
-                                1;
+            vehicleCameras_.begin(), vehicleCameras_.end(),
+            [](const VehicleCamera& camera) { return camera.kind == VehicleCameraKind::Driver; });
+        cameraView_ =
+            driverCamera == vehicleCameras_.end()
+                ? 0
+                : static_cast<int>(std::distance(vehicleCameras_.begin(), driverCamera)) + 1;
         viewLookYaw_ = 0.35 * std::sin(progress * 2.0 * 3.141592653589793);
         viewLookPitch_ = 0.12 * std::sin(progress * 4.0 * 3.141592653589793);
         fieldOfViewOffset_ = 8.0 * std::sin(progress * 2.0 * 3.141592653589793);
@@ -4346,9 +4347,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     const double currentTime = glfwGetTime();
     const double wallTimegap =
         hasPreviousVariableTime_ ? std::max(0.0, currentTime - previousVariableTime_) : 0.0;
-    const double timegap = fixedTimeStep >= 0.0 && std::isfinite(fixedTimeStep)
-                               ? fixedTimeStep
-                               : wallTimegap;
+    const double timegap =
+        fixedTimeStep >= 0.0 && std::isfinite(fixedTimeStep) ? fixedTimeStep : wallTimegap;
     previousVariableTime_ = currentTime;
     hasPreviousVariableTime_ = true;
     frameTimeStep_ = timegap;
@@ -4728,8 +4728,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                     const double y = static_cast<double>(framebufferHeight_) * row / rows;
                     for (int column = 1; column < columns; ++column) {
                         const double x = static_cast<double>(framebufferWidth_) * column / columns;
-                        if (playerVehicle_->mouseEventAt(x, y, framebufferWidth_, framebufferHeight_,
-                                                         interactionContext)
+                        if (playerVehicle_
+                                ->mouseEventAt(x, y, framebufferWidth_, framebufferHeight_,
+                                               interactionContext)
                                 .empty()) {
                             continue;
                         }
@@ -4896,10 +4897,10 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         const double speedMetresPerSecond = simulation.speed();
         const long speedMph = std::lround(speedMetresPerSecond * 2.2369362921);
         const long speedKmh = std::lround(speedMetresPerSecond * 3.6);
-        const long throttlePercent = std::lround(
-            std::clamp(playerVehicle_->variables.get("throttle"), 0.0, 1.0) * 100.0);
-        const long brakePercent = std::lround(
-            std::clamp(playerVehicle_->variables.get("brake"), 0.0, 1.0) * 100.0);
+        const long throttlePercent =
+            std::lround(std::clamp(playerVehicle_->variables.get("throttle"), 0.0, 1.0) * 100.0);
+        const long brakePercent =
+            std::lround(std::clamp(playerVehicle_->variables.get("brake"), 0.0, 1.0) * 100.0);
         std::ostringstream title;
         title << "OpenBus - " << speedMph << " mph / " << speedKmh << " km/h - Throttle "
               << throttlePercent << "% - Brake " << brakePercent << "% - "
@@ -5060,7 +5061,8 @@ double RenderLoop::physicsWheelTorque() const {
 }
 
 double RenderLoop::physicsSteering() const {
-    return playerVehicle_ == nullptr ? smoothedSteering_ : playerVehicle_->variables.get("steering");
+    return playerVehicle_ == nullptr ? smoothedSteering_
+                                     : playerVehicle_->variables.get("steering");
 }
 
 std::vector<double> RenderLoop::physicsWheelBrakeForces(std::size_t axleCount) const {
