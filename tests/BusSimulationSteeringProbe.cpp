@@ -65,6 +65,23 @@ int main() {
     }
 
     BusSimulation simulation(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    const BusConfiguration steeringLimitConfiguration = testConfiguration();
+    const double expectedMaximumSteeringAngle =
+        std::atan(steeringLimitConfiguration.inverseMinimumTurnRadius *
+                  std::abs(steeringLimitConfiguration.axles[0].position -
+                           steeringLimitConfiguration.axles[2].position));
+    BusSimulation steeringLimitCheck(steeringLimitConfiguration,
+                                     VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    for (int step = 0; step < 600; ++step) {
+        steeringLimitCheck.step(0.0, 1.0, 0.0);
+    }
+    if (std::abs(steeringLimitCheck.steeringAngle() - expectedMaximumSteeringAngle) > 1.0e-5) {
+        std::cerr << "inverse minimum turn radius did not set the live steering limit: expected "
+                  << expectedMaximumSteeringAngle << ", got "
+                  << steeringLimitCheck.steeringAngle() << '\n';
+        return 1;
+    }
+
     const BodyPose rearStartPose = simulation.wheelPose(2);
     for (int step = 0; step < 180; ++step) {
         simulation.step(0.0, 0.0, 0.0);

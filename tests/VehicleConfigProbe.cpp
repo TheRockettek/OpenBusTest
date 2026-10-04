@@ -34,7 +34,10 @@ int main() {
     registrationList << "BUS-002\nBUS-003\n";
     registrationList.close();
     std::ofstream config(configPath);
-    config << "[model]\nmodel.cfg\n"
+    config << "[friendlyname]\nMercedes-Benz\nCitaro E400\nNight blue\n"
+              "[description]\nUrban service bus.\n\n Electric drivetrain. \n[end]\n"
+              "[type]\n0\n"
+              "[model]\nmodel.cfg\n"
               "[sound]\nsound/player.cfg\n"
               "[sound_ai]\nsound/ai.cfg\n"
               "[paths]\nmodel/paths.cfg\n"
@@ -50,6 +53,11 @@ int main() {
     std::filesystem::remove_all(root);
 
     if (result.diagnostics.hasErrors() ||
+        result.friendlyManufacturer != "Mercedes-Benz" ||
+        result.friendlyVehicleName != "Citaro E400" ||
+        result.friendlyDefaultPaint != "Night blue" ||
+        result.description != "Urban service bus.\n\n Electric drivetrain. " ||
+        !result.vehicleType.has_value() || *result.vehicleType != 0 ||
         result.soundConfigPath.generic_string() != (root / "sound/player.cfg").generic_string() ||
         result.soundAiConfigPath.generic_string() != (root / "sound/ai.cfg").generic_string() ||
         result.pathsConfigPath.generic_string() != (root / "model/paths.cfg").generic_string() ||

@@ -151,10 +151,10 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
 
 ## 5. Complete vehicle/model configuration coverage
 
-- [~] Core bus identity, mass, bounding box, center of gravity, axles,
-  cameras, model assembly, animations, parents, visibility, and wheel data
-  are loaded for the current vehicles. `[friendlyname]`, `[description]`,
-  and `[type]` are still consumed without being exposed to the runtime.
+- [x] Core bus identity metadata (`[friendlyname]`, `[description]`, and
+  `[type]`), mass, bounding box, center of gravity, axles, cameras, model
+  assembly, animations, parents, visibility, and wheel data are loaded and
+  exposed through `VehicleConfig` for the current vehicles.
 - [~] `[mouseevent]` identifiers are retained on model parts, and W/A/S/D
   transitions are dispatched to the player script runtime as key state and
   optional key-specific entry points. Exact transformed triangle picking is
@@ -232,9 +232,8 @@ for alignment is not mistaken for supporting it.
 
 #### BUS vehicle configuration
 
-- [ ] Preserve and expose `[friendlyname]`, `[description]`, and `[type]`;
-  `[friendlyname]` and `[description]` are currently consumed without
-  metadata storage, while `[type]` is not parsed.
+- [x] Preserve and expose `[friendlyname]`, `[description]`, and `[type]` in
+  `VehicleConfig`.
 - [ ] Implement BUS-level `[fixed]` and `[scriptshare]` semantics.
 - [ ] Retain the labels and implement the view selection behavior for
   `[view_schedule]` and `[view_ticketselling]`; current parsing only records
@@ -242,8 +241,9 @@ for alignment is not mistaken for supporting it.
 - [ ] Parse and use `[cog]` in a consistent way with `[schwerpunkt]`.
 - [ ] Store and apply `[rollwiderstand]` and `[rot_pnt_long]`; both are
   currently consumed without physics semantics.
-- [ ] Apply the parsed `[inv_min_turnradius]` steering constraint and
-  `[ai_deltaheight]` correction to the corresponding runtime paths.
+- [x] Apply the parsed `[inv_min_turnradius]` steering constraint to the live
+  physics steering limit.
+- [ ] Apply the parsed `[ai_deltaheight]` correction to the AI vehicle path.
 - [ ] Add the documented vehicle-family records `[rowdy_factor]`, `[boogies]`,
   `[ai_brakeperformance]`, `[ai_veh_type]`, and `[sinus]`, or explicitly mark
   them unsupported when their family-specific semantics cannot be preserved.

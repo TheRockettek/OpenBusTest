@@ -530,12 +530,20 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
         }
         if (keyword == "description") {
             bool terminated = false;
-            while (reader.next(line)) {
+            std::string description;
+            bool firstLine = true;
+            while (reader.nextIncludingBlank(line)) {
                 if (line.isKeyword() && lower(line.keyword()) == "end") {
                     terminated = true;
                     break;
                 }
+                if (!firstLine) {
+                    description.push_back('\n');
+                }
+                description += line.raw;
+                firstLine = false;
             }
+            result.description = std::move(description);
             if (!terminated) {
                 result.diagnostics.error(line.number, "description", "missing [end]");
             }
@@ -543,7 +551,23 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
         }
         if (keyword == "friendlyname") {
             std::vector<std::string> values;
-            readValues(reader, keyword, 3, values, result.diagnostics);
+            if (readValues(reader, keyword, 3, values, result.diagnostics)) {
+                result.friendlyManufacturer = std::move(values[0]);
+                result.friendlyVehicleName = std::move(values[1]);
+                result.friendlyDefaultPaint = std::move(values[2]);
+            }
+            continue;
+        }
+        if (keyword == "type") {
+            Line value;
+            int vehicleType = 0;
+            if (reader.readPayload(value, result.diagnostics, keyword)) {
+                if (parseInt(value.text, vehicleType)) {
+                    result.vehicleType = vehicleType;
+                } else {
+                    result.diagnostics.error(value.number, keyword, "expected an integer value");
+                }
+            }
             continue;
         }
         if (keyword == "model") {

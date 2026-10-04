@@ -24,6 +24,7 @@ class Reader {
 
     bool isOpen() const;
     bool next(Line& line);
+    bool nextIncludingBlank(Line& line);
     void pushBack(Line line);
 
     bool readPayload(Line& line, ConfigurationDiagnostics& diagnostics,
@@ -32,7 +33,7 @@ class Reader {
                       ConfigurationDiagnostics& diagnostics, const std::string& ownerKeyword);
 
   private:
-    bool readRaw(Line& line);
+    bool readRaw(Line& line, bool skipBlank = true);
 
     std::ifstream input_;
     std::size_t nextLineNumber_ = 0;

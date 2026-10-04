@@ -55,6 +55,11 @@ struct PassengerPathLink {
 struct VehicleConfig {
     VehicleFileKind kind = VehicleFileKind::Vehicle;
     std::filesystem::path sourcePath;
+    std::string friendlyManufacturer;
+    std::string friendlyVehicleName;
+    std::string friendlyDefaultPaint;
+    std::string description;
+    std::optional<int> vehicleType;
     std::filesystem::path modelPath;
     std::vector<VehicleCamera> cameras;
     int standardDriverCamera = -1;

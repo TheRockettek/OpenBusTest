@@ -95,9 +95,9 @@ bool Reader::isOpen() const {
     return input_.is_open();
 }
 
-bool Reader::readRaw(Line& line) {
-    // Skip blank lines and disabled sections while retaining source line numbers
-    // for useful diagnostics.
+bool Reader::readRaw(Line& line, bool skipBlank) {
+    // Skip disabled sections and, for ordinary records, blank lines while
+    // retaining source line numbers for useful diagnostics.
     std::string raw;
     while (std::getline(input_, raw)) {
         ++nextLineNumber_;
@@ -113,7 +113,7 @@ bool Reader::readRaw(Line& line) {
             disabled_ = false;
             continue;
         }
-        if (disabled_ || text.empty()) {
+        if (disabled_ || (skipBlank && text.empty())) {
             continue;
         }
         line = {nextLineNumber_, raw, text};
@@ -129,6 +129,15 @@ bool Reader::next(Line& line) {
         return true;
     }
     return readRaw(line);
+}
+
+bool Reader::nextIncludingBlank(Line& line) {
+    if (hasPushback_) {
+        line = pushback_;
+        hasPushback_ = false;
+        return true;
+    }
+    return readRaw(line, false);
 }
 
 void Reader::pushBack(Line line) {
