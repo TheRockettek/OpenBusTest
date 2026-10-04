@@ -7,6 +7,7 @@
 #include "BusSimulation.h"
 #include "CameraMath.h"
 #include "CoreRenderer.h"
+#include "Environment.h"
 #include "Logger.h"
 #include "MouseControlMapping.h"
 #include "ObjLoader.h"
@@ -3974,6 +3975,9 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
+    if (parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"))) {
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    }
     window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!window_) {
         gameLog.Log("Failed to create OpenGL window");
@@ -3981,6 +3985,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         throw std::runtime_error("Failed to create OpenGL window");
     }
     glfwMakeContextCurrent(window_);
+    glfwGetFramebufferSize(window_, &framebufferWidth_, &framebufferHeight_);
     clickableCursor_ = glfwCreateStandardCursor(GLFW_HAND_CURSOR);
     mouseSteeringCursor_ = glfwCreateStandardCursor(GLFW_CROSSHAIR_CURSOR);
     glfwSetWindowUserPointer(window_, this);
@@ -4242,15 +4247,108 @@ void RenderLoop::requestClose() {
     }
 }
 
-void RenderLoop::beginFrame() {
+std::array<int, 2> RenderLoop::framebufferSize() const {
+    return {framebufferWidth_, framebufferHeight_};
+}
+
+RenderBenchmarkInput RenderLoop::setBenchmarkFrame(RenderBenchmarkPhase phase, int frameInPhase,
+                                                   int phaseFrameCount) {
+    const int frameCount = std::max(phaseFrameCount, 1);
+    const int frame = std::clamp(frameInPhase, 0, frameCount - 1);
+    const double progress = frameCount <= 1 ? 0.0 : static_cast<double>(frame) / (frameCount - 1);
+    benchmarkClickDiscoveryPending_ = false;
+    benchmarkClickQueued_ = false;
+
+    RenderBenchmarkInput input;
+    switch (phase) {
+    case RenderBenchmarkPhase::Baseline:
+        cameraView_ = 0;
+        cameraYaw_ = -2.3;
+        cameraPitch_ = 0.45;
+        cameraDistance_ = 24.0;
+        viewLookYaw_ = 0.0;
+        viewLookPitch_ = 0.0;
+        fieldOfViewOffset_ = 0.0;
+        break;
+    case RenderBenchmarkPhase::CameraCycle: {
+        const auto isUserCamera = [](const VehicleCamera& camera) {
+            return camera.kind == VehicleCameraKind::Driver ||
+                   camera.kind == VehicleCameraKind::Passenger;
+        };
+        const std::size_t cameraCount = static_cast<std::size_t>(
+            std::count_if(vehicleCameras_.begin(), vehicleCameras_.end(), isUserCamera));
+        if (cameraCount == 0) {
+            cameraView_ = 0;
+            break;
+        }
+        const std::size_t selectedCamera = std::min(
+            cameraCount - 1,
+            static_cast<std::size_t>(frame) * cameraCount / static_cast<std::size_t>(frameCount));
+        std::size_t userCameraIndex = 0;
+        for (std::size_t index = 0; index < vehicleCameras_.size(); ++index) {
+            if (!isUserCamera(vehicleCameras_[index])) {
+                continue;
+            }
+            if (userCameraIndex == selectedCamera) {
+                cameraView_ = static_cast<int>(index + 1);
+                break;
+            }
+            ++userCameraIndex;
+        }
+        break;
+    }
+    case RenderBenchmarkPhase::ThirdPersonZoom: {
+        cameraView_ = 0;
+        const double zoomCycle = 0.5 - 0.5 * std::cos(progress * 2.0 * 3.141592653589793);
+        cameraDistance_ = 7.0 + 60.0 * zoomCycle;
+        cameraYaw_ = -2.3 + 0.25 * std::sin(progress * 2.0 * 3.141592653589793);
+        cameraPitch_ = 0.40 + 0.10 * std::sin(progress * 4.0 * 3.141592653589793);
+        break;
+    }
+    case RenderBenchmarkPhase::DrivingControls:
+        cameraView_ = 0;
+        cameraDistance_ = 24.0;
+        input.throttle = 0.15;
+        input.steering = std::sin(progress * 4.0 * 3.141592653589793);
+        input.brake = progress >= 0.75 ? 0.25 : 0.0;
+        break;
+    case RenderBenchmarkPhase::DashboardInteraction: {
+        const auto driverCamera = std::find_if(
+            vehicleCameras_.begin(), vehicleCameras_.end(), [](const VehicleCamera& camera) {
+                return camera.kind == VehicleCameraKind::Driver;
+            });
+        cameraView_ = driverCamera == vehicleCameras_.end()
+                          ? 0
+                          : static_cast<int>(std::distance(vehicleCameras_.begin(), driverCamera)) +
+                                1;
+        viewLookYaw_ = 0.35 * std::sin(progress * 2.0 * 3.141592653589793);
+        viewLookPitch_ = 0.12 * std::sin(progress * 4.0 * 3.141592653589793);
+        fieldOfViewOffset_ = 8.0 * std::sin(progress * 2.0 * 3.141592653589793);
+        benchmarkClickDiscoveryPending_ = !benchmarkClickDiscoveryComplete_;
+        const int clickInterval = std::max(frameCount / 5, 1);
+        benchmarkClickQueued_ = benchmarkClickTargetFound_ && frame % clickInterval == 0;
+        break;
+    }
+    }
+    return input;
+}
+
+bool RenderLoop::benchmarkClickTargetFound() const {
+    return benchmarkClickTargetFound_;
+}
+
+void RenderLoop::beginFrame(double fixedTimeStep) {
     TraceScope trace("frame", "RenderLoop::beginFrame");
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.pollEvents");
         glfwPollEvents();
     }
     const double currentTime = glfwGetTime();
-    const double timegap =
+    const double wallTimegap =
         hasPreviousVariableTime_ ? std::max(0.0, currentTime - previousVariableTime_) : 0.0;
+    const double timegap = fixedTimeStep >= 0.0 && std::isfinite(fixedTimeStep)
+                               ? fixedTimeStep
+                               : wallTimegap;
     previousVariableTime_ = currentTime;
     hasPreviousVariableTime_ = true;
     frameTimeStep_ = timegap;
@@ -4619,6 +4717,36 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         const RenderViewContext interactionContext = isExteriorView()
                                                          ? RenderViewContext::PlayerExterior
                                                          : RenderViewContext::PlayerInterior;
+        if (benchmarkClickDiscoveryPending_) {
+            TraceScope trace("benchmark", "Benchmark.discoverClickable");
+            benchmarkClickDiscoveryPending_ = false;
+            benchmarkClickDiscoveryComplete_ = true;
+            if (playerVehicle_->hasVisibleClickable(interactionContext)) {
+                constexpr int columns = 40;
+                constexpr int rows = 24;
+                for (int row = 1; row < rows && !benchmarkClickTargetFound_; ++row) {
+                    const double y = static_cast<double>(framebufferHeight_) * row / rows;
+                    for (int column = 1; column < columns; ++column) {
+                        const double x = static_cast<double>(framebufferWidth_) * column / columns;
+                        if (playerVehicle_->mouseEventAt(x, y, framebufferWidth_, framebufferHeight_,
+                                                         interactionContext)
+                                .empty()) {
+                            continue;
+                        }
+                        benchmarkClickFramebufferX_ = x;
+                        benchmarkClickFramebufferY_ = y;
+                        benchmarkClickTargetFound_ = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (benchmarkClickQueued_ && benchmarkClickTargetFound_) {
+            pendingMouseClick_ = true;
+            pendingMouseClickX_ = benchmarkClickFramebufferX_ / framebufferScaleX;
+            pendingMouseClickY_ = benchmarkClickFramebufferY_ / framebufferScaleY;
+        }
+        benchmarkClickQueued_ = false;
         const int interactionContextValue = static_cast<int>(interactionContext);
         const std::uint64_t clickableRevision = playerVehicle_->clickableRevision();
         const auto samePose = [&] {

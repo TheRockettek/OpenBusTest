@@ -352,6 +352,31 @@ The main frame path begins with `frame:main`; expand it to compare
 `Renderer::beginFrame`, `BusSimulation::update`, `Renderer::draw`, and
 `Renderer::endFrame` work.
 
+## Repeatable render benchmark
+
+Run `benchmark_rendering.bat --runs 3` to build an isolated Release executable
+with tracing enabled, then benchmark 720p, 1080p, 1440p, 4K, and 5120x1440.
+The runner is `benchmark_rendering.py`, requires Python 3.9 or newer, and uses
+only the standard library; set `OPENBUS_PYTHON` if `python` is not on PATH.
+After building, the Python runner can also be launched directly with
+`python benchmark_rendering.py --runs 3`. Each run measures baseline rendering,
+user-facing camera cycling, third-person zoom, driving controls, and dashboard
+interaction. The benchmark uses a hidden window, a fixed 60 Hz simulation step,
+and disables VSync; it does
+not change the normal `build-ode` build or `profile.bat` settings.
+
+Results are written to `render-benchmark-results/`. The `*_runs.csv` file records
+the requested and actual framebuffer sizes, readiness and measured frame counts,
+and whether a clickable dashboard target was found. The `*_scopes.csv` file
+groups Chrome trace scopes by phase and reports occurrence count, summed
+inclusive elapsed wall time, summed self time, average, and maximum duration.
+Durations are milliseconds converted from trace microseconds; they are CPU-side
+elapsed scope timings, not GPU timings. Self time subtracts the union of direct
+child intervals on the same thread, avoiding double subtraction for overlaps.
+Raw per-run traces and logs are retained alongside the CSV files. If the window
+system cannot provide a requested framebuffer size, both sizes are recorded and
+a warning is printed.
+
 ## OMSI bus-file reference
 
 The supplied OMSI examples are summarized in

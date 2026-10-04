@@ -1,7 +1,11 @@
 .gitignore
 *.log
 build-ode
+build-benchmark/
 build
+render-benchmark-results/
+__pycache__/
+*.py[cod]
 OpenBus_configuration.json
 OpenBus_model_configuration.json
 openbus_trace.json

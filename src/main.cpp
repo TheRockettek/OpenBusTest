@@ -9,12 +9,48 @@
 
 #include <GLFW/glfw3.h>
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <vector>
+
+namespace {
+
+int positiveEnvironmentInt(const char* name, int fallback, int maximum) {
+    const char* value = openbus::getEnvironment(name);
+    if (value == nullptr || *value == '\0') {
+        return fallback;
+    }
+    char* end = nullptr;
+    const long parsed = std::strtol(value, &end, 10);
+    if (end == value || *end != '\0' || parsed <= 0) {
+        return fallback;
+    }
+    return static_cast<int>(std::min(parsed, static_cast<long>(maximum)));
+}
+
+const char* benchmarkPhaseName(RenderBenchmarkPhase phase) {
+    switch (phase) {
+    case RenderBenchmarkPhase::Baseline:
+        return "Benchmark.phase.baseline";
+    case RenderBenchmarkPhase::CameraCycle:
+        return "Benchmark.phase.cameraCycle";
+    case RenderBenchmarkPhase::ThirdPersonZoom:
+        return "Benchmark.phase.thirdPersonZoom";
+    case RenderBenchmarkPhase::DrivingControls:
+        return "Benchmark.phase.drivingControls";
+    case RenderBenchmarkPhase::DashboardInteraction:
+        return "Benchmark.phase.dashboardInteraction";
+    }
+    return "Benchmark.phase.unknown";
+}
+
+} // namespace
 
 int main() {
     installCrashHandler();
@@ -85,9 +121,15 @@ int main() {
 
         BusSimulation simulation(configuration, busPlacement);
 
-        
-
-        RenderLoop renderer(2560, 1440, "OpenBus");
+        const bool benchmarkMode =
+            openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
+        const int windowWidth = benchmarkMode
+                                    ? positiveEnvironmentInt("OPENBUS_BENCHMARK_WIDTH", 1280, 16384)
+                                    : 2560;
+        const int windowHeight = benchmarkMode
+                                     ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384)
+                                     : 1440;
+        RenderLoop renderer(windowWidth, windowHeight, "OpenBus");
         Vehicle* playerVehicle =
             renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
                                 {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
@@ -98,44 +140,115 @@ int main() {
         }
 
         double previousTime = glfwGetTime();
-        bool captureOnStartup = openbus::getEnvironment("OPENBUS_CAPTURE_VIEWS") != nullptr;
-        bool pendingCaptureRequest = captureOnStartup;
-        std::vector<KeyEvent> pendingKeyEvents;
+        if (benchmarkMode) {
+            constexpr double benchmarkTimeStep = 1.0 / 60.0;
+            constexpr std::array<RenderBenchmarkPhase, 5> phases = {
+                RenderBenchmarkPhase::Baseline, RenderBenchmarkPhase::CameraCycle,
+                RenderBenchmarkPhase::ThirdPersonZoom, RenderBenchmarkPhase::DrivingControls,
+                RenderBenchmarkPhase::DashboardInteraction};
+            const int warmupFrames = positiveEnvironmentInt(
+                "OPENBUS_BENCHMARK_WARMUP_FRAMES", 60, 10000);
+            const int phaseFrames = positiveEnvironmentInt("OPENBUS_BENCHMARK_PHASE_FRAMES", 60,
+                                                           100000);
+            const int readyTimeoutSeconds =
+                positiveEnvironmentInt("OPENBUS_BENCHMARK_READY_TIMEOUT", 180, 3600);
+            const auto renderBenchmarkFrame = [&](RenderBenchmarkPhase phase, int frameInPhase,
+                                                  int framesInPhase) {
+                openbus::rendering::TraceScope frameTrace("frame", "main");
+                renderer.beginFrame(benchmarkTimeStep);
+                const RenderBenchmarkInput input =
+                    renderer.setBenchmarkFrame(phase, frameInPhase, framesInPhase);
+                renderer.updatePlayerVariables(simulation, input.throttle, input.steering,
+                                               input.brake);
+                simulation.updateWithWheelTorqueAndBrakeForces(
+                    benchmarkTimeStep, renderer.physicsWheelTorque(), renderer.physicsSteering(),
+                    renderer.physicsWheelBrakeForces(simulation.axleCount()));
+                renderer.updatePostPhysicsVariables(simulation);
+                renderer.draw(simulation);
+                renderer.endFrame();
+            };
 
-        while (!renderer.shouldClose()) {
-            openbus::rendering::TraceScope frameTrace("frame", "main");
-
-            // Each frame updates input-backed variables first, advances physics,
-            // then renders using the resulting simulation and variable state.
-            const double currentTime = glfwGetTime();
-            const double elapsed = currentTime - previousTime;
-            previousTime = currentTime;
-
-            renderer.beginFrame();
-
-            const std::vector<KeyEvent> frameKeyEvents = renderer.consumeKeyEvents();
-            pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(),
-                                    frameKeyEvents.end());
-            renderer.updatePlayerVariables(simulation, renderer.throttle(), renderer.steering(),
-                                           renderer.brake());
-            simulation.updateWithWheelTorqueAndBrakeForces(
-                elapsed, renderer.physicsWheelTorque(), renderer.physicsSteering(),
-                renderer.physicsWheelBrakeForces(simulation.axleCount()));
-            renderer.updatePostPhysicsVariables(simulation);
-            renderer.draw(simulation);
-
-            if (renderer.consumeCaptureRequest()) {
-                pendingCaptureRequest = true;
+            const auto readyDeadline = std::chrono::steady_clock::now() +
+                                       std::chrono::seconds(readyTimeoutSeconds);
+            int readinessFrames = 0;
+            while (!renderer.isCaptureReady() && !renderer.shouldClose() &&
+                   std::chrono::steady_clock::now() < readyDeadline) {
+                renderBenchmarkFrame(RenderBenchmarkPhase::Baseline, 0, 1);
+                ++readinessFrames;
+            }
+            if (!renderer.isCaptureReady()) {
+                throw std::runtime_error("Benchmark timed out waiting for vehicle assets");
             }
 
-            if (pendingCaptureRequest && renderer.isCaptureReady()) {
-                pendingCaptureRequest = false;
-                captureOnStartup = false;
-                renderer.captureViews(simulation, "screenshots");
-                renderer.requestClose();
+            const auto dimensions = renderer.framebufferSize();
+            std::cout << "BENCHMARK_FRAMEBUFFER=" << dimensions[0] << 'x' << dimensions[1]
+                      << '\n';
+            std::cout << "BENCHMARK_READINESS_FRAMES=" << readinessFrames << '\n';
+
+            const int warmupFramesPerPhase = warmupFrames / static_cast<int>(phases.size());
+            const int extraWarmupFrames = warmupFrames % static_cast<int>(phases.size());
+            for (std::size_t phaseIndex = 0; phaseIndex < phases.size(); ++phaseIndex) {
+                const int framesThisPhase = warmupFramesPerPhase +
+                                            (static_cast<int>(phaseIndex) < extraWarmupFrames ? 1
+                                                                                             : 0);
+                for (int frame = 0; frame < framesThisPhase; ++frame) {
+                    renderBenchmarkFrame(phases[phaseIndex], frame, framesThisPhase);
+                }
             }
 
-            renderer.endFrame();
+            {
+                openbus::rendering::TraceScope measurement("benchmark", "Benchmark.measure");
+                for (const RenderBenchmarkPhase phase : phases) {
+                    openbus::rendering::TraceScope phaseTrace("benchmark",
+                                                              benchmarkPhaseName(phase));
+                    for (int frame = 0; frame < phaseFrames; ++frame) {
+                        renderBenchmarkFrame(phase, frame, phaseFrames);
+                    }
+                }
+            }
+            std::cout << "BENCHMARK_CLICK_TARGET="
+                      << (renderer.benchmarkClickTargetFound() ? "found" : "none") << '\n';
+            std::cout << "BENCHMARK_COMPLETE=1\n";
+        } else {
+            bool captureOnStartup = openbus::getEnvironment("OPENBUS_CAPTURE_VIEWS") != nullptr;
+            bool pendingCaptureRequest = captureOnStartup;
+            std::vector<KeyEvent> pendingKeyEvents;
+
+            while (!renderer.shouldClose()) {
+                openbus::rendering::TraceScope frameTrace("frame", "main");
+
+                // Each frame updates input-backed variables first, advances physics,
+                // then renders using the resulting simulation and variable state.
+                const double currentTime = glfwGetTime();
+                const double elapsed = currentTime - previousTime;
+                previousTime = currentTime;
+
+                renderer.beginFrame();
+
+                const std::vector<KeyEvent> frameKeyEvents = renderer.consumeKeyEvents();
+                pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(),
+                                        frameKeyEvents.end());
+                renderer.updatePlayerVariables(simulation, renderer.throttle(),
+                                               renderer.steering(), renderer.brake());
+                simulation.updateWithWheelTorqueAndBrakeForces(
+                    elapsed, renderer.physicsWheelTorque(), renderer.physicsSteering(),
+                    renderer.physicsWheelBrakeForces(simulation.axleCount()));
+                renderer.updatePostPhysicsVariables(simulation);
+                renderer.draw(simulation);
+
+                if (renderer.consumeCaptureRequest()) {
+                    pendingCaptureRequest = true;
+                }
+
+                if (pendingCaptureRequest && renderer.isCaptureReady()) {
+                    pendingCaptureRequest = false;
+                    captureOnStartup = false;
+                    renderer.captureViews(simulation, "screenshots");
+                    renderer.requestClose();
+                }
+
+                renderer.endFrame();
+            }
         }
         applicationLog.Log("OpenBus shut down cleanly");
     } catch (const std::exception& error) {

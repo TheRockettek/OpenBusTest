@@ -32,6 +32,20 @@ struct ModelLoadingPolicy {
     AssetLoadingMode textureMode = AssetLoadingMode::Deferred;
 };
 
+enum class RenderBenchmarkPhase {
+  Baseline,
+  CameraCycle,
+  ThirdPersonZoom,
+  DrivingControls,
+  DashboardInteraction,
+};
+
+struct RenderBenchmarkInput {
+  double throttle = 0.0;
+  double steering = 0.0;
+  double brake = 0.0;
+};
+
 class RenderLoop {
   public:
     RenderLoop(int width, int height, const char* title);
@@ -42,13 +56,17 @@ class RenderLoop {
 
     bool shouldClose() const;
     void requestClose();
+    std::array<int, 2> framebufferSize() const;
+    RenderBenchmarkInput setBenchmarkFrame(RenderBenchmarkPhase phase, int frameInPhase,
+                         int phaseFrameCount);
+    bool benchmarkClickTargetFound() const;
     Vehicle* AddVehicle(const std::filesystem::path& busConfigPath,
                         const std::filesystem::path& modelConfigPath,
                         const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy = {});
 
     void SetPlayerVehicle(Vehicle* vehicle);
 
-    void beginFrame();
+    void beginFrame(double fixedTimeStep = -1.0);
     void updatePlayerVariables(const BusSimulation& simulation, double throttle, double steering,
                                double brake);
     void updatePostPhysicsVariables(const BusSimulation& simulation);
@@ -124,6 +142,12 @@ class RenderLoop {
     std::array<double, 9> clickableHoverCacheRotation_ = {};
     std::uint64_t clickableHoverCacheRevision_ = 0;
     bool renderingReflection_ = false;
+    bool benchmarkClickDiscoveryPending_ = false;
+    bool benchmarkClickDiscoveryComplete_ = false;
+    bool benchmarkClickTargetFound_ = false;
+    bool benchmarkClickQueued_ = false;
+    double benchmarkClickFramebufferX_ = 0.0;
+    double benchmarkClickFramebufferY_ = 0.0;
     bool hasPreviousVariableTime_ = false;
     bool captureRequested_ = false;
     bool captureMode_ = false;
