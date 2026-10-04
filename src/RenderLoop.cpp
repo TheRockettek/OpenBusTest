@@ -864,7 +864,17 @@ struct Vehicle {
         mutable double cachedViewDepth = 0.0;
     };
 
+    struct TransparentBatch {
+        Batch* batch;
+        DisplayPart* part;
+        double depth;
+        int renderType;
+    };
+
     std::vector<DisplayPart> displayLists;
+    std::vector<DisplayPart*> opaquePartsScratch;
+    std::vector<TransparentBatch> noDepthOpaqueBatchesScratch;
+    std::vector<TransparentBatch> transparentBatchesScratch;
     std::vector<bool> variableVisibleParts;
     std::vector<std::size_t> visibleClickablePartIndices;
     std::vector<std::size_t> visibleOpaquePickPartIndices;
@@ -1924,7 +1934,6 @@ struct Vehicle {
     void drawBatch(Batch& batch, double alpha, bool forceUntextured = false,
                    const std::array<double, 3>* overrideColor = nullptr,
                    int alphaModeOverride = -1) {
-        TraceScope trace("render", "Vehicle::drawBatch");
         if (alpha <= 0.0) {
             return;
         }
@@ -1949,35 +1958,40 @@ struct Vehicle {
         const bool materialBatch = !batch.materialTextures.empty() && !forceUntextured;
         const std::vector<GLuint>* materialTextureIds = nullptr;
         std::vector<bool> materialTextureFlips;
-        if (materialBatch) {
-            batch.materialTextureIds.resize(batch.materialTextures.size());
-            materialTextureFlips.resize(batch.materialTextures.size());
-            for (MaterialTextureSource& source : batch.materialTextures) {
-                ensureMaterialTexture(source);
-                if (!openbus::rendering::reflectionPassActive()) {
-                    const int reflectionIndex =
-                        openbus::rendering::reflectionTextureIndex(source.textureName);
-                    const unsigned int reflectionTexture =
-                        openbus::rendering::reflectionTextureForIndex(reflectionIndex);
-                    if (reflectionTexture != 0) {
-                        source.texture = reflectionTexture;
-                        source.textureArray = false;
-                        materialTextureFlips[&source - batch.materialTextures.data()] = true;
+        {
+            TraceScope phase("render", "Vehicle::drawBatch.resolveTextures");
+            if (materialBatch) {
+                batch.materialTextureIds.resize(batch.materialTextures.size());
+                materialTextureFlips.resize(batch.materialTextures.size());
+                for (MaterialTextureSource& source : batch.materialTextures) {
+                    ensureMaterialTexture(source);
+                    if (!openbus::rendering::reflectionPassActive()) {
+                        const int reflectionIndex =
+                            openbus::rendering::reflectionTextureIndex(source.textureName);
+                        const unsigned int reflectionTexture =
+                            openbus::rendering::reflectionTextureForIndex(reflectionIndex);
+                        if (reflectionTexture != 0) {
+                            source.texture = reflectionTexture;
+                            source.textureArray = false;
+                            materialTextureFlips[&source - batch.materialTextures.data()] = true;
+                        }
                     }
+                    batch.materialTextureIds[&source - batch.materialTextures.data()] =
+                        source.texture;
                 }
-                batch.materialTextureIds[&source - batch.materialTextures.data()] = source.texture;
+                materialTextureIds = &batch.materialTextureIds;
+            } else {
+                ensureTexture(batch);
             }
-            materialTextureIds = &batch.materialTextureIds;
-        } else {
-            ensureTexture(batch);
+            ensureAuxiliaryTexture(batch, batch.lightmap);
+            ensureAuxiliaryTexture(batch, batch.nightmap);
+            ensureAuxiliaryTexture(batch, batch.transmap);
+            ensureAuxiliaryTexture(batch, batch.bumpmap);
+            updateFreeTexture(batch);
         }
-        ensureAuxiliaryTexture(batch, batch.lightmap);
-        ensureAuxiliaryTexture(batch, batch.nightmap);
-        ensureAuxiliaryTexture(batch, batch.transmap);
-        ensureAuxiliaryTexture(batch, batch.bumpmap);
-        updateFreeTexture(batch);
         const std::array<double, 3>& color =
             overrideColor == nullptr ? batch.color : *overrideColor;
+        TraceScope phase("render", "Vehicle::drawBatch.prepareAndSubmit");
         openbus::rendering::ModelMaterial material;
         material.texture = materialBatch ? 0 : batch.texture;
         material.textureArray = materialBatch ? false : batch.textureArray;
@@ -2167,15 +2181,12 @@ struct Vehicle {
             part.viewDepthCacheGeneration = viewDepthGeneration;
             return depth;
         };
-        struct TransparentBatch {
-            Batch* batch;
-            DisplayPart* part;
-            double depth;
-            int renderType;
-        };
-        std::vector<DisplayPart*> opaqueParts;
-        std::vector<TransparentBatch> noDepthOpaqueBatches;
-        std::vector<TransparentBatch> transparentBatches;
+        std::vector<DisplayPart*>& opaqueParts = opaquePartsScratch;
+        std::vector<TransparentBatch>& noDepthOpaqueBatches = noDepthOpaqueBatchesScratch;
+        std::vector<TransparentBatch>& transparentBatches = transparentBatchesScratch;
+        opaqueParts.clear();
+        noDepthOpaqueBatches.clear();
+        transparentBatches.clear();
         opaqueParts.reserve(displayLists.size());
         if (renderTransparent) {
             transparentBatches.reserve(displayLists.size());
@@ -4803,7 +4814,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
 }
 
 void RenderLoop::endFrame() {
-    TraceScope trace("frame", "RenderLoop::endFrame");
+    TraceScope trace("frame", "RenderLoop::endFrame.swapBuffers");
     glfwSwapBuffers(window_);
 }
 

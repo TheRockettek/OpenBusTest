@@ -193,9 +193,13 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
     }
 
     GLint viewport[4] = {};
-    glGetIntegerv(GL_VIEWPORT, viewport);
-    const Matrix4 previousModelView = modelViewMatrix();
-    activeReflectionPass = true;
+    Matrix4 previousModelView;
+    {
+        TraceScope phase("render", "ReflectionRenderer::render.setup");
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        previousModelView = modelViewMatrix();
+        activeReflectionPass = true;
+    }
     std::size_t reflectionIndex = 0;
     for (std::size_t cameraIndex = 0; cameraIndex < cameras.size(); ++cameraIndex) {
         TraceScope targetTrace("render", "ReflectionRenderer::render.target");
@@ -208,7 +212,11 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
             break;
         }
         ReflectionTarget& target = impl_->targets[reflectionIndex];
-        const ReflectionRequirement requirement = visibility(reflectionIndex);
+        ReflectionRequirement requirement;
+        {
+            TraceScope phase("render", "ReflectionRenderer::render.target.visibility");
+            requirement = visibility(reflectionIndex);
+        }
         if (!requirement.needed) {
             ++reflectionIndex;
             continue;
@@ -217,19 +225,29 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
         const int requestedTargetSize =
             std::clamp(requirement.size, kMinReflectionTargetSize, impl_->maximumSize);
         if (target.width != requestedTargetSize || target.height != requestedTargetSize) {
+            TraceScope phase("render", "ReflectionRenderer::render.target.resize");
             impl_->resizeTarget(target, requestedTargetSize);
         }
-        pglBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
-        glViewport(0, 0, target.width, target.height);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        draw(simulation, cameraIndex, target.width, target.height);
+        {
+            TraceScope phase("render", "ReflectionRenderer::render.target.clear");
+            pglBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
+            glViewport(0, 0, target.width, target.height);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        }
+        {
+            TraceScope phase("render", "ReflectionRenderer::render.target.draw");
+            draw(simulation, cameraIndex, target.width, target.height);
+        }
         ++reflectionIndex;
     }
-    activeReflectionPass = false;
-    pglBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-    restore(viewport[2], viewport[3]);
-    setModelViewMatrix(previousModelView);
+    {
+        TraceScope phase("render", "ReflectionRenderer::render.restore");
+        activeReflectionPass = false;
+        pglBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        restore(viewport[2], viewport[3]);
+        setModelViewMatrix(previousModelView);
+    }
 }
 
 void ReflectionRenderer::renderDebugOverlay(GLFWwindow* window, bool enabled) const {

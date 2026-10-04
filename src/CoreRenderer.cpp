@@ -936,14 +936,20 @@ void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primiti
         pglBindBuffer(GL_ARRAY_BUFFER, primitiveBuffer);
         currentArrayBuffer = primitiveBuffer;
     }
-    pglBufferData(GL_ARRAY_BUFFER,
-                  static_cast<std::ptrdiff_t>(vertices.size() * sizeof(PrimitiveVertex)),
-                  vertices.data(), GL_STREAM_DRAW);
-    pglVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), nullptr);
-    pglVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex),
-                           reinterpret_cast<const void*>(3 * sizeof(float)));
+    {
+        TraceScope phase("render", "CoreRenderer::drawPrimitives.upload");
+        pglBufferData(GL_ARRAY_BUFFER,
+                      static_cast<std::ptrdiff_t>(vertices.size() * sizeof(PrimitiveVertex)),
+                      vertices.data(), GL_STREAM_DRAW);
+        pglVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), nullptr);
+        pglVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex),
+                               reinterpret_cast<const void*>(3 * sizeof(float)));
+    }
     glLineWidth(lineWidth);
-    glDrawArrays(primitive, 0, static_cast<GLsizei>(vertices.size()));
+    {
+        TraceScope phase("render", "CoreRenderer::drawPrimitives.submit");
+        glDrawArrays(primitive, 0, static_cast<GLsizei>(vertices.size()));
+    }
 }
 
 void drawTextureQuad(GLuint texture, float x, float y, float width, float height,

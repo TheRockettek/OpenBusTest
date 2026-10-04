@@ -2,6 +2,7 @@
 
 #include "CameraMath.h"
 #include "CoreRenderer.h"
+#include "PerfTrace.h"
 
 #include <algorithm>
 #include <array>
@@ -193,6 +194,7 @@ void drawRoadIncline(const RoadBump& bump) {
 }
 
 void drawGround(const std::vector<RoadBump>& bumps) {
+    TraceScope trace("render", "RenderPrimitives::drawGround");
     static std::vector<PrimitiveVertex> ground;
     static std::vector<PrimitiveVertex> gridLines;
     if (ground.empty()) {

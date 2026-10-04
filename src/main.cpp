@@ -85,7 +85,9 @@ int main() {
 
         BusSimulation simulation(configuration, busPlacement);
 
-        RenderLoop renderer(1280, 720, "OpenBus");
+        
+
+        RenderLoop renderer(2560, 1440, "OpenBus");
         Vehicle* playerVehicle =
             renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
                                 {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
