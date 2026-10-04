@@ -195,9 +195,8 @@ int main() {
 
             const bool requireExactResolution = openbus::rendering::parseEnabledFlag(
                 openbus::getEnvironment("OPENBUS_BENCHMARK_REQUIRE_EXACT_RESOLUTION"));
-            if (requireExactResolution &&
-                (framebufferDimensions[0] != windowWidth ||
-                 framebufferDimensions[1] != windowHeight)) {
+            if (requireExactResolution && (framebufferDimensions[0] != windowWidth ||
+                                           framebufferDimensions[1] != windowHeight)) {
                 std::cout << "BENCHMARK_SKIPPED=resolution_mismatch\n";
                 std::cout << "BENCHMARK_COMPLETE=1\n";
                 applicationLog.Log("Benchmark skipped because the requested framebuffer size "

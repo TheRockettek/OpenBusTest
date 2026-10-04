@@ -11,8 +11,8 @@ namespace openbus::rendering {
 inline std::array<double, 3>
 interiorLightPositionInViewSpace(const Matrix4& vehicleRootModelView,
                                  const std::array<double, 3>& omsiPosition) {
-    const std::array<double, 4> modelPosition = {omsiPosition[1], -omsiPosition[0],
-                                                  omsiPosition[2], 1.0};
+    const std::array<double, 4> modelPosition = {omsiPosition[1], -omsiPosition[0], omsiPosition[2],
+                                                 1.0};
     std::array<double, 4> viewPosition = {};
     for (int row = 0; row < 4; ++row) {
         for (int column = 0; column < 4; ++column) {

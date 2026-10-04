@@ -1952,8 +1952,8 @@ struct Vehicle {
             // the vehicle root so the shader can compare them to view-space
             // fragment positions without inheriting a door/panel animation.
             const std::array<double, 3> viewPosition =
-                openbus::rendering::interiorLightPositionInViewSpace(
-                    interiorLightRootModelView, light.position);
+                openbus::rendering::interiorLightPositionInViewSpace(interiorLightRootModelView,
+                                                                     light.position);
             material.interiorLightViewPositions[outputIndex] = {
                 static_cast<float>(viewPosition[0]), static_cast<float>(viewPosition[1]),
                 static_cast<float>(viewPosition[2])};
@@ -2059,8 +2059,8 @@ struct Vehicle {
         // base nightmaps still follow the host's environmental lighting.
         const float nightlight =
             batch.selectedMaterialItem
-            ? 1.0F
-            : std::max(variables.get("nightlighta"), 1.0F - variables.get("envir_brightness"));
+                ? 1.0F
+                : std::max(variables.get("nightlighta"), 1.0F - variables.get("envir_brightness"));
         material.nightmapStrength = std::clamp(nightlight, 0.0F, 1.0F);
         material.bumpmapStrength = static_cast<float>(std::clamp(batch.bumpmapStrength, 0.0, 1.0));
         material.texcoordOffsetX = static_cast<float>(
@@ -4262,7 +4262,7 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
     const double previousLookPitch = viewLookPitch_;
     renderingReflection_ = true;
     reflectionRenderer_->render(
-        simulation, vehicleCameras_,
+        simulation, vehicleCameras_, viewport_,
         [this](std::size_t reflectionIndex) {
             openbus::rendering::ReflectionRequirement result;
             for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
@@ -4605,7 +4605,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         TraceScope phase("render", "RenderLoop::beginFrame.setupView");
-        glViewport(0, 0, width, height);
+        viewport_ = {0, 0, width, height};
+        glViewport(viewport_[0], viewport_[1], viewport_[2], viewport_[3]);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         setPerspective(static_cast<double>(width), static_cast<double>(height),
                        currentFieldOfView());
@@ -4986,8 +4987,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         const long speedMph = std::lround(speedMetresPerSecond * 2.2369362921);
         const long speedKmh = std::lround(speedMetresPerSecond * 3.6);
         const long throttlePercent =
-            std::lround(std::clamp(playerVehicle_->variables.get("throttle"), 0.0F, 1.0F) *
-                        100.0F);
+            std::lround(std::clamp(playerVehicle_->variables.get("throttle"), 0.0F, 1.0F) * 100.0F);
         const long brakePercent =
             std::lround(std::clamp(playerVehicle_->variables.get("brake"), 0.0F, 1.0F) * 100.0F);
         std::ostringstream title;
@@ -5078,7 +5078,8 @@ void RenderLoop::captureViews(const BusSimulation& simulation,
         cameraDistance_ = view.distance;
         {
             TraceScope phase("capture", "RenderLoop::captureViews.render");
-            glViewport(0, 0, width, height);
+            viewport_ = {0, 0, width, height};
+            glViewport(viewport_[0], viewport_[1], viewport_[2], viewport_[3]);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             setPerspective(static_cast<double>(width), static_cast<double>(height), 60.0);
             draw(simulation);

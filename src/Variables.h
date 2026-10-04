@@ -6,7 +6,7 @@
 
 struct VariableDefinition {
     std::string name;
-  float value;
+    float value;
 };
 
 enum class ScriptObjectKind {

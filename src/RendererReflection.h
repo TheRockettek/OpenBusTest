@@ -3,6 +3,7 @@
 #include "BusTypes.h"
 #include "VehicleConfigLoader.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -42,8 +43,8 @@ class ReflectionRenderer {
     void destroy();
     bool empty() const;
     void render(const BusSimulation& simulation, const std::vector<VehicleCamera>& cameras,
-                const VisibilityCallback& visibility, const DrawCallback& draw,
-                const RestoreCallback& restore);
+                const std::array<int, 4>& viewport, const VisibilityCallback& visibility,
+                const DrawCallback& draw, const RestoreCallback& restore);
     void renderDebugOverlay(GLFWwindow* window, bool enabled) const;
 
   private:

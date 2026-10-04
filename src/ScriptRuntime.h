@@ -25,7 +25,7 @@ class ScriptRuntime {
 
     ScriptRuntime(
         const VehicleConfig& configuration, Variables& localState, SimulationState& sharedState,
-      std::function<void(const std::string&, const std::string&, float)> soundTrigger = {});
+        std::function<void(const std::string&, const std::string&, float)> soundTrigger = {});
     ~ScriptRuntime();
 
     ScriptRuntime(const ScriptRuntime&) = delete;
@@ -43,7 +43,7 @@ class ScriptRuntime {
     bool hasScriptEntryPoint(const std::string& functionName) const;
     void invokeMouseRelease(const std::string& eventName);
     void invokeMouseDrag(const std::string& eventName, float deltaX, float deltaY, float cursorX,
-               float cursorY);
+                         float cursorY);
     void configureScriptTextures(const std::vector<ModelScriptTexture>& definitions);
     void configureTextTextures(const std::vector<ModelTextTexture>& definitions);
     bool copyScriptTexture(int index, ScriptTextureSnapshot& snapshot) const;

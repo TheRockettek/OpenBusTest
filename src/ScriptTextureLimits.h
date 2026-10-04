@@ -14,8 +14,8 @@ inline constexpr std::size_t maxScriptTextLength = 65U * 1024U;
 constexpr bool validScriptTextureSize(int width, int height) {
     return width > 0 && height > 0 && width <= maxScriptTextureDimension &&
            height <= maxScriptTextureDimension &&
-           static_cast<std::size_t>(width) <= maxScriptTexturePixels /
-                                                   static_cast<std::size_t>(height);
+           static_cast<std::size_t>(width) <=
+               maxScriptTexturePixels / static_cast<std::size_t>(height);
 }
 
 constexpr std::size_t scriptTextureByteSize(int width, int height) {

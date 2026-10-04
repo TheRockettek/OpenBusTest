@@ -148,9 +148,9 @@ struct ScriptRuntime::Impl {
         if (!std::isfinite(value) || value <= 0.0F) {
             return 0;
         }
-        return static_cast<std::uint32_t>(std::min(
-            static_cast<double>(value),
-            static_cast<double>(std::numeric_limits<std::uint32_t>::max())));
+        return static_cast<std::uint32_t>(
+            std::min(static_cast<double>(value),
+                     static_cast<double>(std::numeric_limits<std::uint32_t>::max())));
     }
 
     static bool validTextureIndex(int index) {
@@ -522,8 +522,7 @@ struct ScriptRuntime::Impl {
         } else if (name == "nrspecrandom") {
             const unsigned int seed = static_cast<unsigned int>(nativePopFloat());
             std::minstd_rand random(seed);
-            pushNumber(static_cast<float>(random()) /
-                       static_cast<float>(std::minstd_rand::max()));
+            pushNumber(static_cast<float>(random()) / static_cast<float>(std::minstd_rand::max()));
         } else if (name == "getterminuscode" || name == "getrouteterminusindex" ||
                    name == "getbusstopcount" || name == "getttlinestring" ||
                    name == "getttterminusindex" || name == "getttbusstopcount" ||
@@ -648,9 +647,8 @@ struct ScriptRuntime::Impl {
                                         : name == "stgetr" ? 1
                                         : name == "stgetg" ? 2
                                                            : 3;
-            pushNumber(validIndex && validTextureIndex(index)
-                           ? scriptTextures[index].color[channel]
-                           : 0.0F);
+            pushNumber(validIndex && validTextureIndex(index) ? scriptTextures[index].color[channel]
+                                                              : 0.0F);
         } else if (name == "getfontindex") {
             popStrings(1);
             pushNumber(0.0);
@@ -702,17 +700,15 @@ struct ScriptRuntime::Impl {
                     localState.setString(instruction.name, nativePopString());
                     break;
                 case OscOpcode::LoadSystem:
-                    floatStack.push_back(
-                        sharedState.sharedVariables().get(instruction.name));
+                    floatStack.push_back(sharedState.sharedVariables().get(instruction.name));
                     break;
                 case OscOpcode::StoreSystem:
                     sharedState.sharedVariables().set(instruction.name, nativePeekFloat());
                     break;
                 case OscOpcode::LoadConstant: {
                     const auto constant = configuration.constants.find(instruction.name);
-                    const float value = constant == configuration.constants.end()
-                                            ? 0.0F
-                                            : constant->second;
+                    const float value =
+                        constant == configuration.constants.end() ? 0.0F : constant->second;
                     floatStack.push_back(value);
                     break;
                 }
@@ -783,34 +779,22 @@ struct ScriptRuntime::Impl {
                     floatStack.push_back(nativePopFloat() == 0.0F ? 1.0F : 0.0F);
                     break;
                 case OscOpcode::Equal:
-                    binary([](float left, float right) {
-                        return left == right ? 1.0F : 0.0F;
-                    });
+                    binary([](float left, float right) { return left == right ? 1.0F : 0.0F; });
                     break;
                 case OscOpcode::NotEqual:
-                    binary([](float left, float right) {
-                        return left != right ? 1.0F : 0.0F;
-                    });
+                    binary([](float left, float right) { return left != right ? 1.0F : 0.0F; });
                     break;
                 case OscOpcode::Less:
-                    binary([](float left, float right) {
-                        return left < right ? 1.0F : 0.0F;
-                    });
+                    binary([](float left, float right) { return left < right ? 1.0F : 0.0F; });
                     break;
                 case OscOpcode::LessEqual:
-                    binary([](float left, float right) {
-                        return left <= right ? 1.0F : 0.0F;
-                    });
+                    binary([](float left, float right) { return left <= right ? 1.0F : 0.0F; });
                     break;
                 case OscOpcode::Greater:
-                    binary([](float left, float right) {
-                        return left > right ? 1.0F : 0.0F;
-                    });
+                    binary([](float left, float right) { return left > right ? 1.0F : 0.0F; });
                     break;
                 case OscOpcode::GreaterEqual:
-                    binary([](float left, float right) {
-                        return left >= right ? 1.0F : 0.0F;
-                    });
+                    binary([](float left, float right) { return left >= right ? 1.0F : 0.0F; });
                     break;
                 case OscOpcode::LogicalAnd:
                     binary([](float left, float right) {
@@ -1215,8 +1199,7 @@ struct ScriptRuntime::Impl {
         Impl* runtime = runtimeFor(lua);
         // runtime->log(lua, "get_const(" + std::string(luaL_checkstring(lua, 1)) + ")");
         const auto found = runtime->configuration.constants.find(luaL_checkstring(lua, 1));
-        lua_pushnumber(lua, found == runtime->configuration.constants.end() ? 0.0F
-                                            : found->second);
+        lua_pushnumber(lua, found == runtime->configuration.constants.end() ? 0.0F : found->second);
         return 1;
     }
 
@@ -1408,7 +1391,7 @@ struct ScriptRuntime::Impl {
         const float seed = popSystemFloat(runtimeFor(lua));
         std::minstd_rand rand(static_cast<unsigned int>(seed));
         return returnSystemFloat(lua, static_cast<float>(rand()) /
-                          static_cast<float>(std::minstd_rand::max()));
+                                          static_cast<float>(std::minstd_rand::max()));
     }
 
     // TODO: Implement currency configuration and change-coin issuance.
@@ -1465,17 +1448,16 @@ struct ScriptRuntime::Impl {
         }
         const int width = std::max(texture.width, requiredWidth);
         const int height = std::max(texture.height, requiredHeight);
-        const std::size_t byteSize =
-            openbus::scripting::scriptTextureByteSize(width, height);
+        const std::size_t byteSize = openbus::scripting::scriptTextureByteSize(width, height);
         if (byteSize == 0 || !canReplaceTextureBytes(texture.pixels.size(), byteSize)) {
             return false;
         }
         std::vector<std::uint8_t> pixels(byteSize, 0);
         for (int y = 0; y < texture.height; ++y) {
-            const auto sourceOffset = static_cast<std::size_t>(y) *
-                                      static_cast<std::size_t>(texture.width) * 4U;
-            const auto targetOffset = static_cast<std::size_t>(y) *
-                                      static_cast<std::size_t>(width) * 4U;
+            const auto sourceOffset =
+                static_cast<std::size_t>(y) * static_cast<std::size_t>(texture.width) * 4U;
+            const auto targetOffset =
+                static_cast<std::size_t>(y) * static_cast<std::size_t>(width) * 4U;
             const std::size_t rowBytes = static_cast<std::size_t>(texture.width) * 4U;
             std::copy_n(texture.pixels.begin() + sourceOffset, rowBytes,
                         pixels.begin() + targetOffset);
@@ -1511,17 +1493,17 @@ struct ScriptRuntime::Impl {
         }
         const int left = std::max(0, std::min(x1, x2));
         const int top = std::max(0, std::min(y1, y2));
-        const int right = std::min(openbus::scripting::maxScriptTextureDimension - 1,
-                                   std::max(x1, x2));
-        const int bottom = std::min(openbus::scripting::maxScriptTextureDimension - 1,
-                                    std::max(y1, y2));
+        const int right =
+            std::min(openbus::scripting::maxScriptTextureDimension - 1, std::max(x1, x2));
+        const int bottom =
+            std::min(openbus::scripting::maxScriptTextureDimension - 1, std::max(y1, y2));
         if (left > right || top > bottom) {
             return;
         }
         const int width = right - left + 1;
         const int height = bottom - top + 1;
-        const std::size_t pixelCount = static_cast<std::size_t>(width) *
-                                       static_cast<std::size_t>(height);
+        const std::size_t pixelCount =
+            static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
         if (pixelCount > openbus::scripting::maxScriptTexturePixels ||
             !resizeScriptTexture(texture, right + 1, bottom + 1)) {
             return;
@@ -1740,8 +1722,8 @@ struct ScriptRuntime::Impl {
         for (auto& entry : textTextureDefinitions) {
             const int index = entry.first;
             TextTextureDefinition& definition = entry.second;
-            const std::size_t byteSize = openbus::scripting::scriptTextureByteSize(
-                definition.width, definition.height);
+            const std::size_t byteSize =
+                openbus::scripting::scriptTextureByteSize(definition.width, definition.height);
             if (!validTextureIndex(index) || byteSize == 0) {
                 continue;
             }
@@ -1946,7 +1928,8 @@ struct ScriptRuntime::Impl {
             static_cast<std::uint8_t>(colorValue & 0xffU),
             static_cast<std::uint8_t>((colorValue >> 24) & 0xffU)};
         if (validSpacing && validY && validX && validIndex && validDrawingOrigin(x) &&
-            validDrawingOrigin(y) && letterSpacing >= -openbus::scripting::maxScriptTextureDimension &&
+            validDrawingOrigin(y) &&
+            letterSpacing >= -openbus::scripting::maxScriptTextureDimension &&
             letterSpacing <= openbus::scripting::maxScriptTextureDimension &&
             value.size() <= openbus::scripting::maxScriptTextLength) {
             drawText(scriptTexture(runtime, index), value, x, y, color, letterSpacing);

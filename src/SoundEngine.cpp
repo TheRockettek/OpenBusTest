@@ -55,12 +55,11 @@ bool dopplerEnabledFromEnvironment() {
         return false;
     }
     const std::string normalized = lower(setting);
-    return normalized == "1" || normalized == "true" || normalized == "yes" ||
-           normalized == "on";
+    return normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on";
 }
 
 std::array<float, 3> velocityBetween(const std::array<double, 3>& current,
-                                    const std::array<double, 3>& previous, double seconds) {
+                                     const std::array<double, 3>& previous, double seconds) {
     constexpr double maximumSpeed = 100.0;
     if (!std::isfinite(seconds) || seconds < 0.001 || seconds > 1.0) {
         return {};
@@ -344,7 +343,7 @@ struct SoundEngine::Backend {
         alDopplerVelocity(343.3f);
         alListenerf(AL_GAIN, 1.0f);
         soundLog.Log(std::string("OpenAL Doppler ") +
-                 (dopplerEnabled ? "enabled (OPENBUS_DOPPLER)" : "disabled"));
+                     (dopplerEnabled ? "enabled (OPENBUS_DOPPLER)" : "disabled"));
     }
 
     ~Backend() {
@@ -434,8 +433,8 @@ struct SoundEngine::Backend {
             activeLoops.emplace(key, source);
         }
         soundLog.Log("OpenAL playback started: file=" + path.string() +
-                     " loop=" + (looped ? "true" : "false") +
-                     " gain=" + std::to_string(gain) + " pitch=" + std::to_string(pitch));
+                     " loop=" + (looped ? "true" : "false") + " gain=" + std::to_string(gain) +
+                     " pitch=" + std::to_string(pitch));
     }
 
     void play(const std::filesystem::path& path, bool looped, float gain, float pitch,
@@ -504,9 +503,8 @@ struct SoundEngine::Backend {
             const auto now = std::chrono::steady_clock::now();
             std::array<float, 3> velocity = {};
             if (dopplerEnabled) {
-                const double elapsed = std::chrono::duration<double>(
-                                           now - source->lastPositionUpdate)
-                                           .count();
+                const double elapsed =
+                    std::chrono::duration<double>(now - source->lastPositionUpdate).count();
                 velocity = velocityBetween(update.position, source->lastPosition, elapsed);
             }
             alSource3f(source->source, AL_VELOCITY, velocity[0], velocity[1], velocity[2]);
@@ -561,9 +559,8 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
         if (!hasSound || !currentTriggerNames.empty()) {
             return;
         }
-        const bool curveDrivenAmbient = !current.loopDisabled &&
-                                        (!current.volumeCurves.empty() ||
-                                         !current.conditions.empty());
+        const bool curveDrivenAmbient =
+            !current.loopDisabled && (!current.volumeCurves.empty() || !current.conditions.empty());
         if (current.loop || curveDrivenAmbient) {
             current.loop = true;
             untriggeredLoopSounds_.push_back(current);

@@ -162,8 +162,10 @@ def summarize_trace(
     summary_rows: list[dict[str, Any]] = []
     frame_rows: list[dict[str, Any]] = []
     frame_times_ms: list[float] = []
-    framebuffer_matches_requested = framebuffer_resolution == requested_resolution
     framebuffer_width, framebuffer_height = parse_resolution(framebuffer_resolution)
+    framebuffer_matches_requested = (framebuffer_width, framebuffer_height) == parse_resolution(
+        requested_resolution
+    )
     if window_resolution:
         window_width, window_height = parse_resolution(window_resolution)
         framebuffer_scale_x = round(framebuffer_width / window_width, 4)
@@ -514,7 +516,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         actual_window_width, actual_window_height = parse_resolution(window_resolution)
         framebuffer_scale_x = round(framebuffer_width / actual_window_width, 4)
         framebuffer_scale_y = round(framebuffer_height / actual_window_height, 4)
-        framebuffer_matches_requested = actual_resolution == resolution
+        framebuffer_matches_requested = (framebuffer_width, framebuffer_height) == (width, height)
         skipped_reason = parse_log_value(r"BENCHMARK_SKIPPED=([^\r\n]+)", log_text)
         if skipped_reason and skipped_reason != "resolution_mismatch":
             raise RuntimeError(

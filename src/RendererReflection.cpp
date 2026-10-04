@@ -181,6 +181,7 @@ bool ReflectionRenderer::empty() const {
 
 void ReflectionRenderer::render(const BusSimulation& simulation,
                                 const std::vector<VehicleCamera>& cameras,
+                                const std::array<int, 4>& viewport,
                                 const VisibilityCallback& visibility, const DrawCallback& draw,
                                 const RestoreCallback& restore) {
     TraceScope trace("render", "ReflectionRenderer::render");
@@ -192,11 +193,9 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
         return;
     }
 
-    GLint viewport[4] = {};
     Matrix4 previousModelView;
     {
         TraceScope phase("render", "ReflectionRenderer::render.setup");
-        glGetIntegerv(GL_VIEWPORT, viewport);
         previousModelView = modelViewMatrix();
         activeReflectionPass = true;
     }

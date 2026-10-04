@@ -420,19 +420,19 @@ struct BusSimulation::Impl {
     Impl(BusConfiguration vehicle, VehiclePlacement vehiclePlacement, double physicsHz,
          int catchUpSteps)
         : configuration(std::move(vehicle)), placement(vehiclePlacement),
-                    maxCatchUpSteps(catchUpSteps) {
-                if (!std::isfinite(physicsHz) || physicsHz <= 0.0 || catchUpSteps <= 0) {
+          maxCatchUpSteps(catchUpSteps) {
+        if (!std::isfinite(physicsHz) || physicsHz <= 0.0 || catchUpSteps <= 0) {
             simulationLog.Log("Invalid physics timing configuration");
-                        throw std::invalid_argument(
-                                "Physics rate must be finite and positive, and catch-up steps must be positive");
+            throw std::invalid_argument(
+                "Physics rate must be finite and positive, and catch-up steps must be positive");
         }
-                const double candidateFixedStep = 1.0 / physicsHz;
-                if (!std::isfinite(candidateFixedStep) || candidateFixedStep <= 0.0) {
-                    simulationLog.Log("Physics rate produced an invalid fixed step");
-                    throw std::invalid_argument(
-                        "Physics rate is outside the representable fixed-step range");
-                }
-                fixedStep = candidateFixedStep;
+        const double candidateFixedStep = 1.0 / physicsHz;
+        if (!std::isfinite(candidateFixedStep) || candidateFixedStep <= 0.0) {
+            simulationLog.Log("Physics rate produced an invalid fixed step");
+            throw std::invalid_argument(
+                "Physics rate is outside the representable fixed-step range");
+        }
+        fixedStep = candidateFixedStep;
         if (configuration.axles.empty()) {
             simulationLog.Log("Bus configuration has no axles");
             throw std::invalid_argument("A bus must define at least one axle");

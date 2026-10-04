@@ -355,8 +355,7 @@ class Emitter {
             emit_push_float(out, depth, pf[i]);
         if (!pf.empty()) {
             if (pending_negated)
-                emit_push_float(out, depth,
-                                round_float("compare(" + pf.back() + ",0) and 1 or 0"));
+                emit_push_float(out, depth, round_float("compare(" + pf.back() + ",0) and 1 or 0"));
             else
                 emit_push_float(out, depth, pf.back());
             pf.clear();
@@ -733,8 +732,8 @@ class Emitter {
         case 'F': // Function/curve call  (pops x, pushes y)
             if (!pf.empty()) {
                 materialise_neg();
-                pf.back() = round_float("call_func(\"" + lower_name(name) + "\", " +
-                                        pf.back() + ")");
+                pf.back() =
+                    round_float("call_func(\"" + lower_name(name) + "\", " + pf.back() + ")");
             } else {
                 flush_pending(out, depth);
                 emit_push_float(out, depth,
@@ -811,8 +810,8 @@ class Emitter {
                 materialise_neg();
                 std::string b = std::move(pf.back());
                 pf.pop_back();
-                pf.back() = round_float("(compare(" + b + ",1) and " + pf.back() + "/" + b +
-                                        " or 0)");
+                pf.back() =
+                    round_float("(compare(" + b + ",1) and " + pf.back() + "/" + b + " or 0)");
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "do local b=" + pop_float_expr() +

@@ -161,6 +161,7 @@ class RenderLoop {
     double frameTimeStep_ = 0.0;
     int framebufferWidth_ = 1;
     int framebufferHeight_ = 1;
+    std::array<int, 4> viewport_ = {0, 0, 1, 1};
     double scriptRateHz_ = 0.0;
     double scriptAccumulator_ = 0.0;
     double steeringSmoothingRate_ = 6.0;

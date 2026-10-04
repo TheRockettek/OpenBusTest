@@ -26,8 +26,7 @@ struct ScriptContext {
     std::unordered_map<std::string, float> sys_num;
     std::unordered_map<std::string, float> constants;
 
-    float get_num(const std::unordered_map<std::string, float>& map,
-                  const std::string& key) const {
+    float get_num(const std::unordered_map<std::string, float>& map, const std::string& key) const {
         auto it = map.find(key);
         return (it == map.end()) ? 0.0F : it->second;
     }
