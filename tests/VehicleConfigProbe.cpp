@@ -33,6 +33,11 @@ int main() {
     std::ofstream registrationList(root / "registration_list.org");
     registrationList << "BUS-002\nBUS-003\n";
     registrationList.close();
+    std::ofstream lightsConstants(root / "lights_constfile.txt", std::ios::binary);
+    lightsConstants.write("\xEF\xBB\xBF", 3);
+    lightsConstants << "[const]\nlights_blinkertime_on\n0.6\n"
+                       "[const]\nlights_blinkertime_off\n0.4\n";
+    lightsConstants.close();
     std::ofstream config(configPath);
     config << "[friendlyname]\nMercedes-Benz\nCitaro E400\nNight blue\n"
               "[description]\nUrban service bus.\n\n Electric drivetrain. \n[end]\n"
@@ -45,6 +50,7 @@ int main() {
               "[passengercabin]\nmodel/cabin.cfg\n"
               "[number]\nregistrations.org\n"
               "[registration_list]\nregistration_list.org\n"
+              "[constfile]\n1\nlights_constfile.txt\n"
               "[registration_automatic]\nB-TEST \n"
               "[registration_free]\n"
               "[kmcounter_init]\n2026\n1234.5\n";
@@ -91,6 +97,13 @@ int main() {
         secondRegistration.selectedVehicleNumber != "BUS-002" ||
         secondRegistration.selectedRegistration != "BUS-003") {
         std::cerr << "BUS metadata records were not retained\n";
+        return 1;
+    }
+    const auto blinkOn = result.constants.find("lights_blinkertime_on");
+    const auto blinkOff = result.constants.find("lights_blinkertime_off");
+    if (blinkOn == result.constants.end() || blinkOn->second != 0.6F ||
+        blinkOff == result.constants.end() || blinkOff->second != 0.4F) {
+        std::cerr << "BOM-prefixed constant file did not retain its first constant\n";
         return 1;
     }
     return 0;

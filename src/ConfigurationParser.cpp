@@ -114,6 +114,9 @@ bool Reader::readRaw(Line& line, bool skipBlank) {
     std::string raw;
     while (std::getline(input_, raw)) {
         ++nextLineNumber_;
+        if (nextLineNumber_ == 1 && raw.starts_with("\xEF\xBB\xBF")) {
+            raw.erase(0, 3);
+        }
         if (!raw.empty() && raw.back() == '\r') {
             raw.pop_back();
         }
