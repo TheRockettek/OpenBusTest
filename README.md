@@ -375,7 +375,8 @@ After building, the Python runner can also be launched directly with
 user-facing camera cycling, third-person zoom, driving controls, and dashboard
 interaction. Benchmark mode creates a hidden GLFW window, uses a fixed 60 Hz
 simulation step, and disables VSync. Hiding the window may avoid OS work-area
-constraints; actual dimensions are still checked and mismatches remain flagged.
+constraints; actual dimensions are checked and mismatched runs are skipped before
+warm-up and measurement.
 Normal simulator launches remain visible and retain the standard `build-ode`
 build and `profile.bat` settings.
 
@@ -387,8 +388,13 @@ Use `--phase-repeats` and `--phase-frames` to adjust those values. Results are w
 `render-benchmark-results/`. The `*_runs.csv` and `*_scopes.csv` files record
 requested window, actual window, framebuffer sizes, framebuffer/window scale
 factors, and flag any framebuffer that differs from the requested resolution.
-Use `--require-exact-resolution` to
-return a failure status if any run is clamped. The `*_frames.csv` file records
+`render_benchmark_frametimes.csv` reports one measured-frame summary row per
+run, including average, p90, and p95 frame times in milliseconds across all
+measured phases and repeats; the same metrics are also included in
+`render_benchmark_runs.csv`. Percentiles use linear interpolation over the
+sorted frame-time samples. Skipped runs remain in the run and frame-time summary
+files with a status and reason but no timing metrics. Use `--require-exact-resolution`
+to return a failure status if any run is clamped. The `*_frames.csv` file records
 one row per main-frame or selected renderer-scope event, including timestamp,
 inclusive duration, and self time. Nested calls stay separate so reflection
 draws are not accidentally summed into a misleading per-frame total. High-volume

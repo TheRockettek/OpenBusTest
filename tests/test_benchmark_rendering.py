@@ -1,8 +1,10 @@
+import csv
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -49,6 +51,82 @@ class TraceSummaryTests(unittest.TestCase):
         self.assertEqual(parent["WallMs"], 0.06)
         self.assertEqual(parent["SelfMs"], 0.02)
         self.assertEqual(summary.frame_count, 1)
+        self.assertEqual(summary.frame_times_ms, [0.003])
+
+    def test_per_run_frame_time_summary_uses_interpolated_percentiles(self):
+        summary = benchmark_rendering.summarize_frame_times([10.0, 20.0, 30.0, 40.0])
+        self.assertEqual(
+            summary,
+            {
+                "AverageFrameTimeMs": 25.0,
+                "P90FrameTimeMs": 37.0,
+                "P95FrameTimeMs": 38.5,
+            },
+        )
+
+    def test_percentile_rejects_empty_samples(self):
+        with self.assertRaisesRegex(ValueError, "without frame timings"):
+            benchmark_rendering.percentile([], 0.95)
+
+    def test_resolution_mismatch_is_skipped_without_timing_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            build = root / "build"
+            build.mkdir()
+            executable = build / "OpenBus.exe"
+            executable.touch()
+            cache = build / "CMakeCache.txt"
+            cache.write_text("OPENBUS_ENABLE_PERF_TRACE:BOOL=ON\n", encoding="utf-8")
+            output = root / "results"
+            args = benchmark_rendering.build_parser().parse_args(
+                [
+                    "--resolutions",
+                    "1920x1080",
+                    "--runs",
+                    "1",
+                    "--warmup-frames",
+                    "0",
+                    "--phase-frames",
+                    "1",
+                    "--phase-repeats",
+                    "1",
+                    "--output-directory",
+                    str(output),
+                ]
+            )
+
+            def fake_run(command, **kwargs):
+                self.assertEqual(
+                    kwargs["env"]["OPENBUS_BENCHMARK_REQUIRE_EXACT_RESOLUTION"], "1"
+                )
+                kwargs["stdout"].write(
+                    "BENCHMARK_COMPLETE=1\n"
+                    "BENCHMARK_WINDOW=1280x720\n"
+                    "BENCHMARK_FRAMEBUFFER=1280x720\n"
+                    "BENCHMARK_PHASE_REPEATS=1\n"
+                    "BENCHMARK_READINESS_FRAMES=0\n"
+                    "BENCHMARK_SKIPPED=resolution_mismatch\n"
+                )
+                return benchmark_rendering.subprocess.CompletedProcess(command, 0)
+
+            with patch.object(benchmark_rendering, "EXECUTABLE", executable), patch.object(
+                benchmark_rendering, "CACHE_FILE", cache
+            ), patch.object(benchmark_rendering, "BUILD_DIR", build), patch.object(
+                benchmark_rendering.subprocess, "run", side_effect=fake_run
+            ):
+                self.assertEqual(benchmark_rendering.run_benchmark(args), 0)
+
+            with (output / "render_benchmark_frametimes.csv").open(
+                newline="", encoding="utf-8-sig"
+            ) as result_file:
+                timing_rows = list(csv.DictReader(result_file))
+            self.assertEqual(len(timing_rows), 1)
+            self.assertEqual(timing_rows[0]["Status"], "Skipped")
+            self.assertEqual(timing_rows[0]["SkipReason"], "framebuffer mismatch")
+            self.assertEqual(timing_rows[0]["FrameCount"], "0")
+            self.assertEqual(timing_rows[0]["AverageFrameTimeMs"], "")
+            self.assertEqual(timing_rows[0]["P90FrameTimeMs"], "")
+            self.assertEqual(timing_rows[0]["P95FrameTimeMs"], "")
 
     def test_missing_phase_marker_is_reported(self):
         events = [self.make_event("Benchmark.measure", "benchmark", 0, 600)]

@@ -57,6 +57,7 @@ class TraceEvent:
 class TraceSummary:
     rows: list[dict[str, Any]]
     frame_rows: list[dict[str, Any]]
+    frame_times_ms: list[float]
     measurement_ms: float
     frame_count: int
     phase_repeat_count: int
@@ -160,6 +161,7 @@ def summarize_trace(
 
     summary_rows: list[dict[str, Any]] = []
     frame_rows: list[dict[str, Any]] = []
+    frame_times_ms: list[float] = []
     framebuffer_matches_requested = framebuffer_resolution == requested_resolution
     framebuffer_width, framebuffer_height = parse_resolution(framebuffer_resolution)
     if window_resolution:
@@ -240,6 +242,7 @@ def summarize_trace(
             key=lambda event: event.start_us,
         )
         for frame_index, frame in enumerate(phase_frames, start=1):
+            frame_times_ms.append(frame.duration_us / 1000.0)
             frame_metadata = {
                 "RequestedResolution": requested_resolution,
                 "WindowResolution": window_resolution,
@@ -292,6 +295,7 @@ def summarize_trace(
     return TraceSummary(
         rows=summary_rows,
         frame_rows=frame_rows,
+        frame_times_ms=frame_times_ms,
         measurement_ms=round(measurement.duration_us / 1000.0, 3),
         frame_count=frame_count,
         phase_repeat_count=next(iter(repeat_counts)),
@@ -310,6 +314,32 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> 
         writer = csv.DictWriter(output_file, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def percentile(values: list[float], quantile: float) -> float:
+    """Return a linearly interpolated percentile using the (n - 1) rank rule."""
+    if not values:
+        raise ValueError("cannot calculate a percentile without frame timings")
+    if not 0.0 <= quantile <= 1.0:
+        raise ValueError("quantile must be between 0 and 1")
+    ordered = sorted(values)
+    rank = (len(ordered) - 1) * quantile
+    lower = math.floor(rank)
+    upper = math.ceil(rank)
+    if lower == upper:
+        return ordered[lower]
+    fraction = rank - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def summarize_frame_times(values: list[float]) -> dict[str, float]:
+    if not values:
+        raise ValueError("cannot summarize an empty frame-timing set")
+    return {
+        "AverageFrameTimeMs": round(sum(values) / len(values), 4),
+        "P90FrameTimeMs": round(percentile(values, 0.90), 4),
+        "P95FrameTimeMs": round(percentile(values, 0.95), 4),
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -394,6 +424,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     summary_rows: list[dict[str, Any]] = []
     frame_rows: list[dict[str, Any]] = []
+    frametime_rows: list[dict[str, Any]] = []
     run_rows: list[dict[str, Any]] = []
     run_cases = [
         (resolution, width, height, run_number)
@@ -425,6 +456,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "OPENBUS_BENCHMARK_PHASE_FRAMES": str(args.phase_frames),
                 "OPENBUS_BENCHMARK_PHASE_REPEATS": str(args.phase_repeats),
                 "OPENBUS_BENCHMARK_READY_TIMEOUT": str(args.ready_timeout_seconds),
+                "OPENBUS_BENCHMARK_REQUIRE_EXACT_RESOLUTION": "1",
                 "OPENBUS_SCRIPT_BACKEND": "native",
                 "OPENBUS_BUS_CONFIG": args.bus_config,
                 "OPENBUS_MODEL_CONFIG": args.model_config,
@@ -483,13 +515,81 @@ def run_benchmark(args: argparse.Namespace) -> int:
         framebuffer_scale_x = round(framebuffer_width / actual_window_width, 4)
         framebuffer_scale_y = round(framebuffer_height / actual_window_height, 4)
         framebuffer_matches_requested = actual_resolution == resolution
+        skipped_reason = parse_log_value(r"BENCHMARK_SKIPPED=([^\r\n]+)", log_text)
+        if skipped_reason and skipped_reason != "resolution_mismatch":
+            raise RuntimeError(
+                f"OpenBus reported an unknown benchmark skip reason {skipped_reason!r}; "
+                f"see {log_path}"
+            )
+        if skipped_reason and framebuffer_matches_requested:
+            raise RuntimeError(
+                f"OpenBus reported a resolution mismatch but the framebuffer matched "
+                f"{resolution}: {log_path}"
+            )
         if not framebuffer_matches_requested:
             warnings.warn(
                 f"Requested framebuffer {resolution}, window is {window_resolution}, "
                 f"but received framebuffer {actual_resolution}; this run is marked "
-                "as a resolution mismatch.",
+                "as skipped.",
                 stacklevel=1,
             )
+
+            readiness_frames = int(
+                parse_log_value(r"BENCHMARK_READINESS_FRAMES=(\d+)", log_text, "0")
+            )
+            skip_note = "framebuffer mismatch"
+            run_rows.append(
+                {
+                    "RequestedResolution": resolution,
+                    "WindowResolution": window_resolution,
+                    "FramebufferResolution": actual_resolution,
+                    "FramebufferScaleX": framebuffer_scale_x,
+                    "FramebufferScaleY": framebuffer_scale_y,
+                    "FramebufferMatchesRequested": False,
+                    "RunOrder": run_order,
+                    "Run": run_number,
+                    "Status": "Skipped",
+                    "SkipReason": skip_note,
+                    "ReadinessFrames": readiness_frames,
+                    "WarmupFramesTotal": args.warmup_frames,
+                    "WarmupFramesPerPhaseMin": warmup_min,
+                    "WarmupFramesPerPhaseMax": warmup_max,
+                    "MeasuredFramesPerPhase": args.phase_frames,
+                    "PhaseRepeats": args.phase_repeats,
+                    "MeasuredFrameCount": "",
+                    "AverageFrameTimeMs": "",
+                    "P90FrameTimeMs": "",
+                    "P95FrameTimeMs": "",
+                    "MeasurementMs": "",
+                    "MeasuredTraceEventCount": "",
+                    "TraceEventCount": "",
+                    "ClickTarget": "skipped",
+                    "TraceFile": str(trace_path),
+                    "LogFile": str(log_path),
+                }
+            )
+            frametime_rows.append(
+                {
+                    "RequestedResolution": resolution,
+                    "WindowResolution": window_resolution,
+                    "FramebufferResolution": actual_resolution,
+                    "FramebufferScaleX": framebuffer_scale_x,
+                    "FramebufferScaleY": framebuffer_scale_y,
+                    "FramebufferMatchesRequested": False,
+                    "RunOrder": run_order,
+                    "Run": run_number,
+                    "Status": "Skipped",
+                    "SkipReason": skip_note,
+                    "FrameCount": 0,
+                    "AverageFrameTimeMs": "",
+                    "P90FrameTimeMs": "",
+                    "P95FrameTimeMs": "",
+                    "TraceFile": str(trace_path),
+                }
+            )
+            continue
+        if skipped_reason:
+            raise RuntimeError(f"OpenBus skipped an exact-resolution run: {log_path}")
 
         click_target = "found" if "BENCHMARK_CLICK_TARGET=found" in log_text else "none"
         if click_target == "none":
@@ -515,6 +615,12 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 f"Trace contains {trace_summary.frame_count} measured frames, expected "
                 f"{expected_frame_count}: {trace_path}"
             )
+        frame_statistics = summarize_frame_times(trace_summary.frame_times_ms)
+        if len(trace_summary.frame_times_ms) != trace_summary.frame_count:
+            raise RuntimeError(
+                f"Trace contains {len(trace_summary.frame_times_ms)} main frame timings but "
+                f"reports {trace_summary.frame_count} measured frames: {trace_path}"
+            )
         if trace_summary.total_event_count >= TRACE_MAX_EVENTS:
             warnings.warn(
                 f"Trace reached the {TRACE_MAX_EVENTS:,}-event cap: {trace_path}",
@@ -522,6 +628,23 @@ def run_benchmark(args: argparse.Namespace) -> int:
             )
         summary_rows.extend(trace_summary.rows)
         frame_rows.extend(trace_summary.frame_rows)
+        frametime_rows.append(
+            {
+                "RequestedResolution": resolution,
+                "WindowResolution": window_resolution,
+                "FramebufferResolution": actual_resolution,
+                "FramebufferScaleX": framebuffer_scale_x,
+                "FramebufferScaleY": framebuffer_scale_y,
+                "FramebufferMatchesRequested": framebuffer_matches_requested,
+                "RunOrder": run_order,
+                "Run": run_number,
+                "Status": "Completed",
+                "SkipReason": "",
+                "FrameCount": len(trace_summary.frame_times_ms),
+                **frame_statistics,
+                "TraceFile": str(trace_path),
+            }
+        )
         run_rows.append(
             {
                 "RequestedResolution": resolution,
@@ -532,6 +655,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "FramebufferMatchesRequested": framebuffer_matches_requested,
                 "RunOrder": run_order,
                 "Run": run_number,
+                "Status": "Completed",
+                "SkipReason": "",
                 "ReadinessFrames": readiness_frames,
                 "WarmupFramesTotal": args.warmup_frames,
                 "WarmupFramesPerPhaseMin": warmup_min,
@@ -539,6 +664,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "MeasuredFramesPerPhase": args.phase_frames,
                 "PhaseRepeats": args.phase_repeats,
                 "MeasuredFrameCount": trace_summary.frame_count,
+                **frame_statistics,
                 "MeasurementMs": trace_summary.measurement_ms,
                 "MeasuredTraceEventCount": trace_summary.measured_event_count,
                 "TraceEventCount": trace_summary.total_event_count,
@@ -575,6 +701,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FramebufferMatchesRequested",
         "RunOrder",
         "Run",
+        "Status",
+        "SkipReason",
         "ReadinessFrames",
         "WarmupFramesTotal",
         "WarmupFramesPerPhaseMin",
@@ -582,6 +710,9 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "MeasuredFramesPerPhase",
         "PhaseRepeats",
         "MeasuredFrameCount",
+        "AverageFrameTimeMs",
+        "P90FrameTimeMs",
+        "P95FrameTimeMs",
         "MeasurementMs",
         "MeasuredTraceEventCount",
         "TraceEventCount",
@@ -606,6 +737,23 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "WallMs",
         "SelfMs",
     ]
+    frametime_fields = [
+        "RequestedResolution",
+        "WindowResolution",
+        "FramebufferResolution",
+        "FramebufferScaleX",
+        "FramebufferScaleY",
+        "FramebufferMatchesRequested",
+        "RunOrder",
+        "Run",
+        "Status",
+        "SkipReason",
+        "FrameCount",
+        "AverageFrameTimeMs",
+        "P90FrameTimeMs",
+        "P95FrameTimeMs",
+        "TraceFile",
+    ]
     summary_rows.sort(
         key=lambda row: (
             row["RequestedResolution"],
@@ -629,16 +777,33 @@ def run_benchmark(args: argparse.Namespace) -> int:
         )
     )
     write_csv(output_path / "render_benchmark_frames.csv", frame_rows, frame_fields)
+    frametime_rows.sort(key=lambda row: (row["RequestedResolution"], row["Run"]))
+    write_csv(output_path / "render_benchmark_frametimes.csv", frametime_rows, frametime_fields)
     print(f"Scope summary: {output_path / 'render_benchmark_scopes.csv'}")
     print(f"Run summary:   {output_path / 'render_benchmark_runs.csv'}")
     print(f"Frame timings: {output_path / 'render_benchmark_frames.csv'}")
+    print(f"Run frame stats: {output_path / 'render_benchmark_frametimes.csv'}")
     for row in run_rows:
         print(
             f"{row['RequestedResolution']:>9} window {row['WindowResolution']:>9} "
             f"framebuffer {row['FramebufferResolution']:>9} "
             f"exact={'yes' if row['FramebufferMatchesRequested'] else 'no ':>3} "
-            f"run {row['Run']:02d}: {row['MeasurementMs']:>9.3f} ms, "
-            f"{row['MeasuredFrameCount']:>4} frames, click target {row['ClickTarget']}"
+            f"run {row['Run']:02d}: "
+            + (
+                f"SKIPPED ({row['SkipReason']})"
+                if row["Status"] == "Skipped"
+                else f"{row['MeasurementMs']:>9.3f} ms, "
+            )
+            + (
+                ""
+                if row["Status"] == "Skipped"
+                else
+                f"{row['MeasuredFrameCount']:>4} frames, "
+                f"avg/p90/p95 {row['AverageFrameTimeMs']:>7.3f}/"
+                f"{row['P90FrameTimeMs']:>7.3f}/"
+                f"{row['P95FrameTimeMs']:>7.3f} ms, "
+                f"click target {row['ClickTarget']}"
+            )
         )
     if args.require_exact_resolution and any(
         not row["FramebufferMatchesRequested"] for row in run_rows

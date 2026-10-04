@@ -72,10 +72,8 @@ int main() {
             openbus::rendering::TraceScope trace("config", "main.resolveConfigurationPaths");
             busConfigPath = busConfigurationPathFor();
             modelConfigPath = modelConfigurationPathForBus(busConfigPath);
-            const std::string configuredAiBusPath =
-                environmentValue("OPENBUS_AI_BUS_CONFIG");
-            const std::string configuredAiModelPath =
-                environmentValue("OPENBUS_AI_MODEL_CONFIG");
+            const std::string configuredAiBusPath = environmentValue("OPENBUS_AI_BUS_CONFIG");
+            const std::string configuredAiModelPath = environmentValue("OPENBUS_AI_MODEL_CONFIG");
             const bool hasAiBusPath = !configuredAiBusPath.empty();
             const bool hasAiModelPath = !configuredAiModelPath.empty();
             if (hasAiBusPath != hasAiModelPath) {
@@ -194,6 +192,20 @@ int main() {
                       << framebufferDimensions[1] << '\n';
             std::cout << "BENCHMARK_PHASE_REPEATS=" << phaseRepeats << '\n';
             std::cout << "BENCHMARK_READINESS_FRAMES=" << readinessFrames << '\n';
+
+            const bool requireExactResolution = openbus::rendering::parseEnabledFlag(
+                openbus::getEnvironment("OPENBUS_BENCHMARK_REQUIRE_EXACT_RESOLUTION"));
+            if (requireExactResolution &&
+                (framebufferDimensions[0] != windowWidth ||
+                 framebufferDimensions[1] != windowHeight)) {
+                std::cout << "BENCHMARK_SKIPPED=resolution_mismatch\n";
+                std::cout << "BENCHMARK_COMPLETE=1\n";
+                applicationLog.Log("Benchmark skipped because the requested framebuffer size "
+                                   "is unavailable");
+                Logger::Flush();
+                openbus::rendering::Flush();
+                return 0;
+            }
 
             const int warmupFramesPerPhase = warmupFrames / static_cast<int>(phases.size());
             const int extraWarmupFrames = warmupFrames % static_cast<int>(phases.size());
