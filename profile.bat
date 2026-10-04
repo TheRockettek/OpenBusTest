@@ -24,7 +24,6 @@ set "OPENBUS_TRACE_MIN_US=1"
 
 set "OPENBUS_ASSET_WORKERS=4"
 set "OPENBUS_DOPPLER=1"
-set "OPENBUS_DEBUG_LIGHTS=1"
 
 call "%~dp0windows_clang_env.bat"
 if errorlevel 1 exit /b %errorlevel%

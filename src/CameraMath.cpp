@@ -73,9 +73,15 @@ void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double target
     double forwardZ = targetZ - eyeZ;
     const double forwardLength =
         std::sqrt(forwardX * forwardX + forwardY * forwardY + forwardZ * forwardZ);
-    forwardX /= forwardLength;
-    forwardY /= forwardLength;
-    forwardZ /= forwardLength;
+    if (!std::isfinite(forwardLength) || forwardLength <= 1.0e-12) {
+        forwardX = 0.0;
+        forwardY = 1.0;
+        forwardZ = 0.0;
+    } else {
+        forwardX /= forwardLength;
+        forwardY /= forwardLength;
+        forwardZ /= forwardLength;
+    }
 
     const double upProjection = upX * forwardX + upY * forwardY + upZ * forwardZ;
     upX -= upProjection * forwardX;

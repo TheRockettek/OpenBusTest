@@ -4,6 +4,7 @@
 #include "Variables.h"
 #include "Environment.h"
 #include "PerfTrace.h"
+#include "ScriptTextureLimits.h"
 #include "TextureLoader.h"
 #include "osc/OscConverter.h"
 
@@ -24,6 +25,7 @@ extern "C" {
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <string_view>
@@ -118,20 +120,89 @@ struct ScriptRuntime::Impl {
     std::vector<OscProgram> nativePrograms;
     std::array<float, 8> nativeRegisters = {};
     bool nativeBackend = false;
-    bool debugLightsVariables = false;
+
+    static bool floatToInt(float value, int& result) {
+        const double numericValue = static_cast<double>(value);
+        if (!std::isfinite(numericValue) ||
+            numericValue < static_cast<double>(std::numeric_limits<int>::min()) ||
+            numericValue > static_cast<double>(std::numeric_limits<int>::max())) {
+            return false;
+        }
+        result = static_cast<int>(value);
+        return true;
+    }
+
+    static bool validDrawingOrigin(int value) {
+        return value >= -openbus::scripting::maxScriptTextureDimension &&
+               value <= openbus::scripting::maxScriptTextureDimension;
+    }
+
+    static std::uint8_t colorChannel(float value) {
+        if (!std::isfinite(value)) {
+            return 0;
+        }
+        return static_cast<std::uint8_t>(std::clamp(value, 0.0F, 255.0F));
+    }
+
+    static std::uint32_t packedColor(float value) {
+        if (!std::isfinite(value) || value <= 0.0F) {
+            return 0;
+        }
+        return static_cast<std::uint32_t>(std::min(
+            static_cast<double>(value),
+            static_cast<double>(std::numeric_limits<std::uint32_t>::max())));
+    }
+
+    static bool validTextureIndex(int index) {
+        return openbus::scripting::validScriptTextureIndex(index);
+    }
+
+    std::size_t currentTextureBytes() const {
+        std::size_t bytes = 0;
+        for (const auto& [index, texture] : scriptTextures) {
+            (void)index;
+            bytes += texture.pixels.size();
+        }
+        for (const auto& [index, texture] : textTextures) {
+            (void)index;
+            bytes += texture.pixels.size();
+        }
+        return bytes;
+    }
+
+    bool canReplaceTextureBytes(std::size_t oldBytes, std::size_t newBytes) const {
+        const std::size_t currentBytes = currentTextureBytes();
+        return oldBytes <= currentBytes &&
+               newBytes <= openbus::scripting::maxScriptTextureBytesPerSurface &&
+               newBytes <= openbus::scripting::maxScriptTextureBytesPerRuntime &&
+               currentBytes - oldBytes <=
+                   openbus::scripting::maxScriptTextureBytesPerRuntime - newBytes;
+    }
 
     ScriptTexture configuredScriptTexture(int index) {
         ScriptTexture texture;
         texture.revision = ++revisionCounter;
+        if (!validTextureIndex(index)) {
+            return texture;
+        }
         const auto found = scriptTextureDimensions.find(index);
         if (found == scriptTextureDimensions.end()) {
             return texture;
         }
         texture.width = found->second.first;
         texture.height = found->second.second;
-        texture.pixels.assign(static_cast<std::size_t>(texture.width) *
-                                  static_cast<std::size_t>(texture.height) * 4,
-                              0);
+        const std::size_t byteSize =
+            openbus::scripting::scriptTextureByteSize(texture.width, texture.height);
+        const auto existing = scriptTextures.find(index);
+        const std::size_t oldBytes =
+            existing == scriptTextures.end() ? 0U : existing->second.pixels.size();
+        if (byteSize == 0 || !canReplaceTextureBytes(oldBytes, byteSize)) {
+            texture.width = 1;
+            texture.height = 1;
+            texture.pixels.assign(4, 0);
+            return texture;
+        }
+        texture.pixels.assign(byteSize, 0);
         return texture;
     }
 
@@ -462,10 +533,15 @@ struct ScriptRuntime::Impl {
             popFloats(1);
             pushNumber(0.0);
         } else if (name == "stnewtex") {
-            const int index = static_cast<int>(nativePopFloat());
-            scriptTextures[index] = configuredScriptTexture(index);
+            int index = -1;
+            if (floatToInt(nativePopFloat(), index) && validTextureIndex(index)) {
+                scriptTextures[index] = configuredScriptTexture(index);
+            }
         } else if (name == "stlock" || name == "stunlock" || name == "stfilter") {
-            const int index = static_cast<int>(nativePopFloat());
+            int index = -1;
+            if (!floatToInt(nativePopFloat(), index) || !validTextureIndex(index)) {
+                return;
+            }
             ScriptTexture& texture = scriptTextures[index];
             if (name == "stlock")
                 texture.locked = true;
@@ -476,63 +552,105 @@ struct ScriptRuntime::Impl {
                 ++texture.revision;
             }
         } else if (name == "stsetcolor") {
-            const auto channel = [this] {
-                return static_cast<std::uint8_t>(std::clamp(nativePopFloat(), 0.0F, 255.0F));
-            };
+            const auto channel = [this] { return colorChannel(nativePopFloat()); };
             const std::uint8_t blue = channel();
             const std::uint8_t green = channel();
             const std::uint8_t red = channel();
             const std::uint8_t alpha = channel();
-            const int index = static_cast<int>(nativePopFloat());
-            scriptTextures[index].color = {alpha, red, green, blue};
+            int index = -1;
+            if (floatToInt(nativePopFloat(), index) && validTextureIndex(index)) {
+                scriptTextures[index].color = {alpha, red, green, blue};
+            }
         } else if (name == "stdrawpixel") {
-            const int y = static_cast<int>(nativePopFloat());
-            const int x = static_cast<int>(nativePopFloat());
-            const int index = static_cast<int>(nativePopFloat());
-            setPixel(scriptTextures[index], x, y);
+            int y = 0;
+            int x = 0;
+            int index = -1;
+            const bool validY = floatToInt(nativePopFloat(), y);
+            const bool validX = floatToInt(nativePopFloat(), x);
+            const bool validIndex = floatToInt(nativePopFloat(), index);
+            if (validY && validX && validIndex && validTextureIndex(index)) {
+                setPixel(scriptTextures[index], x, y);
+            }
         } else if (name == "stdrawrect") {
-            const int y2 = static_cast<int>(nativePopFloat());
-            const int x2 = static_cast<int>(nativePopFloat());
-            const int y1 = static_cast<int>(nativePopFloat());
-            const int x1 = static_cast<int>(nativePopFloat());
-            const int index = static_cast<int>(nativePopFloat());
-            ScriptTexture& texture = scriptTextures[index];
-            for (int y = std::min(y1, y2); y <= std::max(y1, y2); ++y) {
-                for (int x = std::min(x1, x2); x <= std::max(x1, x2); ++x) {
-                    setPixel(texture, x, y);
-                }
+            int y2 = 0;
+            int x2 = 0;
+            int y1 = 0;
+            int x1 = 0;
+            int index = -1;
+            const bool validY2 = floatToInt(nativePopFloat(), y2);
+            const bool validX2 = floatToInt(nativePopFloat(), x2);
+            const bool validY1 = floatToInt(nativePopFloat(), y1);
+            const bool validX1 = floatToInt(nativePopFloat(), x1);
+            const bool validIndex = floatToInt(nativePopFloat(), index);
+            if (validY2 && validX2 && validY1 && validX1 && validIndex &&
+                validTextureIndex(index)) {
+                fillRect(scriptTextures[index], x1, y1, x2, y2);
             }
         } else if (name == "sttextout") {
-            const int letterSpacing = static_cast<int>(nativePopFloat());
-            const std::uint32_t packedColor =
-                static_cast<std::uint32_t>(std::max(0.0F, nativePopFloat()));
+            int letterSpacing = 0;
+            const bool validSpacing = floatToInt(nativePopFloat(), letterSpacing);
+            const std::uint32_t colorValue = packedColor(nativePopFloat());
             nativePopFloat();
-            const int y = static_cast<int>(nativePopFloat());
-            const int x = static_cast<int>(nativePopFloat());
-            const int index = static_cast<int>(nativePopFloat());
+            int y = 0;
+            int x = 0;
+            int index = -1;
+            const bool validY = floatToInt(nativePopFloat(), y);
+            const bool validX = floatToInt(nativePopFloat(), x);
+            const bool validIndex = floatToInt(nativePopFloat(), index);
             const std::string value = nativePopString();
             const std::array<std::uint8_t, 4> color = {
-                static_cast<std::uint8_t>((packedColor >> 16) & 0xffU),
-                static_cast<std::uint8_t>((packedColor >> 8) & 0xffU),
-                static_cast<std::uint8_t>(packedColor & 0xffU),
-                static_cast<std::uint8_t>((packedColor >> 24) & 0xffU)};
-            drawText(scriptTextures[index], value, x, y, color, letterSpacing);
+                static_cast<std::uint8_t>((colorValue >> 16) & 0xffU),
+                static_cast<std::uint8_t>((colorValue >> 8) & 0xffU),
+                static_cast<std::uint8_t>(colorValue & 0xffU),
+                static_cast<std::uint8_t>((colorValue >> 24) & 0xffU)};
+            if (validSpacing && validY && validX && validIndex && validTextureIndex(index) &&
+                validDrawingOrigin(x) && validDrawingOrigin(y) &&
+                letterSpacing >= -openbus::scripting::maxScriptTextureDimension &&
+                letterSpacing <= openbus::scripting::maxScriptTextureDimension &&
+                value.size() <= openbus::scripting::maxScriptTextLength) {
+                drawText(scriptTextures[index], value, x, y, color, letterSpacing);
+            }
         } else if (name == "streadpixel") {
-            popFloats(3);
+            int y = 0;
+            int x = 0;
+            int index = -1;
+            const bool validY = floatToInt(nativePopFloat(), y);
+            const bool validX = floatToInt(nativePopFloat(), x);
+            const bool validIndex = floatToInt(nativePopFloat(), index);
+            if (validY && validX && validIndex && validTextureIndex(index)) {
+                ScriptTexture& texture = scriptTextures[index];
+                if (x >= 0 && y >= 0 && x < texture.width && y < texture.height) {
+                    const std::size_t offset = pixelOffset(texture, x, y);
+                    texture.color = {texture.pixels[offset + 3], texture.pixels[offset],
+                                     texture.pixels[offset + 1], texture.pixels[offset + 2]};
+                }
+            }
         } else if (name == "stcopycolor") {
-            const int destination = static_cast<int>(nativePopFloat());
-            const int origin = static_cast<int>(nativePopFloat());
-            scriptTextures[destination].color = scriptTextures[origin].color;
+            int destination = -1;
+            int origin = -1;
+            const bool validDestination = floatToInt(nativePopFloat(), destination);
+            const bool validOrigin = floatToInt(nativePopFloat(), origin);
+            if (validDestination && validOrigin && validTextureIndex(destination) &&
+                validTextureIndex(origin)) {
+                scriptTextures[destination].color = scriptTextures[origin].color;
+            }
         } else if (name == "stloadtex") {
-            const int index = static_cast<int>(nativePopFloat());
-            loadScriptTexture(index, nativePopString());
+            int index = -1;
+            const bool validIndex = floatToInt(nativePopFloat(), index);
+            const std::string path = nativePopString();
+            if (validIndex && validTextureIndex(index)) {
+                loadScriptTexture(index, path);
+            }
         } else if (name == "stgetr" || name == "stgetg" || name == "stgetb" || name == "stgeta") {
-            const int index = static_cast<int>(nativePopFloat());
+            int index = -1;
+            const bool validIndex = floatToInt(nativePopFloat(), index);
             const std::size_t channel = name == "stgeta"   ? 0
                                         : name == "stgetr" ? 1
                                         : name == "stgetg" ? 2
                                                            : 3;
-            pushNumber(scriptTextures[index].color[channel]);
+            pushNumber(validIndex && validTextureIndex(index)
+                           ? scriptTextures[index].color[channel]
+                           : 0.0F);
         } else if (name == "getfontindex") {
             popStrings(1);
             pushNumber(0.0);
@@ -540,128 +658,6 @@ struct ScriptRuntime::Impl {
             nativePopFloat();
             const std::string value = nativePopString();
             pushNumber(static_cast<float>(value.size() * 6));
-        }
-    }
-
-    const OscInstruction* nativeFindInstruction(const std::vector<OscInstruction>& code,
-                                                std::size_t index) const {
-        return index < code.size() ? &code[index] : nullptr;
-    }
-
-    bool shouldTraceLightsFunction(const std::string& functionName) const {
-        const float interval = localState.get("lights_blinkgeber_timegap");
-        const float factor = localState.get("lights_blinkgeber_faktor");
-        if (functionName.find("lights_startblinkgeber") != std::string::npos) {
-            const bool canStart =
-                (localState.get("elec_busbar_main") > 0.4F ||
-                 (localState.get("elec_busbar_avail") > 0.4F &&
-                  localState.get("lights_warnblinker") != 0.0F)) &&
-                localState.get("lights_blinker_running") == 0.0F;
-            return canStart || (interval <= 0.0F &&
-                                localState.get("lights_blinker_running") != 0.0F);
-        }
-        if (functionName.find("lights_runblinkgeber") != std::string::npos) {
-            const bool active =
-                 (localState.get("elec_busbar_main") > 0.4F &&
-                  localState.get("lights_sw_blinker") != 0.0F) ||
-                 (localState.get("elec_busbar_avail") > 0.4F &&
-                  localState.get("lights_warnblinker") != 0.0F);
-              const float elapsed = localState.get("lights_blinker_runtime") +
-                                sharedState.sharedVariables().get("timegap");
-            return active && (interval <= 0.0F || elapsed > interval);
-        }
-        if (functionName.find("lights_calc_geberfaktor") != std::string::npos) {
-            return factor == 0.0F || interval <= 0.0F;
-        }
-        return false;
-    }
-
-    static bool isLightsTraceVariable(const std::string& name) {
-        return name.starts_with("lights_") || name == "timegap" ||
-               name == "elec_busbar_main" || name == "elec_busbar_avail";
-    }
-
-    static const char* nativeOpcodeName(OscOpcode opcode) {
-        switch (opcode) {
-        case OscOpcode::PushNumber: return "push-number";
-        case OscOpcode::LoadLocal: return "load-local";
-        case OscOpcode::StoreLocal: return "store-local";
-        case OscOpcode::LoadSystem: return "load-system";
-        case OscOpcode::StoreSystem: return "store-system";
-        case OscOpcode::LoadConstant: return "load-constant";
-        case OscOpcode::LoadRegister: return "load-register";
-        case OscOpcode::StoreRegister: return "store-register";
-        case OscOpcode::Duplicate: return "duplicate";
-        case OscOpcode::Add: return "add";
-        case OscOpcode::Subtract: return "subtract";
-        case OscOpcode::Multiply: return "multiply";
-        case OscOpcode::Divide: return "divide";
-        case OscOpcode::Modulo: return "modulo";
-        case OscOpcode::Negate: return "negate";
-        case OscOpcode::LogicalNot: return "logical-not";
-        case OscOpcode::Equal: return "equal";
-        case OscOpcode::NotEqual: return "not-equal";
-        case OscOpcode::Less: return "less";
-        case OscOpcode::LessEqual: return "less-equal";
-        case OscOpcode::Greater: return "greater";
-        case OscOpcode::GreaterEqual: return "greater-equal";
-        case OscOpcode::LogicalAnd: return "logical-and";
-        case OscOpcode::LogicalOr: return "logical-or";
-        case OscOpcode::Absolute: return "absolute";
-        case OscOpcode::Minimum: return "minimum";
-        case OscOpcode::Maximum: return "maximum";
-        case OscOpcode::Floor: return "floor";
-        case OscOpcode::Ceiling: return "ceiling";
-        case OscOpcode::Sine: return "sine";
-        case OscOpcode::Cosine: return "cosine";
-        case OscOpcode::Tangent: return "tangent";
-        case OscOpcode::ArcTangent: return "arctangent";
-        case OscOpcode::SquareRoot: return "sqrt";
-        case OscOpcode::ArcSine: return "arcsine";
-        case OscOpcode::Exponential: return "exponential";
-        case OscOpcode::Square: return "square";
-        case OscOpcode::Sign: return "sign";
-        case OscOpcode::JumpIfFalse: return "jump-if-false";
-        case OscOpcode::Jump: return "jump";
-        case OscOpcode::CallFunction: return "call-function";
-        default: return nullptr;
-        }
-    }
-
-    static bool isNativeArithmeticOpcode(OscOpcode opcode) {
-        switch (opcode) {
-        case OscOpcode::Add:
-        case OscOpcode::Subtract:
-        case OscOpcode::Multiply:
-        case OscOpcode::Divide:
-        case OscOpcode::Modulo:
-        case OscOpcode::Negate:
-        case OscOpcode::LogicalNot:
-        case OscOpcode::Equal:
-        case OscOpcode::NotEqual:
-        case OscOpcode::Less:
-        case OscOpcode::LessEqual:
-        case OscOpcode::Greater:
-        case OscOpcode::GreaterEqual:
-        case OscOpcode::LogicalAnd:
-        case OscOpcode::LogicalOr:
-        case OscOpcode::Absolute:
-        case OscOpcode::Minimum:
-        case OscOpcode::Maximum:
-        case OscOpcode::Floor:
-        case OscOpcode::Ceiling:
-        case OscOpcode::Sine:
-        case OscOpcode::Cosine:
-        case OscOpcode::Tangent:
-        case OscOpcode::ArcTangent:
-        case OscOpcode::SquareRoot:
-        case OscOpcode::ArcSine:
-        case OscOpcode::Exponential:
-        case OscOpcode::Square:
-        case OscOpcode::Sign:
-            return true;
-        default:
-            return false;
         }
     }
 
@@ -678,23 +674,9 @@ struct ScriptRuntime::Impl {
             }
 
             const std::vector<OscInstruction>& code = found->second;
-            const bool traceLightsExecution =
-                debugLightsVariables && shouldTraceLightsFunction(functionName);
-            if (traceLightsExecution) {
-                log("native lights trace enter function=" + functionName +
-                    " depth=" + std::to_string(callDepth) +
-                    " instructions=" + std::to_string(code.size()));
-            }
             std::size_t instructionPointer = 0;
             while (instructionPointer < code.size()) {
-                const std::size_t currentInstruction = instructionPointer;
                 const OscInstruction& instruction = code[instructionPointer++];
-                const std::size_t nextInstruction = instructionPointer;
-                const std::size_t stackSizeBefore = floatStack.size();
-                const float topBefore = floatStack.empty() ? 0.0F : floatStack.back();
-                const float belowTopBefore = floatStack.size() < 2
-                                                     ? 0.0F
-                                                     : floatStack[floatStack.size() - 2];
                 const auto binary = [this](auto operation) {
                     const float right = nativePopFloat();
                     const float left = nativePopFloat();
@@ -715,12 +697,6 @@ struct ScriptRuntime::Impl {
                     break;
                 case OscOpcode::StoreLocal:
                     localState.set(instruction.name, nativePeekFloat());
-                    if (debugLightsVariables && instruction.name == "lights_blinkgeber_timegap") {
-                        log("lights blink interval assigned: value=" +
-                            std::to_string(localState.get(instruction.name)) +
-                            " factor=" +
-                            std::to_string(localState.get("lights_blinkgeber_faktor")));
-                    }
                     break;
                 case OscOpcode::StoreLocalString:
                     localState.setString(instruction.name, nativePopString());
@@ -737,12 +713,6 @@ struct ScriptRuntime::Impl {
                     const float value = constant == configuration.constants.end()
                                             ? 0.0F
                                             : constant->second;
-                    if (debugLightsVariables &&
-                        instruction.name.starts_with("lights_blinkertime_")) {
-                        log("lights timer constant " + instruction.name + "=" +
-                            std::to_string(value) +
-                            (constant == configuration.constants.end() ? " (not loaded)" : ""));
-                    }
                     floatStack.push_back(value);
                     break;
                 }
@@ -1072,99 +1042,6 @@ struct ScriptRuntime::Impl {
                     break;
                 }
                 }
-
-                if (traceLightsExecution) {
-                    const char* opcode = nativeOpcodeName(instruction.opcode);
-                    bool shouldLog = isNativeArithmeticOpcode(instruction.opcode) ||
-                                     instruction.opcode == OscOpcode::JumpIfFalse ||
-                                     instruction.opcode == OscOpcode::Jump ||
-                                     instruction.opcode == OscOpcode::CallFunction;
-                    if ((instruction.opcode == OscOpcode::LoadLocal ||
-                         instruction.opcode == OscOpcode::LoadSystem ||
-                         instruction.opcode == OscOpcode::StoreLocal ||
-                         instruction.opcode == OscOpcode::StoreSystem) &&
-                        isLightsTraceVariable(instruction.name)) {
-                        shouldLog = true;
-                    }
-                    if (instruction.opcode == OscOpcode::LoadConstant &&
-                        instruction.name.starts_with("lights_")) {
-                        shouldLog = true;
-                    }
-                    if (instruction.opcode == OscOpcode::LoadRegister ||
-                        instruction.opcode == OscOpcode::StoreRegister ||
-                        instruction.opcode == OscOpcode::PushNumber) {
-                        shouldLog = true;
-                    }
-                    if (shouldLog && opcode != nullptr) {
-                        std::ostringstream detail;
-                        detail << std::setprecision(9) << "native lights trace function="
-                               << functionName << " ip=" << currentInstruction << " op=" << opcode;
-                        if (!instruction.name.empty()) {
-                            detail << " name=" << instruction.name;
-                        }
-                        if (instruction.opcode == OscOpcode::PushNumber) {
-                            detail << " literal=" << instruction.number;
-                        } else if (instruction.opcode == OscOpcode::LoadRegister ||
-                                   instruction.opcode == OscOpcode::StoreRegister) {
-                            detail << " register=" << instruction.index;
-                        }
-                        if (instruction.opcode == OscOpcode::StoreLocal) {
-                            detail << " saved=" << localState.get(instruction.name);
-                        } else if (instruction.opcode == OscOpcode::StoreSystem) {
-                            detail << " saved="
-                                   << sharedState.sharedVariables().get(instruction.name);
-                        } else if (instruction.opcode == OscOpcode::LoadLocal ||
-                                   instruction.opcode == OscOpcode::LoadSystem ||
-                                   instruction.opcode == OscOpcode::LoadConstant ||
-                                   instruction.opcode == OscOpcode::LoadRegister) {
-                            detail << " loaded="
-                                   << (floatStack.empty() ? 0.0F : floatStack.back());
-                            if (instruction.opcode == OscOpcode::LoadConstant &&
-                                configuration.constants.find(instruction.name) ==
-                                    configuration.constants.end()) {
-                                detail << " (missing -> 0)";
-                            }
-                        } else if (instruction.opcode == OscOpcode::StoreRegister) {
-                            detail << " saved="
-                                   << nativeRegisters[static_cast<std::size_t>(instruction.index)];
-                        } else if (isNativeArithmeticOpcode(instruction.opcode)) {
-                            const bool binaryOperation =
-                                instruction.opcode != OscOpcode::Negate &&
-                                instruction.opcode != OscOpcode::LogicalNot &&
-                                instruction.opcode != OscOpcode::Absolute &&
-                                instruction.opcode != OscOpcode::Floor &&
-                                instruction.opcode != OscOpcode::Ceiling &&
-                                instruction.opcode != OscOpcode::Sine &&
-                                instruction.opcode != OscOpcode::Cosine &&
-                                instruction.opcode != OscOpcode::Tangent &&
-                                instruction.opcode != OscOpcode::ArcTangent &&
-                                instruction.opcode != OscOpcode::SquareRoot &&
-                                instruction.opcode != OscOpcode::ArcSine &&
-                                instruction.opcode != OscOpcode::Exponential &&
-                                instruction.opcode != OscOpcode::Square &&
-                                instruction.opcode != OscOpcode::Sign;
-                            if (binaryOperation) {
-                                detail << " left=" << belowTopBefore << " right=" << topBefore;
-                            } else {
-                                detail << " input=" << topBefore;
-                            }
-                            detail << " result="
-                                   << (floatStack.empty() ? 0.0F : floatStack.back());
-                        } else if (instruction.opcode == OscOpcode::JumpIfFalse) {
-                            detail << " condition=" << topBefore
-                                   << " taken=" << (instructionPointer != nextInstruction)
-                                   << " target=" << instruction.index;
-                        } else if (instruction.opcode == OscOpcode::Jump) {
-                            detail << " target=" << instruction.index;
-                        }
-                        detail << " stack=" << stackSizeBefore << "->" << floatStack.size();
-                        log(detail.str());
-                    }
-                }
-            }
-            if (traceLightsExecution) {
-                log("native lights trace exit function=" + functionName +
-                    " stack=" + std::to_string(floatStack.size()));
             }
             return true;
         }
@@ -1175,29 +1052,7 @@ struct ScriptRuntime::Impl {
         const char* backend = openbus::getEnvironment("OPENBUS_SCRIPT_BACKEND");
         if (backend && lower(backend) == "lua") {
             scriptRuntimeLogger.Log("Lua script backend explicitly selected");
-            if (debugLightsVariables) {
-                log("lights debug: native bytecode not selected; config=" +
-                    configuration.sourcePath.string());
-            }
             return false;
-        }
-
-        if (debugLightsVariables) {
-            log("lights debug: selecting native OSC backend; vehicle config=" +
-                configuration.sourcePath.string());
-            for (const char* name : {"lights_blinkertime_firston", "lights_blinkertime_on",
-                                     "lights_blinkertime_off"}) {
-                const auto constant = configuration.constants.find(name);
-                if (constant == configuration.constants.end()) {
-                    log(std::string("lights debug: configured constant ") + name +
-                        " is missing (native lookup will yield 0)");
-                } else {
-                    std::ostringstream value;
-                    value << std::setprecision(9) << "lights debug: configured constant " << name
-                                  << '=' << constant->second;
-                    log(value.str());
-                }
-            }
         }
 
         for (const std::string& referencedPath : configuration.scripts) {
@@ -1205,9 +1060,6 @@ struct ScriptRuntime::Impl {
             std::replace(normalized.begin(), normalized.end(), '\\', '/');
             const std::filesystem::path sourcePath =
                 configuration.sourcePath.parent_path() / normalized;
-            if (debugLightsVariables) {
-                log("lights debug: loading OSC source=" + sourcePath.string());
-            }
             OscProgram program;
             std::string error;
             if (!compileOscToBytecode(sourcePath, program, error)) {
@@ -1215,10 +1067,6 @@ struct ScriptRuntime::Impl {
                                         sourcePath.string() + ": " + error);
                 nativePrograms.clear();
                 return false;
-            }
-            if (debugLightsVariables) {
-                log("lights debug: native OSC source compiled=" + sourcePath.string() +
-                    " functions=" + std::to_string(program.functions.size()));
             }
             nativePrograms.push_back(std::move(program));
         }
@@ -1235,70 +1083,11 @@ struct ScriptRuntime::Impl {
         return value && std::string(value) == "1";
     }
 
-    static bool lightsDebugEnabledFromEnvironment() {
-        const char* value = openbus::getEnvironment("OPENBUS_DEBUG_LIGHTS");
-        if (value == nullptr) {
-            return false;
-        }
-        const std::string normalized = lower(value);
-        return normalized == "1" || normalized == "true" || normalized == "yes" ||
-               normalized == "on";
-    }
-
-    std::unordered_map<std::string, float> captureLightsVariables() const {
-        std::unordered_map<std::string, float> values;
-        if (!debugLightsVariables) {
-            return values;
-        }
-        values.emplace("Timegap", sharedState.sharedVariables().get("timegap"));
-        for (const auto& [name, value] : localState.numericValues()) {
-            if (name.starts_with("lights_") || name == "elec_busbar_main" ||
-                name == "elec_busbar_avail") {
-                values.emplace(name, value);
-            }
-        }
-        return values;
-    }
-
-    void logChangedLightsVariables(
-        const std::unordered_map<std::string, float>& before) const {
-        if (!debugLightsVariables) {
-            return;
-        }
-        const auto after = captureLightsVariables();
-        std::vector<std::string> changedNames;
-        for (const auto& [name, value] : after) {
-            const auto previous = before.find(name);
-            if (previous == before.end() || previous->second != value) {
-                changedNames.push_back(name);
-            }
-        }
-        if (changedNames.empty()) {
-            return;
-        }
-        std::sort(changedNames.begin(), changedNames.end());
-        std::ostringstream message;
-        message << "lights.osc variables changed after script frame:" << std::setprecision(12);
-        for (const std::string& name : changedNames) {
-            const auto previous = before.find(name);
-            message << ' ' << name << '=';
-            if (previous != before.end()) {
-                message << previous->second << "->";
-            }
-            message << after.at(name);
-        }
-        log(message.str());
-    }
-
     Impl(const VehicleConfig& source, Variables& local, SimulationState& shared)
         : configuration(source),
           scriptIdentity(source.sourcePath.empty() ? "unknown"
                                                    : source.sourcePath.filename().string()),
           localState(local), sharedState(shared) {
-                debugLightsVariables = lightsDebugEnabledFromEnvironment();
-                if (debugLightsVariables) {
-                    log("lights.osc variable debugging enabled by OPENBUS_DEBUG_LIGHTS");
-                }
         for (const std::string& variable : configuration.floatVariables) {
             localState.declare(variable);
         }
@@ -1662,38 +1451,88 @@ struct ScriptRuntime::Impl {
         return runtime->scriptTextures[index];
     }
 
-    static void resizeScriptTexture(ScriptTexture& texture, int requiredWidth, int requiredHeight) {
+    static bool popSystemInt(Impl* runtime, int& value) {
+        return floatToInt(popSystemFloat(runtime), value);
+    }
+
+    static bool popSystemTextureIndex(Impl* runtime, int& index) {
+        return popSystemInt(runtime, index) && validTextureIndex(index);
+    }
+
+    bool resizeScriptTexture(ScriptTexture& texture, int requiredWidth, int requiredHeight) {
         if (requiredWidth <= texture.width && requiredHeight <= texture.height) {
-            return;
+            return true;
         }
         const int width = std::max(texture.width, requiredWidth);
         const int height = std::max(texture.height, requiredHeight);
-        std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4, 0);
+        const std::size_t byteSize =
+            openbus::scripting::scriptTextureByteSize(width, height);
+        if (byteSize == 0 || !canReplaceTextureBytes(texture.pixels.size(), byteSize)) {
+            return false;
+        }
+        std::vector<std::uint8_t> pixels(byteSize, 0);
         for (int y = 0; y < texture.height; ++y) {
-            const auto sourceOffset = static_cast<std::size_t>(y) * texture.width * 4;
-            const auto targetOffset = static_cast<std::size_t>(y) * width * 4;
-            std::copy_n(texture.pixels.begin() + sourceOffset, texture.width * 4,
+            const auto sourceOffset = static_cast<std::size_t>(y) *
+                                      static_cast<std::size_t>(texture.width) * 4U;
+            const auto targetOffset = static_cast<std::size_t>(y) *
+                                      static_cast<std::size_t>(width) * 4U;
+            const std::size_t rowBytes = static_cast<std::size_t>(texture.width) * 4U;
+            std::copy_n(texture.pixels.begin() + sourceOffset, rowBytes,
                         pixels.begin() + targetOffset);
         }
         texture.width = width;
         texture.height = height;
         texture.pixels = std::move(pixels);
+        return true;
     }
 
     static std::size_t pixelOffset(const ScriptTexture& texture, int x, int y) {
         return (static_cast<std::size_t>(y) * texture.width + x) * 4;
     }
 
-    static void setPixel(ScriptTexture& texture, int x, int y) {
-        if (texture.locked || x < 0 || y < 0) {
+    void setPixel(ScriptTexture& texture, int x, int y) {
+        if (texture.locked || x < 0 || y < 0 ||
+            x >= openbus::scripting::maxScriptTextureDimension ||
+            y >= openbus::scripting::maxScriptTextureDimension ||
+            !resizeScriptTexture(texture, x + 1, y + 1)) {
             return;
         }
-        resizeScriptTexture(texture, x + 1, y + 1);
         const std::size_t offset = pixelOffset(texture, x, y);
         texture.pixels[offset] = texture.color[1];
         texture.pixels[offset + 1] = texture.color[2];
         texture.pixels[offset + 2] = texture.color[3];
         texture.pixels[offset + 3] = texture.color[0];
+        ++texture.revision;
+    }
+
+    void fillRect(ScriptTexture& texture, int x1, int y1, int x2, int y2) {
+        if (texture.locked) {
+            return;
+        }
+        const int left = std::max(0, std::min(x1, x2));
+        const int top = std::max(0, std::min(y1, y2));
+        const int right = std::min(openbus::scripting::maxScriptTextureDimension - 1,
+                                   std::max(x1, x2));
+        const int bottom = std::min(openbus::scripting::maxScriptTextureDimension - 1,
+                                    std::max(y1, y2));
+        if (left > right || top > bottom) {
+            return;
+        }
+        const int width = right - left + 1;
+        const int height = bottom - top + 1;
+        const std::size_t pixelCount = static_cast<std::size_t>(width) *
+                                       static_cast<std::size_t>(height);
+        if (pixelCount > openbus::scripting::maxScriptTexturePixels ||
+            !resizeScriptTexture(texture, right + 1, bottom + 1)) {
+            return;
+        }
+        for (int y = top; y <= bottom; ++y) {
+            for (int x = left; x <= right; ++x) {
+                const std::size_t offset = pixelOffset(texture, x, y);
+                std::copy(texture.color.begin(), texture.color.end(),
+                          texture.pixels.begin() + offset);
+            }
+        }
         ++texture.revision;
     }
 
@@ -1707,7 +1546,9 @@ struct ScriptRuntime::Impl {
                          std::array<std::uint8_t, 4> color, int letterSpacing = 0,
                          int maximumScale = 8, TextAlignment alignment = TextAlignment::Left,
                          bool centerVertically = false) {
-        if (texture.locked || value.empty() || texture.width <= 0 || texture.height <= 0) {
+        if (texture.locked || value.empty() ||
+            value.size() > openbus::scripting::maxScriptTextLength ||
+            !openbus::scripting::validScriptTextureSize(texture.width, texture.height)) {
             return;
         }
         std::size_t lineCount = 1;
@@ -1789,6 +1630,10 @@ struct ScriptRuntime::Impl {
 
     static bool drawBitmapFontText(ScriptTexture& texture, const std::string& value, int x, int y,
                                    const TextTextureDefinition& definition, const FontAsset& font) {
+        if (value.size() > openbus::scripting::maxScriptTextLength ||
+            !openbus::scripting::validScriptTextureSize(texture.width, texture.height)) {
+            return false;
+        }
         int fallbackCode = -1;
         for (std::size_t index = 0; index < font.glyphs.size(); ++index) {
             if (font.glyphs[index].defined) {
@@ -1895,6 +1740,17 @@ struct ScriptRuntime::Impl {
         for (auto& entry : textTextureDefinitions) {
             const int index = entry.first;
             TextTextureDefinition& definition = entry.second;
+            const std::size_t byteSize = openbus::scripting::scriptTextureByteSize(
+                definition.width, definition.height);
+            if (!validTextureIndex(index) || byteSize == 0) {
+                continue;
+            }
+            const auto existing = textTextures.find(index);
+            const std::size_t oldBytes =
+                existing == textTextures.end() ? 0U : existing->second.pixels.size();
+            if (!canReplaceTextureBytes(oldBytes, byteSize)) {
+                continue;
+            }
             const std::string value = localState.getString(definition.variable);
             if (definition.hasRenderedValue && value == definition.lastValue) {
                 continue;
@@ -1922,12 +1778,23 @@ struct ScriptRuntime::Impl {
     }
 
     bool loadScriptTexture(int index, const std::string& requestedPath) {
+        if (!validTextureIndex(index)) {
+            return false;
+        }
         std::string normalized = requestedPath;
         std::replace(normalized.begin(), normalized.end(), '\\', '/');
         const std::filesystem::path path = configuration.sourcePath.parent_path() / normalized;
         openbus::rendering::Image image;
-        if (!openbus::rendering::TextureLoader::readImage(path, image) || image.width <= 0 ||
-            image.height <= 0 || image.rgba.empty()) {
+        if (!openbus::rendering::TextureLoader::readImage(path, image) || image.rgba.empty()) {
+            return false;
+        }
+        const std::size_t byteSize =
+            openbus::scripting::scriptTextureByteSize(image.width, image.height);
+        const auto existing = scriptTextures.find(index);
+        const std::size_t oldBytes =
+            existing == scriptTextures.end() ? 0U : existing->second.pixels.size();
+        if (byteSize == 0 || image.rgba.size() != byteSize ||
+            !canReplaceTextureBytes(oldBytes, byteSize)) {
             return false;
         }
         ScriptTexture texture;
@@ -1941,7 +1808,10 @@ struct ScriptRuntime::Impl {
 
     static int safeScriptTextureAction(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const int index = static_cast<int>(popSystemFloat(runtime));
+        int index = -1;
+        if (!popSystemTextureIndex(runtime, index)) {
+            return 0;
+        }
         ScriptTexture& texture = scriptTexture(runtime, index);
         texture.locked = true;
         texture.filtered = false;
@@ -1950,26 +1820,38 @@ struct ScriptRuntime::Impl {
 
     static int safeScriptTextureNew(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const int index = static_cast<int>(popSystemFloat(runtime));
+        int index = -1;
+        if (!popSystemTextureIndex(runtime, index)) {
+            return 0;
+        }
         runtime->scriptTextures[index] = runtime->configuredScriptTexture(index);
         return 0;
     }
 
     static int safeScriptTextureLock(lua_State* lua) {
-        const int index = static_cast<int>(popSystemFloat(runtimeFor(lua)));
-        scriptTexture(runtimeFor(lua), index).locked = true;
+        Impl* runtime = runtimeFor(lua);
+        int index = -1;
+        if (popSystemTextureIndex(runtime, index)) {
+            scriptTexture(runtime, index).locked = true;
+        }
         return 0;
     }
 
     static int safeScriptTextureUnlock(lua_State* lua) {
-        const int index = static_cast<int>(popSystemFloat(runtimeFor(lua)));
-        scriptTexture(runtimeFor(lua), index).locked = false;
+        Impl* runtime = runtimeFor(lua);
+        int index = -1;
+        if (popSystemTextureIndex(runtime, index)) {
+            scriptTexture(runtime, index).locked = false;
+        }
         return 0;
     }
 
     static int safeScriptTextureFilter(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const int index = static_cast<int>(popSystemFloat(runtime));
+        int index = -1;
+        if (!popSystemTextureIndex(runtime, index)) {
+            return 0;
+        }
         ScriptTexture& texture = scriptTexture(runtime, index);
         if (!texture.locked) {
             if (!texture.filtered) {
@@ -1982,33 +1864,42 @@ struct ScriptRuntime::Impl {
 
     static int safeScriptTextureColor(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const std::uint8_t blue =
-            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0F, 255.0F));
-        const std::uint8_t green =
-            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0F, 255.0F));
-        const std::uint8_t red =
-            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0F, 255.0F));
-        const std::uint8_t alpha =
-            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0F, 255.0F));
-        const int index = static_cast<int>(popSystemFloat(runtime));
-        scriptTexture(runtime, index).color = {alpha, red, green, blue};
+        const std::uint8_t blue = colorChannel(popSystemFloat(runtime));
+        const std::uint8_t green = colorChannel(popSystemFloat(runtime));
+        const std::uint8_t red = colorChannel(popSystemFloat(runtime));
+        const std::uint8_t alpha = colorChannel(popSystemFloat(runtime));
+        int index = -1;
+        if (popSystemTextureIndex(runtime, index)) {
+            scriptTexture(runtime, index).color = {alpha, red, green, blue};
+        }
         return 0;
     }
 
     static int safeScriptTexturePixel(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const int y = static_cast<int>(popSystemFloat(runtime));
-        const int x = static_cast<int>(popSystemFloat(runtime));
-        const int index = static_cast<int>(popSystemFloat(runtime));
-        setPixel(scriptTexture(runtime, index), x, y);
+        int y = 0;
+        int x = 0;
+        int index = -1;
+        const bool validY = popSystemInt(runtime, y);
+        const bool validX = popSystemInt(runtime, x);
+        const bool validIndex = popSystemTextureIndex(runtime, index);
+        if (validY && validX && validIndex) {
+            runtime->setPixel(scriptTexture(runtime, index), x, y);
+        }
         return 0;
     }
 
     static int safeScriptTextureReadPixel(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const int y = static_cast<int>(popSystemFloat(runtime));
-        const int x = static_cast<int>(popSystemFloat(runtime));
-        const int index = static_cast<int>(popSystemFloat(runtime));
+        int y = 0;
+        int x = 0;
+        int index = -1;
+        const bool validY = popSystemInt(runtime, y);
+        const bool validX = popSystemInt(runtime, x);
+        const bool validIndex = popSystemTextureIndex(runtime, index);
+        if (!validY || !validX || !validIndex) {
+            return 0;
+        }
         ScriptTexture& texture = scriptTexture(runtime, index);
         if (x >= 0 && y >= 0 && x < texture.width && y < texture.height) {
             const std::size_t offset = pixelOffset(texture, x, y);
@@ -2020,57 +1911,78 @@ struct ScriptRuntime::Impl {
 
     static int safeScriptTextureRect(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const int y2 = static_cast<int>(popSystemFloat(runtime));
-        const int x2 = static_cast<int>(popSystemFloat(runtime));
-        const int y1 = static_cast<int>(popSystemFloat(runtime));
-        const int x1 = static_cast<int>(popSystemFloat(runtime));
-        const int index = static_cast<int>(popSystemFloat(runtime));
-        ScriptTexture& texture = scriptTexture(runtime, index);
-        for (int y = std::min(y1, y2); y <= std::max(y1, y2); ++y) {
-            for (int x = std::min(x1, x2); x <= std::max(x1, x2); ++x) {
-                setPixel(texture, x, y);
-            }
+        int y2 = 0;
+        int x2 = 0;
+        int y1 = 0;
+        int x1 = 0;
+        int index = -1;
+        const bool validY2 = popSystemInt(runtime, y2);
+        const bool validX2 = popSystemInt(runtime, x2);
+        const bool validY1 = popSystemInt(runtime, y1);
+        const bool validX1 = popSystemInt(runtime, x1);
+        const bool validIndex = popSystemTextureIndex(runtime, index);
+        if (validY2 && validX2 && validY1 && validX1 && validIndex) {
+            runtime->fillRect(scriptTexture(runtime, index), x1, y1, x2, y2);
         }
         return 0;
     }
 
     static int safeScriptTextureText(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const int letterSpacing = static_cast<int>(popSystemFloat(runtime));
-        const std::uint32_t packedColor =
-            static_cast<std::uint32_t>(std::max(0.0F, popSystemFloat(runtime)));
+        int letterSpacing = 0;
+        const bool validSpacing = popSystemInt(runtime, letterSpacing);
+        const std::uint32_t colorValue = packedColor(popSystemFloat(runtime));
         popSystemFloat(runtime);
-        const int y = static_cast<int>(popSystemFloat(runtime));
-        const int x = static_cast<int>(popSystemFloat(runtime));
-        const int index = static_cast<int>(popSystemFloat(runtime));
+        int y = 0;
+        int x = 0;
+        int index = -1;
+        const bool validY = popSystemInt(runtime, y);
+        const bool validX = popSystemInt(runtime, x);
+        const bool validIndex = popSystemTextureIndex(runtime, index);
         const std::string value = popSystemString(runtime);
         const std::array<std::uint8_t, 4> color = {
-            static_cast<std::uint8_t>((packedColor >> 16) & 0xffU),
-            static_cast<std::uint8_t>((packedColor >> 8) & 0xffU),
-            static_cast<std::uint8_t>(packedColor & 0xffU),
-            static_cast<std::uint8_t>((packedColor >> 24) & 0xffU)};
-        drawText(scriptTexture(runtime, index), value, x, y, color, letterSpacing);
+            static_cast<std::uint8_t>((colorValue >> 16) & 0xffU),
+            static_cast<std::uint8_t>((colorValue >> 8) & 0xffU),
+            static_cast<std::uint8_t>(colorValue & 0xffU),
+            static_cast<std::uint8_t>((colorValue >> 24) & 0xffU)};
+        if (validSpacing && validY && validX && validIndex && validDrawingOrigin(x) &&
+            validDrawingOrigin(y) && letterSpacing >= -openbus::scripting::maxScriptTextureDimension &&
+            letterSpacing <= openbus::scripting::maxScriptTextureDimension &&
+            value.size() <= openbus::scripting::maxScriptTextLength) {
+            drawText(scriptTexture(runtime, index), value, x, y, color, letterSpacing);
+        }
         return 0;
     }
 
     static int safeScriptTextureCopyColor(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const int destination = static_cast<int>(popSystemFloat(runtime));
-        const int origin = static_cast<int>(popSystemFloat(runtime));
-        scriptTexture(runtime, destination).color = scriptTexture(runtime, origin).color;
+        int destination = -1;
+        int origin = -1;
+        const bool validDestination = popSystemTextureIndex(runtime, destination);
+        const bool validOrigin = popSystemTextureIndex(runtime, origin);
+        if (validDestination && validOrigin) {
+            scriptTexture(runtime, destination).color = scriptTexture(runtime, origin).color;
+        }
         return 0;
     }
 
     static int safeScriptTextureLoad(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
-        const int index = static_cast<int>(popSystemFloat(runtime));
-        runtime->loadScriptTexture(index, popSystemString(runtime));
+        int index = -1;
+        const bool validIndex = popSystemTextureIndex(runtime, index);
+        const std::string path = popSystemString(runtime);
+        if (validIndex) {
+            runtime->loadScriptTexture(index, path);
+        }
         return 0;
     }
 
     static int safeScriptTextureChannel(lua_State* lua, std::size_t channel) {
         Impl* runtime = runtimeFor(lua);
-        const int index = static_cast<int>(popSystemFloat(runtime));
+        int index = -1;
+        if (!popSystemTextureIndex(runtime, index)) {
+            return returnSystemFloat(lua, 0.0);
+        }
         const ScriptTexture& texture = scriptTexture(runtime, index);
         return returnSystemFloat(lua, texture.color[channel]);
     }
@@ -2333,7 +2245,16 @@ void ScriptRuntime::configureScriptTextures(const std::vector<ModelScriptTexture
         return;
     }
     for (const ModelScriptTexture& definition : definitions) {
-        if (definition.slot < 0 || definition.width <= 0 || definition.height <= 0) {
+        if (!openbus::scripting::validScriptTextureIndex(definition.slot) ||
+            !openbus::scripting::validScriptTextureSize(definition.width, definition.height)) {
+            continue;
+        }
+        const std::size_t byteSize =
+            openbus::scripting::scriptTextureByteSize(definition.width, definition.height);
+        const auto existing = impl_->scriptTextures.find(definition.slot);
+        const std::size_t oldBytes =
+            existing == impl_->scriptTextures.end() ? 0U : existing->second.pixels.size();
+        if (!impl_->canReplaceTextureBytes(oldBytes, byteSize)) {
             continue;
         }
         impl_->scriptTextureDimensions[definition.slot] = {definition.width, definition.height};
@@ -2346,7 +2267,8 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         return;
     }
     for (const ModelTextTexture& definition : definitions) {
-        if (definition.slot < 0 || definition.values.size() < 4) {
+        if (!openbus::scripting::validScriptTextureIndex(definition.slot) ||
+            definition.values.size() < 4) {
             continue;
         }
         ScriptRuntime::Impl::TextTextureDefinition configured;
@@ -2358,13 +2280,16 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         } catch (const std::exception&) {
             continue;
         }
-        if (configured.variable.empty() || configured.width <= 0 || configured.height <= 0) {
+        if (configured.variable.empty() ||
+            !openbus::scripting::validScriptTextureSize(configured.width, configured.height)) {
             continue;
         }
-        std::size_t pixelBytes = 0;
-        if (!openbus::rendering::checkedTextureBufferSize(
-                static_cast<std::size_t>(configured.width),
-                static_cast<std::size_t>(configured.height), 4, pixelBytes)) {
+        const std::size_t pixelBytes =
+            openbus::scripting::scriptTextureByteSize(configured.width, configured.height);
+        const auto existing = impl_->textTextures.find(definition.slot);
+        const std::size_t oldBytes =
+            existing == impl_->textTextures.end() ? 0U : existing->second.pixels.size();
+        if (!impl_->canReplaceTextureBytes(oldBytes, pixelBytes)) {
             continue;
         }
         if (definition.values.size() > 4) {
@@ -2414,8 +2339,7 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
              ++channel) {
             try {
                 const float value = std::stof(definition.values[channel + 5]);
-                configured.color[channel] =
-                    static_cast<std::uint8_t>(std::clamp(value, 0.0F, 255.0F));
+                configured.color[channel] = ScriptRuntime::Impl::colorChannel(value);
             } catch (const std::exception&) {
                 continue;
             }
@@ -2642,7 +2566,6 @@ void ScriptRuntime::update(bool isAiVehicle) {
     if (impl_ && (impl_->nativeBackend || impl_->state)) {
         impl_->floatStack.clear();
         impl_->stringStack.clear();
-        const auto lightsVariablesBefore = impl_->captureLightsVariables();
         if (impl_->nativeBackend) {
             if (isAiVehicle && !impl_->executeNativeFunction("frame_ai")) {
                 impl_->executeNativeFunction("frame");
@@ -2652,7 +2575,6 @@ void ScriptRuntime::update(bool isAiVehicle) {
         } else {
             impl_->invokeFrame(isAiVehicle);
         }
-        impl_->logChangedLightsVariables(lightsVariablesBefore);
         impl_->updateTextTextures();
     }
 }

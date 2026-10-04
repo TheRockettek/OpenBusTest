@@ -50,6 +50,16 @@ int main() {
     }
     const ModelConfig result =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
+    const std::filesystem::path oversizedConfigPath = root / "oversized.cfg";
+    std::ofstream oversizedConfig(oversizedConfigPath);
+    oversizedConfig << "[scripttexture]\n4097\n1\n";
+    oversizedConfig.close();
+    const ModelConfig oversized =
+        loadModelConfig(oversizedConfigPath, root, ModelConfigKind::Bus, variables);
+    if (!oversized.diagnostics.hasErrors() || !oversized.scriptTextures.empty()) {
+        std::cerr << "oversized script-texture dimensions were not rejected\n";
+        return 1;
+    }
     std::ofstream variants(configPath);
     variants << "[mesh]\ndisplay.obj\n"
                 "[collision_mesh]\ncollision.obj\n"

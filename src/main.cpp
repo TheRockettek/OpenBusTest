@@ -21,6 +21,11 @@
 
 namespace {
 
+std::string environmentValue(const char* name) {
+    const char* value = openbus::getEnvironment(name);
+    return value == nullptr ? std::string{} : std::string(value);
+}
+
 int positiveEnvironmentInt(const char* name, int fallback, int maximum) {
     const char* value = openbus::getEnvironment(name);
     if (value == nullptr || *value == '\0') {
@@ -67,12 +72,12 @@ int main() {
             openbus::rendering::TraceScope trace("config", "main.resolveConfigurationPaths");
             busConfigPath = busConfigurationPathFor();
             modelConfigPath = modelConfigurationPathForBus(busConfigPath);
-            const char* configuredAiBusPath = openbus::getEnvironment("OPENBUS_AI_BUS_CONFIG");
-            const char* configuredAiModelPath = openbus::getEnvironment("OPENBUS_AI_MODEL_CONFIG");
-            const bool hasAiBusPath =
-                configuredAiBusPath != nullptr && *configuredAiBusPath != '\0';
-            const bool hasAiModelPath =
-                configuredAiModelPath != nullptr && *configuredAiModelPath != '\0';
+            const std::string configuredAiBusPath =
+                environmentValue("OPENBUS_AI_BUS_CONFIG");
+            const std::string configuredAiModelPath =
+                environmentValue("OPENBUS_AI_MODEL_CONFIG");
+            const bool hasAiBusPath = !configuredAiBusPath.empty();
+            const bool hasAiModelPath = !configuredAiModelPath.empty();
             if (hasAiBusPath != hasAiModelPath) {
                 throw std::runtime_error(
                     "OPENBUS_AI_BUS_CONFIG and OPENBUS_AI_MODEL_CONFIG must be set together");

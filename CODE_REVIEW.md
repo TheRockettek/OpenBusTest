@@ -1,118 +1,130 @@
+data are not modeled. The previously identified bump-map gap is now resolved with a bounded
 # OpenBus Code Review
 
-**Review date:** 2026-10-03
-**Scope:** First-party C++ source, headers, tests, and CMake configuration. Third-party Lua/sol sources and build artifacts were excluded.
+**Review date:** 2026-10-04
+**Scope:** First-party C++ source, headers, tests, and CMake/CTest configuration. Third-party
+Lua/sol sources, generated files, build artifacts, and logs were excluded.
 
 ## Executive summary
 
-The current checkout has a coherent single-threaded simulation/script/render update path,
-guarded asynchronous asset decoding, and substantially more material support than the
-previous review recorded. No confirmed critical memory-safety or data-race defect was
-found during this review.
+The review found no confirmed critical-severity issue. The four previously documented
+correctness/resource-handling findings have now been fixed and regression-tested: optional AI
+configuration on Windows, script-texture bounds, the exterior camera's zero-distance
+singularity, and invalid physics rates. No finding from the previous review remains open.
 
-The main remaining compatibility gap is the set of OMSI system macros that still use
-safe fallback values because route, timetable, passenger, ticket, depot, and arrival-board
-data are not modeled. The previously identified bump-map gap is now resolved with a bounded
-normal-map path in the model renderer.
+The main OMSI compatibility gap remains system macros that return safe fallback values where
+route, timetable, passenger, ticket, depot, arrival-board, or world-height data is not modeled.
+The active renderer has more material support than the earlier review recorded, but its
+OpenGL/shader integration remains lightly covered by automated tests.
 
-## Confirmed findings
+## Findings and remediation status
 
 ### Medium priority
 
-#### 1. Several OMSI system macros still return fallback values
+#### 1. Optional AI configuration paths alias on Windows — resolved
 
-`ScriptRuntime` registers safe handlers for HOF/timetable, passenger, ticket, depot,
-arrival-board, ground-height, and related lookups. The handlers intentionally return
-`0`, `-1`, or an empty string and do not consult route, timetable, passenger, or world
-geometry data.
+**Original defect:** `openbus::getEnvironment()` returns a pointer into one thread-local `std::string`, and its
+documented lifetime ends at the next call on that thread. `main()` retains the AI bus-config
+pointer, calls `getEnvironment()` again for the AI model-config path, and only then consumes
+both pointers. The second lookup overwrites the string, so the bus-config pointer now refers
+to the model-config value. Supplying the paired AI environment variables can therefore send
+the wrong path to bus-config loading.
+
+**Locations:** `src/Environment.h` (`getEnvironment`); `src/main.cpp` (AI environment lookups
+and path resolution).
+
+**Resolution:** `main.cpp` now snapshots each optional path through `environmentValue()` into
+an owning `std::string` immediately after lookup, before the next environment lookup.
+
+#### 2. Script textures and drawing coordinates are not bounded — resolved
+
+**Original defect:** `[scripttexture]` previously validated only that dimensions were positive.
+The runtime could allocate `width * height * 4` bytes without a configured maximum, and
+pixel/rectangle macros could grow textures from script coordinates. Those macros cast floats
+directly to `int` without checking finiteness or representable range; `setPixel()` computed
+`x + 1`/`y + 1`, and rectangle loops incremented through caller-provided endpoints.
+
+**Current behavior:** `[scripttexture]` and the runtime enforce shared limits: dimensions no larger than 4096,
+at most 4,194,304 pixels (16 MiB) per surface, at most 256 texture slots, and a 256 MiB
+aggregate runtime texture budget. Textures loaded from files and text textures use the same
+limits. Both native OSC and Lua fallback drawing paths validate finite, representable integer
+arguments and slot indexes. Pixel growth is bounded; rectangle inputs are clipped and a fill
+is rejected when its work area exceeds the pixel limit. Rectangle resizing occurs once before
+an efficient bounded fill rather than expanding once per pixel.
+
+**Locations:** `src/ModelConfigLoader.cpp` (`[scripttexture]` parser); `src/ScriptRuntime.cpp`
+(`configuredScriptTexture`, `resizeScriptTexture`, `setPixel`, `safeScriptTexturePixel`, and
+`safeScriptTextureRect`).
+
+**Resolution:** Shared checked limits live in `src/ScriptTextureLimits.h`; the model parser,
+runtime allocations, file-loaded surfaces, and text textures consume them. Regression probes
+cover oversized configuration, non-representable native/Lua coordinates and indexes, and an
+oversized rectangle.
+
+#### 3. Exterior camera distance can reach a singular zero — resolved
+
+**Original defect:** Right-mouse camera adjustment clamped `cameraDistance_` to `[0, 80]`. At zero, the exterior
+camera computes identical eye and target positions. `lookAt()` divides the forward vector by
+its length without handling a zero length, creating non-finite view-matrix values.
+
+**Locations:** `src/RenderLoop.cpp` (right-mouse camera-distance clamp and exterior-camera
+eye/target calculation); `src/CameraMath.cpp` (`lookAt`).
+
+**Resolution:** Right-mouse exterior zoom now clamps distance to at least 0.1, and `lookAt()`
+uses a finite fallback forward direction when eye and target coincide. `OpenBusCameraMathProbe`
+checks that a coincident eye/target produces a finite matrix.
+
+### Low priority
+
+#### 4. Physics-rate validation accepts NaN and positive infinity — resolved
+
+`BusSimulation::Impl` now rejects non-finite or non-positive rates before taking the reciprocal,
+then verifies that the resulting fixed step is finite and positive. This also rejects positive
+subnormal rates whose reciprocal overflows.
+
+**Location:** `src/BusSimulation.cpp` (`BusSimulation::Impl` constructor).
+
+**Resolution:** Constructor validation and `OpenBusPhysicsProbe` cover zero, negative, NaN,
+positive infinity, and a denormal rate. No arbitrary maximum frequency is imposed; callers
+remain responsible for selecting a practical rate.
+
+## Compatibility limitations
+
+### OMSI system macros with safe fallback behavior
+
+`ScriptRuntime` still registers fallback handlers for several HOF/route, timetable,
+passenger, ticket, depot, arrival-board, and ground-height queries. They return safe numeric,
+index, or string defaults rather than consulting route, timetable, passenger, or world data.
 
 **Locations:** `src/ScriptRuntime.cpp` (`safeNumericLookup`, `safeMissingIndex`,
-`safeStringLookup`, `safeGetHeightAbovePoint`, `safeTicketName`, `safeArrivalString`,
-and `safeArrivalTime`)
+`safeStringLookup`, `safeGetHeightAbovePoint`, `safeTicketName`, `safeArrivalString`, and
+`safeArrivalTime`; system-macro registrations).
 
-**Impact:** Scripts depending on stop indices/names, timetable state, passenger counts,
-ticket data, depot strings, arrival boards, or vehicle-relative ground height cannot
-reproduce OMSI behavior.
+Scripts that depend on those data sources will not yet reproduce OMSI behavior. Keep these
+fallbacks explicit and add focused tests when the underlying data models are implemented;
+do not substitute guessed values.
 
-**Recommendation:** Keep these APIs explicitly documented as partial until the underlying
-route/timetable/world systems exist. Add focused behavior tests as each data source is
-implemented rather than replacing the safe fallbacks with guessed values.
+### Approximate script text helpers
 
-### Low priority / coverage
+Script texture drawing and text-texture generation are present, but `getfontindex` returns a
+constant and `textlength` uses a fixed-width byte-based estimate rather than font metrics.
+These are compatibility limitations, not renderer safety defects.
 
-#### 2. Renderer integration coverage is limited
+**Location:** `src/ScriptRuntime.cpp` (`safeFontIndex`, `safeTextLength`).
 
-The CTest suite exercises variables, configuration parsing, texture decoding, physics,
-camera math, road features, O3D loading, model and vehicle configuration, and script
-textures. It does not exercise an OpenGL context, shader compilation, material-state
-binding, transparent depth prepasses, environment-map sampling, or end-to-end clickable
-mesh rendering.
+## Architectural constraint
 
-**Recommendation:** Add headless or fixture-based renderer tests where practical, and keep
-manual screenshot validation for context-dependent behavior. Texture decoder fuzz/property
-tests would also strengthen malformed-input coverage.
+### `Variables` is currently single-thread owned
 
-#### 3. Some script text helpers remain approximate
+`Variables` stores numeric and string state in unsynchronized maps. Current frame updates,
+script execution, and rendering access that state on the main/render thread; asset workers
+decode assets without accessing `Variables`. This is not a demonstrated current data race,
+but moving these operations to worker threads would require synchronization or a snapshot/
+message-passing design.
 
-Script texture drawing and text-texture generation are implemented, but `getfontindex`
-returns a constant value. `textlength` and the current font/text path intentionally use
-fixed-width byte counts, matching the current OMSI compatibility scope rather than
-counting Unicode code points. These are compatibility limitations rather than renderer
-memory-safety issues.
+## Coverage and verification
 
-**Location:** `src/ScriptRuntime.cpp` (`safeFontIndex`, `safeTextLength`)
-
-#### 4. String handling is intentionally byte-oriented
-
-All OMSI/configuration/script strings should remain fixed-width byte sequences for the
-current implementation. Field counts, slicing, text lengths, font glyph lookup, and
-serialization must use byte counts (`std::string::size()`/byte indexes); do not add UTF-8
-decoding, Unicode normalization, wide-string conversion, or code-point counting. OMSI
-does not require Unicode support for the current target vehicles, so accepting Unicode
-would add semantics that are not part of the supported compatibility contract.
-
-This is a scope constraint, not a defect. Any future Unicode work should be a deliberate
-compatibility change with separate tests for byte-counted fields and authored OMSI text.
-
-## Architectural constraints and risks
-
-### `Variables` ownership is currently single-threaded
-
-`Variables` stores values in unsynchronized `std::unordered_map` instances. The current
-frame flow updates system variables, vehicle variables, scripts, and rendering from the
-main/render thread (`RenderLoop::beginFrame`, `updateScripts`, and draw calls). The asset
-worker pool decodes OBJ and texture data but does not access `Variables`.
-
-This is therefore not a demonstrated current data race. It is an ownership constraint:
-moving script execution, simulation updates, or variable-dependent rendering to worker
-threads would require synchronization or a message/snapshot design. The existing TODO in
-`src/Variables.h` should remain until that ownership model changes.
-
-## Verified mitigations and resolved stale findings
-
-- `AssetRequestManager` uses an RAII `ComInitializer` for Windows worker-thread COM
-	initialization, including `CoUninitialize` when initialization succeeds.
-- DXT block-count and decoded-buffer size arithmetic is checked before allocation or reads
-	in `src/TextureLoader.cpp`.
-- OBJ batch vertex reservation checks `source.size() * 3` for overflow before multiplying.
-- Material-index expansion is capped at 10,000 before resizing occurrence state.
-- Transparent batches are sorted back-to-front, with a transmap alpha-tested depth prepass
-	and separate opaque/transparent passes.
-- `matl_bumpmap` now flows from model configuration through asynchronous texture loading and
-	batch submission into a bounded derivative-based normal-map shader path. Material batching
-	is disabled for bump-mapped batches so the effect is not silently discarded.
-- Environment maps have an active texture-loading and draw path; the environment shader's
-	epsilon clamp is a normal singularity guard, not evidence of an exploitable division bug.
-- Texture lookup/upload logging is opt-in through the verbose environment settings, avoiding
-	the startup log flood noted by the earlier review.
-- The unused `verboseMaterialChangeLogs` declaration was removed; the warning-enabled build is
-	clean.
-- Warning cleanup previously completed remains intact, including disabled trace builds,
-	signed/unsigned comparisons, Windows time/environment APIs, and sound aggregate setup.
-
-## Verification
-
-The repository currently defines 11 CTest probes:
+CMake currently registers 14 CTest probes:
 
 - `OpenBusVariablesProbe`
 - `OpenBusConfigurationParserProbe`
@@ -120,20 +132,58 @@ The repository currently defines 11 CTest probes:
 - `OpenBusPhysicsProbe`
 - `OpenBusStabilityProbe`
 - `OpenBusCameraMathProbe`
+- `OpenBusViewpointProbe`
 - `OpenBusRoadFeaturesProbe`
 - `OpenBusO3DLoaderProbe`
 - `OpenBusModelConfigProbe`
 - `OpenBusVehicleConfigProbe`
+- `OpenBusBusConfigurationCollisionProbe`
+- `OpenBusSoundEngineProbe`
 - `OpenBusScriptTextureRuntimeProbe`
 
-Run the configured build's CTest suite after source changes with
-`ctest --test-dir build-ode -C Release --output-on-failure`.
+The probes cover parsing, variables, texture decoding, physics (including invalid-rate
+rejection), camera math/viewpoints (including coincident look-at), road features,
+O3D/model/vehicle configuration (including oversized script-texture rejection), sound, and
+script-texture/runtime behavior (including bounded native and Lua macro inputs). They do
+not exercise a full OpenGL context, shader compilation, material binding, transparent depth
+prepasses, environment-map sampling, or end-to-end clickable mesh rendering. Add headless or
+fixture-based renderer tests where practical and retain manual screenshot validation for
+context-dependent behavior.
 
-## Suggested fix order
+The latest full CMake build and CTest run after these remediations succeeded; all 14 registered
+probes passed. CTest continues to emit non-fatal missing `DartConfiguration.tcl` messages.
 
-1. Define and document the supported OMSI compatibility scope, starting with the fallback
-	 system macros that affect common vehicle scripts.
-2. Add renderer/material integration coverage around shader compilation and representative
-	 alpha, auxiliary-texture, and environment-map fixtures.
-3. Preserve the current single-threaded `Variables` ownership rule unless a snapshot or
-	 synchronization design is introduced deliberately.
+## Verified fixes and stale findings
+
+- `src/ConfigurationParser.cpp` strips a UTF-8 BOM from the first input line. The regression
+  in `tests/VehicleConfigProbe.cpp` verifies that the first constant in a BOM-prefixed
+  constant file is retained; this prevents the installed bus's first blink-timer constant
+  from being silently skipped.
+- `main.cpp` snapshots Windows environment-backed AI config paths before a subsequent lookup
+  can overwrite the thread-local `getEnvironment()` buffer.
+- `ScriptTextureLimits.h` centralizes dimensions, slot, per-surface, and aggregate-runtime
+  limits; native and Lua texture macros share checked numeric conversions and bounded drawing.
+- `BusSimulation::Impl` validates the physics rate and its reciprocal before storing a fixed
+  step; `CameraMath::lookAt` remains finite for coincident eye/target inputs.
+- Windows worker-thread COM initialization is guarded by RAII in `AssetRequestManager`.
+- Texture block/decoded-size arithmetic, OBJ batch reservation multiplication, and material
+  occurrence-index expansion have bounds checks in their current implementations.
+- Transparent batches are sorted back-to-front with an alpha-tested transmap depth prepass.
+- Bump-map data reaches a bounded derivative-based shader path; material batching is disabled
+  for bump-mapped batches rather than silently omitting the effect.
+- Environment-map texture loading and drawing are active; the shader epsilon clamp is a
+	singularity guard, not evidence of an exploitable division defect.
+- Temporary light-variable snapshots, native OSC instruction traces, and their
+  `OPENBUS_DEBUG_LIGHTS` profile/documentation toggle have been removed. Profiling and ODE
+  wireframe controls remain.
+
+Earlier claims of renderer races, missing COM cleanup, absent environment/bump mapping,
+unbounded material indices, and unchecked DXT/OBJ allocation arithmetic should not be
+reintroduced without new evidence from the current implementation.
+
+## Follow-up opportunities
+
+1. Extend safe OMSI macro implementations only as their route, timetable, passenger, ticket,
+   depot, arrival-board, and world-height backing data models become available.
+2. Add headless or fixture-based renderer tests for OpenGL-context-dependent shader and draw
+   behavior; continue manual screenshot validation where an actual context is required.

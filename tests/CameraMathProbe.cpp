@@ -44,5 +44,14 @@ int main() {
             return 1;
         }
     }
+    openbus::rendering::lookAt(4.0, -2.0, 7.0, 4.0, -2.0, 7.0);
+    const openbus::rendering::Matrix4& coincidentView =
+        openbus::rendering::modelViewMatrix();
+    if (!std::all_of(coincidentView.begin(), coincidentView.end(), [](double value) {
+            return std::isfinite(value);
+        })) {
+        std::cerr << "Coincident camera eye and target produced a non-finite view matrix\n";
+        return 1;
+    }
     return 0;
 }

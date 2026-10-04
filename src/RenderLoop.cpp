@@ -4565,7 +4565,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         } else if (rightMouse) {
             const double cursorDeltaY = cursorY - previousFovCursorY_;
             if (cameraView_ == 0) {
-                cameraDistance_ = std::clamp(cameraDistance_ + cursorDeltaY * 0.1, 0.0, 80.0);
+                cameraDistance_ = std::clamp(cameraDistance_ + cursorDeltaY * 0.1, 0.1, 80.0);
             } else {
                 fieldOfViewOffset_ =
                     std::clamp(fieldOfViewOffset_ + cursorDeltaY * 0.15, -40.0, 60.0);

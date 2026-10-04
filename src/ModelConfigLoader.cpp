@@ -2,6 +2,7 @@
 
 #include "ConfigurationParser.h"
 #include "PerfTrace.h"
+#include "ScriptTextureLimits.h"
 #include "Variables.h"
 
 #include <algorithm>
@@ -1087,10 +1088,14 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 texture.options.push_back(trim(value.text));
             }
             if (texture.options.size() < 2 || !parseInt(texture.options[0], texture.width) ||
-                !parseInt(texture.options[1], texture.height) || texture.width <= 0 ||
-                texture.height <= 0) {
+                !parseInt(texture.options[1], texture.height) ||
+                !openbus::scripting::validScriptTextureSize(texture.width, texture.height)) {
                 result.diagnostics.error(line.number, keyword,
-                                         "expected positive width and height");
+                                         "dimensions exceed the supported script-texture limits");
+            } else if (result.scriptTextures.size() >=
+                       static_cast<std::size_t>(openbus::scripting::maxScriptTextureCount)) {
+                result.diagnostics.error(line.number, keyword,
+                                         "script-texture slot limit exceeded");
             } else {
                 result.scriptTextures.push_back(std::move(texture));
             }

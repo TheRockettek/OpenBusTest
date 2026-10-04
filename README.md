@@ -265,14 +265,6 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   vehicle scripts at 30 Hz while rendering continues at the display rate;
   fixed-rate script ticks receive `Timegap=1/30` and catch up for short frame
   hitches with a bounded tick budget.
-- Set `OPENBUS_DEBUG_LIGHTS=1` to log changes to
-  `Timegap`, all numeric `lights_*` variables, and the main/available electrical
-  busbars. It logs only variables whose values changed during a script frame,
-  with their previous and new values; unchanged frames produce no log entry.
-  With the native backend, it also reports the selected config/scripts and
-  relevant timer constants, then traces blinker startup, timer transitions,
-  and zero-factor/zero-interval calculations with loaded operands, arithmetic
-  results, branch decisions, and saved values.
 - Profiling retains at most `1,000,000` events by default. Set
   `OPENBUS_TRACE_MAX_EVENTS=250000` or another positive value to lower the
   memory ceiling. Trace events are flushed incrementally to the JSON file while

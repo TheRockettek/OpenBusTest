@@ -4,6 +4,8 @@
 
 #include <cmath>
 #include <iostream>
+#include <limits>
+#include <stdexcept>
 
 namespace {
 
@@ -38,6 +40,23 @@ double steeringHeading(const BodyPose& pose) {
 } // namespace
 
 int main() {
+    for (const double invalidRate : {0.0, -1.0, std::numeric_limits<double>::quiet_NaN(),
+                                     std::numeric_limits<double>::infinity(),
+                                     std::numeric_limits<double>::denorm_min()}) {
+        bool rejected = false;
+        try {
+            BusSimulation invalidSimulation(testConfiguration(),
+                                            VehiclePlacement{{0.0, 0.0, 0.0}, 0.0},
+                                            invalidRate);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        if (!rejected) {
+            std::cerr << "invalid physics rate was accepted: " << invalidRate << '\n';
+            return 1;
+        }
+    }
+
     const auto centerMouse = openbus::input::mouseControlInputs(400.0, 300.0, 800.0, 600.0);
     const auto topMouse = openbus::input::mouseControlInputs(400.0, 0.0, 800.0, 600.0);
     const auto bottomMouse = openbus::input::mouseControlInputs(400.0, 600.0, 800.0, 600.0);

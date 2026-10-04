@@ -89,6 +89,11 @@ int main() {
               "(S.$.MixedStringOut)\n"
               "(M.L.MixedMacro)\n"
               "{end}\n"
+              "{MaCrO:TextureSafety}\n"
+              "3 2147483648 0 (M.V.stdrawpixel)\n"
+              "3 0 0 4095 4095 (M.V.stdrawrect)\n"
+              "2147483648 (M.V.stnewtex)\n"
+              "{end}\n"
               "{MaCrO:MixedMacro}\n"
               "(M.V.MixedSystemMacro)\n"
               "(M.L.AnotherMacro)\n"
@@ -152,6 +157,18 @@ int main() {
                  "_pushf(1)\n"
                  "_pushf(2)\n"
                  "sys_macro_stdrawpixel()\n"
+                 "_pushf(3)\n"
+                 "_pushf(1e30)\n"
+                 "_pushf(0)\n"
+                 "sys_macro_stdrawpixel()\n"
+                 "_pushf(3)\n"
+                 "_pushf(0)\n"
+                 "_pushf(0)\n"
+                 "_pushf(4095)\n"
+                 "_pushf(4095)\n"
+                 "sys_macro_stdrawrect()\n"
+                 "_pushf(1e30)\n"
+                 "sys_macro_stnewtex()\n"
                  "end\n"
                  "function trigger_routedisplay()\n"
                  "set_local_var(\"mouse_click_seen\", 1)\n"
@@ -191,9 +208,17 @@ int main() {
         SimulationState nativeSimulation;
         nativeVariables.set("mixednumeric", 42.0);
         ScriptRuntime nativeRuntime(configuration, nativeVariables, nativeSimulation);
+        nativeRuntime.configureScriptTextures({ModelScriptTexture{3, 4, 5, {"4", "5"}}});
         nativeRuntime.initialize();
+        nativeRuntime.invokeEntryPoint("macro_texturesafety");
+        ScriptRuntime::ScriptTextureSnapshot textureAfterNativeSafety;
         if (nativeVariables.get("mixednumericout") != 42.0) {
             std::cerr << "native OSC backend was not selected by default\n";
+            return 1;
+        }
+        if (!nativeRuntime.copyScriptTexture(3, textureAfterNativeSafety) ||
+            textureAfterNativeSafety.width != 4 || textureAfterNativeSafety.height != 5) {
+            std::cerr << "native texture macros accepted unsafe drawing arguments\n";
             return 1;
         }
     }
@@ -396,7 +421,8 @@ int main() {
         return 1;
     }
 
-    runtime.configureScriptTextures({ModelScriptTexture{3, 4, 5, {"4", "5"}}});
+    runtime.configureScriptTextures({ModelScriptTexture{3, 4, 5, {"4", "5"}},
+                                     ModelScriptTexture{4, 4097, 1, {"4097", "1"}}});
     runtime.configureTextTextures({
         ModelTextTexture{0, false, {"display", "probe-font", "32", "16", "0", "255", "0", "0"}},
         ModelTextTexture{1, true, {"bitmapdisplay", "ProbeFont", "6", "4", "0", "10", "20", "30", "2"}},
@@ -473,6 +499,11 @@ int main() {
         !runtime.copyTextTexture(7, gridLeftTextTexture) ||
         !runtime.copyTextTexture(8, gridRightTextTexture)) {
         std::cerr << "configured texture surfaces were not created\n";
+        return 1;
+    }
+    ScriptRuntime::ScriptTextureSnapshot rejectedTexture;
+    if (runtime.copyScriptTexture(4, rejectedTexture)) {
+        std::cerr << "runtime accepted an oversized configured script texture\n";
         return 1;
     }
 
