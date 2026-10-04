@@ -1,6 +1,7 @@
 #include "SoundEngine.h"
 
 #include "ConfigurationParser.h"
+#include "Environment.h"
 #include "Logger.h"
 #include "PerfTrace.h"
 #include "Variables.h"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -47,6 +49,42 @@ bool endsWith(const std::string& value, std::string_view suffix) {
            value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+bool dopplerEnabledFromEnvironment() {
+    const char* setting = openbus::getEnvironment("OPENBUS_DOPPLER");
+    if (setting == nullptr) {
+        return false;
+    }
+    const std::string normalized = lower(setting);
+    return normalized == "1" || normalized == "true" || normalized == "yes" ||
+           normalized == "on";
+}
+
+std::array<float, 3> velocityBetween(const std::array<double, 3>& current,
+                                    const std::array<double, 3>& previous, double seconds) {
+    constexpr double maximumSpeed = 100.0;
+    if (!std::isfinite(seconds) || seconds < 0.001 || seconds > 1.0) {
+        return {};
+    }
+    std::array<double, 3> velocity = {};
+    double speedSquared = 0.0;
+    for (std::size_t axis = 0; axis < velocity.size(); ++axis) {
+        velocity[axis] = (current[axis] - previous[axis]) / seconds;
+        speedSquared += velocity[axis] * velocity[axis];
+    }
+    const double speed = std::sqrt(speedSquared);
+    if (!std::isfinite(speed)) {
+        return {};
+    }
+    if (speed > maximumSpeed) {
+        const double scale = maximumSpeed / speed;
+        for (double& component : velocity) {
+            component *= scale;
+        }
+    }
+    return {static_cast<float>(velocity[0]), static_cast<float>(velocity[1]),
+            static_cast<float>(velocity[2])};
+}
+
 bool isLoopSoundFile(const std::filesystem::path& path) {
     const std::string stem = lower(path.stem().string());
     return stem == "loop" || endsWith(stem, "_loop") || endsWith(stem, "-loop");
@@ -79,7 +117,7 @@ bool belongsToStartFamily(const std::filesystem::path& loopPath,
            (loopStem == family + "_loop" || loopStem == family + "-loop");
 }
 
-double evaluateCurve(const std::vector<SoundCurvePoint>& points, double value) {
+float evaluateCurve(const std::vector<SoundCurvePoint>& points, float value) {
     if (points.empty()) {
         return 1.0;
     }
@@ -90,11 +128,11 @@ double evaluateCurve(const std::vector<SoundCurvePoint>& points, double value) {
         if (value <= points[index].x) {
             const SoundCurvePoint& left = points[index - 1];
             const SoundCurvePoint& right = points[index];
-            const double range = right.x - left.x;
-            if (range == 0.0) {
+            const float range = right.x - left.x;
+            if (range == 0.0F) {
                 return right.y;
             }
-            const double fraction = (value - left.x) / range;
+            const float fraction = (value - left.x) / range;
             return left.y + fraction * (right.y - left.y);
         }
     }
@@ -115,6 +153,8 @@ struct SoundEngine::Backend {
         std::filesystem::path path;
         ALuint source = 0;
         bool loop = false;
+        std::array<double, 3> lastPosition = {};
+        std::chrono::steady_clock::time_point lastPositionUpdate = {};
     };
 
     struct LoopUpdate {
@@ -131,6 +171,10 @@ struct SoundEngine::Backend {
     std::unordered_map<std::string, std::shared_ptr<Clip>> clips;
     std::vector<ActiveSource> active;
     std::unordered_map<std::string, ALuint> activeLoops;
+    bool dopplerEnabled = false;
+    bool hasListenerPosition = false;
+    std::array<double, 3> lastListenerPosition = {};
+    std::chrono::steady_clock::time_point lastListenerPositionUpdate = {};
 
     static std::string sourceKey(const std::filesystem::path& path) {
         return path.lexically_normal().string();
@@ -276,6 +320,7 @@ struct SoundEngine::Backend {
     }
 
     Backend() {
+        dopplerEnabled = dopplerEnabledFromEnvironment();
         device = alcOpenDevice(nullptr);
         if (device == nullptr) {
             soundLog.Log("Unable to open an OpenAL audio device");
@@ -295,8 +340,11 @@ struct SoundEngine::Backend {
         // Do not clamp at AL_MAX_DISTANCE: OMSI's 3D field is not an audio cutoff,
         // and clamping here makes distant sources retain a constant audible level.
         alDistanceModel(AL_INVERSE_DISTANCE);
-        alDopplerFactor(0.0f);
+        alDopplerFactor(dopplerEnabled ? 1.0f : 0.0f);
+        alDopplerVelocity(343.3f);
         alListenerf(AL_GAIN, 1.0f);
+        soundLog.Log(std::string("OpenAL Doppler ") +
+                 (dopplerEnabled ? "enabled (OPENBUS_DOPPLER)" : "disabled"));
     }
 
     ~Backend() {
@@ -326,13 +374,24 @@ struct SoundEngine::Backend {
             return;
         }
         std::lock_guard<std::mutex> lock(mutex);
+        const auto now = std::chrono::steady_clock::now();
+        std::array<float, 3> velocity = {};
+        if (dopplerEnabled && hasListenerPosition) {
+            const double elapsed =
+                std::chrono::duration<double>(now - lastListenerPositionUpdate).count();
+            velocity = velocityBetween(position, lastListenerPosition, elapsed);
+        }
         const std::array<float, 6> orientation = {
             static_cast<float>(forward[0]), static_cast<float>(forward[1]),
             static_cast<float>(forward[2]), static_cast<float>(up[0]),
             static_cast<float>(up[1]),      static_cast<float>(up[2])};
         alListener3f(AL_POSITION, static_cast<float>(position[0]), static_cast<float>(position[1]),
                      static_cast<float>(position[2]));
+        alListener3f(AL_VELOCITY, velocity[0], velocity[1], velocity[2]);
         alListenerfv(AL_ORIENTATION, orientation.data());
+        lastListenerPosition = position;
+        lastListenerPositionUpdate = now;
+        hasListenerPosition = true;
     }
 
     void createSourceLocked(const std::filesystem::path& path, bool looped, float gain, float pitch,
@@ -370,7 +429,7 @@ struct SoundEngine::Backend {
             soundLog.Log("Unable to start OpenAL sound source: " + path.string());
             return;
         }
-        active.push_back({path, source, looped});
+        active.push_back({path, source, looped, position, std::chrono::steady_clock::now()});
         if (looped) {
             activeLoops.emplace(key, source);
         }
@@ -442,6 +501,17 @@ struct SoundEngine::Backend {
             alSource3f(source->source, AL_POSITION, static_cast<float>(update.position[0]),
                        static_cast<float>(update.position[1]),
                        static_cast<float>(update.position[2]));
+            const auto now = std::chrono::steady_clock::now();
+            std::array<float, 3> velocity = {};
+            if (dopplerEnabled) {
+                const double elapsed = std::chrono::duration<double>(
+                                           now - source->lastPositionUpdate)
+                                           .count();
+                velocity = velocityBetween(update.position, source->lastPosition, elapsed);
+            }
+            alSource3f(source->source, AL_VELOCITY, velocity[0], velocity[1], velocity[2]);
+            source->lastPosition = update.position;
+            source->lastPositionUpdate = now;
             desired.erase(target);
             ++source;
         }
@@ -543,7 +613,7 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
                 }
                 if (loopValues.size() >= 3) {
                     current.controlVariable = lower(openbus::config::trim(loopValues[1]));
-                    openbus::config::parseDouble(loopValues[2], current.controlCenter);
+                    openbus::config::parseFloat(loopValues[2], current.controlCenter);
                 }
             }
             currentTriggerNames.clear();
@@ -623,8 +693,8 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
                         break;
                     }
                     SoundCurvePoint point;
-                    if (openbus::config::parseDouble(values[0], point.x) &&
-                        openbus::config::parseDouble(values[1], point.y)) {
+                    if (openbus::config::parseFloat(values[0], point.x) &&
+                        openbus::config::parseFloat(values[1], point.y)) {
                         curve.points.push_back(point);
                     }
                     continue;
@@ -652,7 +722,7 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
             ConfigurationDiagnostics diagnostics;
             SoundCondition condition;
             if (reader.readPayloads(3, values, diagnostics, keyword) &&
-                openbus::config::parseDouble(values[1], condition.referenceValue) &&
+                openbus::config::parseFloat(values[1], condition.referenceValue) &&
                 openbus::config::parseInt(values[2], condition.comparison) &&
                 condition.comparison >= 0 && condition.comparison <= 5) {
                 condition.variable = lower(openbus::config::trim(values[0]));
@@ -664,7 +734,7 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
             }
             // Keep malformed conditions fail-closed so the associated sound
             // cannot accidentally play as an unconditional loop.
-            current.conditions.push_back({{}, 0.0, -1});
+            current.conditions.push_back({{}, 0.0F, -1});
             soundLog.Log("Invalid [conditionSingle] in " + configPath.string());
             updateCurrentTriggers();
         }
@@ -678,7 +748,7 @@ bool SoundEngine::conditionsAllow(const SoundTriggerDefinition& definition,
         if (condition.variable.empty() || condition.comparison < 0 || condition.comparison > 5) {
             return false;
         }
-        const double value = variables.get(condition.variable);
+        const float value = variables.get(condition.variable);
         bool matches = false;
         switch (condition.comparison) {
         case 0:
@@ -740,7 +810,7 @@ void SoundEngine::updateLoops(const Variables& variables) {
             }
         } else if (!definition.controlVariable.empty() && definition.controlCenter > 0.0) {
             gain *= std::clamp(variables.get(definition.controlVariable) / definition.controlCenter,
-                               0.0, 1.0);
+                               0.0F, 1.0F);
         }
         gain = std::clamp(gain, 0.0, 1.0);
         if (gain <= 0.0) {
@@ -749,7 +819,7 @@ void SoundEngine::updateLoops(const Variables& variables) {
         double pitch = 1.0;
         if (!definition.controlVariable.empty() && definition.controlCenter > 0.0) {
             pitch = std::clamp(variables.get(definition.controlVariable) / definition.controlCenter,
-                               0.5, 2.0);
+                               0.5F, 2.0F);
         }
         updates.push_back({file, static_cast<float>(gain), static_cast<float>(pitch),
                            definition.position, definition.maxDistance});
@@ -757,8 +827,12 @@ void SoundEngine::updateLoops(const Variables& variables) {
     backend_->updateLoops(updates);
 }
 
+bool SoundEngine::hasTrigger(const std::string& name) const {
+    return triggers_.find(lower(name)) != triggers_.end();
+}
+
 void SoundEngine::trigger(const std::string& name, const std::filesystem::path& overrideFile,
-                          double controlValue, const Variables* variables) {
+                          float controlValue, const Variables* variables) {
     openbus::rendering::TraceScope trace("sound", "SoundEngine::trigger");
     const auto found = triggers_.find(lower(name));
     if (found == triggers_.end() && overrideFile.empty()) {

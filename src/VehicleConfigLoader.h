@@ -26,8 +26,8 @@ struct VehicleCamera {
 };
 
 struct ConstantCurvePoint {
-    double x = 0.0;
-    double y = 0.0;
+    float x = 0.0F;
+    float y = 0.0F;
 };
 
 struct ConstantCurve {
@@ -118,7 +118,7 @@ struct VehicleConfig {
     bool hasOdometerInitial = false;
     std::vector<std::string> floatVariables;
     std::vector<std::string> stringVariables;
-    std::unordered_map<std::string, double> constants;
+    std::unordered_map<std::string, float> constants;
     std::unordered_map<std::string, ConstantCurve> curves;
     ConfigurationDiagnostics diagnostics;
 };

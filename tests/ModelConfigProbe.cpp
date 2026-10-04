@@ -1,4 +1,5 @@
 #include "ModelConfigLoader.h"
+#include "InteriorLighting.h"
 #include "Variables.h"
 
 #include <filesystem>
@@ -37,6 +38,16 @@ int main() {
     config.close();
 
     Variables variables(ScriptObjectKind::Vehicle);
+    openbus::rendering::Matrix4 rootModelView = {1.0, 0.0, 0.0, 0.0,
+                                                  0.0, 1.0, 0.0, 0.0,
+                                                  0.0, 0.0, 1.0, 0.0,
+                                                  10.0, 20.0, 30.0, 1.0};
+    const std::array<double, 3> lightViewPosition =
+        openbus::rendering::interiorLightPositionInViewSpace(rootModelView, {-0.6, -5.0, 7.0});
+    if (lightViewPosition != std::array<double, 3>{5.0, 20.6, 37.0}) {
+        std::cerr << "interior light model/view coordinate conversion failed\n";
+        return 1;
+    }
     const ModelConfig result =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
     std::ofstream variants(configPath);
@@ -110,7 +121,9 @@ int main() {
         result.parts[0].interiorLightIndexes != std::array<int, 4>{2, -1, 4, 5} ||
         result.interiorLights.size() != 1 ||
         result.interiorLights[0].controller != "cockpit_lights" ||
-        result.interiorLights[0].parameters[6] != 4.0 ||
+        result.interiorLights[0].intensity != 1.0 ||
+        result.interiorLights[0].color != std::array<double, 3>{2.0, 3.0, 0.1} ||
+        result.interiorLights[0].position != std::array<double, 3>{0.2, 0.3, 4.0} ||
         result.parts[0].materialStatesInOrder.size() != 1 ||
         result.parts[0].materialStatesInOrder[0].scriptTextureIndex != 0 ||
         result.parts[0].materialStatesInOrder[0].textTextureIndex != 0 ||

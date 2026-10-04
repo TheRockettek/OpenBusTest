@@ -10,8 +10,8 @@
 #include <vector>
 
 struct SoundCurvePoint {
-    double x = 0.0;
-    double y = 0.0;
+    float x = 0.0F;
+    float y = 0.0F;
 };
 
 struct SoundVolumeCurve {
@@ -21,7 +21,7 @@ struct SoundVolumeCurve {
 
 struct SoundCondition {
     std::string variable;
-    double referenceValue = 0.0;
+    float referenceValue = 0.0F;
     int comparison = -1;
 };
 
@@ -33,7 +33,7 @@ struct SoundTriggerDefinition {
     double maxDistance = 0.0;
     std::array<double, 3> position = {};
     std::string controlVariable;
-    double controlCenter = 0.0;
+    float controlCenter = 0.0F;
     double baseGain = 1.0;
     std::vector<SoundCurvePoint> volumeCurve;
     std::vector<SoundVolumeCurve> volumeCurves;
@@ -54,8 +54,9 @@ class SoundEngine {
     void setListenerPose(const std::array<double, 3>& position,
                          const std::array<double, 3>& forward, const std::array<double, 3>& up);
     void updateLoops(const Variables& variables);
+    bool hasTrigger(const std::string& name) const;
     void trigger(const std::string& name, const std::filesystem::path& overrideFile = {},
-                 double controlValue = 0.0, const Variables* variables = nullptr);
+                 float controlValue = 0.0F, const Variables* variables = nullptr);
     void stop(const std::string& name);
 
   private:

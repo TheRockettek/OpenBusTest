@@ -21,6 +21,7 @@ constexpr std::size_t MAX_CONFIG_RECORDS = 1'000'000;
 using openbus::config::Line;
 using openbus::config::lower;
 using openbus::config::parseDouble;
+using openbus::config::parseFloat;
 using openbus::config::parseInt;
 using openbus::config::Reader;
 using openbus::config::trim;
@@ -110,10 +111,10 @@ void loadConstantFile(const std::filesystem::path& configPath, const std::string
         if (keyword == "const") {
             Line nameLine;
             Line valueLine;
-            double value = 0.0;
+            float value = 0.0F;
             if (!reader.readPayload(nameLine, result.diagnostics, "const") ||
                 !reader.readPayload(valueLine, result.diagnostics, "const") ||
-                !parseDouble(valueLine.text, value)) {
+                !parseFloat(valueLine.text, value)) {
                 result.diagnostics.error(line.number, "const", "expected a name and numeric value");
                 continue;
             }
@@ -140,7 +141,7 @@ void loadConstantFile(const std::filesystem::path& configPath, const std::string
                     break;
                 }
                 ConstantCurvePoint point;
-                if (!parseDouble(values[0], point.x) || !parseDouble(values[1], point.y)) {
+                if (!parseFloat(values[0], point.x) || !parseFloat(values[1], point.y)) {
                     result.diagnostics.error(line.number, "pnt", "expected numeric x and y values");
                     continue;
                 }

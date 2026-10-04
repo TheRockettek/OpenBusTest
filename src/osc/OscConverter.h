@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
-inline constexpr char kOscConverterVersion[] = "11";
+inline constexpr char kOscConverterVersion[] = "12";
 
 enum class OscOpcode {
     PushNumber,
@@ -82,7 +82,7 @@ enum class OscOpcode {
 
 struct OscInstruction {
     OscOpcode opcode = OscOpcode::PushNumber;
-    double number = 0.0;
+    float number = 0.0F;
     int index = 0;
     std::string name;
 };

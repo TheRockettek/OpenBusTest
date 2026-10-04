@@ -586,8 +586,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
-        // [interiorlight]: eight fields; field 0 is the controller, followed by
-        // position, colour, intensity, and mode data.
+        // [interiorlight]: controller, intensity, RGB colour, and local x/y/z.
         if (keyword == "interiorlight") {
             std::vector<std::string> values;
             if (readValues(reader, line.number, keyword, 8, values, result.diagnostics)) {
@@ -595,14 +594,18 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 light.controller = lower(trim(values[0]));
                 declareIfVariable(light.controller, variables);
                 bool valid = true;
+                std::array<double, 7> parameters = {};
                 for (std::size_t index = 1; index < values.size(); ++index) {
-                    if (!parseDouble(values[index], light.parameters[index - 1])) {
+                    if (!parseDouble(values[index], parameters[index - 1])) {
                         result.diagnostics.error(line.number, keyword,
                                                  "expected numeric light parameters");
                         valid = false;
                     }
                 }
                 if (valid) {
+                    light.intensity = parameters[0];
+                    light.color = {parameters[1], parameters[2], parameters[3]};
+                    light.position = {parameters[4], parameters[5], parameters[6]};
                     result.interiorLights.push_back(std::move(light));
                 }
             }

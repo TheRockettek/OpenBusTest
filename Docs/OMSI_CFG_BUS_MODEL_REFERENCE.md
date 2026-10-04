@@ -416,14 +416,18 @@ Use repeated blocks for script-controlled visibility states.
 
 ### `[illumination_interior]`
 
-Assigns interior illumination groups to the current mesh. Repeated numeric
-values identify lighting channels/material groups.
+Assigns four slots on the current mesh to model-wide `[interiorlight]` records.
+Each slot is a zero-based index into the ordered list of those records; `-1`
+leaves a slot unused. A mesh can reference up to four lights, while a model can
+define more than four.
 
 ### `[interiorlight]`
 
-Defines an interior light. Common fields include controlling variable, mode,
-RGB colour, intensity, and local x/y/z position. Preserve all values because
-the exact tail varies by vehicle.
+Defines an interior light with eight values: controller variable (or numeric
+constant), intensity, red, green, blue, and local x/y/z position. Installed
+vehicle CFGs use byte-scale RGB values (0–255). Positions use the model's local
+coordinates. The format source available here does not specify physical units
+for intensity, so renderers should treat it as an authored relative strength.
 
 ### `[light_enh_2]`
 

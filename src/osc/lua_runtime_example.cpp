@@ -21,15 +21,15 @@
 #include <stack>
 
 struct ScriptContext {
-    std::unordered_map<std::string, double> local_num;
+    std::unordered_map<std::string, float> local_num;
     std::unordered_map<std::string, std::string> local_str;
-    std::unordered_map<std::string, double> sys_num;
-    std::unordered_map<std::string, double> constants;
+    std::unordered_map<std::string, float> sys_num;
+    std::unordered_map<std::string, float> constants;
 
-    double get_num(const std::unordered_map<std::string, double>& map,
-                   const std::string& key) const {
+    float get_num(const std::unordered_map<std::string, float>& map,
+                  const std::string& key) const {
         auto it = map.find(key);
-        return (it == map.end()) ? 0.0 : it->second;
+        return (it == map.end()) ? 0.0F : it->second;
     }
 };
 
@@ -75,7 +75,7 @@ int main(int argc, char** argv) {
             // std::cout << "[get_local_var] " << key << " = " << value << "\n";
             return value;
         };
-        auto set_local_var = [&ctx](const std::string& key, double value) {
+        auto set_local_var = [&ctx](const std::string& key, float value) {
             // std::cout << "[set_local_var] " << key << " = " << value << "\n";
             ctx.local_num[key] = value;
         };
@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
             // std::cout << "[get_sys_var] " << key << " = " << value << "\n";
             return value;
         };
-        auto set_sys_var = [&ctx](const std::string& key, double value) {
+        auto set_sys_var = [&ctx](const std::string& key, float value) {
             // std::cout << "[set_sys_var] " << key << " = " << value << "\n";
             ctx.sys_num[key] = value;
         };
@@ -103,13 +103,13 @@ int main(int argc, char** argv) {
             // std::cout << "[get_const] " << key << " = " << value << "\n";
             return value;
         };
-        auto set_const_var = [&ctx](const std::string& key, double value) {
+        auto set_const_var = [&ctx](const std::string& key, float value) {
             // std::cout << "[set_const_var] " << key << " = " << value << "\n";
             ctx.constants[key] = value;
         };
 
         std::stack<std::string> string_stack;
-        std::stack<double> float_stack;
+        std::stack<float> float_stack;
 
         auto string_stack_push = [&string_stack](const std::string& value) {
             string_stack.push(value);
@@ -131,13 +131,13 @@ int main(int argc, char** argv) {
             return string_stack.top();
         };
 
-        auto float_stack_push = [&float_stack](double value) { float_stack.push(value); };
+        auto float_stack_push = [&float_stack](float value) { float_stack.push(value); };
 
         auto float_stack_pop = [&float_stack]() {
             if (float_stack.empty()) {
                 return 0.0;
             }
-            double value = float_stack.top();
+            float value = float_stack.top();
             float_stack.pop();
             return value;
         };
@@ -151,6 +151,7 @@ int main(int argc, char** argv) {
 
         // Register data API
 
+        lua.set_function("osc_f32", [](float value) { return value; });
         lua.set_function("_pushf", float_stack_push);
         lua.set_function("_popf", float_stack_pop);
         lua.set_function("_peekf", float_stack_peek);
@@ -166,7 +167,7 @@ int main(int argc, char** argv) {
         lua.set_function("set_sys_var", set_sys_var);
         lua.set_function("get_const", get_const);
         lua.set_function("set_const_var", set_const_var);
-        lua.set_function("call_func", [](const std::string& name, double x) {
+        lua.set_function("call_func", [](const std::string& name, float x) {
             // std::cout << "[call_func] " << name << "\n";
             return x; // identity for testing
         });
@@ -189,32 +190,32 @@ int main(int argc, char** argv) {
         });
 
         // Register external function stubs
-        lua.set_function("radiator_fan_RPM", [](double rpm) { return rpm * 0.01; });
-        lua.set_function("radiator_fan_RPM2", [](double rpm) { return rpm * 0.015; });
-        lua.set_function("radiator_fan_RPM3", [](double rpm) { return rpm * 0.02; });
-        lua.set_function("engine_turbo_RPM_factor", [](double rpm) { return rpm / 3000.0; });
-        lua.set_function("engine_turbo_throttle_factor", [](double x) { return x; });
-        lua.set_function("engine_M_maxThrottle", [](double x) {
+        lua.set_function("radiator_fan_RPM", [](float rpm) { return rpm * 0.01F; });
+        lua.set_function("radiator_fan_RPM2", [](float rpm) { return rpm * 0.015F; });
+        lua.set_function("radiator_fan_RPM3", [](float rpm) { return rpm * 0.02F; });
+        lua.set_function("engine_turbo_RPM_factor", [](float rpm) { return rpm / 3000.0F; });
+        lua.set_function("engine_turbo_throttle_factor", [](float x) { return x; });
+        lua.set_function("engine_M_maxThrottle", [](float x) {
             (void)x;
             return 2200.0;
         });
-        lua.set_function("engine_M_minThrottle", [](double x) {
+        lua.set_function("engine_M_minThrottle", [](float x) {
             (void)x;
             return 700.0;
         });
-        lua.set_function("engine_n_coldM", [](double x) {
+        lua.set_function("engine_n_coldM", [](float x) {
             (void)x;
             return 0.0;
         });
-        lua.set_function("engine_efficiency_rpm", [](double x) {
+        lua.set_function("engine_efficiency_rpm", [](float x) {
             (void)x;
             return 0.38;
         });
-        lua.set_function("engine_efficiency_throttle", [](double x) {
+        lua.set_function("engine_efficiency_throttle", [](float x) {
             (void)x;
             return 0.40;
         });
-        lua.set_function("kuehlwassersmoke", [](double x) {
+        lua.set_function("kuehlwassersmoke", [](float x) {
             (void)x;
             return 0.0;
         });
@@ -234,7 +235,7 @@ int main(int argc, char** argv) {
         }
 
         string_stack = std::stack<std::string>();
-        float_stack = std::stack<double>();
+        float_stack = std::stack<float>();
         init();
 
         auto execs = 0;
@@ -243,7 +244,7 @@ int main(int argc, char** argv) {
 
         for (;;) {
             string_stack = std::stack<std::string>();
-            float_stack = std::stack<double>();
+            float_stack = std::stack<float>();
             frame();
 
             execs++;

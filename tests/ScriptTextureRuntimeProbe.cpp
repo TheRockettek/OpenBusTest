@@ -221,10 +221,129 @@ int main() {
             return 1;
         }
     }
+    const std::filesystem::path numericScriptPath = root / "numeric.osc";
+    {
+        std::ofstream numericSource(numericScriptPath);
+        numericSource << "{init}\n"
+                         "16777216 1 + (S.L.float32_sum)\n"
+                         "0 2 - (S.L.truthy_input)\n"
+                         "(L.L.truthy_input)\n"
+                         "{if}\n"
+                         "  1 (S.L.boolean_branch)\n"
+                         "{else}\n"
+                         "  0 (S.L.boolean_branch)\n"
+                         "{endif}\n"
+                         "(L.L.truthy_input) ! (S.L.boolean_not)\n"
+                         "0 ! (S.L.boolean_from_zero)\n"
+                         "(L.L.truthy_input) -3 && (S.L.boolean_and)\n"
+                         "(L.L.truthy_input) 0 || (S.L.boolean_or)\n"
+                         "2 1 > (S.L.boolean_compare)\n"
+                         "{end}\n";
+    }
+    VehicleConfig numericConfiguration;
+    numericConfiguration.sourcePath = root / "numeric.bus";
+    numericConfiguration.scripts.push_back(numericScriptPath.filename().string());
+    if (!setScriptBackend(nullptr)) {
+        std::cerr << "could not select native backend for numeric semantics probe\n";
+        return 1;
+    }
+    {
+        Variables numericVariables(ScriptObjectKind::Vehicle);
+        SimulationState numericSimulation;
+        ScriptRuntime numericRuntime(numericConfiguration, numericVariables, numericSimulation);
+        numericRuntime.initialize();
+        if (numericVariables.get("float32_sum") != 16777216.0 ||
+            numericVariables.get("boolean_branch") != 1.0 ||
+            numericVariables.get("boolean_not") != 0.0 ||
+            numericVariables.get("boolean_from_zero") != 1.0 ||
+            numericVariables.get("boolean_and") != 1.0 ||
+            numericVariables.get("boolean_or") != 1.0 ||
+            numericVariables.get("boolean_compare") != 1.0) {
+            std::cerr << "native OSC numeric or boolean semantics mismatch: sum="
+                      << numericVariables.get("float32_sum")
+                      << " branch=" << numericVariables.get("boolean_branch")
+                      << " not=" << numericVariables.get("boolean_not")
+                      << " zero-not=" << numericVariables.get("boolean_from_zero")
+                      << " and=" << numericVariables.get("boolean_and")
+                      << " or=" << numericVariables.get("boolean_or")
+                      << " compare=" << numericVariables.get("boolean_compare") << "\n";
+            return 1;
+        }
+    }
+    std::string numericLuaError;
+    if (!convertOscToLua(numericScriptPath, generatedLuaPath(numericScriptPath), numericLuaError)) {
+        std::cerr << "could not generate numeric semantics Lua probe: " << numericLuaError << "\n";
+        return 1;
+    }
     if (!setScriptBackend("lua")) {
         std::cerr << "could not select Lua backend for Lua-specific runtime probe\n";
         return 1;
     }
+    {
+        Variables numericVariables(ScriptObjectKind::Vehicle);
+        SimulationState numericSimulation;
+        ScriptRuntime numericRuntime(numericConfiguration, numericVariables, numericSimulation);
+        numericRuntime.initialize();
+        if (numericVariables.get("float32_sum") != 16777216.0 ||
+            numericVariables.get("boolean_branch") != 1.0 ||
+            numericVariables.get("boolean_not") != 0.0 ||
+            numericVariables.get("boolean_from_zero") != 1.0 ||
+            numericVariables.get("boolean_and") != 1.0 ||
+            numericVariables.get("boolean_or") != 1.0 ||
+            numericVariables.get("boolean_compare") != 1.0) {
+            std::cerr << "generated Lua numeric or boolean semantics mismatch: sum="
+                      << numericVariables.get("float32_sum")
+                      << " branch=" << numericVariables.get("boolean_branch")
+                      << " not=" << numericVariables.get("boolean_not")
+                      << " zero-not=" << numericVariables.get("boolean_from_zero")
+                      << " and=" << numericVariables.get("boolean_and")
+                      << " or=" << numericVariables.get("boolean_or")
+                      << " compare=" << numericVariables.get("boolean_compare") << "\n";
+            return 1;
+        }
+    }
+    const std::filesystem::path toggleScriptPath = root / "toggle.osc";
+    {
+        std::ofstream toggleSource(toggleScriptPath);
+        toggleSource << "{trigger:toggle}\n"
+                        "(L.L.blinkgeber) ! (S.L.blinkgeber)\n"
+                        "{if}\n"
+                        "  (C.L.blinkertime_on) (S.L.interval)\n"
+                        "{else}\n"
+                        "  (C.L.blinkertime_off) (S.L.interval)\n"
+                        "{endif}\n"
+                        "{end}\n";
+    }
+    std::string luaConversionError;
+    if (!convertOscToLua(toggleScriptPath, generatedLuaPath(toggleScriptPath),
+                         luaConversionError)) {
+        std::cerr << "could not generate Lua toggle probe: " << luaConversionError << "\n";
+        return 1;
+    }
+    VehicleConfig toggleConfiguration;
+    toggleConfiguration.sourcePath = root / "toggle.bus";
+    toggleConfiguration.scripts.push_back(toggleScriptPath.filename().string());
+    toggleConfiguration.constants["blinkertime_on"] = 0.6;
+    toggleConfiguration.constants["blinkertime_off"] = 0.4;
+    Variables toggleVariables(ScriptObjectKind::Vehicle);
+    SimulationState toggleSimulation;
+    toggleVariables.set("blinkgeber", 0.0);
+    ScriptRuntime toggleRuntime(toggleConfiguration, toggleVariables, toggleSimulation);
+    toggleRuntime.invokeEntryPoint("trigger_toggle");
+    if (toggleVariables.get("blinkgeber") != 1.0 ||
+        toggleVariables.get("interval") != static_cast<double>(static_cast<float>(0.6))) {
+        std::cerr << "generated Lua ON transition mismatch: blinkgeber="
+                  << toggleVariables.get("blinkgeber")
+                  << " interval=" << toggleVariables.get("interval") << "\n";
+        return 1;
+    }
+    toggleRuntime.invokeEntryPoint("trigger_toggle");
+    if (toggleVariables.get("blinkgeber") != 0.0 ||
+        toggleVariables.get("interval") != static_cast<double>(static_cast<float>(0.4))) {
+        std::cerr << "generated Lua did not select the OFF interval after toggling off\n";
+        return 1;
+    }
+
     Variables variables(ScriptObjectKind::Vehicle);
     SimulationState simulation;
     ScriptRuntime runtime(configuration, variables, simulation);
@@ -267,7 +386,7 @@ int main() {
     }
     variables.set("ticketer_pos", 0.0);
     runtime.invokeMouseDrag("TicketerGimble", 0.0, -500.0, 120.0, 80.0);
-    if (variables.get("ticketer_pos") != -0.2) {
+    if (variables.get("ticketer_pos") != static_cast<double>(static_cast<float>(-0.2))) {
         std::cerr << "upward ticketer drag did not clamp at the lower limit\n";
         return 1;
     }

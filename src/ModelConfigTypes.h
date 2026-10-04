@@ -119,7 +119,9 @@ struct ModelAnimation {
 
 struct ModelInteriorLight {
     std::string controller;
-    std::array<double, 7> parameters = {};
+    double intensity = 0.0;
+    std::array<double, 3> color = {};
+    std::array<double, 3> position = {};
 };
 
 struct ModelEnhancedLight {

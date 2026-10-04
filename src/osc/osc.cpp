@@ -317,8 +317,12 @@ class Emitter {
     bool pending_str = false;
     std::string pending_str_expr;
 
+    static std::string round_float(const std::string& expr) {
+        return "osc_f32(" + expr + ")";
+    }
+
     void emit_push_float(std::string& out, int depth, const std::string& expr) {
-        out += ind(depth) + "_pushf(" + expr + ")\n";
+        out += ind(depth) + "_pushf(" + round_float(expr) + ")\n";
     }
 
     void emit_push_str(std::string& out, int depth, const std::string& expr) {
@@ -351,7 +355,8 @@ class Emitter {
             emit_push_float(out, depth, pf[i]);
         if (!pf.empty()) {
             if (pending_negated)
-                emit_push_float(out, depth, "compare(" + pf.back() + ",0) and 1 or 0");
+                emit_push_float(out, depth,
+                                round_float("compare(" + pf.back() + ",0) and 1 or 0"));
             else
                 emit_push_float(out, depth, pf.back());
             pf.clear();
@@ -382,7 +387,7 @@ class Emitter {
     // always refers unambiguously to the new top.
     void push_float(std::string& /*out*/, int /*depth*/, const std::string& expr) {
         if (pending_negated && !pf.empty()) {
-            pf.back() = "compare(" + pf.back() + ",0) and 1 or 0";
+            pf.back() = round_float("compare(" + pf.back() + ",0) and 1 or 0");
             pending_negated = false;
         }
         pf.push_back(expr);
@@ -399,7 +404,7 @@ class Emitter {
     // Materialise any negation on pf.back() into the string itself.
     void materialise_neg() {
         if (pending_negated && !pf.empty()) {
-            pf.back() = "compare(" + pf.back() + ",0) and 1 or 0";
+            pf.back() = round_float("compare(" + pf.back() + ",0) and 1 or 0");
             pending_negated = false;
         }
     }
@@ -411,7 +416,7 @@ class Emitter {
             materialise_neg();
             std::string b = std::move(pf.back());
             pf.pop_back();
-            pf.back() = "(" + pf.back() + infix + b + ")";
+            pf.back() = round_float("(" + pf.back() + infix + b + ")");
         } else {
             flush_pending(out, depth);
             out += fallback;
@@ -424,7 +429,7 @@ class Emitter {
             materialise_neg();
             std::string b = std::move(pf.back());
             pf.pop_back();
-            pf.back() = "((" + pf.back() + infix + b + ") and 1 or 0)";
+            pf.back() = round_float("((" + pf.back() + infix + b + ") and 1 or 0)");
         } else {
             flush_pending(out, depth);
             out += fallback;
@@ -437,7 +442,7 @@ class Emitter {
             materialise_neg();
             std::string b = std::move(pf.back());
             pf.pop_back();
-            pf.back() = fn + "(" + pf.back() + "," + b + ")";
+            pf.back() = round_float(fn + "(" + pf.back() + "," + b + ")");
         } else {
             flush_pending(out, depth);
             out += fallback;
@@ -448,7 +453,7 @@ class Emitter {
                        const std::string& fallback) {
         if (!pf.empty()) {
             materialise_neg();
-            pf.back() = fn + "(" + pf.back() + ")";
+            pf.back() = round_float(fn + "(" + pf.back() + ")");
         } else {
             flush_pending(out, depth);
             out += fallback;
@@ -459,7 +464,7 @@ class Emitter {
                          const std::string& suf, const std::string& fallback) {
         if (!pf.empty()) {
             materialise_neg();
-            pf.back() = pre + pf.back() + suf;
+            pf.back() = round_float(pre + pf.back() + suf);
         } else {
             flush_pending(out, depth);
             out += fallback;
@@ -668,9 +673,10 @@ class Emitter {
             if (subU == 'L') {
                 const std::string normalizedName = lower_name(name);
                 if (!pf.empty()) {
-                    std::string expr =
-                        pending_negated ? "compare(" + pf.back() + ",0) and 1 or 0" : pf.back();
-                    out += ind(depth) + "set_local_var(\"" + normalizedName + "\", " + expr + ")\n";
+                    materialise_neg();
+                    out += ind(depth) + "set_local_var(\"" + normalizedName + "\", " + pf.back() +
+                           ")\n";
+                    pf.back() = "get_local_var(\"" + normalizedName + "\")";
                 } else {
                     flush_pending(out, depth);
                     out += ind(depth) + "set_local_var(\"" + normalizedName + "\", " +
@@ -727,7 +733,8 @@ class Emitter {
         case 'F': // Function/curve call  (pops x, pushes y)
             if (!pf.empty()) {
                 materialise_neg();
-                pf.back() = "call_func(\"" + lower_name(name) + "\", " + pf.back() + ")";
+                pf.back() = round_float("call_func(\"" + lower_name(name) + "\", " +
+                                        pf.back() + ")");
             } else {
                 flush_pending(out, depth);
                 emit_push_float(out, depth,
@@ -804,7 +811,8 @@ class Emitter {
                 materialise_neg();
                 std::string b = std::move(pf.back());
                 pf.pop_back();
-                pf.back() = "(compare(" + b + ",1) and " + pf.back() + "/" + b + " or 0)";
+                pf.back() = round_float("(compare(" + b + ",1) and " + pf.back() + "/" + b +
+                                        " or 0)");
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "do local b=" + pop_float_expr() +
@@ -819,8 +827,8 @@ class Emitter {
                 std::string b = std::move(pf.back());
                 pf.pop_back();
                 const std::string a = pf.back();
-                pf.back() = "(compare(" + b + ",1) and (" + a + "-math.floor(" + a + "/" + b +
-                            ")*" + b + ") or 0)";
+                pf.back() = round_float("(compare(" + b + ",1) and (" + a + "-math.floor(" + a +
+                                        "/" + b + ")*" + b + ") or 0)");
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "do local b=" + pop_float_expr() +
@@ -876,7 +884,7 @@ class Emitter {
             if (!pf.empty()) {
                 materialise_neg();
                 const std::string e = pf.back();
-                pf.back() = "(" + e + "*" + e + ")";
+                pf.back() = round_float("(" + e + "*" + e + ")");
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "do local v=" + pop_float_expr() + "; _pushf(v*v) end\n";
@@ -887,7 +895,7 @@ class Emitter {
             if (!pf.empty()) {
                 materialise_neg();
                 const std::string e = pf.back();
-                pf.back() = "((" + e + ">0) and 1 or ((" + e + "<0) and -1 or 0))";
+                pf.back() = round_float("((" + e + ">0) and 1 or ((" + e + "<0) and -1 or 0))");
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "do local v=" + pop_float_expr() +
@@ -899,7 +907,7 @@ class Emitter {
             if (!pf.empty()) {
                 materialise_neg();
                 const std::string e = pf.back();
-                pf.back() = "math.random(0,math.max(0,math.floor(" + e + ")-1))";
+                pf.back() = round_float("math.random(0,math.max(0,math.floor(" + e + ")-1))");
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "_pushf(math.random(0,math.max(0,math.floor(" +
@@ -928,7 +936,8 @@ class Emitter {
                 materialise_neg();
                 std::string b = std::move(pf.back());
                 pf.pop_back();
-                pf.back() = "((compare(" + pf.back() + ",1) and compare(" + b + ",1)) and 1 or 0)";
+                pf.back() = round_float("((compare(" + pf.back() + ",1) and compare(" + b +
+                                        ",1)) and 1 or 0)");
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "do local b=" + pop_float_expr() +
@@ -942,7 +951,8 @@ class Emitter {
                 materialise_neg();
                 std::string b = std::move(pf.back());
                 pf.pop_back();
-                pf.back() = "((compare(" + pf.back() + ",1) or compare(" + b + ",1)) and 1 or 0)";
+                pf.back() = round_float("((compare(" + pf.back() + ",1) or compare(" + b +
+                                        ",1)) and 1 or 0)");
             } else {
                 flush_pending(out, depth);
                 out += ind(depth) + "do local b=" + pop_float_expr() +
@@ -1202,7 +1212,7 @@ class Emitter {
         // function _pops() local i = #_ss; local v = _ss[i]; _ss[i] = nil; return v end\n"; out +=
         // "local function _peeks(offset) offset = offset or 0; return _ss[#_ss - offset] end\n";
         out += "\n";
-        out += "-- Host must provide: get_local_var, set_local_var, get_sys_var,\n";
+        out += "-- Host must provide: osc_f32, get_local_var, set_local_var, get_sys_var,\n";
         out += "--   get_local_str, set_local_str, get_const, call_func,\n";
         out += "--   sound_trigger, sound_trigger_file, sys_macro_*, omsi_debug\n";
         out += "\n";
@@ -1332,7 +1342,7 @@ class BytecodeCompiler {
         } else if (op.size() == 2 && op[0] == 's' && op[1] >= '0' && op[1] <= '7') {
             code.push_back({OscOpcode::StoreRegister, 0.0, op[1] - '0', {}});
         } else if (op == "pi") {
-            code.push_back({OscOpcode::PushNumber, 3.14159265358979323846, 0, {}});
+            code.push_back({OscOpcode::PushNumber, 3.1415927F, 0, {}});
         } else if (op == "d") {
             emit(code, OscOpcode::Duplicate);
         } else if (op == "+") {
@@ -1456,7 +1466,7 @@ class BytecodeCompiler {
                 continue;
             }
             if (token.type == TT::Number) {
-                code.push_back({OscOpcode::PushNumber, std::stod(token.val), 0, {}});
+                code.push_back({OscOpcode::PushNumber, std::stof(token.val), 0, {}});
             } else if (token.type == TT::String) {
                 code.push_back({OscOpcode::PushString, 0.0, 0, token.val});
             } else if (token.type == TT::Command) {

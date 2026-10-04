@@ -35,7 +35,7 @@ bool Variables::hasString(const std::string& name) const {
     return strings_.find(name) != strings_.end();
 }
 
-double Variables::get(const std::string& name) const {
+float Variables::get(const std::string& name) const {
     const auto found = values_.find(name);
     return found == values_.end() ? 0.0 : found->second;
 }
@@ -45,11 +45,11 @@ std::string Variables::getString(const std::string& name) const {
     return found == strings_.end() ? std::string() : found->second;
 }
 
-void Variables::set(const std::string& name, double value) {
+void Variables::set(const std::string& name, float value) {
     values_[name] = value;
 }
 
-const std::unordered_map<std::string, double>& Variables::numericValues() const {
+const std::unordered_map<std::string, float>& Variables::numericValues() const {
     return values_;
 }
 
@@ -138,10 +138,10 @@ SystemVariables::SystemVariables() : Variables(ScriptObjectKind::System) {
         {"nosound", 1.0},
         {"pause", 0.0},
         {"time", 43200.0},
-        {"day", static_cast<double>(localDate.tm_mday)},
-        {"month", static_cast<double>(localDate.tm_mon + 1)},
-        {"year", static_cast<double>(localDate.tm_year + 1900)},
-        {"dayofyear", static_cast<double>(localDate.tm_yday)},
+        {"day", static_cast<float>(localDate.tm_mday)},
+        {"month", static_cast<float>(localDate.tm_mon + 1)},
+        {"year", static_cast<float>(localDate.tm_year + 1900)},
+        {"dayofyear", static_cast<float>(localDate.tm_yday)},
         // These are initialized for the system-variable contract. updateFrame()
         // supplies the live cursor position, and ScriptRuntime temporarily
         // overwrites them with OMSI drag deltas while invoking a drag handler.
@@ -161,7 +161,7 @@ SystemVariables::SystemVariables() : Variables(ScriptObjectKind::System) {
     });
 }
 
-void SystemVariables::updateFrame(double timegap, double getTime, double mouseX, double mouseY) {
+void SystemVariables::updateFrame(float timegap, float getTime, float mouseX, float mouseY) {
     setValues({
         {"timegap", timegap},
         {"gettime", getTime},

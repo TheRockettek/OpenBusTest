@@ -15,7 +15,7 @@ set "OPENBUS_REFLECTION_TRANSPARENT=0"
 set "OPENBUS_MATERIAL_BATCHING=1"
 
 set "OPENBUS_SCRIPT_BACKEND=native"
-set "OPENBUS_SCRIPT_HZ=60"
+set "OPENBUS_SCRIPT_HZ=30"
 
 set "OPENBUS_TRACE=1"
 set "OPENBUS_TRACE_FILE=openbus_trace.json"
@@ -23,6 +23,8 @@ set "OPENBUS_TRACE_MAX_EVENTS=500000"
 set "OPENBUS_TRACE_MIN_US=1"
 
 set "OPENBUS_ASSET_WORKERS=4"
+set "OPENBUS_DOPPLER=1"
+set "OPENBUS_DEBUG_LIGHTS=1"
 
 call "%~dp0windows_clang_env.bat"
 if errorlevel 1 exit /b %errorlevel%

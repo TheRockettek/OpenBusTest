@@ -258,10 +258,21 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Native OSC bytecode is the default script backend. Scripts that cannot be
   compiled fall back to Lua; set `OPENBUS_SCRIPT_BACKEND=lua` to force Lua for
   debugging.
+- OSC numeric values use signed 32-bit floating-point precision in both
+  backends. Conditions and logical inputs treat zero as false and any non-zero
+  value as true; logical and comparison results are canonical `0` or `1`.
 - Scripts normally follow the render rate. Set `OPENBUS_SCRIPT_HZ=30` to run
   vehicle scripts at 30 Hz while rendering continues at the display rate;
   fixed-rate script ticks receive `Timegap=1/30` and catch up for short frame
   hitches with a bounded tick budget.
+- Set `OPENBUS_DEBUG_LIGHTS=1` to log changes to
+  `Timegap`, all numeric `lights_*` variables, and the main/available electrical
+  busbars. It logs only variables whose values changed during a script frame,
+  with their previous and new values; unchanged frames produce no log entry.
+  With the native backend, it also reports the selected config/scripts and
+  relevant timer constants, then traces blinker startup, timer transitions,
+  and zero-factor/zero-interval calculations with loaded operands, arithmetic
+  results, branch decisions, and saved values.
 - Profiling retains at most `1,000,000` events by default. Set
   `OPENBUS_TRACE_MAX_EVENTS=250000` or another positive value to lower the
   memory ceiling. Trace events are flushed incrementally to the JSON file while
@@ -279,6 +290,10 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   back-to-front; this is not hardware occlusion-query culling.
 - Set `OPENBUS_WHEELS_FROM_ODE=1` to bypass wheel `newanim` transforms and
   place each wheel from its matching ODE body pose. The default is `0`.
+- Doppler pitch shifting is disabled by default. Set `OPENBUS_DOPPLER=1` (also
+  accepts `true`, `yes`, or `on`) before launch to enable OpenAL Doppler using
+  listener and moving-loop velocity estimates. Velocities are reset after long
+  frame gaps and capped to avoid pitch spikes on camera/position teleports.
 - Model geometry is uploaded to OpenGL vertex buffer objects (VBOs) and drawn
   with shader-backed `glDrawArrays` calls in an OpenGL 3.3 core profile.
 - Window and door glass remains material-driven in the VBO path; the temporary

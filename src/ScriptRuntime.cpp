@@ -21,10 +21,12 @@ extern "C" {
 #include <cstdlib>
 #include <fstream>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <random>
 #include <sstream>
+#include <string_view>
 #include <unordered_map>
 
 Logger scriptRuntimeLogger = Logger("ScriptRuntime");
@@ -74,10 +76,10 @@ struct ScriptRuntime::Impl {
     std::string scriptIdentity;
     Variables& localState;
     SimulationState& sharedState;
-    std::function<void(const std::string&, const std::string&, double)> onSoundTrigger;
+    std::function<void(const std::string&, const std::string&, float)> onSoundTrigger;
     ScriptEnvironment scriptEnvironment;
     std::vector<std::string> errors;
-    std::vector<double> floatStack;
+    std::vector<float> floatStack;
     std::vector<std::string> stringStack;
     std::unordered_map<int, ScriptTexture> scriptTextures;
     std::unordered_map<int, std::pair<int, int>> scriptTextureDimensions;
@@ -114,8 +116,9 @@ struct ScriptRuntime::Impl {
     std::uint64_t revisionCounter = 0;
     std::vector<std::unique_ptr<LuaFunctionBinding>> luaFunctionBindings;
     std::vector<OscProgram> nativePrograms;
-    std::array<double, 8> nativeRegisters = {};
+    std::array<float, 8> nativeRegisters = {};
     bool nativeBackend = false;
+    bool debugLightsVariables = false;
 
     ScriptTexture configuredScriptTexture(int index) {
         ScriptTexture texture;
@@ -365,21 +368,21 @@ struct ScriptRuntime::Impl {
         return font;
     }
 
-    double nativePopFloat() {
+    float nativePopFloat() {
         if (floatStack.empty()) {
-            return 0.0;
+            return 0.0F;
         }
-        const double value = floatStack.back();
+        const float value = floatStack.back();
         floatStack.pop_back();
         return value;
     }
 
-    double nativePeekFloat() const {
-        return floatStack.empty() ? 0.0 : floatStack.back();
+    float nativePeekFloat() const {
+        return floatStack.empty() ? 0.0F : floatStack.back();
     }
 
-    double soundControlValue(const std::string& name) const {
-        double value = nativePeekFloat();
+    float soundControlValue(const std::string& name) const {
+        float value = nativePeekFloat();
         std::string positionVariable;
         std::string lastPositionVariable;
         if (name == "ev_cabwindow_cls" || name == "ev_cabwindow_opn") {
@@ -390,8 +393,8 @@ struct ScriptRuntime::Impl {
             lastPositionVariable = "cp_cabwindow2_lastpos";
         }
         if (!positionVariable.empty()) {
-            const double timegap = sharedState.sharedVariables().get("timegap");
-            if (timegap > 0.0) {
+            const float timegap = sharedState.sharedVariables().get("timegap");
+            if (timegap > 0.0F) {
                 value = (std::max)(value, std::abs(localState.get(positionVariable) -
                                                    localState.get(lastPositionVariable)) /
                                               timegap);
@@ -425,7 +428,7 @@ struct ScriptRuntime::Impl {
                 stringStack.pop_back();
             }
         };
-        const auto pushNumber = [this](double value) { floatStack.push_back(value); };
+        const auto pushNumber = [this](float value) { floatStack.push_back(value); };
         const auto pushString = [this] { stringStack.emplace_back(); };
 
         if (name == "getterminusindex" || name == "getbusstopindex" || name == "getrouteindex") {
@@ -448,8 +451,8 @@ struct ScriptRuntime::Impl {
         } else if (name == "nrspecrandom") {
             const unsigned int seed = static_cast<unsigned int>(nativePopFloat());
             std::minstd_rand random(seed);
-            pushNumber(static_cast<double>(random()) /
-                       static_cast<double>(std::minstd_rand::max()));
+            pushNumber(static_cast<float>(random()) /
+                       static_cast<float>(std::minstd_rand::max()));
         } else if (name == "getterminuscode" || name == "getrouteterminusindex" ||
                    name == "getbusstopcount" || name == "getttlinestring" ||
                    name == "getttterminusindex" || name == "getttbusstopcount" ||
@@ -474,7 +477,7 @@ struct ScriptRuntime::Impl {
             }
         } else if (name == "stsetcolor") {
             const auto channel = [this] {
-                return static_cast<std::uint8_t>(std::clamp(nativePopFloat(), 0.0, 255.0));
+                return static_cast<std::uint8_t>(std::clamp(nativePopFloat(), 0.0F, 255.0F));
             };
             const std::uint8_t blue = channel();
             const std::uint8_t green = channel();
@@ -502,7 +505,7 @@ struct ScriptRuntime::Impl {
         } else if (name == "sttextout") {
             const int letterSpacing = static_cast<int>(nativePopFloat());
             const std::uint32_t packedColor =
-                static_cast<std::uint32_t>(std::max(0.0, nativePopFloat()));
+                static_cast<std::uint32_t>(std::max(0.0F, nativePopFloat()));
             nativePopFloat();
             const int y = static_cast<int>(nativePopFloat());
             const int x = static_cast<int>(nativePopFloat());
@@ -536,13 +539,130 @@ struct ScriptRuntime::Impl {
         } else if (name == "textlength") {
             nativePopFloat();
             const std::string value = nativePopString();
-            pushNumber(static_cast<double>(value.size() * 6));
+            pushNumber(static_cast<float>(value.size() * 6));
         }
     }
 
     const OscInstruction* nativeFindInstruction(const std::vector<OscInstruction>& code,
                                                 std::size_t index) const {
         return index < code.size() ? &code[index] : nullptr;
+    }
+
+    bool shouldTraceLightsFunction(const std::string& functionName) const {
+        const float interval = localState.get("lights_blinkgeber_timegap");
+        const float factor = localState.get("lights_blinkgeber_faktor");
+        if (functionName.find("lights_startblinkgeber") != std::string::npos) {
+            const bool canStart =
+                (localState.get("elec_busbar_main") > 0.4F ||
+                 (localState.get("elec_busbar_avail") > 0.4F &&
+                  localState.get("lights_warnblinker") != 0.0F)) &&
+                localState.get("lights_blinker_running") == 0.0F;
+            return canStart || (interval <= 0.0F &&
+                                localState.get("lights_blinker_running") != 0.0F);
+        }
+        if (functionName.find("lights_runblinkgeber") != std::string::npos) {
+            const bool active =
+                 (localState.get("elec_busbar_main") > 0.4F &&
+                  localState.get("lights_sw_blinker") != 0.0F) ||
+                 (localState.get("elec_busbar_avail") > 0.4F &&
+                  localState.get("lights_warnblinker") != 0.0F);
+              const float elapsed = localState.get("lights_blinker_runtime") +
+                                sharedState.sharedVariables().get("timegap");
+            return active && (interval <= 0.0F || elapsed > interval);
+        }
+        if (functionName.find("lights_calc_geberfaktor") != std::string::npos) {
+            return factor == 0.0F || interval <= 0.0F;
+        }
+        return false;
+    }
+
+    static bool isLightsTraceVariable(const std::string& name) {
+        return name.starts_with("lights_") || name == "timegap" ||
+               name == "elec_busbar_main" || name == "elec_busbar_avail";
+    }
+
+    static const char* nativeOpcodeName(OscOpcode opcode) {
+        switch (opcode) {
+        case OscOpcode::PushNumber: return "push-number";
+        case OscOpcode::LoadLocal: return "load-local";
+        case OscOpcode::StoreLocal: return "store-local";
+        case OscOpcode::LoadSystem: return "load-system";
+        case OscOpcode::StoreSystem: return "store-system";
+        case OscOpcode::LoadConstant: return "load-constant";
+        case OscOpcode::LoadRegister: return "load-register";
+        case OscOpcode::StoreRegister: return "store-register";
+        case OscOpcode::Duplicate: return "duplicate";
+        case OscOpcode::Add: return "add";
+        case OscOpcode::Subtract: return "subtract";
+        case OscOpcode::Multiply: return "multiply";
+        case OscOpcode::Divide: return "divide";
+        case OscOpcode::Modulo: return "modulo";
+        case OscOpcode::Negate: return "negate";
+        case OscOpcode::LogicalNot: return "logical-not";
+        case OscOpcode::Equal: return "equal";
+        case OscOpcode::NotEqual: return "not-equal";
+        case OscOpcode::Less: return "less";
+        case OscOpcode::LessEqual: return "less-equal";
+        case OscOpcode::Greater: return "greater";
+        case OscOpcode::GreaterEqual: return "greater-equal";
+        case OscOpcode::LogicalAnd: return "logical-and";
+        case OscOpcode::LogicalOr: return "logical-or";
+        case OscOpcode::Absolute: return "absolute";
+        case OscOpcode::Minimum: return "minimum";
+        case OscOpcode::Maximum: return "maximum";
+        case OscOpcode::Floor: return "floor";
+        case OscOpcode::Ceiling: return "ceiling";
+        case OscOpcode::Sine: return "sine";
+        case OscOpcode::Cosine: return "cosine";
+        case OscOpcode::Tangent: return "tangent";
+        case OscOpcode::ArcTangent: return "arctangent";
+        case OscOpcode::SquareRoot: return "sqrt";
+        case OscOpcode::ArcSine: return "arcsine";
+        case OscOpcode::Exponential: return "exponential";
+        case OscOpcode::Square: return "square";
+        case OscOpcode::Sign: return "sign";
+        case OscOpcode::JumpIfFalse: return "jump-if-false";
+        case OscOpcode::Jump: return "jump";
+        case OscOpcode::CallFunction: return "call-function";
+        default: return nullptr;
+        }
+    }
+
+    static bool isNativeArithmeticOpcode(OscOpcode opcode) {
+        switch (opcode) {
+        case OscOpcode::Add:
+        case OscOpcode::Subtract:
+        case OscOpcode::Multiply:
+        case OscOpcode::Divide:
+        case OscOpcode::Modulo:
+        case OscOpcode::Negate:
+        case OscOpcode::LogicalNot:
+        case OscOpcode::Equal:
+        case OscOpcode::NotEqual:
+        case OscOpcode::Less:
+        case OscOpcode::LessEqual:
+        case OscOpcode::Greater:
+        case OscOpcode::GreaterEqual:
+        case OscOpcode::LogicalAnd:
+        case OscOpcode::LogicalOr:
+        case OscOpcode::Absolute:
+        case OscOpcode::Minimum:
+        case OscOpcode::Maximum:
+        case OscOpcode::Floor:
+        case OscOpcode::Ceiling:
+        case OscOpcode::Sine:
+        case OscOpcode::Cosine:
+        case OscOpcode::Tangent:
+        case OscOpcode::ArcTangent:
+        case OscOpcode::SquareRoot:
+        case OscOpcode::ArcSine:
+        case OscOpcode::Exponential:
+        case OscOpcode::Square:
+        case OscOpcode::Sign:
+            return true;
+        default:
+            return false;
+        }
     }
 
     bool executeNativeFunction(const std::string& functionName, int callDepth = 0) {
@@ -558,12 +678,26 @@ struct ScriptRuntime::Impl {
             }
 
             const std::vector<OscInstruction>& code = found->second;
+            const bool traceLightsExecution =
+                debugLightsVariables && shouldTraceLightsFunction(functionName);
+            if (traceLightsExecution) {
+                log("native lights trace enter function=" + functionName +
+                    " depth=" + std::to_string(callDepth) +
+                    " instructions=" + std::to_string(code.size()));
+            }
             std::size_t instructionPointer = 0;
             while (instructionPointer < code.size()) {
+                const std::size_t currentInstruction = instructionPointer;
                 const OscInstruction& instruction = code[instructionPointer++];
+                const std::size_t nextInstruction = instructionPointer;
+                const std::size_t stackSizeBefore = floatStack.size();
+                const float topBefore = floatStack.empty() ? 0.0F : floatStack.back();
+                const float belowTopBefore = floatStack.size() < 2
+                                                     ? 0.0F
+                                                     : floatStack[floatStack.size() - 2];
                 const auto binary = [this](auto operation) {
-                    const double right = nativePopFloat();
-                    const double left = nativePopFloat();
+                    const float right = nativePopFloat();
+                    const float left = nativePopFloat();
                     floatStack.push_back(operation(left, right));
                 };
                 switch (instruction.opcode) {
@@ -581,24 +715,39 @@ struct ScriptRuntime::Impl {
                     break;
                 case OscOpcode::StoreLocal:
                     localState.set(instruction.name, nativePeekFloat());
+                    if (debugLightsVariables && instruction.name == "lights_blinkgeber_timegap") {
+                        log("lights blink interval assigned: value=" +
+                            std::to_string(localState.get(instruction.name)) +
+                            " factor=" +
+                            std::to_string(localState.get("lights_blinkgeber_faktor")));
+                    }
                     break;
                 case OscOpcode::StoreLocalString:
                     localState.setString(instruction.name, nativePopString());
                     break;
                 case OscOpcode::LoadSystem:
-                    floatStack.push_back(sharedState.sharedVariables().get(instruction.name));
+                    floatStack.push_back(
+                        sharedState.sharedVariables().get(instruction.name));
                     break;
                 case OscOpcode::StoreSystem:
                     sharedState.sharedVariables().set(instruction.name, nativePeekFloat());
                     break;
                 case OscOpcode::LoadConstant: {
                     const auto constant = configuration.constants.find(instruction.name);
-                    floatStack.push_back(
-                        constant == configuration.constants.end() ? 0.0 : constant->second);
+                    const float value = constant == configuration.constants.end()
+                                            ? 0.0F
+                                            : constant->second;
+                    if (debugLightsVariables &&
+                        instruction.name.starts_with("lights_blinkertime_")) {
+                        log("lights timer constant " + instruction.name + "=" +
+                            std::to_string(value) +
+                            (constant == configuration.constants.end() ? " (not loaded)" : ""));
+                    }
+                    floatStack.push_back(value);
                     break;
                 }
                 case OscOpcode::CallCurve: {
-                    const double value = nativePopFloat();
+                    const float value = nativePopFloat();
                     const auto curve = configuration.curves.find(instruction.name);
                     if (curve == configuration.curves.end() || curve->second.points.empty()) {
                         floatStack.push_back(value);
@@ -610,11 +759,15 @@ struct ScriptRuntime::Impl {
                         break;
                     }
                     for (std::size_t index = 1; index < points.size(); ++index) {
-                        if (value <= points[index].x) {
+                        const float rightX = points[index].x;
+                        if (value <= rightX) {
                             const auto& left = points[index - 1];
                             const auto& right = points[index];
-                            const double fraction = (value - left.x) / (right.x - left.x);
-                            floatStack.push_back(left.y + fraction * (right.y - left.y));
+                            const float leftX = left.x;
+                            const float leftY = left.y;
+                            const float rightY = right.y;
+                            const float fraction = (value - leftX) / (rightX - leftX);
+                            floatStack.push_back(leftY + fraction * (rightY - leftY));
                             break;
                         }
                         if (index + 1 == points.size()) {
@@ -635,66 +788,78 @@ struct ScriptRuntime::Impl {
                     floatStack.push_back(nativePeekFloat());
                     break;
                 case OscOpcode::Add:
-                    binary([](double left, double right) { return left + right; });
+                    binary([](float left, float right) { return left + right; });
                     break;
                 case OscOpcode::Subtract:
-                    binary([](double left, double right) { return left - right; });
+                    binary([](float left, float right) { return left - right; });
                     break;
                 case OscOpcode::Multiply:
-                    binary([](double left, double right) { return left * right; });
+                    binary([](float left, float right) { return left * right; });
                     break;
                 case OscOpcode::Divide:
-                    binary([](double left, double right) {
-                        return right == 0.0 ? 0.0 : left / right;
+                    binary([](float left, float right) {
+                        return right == 0.0F ? 0.0F : left / right;
                     });
                     break;
                 case OscOpcode::Modulo:
-                    binary([](double left, double right) {
-                        return right == 0.0 ? 0.0 : left - std::floor(left / right) * right;
+                    binary([](float left, float right) {
+                        return right == 0.0F ? 0.0F : left - std::floor(left / right) * right;
                     });
                     break;
                 case OscOpcode::Negate:
                     floatStack.push_back(-nativePopFloat());
                     break;
                 case OscOpcode::LogicalNot:
-                    floatStack.push_back(nativePopFloat() == 0.0 ? 1.0 : 0.0);
+                    floatStack.push_back(nativePopFloat() == 0.0F ? 1.0F : 0.0F);
                     break;
                 case OscOpcode::Equal:
-                    binary([](double left, double right) { return left == right ? 1.0 : 0.0; });
+                    binary([](float left, float right) {
+                        return left == right ? 1.0F : 0.0F;
+                    });
                     break;
                 case OscOpcode::NotEqual:
-                    binary([](double left, double right) { return left != right ? 1.0 : 0.0; });
+                    binary([](float left, float right) {
+                        return left != right ? 1.0F : 0.0F;
+                    });
                     break;
                 case OscOpcode::Less:
-                    binary([](double left, double right) { return left < right ? 1.0 : 0.0; });
+                    binary([](float left, float right) {
+                        return left < right ? 1.0F : 0.0F;
+                    });
                     break;
                 case OscOpcode::LessEqual:
-                    binary([](double left, double right) { return left <= right ? 1.0 : 0.0; });
+                    binary([](float left, float right) {
+                        return left <= right ? 1.0F : 0.0F;
+                    });
                     break;
                 case OscOpcode::Greater:
-                    binary([](double left, double right) { return left > right ? 1.0 : 0.0; });
+                    binary([](float left, float right) {
+                        return left > right ? 1.0F : 0.0F;
+                    });
                     break;
                 case OscOpcode::GreaterEqual:
-                    binary([](double left, double right) { return left >= right ? 1.0 : 0.0; });
+                    binary([](float left, float right) {
+                        return left >= right ? 1.0F : 0.0F;
+                    });
                     break;
                 case OscOpcode::LogicalAnd:
-                    binary([](double left, double right) {
-                        return left != 0.0 && right != 0.0 ? 1.0 : 0.0;
+                    binary([](float left, float right) {
+                        return left != 0.0F && right != 0.0F ? 1.0F : 0.0F;
                     });
                     break;
                 case OscOpcode::LogicalOr:
-                    binary([](double left, double right) {
-                        return left != 0.0 || right != 0.0 ? 1.0 : 0.0;
+                    binary([](float left, float right) {
+                        return left != 0.0F || right != 0.0F ? 1.0F : 0.0F;
                     });
                     break;
                 case OscOpcode::Absolute:
                     floatStack.push_back(std::abs(nativePopFloat()));
                     break;
                 case OscOpcode::Minimum:
-                    binary([](double left, double right) { return std::min(left, right); });
+                    binary([](float left, float right) { return std::min(left, right); });
                     break;
                 case OscOpcode::Maximum:
-                    binary([](double left, double right) { return std::max(left, right); });
+                    binary([](float left, float right) { return std::max(left, right); });
                     break;
                 case OscOpcode::Floor:
                     floatStack.push_back(std::floor(nativePopFloat()));
@@ -715,21 +880,21 @@ struct ScriptRuntime::Impl {
                     floatStack.push_back(std::atan(nativePopFloat()));
                     break;
                 case OscOpcode::SquareRoot:
-                    floatStack.push_back(std::sqrt(std::max(0.0, nativePopFloat())));
+                    floatStack.push_back(std::sqrt(std::max(0.0F, nativePopFloat())));
                     break;
                 case OscOpcode::ArcSine:
-                    floatStack.push_back(std::asin(std::clamp(nativePopFloat(), -1.0, 1.0)));
+                    floatStack.push_back(std::asin(std::clamp(nativePopFloat(), -1.0F, 1.0F)));
                     break;
                 case OscOpcode::Exponential:
                     floatStack.push_back(std::exp(nativePopFloat()));
                     break;
                 case OscOpcode::Square: {
-                    const double value = nativePopFloat();
+                    const float value = nativePopFloat();
                     floatStack.push_back(value * value);
                     break;
                 }
                 case OscOpcode::Sign: {
-                    const double value = nativePopFloat();
+                    const float value = nativePopFloat();
                     floatStack.push_back(value > 0.0 ? 1.0 : value < 0.0 ? -1.0 : 0.0);
                     break;
                 }
@@ -737,7 +902,7 @@ struct ScriptRuntime::Impl {
                     const int limit =
                         std::max(0, static_cast<int>(std::floor(nativePopFloat())) - 1);
                     floatStack.push_back(
-                        limit == 0 ? 0.0 : static_cast<double>(std::rand() % (limit + 1)));
+                        limit == 0 ? 0.0F : static_cast<float>(std::rand() % (limit + 1)));
                     break;
                 }
                 case OscOpcode::StringDuplicate:
@@ -762,7 +927,7 @@ struct ScriptRuntime::Impl {
                     break;
                 }
                 case OscOpcode::StringLength:
-                    floatStack.push_back(static_cast<double>(nativePeekString().size()));
+                    floatStack.push_back(static_cast<float>(nativePeekString().size()));
                     break;
                 case OscOpcode::StringCutBegin: {
                     const int count = std::max(0, static_cast<int>(std::floor(nativePopFloat())));
@@ -836,7 +1001,7 @@ struct ScriptRuntime::Impl {
                 case OscOpcode::StringToFloat: {
                     const std::string value = nativePopString();
                     try {
-                        floatStack.push_back(std::stod(value));
+                        floatStack.push_back(std::stof(value));
                     } catch (...) {
                         floatStack.push_back(-1.0);
                     }
@@ -907,6 +1072,99 @@ struct ScriptRuntime::Impl {
                     break;
                 }
                 }
+
+                if (traceLightsExecution) {
+                    const char* opcode = nativeOpcodeName(instruction.opcode);
+                    bool shouldLog = isNativeArithmeticOpcode(instruction.opcode) ||
+                                     instruction.opcode == OscOpcode::JumpIfFalse ||
+                                     instruction.opcode == OscOpcode::Jump ||
+                                     instruction.opcode == OscOpcode::CallFunction;
+                    if ((instruction.opcode == OscOpcode::LoadLocal ||
+                         instruction.opcode == OscOpcode::LoadSystem ||
+                         instruction.opcode == OscOpcode::StoreLocal ||
+                         instruction.opcode == OscOpcode::StoreSystem) &&
+                        isLightsTraceVariable(instruction.name)) {
+                        shouldLog = true;
+                    }
+                    if (instruction.opcode == OscOpcode::LoadConstant &&
+                        instruction.name.starts_with("lights_")) {
+                        shouldLog = true;
+                    }
+                    if (instruction.opcode == OscOpcode::LoadRegister ||
+                        instruction.opcode == OscOpcode::StoreRegister ||
+                        instruction.opcode == OscOpcode::PushNumber) {
+                        shouldLog = true;
+                    }
+                    if (shouldLog && opcode != nullptr) {
+                        std::ostringstream detail;
+                        detail << std::setprecision(9) << "native lights trace function="
+                               << functionName << " ip=" << currentInstruction << " op=" << opcode;
+                        if (!instruction.name.empty()) {
+                            detail << " name=" << instruction.name;
+                        }
+                        if (instruction.opcode == OscOpcode::PushNumber) {
+                            detail << " literal=" << instruction.number;
+                        } else if (instruction.opcode == OscOpcode::LoadRegister ||
+                                   instruction.opcode == OscOpcode::StoreRegister) {
+                            detail << " register=" << instruction.index;
+                        }
+                        if (instruction.opcode == OscOpcode::StoreLocal) {
+                            detail << " saved=" << localState.get(instruction.name);
+                        } else if (instruction.opcode == OscOpcode::StoreSystem) {
+                            detail << " saved="
+                                   << sharedState.sharedVariables().get(instruction.name);
+                        } else if (instruction.opcode == OscOpcode::LoadLocal ||
+                                   instruction.opcode == OscOpcode::LoadSystem ||
+                                   instruction.opcode == OscOpcode::LoadConstant ||
+                                   instruction.opcode == OscOpcode::LoadRegister) {
+                            detail << " loaded="
+                                   << (floatStack.empty() ? 0.0F : floatStack.back());
+                            if (instruction.opcode == OscOpcode::LoadConstant &&
+                                configuration.constants.find(instruction.name) ==
+                                    configuration.constants.end()) {
+                                detail << " (missing -> 0)";
+                            }
+                        } else if (instruction.opcode == OscOpcode::StoreRegister) {
+                            detail << " saved="
+                                   << nativeRegisters[static_cast<std::size_t>(instruction.index)];
+                        } else if (isNativeArithmeticOpcode(instruction.opcode)) {
+                            const bool binaryOperation =
+                                instruction.opcode != OscOpcode::Negate &&
+                                instruction.opcode != OscOpcode::LogicalNot &&
+                                instruction.opcode != OscOpcode::Absolute &&
+                                instruction.opcode != OscOpcode::Floor &&
+                                instruction.opcode != OscOpcode::Ceiling &&
+                                instruction.opcode != OscOpcode::Sine &&
+                                instruction.opcode != OscOpcode::Cosine &&
+                                instruction.opcode != OscOpcode::Tangent &&
+                                instruction.opcode != OscOpcode::ArcTangent &&
+                                instruction.opcode != OscOpcode::SquareRoot &&
+                                instruction.opcode != OscOpcode::ArcSine &&
+                                instruction.opcode != OscOpcode::Exponential &&
+                                instruction.opcode != OscOpcode::Square &&
+                                instruction.opcode != OscOpcode::Sign;
+                            if (binaryOperation) {
+                                detail << " left=" << belowTopBefore << " right=" << topBefore;
+                            } else {
+                                detail << " input=" << topBefore;
+                            }
+                            detail << " result="
+                                   << (floatStack.empty() ? 0.0F : floatStack.back());
+                        } else if (instruction.opcode == OscOpcode::JumpIfFalse) {
+                            detail << " condition=" << topBefore
+                                   << " taken=" << (instructionPointer != nextInstruction)
+                                   << " target=" << instruction.index;
+                        } else if (instruction.opcode == OscOpcode::Jump) {
+                            detail << " target=" << instruction.index;
+                        }
+                        detail << " stack=" << stackSizeBefore << "->" << floatStack.size();
+                        log(detail.str());
+                    }
+                }
+            }
+            if (traceLightsExecution) {
+                log("native lights trace exit function=" + functionName +
+                    " stack=" + std::to_string(floatStack.size()));
             }
             return true;
         }
@@ -917,7 +1175,29 @@ struct ScriptRuntime::Impl {
         const char* backend = openbus::getEnvironment("OPENBUS_SCRIPT_BACKEND");
         if (backend && lower(backend) == "lua") {
             scriptRuntimeLogger.Log("Lua script backend explicitly selected");
+            if (debugLightsVariables) {
+                log("lights debug: native bytecode not selected; config=" +
+                    configuration.sourcePath.string());
+            }
             return false;
+        }
+
+        if (debugLightsVariables) {
+            log("lights debug: selecting native OSC backend; vehicle config=" +
+                configuration.sourcePath.string());
+            for (const char* name : {"lights_blinkertime_firston", "lights_blinkertime_on",
+                                     "lights_blinkertime_off"}) {
+                const auto constant = configuration.constants.find(name);
+                if (constant == configuration.constants.end()) {
+                    log(std::string("lights debug: configured constant ") + name +
+                        " is missing (native lookup will yield 0)");
+                } else {
+                    std::ostringstream value;
+                    value << std::setprecision(9) << "lights debug: configured constant " << name
+                                  << '=' << constant->second;
+                    log(value.str());
+                }
+            }
         }
 
         for (const std::string& referencedPath : configuration.scripts) {
@@ -925,6 +1205,9 @@ struct ScriptRuntime::Impl {
             std::replace(normalized.begin(), normalized.end(), '\\', '/');
             const std::filesystem::path sourcePath =
                 configuration.sourcePath.parent_path() / normalized;
+            if (debugLightsVariables) {
+                log("lights debug: loading OSC source=" + sourcePath.string());
+            }
             OscProgram program;
             std::string error;
             if (!compileOscToBytecode(sourcePath, program, error)) {
@@ -932,6 +1215,10 @@ struct ScriptRuntime::Impl {
                                         sourcePath.string() + ": " + error);
                 nativePrograms.clear();
                 return false;
+            }
+            if (debugLightsVariables) {
+                log("lights debug: native OSC source compiled=" + sourcePath.string() +
+                    " functions=" + std::to_string(program.functions.size()));
             }
             nativePrograms.push_back(std::move(program));
         }
@@ -948,11 +1235,70 @@ struct ScriptRuntime::Impl {
         return value && std::string(value) == "1";
     }
 
+    static bool lightsDebugEnabledFromEnvironment() {
+        const char* value = openbus::getEnvironment("OPENBUS_DEBUG_LIGHTS");
+        if (value == nullptr) {
+            return false;
+        }
+        const std::string normalized = lower(value);
+        return normalized == "1" || normalized == "true" || normalized == "yes" ||
+               normalized == "on";
+    }
+
+    std::unordered_map<std::string, float> captureLightsVariables() const {
+        std::unordered_map<std::string, float> values;
+        if (!debugLightsVariables) {
+            return values;
+        }
+        values.emplace("Timegap", sharedState.sharedVariables().get("timegap"));
+        for (const auto& [name, value] : localState.numericValues()) {
+            if (name.starts_with("lights_") || name == "elec_busbar_main" ||
+                name == "elec_busbar_avail") {
+                values.emplace(name, value);
+            }
+        }
+        return values;
+    }
+
+    void logChangedLightsVariables(
+        const std::unordered_map<std::string, float>& before) const {
+        if (!debugLightsVariables) {
+            return;
+        }
+        const auto after = captureLightsVariables();
+        std::vector<std::string> changedNames;
+        for (const auto& [name, value] : after) {
+            const auto previous = before.find(name);
+            if (previous == before.end() || previous->second != value) {
+                changedNames.push_back(name);
+            }
+        }
+        if (changedNames.empty()) {
+            return;
+        }
+        std::sort(changedNames.begin(), changedNames.end());
+        std::ostringstream message;
+        message << "lights.osc variables changed after script frame:" << std::setprecision(12);
+        for (const std::string& name : changedNames) {
+            const auto previous = before.find(name);
+            message << ' ' << name << '=';
+            if (previous != before.end()) {
+                message << previous->second << "->";
+            }
+            message << after.at(name);
+        }
+        log(message.str());
+    }
+
     Impl(const VehicleConfig& source, Variables& local, SimulationState& shared)
         : configuration(source),
           scriptIdentity(source.sourcePath.empty() ? "unknown"
                                                    : source.sourcePath.filename().string()),
           localState(local), sharedState(shared) {
+                debugLightsVariables = lightsDebugEnabledFromEnvironment();
+                if (debugLightsVariables) {
+                    log("lights.osc variable debugging enabled by OPENBUS_DEBUG_LIGHTS");
+                }
         for (const std::string& variable : configuration.floatVariables) {
             localState.declare(variable);
         }
@@ -1013,17 +1359,22 @@ struct ScriptRuntime::Impl {
         return static_cast<Impl*>(lua_touserdata(lua, lua_upvalueindex(1)));
     }
 
-    static double numericArgument(lua_State* lua, int index) {
+    static float numericArgument(lua_State* lua, int index) {
         if (lua_isboolean(lua, index)) {
-            return lua_toboolean(lua, index) != 0 ? 1.0 : 0.0;
+            return lua_toboolean(lua, index) != 0 ? 1.0F : 0.0F;
         }
-        return luaL_checknumber(lua, index);
+        return static_cast<float>(luaL_checknumber(lua, index));
+    }
+
+    static int oscFloat32(lua_State* lua) {
+        lua_pushnumber(lua, static_cast<float>(luaL_checknumber(lua, 1)));
+        return 1;
     }
 
     static int getLocal(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
         const char* name = luaL_checkstring(lua, 1);
-        const double value = runtime->localState.get(name);
+        const float value = runtime->localState.get(name);
         // runtime->log(lua, "get_local_var(" + std::string(name) + "): " + std::to_string(value));
         lua_pushnumber(lua, value);
         return 1;
@@ -1032,7 +1383,7 @@ struct ScriptRuntime::Impl {
     static int setLocal(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
         const char* name = luaL_checkstring(lua, 1);
-        const double value = numericArgument(lua, 2);
+        const float value = numericArgument(lua, 2);
         // runtime->log(lua, "set_local_var(" + std::string(name) + ", " + std::to_string(value) +
         // ")");
         runtime->localState.set(name, value);
@@ -1075,7 +1426,8 @@ struct ScriptRuntime::Impl {
         Impl* runtime = runtimeFor(lua);
         // runtime->log(lua, "get_const(" + std::string(luaL_checkstring(lua, 1)) + ")");
         const auto found = runtime->configuration.constants.find(luaL_checkstring(lua, 1));
-        lua_pushnumber(lua, found == runtime->configuration.constants.end() ? 0.0 : found->second);
+        lua_pushnumber(lua, found == runtime->configuration.constants.end() ? 0.0F
+                                            : found->second);
         return 1;
     }
 
@@ -1084,7 +1436,7 @@ struct ScriptRuntime::Impl {
         // runtime->log(lua, "call_func(" + std::string(luaL_checkstring(lua, 1)) + ", " +
         // std::to_string(numericArgument(lua, 2)) + ")");
         const std::string name = luaL_checkstring(lua, 1);
-        const double value = numericArgument(lua, 2);
+        const float value = numericArgument(lua, 2);
         const auto found = runtime->configuration.curves.find(name);
         if (found != runtime->configuration.curves.end() && !found->second.points.empty()) {
             const ConstantCurve& curve = found->second;
@@ -1093,11 +1445,15 @@ struct ScriptRuntime::Impl {
                 return 1;
             }
             for (std::size_t index = 1; index < curve.points.size(); ++index) {
-                if (value <= curve.points[index].x) {
+                const float rightX = curve.points[index].x;
+                if (value <= rightX) {
                     const ConstantCurvePoint& left = curve.points[index - 1];
                     const ConstantCurvePoint& right = curve.points[index];
-                    const double fraction = (value - left.x) / (right.x - left.x);
-                    lua_pushnumber(lua, left.y + fraction * (right.y - left.y));
+                    const float leftX = left.x;
+                    const float leftY = left.y;
+                    const float rightY = right.y;
+                    const float fraction = (value - leftX) / (rightX - leftX);
+                    lua_pushnumber(lua, leftY + fraction * (rightY - leftY));
                     return 1;
                 }
             }
@@ -1187,11 +1543,11 @@ struct ScriptRuntime::Impl {
     }
 
     // TODO: Replace safe system-macro fallbacks with HOF, timetable, and vehicle data.
-    static double popSystemFloat(Impl* runtime) {
+    static float popSystemFloat(Impl* runtime) {
         if (runtime->floatStack.empty()) {
-            return 0.0;
+            return 0.0F;
         }
-        const double value = runtime->floatStack.back();
+        const float value = runtime->floatStack.back();
         runtime->floatStack.pop_back();
         return value;
     }
@@ -1205,7 +1561,7 @@ struct ScriptRuntime::Impl {
         return value;
     }
 
-    static int returnSystemFloat(lua_State* lua, double value) {
+    static int returnSystemFloat(lua_State* lua, float value) {
         Impl* runtime = runtimeFor(lua);
         runtime->floatStack.push_back(value);
         return 0;
@@ -1260,10 +1616,10 @@ struct ScriptRuntime::Impl {
 
     // TODO: Implement deterministic fleet-number and seed-based randomization.
     static int safeNrSpecRandom(lua_State* lua) {
-        double seed = popSystemFloat(runtimeFor(lua));
+        const float seed = popSystemFloat(runtimeFor(lua));
         std::minstd_rand rand(static_cast<unsigned int>(seed));
-        return returnSystemFloat(lua, static_cast<double>(rand()) /
-                                          static_cast<double>(std::minstd_rand::max()));
+        return returnSystemFloat(lua, static_cast<float>(rand()) /
+                          static_cast<float>(std::minstd_rand::max()));
     }
 
     // TODO: Implement currency configuration and change-coin issuance.
@@ -1627,13 +1983,13 @@ struct ScriptRuntime::Impl {
     static int safeScriptTextureColor(lua_State* lua) {
         Impl* runtime = runtimeFor(lua);
         const std::uint8_t blue =
-            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
+            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0F, 255.0F));
         const std::uint8_t green =
-            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
+            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0F, 255.0F));
         const std::uint8_t red =
-            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
+            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0F, 255.0F));
         const std::uint8_t alpha =
-            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0, 255.0));
+            static_cast<std::uint8_t>(std::clamp(popSystemFloat(runtime), 0.0F, 255.0F));
         const int index = static_cast<int>(popSystemFloat(runtime));
         scriptTexture(runtime, index).color = {alpha, red, green, blue};
         return 0;
@@ -1682,7 +2038,7 @@ struct ScriptRuntime::Impl {
         Impl* runtime = runtimeFor(lua);
         const int letterSpacing = static_cast<int>(popSystemFloat(runtime));
         const std::uint32_t packedColor =
-            static_cast<std::uint32_t>(std::max(0.0, popSystemFloat(runtime)));
+            static_cast<std::uint32_t>(std::max(0.0F, popSystemFloat(runtime)));
         popSystemFloat(runtime);
         const int y = static_cast<int>(popSystemFloat(runtime));
         const int x = static_cast<int>(popSystemFloat(runtime));
@@ -1744,7 +2100,7 @@ struct ScriptRuntime::Impl {
         Impl* runtime = runtimeFor(lua);
         discardSystemFloats(runtime, 1);
         const std::string value = popSystemString(runtime);
-        return returnSystemFloat(lua, static_cast<double>(value.size() * 6));
+        return returnSystemFloat(lua, static_cast<float>(value.size() * 6));
     }
 
     static int tracedLuaFunction(lua_State* lua) {
@@ -1785,6 +2141,8 @@ struct ScriptRuntime::Impl {
     }
 
     void registerFunctions() {
+        lua_pushcfunction(state, oscFloat32);
+        lua_setglobal(state, "osc_f32");
         registerFunction("get_local_var", getLocal);
         registerFunction("set_local_var", setLocal);
         registerFunction("get_local_str", getLocalString);
@@ -1963,7 +2321,7 @@ struct ScriptRuntime::Impl {
 
 ScriptRuntime::ScriptRuntime(
     const VehicleConfig& configuration, Variables& localState, SimulationState& sharedState,
-    std::function<void(const std::string&, const std::string&, double)> soundTrigger)
+    std::function<void(const std::string&, const std::string&, float)> soundTrigger)
     : impl_(std::make_unique<Impl>(configuration, localState, sharedState)) {
     impl_->onSoundTrigger = std::move(soundTrigger);
 }
@@ -2055,9 +2413,9 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         for (std::size_t channel = 0; channel < 3 && channel + 5 < definition.values.size();
              ++channel) {
             try {
-                const double value = std::stod(definition.values[channel + 5]);
+                const float value = std::stof(definition.values[channel + 5]);
                 configured.color[channel] =
-                    static_cast<std::uint8_t>(std::clamp(value, 0.0, 255.0));
+                    static_cast<std::uint8_t>(std::clamp(value, 0.0F, 255.0F));
             } catch (const std::exception&) {
                 continue;
             }
@@ -2244,8 +2602,8 @@ void ScriptRuntime::invokeMouseRelease(const std::string& eventName) {
     }
 }
 
-void ScriptRuntime::invokeMouseDrag(const std::string& eventName, double deltaX, double deltaY,
-                                    double cursorX, double cursorY) {
+void ScriptRuntime::invokeMouseDrag(const std::string& eventName, float deltaX, float deltaY,
+                                    float cursorX, float cursorY) {
     if (!impl_ || eventName.empty()) {
         return;
     }
@@ -2284,6 +2642,7 @@ void ScriptRuntime::update(bool isAiVehicle) {
     if (impl_ && (impl_->nativeBackend || impl_->state)) {
         impl_->floatStack.clear();
         impl_->stringStack.clear();
+        const auto lightsVariablesBefore = impl_->captureLightsVariables();
         if (impl_->nativeBackend) {
             if (isAiVehicle && !impl_->executeNativeFunction("frame_ai")) {
                 impl_->executeNativeFunction("frame");
@@ -2293,6 +2652,7 @@ void ScriptRuntime::update(bool isAiVehicle) {
         } else {
             impl_->invokeFrame(isAiVehicle);
         }
+        impl_->logChangedLightsVariables(lightsVariablesBefore);
         impl_->updateTextTextures();
     }
 }

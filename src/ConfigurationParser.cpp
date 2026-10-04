@@ -76,6 +76,19 @@ bool parseDouble(const std::string& value, double& result) {
     return true;
 }
 
+bool parseFloat(const std::string& value, float& result) {
+    double parsed = 0.0;
+    if (!parseDouble(value, parsed)) {
+        return false;
+    }
+    const float singlePrecision = static_cast<float>(parsed);
+    if (!std::isfinite(singlePrecision)) {
+        return false;
+    }
+    result = singlePrecision;
+    return true;
+}
+
 bool Line::isKeyword() const {
     // Keywords are preserved exactly as bracketed lines so ordinary payloads
     // beginning with similar text are not misclassified.

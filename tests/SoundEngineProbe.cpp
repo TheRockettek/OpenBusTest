@@ -37,11 +37,15 @@ int main() {
               "[conditionSingle]\nConditionLess\n2\n2\n"
               "[conditionSingle]\nConditionGreater\n0\n3\n"
               "[conditionSingle]\nConditionLessEqual\n1\n4\n"
-              "[conditionSingle]\nConditionGreaterEqual\n1\n5\n";
+              "[conditionSingle]\nConditionGreaterEqual\n1\n5\n"
+              "[sound]\nIndicatorOff.wav\n1\n"
+              "[trigger]\nev_lights_blinker_off\n";
     config.close();
 
     SoundEngine engine;
     engine.load(configPath);
+    const bool exactOffTriggerExists = engine.hasTrigger("ev_lights_blinker_off");
+    const bool baseTriggerDoesNotExist = !engine.hasTrigger("ev_lights_blinker");
     const std::vector<SoundTriggerDefinition>& loops =
         SoundEngineProbeAccess::untriggeredLoops(engine);
     Variables conditionVariables;
@@ -68,7 +72,7 @@ int main() {
                        loops[0].volumeCurves[1].points[0].y == 0.0 &&
                        loops[0].volumeCurves[1].points[1].x == 1.0 &&
                        loops[0].volumeCurves[1].points[1].y == 1.0 && alarmGateWorks &&
-                       alarmGateInitiallyClosed;
+                       alarmGateInitiallyClosed && exactOffTriggerExists && baseTriggerDoesNotExist;
     std::filesystem::remove_all(root);
 
     if (!valid) {

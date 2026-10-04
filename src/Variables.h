@@ -6,7 +6,7 @@
 
 struct VariableDefinition {
     std::string name;
-    double value;
+  float value;
 };
 
 enum class ScriptObjectKind {
@@ -27,9 +27,9 @@ class Variables {
     void declareString(const std::string& name);
 
     bool has(const std::string& name) const;
-    double get(const std::string& name) const;
-    void set(const std::string& name, double value);
-    const std::unordered_map<std::string, double>& numericValues() const;
+    float get(const std::string& name) const;
+    void set(const std::string& name, float value);
+    const std::unordered_map<std::string, float>& numericValues() const;
 
     bool hasString(const std::string& name) const;
     std::string getString(const std::string& name) const;
@@ -42,7 +42,7 @@ class Variables {
 
   private:
     // TODO: Add synchronization for shared/non-local variables if threaded access is introduced.
-    std::unordered_map<std::string, double> values_;
+    std::unordered_map<std::string, float> values_;
     std::unordered_map<std::string, std::string> strings_;
     ScriptObjectKind objectKind_;
 };
@@ -51,7 +51,7 @@ class SystemVariables : public Variables {
   public:
     SystemVariables();
 
-    void updateFrame(double timegap, double getTime, double mouseX, double mouseY);
+    void updateFrame(float timegap, float getTime, float mouseX, float mouseY);
 };
 
 class SimulationState {

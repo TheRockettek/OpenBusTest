@@ -8,6 +8,7 @@
 #include "CameraMath.h"
 #include "CoreRenderer.h"
 #include "Environment.h"
+#include "InteriorLighting.h"
 #include "Logger.h"
 #include "MouseControlMapping.h"
 #include "ObjLoader.h"
@@ -891,6 +892,7 @@ struct Vehicle {
     std::vector<Part> pendingParts;
     std::vector<ModelInteriorLight> interiorLights;
     std::vector<InteriorLightController> interiorLightControllers;
+    Matrix4 interiorLightRootModelView = identityMatrix();
     AssetRequestManager* assets;
     VehiclePlacement placement;
     double modelOffsetZ = 0.0;
@@ -1022,11 +1024,11 @@ struct Vehicle {
         batch.materialSelectionGeneration = materialSelectionGeneration;
     }
 
-    double alphaScale(const Batch& batch) const {
+    float alphaScale(const Batch& batch) const {
         if (batch.alphaScaleVariable.empty()) {
-            return 1.0;
+            return 1.0F;
         }
-        return std::clamp(variables.get(batch.alphaScaleVariable), 0.0, 1.0);
+        return std::clamp(variables.get(batch.alphaScaleVariable), 0.0F, 1.0F);
     }
 
     void updateAnimationStates() {
@@ -1879,7 +1881,8 @@ struct Vehicle {
                 if (!soundEventsEnabled) {
                     return;
                 }
-                if (name.size() > 4 && name.compare(name.size() - 4, 4, "_off") == 0) {
+                if (file.empty() && !soundEngine.hasTrigger(name) && name.size() > 4 &&
+                    name.compare(name.size() - 4, 4, "_off") == 0) {
                     soundEngine.stop(name.substr(0, name.size() - 4));
                 } else {
                     soundEngine.trigger(name, file, controlValue, &variables);
@@ -1921,7 +1924,7 @@ struct Vehicle {
     void applyInteriorLightMaterial(const Batch& batch,
                                     openbus::rendering::ModelMaterial& material) const {
         material.interiorLightCount = 0;
-        material.interiorLightPositions = {};
+        material.interiorLightViewPositions = {};
         material.interiorLightColors = {};
         material.interiorLightStrengths = {};
         for (const int lightIndex : batch.interiorLightIndexes) {
@@ -1930,14 +1933,11 @@ struct Vehicle {
             }
             const std::size_t index = static_cast<std::size_t>(lightIndex);
             const ModelInteriorLight& light = interiorLights[index];
-            if (light.parameters.size() < 4) {
-                continue;
-            }
             const InteriorLightController& controller = interiorLightControllers[index];
             const double brightness =
                 std::max(0.0, controller.isNumeric ? controller.numericValue
                                                    : variables.get(light.controller));
-            const double strength = brightness * std::max(0.0, light.parameters[0]);
+            const double strength = brightness * std::max(0.0, light.intensity);
             if (strength <= 0.0 || material.interiorLightCount >=
                                        static_cast<int>(openbus::rendering::MAX_INTERIOR_LIGHTS)) {
                 continue;
@@ -1945,15 +1945,18 @@ struct Vehicle {
             const int outputIndex = material.interiorLightCount++;
             for (std::size_t channel = 0; channel < 3; ++channel) {
                 material.interiorLightColors[outputIndex][channel] =
-                    static_cast<float>(std::clamp(light.parameters[channel + 1] / 255.0, 0.0, 1.0));
+                    static_cast<float>(std::clamp(light.color[channel] / 255.0, 0.0, 1.0));
             }
-            // Interior-light positions use the same OMSI CFG coordinates as
-            // mesh vertices: x=lateral, y=longitudinal, z=height.  Convert
-            // them to the renderer's longitudinal/lateral/height basis before
-            // the shader transforms the point into view space.
-            material.interiorLightPositions[outputIndex] = {
-                static_cast<float>(light.parameters[5]), static_cast<float>(-light.parameters[4]),
-                static_cast<float>(light.parameters[6])};
+            // Light locations are model-root positions, independent of the
+            // receiving mesh's animation. Transform to view space once from
+            // the vehicle root so the shader can compare them to view-space
+            // fragment positions without inheriting a door/panel animation.
+            const std::array<double, 3> viewPosition =
+                openbus::rendering::interiorLightPositionInViewSpace(
+                    interiorLightRootModelView, light.position);
+            material.interiorLightViewPositions[outputIndex] = {
+                static_cast<float>(viewPosition[0]), static_cast<float>(viewPosition[1]),
+                static_cast<float>(viewPosition[2])};
             material.interiorLightStrengths[outputIndex] = static_cast<float>(strength);
         }
         material.useInteriorLight = material.interiorLightCount > 0;
@@ -2050,15 +2053,15 @@ struct Vehicle {
         }
         material.lightmapStrength = static_cast<float>(
             batch.lightmapStrengthVariable.empty()
-                ? 1.0
-                : std::clamp(variables.get(batch.lightmapStrengthVariable), 0.0, 1.0));
+                ? 1.0F
+                : std::clamp(variables.get(batch.lightmapStrengthVariable), 0.0F, 1.0F));
         // Script-selected emissive items illuminate even in daytime. Ordinary
         // base nightmaps still follow the host's environmental lighting.
-        const double nightlight =
+        const float nightlight =
             batch.selectedMaterialItem
-                ? 1.0
-                : std::max(variables.get("nightlighta"), 1.0 - variables.get("envir_brightness"));
-        material.nightmapStrength = static_cast<float>(std::clamp(nightlight, 0.0, 1.0));
+            ? 1.0F
+            : std::max(variables.get("nightlighta"), 1.0F - variables.get("envir_brightness"));
+        material.nightmapStrength = std::clamp(nightlight, 0.0F, 1.0F);
         material.bumpmapStrength = static_cast<float>(std::clamp(batch.bumpmapStrength, 0.0, 1.0));
         material.texcoordOffsetX = static_cast<float>(
             batch.texcoordTransXVariable.empty() ? 0.0
@@ -2302,6 +2305,7 @@ struct Vehicle {
         }
         pushMatrix();
         translate(0.0, 0.0, modelOffsetZ);
+        interiorLightRootModelView = openbus::rendering::modelViewMatrix();
         if (renderOpaque) {
             TraceScope phase("render", "Vehicle::draw.opaquePass");
             for (DisplayPart* part : opaqueParts) {
@@ -4982,9 +4986,10 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         const long speedMph = std::lround(speedMetresPerSecond * 2.2369362921);
         const long speedKmh = std::lround(speedMetresPerSecond * 3.6);
         const long throttlePercent =
-            std::lround(std::clamp(playerVehicle_->variables.get("throttle"), 0.0, 1.0) * 100.0);
+            std::lround(std::clamp(playerVehicle_->variables.get("throttle"), 0.0F, 1.0F) *
+                        100.0F);
         const long brakePercent =
-            std::lround(std::clamp(playerVehicle_->variables.get("brake"), 0.0, 1.0) * 100.0);
+            std::lround(std::clamp(playerVehicle_->variables.get("brake"), 0.0F, 1.0F) * 100.0F);
         std::ostringstream title;
         title << "OpenBus - " << speedMph << " mph / " << speedKmh << " km/h - Throttle "
               << throttlePercent << "% - Brake " << brakePercent << "% - "

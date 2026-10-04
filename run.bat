@@ -26,4 +26,6 @@ set "OPENBUS_WHEELS_FROM_ODE=0"
 set "OPENBUS_SCRIPT_BACKEND=native"
 set "OPENBUS_SCRIPT_HZ=0"
 
+set "OPENBUS_DOPPLER=1"
+
 cmake -S . -B build-ode -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DOPENBUS_ENABLE_PERF_TRACE=OFF && cmake --build build-ode --target OpenBus && .\build-ode\OpenBus.exe

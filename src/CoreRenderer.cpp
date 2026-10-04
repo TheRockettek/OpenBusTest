@@ -41,7 +41,7 @@ struct Uniforms {
     GLint useTextTexture = -1;
     GLint useInteriorLight = -1;
     GLint interiorLightCount = -1;
-    std::array<GLint, MAX_INTERIOR_LIGHTS> interiorLightPositions = {};
+    std::array<GLint, MAX_INTERIOR_LIGHTS> interiorLightViewPositions = {};
     std::array<GLint, MAX_INTERIOR_LIGHTS> interiorLightColors = {};
     std::array<GLint, MAX_INTERIOR_LIGHTS> interiorLightStrengths = {};
     GLint lightmapStrength = -1;
@@ -86,7 +86,7 @@ struct ModelUniformState {
     float nightmapStrength = 0.0f;
     float bumpmapStrength = 0.0f;
     int interiorLightCount = 0;
-    std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightPositions = {};
+    std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightViewPositions = {};
     std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightColors = {};
     std::array<float, MAX_INTERIOR_LIGHTS> interiorLightStrengths = {};
     float texcoordOffsetX = 0.0f;
@@ -181,7 +181,7 @@ uniform bool uUseFreeTexture;
 uniform bool uUseTextTexture;
 uniform bool uUseInteriorLight;
 uniform int uInteriorLightCount;
-uniform vec3 uInteriorLightPositions[4];
+uniform vec3 uInteriorLightViewPositions[4];
 uniform vec3 uInteriorLightColors[4];
 uniform float uInteriorLightStrengths[4];
 uniform float uLightmapStrength;
@@ -203,6 +203,7 @@ void main() {
     } else if (uUseTexture) {
         color *= texture(uTexture, vTexCoord.xy);
     }
+    vec3 diffuseReflectance = color.rgb;
     vec3 unlitColor = color.rgb;
     if (!uUseTextTexture && !uUseFreeTexture) {
         vec3 surfaceNormal = normalize(vNormal);
@@ -269,8 +270,7 @@ void main() {
             if (index >= uInteriorLightCount) {
                 break;
             }
-            vec3 lightVector = (uModelView * vec4(uInteriorLightPositions[index], 1.0)).xyz -
-                               vViewPosition;
+            vec3 lightVector = uInteriorLightViewPositions[index] - vViewPosition;
             float distanceToLight = length(lightVector);
             if (distanceToLight <= 0.0001) {
                 continue;
@@ -278,11 +278,13 @@ void main() {
             vec3 lightDirection = lightVector / distanceToLight;
             float diffuse = max(dot(surfaceNormal, lightDirection), 0.0);
             float attenuation = 1.0 / (1.0 + 0.12 * distanceToLight * distanceToLight);
-            float illumination = attenuation * (0.35 + 0.65 * diffuse);
-            color.rgb = clamp(color.rgb + uInteriorLightColors[index] *
-                                             uInteriorLightStrengths[index] * illumination,
-                               0.0, 1.0);
+            // OMSI's authored intensity values are relative (commonly 1.0–3.5),
+            // not photometric units. Scale them into a stable LDR diffuse range.
+            float illumination = attenuation * diffuse *
+                                 max(uInteriorLightStrengths[index], 0.0) * 0.25;
+            color.rgb += diffuseReflectance * uInteriorLightColors[index] * illumination;
         }
+        color.rgb = clamp(color.rgb, 0.0, 1.0);
     }
     if (uAlphaMode == 1 && color.a < 0.5) {
         discard;
@@ -480,8 +482,8 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.useInteriorLight = pglGetUniformLocation(program, "uUseInteriorLight");
         uniforms.interiorLightCount = pglGetUniformLocation(program, "uInteriorLightCount");
         for (std::size_t index = 0; index < MAX_INTERIOR_LIGHTS; ++index) {
-            uniforms.interiorLightPositions[index] = pglGetUniformLocation(
-                program, ("uInteriorLightPositions[" + std::to_string(index) + "]").c_str());
+            uniforms.interiorLightViewPositions[index] = pglGetUniformLocation(
+                program, ("uInteriorLightViewPositions[" + std::to_string(index) + "]").c_str());
             uniforms.interiorLightColors[index] = pglGetUniformLocation(
                 program, ("uInteriorLightColors[" + std::to_string(index) + "]").c_str());
             uniforms.interiorLightStrengths[index] = pglGetUniformLocation(
@@ -645,12 +647,12 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         pglUniform1f(modelUniforms.bumpmapStrength, material.bumpmapStrength);
     }
     if (!modelUniformState.valid ||
-        modelUniformState.interiorLightPositions != material.interiorLightPositions) {
+        modelUniformState.interiorLightViewPositions != material.interiorLightViewPositions) {
         for (std::size_t index = 0; index < MAX_INTERIOR_LIGHTS; ++index) {
-            pglUniform3f(modelUniforms.interiorLightPositions[index],
-                         material.interiorLightPositions[index][0],
-                         material.interiorLightPositions[index][1],
-                         material.interiorLightPositions[index][2]);
+            pglUniform3f(modelUniforms.interiorLightViewPositions[index],
+                         material.interiorLightViewPositions[index][0],
+                         material.interiorLightViewPositions[index][1],
+                         material.interiorLightViewPositions[index][2]);
         }
     }
     if (!modelUniformState.valid ||
@@ -696,7 +698,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.nightmapStrength = material.nightmapStrength;
     modelUniformState.bumpmapStrength = material.bumpmapStrength;
     modelUniformState.interiorLightCount = material.interiorLightCount;
-    modelUniformState.interiorLightPositions = material.interiorLightPositions;
+    modelUniformState.interiorLightViewPositions = material.interiorLightViewPositions;
     modelUniformState.interiorLightColors = material.interiorLightColors;
     modelUniformState.interiorLightStrengths = material.interiorLightStrengths;
     modelUniformState.texcoordOffsetX = material.texcoordOffsetX;

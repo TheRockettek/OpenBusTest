@@ -82,8 +82,9 @@ specific.
 
 ### `[illumination_interior]`
 
-A repeated assignment of four zero-based `[interiorlight]` indexes. Use `-1`
-for an unused slot. The keyword must follow `[mesh]`.
+A repeated assignment of four zero-based indexes into the model-wide ordered
+`[interiorlight]` records. Use `-1` for an unused slot. The keyword must follow
+`[mesh]`.
 
 ### `[boundingbox]`
 
@@ -317,8 +318,9 @@ contains an index and local transform values.
 
 ### `[illumination_interior]`
 
-Assigns interior illumination groups to cabin areas. It uses repeated numeric
-records whose exact meaning depends on the model's interior mesh.
+Assigns up to four model-wide interior-light indexes to the current mesh; `-1`
+marks an unused slot. See the bus-model reference for the `[interiorlight]`
+record fields.
 
 ## 5. Path CFGs
 

@@ -78,7 +78,9 @@ struct ModelMaterial {
     float nightmapStrength = 0.0f;
     float bumpmapStrength = 0.0f;
     int interiorLightCount = 0;
-    std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightPositions = {};
+    // Positions are in view space, transformed from the vehicle root (not the
+    // receiving mesh's per-part animation transform).
+    std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightViewPositions = {};
     std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightColors = {};
     std::array<float, MAX_INTERIOR_LIGHTS> interiorLightStrengths = {};
     float texcoordOffsetX = 0.0f;

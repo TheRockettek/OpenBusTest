@@ -117,8 +117,8 @@ int main() {
     openbus::scripting::Vehicle variables;
     simulation.updateVariables(variables, 0.6, -1.0, 0.0);
     const double expectedSpeedKmh = simulation.speed() * 3.6;
-    if (std::abs(variables.get("velocity") - expectedSpeedKmh) > 1.0e-9 ||
-        std::abs(variables.get("velocity_ground") - expectedSpeedKmh) > 1.0e-9) {
+    if (variables.get("velocity") != static_cast<float>(expectedSpeedKmh) ||
+        variables.get("velocity_ground") != static_cast<float>(expectedSpeedKmh)) {
         std::cerr << "script velocity variables were not expressed in km/h\n";
         return 1;
     }
@@ -145,7 +145,7 @@ int main() {
         2.0;
     if (expectedWheelSpeedRpm < 1.0 || actualWheelSpeedRpm <= 0.0 ||
         std::abs(actualWheelSpeedRpm - expectedWheelSpeedRpm) > expectedWheelSpeedRpm * 0.75 ||
-        std::abs(wheelSpeedVariables.get("n_wheel") - averageDrivenWheelRpm) > 1.0e-9) {
+        wheelSpeedVariables.get("n_wheel") != static_cast<float>(averageDrivenWheelRpm)) {
         std::cerr << "script wheel speeds were not expressed in forward rpm: expected about "
                   << expectedWheelSpeedRpm << " rpm, got " << actualWheelSpeedRpm << " rpm\n";
         return 1;
