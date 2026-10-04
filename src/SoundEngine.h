@@ -19,6 +19,12 @@ struct SoundVolumeCurve {
     std::vector<SoundCurvePoint> points;
 };
 
+struct SoundCondition {
+    std::string variable;
+    double referenceValue = 0.0;
+    int comparison = -1;
+};
+
 struct SoundTriggerDefinition {
     std::filesystem::path file;
     bool loop = false;
@@ -31,6 +37,7 @@ struct SoundTriggerDefinition {
     double baseGain = 1.0;
     std::vector<SoundCurvePoint> volumeCurve;
     std::vector<SoundVolumeCurve> volumeCurves;
+    std::vector<SoundCondition> conditions;
 };
 
 class Variables;
@@ -48,11 +55,14 @@ class SoundEngine {
                          const std::array<double, 3>& forward, const std::array<double, 3>& up);
     void updateLoops(const Variables& variables);
     void trigger(const std::string& name, const std::filesystem::path& overrideFile = {},
-                 double controlValue = 0.0);
+                 double controlValue = 0.0, const Variables* variables = nullptr);
     void stop(const std::string& name);
 
   private:
     friend struct SoundEngineProbeAccess;
+
+    static bool conditionsAllow(const SoundTriggerDefinition& definition,
+                                const Variables& variables);
 
     struct Backend;
     std::unordered_map<std::string, std::vector<SoundTriggerDefinition>> triggers_;

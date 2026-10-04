@@ -1882,7 +1882,7 @@ struct Vehicle {
                 if (name.size() > 4 && name.compare(name.size() - 4, 4, "_off") == 0) {
                     soundEngine.stop(name.substr(0, name.size() - 4));
                 } else {
-                    soundEngine.trigger(name, file, controlValue);
+                    soundEngine.trigger(name, file, controlValue, &variables);
                 }
             });
         for (const std::string& error : scripts->errors()) {

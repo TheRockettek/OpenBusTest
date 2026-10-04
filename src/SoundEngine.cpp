@@ -374,6 +374,9 @@ struct SoundEngine::Backend {
         if (looped) {
             activeLoops.emplace(key, source);
         }
+        soundLog.Log("OpenAL playback started: file=" + path.string() +
+                     " loop=" + (looped ? "true" : "false") +
+                     " gain=" + std::to_string(gain) + " pitch=" + std::to_string(pitch));
     }
 
     void play(const std::filesystem::path& path, bool looped, float gain, float pitch,
@@ -488,7 +491,9 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
         if (!hasSound || !currentTriggerNames.empty()) {
             return;
         }
-        const bool curveDrivenAmbient = !current.loopDisabled && !current.volumeCurves.empty();
+        const bool curveDrivenAmbient = !current.loopDisabled &&
+                                        (!current.volumeCurves.empty() ||
+                                         !current.conditions.empty());
         if (current.loop || curveDrivenAmbient) {
             current.loop = true;
             untriggeredLoopSounds_.push_back(current);
@@ -637,9 +642,71 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
                 current.volumeCurves.push_back(std::move(curve));
             }
             updateCurrentTriggers();
+            continue;
+        }
+        if (keyword == "conditionSingle") {
+            if (!hasSound) {
+                continue;
+            }
+            std::vector<std::string> values;
+            ConfigurationDiagnostics diagnostics;
+            SoundCondition condition;
+            if (reader.readPayloads(3, values, diagnostics, keyword) &&
+                openbus::config::parseDouble(values[1], condition.referenceValue) &&
+                openbus::config::parseInt(values[2], condition.comparison) &&
+                condition.comparison >= 0 && condition.comparison <= 5) {
+                condition.variable = lower(openbus::config::trim(values[0]));
+                if (!condition.variable.empty()) {
+                    current.conditions.push_back(std::move(condition));
+                    updateCurrentTriggers();
+                    continue;
+                }
+            }
+            // Keep malformed conditions fail-closed so the associated sound
+            // cannot accidentally play as an unconditional loop.
+            current.conditions.push_back({{}, 0.0, -1});
+            soundLog.Log("Invalid [conditionSingle] in " + configPath.string());
+            updateCurrentTriggers();
         }
     }
     retainUntriggeredLoop();
+}
+
+bool SoundEngine::conditionsAllow(const SoundTriggerDefinition& definition,
+                                  const Variables& variables) {
+    for (const SoundCondition& condition : definition.conditions) {
+        if (condition.variable.empty() || condition.comparison < 0 || condition.comparison > 5) {
+            return false;
+        }
+        const double value = variables.get(condition.variable);
+        bool matches = false;
+        switch (condition.comparison) {
+        case 0:
+            matches = value != condition.referenceValue;
+            break;
+        case 1:
+            matches = value == condition.referenceValue;
+            break;
+        case 2:
+            matches = value < condition.referenceValue;
+            break;
+        case 3:
+            matches = value > condition.referenceValue;
+            break;
+        case 4:
+            matches = value <= condition.referenceValue;
+            break;
+        case 5:
+            matches = value >= condition.referenceValue;
+            break;
+        default:
+            return false;
+        }
+        if (!matches) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void SoundEngine::setListenerPose(const std::array<double, 3>& position,
@@ -660,6 +727,9 @@ void SoundEngine::updateLoops(const Variables& variables) {
         const std::filesystem::path file =
             definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
         if (!openbus::rendering::viewpointMatches(definition.viewpoint, viewpoint_)) {
+            continue;
+        }
+        if (!conditionsAllow(definition, variables)) {
             continue;
         }
 
@@ -688,7 +758,7 @@ void SoundEngine::updateLoops(const Variables& variables) {
 }
 
 void SoundEngine::trigger(const std::string& name, const std::filesystem::path& overrideFile,
-                          double controlValue) {
+                          double controlValue, const Variables* variables) {
     openbus::rendering::TraceScope trace("sound", "SoundEngine::trigger");
     const auto found = triggers_.find(lower(name));
     if (found == triggers_.end() && overrideFile.empty()) {
@@ -731,9 +801,12 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
         definitions = {std::move(overrideDefinition)};
     }
     definitions.erase(std::remove_if(definitions.begin(), definitions.end(),
-                                     [this](const auto& definition) {
+                                     [this, variables](const auto& definition) {
                                          return !openbus::rendering::viewpointMatches(
-                                             definition.viewpoint, viewpoint_);
+                                                    definition.viewpoint, viewpoint_) ||
+                                                (!definition.conditions.empty() &&
+                                                 (variables == nullptr ||
+                                                  !conditionsAllow(definition, *variables)));
                                      }),
                       definitions.end());
     if (definitions.empty()) {
@@ -771,7 +844,7 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
                          " gain=" + std::to_string(gain));
             continue;
         }
-        soundLog.Log("Attempting sound playback: trigger=" + name + " file=" + file.string() +
+        soundLog.Log("Sound playback requested: trigger=" + name + " file=" + file.string() +
                      " gain=" + std::to_string(gain) +
                      " loop=" + (definition.loop ? "true" : "false"));
         backend_->play(file, definition.loop, static_cast<float>(gain), 1.0f, definition.position,
