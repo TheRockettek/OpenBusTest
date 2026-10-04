@@ -152,6 +152,7 @@ struct BusSimulation::Impl {
     BusConfiguration configuration;
     VehiclePlacement placement;
     std::vector<Corner> corners;
+    dTriMeshDataID chassisCollisionMeshData = nullptr;
     double fixedStep;
     int maxCatchUpSteps;
     double accumulator = 0.0;
@@ -169,6 +170,14 @@ struct BusSimulation::Impl {
     }
 
     ~Impl() {
+        if (chassisGeom) {
+            dGeomDestroy(chassisGeom);
+            chassisGeom = nullptr;
+        }
+        if (chassisCollisionMeshData) {
+            dGeomTriMeshDataDestroy(chassisCollisionMeshData);
+            chassisCollisionMeshData = nullptr;
+        }
         for (dGeomID geometry : roadMeshGeoms) {
             if (geometry) {
                 dGeomDestroy(geometry);
@@ -494,11 +503,43 @@ struct BusSimulation::Impl {
         dBodySetPosition(chassis, placement.position[0], placement.position[1],
                          placement.position[2] + configuration.centerOfGravityHeight);
         dBodySetRotation(chassis, placementRotation);
-        chassisGeom = dCreateBox(ode.space, configuration.collisionLength,
-                                 configuration.collisionWidth, configuration.collisionHeight);
-        dGeomSetBody(chassisGeom, chassis);
-        dGeomSetOffsetPosition(chassisGeom, configuration.collisionOffsetX,
-                               configuration.collisionOffsetY, configuration.collisionOffsetZ);
+        if (configuration.collisionEnabled && configuration.hasCollisionMesh) {
+            if (configuration.collisionMeshVertices.empty() ||
+                configuration.collisionMeshVertices.size() % 3 != 0 ||
+                configuration.collisionMeshIndices.empty() ||
+                configuration.collisionMeshIndices.size() % 3 != 0) {
+                throw std::invalid_argument("Bus collision mesh has invalid vertex/index buffers");
+            }
+            chassisCollisionMeshData = dGeomTriMeshDataCreate();
+            if (!chassisCollisionMeshData) {
+                throw std::runtime_error("Failed to create bus collision mesh data");
+            }
+            dGeomTriMeshDataBuildDouble(
+                chassisCollisionMeshData, configuration.collisionMeshVertices.data(),
+                3 * sizeof(double),
+                checkedOdeCount(configuration.collisionMeshVertices.size() / 3, "vertex count"),
+                configuration.collisionMeshIndices.data(),
+                checkedOdeCount(configuration.collisionMeshIndices.size(), "index count"),
+                3 * sizeof(int));
+            chassisGeom = dCreateTriMesh(ode.space, chassisCollisionMeshData, nullptr, nullptr,
+                                         nullptr);
+            if (!chassisGeom) {
+                dGeomTriMeshDataDestroy(chassisCollisionMeshData);
+                chassisCollisionMeshData = nullptr;
+                throw std::runtime_error("Failed to create bus collision mesh geometry");
+            }
+            dGeomSetBody(chassisGeom, chassis);
+            // Mesh vertices use the visible model's origin; the ODE body origin
+            // is at the configured centre of gravity.
+            dGeomSetOffsetPosition(chassisGeom, 0.0, 0.0,
+                                   -configuration.centerOfGravityHeight);
+        } else if (configuration.collisionEnabled) {
+            chassisGeom = dCreateBox(ode.space, configuration.collisionLength,
+                                     configuration.collisionWidth, configuration.collisionHeight);
+            dGeomSetBody(chassisGeom, chassis);
+            dGeomSetOffsetPosition(chassisGeom, configuration.collisionOffsetX,
+                                   configuration.collisionOffsetY, configuration.collisionOffsetZ);
+        }
         dBodySetAutoDisableFlag(chassis, 0);
         dBodySetMaxAngularSpeed(chassis, MAX_CHASSIS_ANGULAR_SPEED);
 
@@ -1005,7 +1046,9 @@ BodyPose BusSimulation::chassisPose() const {
 ChassisCollisionBox BusSimulation::chassisCollisionBox() const {
     return {impl_->configuration.collisionLength,  impl_->configuration.collisionWidth,
             impl_->configuration.collisionHeight,  impl_->configuration.collisionOffsetX,
-            impl_->configuration.collisionOffsetY, impl_->configuration.collisionOffsetZ};
+            impl_->configuration.collisionOffsetY, impl_->configuration.collisionOffsetZ,
+            impl_->configuration.collisionEnabled,
+            impl_->configuration.hasCollisionMesh && impl_->configuration.collisionEnabled};
 }
 
 BodyPose BusSimulation::wheelPose(std::size_t index) const {

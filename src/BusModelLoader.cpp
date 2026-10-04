@@ -4,6 +4,8 @@
 #include "PerfTrace.h"
 #include "Variables.h"
 
+#include <algorithm>
+#include <cctype>
 #include <utility>
 
 namespace openbus::rendering {
@@ -21,11 +23,14 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
     result.ctcTextures = configuration.ctcTextures;
     result.scriptTextures = configuration.scriptTextures;
     result.textTextures = configuration.textTextures;
+    result.collisionMeshes = configuration.collisionMeshes;
+    result.hasBoundingBox = configuration.hasBoundingBox;
+    result.boundingBox = configuration.boundingBox;
     result.lodThresholds = configuration.lodThresholds;
     result.diagnostics = configuration.diagnostics;
     result.parts.reserve(configuration.parts.size());
     for (const ModelPart& source : configuration.parts) {
-        if (source.objPath.empty() || source.isShadow) {
+        if (source.objPath.empty()) {
             continue;
         }
         BusModelPart part;
@@ -34,6 +39,13 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
         part.textureName = source.textureName;
         part.viewpoint = source.viewpoint;
         part.renderType = source.renderType;
+        std::string meshStem = source.objPath.stem().string();
+        std::transform(meshStem.begin(), meshStem.end(), meshStem.begin(),
+                       [](unsigned char character) {
+                           return static_cast<char>(std::tolower(character));
+                       });
+        part.isShadow = source.isShadow || meshStem == "shadow";
+        part.noCollision = source.noCollision;
         part.visibleVariable = source.visibleVariable;
         part.visibleValue = source.visibleValue;
         part.interiorLightIndexes = source.interiorLightIndexes;

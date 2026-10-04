@@ -137,10 +137,11 @@ change from their controlling variables without manual texture replacement.
   OMSI fonts, layout, and display-background/alpha semantics. Enhanced horizontal
   alignment and `Refresh_Strings`-gated changed-string updates are implemented;
   the fallback rasterizer and remaining format details still differ from OMSI.
-- [ ] Complete `[registration_automatic]`, `[registration_free]`, and
-  `[kmcounter_init]` runtime state so the odometer and registration displays
-  match the OMSI capture rather than remaining blank or using initialization
-  fallbacks.
+- [x] Pair the selected number-list entry with `[registration_list]`, expose
+  the plate as `ident`, and rasterize its text texture on initialization; the
+  default E400 plate is visible on the real model capture.
+- [ ] Complete registration persistence/full OMSI selection UI and verify
+  odometer parity against the reference capture.
 - [ ] Add a repeatable OMSI/OpenBus screenshot comparison for the E400 cockpit
   that checks the dashboard LCD, odometer, warning lamps, illumination, and
   text surfaces independently of camera framing.
@@ -168,25 +169,24 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   passenger-cabin CFG is now loaded for driver/passenger positions,
   illumination groups, and entry/exit path points. The `[paths]` CFG is now
   loaded for indexed path points/links, step-sound packs, and room-height
-  transitions. Registration list files are now loaded and deduplicated; AI
-  sound selection remains incomplete.
+  transitions. `[number]` and `[registration_list]` files are now loaded
+  separately in order and paired by entry index; AI sound selection remains
+  incomplete.
 - [~] `[registration_automatic]`, `[registration_free]`, and
   `[kmcounter_init]` now seed runtime registration and split odometer state.
   Explicit registration/index overrides and deterministic automatic numbers
   are available; persistence and full OMSI selection UI remain incomplete.
-- [~] `collision_mesh` and `nocollision` records are parsed/diagnosed, but
-  physics still uses the simplified chassis box and does not build model
-  collision geometry.
-- [ ] Decide and document the collision policy. If model collision is in
-  scope, load collision meshes and honor `nocollision`; otherwise mark these
-  records unsupported and stop implying full CFG compatibility.
+- [~] Bus-model `[collision_mesh]` records now build an ODE triangle collider;
+  model `[boundingbox]` overrides the BUS box, `[nocollision]` filters a
+  mesh-scoped collider, and the BUS box remains the fallback. Scenery-object
+  collision records are still parse-only because scenery has no runtime.
 - [~] Passenger-cabin CFG loading, driver/passenger positions, illumination
   groups, entry/exit path points, and basic passenger path graph loading are
   active. Boarding/alighting, passenger movement, passenger mass, route/path
   selection, and HOF/timetable integration remain incomplete.
-- [ ] Implement or explicitly scope out
-  registration/odometer behavior, AI/network sections, route/timetable/HOF
-  data, and vehicle-specific view systems.
+- [ ] Complete registration persistence and full selection UI; implement or
+  explicitly scope out AI/network sections, route/timetable/HOF data, and
+  vehicle-specific view systems.
 - [ ] Implement sound configuration coverage beyond the current player sound
   runtime path, including selecting `sound_ai` for AI vehicles.
 - [ ] Add diagnostics that distinguish "recognized and active" from
@@ -203,9 +203,10 @@ by parser alignment and should not be described as supported:
 - Route/path selection, timetable/HOF lookup, stop announcements, and
   arrival-board data used by the script system. Basic `[paths]` point/link
   graphs and step metadata are loaded and covered by `OpenBusVehicleConfigProbe`.
-- Registration-number persistence and full selection UI. Registration list
-  loading, runtime automatic/free selection, the `number` string, and live
-  odometer publication are active; parser coverage remains in
+- Registration-number persistence and full selection UI. Ordered number/plate
+  pairing, runtime automatic/free selection, the distinct `number`/`ident`
+  strings, initial plate-text rendering, and live odometer publication are
+  active; parser coverage remains in
   `OpenBusVehicleConfigProbe`.
 - AI/network vehicle sections, coupling/cable behavior, and articulated
   multi-body physics despite the articulated flag being parsed.
@@ -274,11 +275,11 @@ for alignment is not mistaken for supporting it.
   geometry transforms and passes. `[rendertype]` currently recognizes
   `surface` and numeric values, but not the documented `presurface` and
   `on_surface` names; the scenery-object loader also discards the value.
-- [ ] Make `[isshadow]`, `[collision_mesh]`, `[nocollision]`, and model
-  `[boundingbox]` affect shadow/collision construction. They are currently
-  stored or consumed for alignment while physics uses the simplified chassis
-  shape; additionally, `[isshadow]` meshes are skipped by `BusModelLoader`
-  rather than rendered as ground-clamped fake shadows.
+- [~] `[isshadow]` meshes now render with their authored transparent material
+  and a ground-plane projection; model collision meshes/bounds and
+  `[nocollision]` now affect the bus ODE collider. Scenery-object collision
+  construction and shadow grounding against elevated road surfaces remain
+  incomplete.
 - [~] Implement basic `[illumination_interior]`/`[interiorlight]` emission,
   controller variables, and mesh assignments. `[light_enh]`, `[light_enh_2]`,
   and `[spotlight]` geometry, falloff, and render ordering remain pending.
@@ -329,6 +330,11 @@ for alignment is not mistaken for supporting it.
 - [ ] Complete path runtime use of extended `[pathpnt]` records and
   `[stepsoundpack]`; loading the basic graph is not equivalent to passenger
   route selection or step-sound playback.
+- [~] Player sound CFG runs untriggered `[sound]` records with `[volcurve]`
+  controls as ambient loops and applies their configured base gain. This
+  enables authored window-dependent ambience (for example, `cabwindowopen`)
+  without window-specific mixer logic; the full OMSI sound contract remains
+  incomplete.
 - [ ] Complete sound spatialization and control semantics for `[loopsound]`
   and `[3d]` beyond the current player sound loading/trigger path.
 - [ ] Add AI/network configuration support for `[ailist]`, `[aigroup_2]`,

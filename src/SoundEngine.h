@@ -20,11 +20,13 @@ struct SoundVolumeCurve {
 struct SoundTriggerDefinition {
     std::filesystem::path file;
     bool loop = false;
+  bool loopDisabled = false;
     int viewpoint = 0;
     double maxDistance = 0.0;
     std::array<double, 3> position = {};
     std::string controlVariable;
     double controlCenter = 0.0;
+  double baseGain = 1.0;
     std::vector<SoundCurvePoint> volumeCurve;
     std::vector<SoundVolumeCurve> volumeCurves;
 };
@@ -47,6 +49,8 @@ class SoundEngine {
     void stop(const std::string& name);
 
   private:
+    friend struct SoundEngineProbeAccess;
+
     struct Backend;
     std::unordered_map<std::string, std::vector<SoundTriggerDefinition>> triggers_;
     std::vector<SoundTriggerDefinition> untriggeredLoopSounds_;

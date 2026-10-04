@@ -179,6 +179,8 @@ int main() {
 
     VehicleConfig configuration;
     configuration.sourcePath = root / "probe.bus";
+    configuration.selectedVehicleNumber = "Fleet 01";
+    configuration.selectedRegistration = "AB12 CDE";
     configuration.scripts.push_back(scriptPath.filename().string());
     if (!setScriptBackend(nullptr)) {
         std::cerr << "could not clear script backend override for native-default test\n";
@@ -281,23 +283,34 @@ int main() {
         ModelTextTexture{1, true, {"bitmapdisplay", "ProbeFont", "6", "4", "0", "10", "20", "30", "2"}},
         ModelTextTexture{2, true, {"centerdisplay", "ProbeFont", "6", "8", "1", "10", "20", "30", "0"}},
         ModelTextTexture{3, true, {"blockcolordisplay", "ProbeFont", "6", "6", "0", "1", "1", "1", "0"}},
-        ModelTextTexture{4, true, {"leftdisplay", "ProbeFont", "8", "4", "1", "10", "20", "30", "1"}}});
+        ModelTextTexture{4, true, {"leftdisplay", "ProbeFont", "8", "4", "1", "10", "20", "30", "1"}},
+        ModelTextTexture{5, false, {"ident", "probe-font", "32", "16", "0", "255", "255", "255"}}});
     variables.setString("display", "HELLO\n123");
     variables.setString("bitmapdisplay", "A@AB");
     variables.setString("centerdisplay", "A");
     variables.setString("blockcolordisplay", "A");
     variables.setString("leftdisplay", "A");
     runtime.initialize();
-    ScriptRuntime::ScriptTextureSnapshot unrefreshedText;
-    const bool copiedUnrefreshedText = runtime.copyTextTexture(0, unrefreshedText);
-    bool hasUnrequestedText = false;
-    for (std::size_t offset = 3; copiedUnrefreshedText && offset < unrefreshedText.pixels.size();
+    ScriptRuntime::ScriptTextureSnapshot initialText;
+    ScriptRuntime::ScriptTextureSnapshot initialPlateText;
+    const bool copiedInitialText = runtime.copyTextTexture(0, initialText);
+    const bool copiedInitialPlateText = runtime.copyTextTexture(5, initialPlateText);
+    bool hasInitialText = false;
+    bool hasInitialPlateText = false;
+    for (std::size_t offset = 3; copiedInitialText && offset < initialText.pixels.size();
          offset += 4) {
-        hasUnrequestedText = hasUnrequestedText || unrefreshedText.pixels[offset] != 0;
+        hasInitialText = hasInitialText || initialText.pixels[offset] != 0;
     }
-    if (!copiedUnrefreshedText || hasUnrequestedText ||
-        unrefreshedText.pixels.size() != 32U * 16U * 4U) {
-        std::cerr << "text texture was rasterized without a refresh request\n";
+    for (std::size_t offset = 3;
+         copiedInitialPlateText && offset < initialPlateText.pixels.size(); offset += 4) {
+        hasInitialPlateText = hasInitialPlateText || initialPlateText.pixels[offset] != 0;
+    }
+    if (!copiedInitialText || !hasInitialText ||
+        initialText.pixels.size() != 32U * 16U * 4U || !copiedInitialPlateText ||
+        !hasInitialPlateText || initialPlateText.pixels.size() != 32U * 16U * 4U ||
+        variables.getString("ident") != "AB12 CDE" ||
+        variables.getString("number") != "Fleet 01") {
+        std::cerr << "initial registration text was not bound and rasterized from vehicle data\n";
         return 1;
     }
     variables.set("refresh_strings", 1.0);
@@ -309,6 +322,7 @@ int main() {
 
     ScriptRuntime::ScriptTextureSnapshot scriptTexture;
     ScriptRuntime::ScriptTextureSnapshot textTexture;
+    ScriptRuntime::ScriptTextureSnapshot plateTextTexture;
     ScriptRuntime::ScriptTextureSnapshot bitmapTextTexture;
     ScriptRuntime::ScriptTextureSnapshot centerTextTexture;
     ScriptRuntime::ScriptTextureSnapshot blockColorTextTexture;
@@ -317,6 +331,8 @@ int main() {
         scriptTexture.height != 5 || scriptTexture.pixels.size() != 4U * 5U * 4U ||
         !runtime.copyTextTexture(0, textTexture) || textTexture.width != 32 ||
         textTexture.height != 16 || textTexture.pixels.size() != 32U * 16U * 4U ||
+        !runtime.copyTextTexture(5, plateTextTexture) || plateTextTexture.width != 32 ||
+        plateTextTexture.height != 16 || plateTextTexture.pixels.size() != 32U * 16U * 4U ||
         !runtime.copyTextTexture(1, bitmapTextTexture) || bitmapTextTexture.width != 6 ||
         bitmapTextTexture.height != 4 || bitmapTextTexture.pixels.size() != 6U * 4U * 4U ||
         !runtime.copyTextTexture(2, centerTextTexture) || centerTextTexture.width != 6 ||

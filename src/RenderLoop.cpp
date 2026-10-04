@@ -553,6 +553,13 @@ Matrix4 translationMatrix(const std::array<double, 3>& value) {
     return result;
 }
 
+Matrix4 poseMatrix(const BodyPose& pose) {
+    return {pose.rotation[0], pose.rotation[3], pose.rotation[6], 0.0,
+            pose.rotation[1], pose.rotation[4], pose.rotation[7], 0.0,
+            pose.rotation[2], pose.rotation[5], pose.rotation[8], 0.0,
+            pose.position[0], pose.position[1], pose.position[2], 1.0};
+}
+
 Matrix4 rotationMatrix(double angleDegrees, double x, double y, double z) {
     const double length = std::sqrt(x * x + y * y + z * z);
     if (length <= 1.0e-12) {
@@ -692,7 +699,8 @@ void selectRuntimeRegistration(VehicleConfig& configuration, const VehiclePlacem
         return;
     }
 
-    if (configuration.registrationFree && !configuration.registrationNumbers.empty()) {
+    const std::size_t registrationCount = registrationOptionCount(configuration);
+    if (configuration.registrationFree && registrationCount > 0) {
         std::size_t selectedIndex = 0;
         if (const char* indexValue = std::getenv("OPENBUS_REGISTRATION_INDEX");
             indexValue != nullptr && *indexValue != '\0') {
@@ -702,9 +710,7 @@ void selectRuntimeRegistration(VehicleConfig& configuration, const VehiclePlacem
                 selectedIndex = 0;
             }
         }
-        configuration.selectedRegistration =
-            configuration
-                .registrationNumbers[selectedIndex % configuration.registrationNumbers.size()];
+        selectRegistrationAtIndex(configuration, selectedIndex);
         return;
     }
 
@@ -847,6 +853,7 @@ struct Vehicle {
         std::vector<Batch> batches;
         int viewpoint;
         int renderType = 2;
+        bool isShadow = false;
         bool transparent;
         int lodIndex;
         std::string visibleVariable;
@@ -1241,6 +1248,14 @@ struct Vehicle {
 
     void applyAnimations(const DisplayPart& part) const {
         multiplyMatrix(animationTransformForPart(part));
+    }
+
+    void applyDrawTransform(const DisplayPart& part,
+                            const Matrix4* groundShadowTransform) const {
+        if (part.isShadow && groundShadowTransform != nullptr) {
+            multiplyMatrix(*groundShadowTransform);
+        }
+        applyAnimations(part);
     }
 
     std::array<double, 3> animatedPartCenter(const DisplayPart& part) const {
@@ -2124,7 +2139,8 @@ struct Vehicle {
                       sortedVertices.data(), GL_STATIC_DRAW);
     }
 
-    void draw(RenderViewContext context, VehicleRenderPass renderPass = VehicleRenderPass::All) {
+    void draw(RenderViewContext context, VehicleRenderPass renderPass = VehicleRenderPass::All,
+              const Matrix4* groundShadowTransform = nullptr) {
         TraceScope trace("render", "Vehicle::draw");
         if (!loaded) {
             return;
@@ -2301,7 +2317,7 @@ struct Vehicle {
             TraceScope phase("render", "Vehicle::draw.opaquePass");
             for (DisplayPart* part : opaqueParts) {
                 pushMatrix();
-                applyAnimations(*part);
+                applyDrawTransform(*part, groundShadowTransform);
                 setBackFaceCulling(part->backFaceCulling);
                 for (Batch& batch : part->batches) {
                     const double alpha = alphaScale(batch);
@@ -2335,7 +2351,7 @@ struct Vehicle {
                         continue;
                     }
                     pushMatrix();
-                    applyAnimations(*transparent.part);
+                    applyDrawTransform(*transparent.part, groundShadowTransform);
                     setBackFaceCulling(transparent.part->backFaceCulling);
                     const double alpha = alphaScale(batch);
                     if (alpha > 0.0) {
@@ -2352,7 +2368,7 @@ struct Vehicle {
                 for (const TransparentBatch& noDepthOpaque : noDepthOpaqueBatches) {
                     Batch& batch = *noDepthOpaque.batch;
                     pushMatrix();
-                    applyAnimations(*noDepthOpaque.part);
+                    applyDrawTransform(*noDepthOpaque.part, groundShadowTransform);
                     setBackFaceCulling(noDepthOpaque.part->backFaceCulling);
                     const double alpha = alphaScale(batch);
                     if (alpha <= 0.0) {
@@ -2372,7 +2388,7 @@ struct Vehicle {
                 for (const TransparentBatch& transparent : transparentBatches) {
                     Batch& batch = *transparent.batch;
                     pushMatrix();
-                    applyAnimations(*transparent.part);
+                    applyDrawTransform(*transparent.part, groundShadowTransform);
                     setBackFaceCulling(transparent.part->backFaceCulling);
                     const double alpha = alphaScale(batch);
                     if (alpha <= 0.0) {
@@ -3255,10 +3271,6 @@ struct Vehicle {
 
     void loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed) {
         TraceScope trace("obj", "loadObj");
-        const std::string sourceStem = lower(part.objPath.stem().string());
-        if (sourceStem == "shadow") {
-            return;
-        }
         static const bool verboseObjLoadLogs =
             parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_OBJ_LOAD"));
         static const bool materialBatchingEnabled =
@@ -3716,6 +3728,9 @@ struct Vehicle {
                         }
                     }
                 }
+                if (part.isShadow && state.alphaMode == 0) {
+                    state.alphaMode = 2;
+                }
                 if (!state.textureName.empty()) {
                     textureName = state.textureName;
                 }
@@ -3733,6 +3748,7 @@ struct Vehicle {
         DisplayPart displayPart;
         displayPart.viewpoint = part.viewpoint;
         displayPart.renderType = part.renderType;
+        displayPart.isShadow = part.isShadow;
         displayPart.transparent = hasTransparentMaterial;
         displayPart.lodIndex = part.lodIndex;
         displayPart.visibleVariable = lower(part.visibleVariable);
@@ -4605,6 +4621,22 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     TraceScope trace("frame", "RenderLoop::draw");
     const BodyPose chassis = simulation.chassisPose();
     const ChassisCollisionBox collision = simulation.chassisCollisionBox();
+    constexpr double radiansToDegrees = 180.0 / 3.14159265358979323846;
+    const Matrix4 playerModelBase =
+        multiplyMatrix4(poseMatrix(chassis), translationMatrix({0.0, 0.0,
+                                                               playerVehicle_ != nullptr
+                                                                   ? playerVehicle_->modelOffsetZ
+                                                                   : 0.0}));
+    const Matrix4 shadowGroundBase = multiplyMatrix4(
+        translationMatrix({chassis.position[0], chassis.position[1], 0.015}),
+        rotationMatrix(simulation.yaw() * radiansToDegrees, 0.0, 0.0, 1.0));
+    Matrix4 inversePlayerModelBase = identityMatrix();
+    const bool canGroundClampShadow =
+        invertAffineMatrix(playerModelBase, inversePlayerModelBase);
+    const Matrix4 groundShadowTransform =
+        canGroundClampShadow
+            ? multiplyMatrix4(inversePlayerModelBase, shadowGroundBase)
+            : identityMatrix();
     {
         TraceScope phase("render", "RenderLoop::draw.camera");
         if (cameraView_ == 0) {
@@ -4921,7 +4953,11 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 } else {
                     applyVehiclePlacement(vehicle->placement);
                 }
-                vehicle->draw(vehicleContext, renderPass);
+                const Matrix4* shadowTransform =
+                    vehicle.get() == playerVehicle_ && canGroundClampShadow
+                        ? &groundShadowTransform
+                        : nullptr;
+                vehicle->draw(vehicleContext, renderPass, shadowTransform);
                 popMatrix();
             }
         };
@@ -4946,7 +4982,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                  : RenderViewContext::PlayerInterior);
             popMatrix();
         }
-        if (!playerDrawn) {
+        if (!playerDrawn && collision.enabled && !collision.mesh) {
             pushMatrix();
             applyPose(chassis);
             translate(collision.offsetX, collision.offsetY, collision.offsetZ);

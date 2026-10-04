@@ -304,6 +304,36 @@ add_executable(OpenBusVehicleConfigProbe
 target_include_directories(OpenBusVehicleConfigProbe PRIVATE src src/osc)
 add_test(NAME OpenBusVehicleConfigProbe COMMAND OpenBusVehicleConfigProbe)
 
+add_executable(OpenBusBusConfigurationCollisionProbe
+    tests/BusConfigurationCollisionProbe.cpp
+    src/BusConfiguration.cpp
+    src/BusConfigLoader.cpp
+    src/ConfigurationParser.cpp
+    src/ModelConfigLoader.cpp
+    src/O3DLoader.cpp
+    src/ObjLoader.cpp
+    src/PerfTrace.cpp
+    src/Variables.cpp
+    src/VehicleConfigLoader.cpp
+    src/osc/osc.cpp
+)
+openbus_configure_perf_trace(OpenBusBusConfigurationCollisionProbe)
+target_include_directories(OpenBusBusConfigurationCollisionProbe PRIVATE src src/osc)
+add_test(NAME OpenBusBusConfigurationCollisionProbe
+         COMMAND OpenBusBusConfigurationCollisionProbe)
+
+add_executable(OpenBusSoundEngineProbe
+    tests/SoundEngineProbe.cpp
+    src/ConfigurationParser.cpp
+    src/Logger.cpp
+    src/PerfTrace.cpp
+    src/SoundEngine.cpp
+    src/Variables.cpp
+)
+target_include_directories(OpenBusSoundEngineProbe PRIVATE src)
+target_link_libraries(OpenBusSoundEngineProbe PRIVATE OpenAL::OpenAL)
+add_test(NAME OpenBusSoundEngineProbe COMMAND OpenBusSoundEngineProbe)
+
 add_executable(OpenBusScriptTextureRuntimeProbe
     tests/ScriptTextureRuntimeProbe.cpp
     src/Logger.cpp

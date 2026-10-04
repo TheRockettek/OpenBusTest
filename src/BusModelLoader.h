@@ -36,6 +36,8 @@ struct BusModelPart {
     std::array<double, 3> color = {0.65, 0.65, 0.65};
     int viewpoint = 0;
     int renderType = 2;
+    bool isShadow = false;
+    bool noCollision = false;
     std::string visibleVariable;
     int visibleValue = 0;
     std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
@@ -58,6 +60,9 @@ struct BusModelLoadResult {
     std::vector<ModelCtcTexture> ctcTextures;
     std::vector<ModelScriptTexture> scriptTextures;
     std::vector<ModelTextTexture> textTextures;
+    std::vector<ModelCollisionMesh> collisionMeshes;
+    bool hasBoundingBox = false;
+    std::array<double, 6> boundingBox = {};
     std::vector<double> lodThresholds;
     ConfigurationDiagnostics diagnostics;
 };

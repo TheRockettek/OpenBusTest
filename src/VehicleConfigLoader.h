@@ -5,6 +5,7 @@
 #include "ModelConfigTypes.h"
 
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -102,7 +103,12 @@ struct VehicleConfig {
     std::filesystem::path numberConfigPath;
     std::filesystem::path registrationListConfigPath;
     bool registrationListsLoaded = false;
+    // The [number] fleet identifiers and [registration_list] plate strings
+    // are parallel, order-preserving lists.
+    std::vector<std::string> vehicleNumbers;
     std::vector<std::string> registrationNumbers;
+    std::size_t selectedRegistrationIndex = 0;
+    std::string selectedVehicleNumber;
     std::string selectedRegistration;
     bool registrationAutomatic = false;
     std::string registrationPrefix;
@@ -118,6 +124,9 @@ struct VehicleConfig {
 };
 
 VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, VehicleFileKind kind);
+std::size_t registrationOptionCount(const VehicleConfig& configuration);
+// Selects the parallel number/plate entry, wrapping within their paired range.
+void selectRegistrationAtIndex(VehicleConfig& configuration, std::size_t index);
 
 namespace openbus::scripting {
 class Vehicle;

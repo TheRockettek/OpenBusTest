@@ -484,6 +484,16 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
             }
         }
     };
+    const auto retainUntriggeredLoop = [&]() {
+        if (!hasSound || !currentTriggerNames.empty()) {
+            return;
+        }
+        const bool curveDrivenAmbient = !current.loopDisabled && !current.volumeCurves.empty();
+        if (current.loop || curveDrivenAmbient) {
+            current.loop = true;
+            untriggeredLoopSounds_.push_back(current);
+        }
+    };
     openbus::config::Line line;
     while (reader.next(line)) {
         if (!line.isKeyword()) {
@@ -491,9 +501,7 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
         }
         const std::string keyword = line.keyword();
         if (keyword == "sound" || keyword == "loopsound") {
-            if (hasSound && current.loop && currentTriggerNames.empty()) {
-                untriggeredLoopSounds_.push_back(current);
-            }
+            retainUntriggeredLoop();
             openbus::config::Line value;
             ConfigurationDiagnostics diagnostics;
             if (!reader.readPayload(value, diagnostics, keyword)) {
@@ -502,6 +510,19 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
             current = {};
             current.file = resolve(configPath.parent_path(), openbus::config::trim(value.text));
             current.loop = keyword == "loopsound" || isLoopSoundFile(current.file);
+            if (keyword == "sound") {
+                openbus::config::Line gainLine;
+                if (reader.next(gainLine)) {
+                    if (gainLine.isKeyword()) {
+                        reader.pushBack(std::move(gainLine));
+                    } else {
+                        double baseGain = 1.0;
+                        if (openbus::config::parseDouble(gainLine.text, baseGain)) {
+                            current.baseGain = (std::max)(0.0, baseGain);
+                        }
+                    }
+                }
+            }
             if (keyword == "loopsound") {
                 std::vector<std::string> loopValues;
                 openbus::config::Line loopValue;
@@ -536,6 +557,7 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
         if (keyword == "noloop") {
             if (hasSound) {
                 current.loop = false;
+                current.loopDisabled = true;
                 updateCurrentTriggers();
             }
             continue;
@@ -543,6 +565,7 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
         if (keyword == "loop" || keyword == "looped") {
             if (hasSound) {
                 current.loop = true;
+                current.loopDisabled = false;
                 updateCurrentTriggers();
             }
             continue;
@@ -616,9 +639,7 @@ void SoundEngine::load(const std::filesystem::path& configPath) {
             updateCurrentTriggers();
         }
     }
-    if (hasSound && current.loop && currentTriggerNames.empty()) {
-        untriggeredLoopSounds_.push_back(current);
-    }
+    retainUntriggeredLoop();
 }
 
 void SoundEngine::setListenerPose(const std::array<double, 3>& position,
@@ -638,14 +659,15 @@ void SoundEngine::updateLoops(const Variables& variables, int viewpoint) {
             continue;
         }
 
-        double gain = 1.0;
+        double gain = definition.baseGain;
         if (!definition.volumeCurves.empty()) {
             for (const SoundVolumeCurve& curve : definition.volumeCurves) {
                 gain *= evaluateCurve(curve.points, variables.get(curve.variable));
             }
         } else if (!definition.controlVariable.empty() && definition.controlCenter > 0.0) {
-            gain = std::clamp(variables.get(definition.controlVariable) / definition.controlCenter,
-                              0.0, 1.0);
+            gain *= std::clamp(variables.get(definition.controlVariable) /
+                                   definition.controlCenter,
+                               0.0, 1.0);
         }
         gain = std::clamp(gain, 0.0, 1.0);
         if (gain <= 0.0) {
@@ -701,7 +723,9 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
         return;
     }
     if (!overrideFile.empty()) {
-        definitions = {SoundTriggerDefinition{overrideFile, false, 0, 0.0, {}, {}, 0.0, {}, {}}};
+        SoundTriggerDefinition overrideDefinition;
+        overrideDefinition.file = overrideFile;
+        definitions = {std::move(overrideDefinition)};
     }
     if (overrideFile.empty()) {
         for (const SoundTriggerDefinition& definition : definitions) {
@@ -725,9 +749,9 @@ void SoundEngine::trigger(const std::string& name, const std::filesystem::path& 
     for (const SoundTriggerDefinition& definition : definitions) {
         const std::filesystem::path file =
             definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
-        double gain = 1.0;
+        double gain = definition.baseGain;
         if (!definition.volumeCurve.empty()) {
-            gain = evaluateCurve(definition.volumeCurve, controlValue);
+            gain *= evaluateCurve(definition.volumeCurve, controlValue);
         }
         gain = std::clamp(gain, 0.0, 1.0);
         if (gain <= 0.0) {

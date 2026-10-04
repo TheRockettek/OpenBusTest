@@ -962,12 +962,15 @@ struct ScriptRuntime::Impl {
                                      "yard", "file_schedule"}) {
             localState.declareString(variable);
         }
-        if (!configuration.selectedRegistration.empty()) {
-            // OMSI uses both names for the configured vehicle registration.  The
-            // model text texture commonly references `ident`, while scripts and
-            // other model parts commonly reference `number`.
+        if (!configuration.selectedRegistration.empty() ||
+            !configuration.selectedVehicleNumber.empty()) {
+            // The plate text surface reads `ident`; scripts and fleet-number
+            // surfaces read `number`.
             localState.setString("ident", configuration.selectedRegistration);
-            localState.setString("number", configuration.selectedRegistration);
+            localState.setString(
+                "number", configuration.selectedVehicleNumber.empty()
+                              ? configuration.selectedRegistration
+                              : configuration.selectedVehicleNumber);
         }
 
         if (tryInitializeNativeBackend()) {
@@ -1526,8 +1529,8 @@ struct ScriptRuntime::Impl {
         return true;
     }
 
-    void updateTextTextures() {
-        if (localState.get("refresh_strings") == 0.0) {
+    void updateTextTextures(bool force = false) {
+        if (!force && localState.get("refresh_strings") == 0.0) {
             return;
         }
         for (auto& entry : textTextureDefinitions) {
@@ -2063,7 +2066,7 @@ void ScriptRuntime::initialize() {
         } else {
             impl_->invoke("init");
         }
-        impl_->updateTextTextures();
+        impl_->updateTextTextures(true);
     }
 }
 

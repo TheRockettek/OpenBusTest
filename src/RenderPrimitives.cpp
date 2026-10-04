@@ -321,11 +321,13 @@ void drawCollisionWireframe(const BusSimulation& simulation) {
     glDepthMask(GL_FALSE);
     const BodyPose chassis = simulation.chassisPose();
     const ChassisCollisionBox collision = simulation.chassisCollisionBox();
-    pushMatrix();
-    applyPose(chassis);
-    translate(collision.offsetX, collision.offsetY, collision.offsetZ);
-    drawBox(collision.length, collision.width, collision.height, 0.0, 0.85, 0.95);
-    popMatrix();
+    if (collision.enabled && !collision.mesh) {
+        pushMatrix();
+        applyPose(chassis);
+        translate(collision.offsetX, collision.offsetY, collision.offsetZ);
+        drawBox(collision.length, collision.width, collision.height, 0.0, 0.85, 0.95);
+        popMatrix();
+    }
 
     for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
         pushMatrix();

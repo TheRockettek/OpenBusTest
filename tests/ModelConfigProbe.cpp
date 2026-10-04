@@ -14,18 +14,25 @@ int main() {
     std::ofstream mesh(root / "display.obj");
     mesh << "# parser fixture\n";
     mesh.close();
+    std::ofstream collisionMesh(root / "collision.obj");
+    collisionMesh << "v -1 -2 0\nv 1 -2 0\nv 0 2 0\nf 1 2 3\n";
+    collisionMesh.close();
     std::ofstream config(configPath);
     config << "[scripttexture]\n64\n16\n0\n"
               "[CTC]\nColorscheme\nTexture\\Advert\n0\n"
               "[CTCTexture]\nFarbschema_Tex1\n3803_l.tga\n"
               "[mesh]\ndisplay.obj\n"
+              "[isshadow]\n"
+              "[nocollision]\n"
+              "[collision_mesh]\ncollision.obj\n"
+              "[boundingbox]\n2.5\n13.5\n3.66\n0\n0\n2.23\n"
               "[mouseevent]\nRouteDisplay\n"
               "[matl]\ndisplay.bmp\n0\n"
               "[matl_change]\ndisplay.bmp\n0\nCockpit_Lights\n"
               "[usescripttexture]\n0\n"
               "[illumination_interior]\n2\n-1\n4\n5\n"
               "[interiorlight]\nCockpit_Lights\n1\n2\n3\n0.1\n0.2\n0.3\n4\n"
-              "[texttexture]\nroute_display\nfont\n128\n32\n"
+              "[texttexture]\nident\nfont\n128\n32\n"
               "[usetexttexture]\n0\n";
     config.close();
 
@@ -34,6 +41,8 @@ int main() {
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
     std::ofstream variants(configPath);
     variants << "[mesh]\ndisplay.obj\n"
+                "[collision_mesh]\ncollision.obj\n"
+                "[boundingbox]\n2.5\n13.5\n3.66\n0\n0\n2.23\n"
                 "[matl]\ndisplay.bmp\n0\n"
                 "[matl_alpha]\n2\n[usetexttexture]\n7\n"
                 "[matl_change]\ndisplay.bmp\n0\nDisplayMode\n"
@@ -49,7 +58,13 @@ int main() {
     const ModelConfig conditional =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
     if (conditional.diagnostics.hasErrors() ||
-        conditional.parts[0].materialStatesInOrder.size() != 3) {
+        conditional.parts[0].materialStatesInOrder.size() != 3 ||
+        conditional.collisionMeshes.size() != 1 ||
+        conditional.collisionMeshes[0].sourcePath != "collision.obj" ||
+        conditional.collisionMeshes[0].resolvedPath != root / "collision.obj" ||
+        !conditional.collisionMeshes[0].hasPart ||
+        conditional.collisionMeshes[0].partIndex != 0 || !conditional.hasBoundingBox ||
+        conditional.boundingBox != std::array<double, 6>{2.5, 13.5, 3.66, 0.0, 0.0, 2.23}) {
         std::cerr << "conditional material fixture failed to parse\n";
         return 1;
     }
@@ -80,9 +95,13 @@ int main() {
     std::filesystem::remove_all(root);
 
     if (result.diagnostics.hasErrors() || result.parts.size() != 1 ||
+        !result.parts[0].isShadow || !result.parts[0].noCollision ||
+        result.collisionMeshes.size() != 1 || !result.collisionMeshes[0].hasPart ||
+        !result.hasBoundingBox ||
         result.scriptTextures.size() != 1 || result.scriptTextures[0].slot != 0 ||
         result.scriptTextures[0].width != 64 || result.scriptTextures[0].height != 16 ||
         result.textTextures.size() != 1 || result.textTextures[0].slot != 0 ||
+        result.textTextures[0].values.empty() || result.textTextures[0].values[0] != "ident" ||
         result.ctcTemplates.size() != 1 || result.ctcTemplates[0].name != "Colorscheme" ||
         result.ctcTemplates[0].texturePath != "Texture\\Advert" ||
         result.ctcTextures.size() != 1 || result.ctcTextures[0].slot != "farbschema_tex1" ||

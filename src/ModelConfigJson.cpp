@@ -89,6 +89,33 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
         }
         output << configuration.lodThresholds[index];
     }
+    output << "],\n  \"bounding_box\": ";
+    if (configuration.hasBoundingBox) {
+        output << "{\"size\":[" << configuration.boundingBox[0] << ','
+               << configuration.boundingBox[1] << ',' << configuration.boundingBox[2]
+               << "],\"center\":[" << configuration.boundingBox[3] << ','
+               << configuration.boundingBox[4] << ',' << configuration.boundingBox[5] << "]}";
+    } else {
+        output << "null";
+    }
+    output << ",\n  \"collision_meshes\": [";
+    for (std::size_t index = 0; index < configuration.collisionMeshes.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        const ModelCollisionMesh& mesh = configuration.collisionMeshes[index];
+        output << "{\"source\":";
+        writeJsonString(output, mesh.sourcePath.generic_string());
+        output << ",\"resolved\":";
+        writeJsonString(output, mesh.resolvedPath.generic_string());
+        output << ",\"part_index\":";
+        if (mesh.hasPart) {
+            output << mesh.partIndex;
+        } else {
+            output << "null";
+        }
+        output << '}';
+    }
     output << "],\n  \"script_textures\": [";
     for (std::size_t index = 0; index < configuration.scriptTextures.size(); ++index) {
         if (index != 0) {
@@ -141,6 +168,7 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
                   "      \"render_type\": "
                << part.renderType
                << ",\n      \"is_shadow\": " << (part.isShadow ? "true" : "false")
+               << ",\n      \"no_collision\": " << (part.noCollision ? "true" : "false")
                << ",\n      \"mesh_identifier\": ";
         writeJsonString(output, part.meshIdentifier);
         output << ",\n      \"animation_parent\": ";

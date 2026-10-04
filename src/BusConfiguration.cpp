@@ -4,14 +4,18 @@
 #include "ConfigurationParser.h"
 #include "Environment.h"
 #include "ModelConfigLoader.h"
+#include "O3DLoader.h"
+#include "ObjLoader.h"
 #include "PerfTrace.h"
 #include "Variables.h"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
+#include <limits>
 #include <optional>
 #include <ostream>
 #include <stdexcept>
@@ -79,8 +83,10 @@ std::filesystem::path resolveConfiguredModelPath(const std::filesystem::path& bu
     return relative;
 }
 
-BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source) {
-    const std::array<double, 6>& boundingBox = source.boundingBox;
+BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
+                                                 const ModelConfig& model) {
+    const std::array<double, 6>& boundingBox =
+        model.hasBoundingBox ? model.boundingBox : source.boundingBox;
 
     BusConfiguration configuration{};
     configuration.articulated = source.articulated;
@@ -106,6 +112,75 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source) {
     configuration.wheelHalfWidth = source.wheelHalfWidth;
     configuration.wheelRadius = source.axles.front().wheelDiameter * 0.5;
     configuration.width = boundingBox[0];
+
+    for (const ModelCollisionMesh& collisionMesh : model.collisionMeshes) {
+        if (collisionMesh.hasPart) {
+            if (collisionMesh.partIndex >= model.parts.size()) {
+                throw std::runtime_error("Bus model collision mesh refers to an invalid mesh part");
+            }
+            const ModelPart& owner = model.parts[collisionMesh.partIndex];
+            if (owner.isShadow || owner.noCollision) {
+                continue;
+            }
+        }
+        if (collisionMesh.resolvedPath.empty()) {
+            throw std::runtime_error("Bus model collision mesh was not found: " +
+                                     collisionMesh.sourcePath.string());
+        }
+        std::shared_ptr<openbus::rendering::ParsedObj> parsed;
+        if (openbus::config::lower(collisionMesh.resolvedPath.extension().string()) == ".o3d") {
+            parsed = openbus::rendering::O3DLoader::parse(collisionMesh.resolvedPath);
+        } else {
+            parsed = openbus::rendering::ObjLoader::parse(collisionMesh.resolvedPath,
+                                                         collisionMesh.bundleEntry);
+        }
+        if (!parsed || parsed->triangles.empty()) {
+            throw std::runtime_error("Bus model collision mesh has no triangles: " +
+                                     collisionMesh.resolvedPath.string());
+        }
+        const std::size_t initialVertexCount = configuration.collisionMeshVertices.size();
+        for (const openbus::rendering::ObjTriangle& triangle : parsed->triangles) {
+            std::array<const openbus::rendering::ObjPosition*, 3> positions = {};
+            bool validTriangle = true;
+            for (std::size_t corner = 0; corner < triangle.indices.size(); ++corner) {
+                const int index = triangle.indices[corner].position;
+                if (index <= 0 || static_cast<std::size_t>(index) > parsed->positions.size()) {
+                    validTriangle = false;
+                    break;
+                }
+                positions[corner] = &parsed->positions[static_cast<std::size_t>(index - 1)];
+            }
+            if (!validTriangle) {
+                continue;
+            }
+            const std::size_t nextVertex = configuration.collisionMeshVertices.size() / 3;
+            if (nextVertex > static_cast<std::size_t>(std::numeric_limits<int>::max()) - 3) {
+                throw std::runtime_error("Bus model collision mesh exceeds ODE's vertex limit");
+            }
+            for (std::size_t corner = 0; corner < positions.size(); ++corner) {
+                const auto& position = *positions[corner];
+                const std::array<double, 3> converted = {position.y, -position.x, position.z};
+                if (!std::all_of(converted.begin(), converted.end(),
+                                 [](double value) { return std::isfinite(value); })) {
+                    validTriangle = false;
+                    break;
+                }
+                configuration.collisionMeshVertices.insert(
+                    configuration.collisionMeshVertices.end(), converted.begin(), converted.end());
+                configuration.collisionMeshIndices.push_back(
+                    static_cast<int>(nextVertex + corner));
+            }
+            if (!validTriangle) {
+                configuration.collisionMeshVertices.resize(nextVertex * 3);
+                configuration.collisionMeshIndices.resize(nextVertex);
+            }
+        }
+        if (configuration.collisionMeshVertices.size() == initialVertexCount) {
+            throw std::runtime_error("Bus model collision mesh has no usable triangles: " +
+                                     collisionMesh.resolvedPath.string());
+        }
+    }
+    configuration.hasCollisionMesh = !configuration.collisionMeshIndices.empty();
 
     return configuration;
 }
@@ -229,7 +304,7 @@ BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath) {
         }
     }
     applyModelSteering(source, model);
-    return configurationFromVehicleConfig(source);
+    return configurationFromVehicleConfig(source, model);
 }
 
 void writeBusConfigurationJson(std::ostream& output, const BusConfiguration& configuration) {

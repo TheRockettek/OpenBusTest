@@ -46,6 +46,10 @@ struct BusConfiguration {
     bool articulated;
     std::vector<BusAxle> axles;
     double inverseMinimumTurnRadius = 0.0;
+    bool collisionEnabled = true;
+    bool hasCollisionMesh = false;
+    std::vector<double> collisionMeshVertices;
+    std::vector<int> collisionMeshIndices;
 };
 
 enum class RoadFeatureType {
@@ -84,6 +88,8 @@ struct ChassisCollisionBox {
     double offsetX;
     double offsetY;
     double offsetZ;
+    bool enabled = true;
+    bool mesh = false;
 };
 using Axle = BusAxle;
 using VehicleConfiguration = BusConfiguration;

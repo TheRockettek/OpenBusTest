@@ -107,10 +107,6 @@ bool validForKind(const std::string& keyword, ModelConfigKind kind) {
         kind == ModelConfigKind::SceneryObject) {
         return false;
     }
-    if ((keyword == "collision_mesh" || keyword == "nocollision") &&
-        kind != ModelConfigKind::SceneryObject) {
-        return false;
-    }
     if (keyword == "mouseevent" && kind == ModelConfigKind::Vehicle) {
         return false;
     }
@@ -971,20 +967,62 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             requirePart();
             continue;
         }
-        // [boundingbox]: six numeric bounds, normally min/max coordinates.
+        // [boundingbox]: collision box size X/Y/Z followed by center X/Y/Z.
         if (keyword == "boundingbox") {
             std::vector<std::string> values;
-            readValues(reader, line.number, keyword, 6, values, result.diagnostics);
+            if (readValues(reader, line.number, keyword, 6, values, result.diagnostics)) {
+                std::array<double, 6> bounds = {};
+                bool valid = true;
+                for (std::size_t index = 0; index < values.size(); ++index) {
+                    if (!parseDouble(values[index], bounds[index]) ||
+                        !std::isfinite(bounds[index])) {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (!valid || bounds[0] <= 0.0 || bounds[1] <= 0.0 || bounds[2] <= 0.0) {
+                    result.diagnostics.error(line.number, keyword,
+                                             "expected positive finite box sizes and finite center coordinates");
+                } else {
+                    result.boundingBox = bounds;
+                    result.hasBoundingBox = true;
+                }
+            }
             continue;
         }
-        // [collision_mesh]: one collision mesh path consumed for diagnostics only.
+        // [collision_mesh]: one dedicated collision mesh path.
         if (keyword == "collision_mesh") {
             Line value;
-            reader.readPayload(value, result.diagnostics, keyword);
+            if (reader.readPayload(value, result.diagnostics, keyword)) {
+                ModelCollisionMesh collisionMesh;
+                collisionMesh.sourcePath = trim(value.text);
+                if (ModelPart* current = part(); current != nullptr) {
+                    collisionMesh.partIndex = currentPartIndex;
+                    collisionMesh.hasPart = true;
+                }
+                collisionMesh.resolvedPath = resolveMesh(modelRoot, value.text);
+                if (collisionMesh.resolvedPath.empty()) {
+                    const std::filesystem::path bundlePath = modelRoot / "openbus.obx";
+                    if (std::filesystem::exists(bundlePath)) {
+                        std::filesystem::path relativeMesh = collisionMesh.sourcePath;
+                        relativeMesh.replace_extension(".obj");
+                        collisionMesh.bundleEntry = lower(relativeMesh.generic_string());
+                        collisionMesh.resolvedPath = bundlePath;
+                    }
+                }
+                if (collisionMesh.resolvedPath.empty()) {
+                    result.diagnostics.warning(value.number, keyword,
+                                               "collision mesh was not found: " + value.text);
+                }
+                result.collisionMeshes.push_back(std::move(collisionMesh));
+            }
             continue;
         }
-        // [nocollision]: marker disabling collision for the current object.
+        // [nocollision]: marker disables collision contribution from the current mesh.
         if (keyword == "nocollision") {
+            if (ModelPart* current = requirePart(); current != nullptr) {
+                current->noCollision = true;
+            }
             continue;
         }
         // [vfdmaxmin]: six numeric display limits for VFD/text rendering.

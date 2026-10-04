@@ -46,6 +46,20 @@ double pitchAngle(const BodyPose& pose) {
 } // namespace
 
 int main(int argc, char** argv) {
+    BusConfiguration meshCollisionConfiguration = caetanoConfiguration(true);
+    meshCollisionConfiguration.hasCollisionMesh = true;
+    meshCollisionConfiguration.collisionMeshVertices = {-1.0, -1.0, 0.0,
+                                                         1.0, -1.0, 0.0,
+                                                         0.0, 1.0, 0.0};
+    meshCollisionConfiguration.collisionMeshIndices = {0, 1, 2};
+    BusSimulation meshCollisionSimulation(meshCollisionConfiguration,
+                                           VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    const ChassisCollisionBox meshCollision = meshCollisionSimulation.chassisCollisionBox();
+    if (!meshCollision.enabled || !meshCollision.mesh) {
+        std::cerr << "Configured triangle mesh was not selected as the chassis collider\n";
+        return 1;
+    }
+
     const bool useConfiguredInertia = argc <= 1 || std::string(argv[1]) != "box";
     const int steeringArgument = useConfiguredInertia ? 1 : 2;
     const double steeringCommand =

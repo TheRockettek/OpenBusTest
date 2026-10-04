@@ -341,7 +341,8 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
     }
 }
 
-void loadRegistrationList(const std::filesystem::path& path, VehicleConfig& result) {
+void loadRegistrationEntries(const std::filesystem::path& path,
+                             std::vector<std::string>& entries, VehicleConfig& result) {
     if (path.empty()) {
         return;
     }
@@ -356,15 +357,9 @@ void loadRegistrationList(const std::filesystem::path& path, VehicleConfig& resu
         if (value.empty() || value.front() == ';' || value.front() == '/') {
             continue;
         }
-        if (std::find(result.registrationNumbers.begin(), result.registrationNumbers.end(),
-                      value) == result.registrationNumbers.end()) {
-            result.registrationNumbers.push_back(value);
-        }
+        entries.push_back(std::move(value));
     }
     result.registrationListsLoaded = true;
-    if (result.selectedRegistration.empty() && !result.registrationNumbers.empty()) {
-        result.selectedRegistration = result.registrationNumbers.front();
-    }
 }
 
 void convertVehicleScripts(const std::filesystem::path& configPath, VehicleConfig& result) {
@@ -812,10 +807,42 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
     loadReferencedDefinitions(configPath, result);
     loadPassengerCabin(result, result);
     loadPassengerPaths(result, result);
-    loadRegistrationList(result.numberConfigPath, result);
-    loadRegistrationList(result.registrationListConfigPath, result);
+    loadRegistrationEntries(result.numberConfigPath, result.vehicleNumbers, result);
+    loadRegistrationEntries(result.registrationListConfigPath, result.registrationNumbers, result);
+    if (!result.vehicleNumbers.empty() && !result.registrationNumbers.empty() &&
+        result.vehicleNumbers.size() != result.registrationNumbers.size()) {
+        result.diagnostics.warning(
+            0, "registration_list",
+            "number and registration lists have different lengths; unmatched trailing entries "
+            "are ignored");
+    }
+    selectRegistrationAtIndex(result, 0);
     convertVehicleScripts(configPath, result);
     return result;
+}
+
+std::size_t registrationOptionCount(const VehicleConfig& configuration) {
+    if (!configuration.vehicleNumbers.empty() && !configuration.registrationNumbers.empty()) {
+        return std::min(configuration.vehicleNumbers.size(),
+                        configuration.registrationNumbers.size());
+    }
+    return (std::max)(configuration.vehicleNumbers.size(),
+                      configuration.registrationNumbers.size());
+}
+
+void selectRegistrationAtIndex(VehicleConfig& configuration, std::size_t index) {
+    const std::size_t optionCount = registrationOptionCount(configuration);
+    if (optionCount == 0) {
+        return;
+    }
+    index %= optionCount;
+    configuration.selectedRegistrationIndex = index;
+    configuration.selectedVehicleNumber =
+        index < configuration.vehicleNumbers.size() ? configuration.vehicleNumbers[index] : "";
+    configuration.selectedRegistration =
+        index < configuration.registrationNumbers.size()
+            ? configuration.registrationNumbers[index]
+            : configuration.selectedVehicleNumber;
 }
 
 ModelConfig loadVehicleModelConfig(const std::filesystem::path& configPath,

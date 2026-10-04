@@ -38,6 +38,7 @@ int main() {
               "[description]\nUrban service bus.\n\n Electric drivetrain. \n[end]\n"
               "[type]\n0\n"
               "[model]\nmodel.cfg\n"
+              "[boundingbox]\n2.4\n12.0\n3.2\n0.1\n-0.2\n1.4\n"
               "[sound]\nsound/player.cfg\n"
               "[sound_ai]\nsound/ai.cfg\n"
               "[paths]\nmodel/paths.cfg\n"
@@ -50,6 +51,8 @@ int main() {
     config.close();
 
     const VehicleConfig result = loadVehicleConfig(configPath, VehicleFileKind::Bus);
+    VehicleConfig secondRegistration = result;
+    selectRegistrationAtIndex(secondRegistration, 1);
     std::filesystem::remove_all(root);
 
     if (result.diagnostics.hasErrors() ||
@@ -58,6 +61,8 @@ int main() {
         result.friendlyDefaultPaint != "Night blue" ||
         result.description != "Urban service bus.\n\n Electric drivetrain. " ||
         !result.vehicleType.has_value() || *result.vehicleType != 0 ||
+        !result.hasBoundingBox ||
+        result.boundingBox != std::array<double, 6>{2.4, 12.0, 3.2, 0.1, -0.2, 1.4} ||
         result.soundConfigPath.generic_string() != (root / "sound/player.cfg").generic_string() ||
         result.soundAiConfigPath.generic_string() != (root / "sound/ai.cfg").generic_string() ||
         result.pathsConfigPath.generic_string() != (root / "model/paths.cfg").generic_string() ||
@@ -78,8 +83,13 @@ int main() {
         result.passengerPathNextStepSound != 0 ||
         result.passengerPathNextRoomHeights.size() != 1 ||
         result.passengerPathNextRoomHeights[0] != 1.85 ||
-        !result.registrationListsLoaded || result.registrationNumbers.size() != 3 ||
-        result.selectedRegistration != "BUS-001") {
+        !result.registrationListsLoaded || result.vehicleNumbers.size() != 2 ||
+        result.registrationNumbers.size() != 2 || result.selectedRegistrationIndex != 0 ||
+        result.selectedVehicleNumber != "BUS-001" ||
+        result.selectedRegistration != "BUS-002" ||
+        secondRegistration.selectedRegistrationIndex != 1 ||
+        secondRegistration.selectedVehicleNumber != "BUS-002" ||
+        secondRegistration.selectedRegistration != "BUS-003") {
         std::cerr << "BUS metadata records were not retained\n";
         return 1;
     }

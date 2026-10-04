@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -132,6 +133,14 @@ struct ModelSpotlight {
     std::array<double, 12> parameters = {};
 };
 
+struct ModelCollisionMesh {
+    std::filesystem::path sourcePath;
+    std::filesystem::path resolvedPath;
+    std::string bundleEntry;
+    std::size_t partIndex = 0;
+    bool hasPart = false;
+};
+
 struct ModelCtcTemplate {
     std::string name;
     std::string texturePath;
@@ -152,6 +161,7 @@ struct ModelPart {
     int viewpoint = 0;
     int renderType = 2;
     bool isShadow = false;
+    bool noCollision = false;
     std::string meshIdentifier;
     std::string animationParent;
     std::string mouseEvent;
@@ -174,6 +184,10 @@ struct ModelConfig {
     std::vector<ModelCtcTexture> ctcTextures;
     std::vector<ModelScriptTexture> scriptTextures;
     std::vector<ModelTextTexture> textTextures;
+    std::vector<ModelCollisionMesh> collisionMeshes;
+    bool hasBoundingBox = false;
+    // OMSI model bounds: size X/Y/Z followed by center X/Y/Z.
+    std::array<double, 6> boundingBox = {};
     std::vector<double> lodThresholds;
     ConfigurationDiagnostics diagnostics;
 };

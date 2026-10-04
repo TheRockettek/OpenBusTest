@@ -57,8 +57,12 @@ model-family-specific.
 
 ### `[collision_mesh]`
 
-One collision mesh filename, normally an `.o3d`. It is used instead of or in
-addition to the visible meshes for collision detection.
+One collision mesh filename, normally an `.o3d`. In OpenBus model CFGs the
+record is associated with the current `[mesh]` when one exists; otherwise it
+is a model-level collision mesh. Resolved mesh triangles are used for the bus
+chassis collider. Parts marked `[nocollision]` or `[isshadow]` do not contribute
+their associated collision mesh. If no usable collision mesh remains, the
+configured collision box is used instead.
 
 ### `[viewpoint]`
 
@@ -84,11 +88,22 @@ for an unused slot. The keyword must follow `[mesh]`.
 ### `[boundingbox]`
 
 Defines a cuboid collider using size x/y/z followed by center x/y/z, in metres
-relative to the origin.
+relative to the model origin. For bus models, these dimensions override the
+BUS-file `[boundingbox]` for chassis collision and mass construction; absent a
+model-level record, the BUS box remains the fallback.
 
 ### `[nocollision]`
 
-Disables collision for the object.
+Disables collision contribution from the current mesh. It does not hide the
+mesh or alter its render material. If every declared collision mesh is excluded,
+OpenBus falls back to the configured box rather than leaving the bus without a
+chassis collider.
+
+### `[isshadow]`
+
+Marks the current mesh as a fake shadow. OpenBus keeps the authored mesh and
+material, draws it through the transparent pass, and projects it onto the
+ground plane so chassis bounce and body roll do not lift or tilt the shadow.
 
 ## Camera keywords
 
