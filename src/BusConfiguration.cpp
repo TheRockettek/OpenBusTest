@@ -20,6 +20,7 @@
 #include <ostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -83,6 +84,73 @@ std::filesystem::path resolveConfiguredModelPath(const std::filesystem::path& bu
     return relative;
 }
 
+std::optional<std::size_t> wheelRotationAxleIndex(const ModelPart& part) {
+    constexpr std::string_view prefix = "wheel_rotation_";
+    for (const ModelAnimation& animation : part.animations) {
+        const std::string variable = openbus::config::lower(animation.variable);
+        if (variable.rfind(prefix, 0) != 0) {
+            continue;
+        }
+        const std::size_t sideSeparator = variable.find('_', prefix.size());
+        if (sideSeparator == std::string::npos ||
+            (variable.substr(sideSeparator + 1) != "l" &&
+             variable.substr(sideSeparator + 1) != "r")) {
+            continue;
+        }
+        int axleIndex = -1;
+        if (openbus::config::parseInt(std::string(variable.substr(
+                          prefix.size(), sideSeparator - prefix.size())),
+                          axleIndex) &&
+            axleIndex >= 0) {
+            return static_cast<std::size_t>(axleIndex);
+        }
+    }
+    return {};
+}
+
+std::shared_ptr<openbus::rendering::ParsedObj> parseModelMesh(const ModelPart& part) {
+    if (part.objPath.empty()) {
+        return {};
+    }
+    if (openbus::config::lower(part.objPath.extension().string()) == ".o3d") {
+        return openbus::rendering::O3DLoader::parse(part.objPath);
+    }
+    return openbus::rendering::ObjLoader::parse(part.objPath, part.bundleEntry);
+}
+
+double visualWheelRadius(const openbus::rendering::ParsedObj& mesh) {
+    double radius = 0.0;
+    for (const openbus::rendering::ObjPosition& position : mesh.positions) {
+        // Wheel rotation is around render Y; the tire envelope is in render XZ.
+        const double radialX = position.y - mesh.boundsCenter[0];
+        const double radialZ = position.z - mesh.boundsCenter[2];
+        const double vertexRadius = std::hypot(radialX, radialZ);
+        if (std::isfinite(vertexRadius)) {
+            radius = std::max(radius, vertexRadius);
+        }
+    }
+    return radius;
+}
+
+void fitWheelCollidersToModel(BusConfiguration& configuration, const ModelConfig& model) {
+    for (const ModelPart& part : model.parts) {
+        const std::optional<std::size_t> axleIndex = wheelRotationAxleIndex(part);
+        if (!axleIndex || *axleIndex >= configuration.axles.size()) {
+            continue;
+        }
+        const auto mesh = parseModelMesh(part);
+        if (!mesh || mesh->positions.empty()) {
+            continue;
+        }
+        const double meshRadius = visualWheelRadius(*mesh);
+        BusAxle& axle = configuration.axles[*axleIndex];
+        if (std::isfinite(meshRadius) && meshRadius > axle.wheelDiameter * 0.5) {
+            axle.wheelDiameter = meshRadius * 2.0;
+        }
+    }
+    configuration.wheelRadius = configuration.axles.front().wheelDiameter * 0.5;
+}
+
 BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
                                                 const ModelConfig& model) {
     const std::array<double, 6>& boundingBox =
@@ -112,6 +180,7 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
     configuration.wheelHalfWidth = source.wheelHalfWidth;
     configuration.wheelRadius = source.axles.front().wheelDiameter * 0.5;
     configuration.width = boundingBox[0];
+    fitWheelCollidersToModel(configuration, model);
 
     for (const ModelCollisionMesh& collisionMesh : model.collisionMeshes) {
         if (collisionMesh.hasPart) {

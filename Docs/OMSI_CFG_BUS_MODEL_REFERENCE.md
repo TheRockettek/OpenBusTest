@@ -41,6 +41,13 @@ bit mask made by adding:
 `0` means all viewpoints. This is a mesh-level optimization and is separate
 from selecting a camera.
 
+### `[shadow]`
+
+OMSI per-mesh shadow marker for the preceding mesh. OpenBus recognizes this
+marker to keep valid vehicle CFGs warning-free, but does not currently render
+OMSI's per-mesh cast-shadow behavior. This is distinct from `[isshadow]`, which
+marks an authored fake ground-shadow mesh for OpenBus's ground-shadow handling.
+
 ### `[fixed]`
 
 Marks the following object as fixed/static rather than attached to an animated
@@ -354,11 +361,14 @@ valid.
 The physical and visual wheel paths are updated in this order each frame:
 
 1. `BusSimulation::update()` advances ODE in fixed-size steps. Each step calls
-  refreshWheelTelemetry()` after `dWorldStep()`, which reads suspension from
+  `refreshWheelTelemetry()` after `dWorldStep()`, which reads suspension from
   the wheel/chassis separation projected onto chassis-local Z and reads the
   wheel angular velocity from the ODE wheel body rotation and angular
-  velocity. The local projection keeps front and rear animations independent
-  when the chassis rolls or pitches.
+  velocity. Spring and damper forces use bounded positive compression; the
+  model animation uses the signed chassis-local wheel displacement so it
+  follows the physical wheel pose through chassis pitch and roll. ODE's slider
+  coordinate is also exposed by `wheelSuspensionSliderTravel()` for physics
+  diagnostics.
 2. The same fixed step reads the ODE wheel hinge angle, unwraps it across
   `+/-pi`, and publishes the accumulated value as
   `Wheel_Rotation_<axle>_<side>`. The accumulated value is sign-inverted at
@@ -373,6 +383,29 @@ The physical and visual wheel paths are updated in this order each frame:
   to a `newanim` target. It then applies `delay` smoothing and `maxspeed`
   limiting before `animationTransformForPart()` builds the mesh transform.
 
+Scripts can also tune the physical suspension through writable, per-wheel
+`Axle_Springfactor_<axle>_<side>` variables. OpenBus multiplies the configured
+axle spring rate by this factor before calculating elastic support force;
+damper and anti-roll forces remain independently configured. A factor of `1`
+preserves the configured rate, and `0` removes the spring force for that wheel.
+Finite values are clamped to `[0, 10]`; missing or non-finite values use the
+neutral factor `1`.
+
+ODE wheel bodies start at the configured rest position with their tire bottoms
+at the ground plane; the simulation does not apply a pre-compression based on
+factor `1` before scripts provide their live spring factors. This avoids an
+initial free-fall of the wheels when a script selects a softer spring. Wheel
+contacts use the same ground plane as the rendered road, with increased error
+recovery to limit transient penetration. A wheel-only low-factor physics probe
+checks ground clearance and confirms that published animation displacement
+matches the ODE wheel pose.
+
+For each axle, the ODE tire radius is the larger of the configured bus-file
+radius and the radial envelope of the model mesh carrying that axle's
+`Wheel_Rotation` animation. This keeps a visibly larger tire from extending
+through the ground while retaining the configured radius when model geometry
+is unavailable or smaller.
+
 Consequently, ODE debug geometry shows the latest physical wheel pose, while a
 `newanim` wheel can intentionally show an earlier pose when its animation has
 `delay` or `maxspeed`. A mismatch with no such limits must instead come from
@@ -382,8 +415,10 @@ integrated from angular velocity while the model consumes the accumulated
 angle rather than integrating angular velocity a second time; this avoids a
 step of phase error when ODE changes the wheel speed during a fixed step.
 For suspension, ODE reports positive compression when the wheel moves upward.
-The converted `origin_rot_y` suspension frame maps the positive `anim_trans`
-amount to render +Z, so the renderer must preserve that positive sign.
+The E400 wheel CFG uses `origin_rot_y -90` and positive `anim_trans` scale; in
+the converted frame, a positive animation amount moves the mesh downward.
+Therefore OpenBus publishes the negative of the wheel's projected ODE
+displacement: compression moves the rendered wheel up, and droop moves it down.
 
 For wheel debugging, compare these values in order: ODE `wheelPose()`;
 `wheelRotation()` and `wheelSuspensionCompression()`; the published variable;

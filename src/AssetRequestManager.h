@@ -44,6 +44,7 @@ class AssetRequestManager {
         bool textureArray = false;
         std::size_t textureArrayLayers = 1;
         bool uploadAttempted = false;
+        bool decodeFailureLogged = false;
     };
 
     AssetRequestManager();
@@ -60,6 +61,7 @@ class AssetRequestManager {
                                                       TextureResolver resolver);
     void startTextureRequest(const std::shared_ptr<TextureCacheEntry>& entry);
     void trackTexture(TextureHandle texture);
+    void trackBuffer(unsigned int buffer);
     void join();
 
   private:
@@ -86,6 +88,7 @@ class AssetRequestManager {
     std::mutex decodedTextureMutex_;
     std::unordered_map<std::string, std::shared_ptr<DecodedTexture>> decodedTextureCache_;
     std::vector<TextureHandle> textures_;
+    std::vector<unsigned int> buffers_;
     std::mutex workerMutex_;
     std::condition_variable workerCondition_;
     std::queue<std::function<void()>> workerQueue_;

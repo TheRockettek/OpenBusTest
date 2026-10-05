@@ -3,6 +3,7 @@
 #include "BusTypes.h"
 #include "SoundEngine.h"
 #include "VehicleConfigLoader.h"
+#include "Viewpoint.h"
 #include "Variables.h"
 
 #include <array>
@@ -83,6 +84,7 @@ class RenderLoop {
     double physicsWheelTorque() const;
     double physicsSteering() const;
     std::vector<double> physicsWheelBrakeForces(std::size_t axleCount) const;
+    std::vector<double> physicsAxleSpringFactors(std::size_t axleCount) const;
     std::vector<KeyEvent> consumeKeyEvents();
 
   private:
@@ -166,6 +168,8 @@ class RenderLoop {
     std::unique_ptr<openbus::rendering::AssetRequestManager> assetRequestManager_;
     std::unique_ptr<openbus::rendering::ReflectionRenderer> reflectionRenderer_;
     SoundEngine soundEngine_;
+    openbus::rendering::ViewpointContext soundViewpoint_ =
+        openbus::rendering::ViewpointContext::PlayerExterior;
     std::vector<std::unique_ptr<Vehicle>> vehicles_;
     Vehicle* playerVehicle_ = nullptr;
     GLFWcursor* clickableCursor_ = nullptr;

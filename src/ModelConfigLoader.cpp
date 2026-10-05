@@ -74,6 +74,7 @@ bool isKnownKeyword(const std::string& keyword) {
                                                              "nocollision",
                                                              "rendertype",
                                                              "scripttexture",
+                                                             "shadow",
                                                              "smoke",
                                                              "spotlight",
                                                              "tcoordtransx",
@@ -964,6 +965,12 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             if (current != nullptr) {
                 current->isShadow = true;
             }
+            continue;
+        }
+        if (keyword == "shadow") {
+            // OMSI's per-mesh cast-shadow marker has no equivalent in the current renderer.
+            // Recognize it to avoid warning for otherwise valid vehicle meshes.
+            requirePart();
             continue;
         }
         // [fixed]/[absheight]: marker records with no payload consumed here.

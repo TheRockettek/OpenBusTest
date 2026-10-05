@@ -26,6 +26,8 @@ against one unambiguous support matrix.
 
 - [x] Fixed-rate ODE stepping with bounded catch-up.
 - [x] Per-wheel suspension, steering, wheel rotation, braking, and telemetry.
+- [x] Script-authored `Axle_Springfactor_*` values scale each ODE wheel's
+  configured spring rate while preserving damper and anti-roll forces.
 - [x] Independent axle suspension and live ODE wheel rendering mode.
 - [x] Raw W/A/S/D input seeds player throttle, steering, and brake variables
   before each physics update. The live vehicle path runs scripts first, then
@@ -378,8 +380,8 @@ arrival-board data:
 - [ ] Replace default-only values for documented variable families whose
   producers are absent: `AI_*`, `AI_Scheduled_*`, `PAX_Entry#_*`,
   `PAX_Exit#_*`, `GivenTicket`, `humans_count`, `FF_Vib_*`, `Snd_*`,
-  `Cabinair_*`, `Dirt_*`, `TrafficPriority*`, `Axle_Springfactor_*`,
-  `Axle_Brakeforce_*`, `Axle_SurfaceID_*`, `articulation_*`, `boogie_*`, and
+  `Cabinair_*`, `Dirt_*`, `TrafficPriority*`, `Axle_Brakeforce_*`,
+  `Axle_SurfaceID_*`, `articulation_*`, `boogie_*`, and
   `contactshoe_*`.
 - [ ] Add runtime producers for documented vehicle/scenery/human strings and
   state such as `act_route`, `act_busstop`, `SetLineTo`, `yard`,

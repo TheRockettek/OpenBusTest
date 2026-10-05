@@ -117,6 +117,8 @@ struct BusSimulation::Impl {
         dReal wheelRadius;
         dReal springCompression = 0.0;
         dReal verticalVelocity = 0.0;
+        dReal animationSuspension = 0.0;
+        dReal suspensionSliderZero = 0.0;
         dBodyID suspensionBody = nullptr;
         dBodyID steeringBody = nullptr;
         dBodyID wheelBody = nullptr;
@@ -202,8 +204,8 @@ struct BusSimulation::Impl {
         for (int index = 0; index < count; ++index) {
             contacts[index].surface.mode = dContactSoftERP | dContactSoftCFM | dContactApprox1;
             contacts[index].surface.mu = ROAD_FRICTION_COEFFICIENT;
-            contacts[index].surface.soft_erp = 0.35;
-            contacts[index].surface.soft_cfm = 2e-5;
+            contacts[index].surface.soft_erp = 0.8;
+            contacts[index].surface.soft_cfm = 1e-6;
             dJointID contact = dJointCreateContact(simulation->ode.world, simulation->ode.contacts,
                                                    &contacts[index]);
             dJointAttach(contact, dGeomGetBody(first), dGeomGetBody(second));
@@ -495,16 +497,6 @@ struct BusSimulation::Impl {
             mass.I[10] = std::max(mass.I[10], configuredInertia[2]);
         }
         dBodySetMass(chassis, &mass);
-        const dReal averageSpringRate = [&] {
-            dReal total = 0.0;
-            for (const BusAxle& axle : configuration.axles) {
-                total += axle.springRate;
-            }
-            return total / configuration.axles.size();
-        }();
-        const dReal staticCompression = std::clamp(configuration.mass * std::abs(GRAVITY) /
-                                                       (corners.size() * averageSpringRate),
-                                                   0.0, SUSP_MAX_TRAVEL * 0.9);
         const dReal placementYaw = static_cast<dReal>(placement.yawDegrees * PI / 180.0);
         dMatrix3 placementRotation;
         dRFromAxisAndAngle(placementRotation, 0.0, 0.0, 1.0, placementYaw);
@@ -558,7 +550,7 @@ struct BusSimulation::Impl {
             dMass wheelMass;
             dMassSetCylinderTotal(&wheelMass, WHEEL_MASS, 3, corner.wheelRadius,
                                   configuration.wheelHalfWidth * 2.0);
-            const dReal wheelLocalZ = suspensionAnchorZ(index) - SUSP_REST + staticCompression;
+            const dReal wheelLocalZ = suspensionAnchorZ(index) - SUSP_REST;
             corner.suspensionBody = dBodyCreate(ode.world);
             corner.steeringBody = dBodyCreate(ode.world);
             corner.wheelBody = dBodyCreate(ode.world);
@@ -603,6 +595,7 @@ struct BusSimulation::Impl {
             dJointAttach(corner.suspensionJoint, chassis, corner.suspensionBody);
             dJointSetSliderAxis(corner.suspensionJoint, 0.0, 0.0, 1.0);
             const dReal sliderCenter = dJointGetSliderPosition(corner.suspensionJoint);
+            corner.suspensionSliderZero = sliderCenter;
             dJointSetSliderParam(corner.suspensionJoint, dParamLoStop,
                                  sliderCenter - SUSP_MAX_TRAVEL);
             dJointSetSliderParam(corner.suspensionJoint, dParamHiStop,
@@ -658,9 +651,16 @@ struct BusSimulation::Impl {
                                                chassisRotation[6] * chassisVelocity[1] +
                                                chassisRotation[10] * chassisVelocity[2] +
                                                localAngularX * corner.y - localAngularY * corner.x;
-            corner.springCompression =
-                std::clamp(SUSP_REST - (anchorLocalZ - wheelLocalZ), 0.0, SUSP_MAX_TRAVEL);
+            const dReal projectedCompression = SUSP_REST - (anchorLocalZ - wheelLocalZ);
+            corner.springCompression = std::clamp(projectedCompression, 0.0, SUSP_MAX_TRAVEL);
             corner.verticalVelocity = wheelLocalVelocityZ - anchorLocalVelocityZ;
+            // The authored wheel CFG's origin_rot_y -90 frame turns positive
+            // anim_trans into downward render-Z, opposite ODE's positive
+            // compression/upward wheel displacement.
+            corner.animationSuspension =
+                std::isfinite(projectedCompression)
+                    ? std::clamp(-projectedCompression, -SUSP_MAX_TRAVEL, SUSP_MAX_TRAVEL)
+                    : 0.0;
             const dReal* wheelRotation = dBodyGetRotation(corner.wheelBody);
             const dReal* wheelAngularVelocity = dBodyGetAngularVel(corner.wheelBody);
             const dReal wheelAxisX = wheelRotation[2];
@@ -703,7 +703,8 @@ struct BusSimulation::Impl {
     }
 
     void applyCornerForces(double driveCommand, double steering,
-                           const std::vector<double>& wheelBrakeForces, bool scriptDriven) {
+                           const std::vector<double>& wheelBrakeForces,
+                           const std::vector<double>& wheelSpringFactors, bool scriptDriven) {
         openbus::rendering::TraceScope trace("physics", "BusSimulation::applyCornerForces");
         refreshWheelTelemetry();
         const dReal* velocity = dBodyGetLinearVel(chassis);
@@ -772,7 +773,14 @@ struct BusSimulation::Impl {
             const bool front = configuration.axles[axleIndex].steerable;
             const dReal antiRoll = axleIndex == 0 ? ARB_STIFFNESS_FRONT : ARB_STIFFNESS_REAR;
             const BusAxle& axle = configuration.axles[axleIndex];
-            const dReal springForce = compression[index] * axle.springRate +
+            const dReal configuredSpringFactor =
+                index < wheelSpringFactors.size()
+                    ? static_cast<dReal>(wheelSpringFactors[index])
+                    : 1.0;
+            const dReal springFactor = std::isfinite(configuredSpringFactor)
+                                           ? std::clamp(configuredSpringFactor, 0.0, 10.0)
+                                           : 1.0;
+            const dReal springForce = compression[index] * axle.springRate * springFactor +
                                       corners[index].verticalVelocity * axle.damperRate;
             const dReal antiRollForce = antiRoll * (compression[index ^ 1] - compression[index]);
             const dReal supportForce = std::max(0.0, springForce + antiRollForce);
@@ -874,9 +882,11 @@ struct BusSimulation::Impl {
         }
     }
     void fixedUpdate(double driveCommand, double steering,
-                     const std::vector<double>& wheelBrakeForces, bool scriptDriven) {
+                     const std::vector<double>& wheelBrakeForces,
+                     const std::vector<double>& wheelSpringFactors, bool scriptDriven) {
         openbus::rendering::TraceScope trace("physics", "BusSimulation::fixedUpdate");
-        applyCornerForces(driveCommand, steering, wheelBrakeForces, scriptDriven);
+        applyCornerForces(driveCommand, steering, wheelBrakeForces, wheelSpringFactors,
+                          scriptDriven);
         dSpaceCollide(ode.space, this, &nearCallback);
         dWorldStep(ode.world, fixedStep);
         dJointGroupEmpty(ode.contacts);
@@ -885,13 +895,14 @@ struct BusSimulation::Impl {
     }
 
     void update(double elapsedSeconds, double driveCommand, double steering,
-                const std::vector<double>& wheelBrakeForces, bool scriptDriven) {
+                const std::vector<double>& wheelBrakeForces,
+                const std::vector<double>& wheelSpringFactors, bool scriptDriven) {
         openbus::rendering::TraceScope trace("physics", "BusSimulation::update");
         accumulator += std::clamp(elapsedSeconds, 0.0, MAX_FRAME_SECONDS);
         lastSteps = 0;
         dropped = false;
         while (accumulator >= fixedStep && lastSteps < maxCatchUpSteps) {
-            fixedUpdate(driveCommand, steering, wheelBrakeForces, scriptDriven);
+            fixedUpdate(driveCommand, steering, wheelBrakeForces, wheelSpringFactors, scriptDriven);
             accumulator -= fixedStep;
             ++lastSteps;
         }
@@ -926,37 +937,40 @@ BusSimulation::~BusSimulation() {
 void BusSimulation::update(double elapsedSeconds, double throttle, double steering, double brake) {
     const double forcePerWheel = std::clamp(brake, 0.0, 1.0) * MAX_BRAKE_FORCE * 0.5;
     impl_->update(elapsedSeconds, throttle, steering,
-                  std::vector<double>(impl_->corners.size(), forcePerWheel), false);
+                  std::vector<double>(impl_->corners.size(), forcePerWheel), {}, false);
 }
 
 void BusSimulation::updateWithWheelTorque(double elapsedSeconds, double wheelTorque,
                                           double steering, double brake) {
     const double forcePerWheel = std::clamp(brake, 0.0, 1.0) * MAX_BRAKE_FORCE * 0.5;
     impl_->update(elapsedSeconds, wheelTorque, steering,
-                  std::vector<double>(impl_->corners.size(), forcePerWheel), true);
+                  std::vector<double>(impl_->corners.size(), forcePerWheel), {}, true);
 }
 
 void BusSimulation::updateWithWheelTorqueAndBrakeForces(
     double elapsedSeconds, double wheelTorque, double steering,
-    const std::vector<double>& wheelBrakeForces) {
-    impl_->update(elapsedSeconds, wheelTorque, steering, wheelBrakeForces, true);
+    const std::vector<double>& wheelBrakeForces,
+    const std::vector<double>& wheelSpringFactors) {
+    impl_->update(elapsedSeconds, wheelTorque, steering, wheelBrakeForces, wheelSpringFactors,
+                  true);
 }
 
 void BusSimulation::step(double throttle, double steering, double brake) {
     const double forcePerWheel = std::clamp(brake, 0.0, 1.0) * MAX_BRAKE_FORCE * 0.5;
     impl_->fixedUpdate(throttle, steering,
-                       std::vector<double>(impl_->corners.size(), forcePerWheel), false);
+                       std::vector<double>(impl_->corners.size(), forcePerWheel), {}, false);
 }
 
 void BusSimulation::stepWithWheelTorque(double wheelTorque, double steering, double brake) {
     const double forcePerWheel = std::clamp(brake, 0.0, 1.0) * MAX_BRAKE_FORCE * 0.5;
     impl_->fixedUpdate(wheelTorque, steering,
-                       std::vector<double>(impl_->corners.size(), forcePerWheel), true);
+                       std::vector<double>(impl_->corners.size(), forcePerWheel), {}, true);
 }
 
 void BusSimulation::stepWithWheelTorqueAndBrakeForces(double wheelTorque, double steering,
-                                                      const std::vector<double>& wheelBrakeForces) {
-    impl_->fixedUpdate(wheelTorque, steering, wheelBrakeForces, true);
+                                                      const std::vector<double>& wheelBrakeForces,
+                                                      const std::vector<double>& wheelSpringFactors) {
+    impl_->fixedUpdate(wheelTorque, steering, wheelBrakeForces, wheelSpringFactors, true);
 }
 
 void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, double throttle,
@@ -980,7 +994,7 @@ void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, doub
         variables.set("wheel_rotation" + prefix, impl_->corners[index].wheelRotation);
         const double wheelSpeedRpm = impl_->corners[index].wheelOmega * radiansPerSecondToRpm;
         variables.set("wheel_rotationspeed" + prefix, wheelSpeedRpm);
-        variables.set("axle_suspension" + prefix, impl_->corners[index].springCompression);
+        variables.set("axle_suspension" + prefix, impl_->corners[index].animationSuspension);
         variables.set("axle_steering_" + std::to_string(axleIndex) + "_" + side,
                       dJointGetHingeAngle(impl_->corners[index].steeringJoint));
         if (impl_->configuration.axles[axleIndex].driven) {
@@ -1118,6 +1132,14 @@ double BusSimulation::wheelSuspensionCompression(std::size_t index) const {
         throw std::out_of_range("Wheel index is outside the bus configuration");
     }
     return impl_->corners[index].springCompression;
+}
+
+double BusSimulation::wheelSuspensionSliderTravel(std::size_t index) const {
+    if (index >= impl_->corners.size()) {
+        throw std::out_of_range("Wheel index is outside the bus configuration");
+    }
+    const auto& corner = impl_->corners[index];
+    return corner.suspensionSliderZero - dJointGetSliderPosition(corner.suspensionJoint);
 }
 
 double BusSimulation::wheelRadius() const {

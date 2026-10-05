@@ -26,6 +26,7 @@ extern "C" {
 #include <iostream>
 #include <memory>
 #include <limits>
+#include <mutex>
 #include <random>
 #include <sstream>
 #include <string_view>
@@ -48,6 +49,28 @@ std::string scriptName(std::string value) {
         character = std::isalnum(byte) ? static_cast<char>(std::tolower(byte)) : '_';
     }
     return value;
+}
+
+std::shared_ptr<const OscProgram> cachedNativeProgram(const std::filesystem::path& sourcePath,
+                                                      std::string& error,
+                                                      bool& compiledThisCall) {
+    static std::mutex cacheMutex;
+    static std::unordered_map<std::string, std::shared_ptr<const OscProgram>> cache;
+    std::string key = std::filesystem::absolute(sourcePath).lexically_normal().generic_string();
+    key = lower(std::move(key));
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    const auto cached = cache.find(key);
+    if (cached != cache.end()) {
+        return cached->second;
+    }
+    OscProgram compiled;
+    if (!compileOscToBytecode(sourcePath, compiled, error)) {
+        return {};
+    }
+    auto program = std::make_shared<const OscProgram>(std::move(compiled));
+    cache.emplace(std::move(key), program);
+    compiledThisCall = true;
+    return program;
 }
 
 } // namespace
@@ -117,7 +140,7 @@ struct ScriptRuntime::Impl {
     std::unordered_map<std::string, std::shared_ptr<FontAsset>> fonts;
     std::uint64_t revisionCounter = 0;
     std::vector<std::unique_ptr<LuaFunctionBinding>> luaFunctionBindings;
-    std::vector<OscProgram> nativePrograms;
+    std::vector<std::shared_ptr<const OscProgram>> nativePrograms;
     std::array<float, 8> nativeRegisters = {};
     bool nativeBackend = false;
 
@@ -665,9 +688,9 @@ struct ScriptRuntime::Impl {
             errors.push_back("native OSC call depth exceeded in " + functionName);
             return false;
         }
-        for (const OscProgram& program : nativePrograms) {
-            const auto found = program.functions.find(functionName);
-            if (found == program.functions.end()) {
+        for (const std::shared_ptr<const OscProgram>& program : nativePrograms) {
+            const auto found = program->functions.find(functionName);
+            if (found == program->functions.end()) {
                 continue;
             }
 
@@ -1039,14 +1062,16 @@ struct ScriptRuntime::Impl {
             return false;
         }
 
+        bool compiledAnyScript = false;
         for (const std::string& referencedPath : configuration.scripts) {
             std::string normalized = referencedPath;
             std::replace(normalized.begin(), normalized.end(), '\\', '/');
             const std::filesystem::path sourcePath =
                 configuration.sourcePath.parent_path() / normalized;
-            OscProgram program;
             std::string error;
-            if (!compileOscToBytecode(sourcePath, program, error)) {
+            std::shared_ptr<const OscProgram> program =
+                cachedNativeProgram(sourcePath, error, compiledAnyScript);
+            if (!program) {
                 scriptRuntimeLogger.Log("Native OSC backend falling back to Lua for " +
                                         sourcePath.string() + ": " + error);
                 nativePrograms.clear();
@@ -1055,7 +1080,7 @@ struct ScriptRuntime::Impl {
             nativePrograms.push_back(std::move(program));
         }
         nativeBackend = !nativePrograms.empty();
-        if (nativeBackend) {
+        if (nativeBackend && compiledAnyScript) {
             scriptRuntimeLogger.Log("Native OSC backend enabled for " +
                                     std::to_string(nativePrograms.size()) + " script(s)");
         }
@@ -2471,8 +2496,8 @@ bool ScriptRuntime::hasScriptEntryPoint(const std::string& functionName) const {
         return false;
     }
     if (impl_->nativeBackend) {
-        for (const OscProgram& program : impl_->nativePrograms) {
-            if (program.functions.find(functionName) != program.functions.end()) {
+        for (const std::shared_ptr<const OscProgram>& program : impl_->nativePrograms) {
+            if (program->functions.find(functionName) != program->functions.end()) {
                 return true;
             }
         }

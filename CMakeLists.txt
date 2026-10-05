@@ -180,6 +180,7 @@ add_executable(OpenBus
     src/OpenGLFunctions.cpp
     src/ScriptRuntime.cpp
     src/SoundEngine.cpp
+    src/VehicleSoundBank.cpp
     src/osc/osc.cpp
 )
 
@@ -389,11 +390,10 @@ add_executable(OpenBusSoundEngineProbe
     src/ConfigurationParser.cpp
     src/Logger.cpp
     src/PerfTrace.cpp
-    src/SoundEngine.cpp
+    src/VehicleSoundBank.cpp
     src/Variables.cpp
 )
 target_include_directories(OpenBusSoundEngineProbe PRIVATE src)
-target_link_libraries(OpenBusSoundEngineProbe PRIVATE OpenAL::OpenAL)
 add_test(NAME OpenBusSoundEngineProbe COMMAND OpenBusSoundEngineProbe)
 
 add_executable(OpenBusScriptTextureRuntimeProbe

@@ -4,6 +4,7 @@
 
 #include "Environment.h"
 #include "Logger.h"
+#include "OpenGLFunctions.h"
 
 #include <algorithm>
 #include <charconv>
@@ -96,6 +97,9 @@ AssetRequestManager::~AssetRequestManager() {
     }
     if (!textures_.empty()) {
         glDeleteTextures(static_cast<GLsizei>(textures_.size()), textures_.data());
+    }
+    if (!buffers_.empty()) {
+        pglDeleteBuffers(static_cast<GLsizei>(buffers_.size()), buffers_.data());
     }
 }
 
@@ -289,6 +293,12 @@ void AssetRequestManager::loadTextureRequest(const std::shared_ptr<TextureReques
 void AssetRequestManager::trackTexture(TextureHandle texture) {
     if (texture != 0) {
         textures_.push_back(texture);
+    }
+}
+
+void AssetRequestManager::trackBuffer(unsigned int buffer) {
+    if (buffer != 0) {
+        buffers_.push_back(buffer);
     }
 }
 

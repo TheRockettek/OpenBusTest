@@ -1,82 +1,116 @@
-#include "SoundEngine.h"
+#include "VehicleSoundBank.h"
 #include "Variables.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <vector>
 
-struct SoundEngineProbeAccess {
-    static const std::vector<SoundTriggerDefinition>& untriggeredLoops(const SoundEngine& engine) {
-        return engine.untriggeredLoopSounds_;
+struct RecordedPlayback {
+    SoundPlaybackHandle handle = 0;
+    std::filesystem::path path;
+    bool looped = false;
+    SoundPlaybackParameters parameters;
+};
+
+class FakePlayback final : public SoundPlayback {
+  public:
+    SoundPlaybackHandle play(const std::filesystem::path& path, bool looped,
+                             const SoundPlaybackParameters& parameters) override {
+        const SoundPlaybackHandle handle = ++nextHandle;
+        started.push_back({handle, path, looped, parameters});
+        return handle;
     }
 
-    static bool conditionsAllow(const SoundTriggerDefinition& definition,
-                                const Variables& variables) {
-        return SoundEngine::conditionsAllow(definition, variables);
+    void updateLoop(SoundPlaybackHandle handle,
+                    const SoundPlaybackParameters& parameters) override {
+        updated.push_back(handle);
+        for (RecordedPlayback& playback : started) {
+            if (playback.handle == handle) {
+                playback.parameters = parameters;
+            }
+        }
     }
+
+    void stopLoop(SoundPlaybackHandle handle) override { stopped.push_back(handle); }
+
+    SoundPlaybackHandle nextHandle = 0;
+    std::vector<RecordedPlayback> started;
+    std::vector<SoundPlaybackHandle> updated;
+    std::vector<SoundPlaybackHandle> stopped;
 };
 
 int main() {
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "openbus_sound_engine_probe";
+        std::filesystem::temp_directory_path() / "openbus_vehicle_sound_probe";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     const std::filesystem::path configPath = root / "sound.cfg";
-    std::ofstream config(configPath);
-    config << "[sound]\nWind.wav\n0.3\n"
-              "[viewpoint]\n2\n"
-              "[volcurve]\nVelocity\n[pnt]\n0\n0\n[pnt]\n80\n1\n"
-              "[volcurve]\nCabWindowOpen\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
-              "[sound]\nExplicitOneShot.wav\n0.4\n[noloop]\n"
-              "[volcurve]\nWindowOpen\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
-              "[sound]\nAssaultAlarm.wav\n1\n"
-              "[volcurve]\nbatteryMasterSwitchState\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
-              "[conditionSingle]\nAssaultAlarm\n1\n1\n"
-              "[conditionSingle]\nConditionNotEqual\n2\n0\n"
-              "[conditionSingle]\nConditionLess\n2\n2\n"
-              "[conditionSingle]\nConditionGreater\n0\n3\n"
-              "[conditionSingle]\nConditionLessEqual\n1\n4\n"
-              "[conditionSingle]\nConditionGreaterEqual\n1\n5\n"
-              "[sound]\nIndicatorOff.wav\n1\n"
-              "[trigger]\nev_lights_blinker_off\n";
-    config.close();
+    {
+        std::ofstream config(configPath);
+        config << "[sound]\nHorn_loop.wav\n0.8\n"
+                  "[trigger]\nev_horn\n"
+                  "[sound]\nAmbient_loop.wav\n1\n"
+                  "[volcurve]\nAmbientLevel\n"
+                  "[pnt]\n0\n0\n"
+                  "[pnt]\n1\n1\n"
+                  "[sound]\nExplicitOneShot.wav\n0.4\n"
+                  "[noloop]\n"
+                  "[trigger]\nev_one_shot\n";
+    }
 
-    SoundEngine engine;
-    engine.load(configPath);
-    const bool exactOffTriggerExists = engine.hasTrigger("ev_lights_blinker_off");
-    const bool baseTriggerDoesNotExist = !engine.hasTrigger("ev_lights_blinker");
-    const std::vector<SoundTriggerDefinition>& loops =
-        SoundEngineProbeAccess::untriggeredLoops(engine);
-    Variables conditionVariables;
-    conditionVariables.set("assaultalarm", 1.0);
-    conditionVariables.set("conditionnotequal", 3.0);
-    conditionVariables.set("conditionless", 1.0);
-    conditionVariables.set("conditiongreater", 1.0);
-    conditionVariables.set("conditionlessequal", 1.0);
-    conditionVariables.set("conditiongreaterequal", 1.0);
-    const bool alarmGateWorks = loops.size() == 2 && loops[1].file.filename() == "AssaultAlarm.wav" &&
-                                loops[1].conditions.size() == 6 &&
-                                SoundEngineProbeAccess::conditionsAllow(loops[1], conditionVariables);
-    conditionVariables.set("assaultalarm", 0.0);
-    const bool alarmGateInitiallyClosed =
-        !SoundEngineProbeAccess::conditionsAllow(loops[1], conditionVariables);
-    const bool valid = loops.size() == 2 && loops[0].loop &&
-                       loops[0].file.filename() == "Wind.wav" &&
-                       loops[0].viewpoint == 2 && loops[0].baseGain == 0.3 &&
-                       loops[0].volumeCurves.size() == 2 &&
-                       loops[0].volumeCurves[0].variable == "velocity" &&
-                       loops[0].volumeCurves[1].variable == "cabwindowopen" &&
-                       loops[0].volumeCurves[1].points.size() == 2 &&
-                       loops[0].volumeCurves[1].points[0].x == 0.0 &&
-                       loops[0].volumeCurves[1].points[0].y == 0.0 &&
-                       loops[0].volumeCurves[1].points[1].x == 1.0 &&
-                       loops[0].volumeCurves[1].points[1].y == 1.0 && alarmGateWorks &&
-                       alarmGateInitiallyClosed && exactOffTriggerExists && baseTriggerDoesNotExist;
+    VehicleSoundBank firstVehicle;
+    VehicleSoundBank secondVehicle;
+    firstVehicle.load(configPath);
+    secondVehicle.load(configPath);
+    FakePlayback playback;
+    Variables firstVariables;
+    Variables secondVariables;
+    firstVariables.set("ambientlevel", 1.0F);
+    secondVariables.set("ambientlevel", 1.0F);
+    constexpr auto exterior = openbus::rendering::ViewpointContext::PlayerExterior;
+
+    firstVehicle.trigger(playback, "ev_horn", {}, 0.0F, firstVariables, exterior);
+    secondVehicle.trigger(playback, "ev_horn", {}, 0.0F, secondVariables, exterior);
+    firstVehicle.updateAmbient(playback, firstVariables, exterior);
+    secondVehicle.updateAmbient(playback, secondVariables, exterior);
+
+    const bool bothVehiclesStartedTheirOwnLoops =
+        playback.started.size() == 4 && playback.started[0].looped &&
+        playback.started[1].looped && playback.started[2].looped && playback.started[3].looped &&
+        playback.started[0].path == playback.started[1].path &&
+        playback.started[2].path == playback.started[3].path;
+
+    firstVehicle.stop(playback, "ev_horn");
+    const bool triggerStopIsScopedToFirstVehicle = playback.stopped.size() == 1 &&
+                                                    playback.stopped[0] == playback.started[0].handle;
+
+    firstVariables.set("ambientlevel", 0.0F);
+    firstVehicle.updateAmbient(playback, firstVariables, exterior);
+    const bool ambientStopIsScopedToFirstVehicle =
+        playback.stopped.size() == 2 && playback.stopped[1] == playback.started[2].handle;
+
+    firstVehicle.stopAllLoops(playback);
+    const bool stopAllLeavesSecondVehicleLoopsAlone =
+        playback.stopped.size() == 2 &&
+        std::find(playback.stopped.begin(), playback.stopped.end(), playback.started[1].handle) ==
+            playback.stopped.end() &&
+        std::find(playback.stopped.begin(), playback.stopped.end(), playback.started[3].handle) ==
+            playback.stopped.end();
+
+    const bool triggerLookupIsLocal = firstVehicle.hasTrigger("ev_horn") &&
+                                      !VehicleSoundBank{}.hasTrigger("ev_horn");
+    firstVehicle.trigger(playback, "ev_one_shot", {}, 0.0F, firstVariables, exterior);
+    const bool oneShotPlaybackWorks = playback.started.size() == 5 &&
+                                      !playback.started.back().looped &&
+                                      playback.started.back().parameters.gain == 0.4F;
+
     std::filesystem::remove_all(root);
-
-    if (!valid) {
-        std::cerr << "curve-driven ambient sounds were not retained as configured loops\n";
+    if (!bothVehiclesStartedTheirOwnLoops || !triggerStopIsScopedToFirstVehicle ||
+        !ambientStopIsScopedToFirstVehicle || !stopAllLeavesSecondVehicleLoopsAlone ||
+        !triggerLookupIsLocal || !oneShotPlaybackWorks) {
+        std::cerr << "vehicle sound ownership or loop cancellation was not isolated\n";
         return 1;
     }
     return 0;

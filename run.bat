@@ -14,9 +14,14 @@ set "OPENBUS_MODEL_CONFIG=Vehicles\[SP] Studio Polygon 400MMC\Model\Configuratio
 
 set "OPENBUS_AI_BUS_CONFIG=Vehicles/VW_Golf_2/ai_vw_golf_2.bus"
 set "OPENBUS_AI_MODEL_CONFIG=Vehicles/VW_Golf_2/model/model.cfg"
+set "OPENBUS_AI_COUNT=200"
 
-set "OPENBUS_SCRIPT_HZ=0"
 set "OPENBUS_VSYNC=off"
+
+set "OPENBUS_REFLECTION_TRANSPARENT=0"
+set "OPENBUS_MATERIAL_BATCHING=1"
+
+set "OPENBUS_REFLECTION_MAX_FPS=60"
 
 set "OPENBUS_REFLECTION_TRANSPARENT=0"
 set "OPENBUS_MATERIAL_BATCHING=1"
@@ -24,8 +29,9 @@ set "OPENBUS_FRUSTUM_CULLING=1"
 set "OPENBUS_WHEELS_FROM_ODE=0"
 
 set "OPENBUS_SCRIPT_BACKEND=native"
-set "OPENBUS_SCRIPT_HZ=0"
+set "OPENBUS_SCRIPT_HZ=60"
 
+set "OPENBUS_ASSET_WORKERS=4"
 set "OPENBUS_DOPPLER=1"
 
 cmake -S . -B build-ode -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DOPENBUS_ENABLE_PERF_TRACE=OFF && cmake --build build-ode --target OpenBus && .\build-ode\OpenBus.exe

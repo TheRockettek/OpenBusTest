@@ -83,9 +83,9 @@ relrange 🔒
 Driver_Seat_VertTransl 🔒
 Wheel_Rotation_#_L & _R 🔒
 Wheel_RotationSpeed_#_L & _R 🔒
-Axle_Suspension_#_L & _R 🔒
+Axle_Suspension_#_L & _R 🔒 (signed model displacement: negative = compression/up, positive = droop/down)
 Axle_Steering_#_L & _R 🔒
-Axle_Springfactor_#_L & _R
+Axle_Springfactor_#_L & _R (scales the configured ODE spring rate; 1 = configured rate)
 Axle_Brakeforce_#_L & _R
 Axle_SurfaceID_#_L & _R 🔒
 Debug_0–5

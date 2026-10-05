@@ -39,6 +39,19 @@ int positiveEnvironmentInt(const char* name, int fallback, int maximum) {
     return static_cast<int>(std::min(parsed, static_cast<long>(maximum)));
 }
 
+VehiclePlacement aiVehiclePlacement(int index, int vehicleCount) {
+    if (vehicleCount == 1) {
+        return {{5.0, 5.0, 0.0}, 0.0};
+    }
+    constexpr int columns = 20;
+    constexpr double columnSpacing = 5.5;
+    constexpr double rowSpacing = 8.0;
+    const int column = index % columns;
+    const int row = index / columns;
+    const double centeredColumn = static_cast<double>(column) - (columns - 1) / 2.0;
+    return {{centeredColumn * columnSpacing, 12.0 + row * rowSpacing, 0.0}, 0.0};
+}
+
 const char* benchmarkPhaseName(RenderBenchmarkPhase phase) {
     switch (phase) {
     case RenderBenchmarkPhase::Baseline:
@@ -68,6 +81,7 @@ int main() {
         std::filesystem::path modelConfigPath;
         std::filesystem::path aiBusConfigPath;
         std::filesystem::path aiModelConfigPath;
+        int aiVehicleCount = 0;
         {
             openbus::rendering::TraceScope trace("config", "main.resolveConfigurationPaths");
             busConfigPath = busConfigurationPathFor();
@@ -84,11 +98,11 @@ int main() {
                 aiBusConfigPath = busConfigurationPathFor(configuredAiBusPath);
                 aiModelConfigPath =
                     modelConfigurationPathForBus(aiBusConfigPath, configuredAiModelPath);
+                aiVehicleCount = positiveEnvironmentInt("OPENBUS_AI_COUNT", 1, 200);
             }
         }
 
         const VehiclePlacement busPlacement{{0.0, 0.0, 0.0}, 0.0};
-        const VehiclePlacement aiPlacement{{5.0, 5.0, 0.0}, 0};
 
         BusConfiguration configuration;
         {
@@ -136,8 +150,12 @@ int main() {
                                 {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
         renderer.SetPlayerVehicle(playerVehicle);
         if (!aiBusConfigPath.empty()) {
-            renderer.AddVehicle(aiBusConfigPath, aiModelConfigPath, aiPlacement,
-                                {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+            std::cout << "AI_VEHICLES=" << aiVehicleCount << '\n';
+            for (int index = 0; index < aiVehicleCount; ++index) {
+                renderer.AddVehicle(aiBusConfigPath, aiModelConfigPath,
+                                    aiVehiclePlacement(index, aiVehicleCount),
+                                    {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+            }
         }
 
         double previousTime = glfwGetTime();
@@ -165,7 +183,8 @@ int main() {
                                                input.brake);
                 simulation.updateWithWheelTorqueAndBrakeForces(
                     benchmarkTimeStep, renderer.physicsWheelTorque(), renderer.physicsSteering(),
-                    renderer.physicsWheelBrakeForces(simulation.axleCount()));
+                    renderer.physicsWheelBrakeForces(simulation.axleCount()),
+                    renderer.physicsAxleSpringFactors(simulation.axleCount()));
                 renderer.updatePostPhysicsVariables(simulation);
                 renderer.draw(simulation);
                 renderer.endFrame();
@@ -255,7 +274,8 @@ int main() {
                                                renderer.brake());
                 simulation.updateWithWheelTorqueAndBrakeForces(
                     elapsed, renderer.physicsWheelTorque(), renderer.physicsSteering(),
-                    renderer.physicsWheelBrakeForces(simulation.axleCount()));
+                    renderer.physicsWheelBrakeForces(simulation.axleCount()),
+                    renderer.physicsAxleSpringFactors(simulation.axleCount()));
                 renderer.updatePostPhysicsVariables(simulation);
                 renderer.draw(simulation);
 

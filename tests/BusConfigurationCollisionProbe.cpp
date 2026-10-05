@@ -44,11 +44,27 @@ int main() {
     std::ofstream collisionMesh(root / "collision.obj");
     collisionMesh << "v 2 0 -1\nv 2 0 1\nv -2 0 0\nf 1 2 3\n";
     collisionMesh.close();
+    constexpr double visualWheelRadius = 0.52;
+    std::ofstream wheelMesh(root / "wheel.obj");
+    wheelMesh << "v -0.145 " << visualWheelRadius << " 0\n"
+              << "v -0.145 0 " << visualWheelRadius << "\n"
+              << "v -0.145 " << -visualWheelRadius << " 0\n"
+              << "v -0.145 0 " << -visualWheelRadius << "\n"
+              << "v 0.145 " << visualWheelRadius << " 0\n"
+              << "v 0.145 0 " << visualWheelRadius << "\n"
+              << "v 0.145 " << -visualWheelRadius << " 0\n"
+              << "v 0.145 0 " << -visualWheelRadius << "\n"
+                 "f 1 2 3\nf 5 6 7\n";
+    wheelMesh.close();
 
     const std::filesystem::path modelPath = root / "model.cfg";
     auto writeModelConfig = [&](bool noCollision) {
         std::ofstream model(modelPath, std::ios::trunc);
         model << "[mesh]\nbody.obj\n"
+                 "[mesh]\nwheel.obj\n"
+                 "[mesh_ident]\nwheel_frontleft\n"
+                 "[newanim]\n"
+                 "anim_rot\nwheel_rotation_0_l\n1\n"
                  "[collision_mesh]\ncollision.obj\n";
         if (noCollision) {
             model << "[nocollision]\n";
@@ -80,6 +96,9 @@ int main() {
         nearlyEqual(meshConfiguration.collisionOffsetX, -0.3) &&
         nearlyEqual(meshConfiguration.collisionOffsetY, -0.1) &&
         nearlyEqual(meshConfiguration.collisionOffsetZ, 1.0);
+    const bool wheelColliderMatchesVisualEnvelope =
+        nearlyEqual(meshConfiguration.axles[0].wheelDiameter, visualWheelRadius * 2.0) &&
+        nearlyEqual(meshConfiguration.wheelRadius, visualWheelRadius);
 
     writeModelConfig(true);
     BusConfiguration noCollisionConfiguration{};
@@ -96,8 +115,10 @@ int main() {
                                     nearlyEqual(noCollisionConfiguration.collisionHeight, 3.66);
 
     std::filesystem::remove_all(root);
-    if (!meshWasBuilt || !modelBoundsApplied || !boxFallbackApplied) {
-        std::cerr << "Bus collision mesh, nocollision filtering, or model bounding box failed\n";
+    if (!meshWasBuilt || !modelBoundsApplied || !wheelColliderMatchesVisualEnvelope ||
+        !boxFallbackApplied) {
+        std::cerr << "Bus collision mesh, wheel collider fit, nocollision filtering, or model "
+                     "bounding box failed\n";
         return 1;
     }
     return 0;

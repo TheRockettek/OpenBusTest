@@ -1,10 +1,8 @@
 #include "SoundEngine.h"
 
-#include "ConfigurationParser.h"
 #include "Environment.h"
 #include "Logger.h"
 #include "PerfTrace.h"
-#include "Variables.h"
 
 #include <AL/al.h>
 #include <AL/alc.h>
@@ -22,10 +20,8 @@
 #include <limits>
 #include <memory>
 #include <mutex>
-#include <sstream>
-#include <string_view>
+#include <string>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 namespace {
@@ -37,16 +33,6 @@ std::string lower(std::string value) {
         return static_cast<char>(std::tolower(character));
     });
     return value;
-}
-
-std::filesystem::path resolve(const std::filesystem::path& base, std::string value) {
-    std::replace(value.begin(), value.end(), '\\', '/');
-    return base / std::filesystem::path(value);
-}
-
-bool endsWith(const std::string& value, std::string_view suffix) {
-    return value.size() >= suffix.size() &&
-           value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
 bool dopplerEnabledFromEnvironment() {
@@ -84,60 +70,6 @@ std::array<float, 3> velocityBetween(const std::array<double, 3>& current,
             static_cast<float>(velocity[2])};
 }
 
-bool isLoopSoundFile(const std::filesystem::path& path) {
-    const std::string stem = lower(path.stem().string());
-    return stem == "loop" || endsWith(stem, "_loop") || endsWith(stem, "-loop");
-}
-
-bool isEndSoundFile(const std::filesystem::path& path) {
-    return endsWith(lower(path.stem().string()), "_end");
-}
-
-bool belongsToSoundFamily(const std::filesystem::path& loopPath,
-                          const std::filesystem::path& endPath) {
-    const std::string loopStem = lower(loopPath.stem().string());
-    const std::string endStem = lower(endPath.stem().string());
-    const std::string family = endStem.substr(0, endStem.size() - 4);
-    return loopPath.parent_path() == endPath.parent_path() &&
-           (loopStem == family + "_loop" || loopStem == family + "-loop");
-}
-
-bool belongsToStartFamily(const std::filesystem::path& loopPath,
-                          const std::filesystem::path& startPath) {
-    const std::string loopStem = lower(loopPath.stem().string());
-    const std::string startStem = lower(startPath.stem().string());
-    constexpr std::string_view suffix = "_start";
-    if (startStem.size() <= suffix.size() ||
-        startStem.compare(startStem.size() - suffix.size(), suffix.size(), suffix) != 0) {
-        return false;
-    }
-    const std::string family = startStem.substr(0, startStem.size() - suffix.size());
-    return loopPath.parent_path() == startPath.parent_path() &&
-           (loopStem == family + "_loop" || loopStem == family + "-loop");
-}
-
-float evaluateCurve(const std::vector<SoundCurvePoint>& points, float value) {
-    if (points.empty()) {
-        return 1.0;
-    }
-    if (value <= points.front().x) {
-        return points.front().y;
-    }
-    for (std::size_t index = 1; index < points.size(); ++index) {
-        if (value <= points[index].x) {
-            const SoundCurvePoint& left = points[index - 1];
-            const SoundCurvePoint& right = points[index];
-            const float range = right.x - left.x;
-            if (range == 0.0F) {
-                return right.y;
-            }
-            const float fraction = (value - left.x) / range;
-            return left.y + fraction * (right.y - left.y);
-        }
-    }
-    return points.back().y;
-}
-
 } // namespace
 
 struct SoundEngine::Backend {
@@ -149,19 +81,11 @@ struct SoundEngine::Backend {
     };
 
     struct ActiveSource {
-        std::filesystem::path path;
+        SoundPlaybackHandle handle = 0;
         ALuint source = 0;
         bool loop = false;
         std::array<double, 3> lastPosition = {};
         std::chrono::steady_clock::time_point lastPositionUpdate = {};
-    };
-
-    struct LoopUpdate {
-        std::filesystem::path path;
-        float gain = 0.0f;
-        float pitch = 1.0f;
-        std::array<double, 3> position = {};
-        double maxDistance = 0.0;
     };
 
     ALCdevice* device = nullptr;
@@ -169,15 +93,11 @@ struct SoundEngine::Backend {
     std::mutex mutex;
     std::unordered_map<std::string, std::shared_ptr<Clip>> clips;
     std::vector<ActiveSource> active;
-    std::unordered_map<std::string, ALuint> activeLoops;
+    SoundPlaybackHandle nextHandle = 1;
     bool dopplerEnabled = false;
     bool hasListenerPosition = false;
     std::array<double, 3> lastListenerPosition = {};
     std::chrono::steady_clock::time_point lastListenerPositionUpdate = {};
-
-    static std::string sourceKey(const std::filesystem::path& path) {
-        return path.lexically_normal().string();
-    }
 
     static std::uint32_t read32(const std::vector<std::uint8_t>& data, std::size_t offset) {
         return static_cast<std::uint32_t>(data[offset]) |
@@ -336,8 +256,6 @@ struct SoundEngine::Backend {
             device = nullptr;
             return;
         }
-        // Do not clamp at AL_MAX_DISTANCE: OMSI's 3D field is not an audio cutoff,
-        // and clamping here makes distant sources retain a constant audible level.
         alDistanceModel(AL_INVERSE_DISTANCE);
         alDopplerFactor(dopplerEnabled ? 1.0f : 0.0f);
         alDopplerVelocity(343.3f);
@@ -383,7 +301,7 @@ struct SoundEngine::Backend {
         const std::array<float, 6> orientation = {
             static_cast<float>(forward[0]), static_cast<float>(forward[1]),
             static_cast<float>(forward[2]), static_cast<float>(up[0]),
-            static_cast<float>(up[1]),      static_cast<float>(up[2])};
+            static_cast<float>(up[1]), static_cast<float>(up[2])};
         alListener3f(AL_POSITION, static_cast<float>(position[0]), static_cast<float>(position[1]),
                      static_cast<float>(position[2]));
         alListener3f(AL_VELOCITY, velocity[0], velocity[1], velocity[2]);
@@ -393,131 +311,109 @@ struct SoundEngine::Backend {
         hasListenerPosition = true;
     }
 
-    void createSourceLocked(const std::filesystem::path& path, bool looped, float gain, float pitch,
-                            const std::array<double, 3>& position, double maxDistance) {
+    SoundPlaybackHandle createSourceLocked(const std::filesystem::path& path, bool looped,
+                                           const SoundPlaybackParameters& parameters) {
         const std::shared_ptr<Clip> clip = loadClipLocked(path);
         if (!clip) {
             soundLog.Log("Unable to decode sound: " + path.string());
-            return;
-        }
-        const std::string key = sourceKey(path);
-        if (looped && activeLoops.contains(key)) {
-            return;
+            return 0;
         }
         ALuint source = 0;
         alGenSources(1, &source);
         if (source == 0) {
             soundLog.Log("Unable to create OpenAL sound source");
-            return;
+            return 0;
         }
         alSourcei(source, AL_BUFFER, static_cast<ALint>(clip->buffer));
         alSourcei(source, AL_LOOPING, looped ? AL_TRUE : AL_FALSE);
-        alSourcef(source, AL_GAIN, gain);
-        alSourcef(source, AL_PITCH, pitch);
+        alSourcef(source, AL_GAIN, parameters.gain);
+        alSourcef(source, AL_PITCH, parameters.pitch);
         alSourcei(source, AL_SOURCE_RELATIVE, AL_FALSE);
-        alSource3f(source, AL_POSITION, static_cast<float>(position[0]),
-                   static_cast<float>(position[1]), static_cast<float>(position[2]));
+        alSource3f(source, AL_POSITION, static_cast<float>(parameters.position[0]),
+                   static_cast<float>(parameters.position[1]),
+                   static_cast<float>(parameters.position[2]));
         alSourcef(source, AL_REFERENCE_DISTANCE, 1.0f);
         alSourcef(source, AL_ROLLOFF_FACTOR, 1.0f);
-        if (maxDistance > 0.0) {
-            alSourcef(source, AL_MAX_DISTANCE, static_cast<float>(maxDistance));
+        if (parameters.maxDistance > 0.0) {
+            alSourcef(source, AL_MAX_DISTANCE, static_cast<float>(parameters.maxDistance));
         }
         alSourcePlay(source);
         if (alGetError() != AL_NO_ERROR) {
             alDeleteSources(1, &source);
             soundLog.Log("Unable to start OpenAL sound source: " + path.string());
-            return;
+            return 0;
         }
-        active.push_back({path, source, looped, position, std::chrono::steady_clock::now()});
-        if (looped) {
-            activeLoops.emplace(key, source);
+        SoundPlaybackHandle handle = nextHandle++;
+        if (handle == 0) {
+            handle = nextHandle++;
         }
+        active.push_back({handle, source, looped, parameters.position,
+                          std::chrono::steady_clock::now()});
         soundLog.Log("OpenAL playback started: file=" + path.string() +
-                     " loop=" + (looped ? "true" : "false") + " gain=" + std::to_string(gain) +
-                     " pitch=" + std::to_string(pitch));
+                     " loop=" + (looped ? "true" : "false") +
+                     " gain=" + std::to_string(parameters.gain) +
+                     " pitch=" + std::to_string(parameters.pitch));
+        return handle;
     }
 
-    void play(const std::filesystem::path& path, bool looped, float gain, float pitch,
-              const std::array<double, 3>& position, double maxDistance) {
+    SoundPlaybackHandle play(const std::filesystem::path& path, bool looped,
+                             const SoundPlaybackParameters& parameters) {
         openbus::rendering::TraceScope trace("sound", "Backend::play");
         if (context == nullptr) {
-            return;
+            return 0;
         }
         std::lock_guard<std::mutex> lock(mutex);
         cleanupStoppedSourcesLocked();
-        createSourceLocked(path, looped, gain, pitch, position, maxDistance);
+        return createSourceLocked(path, looped, parameters);
     }
 
-    void stop(const std::filesystem::path& path) {
-        if (context == nullptr) {
+    void updateLoop(SoundPlaybackHandle handle, const SoundPlaybackParameters& parameters) {
+        openbus::rendering::TraceScope trace("sound", "Backend::updateLoop");
+        if (context == nullptr || handle == 0) {
             return;
         }
         std::lock_guard<std::mutex> lock(mutex);
-        const auto loop = activeLoops.find(sourceKey(path));
-        if (loop == activeLoops.end()) {
+        const auto found = std::find_if(active.begin(), active.end(), [handle](const auto& source) {
+            return source.handle == handle && source.loop;
+        });
+        if (found == active.end()) {
             return;
         }
-        const ALuint sourceId = loop->second;
-        alSourceStop(sourceId);
-        alDeleteSources(1, &sourceId);
-        activeLoops.erase(loop);
-        active.erase(
-            std::remove_if(active.begin(), active.end(),
-                           [sourceId](const ActiveSource& s) { return s.source == sourceId; }),
-            active.end());
+        alSourcef(found->source, AL_GAIN, parameters.gain);
+        alSourcef(found->source, AL_PITCH, parameters.pitch);
+        alSource3f(found->source, AL_POSITION, static_cast<float>(parameters.position[0]),
+                   static_cast<float>(parameters.position[1]),
+                   static_cast<float>(parameters.position[2]));
+        if (parameters.maxDistance > 0.0) {
+            alSourcef(found->source, AL_MAX_DISTANCE,
+                      static_cast<float>(parameters.maxDistance));
+        }
+        const auto now = std::chrono::steady_clock::now();
+        std::array<float, 3> velocity = {};
+        if (dopplerEnabled) {
+            const double elapsed =
+                std::chrono::duration<double>(now - found->lastPositionUpdate).count();
+            velocity = velocityBetween(parameters.position, found->lastPosition, elapsed);
+        }
+        alSource3f(found->source, AL_VELOCITY, velocity[0], velocity[1], velocity[2]);
+        found->lastPosition = parameters.position;
+        found->lastPositionUpdate = now;
     }
 
-    void updateLoops(const std::vector<LoopUpdate>& updates) {
-        openbus::rendering::TraceScope trace("sound", "Backend::updateLoops");
-        if (context == nullptr) {
+    void stopLoop(SoundPlaybackHandle handle) {
+        if (context == nullptr || handle == 0) {
             return;
         }
         std::lock_guard<std::mutex> lock(mutex);
-        cleanupStoppedSourcesLocked();
-        std::unordered_map<std::string, const LoopUpdate*> desired;
-        desired.reserve(updates.size());
-        for (const LoopUpdate& update : updates) {
-            desired.emplace(sourceKey(update.path), &update);
+        const auto found = std::find_if(active.begin(), active.end(), [handle](const auto& source) {
+            return source.handle == handle && source.loop;
+        });
+        if (found == active.end()) {
+            return;
         }
-
-        for (auto source = active.begin(); source != active.end();) {
-            if (!source->loop) {
-                ++source;
-                continue;
-            }
-            const std::string key = sourceKey(source->path);
-            const auto target = desired.find(key);
-            if (target == desired.end()) {
-                alSourceStop(source->source);
-                alDeleteSources(1, &source->source);
-                activeLoops.erase(key);
-                source = active.erase(source);
-                continue;
-            }
-            const LoopUpdate& update = *target->second;
-            alSourcef(source->source, AL_GAIN, update.gain);
-            alSourcef(source->source, AL_PITCH, update.pitch);
-            alSource3f(source->source, AL_POSITION, static_cast<float>(update.position[0]),
-                       static_cast<float>(update.position[1]),
-                       static_cast<float>(update.position[2]));
-            const auto now = std::chrono::steady_clock::now();
-            std::array<float, 3> velocity = {};
-            if (dopplerEnabled) {
-                const double elapsed =
-                    std::chrono::duration<double>(now - source->lastPositionUpdate).count();
-                velocity = velocityBetween(update.position, source->lastPosition, elapsed);
-            }
-            alSource3f(source->source, AL_VELOCITY, velocity[0], velocity[1], velocity[2]);
-            source->lastPosition = update.position;
-            source->lastPositionUpdate = now;
-            desired.erase(target);
-            ++source;
-        }
-        for (const auto& [key, update] : desired) {
-            (void)key;
-            createSourceLocked(update->path, true, update->gain, update->pitch, update->position,
-                               update->maxDistance);
-        }
+        alSourceStop(found->source);
+        alDeleteSources(1, &found->source);
+        active.erase(found);
     }
 };
 
@@ -525,419 +421,22 @@ SoundEngine::SoundEngine() : backend_(std::make_unique<Backend>()) {}
 
 SoundEngine::~SoundEngine() = default;
 
-void SoundEngine::load(const std::filesystem::path& configPath) {
-    if (configPath.empty()) {
-        return;
-    }
-    basePath_ = configPath.parent_path();
-    triggers_.clear();
-    untriggeredLoopSounds_.clear();
-
-    openbus::config::Reader reader(configPath);
-    if (!reader.isOpen()) {
-        soundLog.Log("Unable to open sound configuration: " + configPath.string());
-        return;
-    }
-
-    SoundTriggerDefinition current;
-    bool hasSound = false;
-    std::vector<std::string> currentTriggerNames;
-    const auto updateCurrentTriggers = [&]() {
-        for (const std::string& name : currentTriggerNames) {
-            std::vector<SoundTriggerDefinition>& definitions = triggers_[lower(name)];
-            const auto existing = std::find_if(
-                definitions.begin(), definitions.end(),
-                [&](const SoundTriggerDefinition& value) { return value.file == current.file; });
-            if (existing == definitions.end()) {
-                definitions.push_back(current);
-            } else {
-                *existing = current;
-            }
-        }
-    };
-    const auto retainUntriggeredLoop = [&]() {
-        if (!hasSound || !currentTriggerNames.empty()) {
-            return;
-        }
-        const bool curveDrivenAmbient =
-            !current.loopDisabled && (!current.volumeCurves.empty() || !current.conditions.empty());
-        if (current.loop || curveDrivenAmbient) {
-            current.loop = true;
-            untriggeredLoopSounds_.push_back(current);
-        }
-    };
-    openbus::config::Line line;
-    while (reader.next(line)) {
-        if (!line.isKeyword()) {
-            continue;
-        }
-        const std::string keyword = line.keyword();
-        if (keyword == "sound" || keyword == "loopsound") {
-            retainUntriggeredLoop();
-            openbus::config::Line value;
-            ConfigurationDiagnostics diagnostics;
-            if (!reader.readPayload(value, diagnostics, keyword)) {
-                continue;
-            }
-            current = {};
-            current.file = resolve(configPath.parent_path(), openbus::config::trim(value.text));
-            current.loop = keyword == "loopsound" || isLoopSoundFile(current.file);
-            if (keyword == "sound") {
-                openbus::config::Line gainLine;
-                if (reader.next(gainLine)) {
-                    if (gainLine.isKeyword()) {
-                        reader.pushBack(std::move(gainLine));
-                    } else {
-                        double baseGain = 1.0;
-                        if (openbus::config::parseDouble(gainLine.text, baseGain)) {
-                            current.baseGain = (std::max)(0.0, baseGain);
-                        }
-                    }
-                }
-            }
-            if (keyword == "loopsound") {
-                std::vector<std::string> loopValues;
-                openbus::config::Line loopValue;
-                while (reader.next(loopValue)) {
-                    if (loopValue.isKeyword()) {
-                        reader.pushBack(std::move(loopValue));
-                        break;
-                    }
-                    loopValues.push_back(loopValue.text);
-                    if (loopValues.size() == 4) {
-                        break;
-                    }
-                }
-                if (loopValues.size() >= 3) {
-                    current.controlVariable = lower(openbus::config::trim(loopValues[1]));
-                    openbus::config::parseFloat(loopValues[2], current.controlCenter);
-                }
-            }
-            currentTriggerNames.clear();
-            hasSound = true;
-            continue;
-        }
-        if (keyword == "trigger") {
-            openbus::config::Line value;
-            ConfigurationDiagnostics diagnostics;
-            if (hasSound && reader.readPayload(value, diagnostics, keyword)) {
-                currentTriggerNames.push_back(openbus::config::trim(value.text));
-                updateCurrentTriggers();
-            }
-            continue;
-        }
-        if (keyword == "noloop") {
-            if (hasSound) {
-                current.loop = false;
-                current.loopDisabled = true;
-                updateCurrentTriggers();
-            }
-            continue;
-        }
-        if (keyword == "loop" || keyword == "looped") {
-            if (hasSound) {
-                current.loop = true;
-                current.loopDisabled = false;
-                updateCurrentTriggers();
-            }
-            continue;
-        }
-        if (keyword == "viewpoint") {
-            openbus::config::Line value;
-            ConfigurationDiagnostics diagnostics;
-            int viewpoint = 0;
-            if (hasSound && reader.readPayload(value, diagnostics, keyword) &&
-                openbus::config::parseInt(value.text, viewpoint)) {
-                current.viewpoint = viewpoint;
-                updateCurrentTriggers();
-            }
-            continue;
-        }
-        if (keyword == "3d") {
-            std::vector<std::string> values;
-            ConfigurationDiagnostics diagnostics;
-            double maxDistance = 0.0;
-            if (hasSound && reader.readPayloads(4, values, diagnostics, keyword) &&
-                openbus::config::parseDouble(values[3], maxDistance)) {
-                double sourceX = 0.0;
-                double sourceY = 0.0;
-                openbus::config::parseDouble(values[0], sourceX);
-                openbus::config::parseDouble(values[1], sourceY);
-                current.position = {sourceY, -sourceX, 0.0};
-                openbus::config::parseDouble(values[2], current.position[2]);
-                current.maxDistance = (std::max)(0.0, maxDistance);
-                updateCurrentTriggers();
-            }
-            continue;
-        }
-        if (keyword == "volcurve") {
-            SoundVolumeCurve curve;
-            openbus::config::Line curveVariable;
-            if (reader.next(curveVariable) && !curveVariable.isKeyword()) {
-                curve.variable = lower(openbus::config::trim(curveVariable.text));
-            } else if (curveVariable.isKeyword()) {
-                reader.pushBack(std::move(curveVariable));
-            }
-            while (reader.next(line)) {
-                if (line.isKeyword() && line.keyword() != "pnt") {
-                    reader.pushBack(std::move(line));
-                    break;
-                }
-                if (line.isKeyword()) {
-                    std::vector<std::string> values;
-                    ConfigurationDiagnostics diagnostics;
-                    if (!reader.readPayloads(2, values, diagnostics, "pnt")) {
-                        break;
-                    }
-                    SoundCurvePoint point;
-                    if (openbus::config::parseFloat(values[0], point.x) &&
-                        openbus::config::parseFloat(values[1], point.y)) {
-                        curve.points.push_back(point);
-                    }
-                    continue;
-                }
-                std::istringstream values(line.text);
-                SoundCurvePoint point;
-                if (values >> point.x >> point.y) {
-                    curve.points.push_back(point);
-                }
-            }
-            if (!curve.points.empty()) {
-                if (current.volumeCurve.empty()) {
-                    current.volumeCurve = curve.points;
-                }
-                current.volumeCurves.push_back(std::move(curve));
-            }
-            updateCurrentTriggers();
-            continue;
-        }
-        if (keyword == "conditionSingle") {
-            if (!hasSound) {
-                continue;
-            }
-            std::vector<std::string> values;
-            ConfigurationDiagnostics diagnostics;
-            SoundCondition condition;
-            if (reader.readPayloads(3, values, diagnostics, keyword) &&
-                openbus::config::parseFloat(values[1], condition.referenceValue) &&
-                openbus::config::parseInt(values[2], condition.comparison) &&
-                condition.comparison >= 0 && condition.comparison <= 5) {
-                condition.variable = lower(openbus::config::trim(values[0]));
-                if (!condition.variable.empty()) {
-                    current.conditions.push_back(std::move(condition));
-                    updateCurrentTriggers();
-                    continue;
-                }
-            }
-            // Keep malformed conditions fail-closed so the associated sound
-            // cannot accidentally play as an unconditional loop.
-            current.conditions.push_back({{}, 0.0F, -1});
-            soundLog.Log("Invalid [conditionSingle] in " + configPath.string());
-            updateCurrentTriggers();
-        }
-    }
-    retainUntriggeredLoop();
-}
-
-bool SoundEngine::conditionsAllow(const SoundTriggerDefinition& definition,
-                                  const Variables& variables) {
-    for (const SoundCondition& condition : definition.conditions) {
-        if (condition.variable.empty() || condition.comparison < 0 || condition.comparison > 5) {
-            return false;
-        }
-        const float value = variables.get(condition.variable);
-        bool matches = false;
-        switch (condition.comparison) {
-        case 0:
-            matches = value != condition.referenceValue;
-            break;
-        case 1:
-            matches = value == condition.referenceValue;
-            break;
-        case 2:
-            matches = value < condition.referenceValue;
-            break;
-        case 3:
-            matches = value > condition.referenceValue;
-            break;
-        case 4:
-            matches = value <= condition.referenceValue;
-            break;
-        case 5:
-            matches = value >= condition.referenceValue;
-            break;
-        default:
-            return false;
-        }
-        if (!matches) {
-            return false;
-        }
-    }
-    return true;
-}
-
 void SoundEngine::setListenerPose(const std::array<double, 3>& position,
                                   const std::array<double, 3>& forward,
                                   const std::array<double, 3>& up) {
     backend_->setListenerPose(position, forward, up);
 }
 
-void SoundEngine::setViewpoint(openbus::rendering::ViewpointContext viewpoint) {
-    viewpoint_ = viewpoint;
+SoundPlaybackHandle SoundEngine::play(const std::filesystem::path& path, bool looped,
+                                      const SoundPlaybackParameters& parameters) {
+    return backend_->play(path, looped, parameters);
 }
 
-void SoundEngine::updateLoops(const Variables& variables) {
-    openbus::rendering::TraceScope trace("sound", "SoundEngine::updateLoops");
-    std::vector<Backend::LoopUpdate> updates;
-    updates.reserve(untriggeredLoopSounds_.size());
-    for (const SoundTriggerDefinition& definition : untriggeredLoopSounds_) {
-        const std::filesystem::path file =
-            definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
-        if (!openbus::rendering::viewpointMatches(definition.viewpoint, viewpoint_)) {
-            continue;
-        }
-        if (!conditionsAllow(definition, variables)) {
-            continue;
-        }
-
-        double gain = definition.baseGain;
-        if (!definition.volumeCurves.empty()) {
-            for (const SoundVolumeCurve& curve : definition.volumeCurves) {
-                gain *= evaluateCurve(curve.points, variables.get(curve.variable));
-            }
-        } else if (!definition.controlVariable.empty() && definition.controlCenter > 0.0) {
-            gain *= std::clamp(variables.get(definition.controlVariable) / definition.controlCenter,
-                               0.0F, 1.0F);
-        }
-        gain = std::clamp(gain, 0.0, 1.0);
-        if (gain <= 0.0) {
-            continue;
-        }
-        double pitch = 1.0;
-        if (!definition.controlVariable.empty() && definition.controlCenter > 0.0) {
-            pitch = std::clamp(variables.get(definition.controlVariable) / definition.controlCenter,
-                               0.5F, 2.0F);
-        }
-        updates.push_back({file, static_cast<float>(gain), static_cast<float>(pitch),
-                           definition.position, definition.maxDistance});
-    }
-    backend_->updateLoops(updates);
+void SoundEngine::updateLoop(SoundPlaybackHandle handle,
+                             const SoundPlaybackParameters& parameters) {
+    backend_->updateLoop(handle, parameters);
 }
 
-bool SoundEngine::hasTrigger(const std::string& name) const {
-    return triggers_.find(lower(name)) != triggers_.end();
-}
-
-void SoundEngine::trigger(const std::string& name, const std::filesystem::path& overrideFile,
-                          float controlValue, const Variables* variables) {
-    openbus::rendering::TraceScope trace("sound", "SoundEngine::trigger");
-    const auto found = triggers_.find(lower(name));
-    if (found == triggers_.end() && overrideFile.empty()) {
-        soundLog.Log("Skipping unknown sound trigger: " + name);
-        return;
-    }
-    std::vector<SoundTriggerDefinition> definitions;
-    if (found != triggers_.end()) {
-        definitions = found->second;
-    }
-    if (overrideFile.empty()) {
-        std::vector<SoundTriggerDefinition> inferredLoops;
-        for (const SoundTriggerDefinition& definition : definitions) {
-            if (definition.loop) {
-                continue;
-            }
-            for (const SoundTriggerDefinition& loop : untriggeredLoopSounds_) {
-                if (belongsToStartFamily(loop.file, definition.file) &&
-                    std::none_of(definitions.begin(), definitions.end(),
-                                 [&loop](const SoundTriggerDefinition& existing) {
-                                     return existing.file == loop.file;
-                                 }) &&
-                    std::none_of(inferredLoops.begin(), inferredLoops.end(),
-                                 [&loop](const SoundTriggerDefinition& existing) {
-                                     return existing.file == loop.file;
-                                 })) {
-                    inferredLoops.push_back(loop);
-                }
-            }
-        }
-        definitions.insert(definitions.end(), inferredLoops.begin(), inferredLoops.end());
-    }
-    if (definitions.empty() && overrideFile.empty()) {
-        soundLog.Log("Skipping unknown sound trigger: " + name);
-        return;
-    }
-    if (!overrideFile.empty()) {
-        SoundTriggerDefinition overrideDefinition;
-        overrideDefinition.file = overrideFile;
-        definitions = {std::move(overrideDefinition)};
-    }
-    definitions.erase(std::remove_if(definitions.begin(), definitions.end(),
-                                     [this, variables](const auto& definition) {
-                                         return !openbus::rendering::viewpointMatches(
-                                                    definition.viewpoint, viewpoint_) ||
-                                                (!definition.conditions.empty() &&
-                                                 (variables == nullptr ||
-                                                  !conditionsAllow(definition, *variables)));
-                                     }),
-                      definitions.end());
-    if (definitions.empty()) {
-        return;
-    }
-    if (overrideFile.empty()) {
-        for (const SoundTriggerDefinition& definition : definitions) {
-            if (!isEndSoundFile(definition.file)) {
-                continue;
-            }
-            for (const auto& entry : triggers_) {
-                for (const SoundTriggerDefinition& candidate : entry.second) {
-                    if (candidate.loop && belongsToSoundFamily(candidate.file, definition.file)) {
-                        backend_->stop(candidate.file);
-                    }
-                }
-            }
-            for (const SoundTriggerDefinition& candidate : untriggeredLoopSounds_) {
-                if (belongsToSoundFamily(candidate.file, definition.file)) {
-                    backend_->stop(candidate.file);
-                }
-            }
-        }
-    }
-    for (const SoundTriggerDefinition& definition : definitions) {
-        const std::filesystem::path file =
-            definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
-        double gain = definition.baseGain;
-        if (!definition.volumeCurve.empty()) {
-            gain *= evaluateCurve(definition.volumeCurve, controlValue);
-        }
-        gain = std::clamp(gain, 0.0, 1.0);
-        if (gain <= 0.0) {
-            soundLog.Log("Skipping silent sound: trigger=" + name +
-                         " gain=" + std::to_string(gain));
-            continue;
-        }
-        soundLog.Log("Sound playback requested: trigger=" + name + " file=" + file.string() +
-                     " gain=" + std::to_string(gain) +
-                     " loop=" + (definition.loop ? "true" : "false"));
-        backend_->play(file, definition.loop, static_cast<float>(gain), 1.0f, definition.position,
-                       definition.maxDistance);
-    }
-}
-
-void SoundEngine::stop(const std::string& name) {
-    const auto found = triggers_.find(lower(name));
-    if (found == triggers_.end()) {
-        return;
-    }
-    for (const SoundTriggerDefinition& definition : found->second) {
-        if (definition.loop) {
-            backend_->stop(definition.file);
-        }
-    }
-    for (const SoundTriggerDefinition& definition : untriggeredLoopSounds_) {
-        for (const SoundTriggerDefinition& trigger : found->second) {
-            if (belongsToStartFamily(definition.file, trigger.file)) {
-                backend_->stop(definition.file);
-            }
-        }
-    }
+void SoundEngine::stopLoop(SoundPlaybackHandle handle) {
+    backend_->stopLoop(handle);
 }

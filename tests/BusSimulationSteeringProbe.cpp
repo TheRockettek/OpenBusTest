@@ -2,6 +2,7 @@
 #include "MouseControlMapping.h"
 #include "Variables.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -84,6 +85,87 @@ int main() {
     }
 
     BusSimulation simulation(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    BusConfiguration wheelContactConfiguration = testConfiguration();
+    wheelContactConfiguration.collisionEnabled = false;
+    BusSimulation softSuspension(wheelContactConfiguration,
+                                 VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    BusSimulation stiffSuspension(wheelContactConfiguration,
+                                  VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    const std::vector<double> noWheelBrakes(softSuspension.wheelCount(), 0.0);
+    const std::vector<double> softSpringFactors(softSuspension.wheelCount(), 0.5);
+    const std::vector<double> stiffSpringFactors(softSuspension.wheelCount(), 2.0);
+    double maximumVerticalResponseDifference = 0.0;
+    for (int step = 0; step < 600; ++step) {
+        softSuspension.stepWithWheelTorqueAndBrakeForces(0.0, 0.0, noWheelBrakes,
+                                                         softSpringFactors);
+        stiffSuspension.stepWithWheelTorqueAndBrakeForces(0.0, 0.0, noWheelBrakes,
+                                                          stiffSpringFactors);
+        maximumVerticalResponseDifference =
+            std::max(maximumVerticalResponseDifference,
+                     std::abs(softSuspension.positionZ() - stiffSuspension.positionZ()));
+    }
+    if (maximumVerticalResponseDifference <= 1.0e-5) {
+        std::cerr << "Axle_Springfactor did not change ODE suspension response: max vertical "
+                     "difference="
+                  << maximumVerticalResponseDifference << '\n';
+        return 1;
+    }
+
+    BusSimulation lowFactorGroundCheck(wheelContactConfiguration,
+                                       VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    const std::vector<double> lowSpringFactors(lowFactorGroundCheck.wheelCount(), 0.3);
+    const std::vector<double> groundCheckBrakes(lowFactorGroundCheck.wheelCount(), 0.0);
+    double minimumWheelGroundClearance = std::numeric_limits<double>::max();
+    double maximumSliderCompression = 0.0;
+    std::vector<double> finalAnimationDisplacements(lowFactorGroundCheck.wheelCount(), 0.0);
+    const double restSuspensionLength = 0.35;
+    const double centerOfGravityHeight = testConfiguration().centerOfGravityHeight;
+    for (int step = 0; step < 900; ++step) {
+        lowFactorGroundCheck.stepWithWheelTorqueAndBrakeForces(
+            0.0, 0.0, groundCheckBrakes, lowSpringFactors);
+        const BodyPose chassisPose = lowFactorGroundCheck.chassisPose();
+        for (std::size_t wheel = 0; wheel < lowFactorGroundCheck.wheelCount(); ++wheel) {
+            const BodyPose wheelPose = lowFactorGroundCheck.wheelPose(wheel);
+            const double wheelRadius = lowFactorGroundCheck.wheelRadius(wheel);
+            minimumWheelGroundClearance =
+                std::min(minimumWheelGroundClearance, wheelPose.position[2] - wheelRadius);
+            const double deltaX = wheelPose.position[0] - chassisPose.position[0];
+            const double deltaY = wheelPose.position[1] - chassisPose.position[1];
+            const double deltaZ = wheelPose.position[2] - chassisPose.position[2];
+            const double wheelLocalZ = chassisPose.rotation[2] * deltaX +
+                                       chassisPose.rotation[5] * deltaY +
+                                       chassisPose.rotation[8] * deltaZ;
+            const double anchorLocalZ = wheelRadius + restSuspensionLength - centerOfGravityHeight;
+            const double rawCompression =
+                restSuspensionLength - (anchorLocalZ - wheelLocalZ);
+            finalAnimationDisplacements[wheel] = rawCompression;
+            maximumSliderCompression =
+                std::max(maximumSliderCompression,
+                         lowFactorGroundCheck.wheelSuspensionSliderTravel(wheel));
+        }
+    }
+    openbus::scripting::Vehicle lowFactorVariables;
+    lowFactorGroundCheck.updateVariables(lowFactorVariables, 0.0, 0.0, 0.0);
+    bool animationVariableMatchesPose = true;
+    for (std::size_t wheel = 0; wheel < lowFactorGroundCheck.wheelCount(); ++wheel) {
+        const std::string variableName = "axle_suspension_" + std::to_string(wheel / 2) +
+                                         (wheel % 2 == 0 ? "_l" : "_r");
+        const double expectedDisplacement =
+            std::clamp(-finalAnimationDisplacements[wheel], -0.25, 0.25);
+        animationVariableMatchesPose =
+            animationVariableMatchesPose &&
+            std::abs(lowFactorVariables.get(variableName) - expectedDisplacement) < 1.0e-5;
+    }
+    if (minimumWheelGroundClearance < -0.005 || maximumSliderCompression > 0.28 ||
+        !animationVariableMatchesPose) {
+        std::cerr << "ODE wheel contact/travel exceeded its expected range: ground clearance="
+                  << minimumWheelGroundClearance
+                  << " m, maximum slider compression=" << maximumSliderCompression
+                  << " m, animation variable matches pose="
+                  << (animationVariableMatchesPose ? "yes" : "no") << '\n';
+        return 1;
+    }
+
     const BusConfiguration steeringLimitConfiguration = testConfiguration();
     const double expectedMaximumSteeringAngle =
         std::atan(steeringLimitConfiguration.inverseMinimumTurnRadius *
@@ -146,16 +228,16 @@ int main() {
     for (int step = 0; step < 600; ++step) {
         wheelSpeedCheck.stepWithWheelTorque(0.0, 0.0, 0.0);
     }
-    const double initialWheelRotation = wheelSpeedCheck.wheelRotation(2);
-    constexpr int wheelSpeedSampleSteps = 5;
-    for (int step = 0; step < wheelSpeedSampleSteps; ++step) {
+    for (int step = 0; step < 4; ++step) {
         wheelSpeedCheck.stepWithWheelTorque(1000.0, 0.0, 0.0);
     }
+    const double rotationBeforeFinalStep = wheelSpeedCheck.wheelRotation(2);
+    wheelSpeedCheck.stepWithWheelTorque(1000.0, 0.0, 0.0);
     openbus::scripting::Vehicle wheelSpeedVariables;
     wheelSpeedCheck.updateVariables(wheelSpeedVariables, 0.0, 0.0, 0.0);
     const double expectedWheelSpeedRpm =
-        std::abs(wheelSpeedCheck.wheelRotation(2) - initialWheelRotation) *
-        wheelSpeedCheck.physicsHz() / wheelSpeedSampleSteps * 60.0 /
+        std::abs(wheelSpeedCheck.wheelRotation(2) - rotationBeforeFinalStep) *
+        wheelSpeedCheck.physicsHz() * 60.0 /
         (2.0 * 3.141592653589793);
     const double actualWheelSpeedRpm = wheelSpeedVariables.get("wheel_rotationspeed_1_l");
     const double averageDrivenWheelRpm =
@@ -163,9 +245,11 @@ int main() {
          wheelSpeedVariables.get("wheel_rotationspeed_1_r")) /
         2.0;
     if (expectedWheelSpeedRpm < 1.0 || actualWheelSpeedRpm <= 0.0 ||
-        std::abs(actualWheelSpeedRpm - expectedWheelSpeedRpm) > expectedWheelSpeedRpm * 0.75 ||
-        wheelSpeedVariables.get("n_wheel") != static_cast<float>(averageDrivenWheelRpm)) {
-        std::cerr << "script wheel speeds were not expressed in forward rpm: expected about "
+        std::abs(actualWheelSpeedRpm - expectedWheelSpeedRpm) >
+            std::max(0.5, expectedWheelSpeedRpm * 0.1) ||
+        std::abs(wheelSpeedVariables.get("n_wheel") - averageDrivenWheelRpm) > 1.0e-4) {
+        std::cerr << "script wheel speeds were inconsistent with integrated forward rotation: "
+                     "expected about "
                   << expectedWheelSpeedRpm << " rpm, got " << actualWheelSpeedRpm << " rpm\n";
         return 1;
     }
@@ -227,6 +311,8 @@ int main() {
               << " axleSteering0L=" << variables.get("axle_steering_0_l")
               << " wheelRotation1L=" << variables.get("wheel_rotation_1_l")
               << " wheelRotation1R=" << variables.get("wheel_rotation_1_r")
+              << " minLowFactorGroundClearance=" << minimumWheelGroundClearance
+              << " maxLowFactorSliderCompression=" << maximumSliderCompression
               << " rearPoseChange=" << rearPoseChange
               << " headingDirectionChanges=" << headingDirectionChanges << '\n';
     return 0;

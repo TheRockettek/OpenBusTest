@@ -23,6 +23,7 @@ int main() {
               "[CTC]\nColorscheme\nTexture\\Advert\n0\n"
               "[CTCTexture]\nFarbschema_Tex1\n3803_l.tga\n"
               "[mesh]\ndisplay.obj\n"
+              "[shadow]\n"
               "[isshadow]\n"
               "[nocollision]\n"
               "[collision_mesh]\ncollision.obj\n"
@@ -50,6 +51,12 @@ int main() {
     }
     const ModelConfig result =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
+    bool shadowMarkerWarned = false;
+    for (const ConfigurationDiagnostic& diagnostic : result.diagnostics.entries) {
+        shadowMarkerWarned = shadowMarkerWarned ||
+                             (diagnostic.severity == ConfigurationDiagnostic::Severity::Warning &&
+                              diagnostic.keyword == "shadow");
+    }
     const std::filesystem::path oversizedConfigPath = root / "oversized.cfg";
     std::ofstream oversizedConfig(oversizedConfigPath);
     oversizedConfig << "[scripttexture]\n4097\n1\n";
@@ -115,7 +122,7 @@ int main() {
     }
     std::filesystem::remove_all(root);
 
-    if (result.diagnostics.hasErrors() || result.parts.size() != 1 ||
+    if (result.diagnostics.hasErrors() || shadowMarkerWarned || result.parts.size() != 1 ||
         !result.parts[0].isShadow || !result.parts[0].noCollision ||
         result.collisionMeshes.size() != 1 || !result.collisionMeshes[0].hasPart ||
         !result.hasBoundingBox ||

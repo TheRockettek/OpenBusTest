@@ -20,6 +20,7 @@
 #include "ScriptRuntime.h"
 #include "ScreenshotWriter.h"
 #include "SoundEngine.h"
+#include "VehicleSoundBank.h"
 #include "TextureAssetLoader.h"
 #include "TextureLoader.h"
 #include "Viewpoint.h"
@@ -645,6 +646,80 @@ Matrix4 makeMeshTransform(const std::array<double, 9>& meshRotation,
     return result;
 }
 
+struct SharedVehicleDefinition {
+    std::string cacheKey;
+    std::filesystem::path modelConfigPath;
+    std::filesystem::path modelRoot;
+    VehicleConfig vehicleConfiguration;
+    openbus::rendering::BusModelLoadResult modelConfiguration;
+    std::vector<std::string> modelNumericVariables;
+    std::vector<std::string> modelStringVariables;
+};
+
+std::string normalizedConfigPath(const std::filesystem::path& path) {
+    std::string key = std::filesystem::absolute(path).lexically_normal().generic_string();
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return key;
+}
+
+std::filesystem::path modelRootFor(const std::filesystem::path& modelConfigPath) {
+    const std::filesystem::path directory = modelConfigPath.parent_path();
+    std::string directoryName = directory.filename().string();
+    std::transform(directoryName.begin(), directoryName.end(), directoryName.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    return directoryName == "configuration files"
+               ? directory.parent_path()
+               : directory;
+}
+
+std::shared_ptr<const SharedVehicleDefinition>
+sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
+                        const std::filesystem::path& modelConfigPath) {
+    static std::mutex cacheMutex;
+    static std::unordered_map<std::string, std::shared_ptr<const SharedVehicleDefinition>> cache;
+    const std::string key = normalizedConfigPath(busConfigPath) + "|" +
+                            normalizedConfigPath(modelConfigPath);
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    const auto existing = cache.find(key);
+    if (existing != cache.end()) {
+        return existing->second;
+    }
+
+    auto definition = std::make_shared<SharedVehicleDefinition>();
+    definition->cacheKey = key;
+    definition->modelConfigPath = modelConfigPath;
+    definition->modelRoot = modelRootFor(modelConfigPath);
+    gameLog.Log("Loading bus model with config: " + modelConfigPath.string() +
+                " and model root: " + definition->modelRoot.string());
+    definition->vehicleConfiguration = loadBusConfig(busConfigPath);
+
+    openbus::scripting::Vehicle modelVariables;
+    definition->modelConfiguration = openbus::rendering::loadBusModel(
+        modelConfigPath, definition->modelRoot, modelVariables);
+    for (const auto& [name, value] : modelVariables.numericValues()) {
+        (void)value;
+        definition->modelNumericVariables.push_back(name);
+    }
+    for (const auto& [name, value] : modelVariables.stringValues()) {
+        (void)value;
+        definition->modelStringVariables.push_back(name);
+    }
+    for (const ConfigurationDiagnostic& diagnostic : definition->modelConfiguration.diagnostics.entries) {
+        const std::string severity =
+            diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error" : "warning";
+        gameLog.Log("CFG " + severity + " line " + std::to_string(diagnostic.line) + " [" +
+                    diagnostic.keyword + "]: " + diagnostic.message);
+    }
+
+    std::shared_ptr<const SharedVehicleDefinition> shared = std::move(definition);
+    cache.emplace(key, shared);
+    return shared;
+}
+
 } // namespace
 
 using openbus::rendering::applyPose;
@@ -768,7 +843,35 @@ struct Vehicle {
     };
 
     struct Batch {
+        struct SharedVertices {
+            std::shared_ptr<std::vector<Vertex>> values =
+                std::make_shared<std::vector<Vertex>>();
+
+            SharedVertices& operator=(std::vector<Vertex>&& vertices) {
+                values = std::make_shared<std::vector<Vertex>>(std::move(vertices));
+                return *this;
+            }
+            std::size_t size() const { return values->size(); }
+            bool empty() const { return values->empty(); }
+            Vertex* data() { return values->data(); }
+            const Vertex* data() const { return values->data(); }
+            Vertex& operator[](std::size_t index) { return (*values)[index]; }
+            const Vertex& operator[](std::size_t index) const { return (*values)[index]; }
+            auto begin() { return values->begin(); }
+            auto end() { return values->end(); }
+            auto begin() const { return values->begin(); }
+            auto end() const { return values->end(); }
+            void reserve(std::size_t size) { values->reserve(size); }
+            template <typename Iterator>
+            auto insert(typename std::vector<Vertex>::iterator position, Iterator first,
+                        Iterator last) {
+                return values->insert(position, first, last);
+            }
+        };
+
         GLuint buffer = 0;
+        bool bufferTracked = false;
+        bool sharedGeometryBuffer = false;
         GLuint texture = 0;
         bool textureArray = false;
         std::size_t textureArrayLayers = 1;
@@ -817,7 +920,7 @@ struct Vehicle {
         std::string alphaScaleVariable;
         int baseTextureLayer = 0;
         int textureLayer = 0;
-        std::vector<Vertex> vertices;
+        SharedVertices vertices;
         std::vector<std::array<float, 4>> materialColors;
         std::vector<MaterialTextureSource> materialTextures;
         std::vector<GLuint> materialTextureIds;
@@ -891,11 +994,14 @@ struct Vehicle {
     std::unordered_map<int, int> reflectionRequiredSizes;
     openbus::scripting::Vehicle variables;
     std::unique_ptr<ScriptRuntime> scripts;
+    SoundEngine* soundPlayback = nullptr;
+    VehicleSoundBank soundBank;
     bool soundEventsEnabled = false;
     std::vector<Part> pendingParts;
     std::vector<ModelInteriorLight> interiorLights;
     std::vector<InteriorLightController> interiorLightControllers;
     Matrix4 interiorLightRootModelView = identityMatrix();
+    std::string modelCacheKey;
     AssetRequestManager* assets;
     VehiclePlacement placement;
     double modelOffsetZ = 0.0;
@@ -921,6 +1027,7 @@ struct Vehicle {
     Matrix4 preparedDrawModelView = {};
     Matrix4 preparedDrawProjection = {};
     bool loaded = false;
+    bool hasSharedGeometry = false;
     bool hasLoadedInitialView = false;
     bool loggedAllObjectsLoaded = false;
     bool logPlayerStartupState = false;
@@ -1908,12 +2015,13 @@ struct Vehicle {
     bool comInitialized = false;
 #endif
 
-    explicit Vehicle(const std::filesystem::path& busConfigPath,
-                     const std::filesystem::path& modelConfigPath,
+        explicit Vehicle(const std::shared_ptr<const SharedVehicleDefinition>& definition,
                      const VehiclePlacement& configuredPlacement, double configuredModelOffsetZ,
                      ModelLoadingPolicy policy, AssetRequestManager& manager,
-                     SimulationState& simulationState, SoundEngine& soundEngine)
-        : loadingPolicy(policy), variables(), assets(&manager), placement(configuredPlacement),
+                     SimulationState& simulationState, SoundEngine& soundEngine,
+                     openbus::rendering::ViewpointContext& soundViewpoint)
+                : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
+                    modelCacheKey(definition->cacheKey), assets(&manager), placement(configuredPlacement),
           modelOffsetZ(configuredModelOffsetZ),
           wheelsFromOde(parseEnabledFlag(std::getenv("OPENBUS_WHEELS_FROM_ODE"))) {
         if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
@@ -1930,54 +2038,63 @@ struct Vehicle {
         const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         comInitialized = SUCCEEDED(comResult);
 #endif
-        const std::filesystem::path modelConfigDirectory = modelConfigPath.parent_path();
-        const std::filesystem::path modelRoot =
-            lower(modelConfigDirectory.filename().string()) == "configuration files"
-                ? modelConfigDirectory.parent_path()
-                : modelConfigDirectory;
-        gameLog.Log("Loading bus model with config: " + modelConfigPath.string() +
-                    " and model root: " + modelRoot.string());
-        VehicleConfig vehicleConfiguration = loadBusConfig(busConfigPath);
+        VehicleConfig vehicleConfiguration = definition->vehicleConfiguration;
         selectRuntimeRegistration(vehicleConfiguration, configuredPlacement);
         odometerMetres =
             vehicleConfiguration.hasOdometerInitial
                 ? std::max(0.0, vehicleConfiguration.odometerInitialKilometres) * 1000.0
                 : 0.0;
-        soundEngine.load(vehicleConfiguration.soundConfigPath);
+        soundBank.load(vehicleConfiguration.soundConfigPath);
         scripts = std::make_unique<ScriptRuntime>(
             vehicleConfiguration, variables, simulationState,
-            [this, &soundEngine](const std::string& name, const std::string& file,
-                                 double controlValue) {
+            [this, &soundEngine, &soundViewpoint](const std::string& name,
+                                                  const std::string& file,
+                                                  double controlValue) {
                 if (!soundEventsEnabled) {
                     return;
                 }
-                if (file.empty() && !soundEngine.hasTrigger(name) && name.size() > 4 &&
+                if (file.empty() && !soundBank.hasTrigger(name) && name.size() > 4 &&
                     name.compare(name.size() - 4, 4, "_off") == 0) {
-                    soundEngine.stop(name.substr(0, name.size() - 4));
+                    soundBank.stop(soundEngine, name.substr(0, name.size() - 4));
                 } else {
-                    soundEngine.trigger(name, file, controlValue, &variables);
+                    soundBank.trigger(soundEngine, name, file, static_cast<float>(controlValue),
+                                      variables, soundViewpoint);
                 }
             });
         for (const std::string& error : scripts->errors()) {
             gameLog.Log("Lua script error: " + error);
         }
-        load(modelConfigPath, modelRoot);
+        for (const std::string& name : definition->modelNumericVariables) {
+            variables.declare(name);
+        }
+        for (const std::string& name : definition->modelStringVariables) {
+            variables.declareString(name);
+        }
+        load(*definition);
         scripts->initialize();
         for (const std::string& error : scripts->errors()) {
             gameLog.Log("Lua initialization error: " + error);
         }
         scripts->update(false);
-        spawn();
+        if (!hasSharedGeometry) {
+            spawn();
+            cacheSharedDisplayLists();
+        } else {
+            loggedAllObjectsLoaded = true;
+        }
         // Suppress sound callbacks caused by scripts settling initial state.
         soundEventsEnabled = true;
     }
 
     ~Vehicle() {
+        if (soundPlayback != nullptr) {
+            soundBank.stopAllLoops(*soundPlayback);
+        }
         joinTextureWorkers();
         const auto deleteBuffers = [](const std::vector<DisplayPart>& parts) {
             for (const DisplayPart& part : parts) {
                 for (const Batch& batch : part.batches) {
-                    if (batch.buffer) {
+                    if (batch.buffer && !batch.bufferTracked) {
                         pglDeleteBuffers(1, &batch.buffer);
                     }
                 }
@@ -2194,6 +2311,17 @@ struct Vehicle {
         for (const TriangleDepth& triangle : triangles) {
             sortedVertices.insert(sortedVertices.end(), batch.vertices.begin() + triangle.index,
                                   batch.vertices.begin() + triangle.index + 3);
+        }
+        if (batch.sharedGeometryBuffer) {
+            GLuint privateBuffer = 0;
+            pglGenBuffers(1, &privateBuffer);
+            if (privateBuffer == 0) {
+                return;
+            }
+            batch.buffer = privateBuffer;
+            batch.sharedGeometryBuffer = false;
+            batch.bufferTracked = true;
+            assets->trackBuffer(batch.buffer);
         }
         pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
         pglBufferData(GL_ARRAY_BUFFER,
@@ -2567,6 +2695,71 @@ struct Vehicle {
 
     bool isCaptureReady() const {
         return areObjectsLoaded() && areTexturesLoaded();
+    }
+
+    static std::mutex& sharedDisplayCacheMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    static std::unordered_map<std::string, std::vector<DisplayPart>>& sharedDisplayCache() {
+        static std::unordered_map<std::string, std::vector<DisplayPart>> cache;
+        return cache;
+    }
+
+    bool loadSharedDisplayLists() {
+        std::lock_guard<std::mutex> lock(sharedDisplayCacheMutex());
+        const auto cached = sharedDisplayCache().find(modelCacheKey);
+        if (cached == sharedDisplayCache().end()) {
+            return false;
+        }
+        displayLists = cached->second;
+        for (DisplayPart& part : displayLists) {
+            part.animationStates.assign(part.animations.size(), {});
+            part.animationCacheGeneration = 0;
+            part.cachedAnimationTransform = identityMatrix();
+            part.viewDepthCacheGeneration = 0;
+            part.cachedViewDepth = 0.0;
+            for (Batch& batch : part.batches) {
+                batch.sharedGeometryBuffer = true;
+                batch.dynamicTexture = 0;
+                batch.freeTexture = 0;
+                batch.freeTextureIndex = -1;
+                batch.freeTextureWidth = 0;
+                batch.freeTextureHeight = 0;
+                batch.freeTextureRevision = 0;
+                batch.freeTextureAsset = {};
+                batch.selectedMaterialItem = false;
+                batch.materialSelectionGeneration = 0;
+            }
+        }
+        loaded = !displayLists.empty();
+        hasSharedGeometry = loaded;
+        hasLoadedInitialView = loaded;
+        loggedAllObjectsLoaded = loaded;
+        if (loaded) {
+            rebuildDisplayOrder();
+            preloadTextures();
+        }
+        return loaded;
+    }
+
+    void cacheSharedDisplayLists() {
+        if (displayLists.empty()) {
+            return;
+        }
+        for (DisplayPart& part : displayLists) {
+            for (Batch& batch : part.batches) {
+                batch.sharedGeometryBuffer = batch.buffer != 0;
+            }
+        }
+        std::lock_guard<std::mutex> lock(sharedDisplayCacheMutex());
+        sharedDisplayCache().try_emplace(modelCacheKey, displayLists);
+    }
+
+    static void clearSharedDisplayCache() {
+        std::lock_guard<std::mutex> lock(sharedDisplayCacheMutex());
+        sharedDisplayCache().clear();
     }
 
     void spawn() {
@@ -3149,7 +3342,9 @@ struct Vehicle {
         batch.textureArrayLayers = batch.textureCacheEntry->textureArrayLayers;
         batch.textureLoadAttempted = true;
         batch.textured = batch.texture != 0;
-        if (batch.texturePath.empty() || batch.texture == 0) {
+        if ((batch.texturePath.empty() || batch.texture == 0) &&
+            !batch.textureCacheEntry->decodeFailureLogged) {
+            batch.textureCacheEntry->decodeFailureLogged = true;
             textureLog.Log("decode-failed: " + batch.textureName +
                            " resolved=" + batch.texturePath.generic_string());
         }
@@ -3852,6 +4047,12 @@ struct Vehicle {
                       state.textureChanges, state);
         }
         consolidateMaterialBatches(destination->back().batches);
+        for (Batch& batch : destination->back().batches) {
+            if (batch.buffer != 0 && !batch.bufferTracked) {
+                assets->trackBuffer(batch.buffer);
+                batch.bufferTracked = true;
+            }
+        }
         cacheReflectionTextureIndices(destination->back());
         if (verboseObjLoadLogs) {
             for (const Batch& batch : destination->back().batches) {
@@ -4018,13 +4219,13 @@ struct Vehicle {
         }
     }
 
-    void load(const std::filesystem::path& configPath, const std::filesystem::path& modelRoot) {
-        auto result = openbus::rendering::loadBusModel(configPath, modelRoot, variables);
+    void load(const SharedVehicleDefinition& definition) {
+        const openbus::rendering::BusModelLoadResult& result = definition.modelConfiguration;
         if (scripts) {
             scripts->configureScriptTextures(result.scriptTextures);
             scripts->configureTextTextures(result.textTextures);
         }
-        interiorLights = std::move(result.interiorLights);
+        interiorLights = result.interiorLights;
         interiorLightControllers.clear();
         interiorLightControllers.reserve(interiorLights.size());
         for (const ModelInteriorLight& light : interiorLights) {
@@ -4033,24 +4234,20 @@ struct Vehicle {
             interiorLightControllers.push_back(
                 {parsedEnd != light.controller.c_str() && *parsedEnd == '\0', numericValue});
         }
-        lodThresholds = std::move(result.lodThresholds);
+        lodThresholds = result.lodThresholds;
         ctcTextureReplacements.clear();
         for (const ModelCtcTexture& texture : result.ctcTextures) {
             ctcTextureReplacements[lower(texture.slot)] = texture.textureName;
         }
-        for (const ConfigurationDiagnostic& diagnostic : result.diagnostics.entries) {
-            const std::string severity =
-                diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error"
-                                                                                : "warning";
-            gameLog.Log("CFG " + severity + " line " + std::to_string(diagnostic.line) + " [" +
-                        diagnostic.keyword + "]: " + diagnostic.message);
+        if (loadSharedDisplayLists()) {
+            return;
         }
 
         std::vector<Part> parts;
         parts.reserve(result.parts.size());
-        for (auto& source : result.parts) {
+        for (const auto& source : result.parts) {
             Part part;
-            static_cast<openbus::rendering::BusModelPart&>(part) = std::move(source);
+            static_cast<openbus::rendering::BusModelPart&>(part) = source;
             parts.push_back(std::move(part));
         }
         pendingParts = std::move(parts);
@@ -4156,6 +4353,7 @@ RenderLoop::~RenderLoop() {
     playerVehicle_ = nullptr;
     assetRequestManager_->join();
     vehicles_.clear();
+    Vehicle::clearSharedDisplayCache();
     openbus::rendering::shutdownCoreRenderer();
     assetRequestManager_.reset();
 
@@ -4182,7 +4380,9 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& busConfigPath,
     const std::filesystem::path resolvedBusConfigPath = busConfigurationPathFor(busConfigPath);
     const std::filesystem::path resolvedModelConfigPath =
         modelConfigurationPathForBus(resolvedBusConfigPath, modelConfigPath);
-    const VehicleConfig vehicleConfiguration = loadBusConfig(resolvedBusConfigPath);
+    const std::shared_ptr<const SharedVehicleDefinition> definition =
+        sharedVehicleDefinition(resolvedBusConfigPath, resolvedModelConfigPath);
+    const VehicleConfig& vehicleConfiguration = definition->vehicleConfiguration;
     if (vehicleCameras_.empty()) {
         for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
             if (camera.kind == VehicleCameraKind::Driver ||
@@ -4210,9 +4410,9 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& busConfigPath,
         reflectionRenderer_->initialize(vehicleCameras_);
     }
     const double modelOffsetZ = -vehicleConfiguration.centerOfGravityHeight;
-    auto model = std::make_unique<Vehicle>(resolvedBusConfigPath, resolvedModelConfigPath,
-                                           placement, modelOffsetZ, loadingPolicy,
-                                           *assetRequestManager_, simulationState_, soundEngine_);
+    auto model = std::make_unique<Vehicle>(definition, placement, modelOffsetZ, loadingPolicy,
+                                           *assetRequestManager_, simulationState_, soundEngine_,
+                                           soundViewpoint_);
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
     return result;
@@ -4238,8 +4438,8 @@ void RenderLoop::logDiagnosticVariables() const {
 void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
                                        double steering, double brake) {
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
-    soundEngine_.setViewpoint(isExteriorView() ? RenderViewContext::PlayerExterior
-                                               : RenderViewContext::PlayerInterior);
+    soundViewpoint_ = isExteriorView() ? RenderViewContext::PlayerExterior
+                                       : RenderViewContext::PlayerInterior;
     smoothedSteering_ = openbus::input::smoothSteeringInput(
         smoothedSteering_, steering, std::clamp(frameTimeStep_, 0.0, 0.25), steeringSmoothingRate_);
     if (playerVehicle_ != nullptr) {
@@ -4253,7 +4453,8 @@ void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
         playerVehicle_->updateSimulationVariables(
             simulation, playerVehicle_->variables.get("throttle"),
             playerVehicle_->variables.get("steering"), playerVehicle_->variables.get("brake"));
-        soundEngine_.updateLoops(playerVehicle_->variables);
+        playerVehicle_->soundBank.updateAmbient(soundEngine_, playerVehicle_->variables,
+                                                soundViewpoint_);
     }
 }
 
@@ -5179,6 +5380,25 @@ std::vector<double> RenderLoop::physicsWheelBrakeForces(std::size_t axleCount) c
         forces[axle * 2 + 1] = playerVehicle_->variables.get(prefix + "r");
     }
     return forces;
+}
+
+std::vector<double> RenderLoop::physicsAxleSpringFactors(std::size_t axleCount) const {
+    std::vector<double> factors(axleCount * 2, 1.0);
+    if (playerVehicle_ == nullptr) {
+        return factors;
+    }
+    for (std::size_t axle = 0; axle < axleCount; ++axle) {
+        const std::string prefix = "axle_springfactor_" + std::to_string(axle) + "_";
+        const std::string leftName = prefix + "l";
+        const std::string rightName = prefix + "r";
+        if (playerVehicle_->variables.has(leftName)) {
+            factors[axle * 2] = playerVehicle_->variables.get(leftName);
+        }
+        if (playerVehicle_->variables.has(rightName)) {
+            factors[axle * 2 + 1] = playerVehicle_->variables.get(rightName);
+        }
+    }
+    return factors;
 }
 
 std::vector<KeyEvent> RenderLoop::consumeKeyEvents() {

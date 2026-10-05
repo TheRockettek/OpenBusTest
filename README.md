@@ -181,8 +181,10 @@ Every rendered vehicle must provide a `VehiclePlacement` containing its world
 in one process by calling `RenderLoop::AddVehicle` once per `.bus`/`.cfg` pair.
 The first vehicle is connected to the shared bus simulation; additional
 vehicles are scripted AI models rendered at their declared placements. Set
-`OPENBUS_AI_BUS_CONFIG` and `OPENBUS_AI_MODEL_CONFIG` together to add an
-optional AI vehicle; `run.bat` uses them to load the VW Golf test vehicle.
+`OPENBUS_AI_BUS_CONFIG` and `OPENBUS_AI_MODEL_CONFIG` together to add AI
+vehicles. `OPENBUS_AI_COUNT` selects the number to spawn (defaults to 1 and is
+limited to 200); multiple instances are arranged in a grid. `run.bat` uses the
+VW Golf test vehicle and sets the count to 200 for stress testing.
 
 The loader uses `[mass]`, `[boundingbox]`, `[schwerpunkt]`, and `[newachse]`
 records, including axle spring, damper, load, and driven flags. The
@@ -432,3 +434,9 @@ controls, and metadata remain in
 [Docs/OMSI_CFG_GENERAL_REFERENCE.md](C:/Users/blane/Desktop/OpenBusTest/Docs/OMSI_CFG_GENERAL_REFERENCE.md).
 The original CFG files remain in place so their relative paths continue to
 work.
+
+The OMSI 2 map-package reference is in
+[Docs/OMSI2_MAP_FORMAT_REFERENCE.md](C:/Users/blane/Desktop/OpenBusTest/Docs/OMSI2_MAP_FORMAT_REFERENCE.md).
+It documents `global.cfg`, tile records and sidecars, Chrono variants, AI lists,
+timetable files, parser limitations, and validation against the installed
+Grande Porto 2022 map.
