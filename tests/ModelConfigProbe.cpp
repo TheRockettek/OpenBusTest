@@ -1,5 +1,6 @@
 #include "ModelConfigLoader.h"
 #include "InteriorLighting.h"
+#include "SceneryObjectConfigLoader.h"
 #include "Variables.h"
 
 #include <filesystem>
@@ -11,6 +12,21 @@ int main() {
         std::filesystem::temp_directory_path() / "openbus_model_config_probe";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
+    const std::filesystem::path treeConfigPath = root / "tree.sco";
+    std::ofstream treeConfig(treeConfigPath);
+    treeConfig << "[tree]\nTree_Medium_06.tga\n12\n18\n0.9\n1.1\n"
+                  "[mesh]\ntreehelper.x\n[onlyeditor]\n";
+    treeConfig.close();
+    const SceneryObjectConfig treeConfigResult = loadSceneryObjectFile(treeConfigPath);
+    if (treeConfigResult.diagnostics.hasErrors() || treeConfigResult.trees.size() != 1 ||
+        treeConfigResult.trees[0].texturePath != "Tree_Medium_06.tga" ||
+        treeConfigResult.trees[0].minimumHeight != 12.0 ||
+        treeConfigResult.trees[0].maximumHeight != 18.0 ||
+        treeConfigResult.trees[0].minimumRatio != 0.9 ||
+        treeConfigResult.trees[0].maximumRatio != 1.1) {
+        std::cerr << "scenery tree definition was not parsed\n";
+        return 1;
+    }
     const std::filesystem::path configPath = root / "display.cfg";
     std::ofstream mesh(root / "display.obj");
     mesh << "# parser fixture\n";
@@ -118,6 +134,28 @@ int main() {
         conditional.parts[0].materialStatesInOrder[1].textureChanges.size() != 0 ||
         conditional.parts[0].materialStatesInOrder[2].textureChanges.size() != 1) {
         std::cerr << "material changes were attached to the preceding rather than named material\n";
+        return 1;
+    }
+
+    std::ofstream laxConfig(configPath);
+    laxConfig << "[mesh]\ndisplay.obj\n"
+                 "[matl_envmap]\nenvmap.bmp\n0.03\n"
+                 "[newanim]\norigin_from_mesh\nanim_rot\norigin_rot_x\n0\n"
+                 "origin_rot_y\n90\nanim_rot\nflap1_pos\n-170\n"
+                 "[newanim]\nanim_rot\nsecond_rotation\n45\n"
+                 "anim_trans\nsecond_translation\n1\n";
+    laxConfig.close();
+    const ModelConfig lax = loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
+    if (lax.diagnostics.hasErrors() || lax.parts.size() != 1 ||
+        lax.parts[0].materialStatesInOrder.size() != 1 ||
+        lax.parts[0].materialStatesInOrder[0].materialIndex != 0 ||
+        lax.parts[0].materialStatesInOrder[0].environmentTextureName != "envmap.bmp" ||
+        lax.parts[0].animations.size() != 3 ||
+        lax.parts[0].animations[0].variable != "flap1_pos" ||
+        lax.parts[0].animations[0].originRotation[1] != 90.0 ||
+        lax.parts[0].animations[1].variable != "second_rotation" ||
+        lax.parts[0].animations[2].variable != "second_translation") {
+        std::cerr << "lax material or animation records were not recovered\n";
         return 1;
     }
     std::filesystem::remove_all(root);

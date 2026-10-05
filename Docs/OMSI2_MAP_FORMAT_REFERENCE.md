@@ -429,6 +429,30 @@ Examples inspected include `global.cfg` entrypoints around lines 349–362,
 `Chrono\Festas_S.VerissimoParanhos\tile_0_3.map`. These are validation
 locations, not a promise that line numbers are stable across map releases.
 
+### 11.1 AI-list and signal-route evidence
+
+The installed map's `ailists.cfg` uses the modern group sections
+`[aigroup_2]`, `[aigroup_depot]`, and `[aigroup_depot_typgroup_2]`; no legacy
+`[ailist]` or `[aigroup]` sections were observed in this file. A sampled
+`[aigroup_2]` named `NormalCars` contains vehicle paths such as
+`vehicles\VW_Golf_2\AI_VW_Golf_2.bus` followed by a numeric value. Depot groups
+associate vehicle groups with HOF names and include variable-length vehicle
+and repaint data. These observations establish that the file selects vehicle
+assets and depot/HOF combinations, but not a complete grammar for route
+selection, spawn placement, dispatch timing, or vehicle movement. Preserve
+unparsed rows rather than treating the trailing numeric value as a universally
+understood weight or probability.
+
+The map's `signalroutes.cfg` is only a seven-line header/template and contains
+no actual signal-route records. This does not establish that the map has no
+traffic signals: signal objects or scripts may carry additional behavior. It
+does mean the inspected route file is not enough to derive a signal state
+machine or AI stopping rules. Together with the unresolved timetable-to-route
+and spawn scheduling behavior, the installed evidence is insufficient for a
+dependable AI-traffic or signal-compliance implementation. Defer those runtime
+features until route, signal, and scheduling data can be verified; the current
+OpenBus static vehicle-grid option is a development aid, not OMSI AI traffic.
+
 ## 12. Known gaps and implementation cautions
 
 The consulted sources do not establish:

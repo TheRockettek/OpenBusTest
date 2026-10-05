@@ -1,10 +1,58 @@
 # OpenBus
 
 OpenBus is a C++ bus simulator prototype built on the
-[Open Dynamics Engine (ODE)](https://www.ode.org/). This first milestone is a
-headless physics sandbox: it creates a simplified bus chassis, four wheels, a
-ground plane, and advances the vehicle through ODE's collision and constraint
-solver.
+[Open Dynamics Engine (ODE)](https://www.ode.org/). It combines fixed-step bus
+physics with OpenGL vehicle rendering and partial OMSI map rendering. This is
+a prototype, not a fully OMSI-compatible simulator.
+
+## Compatibility and validation status
+
+This table summarizes the current implementation, not complete OMSI parity.
+Parser probes establish only the parser behavior they exercise; they do not
+prove end-to-end rendering or runtime semantics.
+
+| Feature | Current status | Implementation | Regression evidence |
+| --- | --- | --- | --- |
+| Physics and wheel simulation | Fixed-step ODE and per-wheel simulation are active; the deterministic bump/steering/braking stress probe covers two- and three-axle fixtures. Broader tuning remains incomplete. | [`BusSimulation.cpp`](src/BusSimulation.cpp) | [`BusSimulationSteeringProbe.cpp`](tests/BusSimulationSteeringProbe.cpp), [`BusSimulationStabilityProbe.cpp`](tests/BusSimulationStabilityProbe.cpp), [`BusSimulationStressProbe.cpp`](tests/BusSimulationStressProbe.cpp) |
+| Vehicle/model loading | Core MAN DL05 and E400 configuration paths are implemented; broad OMSI configuration coverage remains partial. | [`VehicleConfigLoader.cpp`](src/VehicleConfigLoader.cpp), [`ModelConfigLoader.cpp`](src/ModelConfigLoader.cpp), [`RenderLoop.cpp`](src/RenderLoop.cpp) | [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); visual procedure: [screenshot plan](Docs/SCREENSHOT_VALIDATION_PLAN.md) |
+| Texture decoding and materials | Texture decoding has a probe; several material semantics and visual parity checks remain incomplete, including alpha mode 2 and environment maps. | [`TextureLoader.cpp`](src/TextureLoader.cpp), [`CoreRenderer.cpp`](src/CoreRenderer.cpp) | [`TextureLoaderProbe.cpp`](tests/TextureLoaderProbe.cpp); GL/material checks: [incomplete visual checks](Docs/SCREENSHOT_VALIDATION_PLAN.md#incomplete-feature-visual-checks) |
+| Map, terrain, scenery, and roads | Partial: terrain, limited O3D/tree scenery, and supported straight roads render; curved roads and general `.x` scenery remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`RoadFeaturesProbe.cpp`](tests/RoadFeaturesProbe.cpp), [`O3DLoaderProbe.cpp`](tests/O3DLoaderProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); no end-to-end map-renderer probe yet |
+| Map, terrain, scenery, and roads | Partial: terrain, limited O3D/tree scenery, and two-profile straight/curved road centerlines render; general `.x` scenery and full OMSI road profiles remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/MapSplineGeometry.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`RoadFeaturesProbe.cpp`](tests/RoadFeaturesProbe.cpp), [`O3DLoaderProbe.cpp`](tests/O3DLoaderProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); no end-to-end map-renderer probe yet |
+| Scripts and dynamic displays | Script textures and text surfaces have runtime paths; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/ScriptRuntime.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
+| Sound | Player sound runtime is active; full OMSI sound and AI sound selection remain incomplete. | [`SoundEngine.cpp`](src/SoundEngine.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp) |
+| AI, passengers, routes, and articulated vehicles | Runtime support is incomplete; parsed configuration is not evidence of these behaviors. | [vehicle configuration](src/VehicleConfigLoader.cpp), [map configuration](src/MapConfigLoader.cpp) | No end-to-end regression probe; see the [completion TODO](TODO.md) |
+
+### Grande Porto map runtime scope
+
+The current map path loads `global.cfg`, uses its first entrypoint by default,
+parses tile object/spline placements and `.terrain` grids, and renders the
+terrain patch around that spawn. It uses the first `[groundtex]` entry. Nearby
+scenery is limited to vertical placements with supported O3D LOD-0 meshes;
+`[tree]` SCOs without a usable mesh get a crossed-texture-plane preview. Road
+rendering recognizes two Freyfurt 6.5 m asphalt profiles, tessellates straight
+and signed-radius centerlines, and approximates their cross-section and grade.
+
+The following map behavior is **not implemented** or remains explicitly
+partial:
+
+- General DirectX `.x` scenery loading; the tree preview is not the original
+  mesh. Scenery pitch/bank, attachments/repeaters, object scripts, and scenery
+  collision are also unsupported.
+- Road profile discovery and full `.sli` semantics. Targeted curve/seam visual
+  capture is still pending. Other spline families,
+  road widths/materials/markings, and non-vertical/elevated spline behavior are
+  not covered by the two hard-coded profiles.
+- Per-tile/detail/seasonal ground textures, water rendering, tile lightmaps,
+  Chrono map variants, and streamed terrain/scenery/collision outside the
+  spawn-neighborhood patch.
+- Entrypoint selection, HOF/timetable/route integration, scheduled OMSI AI
+  traffic, and signal behavior. A configured static AI vehicle grid is only a
+  development aid; the inspected Grande Porto `signalroutes.cfg` has no route
+  records and does not establish enough semantics to implement signal control.
+
+The next rendering increment is curved centerline geometry for the two
+recognized asphalt profiles. Geometry probes do not replace an in-context map
+visual check; the [map TODOs](TODO.md#grande-porto-map-support) track both.
 
 ## Prerequisites
 

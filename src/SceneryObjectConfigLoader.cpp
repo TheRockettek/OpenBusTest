@@ -88,6 +88,26 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             }
             continue;
         }
+        if (keyword == "tree") {
+            std::vector<std::string> values;
+            if (reader.readPayloads(5, values, result.diagnostics, keyword) &&
+                values.size() == 5) {
+                SceneryTreeDefinition tree;
+                tree.texturePath = values[0];
+                if (parseDouble(values[1], tree.minimumHeight) &&
+                    parseDouble(values[2], tree.maximumHeight) &&
+                    parseDouble(values[3], tree.minimumRatio) &&
+                    parseDouble(values[4], tree.maximumRatio) &&
+                    tree.minimumHeight > 0.0 && tree.maximumHeight >= tree.minimumHeight &&
+                    tree.minimumRatio > 0.0 && tree.maximumRatio >= tree.minimumRatio) {
+                    result.trees.push_back(std::move(tree));
+                } else {
+                    result.diagnostics.error(line.number, keyword,
+                                             "expected valid height and ratio ranges");
+                }
+            }
+            continue;
+        }
         if (keyword == "boundingbox") {
             std::vector<double> values;
             if (readDoubles(reader, keyword, 6, values, result.diagnostics)) {
@@ -156,7 +176,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         result.diagnostics.warning(line.number, line.keyword(), "unknown SceneryObject keyword");
     }
 
-    if (result.modelPath.empty()) {
+    if (result.modelPath.empty() && result.trees.empty()) {
         result.diagnostics.error(0, "model", "SceneryObject configuration has no [model] entry");
     }
     return result;

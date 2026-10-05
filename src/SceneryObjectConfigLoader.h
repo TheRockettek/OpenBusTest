@@ -11,6 +11,14 @@ namespace openbus::scripting {
 class SceneryObject;
 }
 
+struct SceneryTreeDefinition {
+    std::string texturePath;
+    double minimumHeight = 0.0;
+    double maximumHeight = 0.0;
+    double minimumRatio = 1.0;
+    double maximumRatio = 1.0;
+};
+
 struct SceneryObjectConfig {
     std::filesystem::path sourcePath;
     std::filesystem::path modelPath;
@@ -23,6 +31,7 @@ struct SceneryObjectConfig {
     std::vector<std::string> variableLists;
     std::vector<std::string> stringVariableLists;
     std::vector<std::string> constantFiles;
+    std::vector<SceneryTreeDefinition> trees;
     ConfigurationDiagnostics diagnostics;
 };
 

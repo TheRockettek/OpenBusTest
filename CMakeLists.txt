@@ -159,12 +159,15 @@ add_executable(OpenBus
     src/Logger.cpp
     src/Variables.cpp
     src/ConfigurationParser.cpp
+    src/MapConfigLoader.cpp
+    src/MapSplineGeometry.cpp
     src/VehicleConfigLoader.cpp
     src/ModelConfigLoader.cpp
     src/ModelConfigJson.cpp
     src/BusConfigLoader.cpp
     src/BusModelLoader.cpp
     src/CameraMath.cpp
+    src/MapRenderer.cpp
     src/CoreRenderer.cpp
     src/RenderPrimitives.cpp
     src/RendererReflection.cpp
@@ -290,6 +293,19 @@ openbus_configure_perf_trace(OpenBusStabilityProbe)
 target_include_directories(OpenBusStabilityProbe PRIVATE src)
 target_link_libraries(OpenBusStabilityProbe PRIVATE ${OPENBUS_ODE_TARGET})
 
+add_executable(OpenBusPhysicsStressProbe
+    tests/BusSimulationStressProbe.cpp
+    src/BusSimulation.cpp
+    src/Logger.cpp
+    src/PerfTrace.cpp
+    src/RoadFeatures.cpp
+    src/Variables.cpp
+)
+
+openbus_configure_perf_trace(OpenBusPhysicsStressProbe)
+target_include_directories(OpenBusPhysicsStressProbe PRIVATE src)
+target_link_libraries(OpenBusPhysicsStressProbe PRIVATE ${OPENBUS_ODE_TARGET})
+
 add_executable(OpenBusVariablesProbe
     tests/VariablesProbe.cpp
     src/Variables.cpp
@@ -304,6 +320,20 @@ add_executable(OpenBusConfigurationParserProbe
 target_include_directories(OpenBusConfigurationParserProbe PRIVATE src)
 add_test(NAME OpenBusConfigurationParserProbe COMMAND OpenBusConfigurationParserProbe)
 
+add_executable(OpenBusMapConfigProbe
+    tests/MapConfigLoaderProbe.cpp
+    src/MapConfigLoader.cpp
+)
+target_include_directories(OpenBusMapConfigProbe PRIVATE src)
+add_test(NAME OpenBusMapConfigProbe COMMAND OpenBusMapConfigProbe)
+
+add_executable(OpenBusMapSplineGeometryProbe
+    tests/MapSplineGeometryProbe.cpp
+    src/MapSplineGeometry.cpp
+)
+target_include_directories(OpenBusMapSplineGeometryProbe PRIVATE src)
+add_test(NAME OpenBusMapSplineGeometryProbe COMMAND OpenBusMapSplineGeometryProbe)
+
 add_executable(OpenBusTextureLoaderProbe
     tests/TextureLoaderProbe.cpp
     src/Logger.cpp
@@ -316,6 +346,7 @@ add_test(NAME OpenBusTextureLoaderProbe COMMAND OpenBusTextureLoaderProbe)
 
 add_test(NAME OpenBusPhysicsProbe COMMAND OpenBusPhysicsProbe)
 add_test(NAME OpenBusStabilityProbe COMMAND OpenBusStabilityProbe)
+add_test(NAME OpenBusPhysicsStressProbe COMMAND OpenBusPhysicsStressProbe)
 
 add_executable(OpenBusCameraMathProbe
     tests/CameraMathProbe.cpp
@@ -349,6 +380,7 @@ add_executable(OpenBusModelConfigProbe
     tests/ModelConfigProbe.cpp
     src/ConfigurationParser.cpp
     src/ModelConfigLoader.cpp
+    src/SceneryObjectConfigLoader.cpp
     src/PerfTrace.cpp
     src/Variables.cpp
 )

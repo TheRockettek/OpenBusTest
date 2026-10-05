@@ -10,6 +10,7 @@
 #include "Environment.h"
 #include "InteriorLighting.h"
 #include "Logger.h"
+#include "MapRenderer.h"
 #include "MouseControlMapping.h"
 #include "ObjLoader.h"
 #include "OpenGLFunctions.h"
@@ -3904,6 +3905,7 @@ struct Vehicle {
         std::unordered_map<std::string, const MaterialState*> materialStatesByStem;
         std::unordered_map<std::string, std::vector<const MaterialState*>>
             materialStatesByStemOccurrence;
+        std::unordered_map<int, const MaterialState*> implicitMaterialStatesByIndex;
         materialStatesByFilename.reserve(part.materialStates.size());
         materialStatesByStem.reserve(part.materialStates.size());
         for (const auto& entry : part.materialStates) {
@@ -3916,6 +3918,10 @@ struct Vehicle {
             const std::filesystem::path statePath = state.textureName.empty()
                                                         ? state.texturePath
                                                         : std::filesystem::path(state.textureName);
+            if (state.textureName.empty() && state.texturePath.empty() &&
+                state.materialIndex >= 0) {
+                implicitMaterialStatesByIndex.emplace(state.materialIndex, &state);
+            }
             std::vector<const MaterialState*>& states =
                 materialStatesByStemOccurrence[lower(statePath.stem().string())];
             if (state.materialIndex > 10000) {
@@ -3993,6 +3999,12 @@ struct Vehicle {
                         static_cast<std::size_t>(occurrence->second) < states->second.size() &&
                         states->second[static_cast<std::size_t>(occurrence->second)] != nullptr) {
                         state = *states->second[static_cast<std::size_t>(occurrence->second)];
+                    } else {
+                        const auto implicitState = implicitMaterialStatesByIndex.find(
+                            material->second.materialIndex);
+                        if (implicitState != implicitMaterialStatesByIndex.end()) {
+                            state = *implicitState->second;
+                        }
                     }
                     matchedMaterialState = true;
                 }
@@ -4385,6 +4397,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
 RenderLoop::~RenderLoop() {
     gameLog.Log("RenderLoop shutting down");
     reflectionRenderer_->destroy();
+    mapRenderer_.reset();
     playerVehicle_ = nullptr;
     assetRequestManager_->join();
     vehicles_.clear();
@@ -4458,6 +4471,16 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
     if (playerVehicle_ != nullptr) {
         playerVehicle_->initializePlayerSystems();
     }
+}
+
+void RenderLoop::SetMap(const openbus::map::MapDefinition& map,
+                        std::size_t spawnEntryPointIndex,
+                        const std::filesystem::path& omsiRoot) {
+    if (spawnEntryPointIndex >= map.entryPoints.size()) {
+        throw std::out_of_range("Selected map spawn entrypoint is outside [entrypoints]");
+    }
+    mapRenderer_ = std::make_unique<openbus::rendering::MapRenderer>(
+        map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex), omsiRoot);
 }
 
 void RenderLoop::logDiagnosticVariables() const {
@@ -5209,7 +5232,15 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     }
     {
         TraceScope phase("render", "RenderLoop::draw.ground");
-        if (!captureMode_) {
+        if (mapRenderer_ != nullptr) {
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LESS);
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_POLYGON_OFFSET_FILL);
+            mapRenderer_->draw();
+        } else if (!captureMode_) {
             glEnable(GL_DEPTH_TEST);
             glDepthFunc(GL_LESS);
             glDepthMask(GL_TRUE);

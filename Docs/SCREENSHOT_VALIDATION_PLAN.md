@@ -1,8 +1,8 @@
 # Screenshot Validation Plan
 
-This plan validates features currently classified as **fully supported** in the
-OpenBus runtime. It is focused on visual behavior that can be demonstrated by
-repeatable screenshots. Runtime-only properties such as cache hit rates,
+This plan records repeatable visual checks for implemented OpenBus behavior; it
+is not a claim of complete OMSI compatibility. Sections below identify known
+validation gaps explicitly. Runtime-only properties such as cache hit rates,
 triangle counts, crash handling, and exact physics values require logs or
 automated tests in addition to screenshots.
 
@@ -164,31 +164,7 @@ content.
 - `nozwrite-angle-a.png`
 - `nozwrite-angle-b.png`
 
-### 6. Environment-map materials
-
-**Goal:** prove `[matl_envmap]` produces a visible reflection contribution on
-  materials that use it.
-
-**Steps:**
-
-1. Capture reflective body or trim from two different outside angles.
-2. Keep lighting and camera distance comparable between the captures.
-
-**Expected screenshots:**
-
-- The base material remains visible.
-- The reflective contribution changes as the view changes.
-- The environment layer is not rendered as an opaque replacement texture.
-
-**Evidence:**
-
-- `envmap-angle-a.png`
-- `envmap-angle-b.png`
-
-This is a visual smoke test, not proof that the reflection equation exactly
-matches OMSI.
-
-### 7. Static decals
+### 6. Static decals
 
 **Goal:** prove decal meshes and their alpha textures load through the generic
   mesh/material path.
@@ -215,7 +191,7 @@ matches OMSI.
 This validates static decal composition only. Dynamic script-controlled decals,
 lightmaps, and texture changes are outside this “full” screenshot claim.
 
-### 8. Live wheel rendering
+### 7. Live wheel rendering
 
 **Goal:** prove wheel meshes are bound to live physics poses rather than being
   left in the static model position.
@@ -245,7 +221,7 @@ lightmaps, and texture changes are outside this “full” screenshot claim.
 Screenshots demonstrate pose changes; wheel angular speed, slip, and force
 values require a separate runtime or automated physics test.
 
-### 9. Supported texture decoding
+### 8. Supported texture decoding
 
 **Goal:** prove that representative texture families render correctly.
 
@@ -272,6 +248,37 @@ values require a separate runtime or automated physics test.
 
 Texture logs should be retained with the screenshots to prove which source
 files were decoded and uploaded.
+
+## Incomplete-feature visual checks
+
+These checks are exploratory only. Passing them does not move the feature into
+the supported baseline; implementation and repeatable regression evidence are
+still required.
+
+### Environment-map materials
+
+`[matl_envmap]` has a runtime loading and shader path, but representative visual
+validation and shader/draw regression coverage are still incomplete.
+
+**Steps:**
+
+1. Capture reflective body or trim from two different outside angles.
+2. Keep lighting and camera distance comparable between the captures.
+
+**Expected screenshots:**
+
+- The base material remains visible.
+- The reflective contribution changes as the view changes.
+- The environment layer is not rendered as an opaque replacement texture.
+
+**Evidence:**
+
+- `envmap-angle-a.png`
+- `envmap-angle-b.png`
+
+These captures are visual evidence only, not proof that the reflection equation
+matches OMSI. Transparent `[matl_alpha]` mode-2 depth behavior also remains an
+explicit implementation gap; the alpha screenshots above do not close it.
 
 ## Review checklist
 

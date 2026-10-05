@@ -214,6 +214,7 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
     // [newanim] is a variable-length block terminated by the next keyword or '--'.
     static_cast<void>(keywordLine);
     ModelAnimation animation;
+    std::vector<ModelAnimation> drivenAnimations;
     Line field;
     while (reader.next(field)) {
         if (field.isKeyword()) {
@@ -283,47 +284,85 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
             continue;
         }
         if (name == "anim_rot" || name == "anim_trans") {
-            if (!animation.type.empty()) {
-                diagnostics.error(field.number, name,
-                                  "only one anim_rot or anim_trans is allowed per newanim");
-                return false;
+            Line variableLine;
+            if (!reader.next(variableLine)) {
+                diagnostics.warning(field.number, name,
+                                    "ignored animation operation without a variable and scale");
+                break;
             }
-            std::vector<std::string> values;
-            if (!readValues(reader, field.number, name, 2, values, diagnostics)) {
-                return false;
+            if (variableLine.isKeyword()) {
+                reader.pushBack(std::move(variableLine));
+                diagnostics.warning(field.number, name,
+                                    "ignored animation operation without a variable and scale");
+                break;
             }
-            animation.variable = lower(trim(values[0]));
-            if (animation.variable.empty()) {
-                diagnostics.error(field.number, name, "animation variable cannot be empty");
-                return false;
+            const std::string candidate = lower(trim(variableLine.text));
+            static const std::unordered_set<std::string> animationFields = {
+                "origin_from_mesh", "origin_trans", "origin_rot_x", "origin_rot_y",
+                "origin_rot_z", "delay", "maxspeed", "offset", "anim_rot", "anim_trans"};
+            if (animationFields.find(candidate) != animationFields.end() ||
+                variableLine.text == "--" || isSeparatorLine(variableLine.text)) {
+                reader.pushBack(std::move(variableLine));
+                diagnostics.warning(field.number, name,
+                                    "ignored animation operation without a variable and scale");
+                continue;
             }
+
+            Line scaleLine;
+            if (!reader.next(scaleLine)) {
+                diagnostics.warning(field.number, name,
+                                    "ignored animation operation without a numeric scale");
+                break;
+            }
+            if (scaleLine.isKeyword()) {
+                reader.pushBack(std::move(scaleLine));
+                diagnostics.warning(field.number, name,
+                                    "ignored animation operation without a numeric scale");
+                break;
+            }
+            const std::string variable = lower(trim(variableLine.text));
             double scale = 0.0;
-            if (!parseDouble(values[1], scale)) {
-                diagnostics.error(field.number, name, "expected a numeric scale");
-                return false;
+            if (variable.empty() || !parseDouble(scaleLine.text, scale)) {
+                diagnostics.warning(field.number, name,
+                                    "ignored animation operation with an invalid variable or scale");
+                continue;
             }
-            animation.type = name;
-            animation.scale = scale;
-            variables.declare(animation.variable);
+            ModelAnimation driven;
+            driven.type = name;
+            driven.variable = variable;
+            driven.scale = scale;
+            drivenAnimations.push_back(std::move(driven));
+            variables.declare(variable);
             continue;
         }
         break;
     }
-    part.animations.push_back(animation);
-    const std::string variable = lower(animation.variable);
-    if (variable.rfind("wheel_rotation_", 0) == 0) {
-        part.wheelAnimation.rotationVariable = animation.variable;
-        part.wheelAnimation.rotationScale = animation.scale;
-        if (animation.hasOrigin) {
-            part.wheelAnimation.origin = animation.origin;
-            part.wheelAnimation.hasOrigin = true;
+    if (drivenAnimations.empty()) {
+        drivenAnimations.push_back({});
+    }
+    for (const ModelAnimation& driven : drivenAnimations) {
+        ModelAnimation parsed = animation;
+        if (!driven.type.empty()) {
+            parsed.type = driven.type;
+            parsed.variable = driven.variable;
+            parsed.scale = driven.scale;
         }
-    } else if (variable.rfind("axle_suspension_", 0) == 0) {
-        part.wheelAnimation.suspensionVariable = animation.variable;
-        part.wheelAnimation.suspensionScale = animation.scale;
-    } else if (variable.rfind("axle_steering_", 0) == 0) {
-        part.wheelAnimation.steeringVariable = animation.variable;
-        part.wheelAnimation.steeringScale = animation.scale;
+        part.animations.push_back(parsed);
+        const std::string variable = lower(parsed.variable);
+        if (variable.rfind("wheel_rotation_", 0) == 0) {
+            part.wheelAnimation.rotationVariable = parsed.variable;
+            part.wheelAnimation.rotationScale = parsed.scale;
+            if (parsed.hasOrigin) {
+                part.wheelAnimation.origin = parsed.origin;
+                part.wheelAnimation.hasOrigin = true;
+            }
+        } else if (variable.rfind("axle_suspension_", 0) == 0) {
+            part.wheelAnimation.suspensionVariable = parsed.variable;
+            part.wheelAnimation.suspensionScale = parsed.scale;
+        } else if (variable.rfind("axle_steering_", 0) == 0) {
+            part.wheelAnimation.steeringVariable = parsed.variable;
+            part.wheelAnimation.steeringScale = parsed.scale;
+        }
     }
     return true;
 }
@@ -403,11 +442,26 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         };
         const auto requireMaterial = [&]() -> ModelMaterialState* {
             ModelMaterialState* current = material();
-            if (current == nullptr) {
-                result.diagnostics.error(line.number, line.keyword(),
-                                         "material keyword must follow [matl]");
+            if (current != nullptr) {
+                return current;
             }
-            return current;
+            ModelPart* currentPart = part();
+            if (currentPart == nullptr) {
+                result.diagnostics.error(line.number, line.keyword(),
+                                         "material keyword must follow [mesh]");
+                return nullptr;
+            }
+            // Some OMSI meshes carry their base material in the O3D and omit
+            // [matl] in the CFG. Bind modifiers to the first mesh material.
+            currentMaterialIndex = currentPart->materialStatesInOrder.size();
+            currentMaterialKey = "#implicit#" + std::to_string(currentMaterialIndex);
+            ModelMaterialState implicitMaterial;
+            implicitMaterial.materialIndex = 0;
+            currentPart->materialStatesInOrder.push_back(implicitMaterial);
+            currentPart->materialStates.emplace(currentMaterialKey, implicitMaterial);
+            result.diagnostics.warning(line.number, line.keyword(),
+                                       "no preceding [matl]; applying modifier to material index 0");
+            return &currentPart->materialStatesInOrder.back();
         };
 
         // The parser keeps the current mesh, material, and LOD as context for

@@ -150,6 +150,10 @@ struct BusSimulation::Impl {
     std::vector<dTriMeshDataID> roadMeshData;
     std::vector<std::vector<double>> roadMeshVertices;
     std::vector<std::vector<int>> roadMeshIndices;
+    std::vector<dGeomID> terrainGeoms;
+    std::vector<dTriMeshDataID> terrainMeshData;
+    std::vector<std::vector<double>> terrainVertices;
+    std::vector<std::vector<int>> terrainIndices;
     dGeomID chassisGeom = nullptr;
     BusConfiguration configuration;
     VehiclePlacement placement;
@@ -190,6 +194,83 @@ struct BusSimulation::Impl {
                 dGeomTriMeshDataDestroy(data);
             }
         }
+        for (dGeomID geometry : terrainGeoms) {
+            if (geometry) {
+                dGeomDestroy(geometry);
+            }
+        }
+        for (dTriMeshDataID data : terrainMeshData) {
+            if (data) {
+                dGeomTriMeshDataDestroy(data);
+            }
+        }
+    }
+
+    void addTerrainCollision(const TerrainCollisionGrid& terrain) {
+        if (terrain.intervals == 0 || terrain.intervals > 1024 ||
+            !std::isfinite(terrain.tileSizeMeters) || terrain.tileSizeMeters <= 0.0) {
+            throw std::invalid_argument("Map terrain grid has invalid dimensions");
+        }
+        const std::size_t side = terrain.intervals + 1;
+        const std::size_t vertexCount = side * side;
+        if (terrain.heights.size() != vertexCount) {
+            throw std::invalid_argument("Map terrain height count does not match its grid");
+        }
+        checkedOdeCount(vertexCount, "map terrain vertex count");
+        const std::size_t triangleIndexCount = terrain.intervals * terrain.intervals * 6;
+        checkedOdeCount(triangleIndexCount, "map terrain index count");
+
+        std::vector<double> vertices;
+        std::vector<int> indices;
+        vertices.reserve(vertexCount * 3);
+        indices.reserve(triangleIndexCount);
+        const double sampleSpacing = terrain.tileSizeMeters / terrain.intervals;
+        for (std::size_t row = 0; row < side; ++row) {
+            for (std::size_t column = 0; column < side; ++column) {
+                const float height = terrain.heights[row * side + column];
+                if (!std::isfinite(height)) {
+                    throw std::invalid_argument("Map terrain contains a non-finite height");
+                }
+                vertices.push_back(static_cast<double>(terrain.tileX) * terrain.tileSizeMeters +
+                                   static_cast<double>(column) * sampleSpacing);
+                vertices.push_back(static_cast<double>(terrain.tileY) * terrain.tileSizeMeters +
+                                   static_cast<double>(row) * sampleSpacing);
+                vertices.push_back(height);
+            }
+        }
+        for (std::size_t row = 0; row < terrain.intervals; ++row) {
+            for (std::size_t column = 0; column < terrain.intervals; ++column) {
+                const std::size_t topLeft = row * side + column;
+                const std::size_t topRight = topLeft + 1;
+                const std::size_t bottomLeft = topLeft + side;
+                const std::size_t bottomRight = bottomLeft + 1;
+                indices.insert(indices.end(), {static_cast<int>(topLeft),
+                                               static_cast<int>(topRight),
+                                               static_cast<int>(bottomRight),
+                                               static_cast<int>(topLeft),
+                                               static_cast<int>(bottomRight),
+                                               static_cast<int>(bottomLeft)});
+            }
+        }
+
+        const dTriMeshDataID meshData = dGeomTriMeshDataCreate();
+        if (!meshData) {
+            throw std::runtime_error("Failed to create map terrain collision data");
+        }
+        dGeomTriMeshDataBuildDouble(meshData, vertices.data(), 3 * sizeof(double),
+                                    checkedOdeCount(vertexCount, "map terrain vertex count"),
+                                    indices.data(),
+                                    checkedOdeCount(indices.size(), "map terrain index count"),
+                                    3 * sizeof(int));
+        const dGeomID geometry = dCreateTriMesh(ode.space, meshData, nullptr, nullptr, nullptr);
+        if (!geometry) {
+            dGeomTriMeshDataDestroy(meshData);
+            throw std::runtime_error("Failed to create map terrain collision geometry");
+        }
+        terrainVertices.push_back(std::move(vertices));
+        terrainIndices.push_back(std::move(indices));
+        terrainMeshData.push_back(meshData);
+        terrainGeoms.push_back(geometry);
     }
 
     static void nearCallback(void* context, dGeomID first, dGeomID second) {
@@ -420,7 +501,7 @@ struct BusSimulation::Impl {
     }
 
     Impl(BusConfiguration vehicle, VehiclePlacement vehiclePlacement, double physicsHz,
-         int catchUpSteps)
+         int catchUpSteps, double groundPlaneZ, std::vector<TerrainCollisionGrid> terrain)
         : configuration(std::move(vehicle)), placement(vehiclePlacement),
           maxCatchUpSteps(catchUpSteps) {
         if (!std::isfinite(physicsHz) || physicsHz <= 0.0 || catchUpSteps <= 0) {
@@ -476,9 +557,15 @@ struct BusSimulation::Impl {
                               std::to_string(minimumMass) + " kg");
             configuration.mass = minimumMass;
         }
-        ground = dCreatePlane(ode.space, 0.0, 0.0, 1.0, 0.0);
-        for (const RoadBump& bump : defaultRoadBumps()) {
-            addRoadFeature(bump);
+        if (terrain.empty()) {
+            ground = dCreatePlane(ode.space, 0.0, 0.0, 1.0, groundPlaneZ);
+            for (const RoadBump& bump : defaultRoadBumps()) {
+                addRoadFeature(bump);
+            }
+        } else {
+            for (const TerrainCollisionGrid& tile : terrain) {
+                addTerrainCollision(tile);
+            }
         }
         chassis = dBodyCreate(ode.world);
         dMass mass;
@@ -921,9 +1008,10 @@ struct BusSimulation::Impl {
 };
 
 BusSimulation::BusSimulation(BusConfiguration configuration, VehiclePlacement placement,
-                             double physicsHz, int maxCatchUpSteps)
-    : impl_(
-          std::make_unique<Impl>(std::move(configuration), placement, physicsHz, maxCatchUpSteps)) {
+                             double physicsHz, int maxCatchUpSteps, double groundPlaneZ,
+                             std::vector<TerrainCollisionGrid> terrain)
+    : impl_(std::make_unique<Impl>(std::move(configuration), placement, physicsHz,
+                                  maxCatchUpSteps, groundPlaneZ, std::move(terrain))) {
     openbus::rendering::TraceScope trace("startup", "BusSimulation::BusSimulation");
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }

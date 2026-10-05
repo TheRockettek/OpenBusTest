@@ -81,6 +81,14 @@ struct VehiclePlacement {
     double yawDegrees;
 };
 
+struct TerrainCollisionGrid {
+    int tileX = 0;
+    int tileY = 0;
+    double tileSizeMeters = 300.0;
+    std::size_t intervals = 0;
+    std::vector<float> heights;
+};
+
 struct ChassisCollisionBox {
     double length;
     double width;

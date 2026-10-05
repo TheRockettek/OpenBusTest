@@ -3,6 +3,7 @@
 #include "CrashHandler.h"
 #include "Environment.h"
 #include "Logger.h"
+#include "MapConfigLoader.h"
 #include "ModelConfigLoader.h"
 #include "PerfTrace.h"
 #include "RenderLoop.h"
@@ -37,6 +38,30 @@ int positiveEnvironmentInt(const char* name, int fallback, int maximum) {
         return fallback;
     }
     return static_cast<int>(std::min(parsed, static_cast<long>(maximum)));
+}
+
+std::vector<TerrainCollisionGrid> loadSpawnTerrain(
+    const openbus::map::MapDefinition& map, std::size_t centerTileIndex) {
+    constexpr int tileRadius = 1;
+    if (centerTileIndex >= map.tiles.size()) {
+        throw std::runtime_error("Selected map spawn references an invalid tile");
+    }
+    const openbus::map::MapTileReference& center = map.tiles[centerTileIndex];
+    std::vector<TerrainCollisionGrid> terrain;
+    terrain.reserve(9);
+    for (const openbus::map::MapTileReference& tile : map.tiles) {
+        if (std::abs(tile.x - center.x) > tileRadius ||
+            std::abs(tile.y - center.y) > tileRadius || !tile.hasTerrainFile) {
+            continue;
+        }
+        const openbus::map::TerrainGrid grid = openbus::map::loadTerrainGrid(tile.terrainPath);
+        terrain.push_back({tile.x, tile.y, openbus::map::OMSI_TILE_SIZE_METERS,
+                   grid.intervals, grid.heights});
+    }
+    if (terrain.empty()) {
+        throw std::runtime_error("No terrain collision files found around the selected spawn");
+    }
+    return terrain;
 }
 
 VehiclePlacement aiVehiclePlacement(int index, int vehicleCount) {
@@ -81,6 +106,7 @@ int main() {
         std::filesystem::path modelConfigPath;
         std::filesystem::path aiBusConfigPath;
         std::filesystem::path aiModelConfigPath;
+        std::filesystem::path mapDirectory;
         int aiVehicleCount = 0;
         {
             openbus::rendering::TraceScope trace("config", "main.resolveConfigurationPaths");
@@ -100,9 +126,25 @@ int main() {
                     modelConfigurationPathForBus(aiBusConfigPath, configuredAiModelPath);
                 aiVehicleCount = positiveEnvironmentInt("OPENBUS_AI_COUNT", 1, 200);
             }
+            const std::string configuredMapPath = environmentValue("OPENBUS_MAP_PATH");
+            mapDirectory = configuredMapPath.empty()
+                               ? omsiRootPath() / "maps" / "Grande Porto 2022"
+                               : std::filesystem::path(configuredMapPath);
+            if (mapDirectory.is_relative()) {
+                mapDirectory = omsiRootPath() / mapDirectory;
+            }
         }
 
-        const VehiclePlacement busPlacement{{0.0, 0.0, 0.0}, 0.0};
+        const openbus::map::MapDefinition mapDefinition =
+            openbus::map::loadMapDefinition(mapDirectory);
+        if (mapDefinition.entryPoints.empty()) {
+            throw std::runtime_error("Map has no [entrypoints]: " + mapDirectory.string());
+        }
+        constexpr std::size_t defaultSpawnEntryPoint = 0;
+        const VehiclePlacement busPlacement =
+            mapDefinition.entryPoints[defaultSpawnEntryPoint].placement;
+        applicationLog.Log("Map " + mapDirectory.string() + " spawn: " +
+                           mapDefinition.entryPoints[defaultSpawnEntryPoint].name);
 
         BusConfiguration configuration;
         {
@@ -136,7 +178,10 @@ int main() {
             modelConfigurationOutput.flush();
         }
 
-        BusSimulation simulation(configuration, busPlacement);
+        BusSimulation simulation(
+            configuration, busPlacement, 60.0, 8, busPlacement.position[2],
+            loadSpawnTerrain(mapDefinition,
+                             mapDefinition.entryPoints[defaultSpawnEntryPoint].tileIndex));
 
         const bool benchmarkMode =
             openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
@@ -145,6 +190,7 @@ int main() {
         const int windowHeight =
             benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384) : 1440;
         RenderLoop renderer(windowWidth, windowHeight, "OpenBus");
+        renderer.SetMap(mapDefinition, defaultSpawnEntryPoint, omsiRootPath());
         Vehicle* playerVehicle =
             renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
                                 {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});

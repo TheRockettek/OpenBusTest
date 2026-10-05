@@ -364,7 +364,8 @@ BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath) {
     if (model.diagnostics.hasErrors()) {
         for (const ConfigurationDiagnostic& diagnostic : model.diagnostics.entries) {
             if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error) {
-                throw std::runtime_error("Invalid bus model configuration " + configPath.string() +
+                throw std::runtime_error("Invalid bus model configuration " +
+                                         modelConfigurationPathForBus(configPath).string() +
                                          " at line " + std::to_string(diagnostic.line) + ": " +
                                          diagnostic.message);
             }

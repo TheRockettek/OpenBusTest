@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BusTypes.h"
+#include "MapConfigLoader.h"
 #include "SoundEngine.h"
 #include "VehicleConfigLoader.h"
 #include "Viewpoint.h"
@@ -20,6 +21,7 @@ class BusSimulation;
 
 namespace openbus::rendering {
 class AssetRequestManager;
+class MapRenderer;
 class ReflectionRenderer;
 } // namespace openbus::rendering
 
@@ -67,6 +69,8 @@ class RenderLoop {
                         const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy = {});
 
     void SetPlayerVehicle(Vehicle* vehicle);
+    void SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
+                const std::filesystem::path& omsiRoot);
 
     void beginFrame(double fixedTimeStep = -1.0);
     void updatePlayerVariables(const BusSimulation& simulation, double throttle, double steering,
@@ -167,6 +171,7 @@ class RenderLoop {
     SimulationState simulationState_;
     std::unique_ptr<openbus::rendering::AssetRequestManager> assetRequestManager_;
     std::unique_ptr<openbus::rendering::ReflectionRenderer> reflectionRenderer_;
+    std::unique_ptr<openbus::rendering::MapRenderer> mapRenderer_;
     SoundEngine soundEngine_;
     openbus::rendering::ViewpointContext soundViewpoint_ =
         openbus::rendering::ViewpointContext::PlayerExterior;

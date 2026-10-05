@@ -13,10 +13,11 @@ configuration behavior, and regression evidence all exist.
 
 ## 0. Establish the completion baseline
 
-- [ ] Make `Docs/SCREENSHOT_VALIDATION_PLAN.md` truthful: environment maps and
+- [x] Make `Docs/SCREENSHOT_VALIDATION_PLAN.md` truthful: environment maps and
   any other features marked fully supported must either have evidence or be
-  moved to the incomplete section.
-- [ ] Add a short compatibility/status table to the README linking each major
+  moved to the incomplete section. Environment maps are now explicitly
+  exploratory, and the alpha mode-2 depth gap is called out.
+- [x] Add a short compatibility/status table to the README linking each major
   feature to its implementation and test evidence.
 
 Done when a fresh checkout can be configured, built, launched, and evaluated
@@ -35,9 +36,10 @@ against one unambiguous support matrix.
   engine state and Voith gear selection. The legacy throttle-based drivetrain
   remains only for standalone physics probes.
 - [~] High-speed bump stability: local-axis damping, softened contact response,
-  and steering-rate damping are implemented, but there is no automated stress
-  test for repeated bumps while accelerating and steering.
-- [ ] Add a deterministic physics stress probe covering straight-line bumps,
+  and steering-rate damping are implemented. A deterministic stress probe now
+  exercises bump traversal, steering reversals, braking, and fast wheel contact
+  with two- and three-axle configurations; broader solver/contact tuning remains.
+- [x] Add a deterministic physics stress probe covering straight-line bumps,
   alternating bumps, hard steering transitions, braking over bumps, and
   high-speed wheel contact. Assert finite poses/velocities, bounded angular
   speed, no excessive suspension travel, and left/right symmetry.
@@ -392,6 +394,39 @@ Each item above needs a parser/runtime test or an explicit unsupported-status
 diagnostic before it can be moved to the implemented baseline.
 
 ## 6. Rendering and platform completeness
+
+### Grande Porto map support
+
+Implemented foundation: `global.cfg` and tile/terrain parsing, first-entrypoint
+spawn, local terrain rendering/collision, nearby supported O3D scenery, tree
+preview cards, and a narrow two-profile road renderer. These are not equivalent
+to full OMSI map support; see the README's map scope for the explicit boundary.
+
+- [x] Add curved centerline tessellation for the recognized Freyfurt asphalt
+  profiles. Signed-radius geometry is checked by `OpenBusMapSplineGeometryProbe`
+  against linked Grande Porto spline endpoints in both turn directions; a
+  zero-radius straight case and invalid inputs are covered. The startup map
+  capture smoke test passes, but a camera-framed capture that clearly shows a
+  representative curve remains open.
+- [ ] Add targeted, repeatable in-context screenshot evidence for curved-road
+  geometry and seams at linked spline boundaries.
+- [ ] Load general scenery `.x` meshes, or keep them explicitly unsupported;
+  tree SCO previews currently use crossed textured planes rather than their
+  editor/helper mesh.
+- [ ] Read supported road profiles from `.sli` files instead of hard-coding two
+  profile paths, a 6.5 m width, and a grade approximation; cover markings,
+  materials, and elevation behavior with fixtures.
+- [ ] Support scenery pitch/bank and attachment/repeater records; connect
+  scenery scripts, mouse events, and collision only when their runtime
+  semantics are defined.
+- [ ] Add per-tile/detail/seasonal ground textures and implement or explicitly
+  scope out water, map lightmaps, and Chrono tile variants.
+- [ ] Stream terrain, scenery, and collision as the player leaves the current
+  3x3 spawn-neighborhood patch.
+- [ ] Add entrypoint selection and HOF/timetable-backed map state. Defer
+  scheduled AI and signal behavior until route/signal formats provide enough
+  verified data; the inspected Grande Porto signal-route file is only a
+  header/template.
 
 - [x] OpenGL 3.3 renderer, VBO model path, cameras, mirrors, frustum culling,
   LOD selection, texture cache, crash reports, tracing, and profiling hooks

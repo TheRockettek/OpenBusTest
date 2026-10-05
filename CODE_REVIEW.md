@@ -124,16 +124,19 @@ message-passing design.
 
 ## Coverage and verification
 
-CMake currently registers 14 CTest probes:
+CMake currently registers 17 CTest probes:
 
 - `OpenBusVariablesProbe`
 - `OpenBusConfigurationParserProbe`
 - `OpenBusTextureLoaderProbe`
 - `OpenBusPhysicsProbe`
+- `OpenBusPhysicsStressProbe`
 - `OpenBusStabilityProbe`
 - `OpenBusCameraMathProbe`
 - `OpenBusViewpointProbe`
 - `OpenBusRoadFeaturesProbe`
+- `OpenBusMapConfigProbe`
+- `OpenBusMapSplineGeometryProbe`
 - `OpenBusO3DLoaderProbe`
 - `OpenBusModelConfigProbe`
 - `OpenBusVehicleConfigProbe`
@@ -142,7 +145,9 @@ CMake currently registers 14 CTest probes:
 - `OpenBusScriptTextureRuntimeProbe`
 
 The probes cover parsing, variables, texture decoding, physics (including invalid-rate
-rejection), camera math/viewpoints (including coincident look-at), road features,
+rejection and deterministic two-/three-axle bump, steering, and braking stress), map
+configuration and signed-radius spline endpoint geometry, camera math/viewpoints
+(including coincident look-at), road features,
 O3D/model/vehicle configuration (including oversized script-texture rejection), sound, and
 script-texture/runtime behavior (including bounded native and Lua macro inputs). They do
 not exercise a full OpenGL context, shader compilation, material binding, transparent depth
@@ -150,7 +155,7 @@ prepasses, environment-map sampling, or end-to-end clickable mesh rendering. Add
 fixture-based renderer tests where practical and retain manual screenshot validation for
 context-dependent behavior.
 
-The latest full CMake build and CTest run after these remediations succeeded; all 14 registered
+The latest full CMake build and CTest run after these remediations succeeded; all 17 registered
 probes passed. CTest continues to emit non-fatal missing `DartConfiguration.tcl` messages.
 
 ## Verified fixes and stale findings

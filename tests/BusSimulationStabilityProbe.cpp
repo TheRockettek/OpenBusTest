@@ -46,6 +46,22 @@ double pitchAngle(const BodyPose& pose) {
 } // namespace
 
 int main(int argc, char** argv) {
+    TerrainCollisionGrid terrain;
+    terrain.tileX = -1;
+    terrain.tileY = 2;
+    terrain.intervals = 2;
+    terrain.heights = {3.0F, 3.5F, 4.0F, 3.0F, 3.5F, 4.0F, 3.0F, 3.5F, 4.0F};
+    BusSimulation terrainSimulation(caetanoConfiguration(true),
+                                    VehiclePlacement{{-150.0, 750.0, 3.5}, 0.0}, 60.0, 8, 0.0,
+                                    {terrain});
+    for (int step = 0; step < 600; ++step) {
+        terrainSimulation.step(0.0, 0.0, 1.0);
+    }
+    if (std::abs(terrainSimulation.chassisPose().position[2] - 4.8) > 0.25) {
+        std::cerr << "Bus did not settle on the nonzero map terrain collision surface\n";
+        return 1;
+    }
+
     BusConfiguration meshCollisionConfiguration = caetanoConfiguration(true);
     meshCollisionConfiguration.hasCollisionMesh = true;
     meshCollisionConfiguration.collisionMeshVertices = {-1.0, -1.0, 0.0,
