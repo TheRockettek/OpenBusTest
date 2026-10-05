@@ -344,8 +344,8 @@ bool VehicleSoundBank::conditionsAllow(const SoundTriggerDefinition& definition,
     return true;
 }
 
-std::filesystem::path VehicleSoundBank::resolvedFile(
-    const SoundTriggerDefinition& definition) const {
+std::filesystem::path
+VehicleSoundBank::resolvedFile(const SoundTriggerDefinition& definition) const {
     return definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
 }
 
@@ -353,8 +353,7 @@ bool VehicleSoundBank::hasTrigger(const std::string& name) const {
     return triggers_.find(lower(name)) != triggers_.end();
 }
 
-void VehicleSoundBank::stopLoopFile(SoundPlayback& playback,
-                                    const std::filesystem::path& path) {
+void VehicleSoundBank::stopLoopFile(SoundPlayback& playback, const std::filesystem::path& path) {
     const std::string key = pathKey(path);
     const auto loop = activeTriggeredLoops_.find(key);
     if (loop == activeTriggeredLoops_.end()) {
@@ -438,8 +437,7 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
             }
             for (const auto& entry : triggers_) {
                 for (const SoundTriggerDefinition& candidate : entry.second) {
-                    if (candidate.loop &&
-                        belongsToSoundFamily(candidate.file, definition.file)) {
+                    if (candidate.loop && belongsToSoundFamily(candidate.file, definition.file)) {
                         stopLoopFile(playback, resolvedFile(candidate));
                     }
                 }
@@ -538,9 +536,9 @@ void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& v
                                0.5F, 2.0F);
         }
         desired.emplace(pathKey(file),
-                DesiredLoop{file, {static_cast<float>(gain),
-                           static_cast<float>(pitch), definition.position,
-                           definition.maxDistance}});
+                        DesiredLoop{file,
+                                    {static_cast<float>(gain), static_cast<float>(pitch),
+                                     definition.position, definition.maxDistance}});
     }
 
     for (auto active = activeAmbientLoops_.begin(); active != activeAmbientLoops_.end();) {

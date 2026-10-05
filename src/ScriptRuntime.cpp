@@ -52,8 +52,7 @@ std::string scriptName(std::string value) {
 }
 
 std::shared_ptr<const OscProgram> cachedNativeProgram(const std::filesystem::path& sourcePath,
-                                                      std::string& error,
-                                                      bool& compiledThisCall) {
+                                                      std::string& error, bool& compiledThisCall) {
     static std::mutex cacheMutex;
     static std::unordered_map<std::string, std::shared_ptr<const OscProgram>> cache;
     std::string key = std::filesystem::absolute(sourcePath).lexically_normal().generic_string();

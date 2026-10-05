@@ -668,13 +668,10 @@ std::string normalizedConfigPath(const std::filesystem::path& path) {
 std::filesystem::path modelRootFor(const std::filesystem::path& modelConfigPath) {
     const std::filesystem::path directory = modelConfigPath.parent_path();
     std::string directoryName = directory.filename().string();
-    std::transform(directoryName.begin(), directoryName.end(), directoryName.begin(),
-                   [](unsigned char character) {
-                       return static_cast<char>(std::tolower(character));
-                   });
-    return directoryName == "configuration files"
-               ? directory.parent_path()
-               : directory;
+    std::transform(
+        directoryName.begin(), directoryName.end(), directoryName.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    return directoryName == "configuration files" ? directory.parent_path() : directory;
 }
 
 std::shared_ptr<const SharedVehicleDefinition>
@@ -682,8 +679,8 @@ sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
                         const std::filesystem::path& modelConfigPath) {
     static std::mutex cacheMutex;
     static std::unordered_map<std::string, std::shared_ptr<const SharedVehicleDefinition>> cache;
-    const std::string key = normalizedConfigPath(busConfigPath) + "|" +
-                            normalizedConfigPath(modelConfigPath);
+    const std::string key =
+        normalizedConfigPath(busConfigPath) + "|" + normalizedConfigPath(modelConfigPath);
     std::lock_guard<std::mutex> lock(cacheMutex);
     const auto existing = cache.find(key);
     if (existing != cache.end()) {
@@ -699,8 +696,8 @@ sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
     definition->vehicleConfiguration = loadBusConfig(busConfigPath);
 
     openbus::scripting::Vehicle modelVariables;
-    definition->modelConfiguration = openbus::rendering::loadBusModel(
-        modelConfigPath, definition->modelRoot, modelVariables);
+    definition->modelConfiguration =
+        openbus::rendering::loadBusModel(modelConfigPath, definition->modelRoot, modelVariables);
     for (const auto& [name, value] : modelVariables.numericValues()) {
         (void)value;
         definition->modelNumericVariables.push_back(name);
@@ -709,7 +706,8 @@ sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
         (void)value;
         definition->modelStringVariables.push_back(name);
     }
-    for (const ConfigurationDiagnostic& diagnostic : definition->modelConfiguration.diagnostics.entries) {
+    for (const ConfigurationDiagnostic& diagnostic :
+         definition->modelConfiguration.diagnostics.entries) {
         const std::string severity =
             diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error" : "warning";
         gameLog.Log("CFG " + severity + " line " + std::to_string(diagnostic.line) + " [" +
@@ -847,24 +845,45 @@ struct Vehicle {
 
     struct Batch {
         struct SharedVertices {
-            std::shared_ptr<std::vector<Vertex>> values =
-                std::make_shared<std::vector<Vertex>>();
+            std::shared_ptr<std::vector<Vertex>> values = std::make_shared<std::vector<Vertex>>();
 
             SharedVertices& operator=(std::vector<Vertex>&& vertices) {
                 values = std::make_shared<std::vector<Vertex>>(std::move(vertices));
                 return *this;
             }
-            std::size_t size() const { return values->size(); }
-            bool empty() const { return values->empty(); }
-            Vertex* data() { return values->data(); }
-            const Vertex* data() const { return values->data(); }
-            Vertex& operator[](std::size_t index) { return (*values)[index]; }
-            const Vertex& operator[](std::size_t index) const { return (*values)[index]; }
-            auto begin() { return values->begin(); }
-            auto end() { return values->end(); }
-            auto begin() const { return values->begin(); }
-            auto end() const { return values->end(); }
-            void reserve(std::size_t size) { values->reserve(size); }
+            std::size_t size() const {
+                return values->size();
+            }
+            bool empty() const {
+                return values->empty();
+            }
+            Vertex* data() {
+                return values->data();
+            }
+            const Vertex* data() const {
+                return values->data();
+            }
+            Vertex& operator[](std::size_t index) {
+                return (*values)[index];
+            }
+            const Vertex& operator[](std::size_t index) const {
+                return (*values)[index];
+            }
+            auto begin() {
+                return values->begin();
+            }
+            auto end() {
+                return values->end();
+            }
+            auto begin() const {
+                return values->begin();
+            }
+            auto end() const {
+                return values->end();
+            }
+            void reserve(std::size_t size) {
+                values->reserve(size);
+            }
             template <typename Iterator>
             auto insert(typename std::vector<Vertex>::iterator position, Iterator first,
                         Iterator last) {
@@ -1855,8 +1874,8 @@ struct Vehicle {
             description << " id=\"" << part.meshIdentifier << "\"";
         }
         description << " mouseevent=\"" << part.mouseEvent << "\" maps_to=" << handler
-                    << " handler=" << (handlerFound ? "found" : "missing")
-                    << " visible=" << (clickablePartVisible(part, partIndex, context) ? "yes" : "no")
+                    << " handler=" << (handlerFound ? "found" : "missing") << " visible="
+                    << (clickablePartVisible(part, partIndex, context) ? "yes" : "no")
                     << " bounds_size_xyz=(" << part.size[0] << ',' << part.size[1] << ','
                     << part.size[2] << ") [model units]";
         return description.str();
@@ -1879,9 +1898,18 @@ struct Vehicle {
 
     void drawClickableDebug(RenderViewContext context) const {
         TraceScope trace("debug", "Vehicle::drawClickableDebug");
-        static constexpr std::array<std::array<int, 2>, 12> boxEdges = {
-            {{0, 1}, {1, 3}, {3, 2}, {2, 0}, {4, 5}, {5, 7},
-             {7, 6}, {6, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}}};
+        static constexpr std::array<std::array<int, 2>, 12> boxEdges = {{{0, 1},
+                                                                         {1, 3},
+                                                                         {3, 2},
+                                                                         {2, 0},
+                                                                         {4, 5},
+                                                                         {5, 7},
+                                                                         {7, 6},
+                                                                         {6, 4},
+                                                                         {0, 4},
+                                                                         {1, 5},
+                                                                         {2, 6},
+                                                                         {3, 7}}};
         clickableDebugBoxVertices.clear();
         clickableDebugWireVertices.clear();
         clickableDebugTriangleVertices.clear();
@@ -1916,9 +1944,9 @@ struct Vehicle {
                 continue;
             }
             const bool isSelected = &part == selected;
-            const std::array<float, 3> boundsColor =
-                isSelected ? std::array<float, 3>{1.0f, 0.15f, 0.05f}
-                           : std::array<float, 3>{0.0f, 0.75f, 0.95f};
+            const std::array<float, 3> boundsColor = isSelected
+                                                         ? std::array<float, 3>{1.0f, 0.15f, 0.05f}
+                                                         : std::array<float, 3>{0.0f, 0.75f, 0.95f};
             const Matrix4 animation = animationTransformForPart(part);
             const std::array<double, 3> half = {std::max(part.size[0] * 0.5, 0.0),
                                                 std::max(part.size[1] * 0.5, 0.0),
@@ -1933,10 +1961,10 @@ struct Vehicle {
                 corners[static_cast<std::size_t>(corner)][2] += modelOffsetZ;
             }
             for (const auto& edge : boxEdges) {
-                appendVertex(clickableDebugBoxVertices,
-                             corners[static_cast<std::size_t>(edge[0])], boundsColor);
-                appendVertex(clickableDebugBoxVertices,
-                             corners[static_cast<std::size_t>(edge[1])], boundsColor);
+                appendVertex(clickableDebugBoxVertices, corners[static_cast<std::size_t>(edge[0])],
+                             boundsColor);
+                appendVertex(clickableDebugBoxVertices, corners[static_cast<std::size_t>(edge[1])],
+                             boundsColor);
             }
             const std::array<float, 3> meshColor = {1.0f, 0.85f, 0.05f};
             for (const Batch& batch : part.batches) {
@@ -2018,13 +2046,13 @@ struct Vehicle {
     bool comInitialized = false;
 #endif
 
-        explicit Vehicle(const std::shared_ptr<const SharedVehicleDefinition>& definition,
+    explicit Vehicle(const std::shared_ptr<const SharedVehicleDefinition>& definition,
                      const VehiclePlacement& configuredPlacement, double configuredModelOffsetZ,
                      ModelLoadingPolicy policy, AssetRequestManager& manager,
                      SimulationState& simulationState, SoundEngine& soundEngine,
                      openbus::rendering::ViewpointContext& soundViewpoint)
-                : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
-                    modelCacheKey(definition->cacheKey), assets(&manager), placement(configuredPlacement),
+        : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
+          modelCacheKey(definition->cacheKey), assets(&manager), placement(configuredPlacement),
           modelOffsetZ(configuredModelOffsetZ),
           wheelsFromOde(parseEnabledFlag(std::getenv("OPENBUS_WHEELS_FROM_ODE"))) {
         if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
@@ -2050,8 +2078,7 @@ struct Vehicle {
         soundBank.load(vehicleConfiguration.soundConfigPath);
         scripts = std::make_unique<ScriptRuntime>(
             vehicleConfiguration, variables, simulationState,
-            [this, &soundEngine, &soundViewpoint](const std::string& name,
-                                                  const std::string& file,
+            [this, &soundEngine, &soundViewpoint](const std::string& name, const std::string& file,
                                                   double controlValue) {
                 if (!soundEventsEnabled) {
                     return;
@@ -2153,8 +2180,8 @@ struct Vehicle {
     }
 
     void drawBatch(Batch& batch, double alpha, bool forceUntextured = false,
-                   const std::array<double, 3>* overrideColor = nullptr,
-                   int alphaModeOverride = -1, bool forceDepthTest = false) {
+                   const std::array<double, 3>* overrideColor = nullptr, int alphaModeOverride = -1,
+                   bool forceDepthTest = false) {
         if (alpha <= 0.0) {
             return;
         }
@@ -4446,8 +4473,8 @@ void RenderLoop::logDiagnosticVariables() const {
 void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
                                        double steering, double brake) {
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
-    soundViewpoint_ = isExteriorView() ? RenderViewContext::PlayerExterior
-                                       : RenderViewContext::PlayerInterior;
+    soundViewpoint_ =
+        isExteriorView() ? RenderViewContext::PlayerExterior : RenderViewContext::PlayerInterior;
     smoothedSteering_ = openbus::input::smoothSteeringInput(
         smoothedSteering_, steering, std::clamp(frameTimeStep_, 0.0, 0.25), steeringSmoothingRate_);
     if (playerVehicle_ != nullptr) {
@@ -4889,10 +4916,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         poseMatrix(chassis),
         translationMatrix(
             {0.0, 0.0, playerVehicle_ != nullptr ? playerVehicle_->modelOffsetZ : 0.0}));
-    const Matrix4 shadowGroundBase =
-        multiplyMatrix4(translationMatrix({chassis.position[0], chassis.position[1],
-                                           GROUND_SHADOW_OFFSET_Z}),
-                        rotationMatrix(simulation.yaw() * radiansToDegrees, 0.0, 0.0, 1.0));
+    const Matrix4 shadowGroundBase = multiplyMatrix4(
+        translationMatrix({chassis.position[0], chassis.position[1], GROUND_SHADOW_OFFSET_Z}),
+        rotationMatrix(simulation.yaw() * radiansToDegrees, 0.0, 0.0, 1.0));
     Matrix4 inversePlayerModelBase = identityMatrix();
     const bool canGroundClampShadow = invertAffineMatrix(playerModelBase, inversePlayerModelBase);
     const Matrix4 groundShadowTransform =

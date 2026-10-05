@@ -773,10 +773,9 @@ struct BusSimulation::Impl {
             const bool front = configuration.axles[axleIndex].steerable;
             const dReal antiRoll = axleIndex == 0 ? ARB_STIFFNESS_FRONT : ARB_STIFFNESS_REAR;
             const BusAxle& axle = configuration.axles[axleIndex];
-            const dReal configuredSpringFactor =
-                index < wheelSpringFactors.size()
-                    ? static_cast<dReal>(wheelSpringFactors[index])
-                    : 1.0;
+            const dReal configuredSpringFactor = index < wheelSpringFactors.size()
+                                                     ? static_cast<dReal>(wheelSpringFactors[index])
+                                                     : 1.0;
             const dReal springFactor = std::isfinite(configuredSpringFactor)
                                            ? std::clamp(configuredSpringFactor, 0.0, 10.0)
                                            : 1.0;
@@ -949,8 +948,7 @@ void BusSimulation::updateWithWheelTorque(double elapsedSeconds, double wheelTor
 
 void BusSimulation::updateWithWheelTorqueAndBrakeForces(
     double elapsedSeconds, double wheelTorque, double steering,
-    const std::vector<double>& wheelBrakeForces,
-    const std::vector<double>& wheelSpringFactors) {
+    const std::vector<double>& wheelBrakeForces, const std::vector<double>& wheelSpringFactors) {
     impl_->update(elapsedSeconds, wheelTorque, steering, wheelBrakeForces, wheelSpringFactors,
                   true);
 }
@@ -967,9 +965,9 @@ void BusSimulation::stepWithWheelTorque(double wheelTorque, double steering, dou
                        std::vector<double>(impl_->corners.size(), forcePerWheel), {}, true);
 }
 
-void BusSimulation::stepWithWheelTorqueAndBrakeForces(double wheelTorque, double steering,
-                                                      const std::vector<double>& wheelBrakeForces,
-                                                      const std::vector<double>& wheelSpringFactors) {
+void BusSimulation::stepWithWheelTorqueAndBrakeForces(
+    double wheelTorque, double steering, const std::vector<double>& wheelBrakeForces,
+    const std::vector<double>& wheelSpringFactors) {
     impl_->fixedUpdate(wheelTorque, steering, wheelBrakeForces, wheelSpringFactors, true);
 }
 

@@ -139,8 +139,8 @@ VehiclePlacement makeModelRootPlacement(const VehiclePlacement& groundPlacement,
     return result;
 }
 
-Matrix4 makeGroundShadowTransform(const VehiclePlacement& modelRootPlacement,
-                                  double modelOffsetZ, double groundPlaneZ) {
+Matrix4 makeGroundShadowTransform(const VehiclePlacement& modelRootPlacement, double modelOffsetZ,
+                                  double groundPlaneZ) {
     // Static vehicles only rotate around world Z, so a local Z translation is
     // unchanged by the placement yaw. Vehicle::draw applies modelOffsetZ
     // before this matrix; cancel that offset and align the shadow origin with

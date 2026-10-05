@@ -301,7 +301,7 @@ struct SoundEngine::Backend {
         const std::array<float, 6> orientation = {
             static_cast<float>(forward[0]), static_cast<float>(forward[1]),
             static_cast<float>(forward[2]), static_cast<float>(up[0]),
-            static_cast<float>(up[1]), static_cast<float>(up[2])};
+            static_cast<float>(up[1]),      static_cast<float>(up[2])};
         alListener3f(AL_POSITION, static_cast<float>(position[0]), static_cast<float>(position[1]),
                      static_cast<float>(position[2]));
         alListener3f(AL_VELOCITY, velocity[0], velocity[1], velocity[2]);
@@ -347,11 +347,10 @@ struct SoundEngine::Backend {
         if (handle == 0) {
             handle = nextHandle++;
         }
-        active.push_back({handle, source, looped, parameters.position,
-                          std::chrono::steady_clock::now()});
-        soundLog.Log("OpenAL playback started: file=" + path.string() +
-                     " loop=" + (looped ? "true" : "false") +
-                     " gain=" + std::to_string(parameters.gain) +
+        active.push_back(
+            {handle, source, looped, parameters.position, std::chrono::steady_clock::now()});
+        soundLog.Log("OpenAL playback started: file=" + path.string() + " loop=" +
+                     (looped ? "true" : "false") + " gain=" + std::to_string(parameters.gain) +
                      " pitch=" + std::to_string(parameters.pitch));
         return handle;
     }
@@ -385,8 +384,7 @@ struct SoundEngine::Backend {
                    static_cast<float>(parameters.position[1]),
                    static_cast<float>(parameters.position[2]));
         if (parameters.maxDistance > 0.0) {
-            alSourcef(found->source, AL_MAX_DISTANCE,
-                      static_cast<float>(parameters.maxDistance));
+            alSourcef(found->source, AL_MAX_DISTANCE, static_cast<float>(parameters.maxDistance));
         }
         const auto now = std::chrono::steady_clock::now();
         std::array<float, 3> velocity = {};

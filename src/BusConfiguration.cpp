@@ -92,15 +92,14 @@ std::optional<std::size_t> wheelRotationAxleIndex(const ModelPart& part) {
             continue;
         }
         const std::size_t sideSeparator = variable.find('_', prefix.size());
-        if (sideSeparator == std::string::npos ||
-            (variable.substr(sideSeparator + 1) != "l" &&
-             variable.substr(sideSeparator + 1) != "r")) {
+        if (sideSeparator == std::string::npos || (variable.substr(sideSeparator + 1) != "l" &&
+                                                   variable.substr(sideSeparator + 1) != "r")) {
             continue;
         }
         int axleIndex = -1;
-        if (openbus::config::parseInt(std::string(variable.substr(
-                          prefix.size(), sideSeparator - prefix.size())),
-                          axleIndex) &&
+        if (openbus::config::parseInt(
+                std::string(variable.substr(prefix.size(), sideSeparator - prefix.size())),
+                axleIndex) &&
             axleIndex >= 0) {
             return static_cast<std::size_t>(axleIndex);
         }
