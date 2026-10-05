@@ -142,6 +142,7 @@ constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 8;
 constexpr double DEFAULT_FIELD_OF_VIEW = 60.0;
 constexpr double MIN_FIELD_OF_VIEW = 20.0;
 constexpr double MAX_FIELD_OF_VIEW = 120.0;
+constexpr double GROUND_SHADOW_OFFSET_Z = 0.015;
 
 struct VehicleKeyBinding {
     const char* action;
@@ -730,6 +731,8 @@ using openbus::rendering::drawGround;
 using openbus::rendering::drawMaterialBatch;
 using openbus::rendering::drawModelBatch;
 using openbus::rendering::lookAt;
+using openbus::rendering::makeGroundShadowTransform;
+using openbus::rendering::makeModelRootPlacement;
 using openbus::rendering::modelViewMatrix;
 using openbus::rendering::multiplyMatrix;
 using openbus::rendering::parseEnabledFlag;
@@ -2151,7 +2154,7 @@ struct Vehicle {
 
     void drawBatch(Batch& batch, double alpha, bool forceUntextured = false,
                    const std::array<double, 3>* overrideColor = nullptr,
-                   int alphaModeOverride = -1) {
+                   int alphaModeOverride = -1, bool forceDepthTest = false) {
         if (alpha <= 0.0) {
             return;
         }
@@ -2170,8 +2173,13 @@ struct Vehicle {
             glDisable(GL_BLEND);
             glDepthMask(GL_TRUE);
         }
-        if (batch.noZcheck) {
+        // Ground-projected fake shadows must still be occluded by vehicle
+        // geometry; keep their noZwrite behavior but honor the depth test.
+        const bool noZcheck = batch.noZcheck && !forceDepthTest;
+        if (noZcheck) {
             glDisable(GL_DEPTH_TEST);
+        } else if (forceDepthTest) {
+            glEnable(GL_DEPTH_TEST);
         }
         const bool materialBatch = !batch.materialTextures.empty() && !forceUntextured;
         const std::vector<GLuint>* materialTextureIds = nullptr;
@@ -2275,7 +2283,7 @@ struct Vehicle {
             drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
                            forceUntextured ? 0 : alphaMode);
         }
-        if (batch.noZcheck) {
+        if (noZcheck) {
             glEnable(GL_DEPTH_TEST);
         }
     }
@@ -2605,7 +2613,7 @@ struct Vehicle {
                     if (batch.alphaMode == 2 && !batch.transmap.name.empty()) {
                         sortTransparentBatch(batch);
                     }
-                    drawBatch(batch, alpha);
+                    drawBatch(batch, alpha, false, nullptr, -1, transparent.part->isShadow);
                     if (!reflectionPass) {
                         drawEnvironmentMap(batch, alpha);
                     }
@@ -4882,7 +4890,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         translationMatrix(
             {0.0, 0.0, playerVehicle_ != nullptr ? playerVehicle_->modelOffsetZ : 0.0}));
     const Matrix4 shadowGroundBase =
-        multiplyMatrix4(translationMatrix({chassis.position[0], chassis.position[1], 0.015}),
+        multiplyMatrix4(translationMatrix({chassis.position[0], chassis.position[1],
+                                           GROUND_SHADOW_OFFSET_Z}),
                         rotationMatrix(simulation.yaw() * radiansToDegrees, 0.0, 0.0, 1.0));
     Matrix4 inversePlayerModelBase = identityMatrix();
     const bool canGroundClampShadow = invertAffineMatrix(playerModelBase, inversePlayerModelBase);
@@ -5035,7 +5044,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                     applyPose(chassis);
                     vehicle->prepareFrameVisibility(context, framebufferWidth_, framebufferHeight_);
                 } else {
-                    applyVehiclePlacement(vehicle->placement);
+                    applyVehiclePlacement(
+                        makeModelRootPlacement(vehicle->placement, vehicle->modelOffsetZ));
                     vehicle->prepareFrameVisibility(RenderViewContext::NonPlayer, framebufferWidth_,
                                                     framebufferHeight_);
                 }
@@ -5203,11 +5213,22 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                         playerDrawn = true;
                     }
                 } else {
-                    applyVehiclePlacement(vehicle->placement);
+                    applyVehiclePlacement(
+                        makeModelRootPlacement(vehicle->placement, vehicle->modelOffsetZ));
                 }
-                const Matrix4* shadowTransform =
-                    vehicle.get() == playerVehicle_ && canGroundClampShadow ? &groundShadowTransform
-                                                                            : nullptr;
+                Matrix4 aiGroundShadowTransform = {};
+                const Matrix4* shadowTransform = nullptr;
+                if (vehicle.get() == playerVehicle_) {
+                    if (canGroundClampShadow) {
+                        shadowTransform = &groundShadowTransform;
+                    }
+                } else {
+                    const VehiclePlacement rootPlacement =
+                        makeModelRootPlacement(vehicle->placement, vehicle->modelOffsetZ);
+                    aiGroundShadowTransform = makeGroundShadowTransform(
+                        rootPlacement, vehicle->modelOffsetZ, GROUND_SHADOW_OFFSET_Z);
+                    shadowTransform = &aiGroundShadowTransform;
+                }
                 vehicle->draw(vehicleContext, renderPass, shadowTransform);
                 popMatrix();
             }

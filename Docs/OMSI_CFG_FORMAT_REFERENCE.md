@@ -8,6 +8,7 @@ Do not treat every CFG as a vehicle model file.
 
 | Reference | Use |
 | --- | --- |
+| [OMSI2_MAP_FORMAT_REFERENCE.md](C:/Users/blane/Desktop/OpenBusTest/Docs/OMSI2_MAP_FORMAT_REFERENCE.md) | Map packages: `global.cfg`, tile `.map` files and sidecars, Chrono, AI lists, and `TTData` |
 | [OMSI_CFG_BUS_MODEL_REFERENCE.md](C:/Users/blane/Desktop/OpenBusTest/Docs/OMSI_CFG_BUS_MODEL_REFERENCE.md) | Bus-only model construction: meshes, materials, animations, lights, visibility, displays, and texture changes |
 | [OMSI_CFG_GENERAL_REFERENCE.md](C:/Users/blane/Desktop/OpenBusTest/Docs/OMSI_CFG_GENERAL_REFERENCE.md) | Shared syntax plus surfaces, passenger cabins, paths, sounds, AI/network, environment, controls, and metadata |
 

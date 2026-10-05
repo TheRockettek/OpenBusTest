@@ -132,6 +132,25 @@ void applyPose(const BodyPose& pose) {
     cachedModelViewMatrix = multiply(cachedModelViewMatrix, matrix);
 }
 
+VehiclePlacement makeModelRootPlacement(const VehiclePlacement& groundPlacement,
+                                        double modelOffsetZ) {
+    VehiclePlacement result = groundPlacement;
+    result.position[2] -= modelOffsetZ;
+    return result;
+}
+
+Matrix4 makeGroundShadowTransform(const VehiclePlacement& modelRootPlacement,
+                                  double modelOffsetZ, double groundPlaneZ) {
+    // Static vehicles only rotate around world Z, so a local Z translation is
+    // unchanged by the placement yaw. Vehicle::draw applies modelOffsetZ
+    // before this matrix; cancel that offset and align the shadow origin with
+    // the ground plane without changing its authored footprint or yaw.
+    Matrix4 transform = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                         0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+    transform[14] = groundPlaneZ - modelRootPlacement.position[2] - modelOffsetZ;
+    return transform;
+}
+
 void pushMatrix() {
     modelViewStack.push_back(cachedModelViewMatrix);
 }

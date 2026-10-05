@@ -124,6 +124,8 @@ One alpha/rendering mode integer:
 ### `[matl_noZcheck]`
 
 Marker disabling depth-buffer comparison for the material.
+For `[isshadow]` fake-shadow meshes, OpenBus retains depth testing so the
+vehicle body occludes its ground-projected shadow.
 
 ### `[matl_noZwrite]`
 

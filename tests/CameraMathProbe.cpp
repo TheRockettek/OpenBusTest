@@ -22,6 +22,23 @@ double dot(const std::array<double, 3>& left, const std::array<double, 3>& right
 
 int main() {
     constexpr double pi = 3.14159265358979323846;
+    const VehiclePlacement groundPlacement{{4.0, -7.0, 0.0}, 37.0};
+    constexpr double modelOffsetZ = -0.4;
+    constexpr double groundPlaneZ = 0.015;
+    const VehiclePlacement modelRootPlacement =
+        openbus::rendering::makeModelRootPlacement(groundPlacement, modelOffsetZ);
+    const openbus::rendering::Matrix4 shadowTransform =
+        openbus::rendering::makeGroundShadowTransform(modelRootPlacement, modelOffsetZ,
+                                                       groundPlaneZ);
+    const double shadowOriginWorldZ = modelRootPlacement.position[2] + modelOffsetZ +
+                                      shadowTransform[14];
+    if (std::abs(modelRootPlacement.position[2] - 0.4) > 1.0e-12 ||
+        std::abs(shadowOriginWorldZ - groundPlaneZ) > 1.0e-12 ||
+        shadowTransform[12] != 0.0 || shadowTransform[13] != 0.0) {
+        std::cerr << "Static vehicle root or shadow was not aligned with its ground plane\n";
+        return 1;
+    }
+
     const double pan = 180.0 * pi / 180.0;
     const double tilt = -89.5 * pi / 180.0;
     const std::array<double, 3> direction = {

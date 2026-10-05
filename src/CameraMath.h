@@ -13,6 +13,14 @@ void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double target
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ,
             double upX, double upY, double upZ);
 void applyPose(const BodyPose& pose);
+// Converts a ground-referenced static placement to the model root height
+// required before Vehicle::draw applies modelOffsetZ.
+VehiclePlacement makeModelRootPlacement(const VehiclePlacement& groundPlacement,
+                                        double modelOffsetZ);
+// Returns a local Z translation for a yaw-only vehicle's fake shadow after
+// modelOffsetZ has been applied.
+Matrix4 makeGroundShadowTransform(const VehiclePlacement& modelRootPlacement,
+                                  double modelOffsetZ, double groundPlaneZ);
 void pushMatrix();
 void popMatrix();
 void translate(double x, double y, double z);
