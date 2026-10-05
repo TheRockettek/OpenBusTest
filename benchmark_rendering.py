@@ -475,6 +475,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
             }
         )
         environment.pop("OPENBUS_CAPTURE_VIEWS", None)
+        environment.pop("OPENBUS_REFLECTION_MAX_FPS", None)
         environment.pop("OPENBUS_AI_BUS_CONFIG", None)
         environment.pop("OPENBUS_AI_MODEL_CONFIG", None)
 

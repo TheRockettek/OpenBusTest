@@ -8,10 +8,6 @@
 #include "PerfTrace.h"
 #include "Variables.h"
 
-#ifndef GLFW_INCLUDE_NONE
-#define GLFW_INCLUDE_NONE
-#endif
-#include <GLFW/glfw3.h>
 #include <GL/gl.h>
 
 #include <algorithm>
@@ -19,6 +15,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstdint>
+#include <chrono>
 #include <filesystem>
 #include <string_view>
 #include <unordered_map>
@@ -65,17 +62,34 @@ int reflectionIntervalFromEnvironment() {
     return value == nullptr ? 1 : std::max(1, std::atoi(value));
 }
 
+double reflectionMaxFrameRateFromEnvironment() {
+    const char* value = openbus::getEnvironment("OPENBUS_REFLECTION_MAX_FPS");
+    if (value == nullptr) {
+        return 0.0;
+    }
+    try {
+        const double frameRate = std::stod(value);
+        return std::isfinite(frameRate) && frameRate > 0.0 ? std::clamp(frameRate, 1.0, 1000.0)
+                                                           : 0.0;
+    } catch (const std::exception&) {
+        return 0.0;
+    }
+}
+
 } // namespace
 
 struct ReflectionRenderer::Impl {
     int maximumSize;
     int frameInterval;
+    double maximumFrameRate;
     std::uint64_t frameCounter = 0;
+    std::chrono::steady_clock::time_point lastRenderTime = {};
+    bool hasRendered = false;
     std::vector<ReflectionTarget> targets;
 
-    Impl(int maximumSizeValue, int frameIntervalValue)
+    Impl(int maximumSizeValue, int frameIntervalValue, double maximumFrameRateValue)
         : maximumSize(std::max(maximumSizeValue, kMinReflectionTargetSize)),
-          frameInterval(std::max(frameIntervalValue, 1)) {}
+          frameInterval(std::max(frameIntervalValue, 1)), maximumFrameRate(maximumFrameRateValue) {}
 
     void resizeTarget(ReflectionTarget& target, int size) {
         size = std::clamp(size, kMinReflectionTargetSize, maximumSize);
@@ -96,10 +110,15 @@ struct ReflectionRenderer::Impl {
 
 ReflectionRenderer::ReflectionRenderer()
     : impl_(std::make_unique<Impl>(reflectionSizeFromEnvironment(),
-                                   reflectionIntervalFromEnvironment())) {
+                                   reflectionIntervalFromEnvironment(),
+                                   reflectionMaxFrameRateFromEnvironment())) {
     gameLog.Log("Reflection targets: " + std::to_string(impl_->maximumSize) + "x" +
                 std::to_string(impl_->maximumSize) + ", every " +
                 std::to_string(impl_->frameInterval) + " frame(s)");
+    if (impl_->maximumFrameRate > 0.0) {
+        gameLog.Log("Reflection updates capped at " + std::to_string(impl_->maximumFrameRate) +
+                    " FPS");
+    }
 }
 
 ReflectionRenderer::~ReflectionRenderer() {
@@ -192,6 +211,14 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
     if (impl_->frameCounter % static_cast<std::uint64_t>(impl_->frameInterval) != 0) {
         return;
     }
+    const auto renderStart = std::chrono::steady_clock::now();
+    if (impl_->maximumFrameRate > 0.0 && impl_->hasRendered &&
+        std::chrono::duration<double>(renderStart - impl_->lastRenderTime).count() <
+            1.0 / impl_->maximumFrameRate) {
+        return;
+    }
+    impl_->lastRenderTime = renderStart;
+    impl_->hasRendered = true;
 
     Matrix4 previousModelView;
     {
@@ -247,41 +274,6 @@ void ReflectionRenderer::render(const BusSimulation& simulation,
         restore(viewport[2], viewport[3]);
         setModelViewMatrix(previousModelView);
     }
-}
-
-void ReflectionRenderer::renderDebugOverlay(GLFWwindow* window, bool enabled) const {
-    TraceScope trace("render", "ReflectionRenderer::renderDebugOverlay");
-    if (!enabled || activeReflectionPass || empty()) {
-        return;
-    }
-    int width = 1;
-    int height = 1;
-    glfwGetFramebufferSize(window, &width, &height);
-    const std::size_t columnCount = std::min<std::size_t>(4, impl_->targets.size());
-    const std::size_t rowCount = (impl_->targets.size() + columnCount - 1) / columnCount;
-    const float gapPixels = 6.0f;
-    constexpr float maxTilePixels = 220.0f;
-    const float tilePixels = std::min(
-        {maxTilePixels, (static_cast<float>(width) - gapPixels * (columnCount + 1)) / columnCount,
-         (static_cast<float>(height) - gapPixels * (rowCount + 1)) / rowCount});
-    if (tilePixels <= 0.0f) {
-        return;
-    }
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    for (std::size_t index = 0; index < impl_->targets.size(); ++index) {
-        const std::size_t column = index % columnCount;
-        const std::size_t row = index / columnCount;
-        const float leftPixels = gapPixels + column * (tilePixels + gapPixels);
-        const float topPixels = gapPixels + row * (tilePixels + gapPixels);
-        const float left = -1.0f + 2.0f * leftPixels / static_cast<float>(width);
-        const float bottom = 1.0f - 2.0f * (topPixels + tilePixels) / static_cast<float>(height);
-        drawTextureQuad(impl_->targets[index].texture, left, bottom,
-                        2.0f * tilePixels / static_cast<float>(width),
-                        2.0f * tilePixels / static_cast<float>(height));
-    }
-    glEnable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
 }
 
 bool reflectionPassActive() {

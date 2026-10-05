@@ -99,6 +99,7 @@ class TraceSummaryTests(unittest.TestCase):
                 self.assertEqual(
                     kwargs["env"]["OPENBUS_BENCHMARK_REQUIRE_EXACT_RESOLUTION"], "1"
                 )
+                self.assertNotIn("OPENBUS_REFLECTION_MAX_FPS", kwargs["env"])
                 kwargs["stdout"].write(
                     "BENCHMARK_COMPLETE=1\n"
                     "BENCHMARK_WINDOW=1280x720\n"
@@ -113,6 +114,8 @@ class TraceSummaryTests(unittest.TestCase):
                 benchmark_rendering, "CACHE_FILE", cache
             ), patch.object(benchmark_rendering, "BUILD_DIR", build), patch.object(
                 benchmark_rendering.subprocess, "run", side_effect=fake_run
+            ), patch.dict(
+                benchmark_rendering.os.environ, {"OPENBUS_REFLECTION_MAX_FPS": "30"}
             ):
                 self.assertEqual(benchmark_rendering.run_benchmark(args), 0)
 

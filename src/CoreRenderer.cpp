@@ -118,6 +118,11 @@ GLuint currentArrayBuffer = 0;
 GLenum currentTextureUnit = GL_TEXTURE0;
 std::array<GLuint, MAX_TEXTURE_UNITS> boundTexture2D = {};
 std::array<GLuint, MAX_TEXTURE_UNITS> boundTextureArray = {};
+bool wrapParametersValid = false;
+GLuint wrapParametersTexture = 0;
+GLenum wrapParametersTarget = 0;
+GLint wrapParametersS = 0;
+GLint wrapParametersT = 0;
 GLuint matrixProgram = 0;
 Matrix4 cachedProjection = {};
 Matrix4 cachedModelView = {};
@@ -603,6 +608,20 @@ void selectTextureUnit(GLenum textureUnit) {
     currentTextureUnit = textureUnit;
 }
 
+void setTextureWrap(GLenum target, GLuint texture, GLint wrapS, GLint wrapT) {
+    if (wrapParametersValid && wrapParametersTexture == texture && wrapParametersTarget == target &&
+        wrapParametersS == wrapS && wrapParametersT == wrapT) {
+        return;
+    }
+    glTexParameteri(target, GL_TEXTURE_WRAP_S, wrapS);
+    glTexParameteri(target, GL_TEXTURE_WRAP_T, wrapT);
+    wrapParametersValid = true;
+    wrapParametersTexture = texture;
+    wrapParametersTarget = target;
+    wrapParametersS = wrapS;
+    wrapParametersT = wrapT;
+}
+
 void uploadModelUniforms(const ModelMaterial& material, const std::array<double, 3>& color,
                          double alpha, int alphaMode) {
     const std::array<float, 4> colorValue = {
@@ -849,6 +868,7 @@ void shutdownCoreRenderer() {
 void invalidateTextureBindings() {
     boundTexture2D.fill(std::numeric_limits<GLuint>::max());
     boundTextureArray.fill(std::numeric_limits<GLuint>::max());
+    wrapParametersValid = false;
     pglActiveTexture(GL_TEXTURE0);
     currentTextureUnit = GL_TEXTURE0;
 }
@@ -866,8 +886,8 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     const GLenum textureTarget = material.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
     bindTexture(textureTarget, material.texture);
     if (material.texture != 0) {
-        glTexParameteri(textureTarget, GL_TEXTURE_WRAP_S, material.textureWrapS);
-        glTexParameteri(textureTarget, GL_TEXTURE_WRAP_T, material.textureWrapT);
+        setTextureWrap(textureTarget, material.texture, material.textureWrapS,
+                       material.textureWrapT);
     }
     selectTextureUnit(GL_TEXTURE1);
     bindTexture(GL_TEXTURE_2D, material.lightmap);

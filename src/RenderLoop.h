@@ -94,7 +94,6 @@ class RenderLoop {
     void logDiagnosticVariables() const;
     double currentFieldOfView() const;
     void renderReflectionViews(const BusSimulation& simulation);
-    void renderReflectionDebugOverlay();
 
     GLFWwindow* window_;
     double cameraYaw_ = -2.3;
@@ -121,11 +120,7 @@ class RenderLoop {
     bool previousCaptureKeyState_ = false;
     bool previousLeftMouseState_ = false;
     bool leftMousePressed_ = false;
-    bool previousReflectionDebugKeyState_ = false;
-    bool previousCollisionDebugKeyState_ = false;
     bool previousClickableDebugKeyState_ = false;
-    bool reflectionDebugOverlay_ = false;
-    bool collisionDebugOverlay_ = false;
     bool clickableDebugOverlay_ = false;
     bool clickableHoverCacheValid_ = false;
     bool clickableHoverCacheHit_ = false;
@@ -139,9 +134,8 @@ class RenderLoop {
     double clickableHoverCacheCameraPitch_ = 0.0;
     double clickableHoverCacheLookYaw_ = 0.0;
     double clickableHoverCacheLookPitch_ = 0.0;
-    std::array<double, 3> clickableHoverCachePosition_ = {};
-    std::array<double, 9> clickableHoverCacheRotation_ = {};
     std::uint64_t clickableHoverCacheRevision_ = 0;
+    double clickableHoverCacheTimestamp_ = 0.0;
     bool renderingReflection_ = false;
     bool benchmarkClickDiscoveryPending_ = false;
     bool benchmarkClickDiscoveryComplete_ = false;

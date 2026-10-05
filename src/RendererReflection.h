@@ -11,7 +11,6 @@
 #include <string>
 #include <vector>
 
-struct GLFWwindow;
 class BusSimulation;
 
 namespace openbus::rendering {
@@ -45,7 +44,6 @@ class ReflectionRenderer {
     void render(const BusSimulation& simulation, const std::vector<VehicleCamera>& cameras,
                 const std::array<int, 4>& viewport, const VisibilityCallback& visibility,
                 const DrawCallback& draw, const RestoreCallback& restore);
-    void renderDebugOverlay(GLFWwindow* window, bool enabled) const;
 
   private:
     struct Impl;

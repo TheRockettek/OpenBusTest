@@ -102,39 +102,6 @@ void drawBox(double length, double width, double height, double red, double gree
     drawLineList(vertices);
 }
 
-void drawSolidTriangles(const std::vector<std::array<double, 3>>& positions, double red,
-                        double green, double blue) {
-    if (positions.size() < 3) {
-        return;
-    }
-    const std::array<double, 3> color = {red, green, blue};
-    std::vector<PrimitiveVertex> vertices;
-    vertices.reserve((positions.size() / 3) * 3);
-    for (const auto& point : positions) {
-        vertices.push_back(vertex(point[0], point[1], point[2], color));
-    }
-    drawPrimitives(vertices, GL_TRIANGLES);
-}
-
-void drawWireframeTriangles(const std::vector<std::array<double, 3>>& positions, double red,
-                            double green, double blue) {
-    if (positions.size() < 3) {
-        return;
-    }
-    const std::array<double, 3> color = {red, green, blue};
-    std::vector<PrimitiveVertex> vertices;
-    vertices.reserve((positions.size() / 3) * 6);
-    for (std::size_t index = 0; index + 2 < positions.size(); index += 3) {
-        const auto& first = positions[index];
-        const auto& second = positions[index + 1];
-        const auto& third = positions[index + 2];
-        for (const auto& point : {first, second, second, third, third, first}) {
-            vertices.push_back(vertex(point[0], point[1], point[2], color));
-        }
-    }
-    drawLineList(vertices, 1.5f);
-}
-
 void drawRoadBox(double centerX, double centerY, double length, double width, double height,
                  double bottomZ, const std::array<double, 3>& topColor,
                  const std::array<double, 3>& sideColor) {
@@ -285,57 +252,6 @@ void drawGround(const std::vector<RoadBump>& bumps) {
     }
     drawPrimitives(surfaces, GL_TRIANGLES);
     drawLineList(lines);
-}
-
-void drawWheel(double radius, double halfWidth, double red, double green, double blue) {
-    constexpr int segments = 16;
-    const std::array<double, 3> color = {red, green, blue};
-    std::vector<PrimitiveVertex> vertices;
-    vertices.reserve(segments * 6);
-    for (int segment = 0; segment < segments; ++segment) {
-        const double first = 2.0 * 3.141592653589793 * segment / segments;
-        const double second = 2.0 * 3.141592653589793 * (segment + 1) / segments;
-        for (const double z : {-halfWidth, halfWidth}) {
-            vertices.push_back(
-                vertex(radius * std::cos(first), radius * std::sin(first), z, color));
-            vertices.push_back(
-                vertex(radius * std::cos(second), radius * std::sin(second), z, color));
-        }
-        vertices.push_back(
-            vertex(radius * std::cos(first), radius * std::sin(first), -halfWidth, color));
-        vertices.push_back(
-            vertex(radius * std::cos(first), radius * std::sin(first), halfWidth, color));
-    }
-    drawLineList(vertices);
-}
-
-void drawCenterOfGravityMarker(double size) {
-    const std::array<double, 3> color = {0.95, 0.10, 0.10};
-    drawLineList({vertex(-size, 0.0, 0.0, color), vertex(size, 0.0, 0.0, color),
-                  vertex(0.0, -size, 0.0, color), vertex(0.0, size, 0.0, color),
-                  vertex(0.0, 0.0, -size, color), vertex(0.0, 0.0, size, color)},
-                 3.0f);
-}
-
-void drawCollisionWireframe(const BusSimulation& simulation) {
-    glDepthMask(GL_FALSE);
-    const BodyPose chassis = simulation.chassisPose();
-    const ChassisCollisionBox collision = simulation.chassisCollisionBox();
-    if (collision.enabled && !collision.mesh) {
-        pushMatrix();
-        applyPose(chassis);
-        translate(collision.offsetX, collision.offsetY, collision.offsetZ);
-        drawBox(collision.length, collision.width, collision.height, 0.0, 0.85, 0.95);
-        popMatrix();
-    }
-
-    for (std::size_t index = 0; index < simulation.wheelCount(); ++index) {
-        pushMatrix();
-        applyPose(simulation.wheelPose(index));
-        drawWheel(simulation.wheelRadius(index), simulation.wheelHalfWidth(), 0.0, 0.85, 0.95);
-        popMatrix();
-    }
-    glDepthMask(GL_TRUE);
 }
 
 } // namespace openbus::rendering

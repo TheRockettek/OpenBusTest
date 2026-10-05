@@ -238,6 +238,9 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Hold right mouse and drag vertically: adjust FOV in configured views, or
   move closer/farther in the outside orbit view
 - Scroll up/down: zoom in/out
+- Press `I` to show clickable mesh bounds; the currently hovered clickable part
+  is highlighted. `game.log` lists mesh dimensions, mouse events, and mapped
+  script trigger availability when the overlay is enabled.
 - VSync is enabled by default; set `OPENBUS_VSYNC=0`, `off`, or `false` before
   launching to run above the display refresh cadence
 - Reflection mirrors render at `256x256` by default. Set
@@ -246,6 +249,9 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Mirrors update every frame by default. Set `OPENBUS_REFLECTION_INTERVAL=4`
   to update them once every four rendered frames; values below `1` are treated
   as `1`.
+- Set `OPENBUS_REFLECTION_MAX_FPS=60` to cap mirror refreshes at 60 FPS without
+  limiting the main game. The cap is unset by default; when both reflection
+  controls are configured, the interval and time-based cap both apply.
 - Mirror transparency is rendered by default. Set
   `OPENBUS_REFLECTION_TRANSPARENT=0` to render opaque geometry only and reduce
   mirror workload when transparent details are not needed.

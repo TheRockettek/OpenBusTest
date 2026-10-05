@@ -650,14 +650,10 @@ Matrix4 makeMeshTransform(const std::array<double, 9>& meshRotation,
 using openbus::rendering::applyPose;
 using AssetRequestManager = openbus::rendering::AssetRequestManager;
 using openbus::rendering::drawBox;
-using openbus::rendering::drawCenterOfGravityMarker;
-using openbus::rendering::drawCollisionWireframe;
 using openbus::rendering::drawEnvironmentBatch;
 using openbus::rendering::drawGround;
 using openbus::rendering::drawMaterialBatch;
 using openbus::rendering::drawModelBatch;
-using openbus::rendering::drawSolidTriangles;
-using openbus::rendering::drawWireframeTriangles;
 using openbus::rendering::lookAt;
 using openbus::rendering::modelViewMatrix;
 using openbus::rendering::multiplyMatrix;
@@ -848,6 +844,7 @@ struct Vehicle {
         bool isShadow = false;
         bool transparent;
         int lodIndex;
+        std::string meshName;
         std::string visibleVariable;
         int visibleValue = 0;
         std::string meshIdentifier;
@@ -884,6 +881,12 @@ struct Vehicle {
     std::vector<bool> variableVisibleParts;
     std::vector<std::size_t> visibleClickablePartIndices;
     std::vector<std::size_t> visibleOpaquePickPartIndices;
+    mutable std::size_t hoveredClickablePartIndex = std::numeric_limits<std::size_t>::max();
+    mutable std::size_t hoveredClickableBatchIndex = std::numeric_limits<std::size_t>::max();
+    mutable std::size_t hoveredClickableTriangle = 0;
+    mutable std::vector<openbus::rendering::PrimitiveVertex> clickableDebugBoxVertices;
+    mutable std::vector<openbus::rendering::PrimitiveVertex> clickableDebugWireVertices;
+    mutable std::vector<openbus::rendering::PrimitiveVertex> clickableDebugTriangleVertices;
     std::unordered_set<int> visibleReflectionTextureIndices;
     std::unordered_map<int, int> reflectionRequiredSizes;
     openbus::scripting::Vehicle variables;
@@ -935,10 +938,14 @@ struct Vehicle {
     }
 
     void updateMaterialChange(Batch& batch) {
-        TraceScope phase("texture", "updateMaterialChange");
         if (batch.materialSelectionGeneration == materialSelectionGeneration) {
             return;
         }
+        if (batch.materialSelectionGeneration != 0 && batch.textureChanges.empty()) {
+            batch.materialSelectionGeneration = materialSelectionGeneration;
+            return;
+        }
+        TraceScope phase("texture", "updateMaterialChange");
         const MaterialState& selected = selectModelMaterial(
             batch.baseMaterial, [this](const std::string& name) { return variables.get(name); });
         batch.selectedMaterialItem = &selected != &batch.baseMaterial;
@@ -1035,7 +1042,6 @@ struct Vehicle {
         TraceScope trace("render", "Vehicle::updateAnimationStates");
         ++animationGeneration;
         const double timeStep = std::clamp(animationTimeStep, 0.0, 0.25);
-        bool changed = false;
         for (DisplayPart& part : displayLists) {
             if (part.animationStates.size() != part.animations.size()) {
                 part.animationStates.resize(part.animations.size());
@@ -1043,9 +1049,6 @@ struct Vehicle {
             for (std::size_t index = 0; index < part.animations.size(); ++index) {
                 const ModelAnimation& animation = part.animations[index];
                 DisplayPart::AnimationState& state = part.animationStates[index];
-                const double previousAmount = state.currentAmount;
-                const double previousTarget = state.targetAmount;
-                const bool previousInitialized = state.initialized;
                 if (animation.type.empty()) {
                     state.currentAmount = 0.0;
                     state.targetAmount = 0.0;
@@ -1087,13 +1090,7 @@ struct Vehicle {
                 } else {
                     state.currentAmount = nextAmount;
                 }
-                changed = changed || state.currentAmount != previousAmount ||
-                          state.targetAmount != previousTarget ||
-                          state.initialized != previousInitialized;
             }
-        }
-        if (changed) {
-            ++clickableStateRevision;
         }
     }
 
@@ -1516,19 +1513,23 @@ struct Vehicle {
 
     const DisplayPart* pickClickable(double cursorX, double cursorY, int viewportWidth,
                                      int viewportHeight, RenderViewContext context,
-                                     bool exactTriangles, const Batch** hitBatch = nullptr,
-                                     std::size_t* hitTriangle = nullptr,
-                                     bool* boundsOverlap = nullptr) const {
+                                     const Batch** hitBatch = nullptr,
+                                     std::size_t* hitTriangle = nullptr) const {
         TraceScope trace("input", "Vehicle::pickClickable");
         (void)context;
-        if (boundsOverlap != nullptr) {
-            *boundsOverlap = false;
+        if (hitBatch != nullptr) {
+            *hitBatch = nullptr;
+        }
+        if (hitTriangle != nullptr) {
+            *hitTriangle = 0;
         }
         if (viewportWidth <= 0 || viewportHeight <= 0) {
             return nullptr;
         }
         const auto& modelView = openbus::rendering::modelViewMatrix();
         const auto& projection = openbus::rendering::projectionMatrix();
+        const Batch* selectedBatch = nullptr;
+        std::size_t selectedTriangle = 0;
         const double normalizedX = cursorX / static_cast<double>(viewportWidth) * 2.0 - 1.0;
         const double normalizedY = 1.0 - cursorY / static_cast<double>(viewportHeight) * 2.0;
         struct ProjectedVertex {
@@ -1624,53 +1625,30 @@ struct Vehicle {
                    normalizedY >= minimumNdcY && normalizedY <= maximumNdcY;
         };
         double closestOccluderDepth = std::numeric_limits<double>::max();
-        if (exactTriangles) {
-            for (const std::size_t partIndex : visibleOpaquePickPartIndices) {
-                const DisplayPart& part = displayLists[partIndex];
-                const Matrix4 modelViewPart = multiplyMatrix4(
-                    modelView, multiplyMatrix4(translationMatrix({0.0, 0.0, modelOffsetZ}),
-                                               animationTransformForPart(part)));
-                std::array<double, 4> viewCenter = {};
-                std::array<double, 4> clipCenter = {};
-                if (!cursorWithinProjectedBounds(modelViewPart, part, viewCenter, clipCenter)) {
-                    continue;
-                }
-                for (const Batch& batch : part.batches) {
-                    if (batch.alphaMode != 0 || batch.noZwrite || batch.noZcheck) {
-                        continue;
-                    }
-                    for (std::size_t index = 0; index + 2 < batch.vertices.size(); index += 3) {
-                        double triangleDepth = 0.0;
-                        if (triangleDepthAtCursor(modelViewPart, part, batch, index,
-                                                  triangleDepth)) {
-                            closestOccluderDepth = std::min(closestOccluderDepth, triangleDepth);
-                        }
-                    }
-                }
+        for (const std::size_t partIndex : visibleOpaquePickPartIndices) {
+            const DisplayPart& part = displayLists[partIndex];
+            const Matrix4 modelViewPart = multiplyMatrix4(
+                modelView, multiplyMatrix4(translationMatrix({0.0, 0.0, modelOffsetZ}),
+                                           animationTransformForPart(part)));
+            std::array<double, 4> viewCenter = {};
+            std::array<double, 4> clipCenter = {};
+            if (!cursorWithinProjectedBounds(modelViewPart, part, viewCenter, clipCenter)) {
+                continue;
             }
-        }
-        std::size_t overlappingNonClickableOccluders = 0;
-        if (!exactTriangles && boundsOverlap != nullptr) {
-            for (const std::size_t partIndex : visibleOpaquePickPartIndices) {
-                const DisplayPart& part = displayLists[partIndex];
-                if (!part.mouseEvent.empty()) {
+            for (const Batch& batch : part.batches) {
+                if (batch.alphaMode != 0 || batch.noZwrite || batch.noZcheck) {
                     continue;
                 }
-                const Matrix4 modelViewPart = multiplyMatrix4(
-                    modelView, multiplyMatrix4(translationMatrix({0.0, 0.0, modelOffsetZ}),
-                                               animationTransformForPart(part)));
-                std::array<double, 4> viewCenter = {};
-                std::array<double, 4> clipCenter = {};
-                if (cursorWithinProjectedBounds(modelViewPart, part, viewCenter, clipCenter)) {
-                    ++overlappingNonClickableOccluders;
+                for (std::size_t index = 0; index + 2 < batch.vertices.size(); index += 3) {
+                    double triangleDepth = 0.0;
+                    if (triangleDepthAtCursor(modelViewPart, part, batch, index, triangleDepth)) {
+                        closestOccluderDepth = std::min(closestOccluderDepth, triangleDepth);
+                    }
                 }
             }
         }
         double closestDepth = std::numeric_limits<double>::max();
         const DisplayPart* selected = nullptr;
-        const Batch* selectedBatch = nullptr;
-        std::size_t selectedTriangle = 0;
-        std::size_t overlappingClickableParts = 0;
         for (const std::size_t partIndex : visibleClickablePartIndices) {
             const DisplayPart& part = displayLists[partIndex];
             const Matrix4 modelViewPart = multiplyMatrix4(
@@ -1681,16 +1659,7 @@ struct Vehicle {
             if (!cursorWithinProjectedBounds(modelViewPart, part, viewCenter, clipCenter)) {
                 continue;
             }
-            ++overlappingClickableParts;
             if (std::abs(clipCenter[3]) <= 1.0e-8) {
-                continue;
-            }
-            if (!exactTriangles) {
-                const double partDepth = -viewCenter[2];
-                if (partDepth < closestDepth) {
-                    closestDepth = partDepth;
-                    selected = &part;
-                }
                 continue;
             }
             double partDistance = std::numeric_limits<double>::max();
@@ -1724,23 +1693,32 @@ struct Vehicle {
             selected = &part;
             selectedBatch = partBatch;
             selectedTriangle = partTriangle;
-            if (hitBatch != nullptr) {
-                *hitBatch = selectedBatch;
-            }
-            if (hitTriangle != nullptr) {
-                *hitTriangle = selectedTriangle;
-            }
         }
-        if (boundsOverlap != nullptr && selected != nullptr) {
-            *boundsOverlap = overlappingClickableParts + overlappingNonClickableOccluders > 1;
+        if (hitBatch != nullptr) {
+            *hitBatch = selectedBatch;
+        }
+        if (hitTriangle != nullptr) {
+            *hitTriangle = selectedTriangle;
         }
         return selected;
     }
 
     bool hasClickableAt(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
                         RenderViewContext context) const {
-        return pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, false) !=
-               nullptr;
+        const Batch* selectedBatch = nullptr;
+        std::size_t selectedTriangle = 0;
+        const DisplayPart* selected = pickClickable(cursorX, cursorY, viewportWidth, viewportHeight,
+                                                    context, &selectedBatch, &selectedTriangle);
+        hoveredClickablePartIndex = selected == nullptr
+                                        ? std::numeric_limits<std::size_t>::max()
+                                        : static_cast<std::size_t>(selected - displayLists.data());
+        hoveredClickableBatchIndex = std::numeric_limits<std::size_t>::max();
+        hoveredClickableTriangle = selectedTriangle;
+        if (selected != nullptr && selectedBatch != nullptr) {
+            hoveredClickableBatchIndex =
+                static_cast<std::size_t>(selectedBatch - selected->batches.data());
+        }
+        return selected != nullptr;
     }
 
     bool hasVisibleClickable(RenderViewContext context) const {
@@ -1752,16 +1730,160 @@ struct Vehicle {
         return clickableStateRevision + displayLists.size();
     }
 
+    std::string clickableDebugDescription(const DisplayPart& part, std::size_t partIndex,
+                                          RenderViewContext context) const {
+        std::string scriptEvent = lower(part.mouseEvent);
+        for (char& character : scriptEvent) {
+            const unsigned char byte = static_cast<unsigned char>(character);
+            character = std::isalnum(byte) ? static_cast<char>(std::tolower(byte)) : '_';
+        }
+        const std::string handler = "trigger_" + scriptEvent;
+        const bool handlerFound = scripts != nullptr && scripts->hasScriptEntryPoint(handler);
+        std::ostringstream description;
+        description << "Clickable part[" << partIndex << "] mesh=\"" << part.meshName << "\"";
+        if (!part.meshIdentifier.empty()) {
+            description << " id=\"" << part.meshIdentifier << "\"";
+        }
+        description << " mouseevent=\"" << part.mouseEvent << "\" maps_to=" << handler
+                    << " handler=" << (handlerFound ? "found" : "missing")
+                    << " visible=" << (clickablePartVisible(part, partIndex, context) ? "yes" : "no")
+                    << " bounds_size_xyz=(" << part.size[0] << ',' << part.size[1] << ','
+                    << part.size[2] << ") [model units]";
+        return description.str();
+    }
+
+    void logClickableDebugInfo(RenderViewContext context) const {
+        std::size_t clickableCount = 0;
+        for (const DisplayPart& part : displayLists) {
+            clickableCount += !part.mouseEvent.empty() ? 1U : 0U;
+        }
+        gameLog.Log("Clickable overlay: " + std::to_string(clickableCount) +
+                    " mesh(es) with [mouseevent]; bounds are in model units");
+        for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+            const DisplayPart& part = displayLists[partIndex];
+            if (!part.mouseEvent.empty()) {
+                gameLog.Log(clickableDebugDescription(part, partIndex, context));
+            }
+        }
+    }
+
+    void drawClickableDebug(RenderViewContext context) const {
+        TraceScope trace("debug", "Vehicle::drawClickableDebug");
+        static constexpr std::array<std::array<int, 2>, 12> boxEdges = {
+            {{0, 1}, {1, 3}, {3, 2}, {2, 0}, {4, 5}, {5, 7},
+             {7, 6}, {6, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}}};
+        clickableDebugBoxVertices.clear();
+        clickableDebugWireVertices.clear();
+        clickableDebugTriangleVertices.clear();
+        clickableDebugBoxVertices.reserve(visibleClickablePartIndices.size() * 24);
+        const auto appendVertex = [](std::vector<openbus::rendering::PrimitiveVertex>& vertices,
+                                     const std::array<double, 4>& point,
+                                     const std::array<float, 3>& color) {
+            vertices.push_back({static_cast<float>(point[0]), static_cast<float>(point[1]),
+                                static_cast<float>(point[2]), color[0], color[1], color[2]});
+        };
+        const auto transformVertex = [this](const Matrix4& animation, const Vertex& vertex) {
+            std::array<double, 4> point =
+                transformPoint(animation, {vertex.x, vertex.y, vertex.z, 1.0});
+            point[2] += modelOffsetZ;
+            return point;
+        };
+        const DisplayPart* selected = nullptr;
+        const Batch* selectedBatch = nullptr;
+        std::size_t selectedTriangle = hoveredClickableTriangle;
+        if (hoveredClickablePartIndex < displayLists.size()) {
+            const DisplayPart& part = displayLists[hoveredClickablePartIndex];
+            if (clickablePartVisible(part, hoveredClickablePartIndex, context)) {
+                selected = &part;
+                if (hoveredClickableBatchIndex < part.batches.size()) {
+                    selectedBatch = &part.batches[hoveredClickableBatchIndex];
+                }
+            }
+        }
+        for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+            const DisplayPart& part = displayLists[partIndex];
+            if (part.mouseEvent.empty() || !clickablePartVisible(part, partIndex, context)) {
+                continue;
+            }
+            const bool isSelected = &part == selected;
+            const std::array<float, 3> boundsColor =
+                isSelected ? std::array<float, 3>{1.0f, 0.15f, 0.05f}
+                           : std::array<float, 3>{0.0f, 0.75f, 0.95f};
+            const Matrix4 animation = animationTransformForPart(part);
+            const std::array<double, 3> half = {std::max(part.size[0] * 0.5, 0.0),
+                                                std::max(part.size[1] * 0.5, 0.0),
+                                                std::max(part.size[2] * 0.5, 0.0)};
+            std::array<std::array<double, 4>, 8> corners = {};
+            for (int corner = 0; corner < 8; ++corner) {
+                const std::array<double, 4> local = {
+                    part.center[0] + ((corner & 1) == 0 ? -half[0] : half[0]),
+                    part.center[1] + ((corner & 2) == 0 ? -half[1] : half[1]),
+                    part.center[2] + ((corner & 4) == 0 ? -half[2] : half[2]), 1.0};
+                corners[static_cast<std::size_t>(corner)] = transformPoint(animation, local);
+                corners[static_cast<std::size_t>(corner)][2] += modelOffsetZ;
+            }
+            for (const auto& edge : boxEdges) {
+                appendVertex(clickableDebugBoxVertices,
+                             corners[static_cast<std::size_t>(edge[0])], boundsColor);
+                appendVertex(clickableDebugBoxVertices,
+                             corners[static_cast<std::size_t>(edge[1])], boundsColor);
+            }
+            const std::array<float, 3> meshColor = {1.0f, 0.85f, 0.05f};
+            for (const Batch& batch : part.batches) {
+                for (std::size_t index = 0; index + 2 < batch.vertices.size(); index += 3) {
+                    const auto first = transformVertex(animation, batch.vertices[index]);
+                    const auto second = transformVertex(animation, batch.vertices[index + 1]);
+                    const auto third = transformVertex(animation, batch.vertices[index + 2]);
+                    appendVertex(clickableDebugWireVertices, first, meshColor);
+                    appendVertex(clickableDebugWireVertices, second, meshColor);
+                    appendVertex(clickableDebugWireVertices, second, meshColor);
+                    appendVertex(clickableDebugWireVertices, third, meshColor);
+                    appendVertex(clickableDebugWireVertices, third, meshColor);
+                    appendVertex(clickableDebugWireVertices, first, meshColor);
+                }
+                if (isSelected && selectedBatch == &batch &&
+                    selectedTriangle + 2 < batch.vertices.size()) {
+                    const std::array<float, 3> fillColor = {1.0f, 0.15f, 0.02f};
+                    const std::array<float, 3> outlineColor = {1.0f, 1.0f, 0.2f};
+                    const auto first = transformVertex(animation, batch.vertices[selectedTriangle]);
+                    const auto second =
+                        transformVertex(animation, batch.vertices[selectedTriangle + 1]);
+                    const auto third =
+                        transformVertex(animation, batch.vertices[selectedTriangle + 2]);
+                    appendVertex(clickableDebugTriangleVertices, first, fillColor);
+                    appendVertex(clickableDebugTriangleVertices, second, fillColor);
+                    appendVertex(clickableDebugTriangleVertices, third, fillColor);
+                    appendVertex(clickableDebugWireVertices, first, outlineColor);
+                    appendVertex(clickableDebugWireVertices, second, outlineColor);
+                    appendVertex(clickableDebugWireVertices, second, outlineColor);
+                    appendVertex(clickableDebugWireVertices, third, outlineColor);
+                    appendVertex(clickableDebugWireVertices, third, outlineColor);
+                    appendVertex(clickableDebugWireVertices, first, outlineColor);
+                }
+            }
+        }
+        if (clickableDebugBoxVertices.empty() && clickableDebugWireVertices.empty()) {
+            return;
+        }
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        if (!clickableDebugBoxVertices.empty()) {
+            openbus::rendering::drawPrimitives(clickableDebugBoxVertices, GL_LINES);
+        }
+        if (!clickableDebugTriangleVertices.empty()) {
+            openbus::rendering::drawPrimitives(clickableDebugTriangleVertices, GL_TRIANGLES);
+        }
+        if (!clickableDebugWireVertices.empty()) {
+            openbus::rendering::drawPrimitives(clickableDebugWireVertices, GL_LINES, 1.5f);
+        }
+        glDepthMask(GL_TRUE);
+        glEnable(GL_DEPTH_TEST);
+    }
+
     std::string mouseEventAt(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
                              RenderViewContext context) const {
-        bool boundsOverlap = false;
         const DisplayPart* selected =
-            pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, false, nullptr,
-                          nullptr, &boundsOverlap);
-        if (selected != nullptr && boundsOverlap) {
-            selected =
-                pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, true);
-        }
+            pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context);
         return selected == nullptr ? std::string() : selected->mouseEvent;
     }
 
@@ -1776,58 +1898,6 @@ struct Vehicle {
             scripts->invokeMouseEvent(eventName);
         }
         return true;
-    }
-
-    void drawClickableDebug(double cursorX, double cursorY, int viewportWidth, int viewportHeight,
-                            RenderViewContext context) const {
-        TraceScope trace("debug", "Vehicle::drawClickableDebug");
-        glDisable(GL_DEPTH_TEST);
-        glDepthMask(GL_FALSE);
-        const Batch* selectedBatch = nullptr;
-        std::size_t selectedTriangle = 0;
-        const DisplayPart* selected =
-            pickClickable(cursorX, cursorY, viewportWidth, viewportHeight, context, true,
-                          &selectedBatch, &selectedTriangle);
-        for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
-            const DisplayPart& part = displayLists[partIndex];
-            if (part.mouseEvent.empty() || !clickablePartVisible(part, partIndex, context)) {
-                continue;
-            }
-            std::vector<std::array<double, 3>> vertices;
-            for (const Batch& batch : part.batches) {
-                vertices.reserve(vertices.size() + batch.vertices.size());
-                for (const Vertex& vertex : batch.vertices) {
-                    vertices.push_back({vertex.x, vertex.y, vertex.z});
-                }
-            }
-            const bool isSelected = &part == selected;
-            pushMatrix();
-            translate(0.0, 0.0, modelOffsetZ);
-            applyAnimations(part);
-            translate(part.center[0], part.center[1], part.center[2]);
-            drawBox(part.size[0], part.size[1], part.size[2], isSelected ? 1.0 : 0.0,
-                    isSelected ? 0.15 : 0.75, isSelected ? 0.05 : 0.95);
-            translate(-part.center[0], -part.center[1], -part.center[2]);
-            if (!vertices.empty()) {
-                drawWireframeTriangles(vertices, 1.0, 0.85, 0.05);
-                if (isSelected && selectedBatch != nullptr) {
-                    const std::size_t triangleEnd = selectedTriangle + 2;
-                    if (triangleEnd < selectedBatch->vertices.size()) {
-                        std::vector<std::array<double, 3>> selectedVertices;
-                        selectedVertices.reserve(3);
-                        for (std::size_t index = selectedTriangle; index <= triangleEnd; ++index) {
-                            const Vertex& vertex = selectedBatch->vertices[index];
-                            selectedVertices.push_back({vertex.x, vertex.y, vertex.z});
-                        }
-                        drawSolidTriangles(selectedVertices, 1.0, 0.15, 0.02);
-                        drawWireframeTriangles(selectedVertices, 1.0, 1.0, 0.2);
-                    }
-                }
-            }
-            popMatrix();
-        }
-        glDepthMask(GL_TRUE);
-        glEnable(GL_DEPTH_TEST);
     }
 
     void joinTextureWorkers() {
@@ -2173,7 +2243,7 @@ struct Vehicle {
         }
 
         {
-            if (frustumCulling) {
+            if (!reusePreparedDraw && frustumCulling) {
                 TraceScope phase("render", "Vehicle::draw.frustumSetup");
                 frustum = buildViewFrustum(openbus::rendering::projectionMatrix());
             }
@@ -2245,13 +2315,11 @@ struct Vehicle {
                     if (!viewpointMatches || !visible(part, partIndex)) {
                         continue;
                     }
+                    bool hasOpaqueBatch = false;
                     for (Batch& batch : part.batches) {
                         updateMaterialChange(batch);
-                    }
-                    const bool hasOpaqueBatch = std::any_of(
-                        part.batches.begin(), part.batches.end(),
-                        [](const Batch& batch) { return batch.alphaMode == 0 && !batch.noZwrite; });
-                    for (Batch& batch : part.batches) {
+                        hasOpaqueBatch =
+                            hasOpaqueBatch || (batch.alphaMode == 0 && !batch.noZwrite);
                         if (classifyTransparent && (batch.alphaMode != 0 || batch.noZwrite)) {
                             transparentBatches.push_back(
                                 {&batch, &part, viewDepth(part), part.renderType});
@@ -3744,6 +3812,8 @@ struct Vehicle {
         displayPart.isShadow = part.isShadow;
         displayPart.transparent = hasTransparentMaterial;
         displayPart.lodIndex = part.lodIndex;
+        displayPart.meshName =
+            part.bundleEntry.empty() ? part.objPath.filename().string() : part.bundleEntry;
         displayPart.visibleVariable = lower(part.visibleVariable);
         displayPart.visibleValue = part.visibleValue;
         displayPart.meshIdentifier = part.meshIdentifier;
@@ -3812,6 +3882,7 @@ struct Vehicle {
                          [](const DisplayPart& first, const DisplayPart& second) {
                              return first.transparent < second.transparent;
                          });
+        ++clickableStateRevision;
         for (DisplayPart& part : displayLists) {
             part.pickOccluder =
                 std::any_of(part.batches.begin(), part.batches.end(), [](const Batch& batch) {
@@ -4035,7 +4106,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     const bool benchmarkMode = parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
-    glfwWindowHint(GLFW_VISIBLE, benchmarkMode ? GLFW_FALSE : GLFW_TRUE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
 #ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
@@ -4300,10 +4371,6 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
     renderingReflection_ = false;
 }
 
-void RenderLoop::renderReflectionDebugOverlay() {
-    reflectionRenderer_->renderDebugOverlay(window_, reflectionDebugOverlay_);
-}
-
 bool RenderLoop::shouldClose() const {
     return glfwWindowShouldClose(window_) != 0;
 }
@@ -4507,26 +4574,17 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         previousCaptureKeyState_ = captureKeyPressed;
     }
     {
-        TraceScope phase("frame", "RenderLoop::beginFrame.debugInput");
-        const bool reflectionDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_F10) == GLFW_PRESS;
-        if (reflectionDebugKeyPressed && !previousReflectionDebugKeyState_) {
-            reflectionDebugOverlay_ = !reflectionDebugOverlay_;
-            gameLog.Log(std::string("Reflection texture overlay ") +
-                        (reflectionDebugOverlay_ ? "enabled" : "disabled"));
-        }
-        previousReflectionDebugKeyState_ = reflectionDebugKeyPressed;
-        const bool collisionDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_C) == GLFW_PRESS;
-        if (collisionDebugKeyPressed && !previousCollisionDebugKeyState_) {
-            collisionDebugOverlay_ = !collisionDebugOverlay_;
-            gameLog.Log(std::string("Collision wireframe overlay ") +
-                        (collisionDebugOverlay_ ? "enabled" : "disabled"));
-        }
-        previousCollisionDebugKeyState_ = collisionDebugKeyPressed;
         const bool clickableDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_I) == GLFW_PRESS;
         if (clickableDebugKeyPressed && !previousClickableDebugKeyState_) {
             clickableDebugOverlay_ = !clickableDebugOverlay_;
             gameLog.Log(std::string("Clickable component overlay ") +
                         (clickableDebugOverlay_ ? "enabled" : "disabled"));
+            if (clickableDebugOverlay_ && playerVehicle_ != nullptr) {
+                const RenderViewContext context = isExteriorView()
+                                                      ? RenderViewContext::PlayerExterior
+                                                      : RenderViewContext::PlayerInterior;
+                playerVehicle_->logClickableDebugInfo(context);
+            }
         }
         previousClickableDebugKeyState_ = clickableDebugKeyPressed;
     }
@@ -4836,10 +4894,10 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         benchmarkClickQueued_ = false;
         const int interactionContextValue = static_cast<int>(interactionContext);
         const std::uint64_t clickableRevision = playerVehicle_->clickableRevision();
-        const auto samePose = [&] {
-            return clickableHoverCachePosition_ == chassis.position &&
-                   clickableHoverCacheRotation_ == chassis.rotation;
-        };
+        // Pose changes every simulation step; while the pointer is stationary, refresh
+        // animated/moving hit targets at 13 Hz instead of scanning all triangles per frame.
+        constexpr double clickableHoverRefreshInterval = 0.075;
+        const double currentTime = glfwGetTime();
         const bool hoverCacheMatches =
             clickableHoverCacheValid_ && clickableHoverCacheX_ == framebufferCursorX &&
             clickableHoverCacheY_ == framebufferCursorY &&
@@ -4850,8 +4908,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             clickableHoverCacheCameraYaw_ == cameraYaw_ &&
             clickableHoverCacheCameraPitch_ == cameraPitch_ &&
             clickableHoverCacheLookYaw_ == viewLookYaw_ &&
-            clickableHoverCacheLookPitch_ == viewLookPitch_ && samePose() &&
-            clickableHoverCacheRevision_ == clickableRevision;
+            clickableHoverCacheLookPitch_ == viewLookPitch_ &&
+            clickableHoverCacheRevision_ == clickableRevision &&
+            currentTime - clickableHoverCacheTimestamp_ < clickableHoverRefreshInterval;
         if (!hoverCacheMatches) {
             clickableHoverCacheValid_ = true;
             clickableHoverCacheX_ = framebufferCursorX;
@@ -4864,9 +4923,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             clickableHoverCacheCameraPitch_ = cameraPitch_;
             clickableHoverCacheLookYaw_ = viewLookYaw_;
             clickableHoverCacheLookPitch_ = viewLookPitch_;
-            clickableHoverCachePosition_ = chassis.position;
-            clickableHoverCacheRotation_ = chassis.rotation;
             clickableHoverCacheRevision_ = clickableRevision;
+            clickableHoverCacheTimestamp_ = currentTime;
             clickableHoverCacheHit_ = playerVehicle_->hasVisibleClickable(interactionContext) &&
                                       playerVehicle_->hasClickableAt(
                                           framebufferCursorX, framebufferCursorY, framebufferWidth_,
@@ -4955,30 +5013,17 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         };
         drawVehicles(VehicleRenderPass::Opaque);
         drawVehicles(VehicleRenderPass::Transparent);
-        if (clickableDebugOverlay_ && playerVehicle_ != nullptr) {
-            double cursorX = 0.0;
-            double cursorY = 0.0;
-            glfwGetCursorPos(window_, &cursorX, &cursorY);
-            int windowWidth = 1;
-            int windowHeight = 1;
-            glfwGetWindowSize(window_, &windowWidth, &windowHeight);
-            const double framebufferCursorX = cursorX * static_cast<double>(framebufferWidth_) /
-                                              static_cast<double>(std::max(windowWidth, 1));
-            const double framebufferCursorY = cursorY * static_cast<double>(framebufferHeight_) /
-                                              static_cast<double>(std::max(windowHeight, 1));
-            pushMatrix();
-            applyPose(chassis);
-            playerVehicle_->drawClickableDebug(
-                framebufferCursorX, framebufferCursorY, framebufferWidth_, framebufferHeight_,
-                isExteriorView() ? RenderViewContext::PlayerExterior
-                                 : RenderViewContext::PlayerInterior);
-            popMatrix();
-        }
         if (!playerDrawn && collision.enabled && !collision.mesh) {
             pushMatrix();
             applyPose(chassis);
             translate(collision.offsetX, collision.offsetY, collision.offsetZ);
             drawBox(collision.length, collision.width, collision.height, 0.85, 0.70, 0.08);
+            popMatrix();
+        }
+        if (!renderingReflection_ && clickableDebugOverlay_ && playerVehicle_ != nullptr) {
+            pushMatrix();
+            applyPose(chassis);
+            playerVehicle_->drawClickableDebug(context);
             popMatrix();
         }
     }
@@ -4997,38 +5042,6 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         glfwSetWindowTitle(window_, title.str().c_str());
         lastStatsTitleTime_ = glfwGetTime();
     }
-    {
-        TraceScope phase("render", "RenderLoop::draw.overlays");
-        if (!renderingReflection_) {
-            const std::array<double, 3> centerOfGravity = simulation.centerOfGravity();
-            pushMatrix();
-            translate(centerOfGravity[0], centerOfGravity[1], centerOfGravity[2]);
-            drawCenterOfGravityMarker(0.35);
-            popMatrix();
-            const std::array<double, 3> axleColor = {0.20, 0.20, 0.20};
-            std::vector<openbus::rendering::PrimitiveVertex> axleLines;
-            axleLines.reserve(simulation.axleCount() * 2);
-            for (std::size_t axleIndex = 0; axleIndex < simulation.axleCount(); ++axleIndex) {
-                const BodyPose leftWheel = simulation.wheelPose(axleIndex * 2);
-                const BodyPose rightWheel = simulation.wheelPose(axleIndex * 2 + 1);
-                axleLines.push_back(
-                    {static_cast<float>(rightWheel.position[0]),
-                     static_cast<float>(rightWheel.position[1]),
-                     static_cast<float>(rightWheel.position[2]), static_cast<float>(axleColor[0]),
-                     static_cast<float>(axleColor[1]), static_cast<float>(axleColor[2])});
-                axleLines.push_back(
-                    {static_cast<float>(leftWheel.position[0]),
-                     static_cast<float>(leftWheel.position[1]),
-                     static_cast<float>(leftWheel.position[2]), static_cast<float>(axleColor[0]),
-                     static_cast<float>(axleColor[1]), static_cast<float>(axleColor[2])});
-            }
-            openbus::rendering::drawPrimitives(axleLines, GL_LINES);
-            if (collisionDebugOverlay_) {
-                drawCollisionWireframe(simulation);
-            }
-        }
-    }
-    renderReflectionDebugOverlay();
 }
 
 void RenderLoop::endFrame() {
