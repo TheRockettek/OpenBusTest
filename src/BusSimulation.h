@@ -2,7 +2,9 @@
 
 #include "BusConfiguration.h"
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace openbus::scripting {
@@ -15,7 +17,8 @@ class BusSimulation {
                            double physicsHz = 60.0, int maxCatchUpSteps = 8,
                            double groundPlaneZ = 0.0,
                            std::vector<TerrainCollisionGrid> terrain = {},
-                           std::vector<StaticCollisionMesh> staticCollision = {});
+                           std::vector<StaticCollisionMesh> staticCollision = {},
+                           bool createDefaultGround = true);
     ~BusSimulation();
 
     BusSimulation(const BusSimulation&) = delete;
@@ -41,6 +44,12 @@ class BusSimulation {
     double positionX() const;
     double positionY() const;
     double positionZ() const;
+    void translateVertically(double meters);
+    void addMapTileCollision(int tileX, int tileY, std::optional<TerrainCollisionGrid> terrain,
+                             std::vector<StaticCollisionMesh> staticCollision);
+    void removeMapTileCollision(int tileX, int tileY);
+    std::uint64_t collisionDebugRevision() const;
+    std::size_t loadedMapCollisionTileCount() const;
     std::vector<StaticCollisionMesh> collisionDebugMeshes() const;
     double yaw() const;
     double steeringAngle() const;

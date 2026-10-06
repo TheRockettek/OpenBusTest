@@ -75,9 +75,10 @@ double sampleTerrainHeight(const MapDefinition& map, double worldX, double world
     const std::uint64_t key = tileKey(tileX, tileY);
     auto found = terrainCache.find(key);
     if (found == terrainCache.end()) {
-        const auto reference = std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& tile) {
-            return tile.x == tileX && tile.y == tileY && tile.hasTerrainFile;
-        });
+        const auto reference =
+            std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& tile) {
+                return tile.x == tileX && tile.y == tileY && tile.hasTerrainFile;
+            });
         if (reference == map.tiles.end()) {
             return 0.0;
         }
@@ -94,10 +95,10 @@ double sampleTerrainHeight(const MapDefinition& map, double worldX, double world
     const std::size_t side = grid.intervals + 1;
     const double localX = worldX - static_cast<double>(tileX) * OMSI_TILE_SIZE_METERS;
     const double localY = worldY - static_cast<double>(tileY) * OMSI_TILE_SIZE_METERS;
-    const double gridX = std::clamp(localX / OMSI_TILE_SIZE_METERS * grid.intervals,
-                                    0.0, static_cast<double>(grid.intervals));
-    const double gridY = std::clamp(localY / OMSI_TILE_SIZE_METERS * grid.intervals,
-                                    0.0, static_cast<double>(grid.intervals));
+    const double gridX = std::clamp(localX / OMSI_TILE_SIZE_METERS * grid.intervals, 0.0,
+                                    static_cast<double>(grid.intervals));
+    const double gridY = std::clamp(localY / OMSI_TILE_SIZE_METERS * grid.intervals, 0.0,
+                                    static_cast<double>(grid.intervals));
     const std::size_t x0 = static_cast<std::size_t>(gridX);
     const std::size_t y0 = static_cast<std::size_t>(gridY);
     const std::size_t x1 = std::min(x0 + 1, grid.intervals);
@@ -107,12 +108,12 @@ double sampleTerrainHeight(const MapDefinition& map, double worldX, double world
     const auto at = [&](std::size_t y, std::size_t x) {
         return static_cast<double>(grid.heights[y * side + x]);
     };
-    return std::lerp(std::lerp(at(y0, x0), at(y0, x1), fx),
-                     std::lerp(at(y1, x0), at(y1, x1), fx), fy);
+    return std::lerp(std::lerp(at(y0, x0), at(y0, x1), fx), std::lerp(at(y1, x0), at(y1, x1), fx),
+                     fy);
 }
 
 std::array<double, 3> transformSceneryVertex(const openbus::rendering::ObjPosition& source,
-                                              const MapSceneryPose& pose, double worldZ) {
+                                             const MapSceneryPose& pose, double worldZ) {
     const double radians = std::numbers::pi / 180.0;
     const double ax = -pose.rotationDegrees[1] * radians;
     const double ay = pose.rotationDegrees[2] * radians;
@@ -127,10 +128,11 @@ std::array<double, 3> transformSceneryVertex(const openbus::rendering::ObjPositi
             pose.y + x2 * std::sin(az) + y2 * std::cos(az), worldZ + z2};
 }
 
-std::vector<std::filesystem::path> readSceneryCollisionMeshes(
-    const std::filesystem::path& configPath, const std::filesystem::path& omsiRoot,
-    const std::filesystem::path& mapRoot, bool& noCollision, bool& onlyEditor,
-    bool& absoluteHeight) {
+std::vector<std::filesystem::path>
+readSceneryCollisionMeshes(const std::filesystem::path& configPath,
+                           const std::filesystem::path& omsiRoot,
+                           const std::filesystem::path& mapRoot, bool& noCollision,
+                           bool& onlyEditor, bool& absoluteHeight) {
     std::vector<std::filesystem::path> meshes;
     const SceneryObjectConfig scenery = loadSceneryObjectFile(configPath);
     noCollision = scenery.noCollision;
@@ -150,17 +152,15 @@ std::vector<std::filesystem::path> readSceneryCollisionMeshes(
         }
     }
 
-    const std::filesystem::path modelConfigPath =
-        resolveSceneryObjectModelConfigPath(scenery);
+    const std::filesystem::path modelConfigPath = resolveSceneryObjectModelConfigPath(scenery);
     if (modelConfigPath.empty() || !std::filesystem::is_regular_file(modelConfigPath)) {
         return meshes;
     }
-    const std::filesystem::path modelRoot = scenery.modelPath.empty()
-                                                ? objectRoot / "model"
-                                                : modelConfigPath.parent_path();
+    const std::filesystem::path modelRoot =
+        scenery.modelPath.empty() ? objectRoot / "model" : modelConfigPath.parent_path();
     openbus::scripting::SceneryObject variables;
-    const ModelConfig model = loadModelConfig(modelConfigPath, modelRoot,
-                                              ModelConfigKind::SceneryObject, variables);
+    const ModelConfig model =
+        loadModelConfig(modelConfigPath, modelRoot, ModelConfigKind::SceneryObject, variables);
     absoluteHeight = absoluteHeight || model.absoluteHeight;
     for (const ModelCollisionMesh& collision : model.collisionMeshes) {
         if (collision.hasPart && collision.partIndex < model.parts.size() &&
@@ -187,14 +187,19 @@ std::vector<std::filesystem::path> readSceneryCollisionMeshes(
 
 } // namespace
 
-MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
-                                             const std::filesystem::path& omsiRoot) {
+static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map,
+                                                        const std::filesystem::path& omsiRoot,
+                                                        const MapTileReference* selectedTile) {
     MapRoadCollisionResult result;
     std::unordered_map<std::string, MapSplineProfile> profiles;
     std::unordered_set<std::string> failedProfiles;
     std::unordered_map<std::uint64_t, TerrainGrid> terrainCache;
 
     for (const MapTileReference& tileReference : map.tiles) {
+        if (selectedTile != nullptr &&
+            (tileReference.x != selectedTile->x || tileReference.y != selectedTile->y)) {
+            continue;
+        }
         ++result.tilesVisited;
         const MapTileData tile = loadMapTile(tileReference);
         StaticCollisionMesh tileMesh;
@@ -303,9 +308,8 @@ MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
             if (noCollision || onlyEditor || collisionPaths.empty()) {
                 continue;
             }
-            const double ground = absoluteHeight
-                                      ? 0.0
-                                      : sampleTerrainHeight(map, pose->x, pose->y, terrainCache);
+            const double ground =
+                absoluteHeight ? 0.0 : sampleTerrainHeight(map, pose->x, pose->y, terrainCache);
             const double worldZ = mapSceneryWorldHeight(pose->z, ground, absoluteHeight);
             bool objectAdded = false;
             for (const std::filesystem::path& collisionPath : collisionPaths) {
@@ -353,6 +357,23 @@ MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
         }
     }
     return result;
+}
+
+MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
+                                             const std::filesystem::path& omsiRoot) {
+    return buildMapRoadCollisionImpl(map, omsiRoot, nullptr);
+}
+
+MapRoadCollisionResult buildMapRoadCollisionTile(const MapDefinition& map,
+                                                 const std::filesystem::path& omsiRoot, int tileX,
+                                                 int tileY) {
+    const auto tile = std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& reference) {
+        return reference.x == tileX && reference.y == tileY;
+    });
+    if (tile == map.tiles.end()) {
+        return {};
+    }
+    return buildMapRoadCollisionImpl(map, omsiRoot, &*tile);
 }
 
 } // namespace openbus::map

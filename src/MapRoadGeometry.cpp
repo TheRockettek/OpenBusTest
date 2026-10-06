@@ -30,6 +30,8 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
     geometry.indices.reserve((centerline.size() - 1) * (section.points.size() - 1) * 6);
     const double chainOffset = spline.chainOffsetValid ? spline.chainOffset : 0.0;
     for (const MapSplineSample& sample : centerline) {
+        const double cantT = std::clamp(sample.distance / spline.length, 0.0, 1.0);
+        const double cant = spline.cantStart + (spline.cantEnd - spline.cantStart) * cantT;
         const double elevation = mapSplineElevation(
             spline.elevation, spline.length, spline.gradientStart, spline.gradientEnd,
             spline.elevated ? std::optional<double>(spline.heightDelta) : std::nullopt,
@@ -37,8 +39,11 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
         for (const MapSplineProfilePoint& point : section.points) {
             const std::array<double, 2> lateral =
                 mapSplineRightOffset(sample.headingRadians, point.lateral);
+            // Cant is expressed as a crossfall percentage, matching the map attachment-row
+            // placement convention: positive cant lowers the right-positive side.
+            const double cantLift = -point.lateral * cant / 100.0;
             MapRoadVertex vertex{sample.x + lateral[0], sample.y + lateral[1],
-                                 elevation + point.height, point.textureU,
+                                 elevation + point.height + cantLift, point.textureU,
                                  (chainOffset + sample.distance) * point.textureVPerMeter};
             if (!std::isfinite(vertex.x) || !std::isfinite(vertex.y) || !std::isfinite(vertex.z) ||
                 !std::isfinite(vertex.textureU) || !std::isfinite(vertex.textureV)) {

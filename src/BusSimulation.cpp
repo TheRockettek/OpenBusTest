@@ -9,9 +9,11 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <ode/ode.h>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace {
@@ -82,6 +84,11 @@ int checkedOdeCount(std::size_t count, const char* label) {
     return static_cast<int>(count);
 }
 
+std::uint64_t mapTileKey(int tileX, int tileY) {
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tileX)) << 32U) |
+           static_cast<std::uint32_t>(tileY);
+}
+
 class OdeRuntime {
   public:
     OdeRuntime() {
@@ -142,6 +149,14 @@ struct BusSimulation::Impl {
         bool skid = false;
     };
 
+    struct StreamedTileCollision {
+        std::vector<dGeomID> geometries;
+        std::vector<dTriMeshDataID> meshData;
+        std::vector<std::vector<double>> terrainVertices;
+        std::vector<std::vector<int>> terrainIndices;
+        std::vector<StaticCollisionMesh> staticMeshes;
+    };
+
     OdeRuntime ode;
     dBodyID chassis = nullptr;
     dGeomID ground = nullptr;
@@ -157,6 +172,8 @@ struct BusSimulation::Impl {
     std::vector<dGeomID> mapCollisionGeoms;
     std::vector<dTriMeshDataID> mapCollisionMeshData;
     std::vector<StaticCollisionMesh> mapCollisionMeshes;
+    std::unordered_map<std::uint64_t, StreamedTileCollision> streamedTileCollisions;
+    std::uint64_t collisionRevision = 0;
     dGeomID chassisGeom = nullptr;
     BusConfiguration configuration;
     VehiclePlacement placement;
@@ -217,9 +234,23 @@ struct BusSimulation::Impl {
                 dGeomTriMeshDataDestroy(data);
             }
         }
+        for (auto& [key, tile] : streamedTileCollisions) {
+            static_cast<void>(key);
+            for (dGeomID geometry : tile.geometries) {
+                if (geometry) {
+                    dGeomDestroy(geometry);
+                }
+            }
+            for (dTriMeshDataID data : tile.meshData) {
+                if (data) {
+                    dGeomTriMeshDataDestroy(data);
+                }
+            }
+        }
     }
 
-    void addTerrainCollision(const TerrainCollisionGrid& terrain) {
+    void addTerrainCollision(const TerrainCollisionGrid& terrain,
+                             StreamedTileCollision* streamedTile = nullptr) {
         if (terrain.intervals == 0 || terrain.intervals > 1024 ||
             !std::isfinite(terrain.tileSizeMeters) || terrain.tileSizeMeters <= 0.0) {
             throw std::invalid_argument("Map terrain grid has invalid dimensions");
@@ -232,6 +263,12 @@ struct BusSimulation::Impl {
         checkedOdeCount(vertexCount, "map terrain vertex count");
         const std::size_t triangleIndexCount = terrain.intervals * terrain.intervals * 6;
         checkedOdeCount(triangleIndexCount, "map terrain index count");
+        if (streamedTile != nullptr) {
+            streamedTile->terrainVertices.reserve(streamedTile->terrainVertices.size() + 1);
+            streamedTile->terrainIndices.reserve(streamedTile->terrainIndices.size() + 1);
+            streamedTile->meshData.reserve(streamedTile->meshData.size() + 1);
+            streamedTile->geometries.reserve(streamedTile->geometries.size() + 1);
+        }
 
         std::vector<double> vertices;
         std::vector<int> indices;
@@ -277,13 +314,21 @@ struct BusSimulation::Impl {
             dGeomTriMeshDataDestroy(meshData);
             throw std::runtime_error("Failed to create map terrain collision geometry");
         }
-        terrainVertices.push_back(std::move(vertices));
-        terrainIndices.push_back(std::move(indices));
-        terrainMeshData.push_back(meshData);
-        terrainGeoms.push_back(geometry);
+        if (streamedTile != nullptr) {
+            streamedTile->terrainVertices.push_back(std::move(vertices));
+            streamedTile->terrainIndices.push_back(std::move(indices));
+            streamedTile->meshData.push_back(meshData);
+            streamedTile->geometries.push_back(geometry);
+        } else {
+            terrainVertices.push_back(std::move(vertices));
+            terrainIndices.push_back(std::move(indices));
+            terrainMeshData.push_back(meshData);
+            terrainGeoms.push_back(geometry);
+        }
     }
 
-    void addStaticCollision(StaticCollisionMesh mesh) {
+    void addStaticCollision(StaticCollisionMesh mesh,
+                            StreamedTileCollision* streamedTile = nullptr) {
         if (mesh.vertices.empty() && mesh.indices.empty()) {
             return;
         }
@@ -304,9 +349,15 @@ struct BusSimulation::Impl {
             }
         }
 
-        mapCollisionGeoms.reserve(mapCollisionGeoms.size() + 1);
-        mapCollisionMeshData.reserve(mapCollisionMeshData.size() + 1);
-        mapCollisionMeshes.reserve(mapCollisionMeshes.size() + 1);
+        if (streamedTile != nullptr) {
+            streamedTile->geometries.reserve(streamedTile->geometries.size() + 1);
+            streamedTile->meshData.reserve(streamedTile->meshData.size() + 1);
+            streamedTile->staticMeshes.reserve(streamedTile->staticMeshes.size() + 1);
+        } else {
+            mapCollisionGeoms.reserve(mapCollisionGeoms.size() + 1);
+            mapCollisionMeshData.reserve(mapCollisionMeshData.size() + 1);
+            mapCollisionMeshes.reserve(mapCollisionMeshes.size() + 1);
+        }
         const dTriMeshDataID meshData = dGeomTriMeshDataCreate();
         if (!meshData) {
             throw std::runtime_error("Failed to create map static collision data");
@@ -321,9 +372,15 @@ struct BusSimulation::Impl {
             dGeomTriMeshDataDestroy(meshData);
             throw std::runtime_error("Failed to create map static collision geometry");
         }
-        mapCollisionMeshes.push_back(std::move(mesh));
-        mapCollisionMeshData.push_back(meshData);
-        mapCollisionGeoms.push_back(geometry);
+        if (streamedTile != nullptr) {
+            streamedTile->staticMeshes.push_back(std::move(mesh));
+            streamedTile->meshData.push_back(meshData);
+            streamedTile->geometries.push_back(geometry);
+        } else {
+            mapCollisionMeshes.push_back(std::move(mesh));
+            mapCollisionMeshData.push_back(meshData);
+            mapCollisionGeoms.push_back(geometry);
+        }
     }
 
     static void nearCallback(void* context, dGeomID first, dGeomID second) {
@@ -555,7 +612,7 @@ struct BusSimulation::Impl {
 
     Impl(BusConfiguration vehicle, VehiclePlacement vehiclePlacement, double physicsHz,
          int catchUpSteps, double groundPlaneZ, std::vector<TerrainCollisionGrid> terrain,
-         std::vector<StaticCollisionMesh> staticCollision)
+         std::vector<StaticCollisionMesh> staticCollision, bool createDefaultGround)
         : configuration(std::move(vehicle)), placement(vehiclePlacement),
           maxCatchUpSteps(catchUpSteps) {
         if (!std::isfinite(physicsHz) || physicsHz <= 0.0 || catchUpSteps <= 0) {
@@ -611,7 +668,7 @@ struct BusSimulation::Impl {
                               std::to_string(minimumMass) + " kg");
             configuration.mass = minimumMass;
         }
-        if (terrain.empty()) {
+        if (terrain.empty() && createDefaultGround) {
             ground = dCreatePlane(ode.space, 0.0, 0.0, 1.0, groundPlaneZ);
             for (const RoadBump& bump : defaultRoadBumps()) {
                 addRoadFeature(bump);
@@ -1067,9 +1124,11 @@ struct BusSimulation::Impl {
 BusSimulation::BusSimulation(BusConfiguration configuration, VehiclePlacement placement,
                              double physicsHz, int maxCatchUpSteps, double groundPlaneZ,
                              std::vector<TerrainCollisionGrid> terrain,
-                             std::vector<StaticCollisionMesh> staticCollision)
+                             std::vector<StaticCollisionMesh> staticCollision,
+                             bool createDefaultGround)
     : impl_(std::make_unique<Impl>(std::move(configuration), placement, physicsHz, maxCatchUpSteps,
-                                   groundPlaneZ, std::move(terrain), std::move(staticCollision))) {
+                                   groundPlaneZ, std::move(terrain), std::move(staticCollision),
+                                   createDefaultGround)) {
     openbus::rendering::TraceScope trace("startup", "BusSimulation::BusSimulation");
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }
@@ -1155,6 +1214,25 @@ double BusSimulation::positionX() const {
     return dBodyGetPosition(impl_->chassis)[0];
 }
 
+void BusSimulation::translateVertically(double meters) {
+    if (!std::isfinite(meters)) {
+        throw std::invalid_argument("Vertical translation must be finite");
+    }
+    const auto translateBody = [meters](dBodyID body) {
+        const dReal* position = dBodyGetPosition(body);
+        const dReal x = position[0];
+        const dReal y = position[1];
+        const dReal z = position[2] + static_cast<dReal>(meters);
+        dBodySetPosition(body, x, y, z);
+    };
+    translateBody(impl_->chassis);
+    for (const Impl::Corner& corner : impl_->corners) {
+        translateBody(corner.suspensionBody);
+        translateBody(corner.steeringBody);
+        translateBody(corner.wheelBody);
+    }
+}
+
 double BusSimulation::positionY() const {
     return dBodyGetPosition(impl_->chassis)[1];
 }
@@ -1163,13 +1241,83 @@ double BusSimulation::positionZ() const {
     return dBodyGetPosition(impl_->chassis)[2];
 }
 
+void BusSimulation::addMapTileCollision(int tileX, int tileY,
+                                        std::optional<TerrainCollisionGrid> terrain,
+                                        std::vector<StaticCollisionMesh> staticCollision) {
+    const std::uint64_t key = mapTileKey(tileX, tileY);
+    const auto [tileIt, inserted] = impl_->streamedTileCollisions.try_emplace(key);
+    if (!inserted) {
+        throw std::invalid_argument("Map tile collision is already active");
+    }
+    try {
+        if (terrain.has_value()) {
+            if (terrain->tileX != tileX || terrain->tileY != tileY) {
+                throw std::invalid_argument("Map terrain collision tile coordinates do not match");
+            }
+            impl_->addTerrainCollision(*terrain, &tileIt->second);
+        }
+        for (StaticCollisionMesh& mesh : staticCollision) {
+            impl_->addStaticCollision(std::move(mesh), &tileIt->second);
+        }
+    } catch (...) {
+        for (dGeomID geometry : tileIt->second.geometries) {
+            if (geometry) {
+                dGeomDestroy(geometry);
+            }
+        }
+        for (dTriMeshDataID data : tileIt->second.meshData) {
+            if (data) {
+                dGeomTriMeshDataDestroy(data);
+            }
+        }
+        impl_->streamedTileCollisions.erase(tileIt);
+        throw;
+    }
+    ++impl_->collisionRevision;
+}
+
+void BusSimulation::removeMapTileCollision(int tileX, int tileY) {
+    const auto tile = impl_->streamedTileCollisions.find(mapTileKey(tileX, tileY));
+    if (tile == impl_->streamedTileCollisions.end()) {
+        return;
+    }
+    for (dGeomID geometry : tile->second.geometries) {
+        if (geometry) {
+            dGeomDestroy(geometry);
+        }
+    }
+    for (dTriMeshDataID data : tile->second.meshData) {
+        if (data) {
+            dGeomTriMeshDataDestroy(data);
+        }
+    }
+    impl_->streamedTileCollisions.erase(tile);
+    ++impl_->collisionRevision;
+}
+
+std::uint64_t BusSimulation::collisionDebugRevision() const {
+    return impl_->collisionRevision;
+}
+
+std::size_t BusSimulation::loadedMapCollisionTileCount() const {
+    return impl_->streamedTileCollisions.size();
+}
+
 std::vector<StaticCollisionMesh> BusSimulation::collisionDebugMeshes() const {
     std::vector<StaticCollisionMesh> meshes;
-    meshes.reserve(impl_->terrainVertices.size() + impl_->mapCollisionMeshes.size());
+    meshes.reserve(impl_->terrainVertices.size() + impl_->mapCollisionMeshes.size() +
+                   impl_->streamedTileCollisions.size());
     for (std::size_t index = 0; index < impl_->terrainVertices.size(); ++index) {
         meshes.push_back({impl_->terrainVertices[index], impl_->terrainIndices[index]});
     }
     meshes.insert(meshes.end(), impl_->mapCollisionMeshes.begin(), impl_->mapCollisionMeshes.end());
+    for (const auto& [key, tile] : impl_->streamedTileCollisions) {
+        static_cast<void>(key);
+        for (std::size_t index = 0; index < tile.terrainVertices.size(); ++index) {
+            meshes.push_back({tile.terrainVertices[index], tile.terrainIndices[index]});
+        }
+        meshes.insert(meshes.end(), tile.staticMeshes.begin(), tile.staticMeshes.end());
+    }
     return meshes;
 }
 

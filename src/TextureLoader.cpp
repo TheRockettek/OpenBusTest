@@ -336,8 +336,8 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
     const std::uint32_t greenMask = readU32(data, 96);
     const std::uint32_t blueMask = readU32(data, 100);
     const std::uint32_t alphaMask = readU32(data, 104);
-    if ((pixelFormatFlags & 0x2U) != 0 && (pixelFormatFlags & 0x40U) == 0 &&
-        rgbBitCount == 8 && alphaMask == 0xffU) {
+    if ((pixelFormatFlags & 0x2U) != 0 && (pixelFormatFlags & 0x40U) == 0 && rgbBitCount == 8 &&
+        alphaMask == 0xffU) {
         std::size_t pixelCount = 0;
         if (!checkedBufferSize(static_cast<std::size_t>(image.width),
                                static_cast<std::size_t>(image.height), 1, pixelCount) ||
@@ -525,10 +525,10 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
                     }
                     if (premultipliedAlpha && image.rgba[target + 3] != 0) {
                         for (std::size_t channel = 0; channel < 3; ++channel) {
-                            image.rgba[target + channel] = static_cast<std::uint8_t>(
-                                std::min(255U, (static_cast<unsigned>(image.rgba[target + channel]) *
-                                                255U + image.rgba[target + 3] / 2U) /
-                                                   image.rgba[target + 3]));
+                            image.rgba[target + channel] = static_cast<std::uint8_t>(std::min(
+                                255U, (static_cast<unsigned>(image.rgba[target + channel]) * 255U +
+                                       image.rgba[target + 3] / 2U) /
+                                          image.rgba[target + 3]));
                         }
                     }
                 }

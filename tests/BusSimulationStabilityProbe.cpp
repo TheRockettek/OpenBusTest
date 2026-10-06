@@ -85,6 +85,23 @@ int main(int argc, char** argv) {
         std::cerr << "Map road collision debug mesh did not expose the active ODE geometry\n";
         return 1;
     }
+    BusSimulation streamedSimulation(caetanoConfiguration(true),
+                                      VehiclePlacement{{-150.0, 750.0, 4.0}, 0.0},
+                                      60.0, 8, 0.0, {}, {}, false);
+    streamedSimulation.addMapTileCollision(-1, 2, terrain, {raisedRoad});
+    if (streamedSimulation.loadedMapCollisionTileCount() != 1 ||
+        streamedSimulation.collisionDebugMeshes().size() != 2 ||
+        streamedSimulation.collisionDebugRevision() != 1) {
+        std::cerr << "Streamed map tile collision was not registered as one active tile\n";
+        return 1;
+    }
+    streamedSimulation.removeMapTileCollision(-1, 2);
+    if (streamedSimulation.loadedMapCollisionTileCount() != 0 ||
+        !streamedSimulation.collisionDebugMeshes().empty() ||
+        streamedSimulation.collisionDebugRevision() != 2) {
+        std::cerr << "Streamed map tile collision was not fully removed\n";
+        return 1;
+    }
     for (int step = 0; step < 600; ++step) {
         roadSimulation.step(0.0, 0.0, 1.0);
     }
@@ -105,6 +122,32 @@ int main(int argc, char** argv) {
     if (!meshCollision.enabled || !meshCollision.mesh) {
         std::cerr << "Configured triangle mesh was not selected as the chassis collider\n";
         return 1;
+    }
+
+    BusSimulation liftSimulation(caetanoConfiguration(true),
+                                 VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    const BodyPose chassisBeforeLift = liftSimulation.chassisPose();
+    std::vector<BodyPose> wheelsBeforeLift;
+    for (std::size_t index = 0; index < liftSimulation.wheelCount(); ++index) {
+        wheelsBeforeLift.push_back(liftSimulation.wheelPose(index));
+    }
+    liftSimulation.translateVertically(5.0);
+    const BodyPose chassisAfterLift = liftSimulation.chassisPose();
+    if (std::abs(chassisAfterLift.position[0] - chassisBeforeLift.position[0]) > 1e-9 ||
+        std::abs(chassisAfterLift.position[1] - chassisBeforeLift.position[1]) > 1e-9 ||
+        std::abs(chassisAfterLift.position[2] - chassisBeforeLift.position[2] - 5.0) > 1e-9) {
+        std::cerr << "Vertical teleport did not preserve the bus X/Y or raise chassis by 5 m\n";
+        return 1;
+    }
+    for (std::size_t index = 0; index < wheelsBeforeLift.size(); ++index) {
+        const BodyPose wheelAfterLift = liftSimulation.wheelPose(index);
+        if (std::abs(wheelAfterLift.position[0] - wheelsBeforeLift[index].position[0]) > 1e-9 ||
+            std::abs(wheelAfterLift.position[1] - wheelsBeforeLift[index].position[1]) > 1e-9 ||
+            std::abs(wheelAfterLift.position[2] - wheelsBeforeLift[index].position[2] - 5.0) >
+                1e-9) {
+            std::cerr << "Vertical teleport did not keep the wheel bodies aligned with the chassis\n";
+            return 1;
+        }
     }
 
     const bool useConfiguredInertia = argc <= 1 || std::string(argv[1]) != "box";

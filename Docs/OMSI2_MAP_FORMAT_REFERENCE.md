@@ -215,6 +215,20 @@ only IDs/link fields have clearly typed handling in its parser.
 | `[spline]` | 19: `line1`, spline filename, ID, previous spline ID, next spline ID, `x`, `z`, `y`, rotation, length, radius, gradient start, gradient end, cant start, cant end, skew start, skew end, `line18`, then the literal `mirror` marker or an empty line. |
 | `[spline_h]` | 20: same as `[spline]`, with `delta_h` inserted after gradient end and before cant start. |
 
+OpenBus evaluates ordinary spline elevation from its endpoint gradients and
+`[spline_h]` elevation from a cubic profile constrained by the endpoint
+gradients and `delta_h`. Cant is parsed and provisionally applied as a linearly
+interpolated percentage crossfall to `.sli` profile heights in both rendered
+and collision geometry; its sign and unit interpretation still need OMSI
+visual confirmation. The v14 skew values and literal `mirror` marker are
+retained by the parser, but are not yet applied to geometry.
+
+The `.sli` reader supports `[texture]`, `[profile]`, and `[profilepnt]` for
+textured cross-section strips. It also retains the four raw/numeric fields of
+each `[heightprofile]` record, marking malformed or truncated records invalid.
+Those records do not currently alter road vertices: their relationship to the
+graphical profile points and terrain editing is not verified.
+
 After a spline's fixed fields, the grammar can accept an optional
 `[spline_terrain_align_2]` block and repeated `[rule]` / `[kill_rule]` blocks.
 Each rule block has four payload lines. Most geometry/numeric values are kept
@@ -249,7 +263,10 @@ coordinate tuple order.
 
 After the fixed positions, supported modifiers include:
 
-- `[varparent]` plus one integer-like parent ID.
+- `[varparent]` plus one integer-like editor object number. In the inspected
+  Bad Karlstein v14 tile, value `198` points to the same tile's `Object Nr. 198`
+  record (whose authored placement ID is different), so this is not the same
+  namespace as the `[object]` ID or `[attachObj]` target ID.
 - `[spline_terrain_align]` as a marker (no fixed value in the grammar).
 - Repeated `[rule]` or `[kill_rule]`, each followed by four lines.
 - Optional object-specific lines not matching the next structural tag.
@@ -258,9 +275,28 @@ OpenBus preserves `[attachObj]`'s attach-point index, three rotation strings,
 and label-count string verbatim. It also exposes numeric attach-point and
 rotation values when those strings parse, with a validity flag; failed
 conversions do not discard or rewrite the raw text. The label count remains
-opaque and does not determine how many optional tail lines are consumed.
-Neither typed values nor the retained fields imply that parent-anchor
-transforms are implemented.
+opaque and does not determine how many optional tail lines are consumed. The
+renderer resolves attached-to IDs across map tiles and composes the target
+placement with the selected `[new_attachment]` translation/rotation followed
+by the child's three rotations. The current implementation treats the anchor
+index as zero-based; missing targets, invalid indices, and parent cycles are
+skipped with diagnostics. Object-specific tail lines remain opaque. `[varparent]`
+editor ordinals are retained separately from placement IDs and tile-local
+references are checked against `Object Nr.` labels. Its variable/script runtime
+effect is not implemented because scenery script-variable inheritance is not
+evaluated; it is intentionally not treated as an `[attachObj]` parent alias.
+
+The renderer currently interprets `[spline_terrain_align]` as an orientation
+modifier: it tilts the placed model's local up axis to the piecewise-bilinear
+terrain normal at its map X/Y, while preserving the placement position and
+authored orientation. This is applied to marked ordinary objects, attached
+objects, and each generated spline-attachment instance. It does not replace
+ordinary terrain-relative height sampling or the spline's authored elevation.
+This interpretation is an implementation hypothesis, not OMSI-verified
+semantics; the installed maps establish that the marker occurs on all three
+record families, but do not establish whether OMSI instead or additionally
+changes their height. `[spline_terrain_align_2]` remains separately preserved
+and unsupported.
 
 Scenery-object configuration files can contain the marker `[onlyeditor]`.
 OpenBus skips placements for editor-only SCOs, but if the SCO also defines a
@@ -268,8 +304,9 @@ OpenBus skips placements for editor-only SCOs, but if the SCO also defines a
 mesh. The marker is not inferred from asset names or map-global editor metadata.
 
 The merger offsets object IDs, `AttachObj.attached_to_object_id`, and present
-`varparent` values during merge. That makes them reference-sensitive fields;
-copying records without remapping can break relationships.
+`varparent` values during merge. These fields are reference-sensitive; copying
+records without remapping can break relationships. `varparent` values are
+editor object numbers, not authored placement IDs.
 
 ### 5.3 Chrono tile records
 
@@ -412,7 +449,7 @@ remapping logic, not a complete OMSI reference manual.
 
 | Namespace/reference | Fields that the merger offsets |
 | --- | --- |
-| Numeric object/spline IDs | Tile object IDs, spline IDs, nonzero previous/next spline IDs, attachment target IDs, present `varparent` IDs, entrypoint IDs, timetable stop/link/track/trip-station IDs, and Chrono selector/record IDs. |
+| Numeric object/spline IDs | Tile object IDs, spline IDs, nonzero previous/next spline IDs, attachment target IDs, present `varparent` editor object numbers, entrypoint IDs, timetable stop/link/track/trip-station IDs, and Chrono selector/record IDs. |
 | Tile ordinal | Global entrypoint tile index, busstop tile index, station-link entry tile index, track-entry tile index, regular trip station tile index; tile-index offsets are based on the number/order of `[map]` entries. |
 | Ground-texture ordinal | The merger combines `[groundtex]` records and adjusts registered per-tile DDS sidecar filename ordinals. Preserving or replacing an incoming map's base ground texture changes that adjustment; do not infer that every numeric texture-looking field is rewritten. |
 

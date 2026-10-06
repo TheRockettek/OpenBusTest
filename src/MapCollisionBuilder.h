@@ -22,6 +22,10 @@ struct MapRoadCollisionResult {
 // Builds map collision from road-profile strips and authored SCO/model [collision_mesh]
 // scenery throughout the selected map, partitioned into per-tile ODE mesh inputs.
 MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
-                                              const std::filesystem::path& omsiRoot);
+                                             const std::filesystem::path& omsiRoot);
+// Builds only the requested tile; an absent tile returns an empty result.
+MapRoadCollisionResult buildMapRoadCollisionTile(const MapDefinition& map,
+                                                 const std::filesystem::path& omsiRoot, int tileX,
+                                                 int tileY);
 
 } // namespace openbus::map

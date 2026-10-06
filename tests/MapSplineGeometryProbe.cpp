@@ -101,6 +101,9 @@ void runProbe() {
             -5.79, 1.0e-9, "elevated spline starts at its authored height");
         requireNear(openbus::map::mapSplineElevation(-5.79, 73.86, 6.19, 0.0, 5.85, 73.86),
             0.06, 1.0e-9, "elevated spline ends exactly at its authored height delta");
+        requireNear(openbus::map::mapSplineElevation(-5.79, 73.86, 6.19, 0.0, 5.85, 36.93),
+            -2.29350825, 1.0e-8,
+            "elevated spline uses cubic interpolation between its endpoint gradients");
         require(!openbus::map::sampleMapSpline(0.0, 0.0, 0.0, 20.0, 0.0, 21.0),
             "out-of-range spline samples are rejected");
 

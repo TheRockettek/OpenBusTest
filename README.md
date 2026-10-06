@@ -16,16 +16,19 @@ prove end-to-end rendering or runtime semantics.
 | Physics and wheel simulation | Fixed-step ODE and per-wheel simulation are active; the deterministic bump/steering/braking stress probe covers two- and three-axle fixtures. Broader tuning remains incomplete. | [`BusSimulation.cpp`](src/BusSimulation.cpp) | [`BusSimulationSteeringProbe.cpp`](tests/BusSimulationSteeringProbe.cpp), [`BusSimulationStabilityProbe.cpp`](tests/BusSimulationStabilityProbe.cpp), [`BusSimulationStressProbe.cpp`](tests/BusSimulationStressProbe.cpp) |
 | Vehicle/model loading | Core MAN DL05 and E400 configuration paths are implemented; broad OMSI configuration coverage remains partial. | [`VehicleConfigLoader.cpp`](src/VehicleConfigLoader.cpp), [`ModelConfigLoader.cpp`](src/ModelConfigLoader.cpp), [`RenderLoop.cpp`](src/RenderLoop.cpp) | [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); visual procedure: [screenshot plan](Docs/SCREENSHOT_VALIDATION_PLAN.md) |
 | Texture decoding and materials | Texture decoding has a probe; several material semantics and visual parity checks remain incomplete, including alpha mode 2 and environment maps. | [`TextureLoader.cpp`](src/TextureLoader.cpp), [`CoreRenderer.cpp`](src/CoreRenderer.cpp) | [`TextureLoaderProbe.cpp`](tests/TextureLoaderProbe.cpp); GL/material checks: [incomplete visual checks](Docs/SCREENSHOT_VALIDATION_PLAN.md#incomplete-feature-visual-checks) |
-| Map, terrain, scenery, and roads | Partial: supported `.sli` profile strips and authored SCO/model `[collision_mesh]` O3Ds are built into static ODE trimeshes for every listed map tile; terrain collision also covers every listed terrain tile. Collision is full-map and resident (not streamed), while rendering remains synchronous and resident/cull-based. General `.x` scenery, full OMSI attachments/profile semantics, and end-to-end visual/contact validation remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/MapSplineGeometry.cpp), [`MapRoadGeometry.cpp`](src/MapRoadGeometry.cpp), [`MapCollisionBuilder.cpp`](src/MapCollisionBuilder.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapCollisionBuilderProbe.cpp`](tests/MapCollisionBuilderProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`MapRoadGeometryProbe.cpp`](tests/MapRoadGeometryProbe.cpp), [`BusSimulationStabilityProbe.cpp`](tests/BusSimulationStabilityProbe.cpp); in-context driving validation remains |
-| Scripts and dynamic displays | Script textures and text surfaces have runtime paths; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/ScriptRuntime.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
+| Map, terrain, scenery, and roads | Partial: supported `.sli` profile strips and authored SCO/model `[collision_mesh]` O3Ds are built into static ODE trimeshes for nearby map tiles; terrain collision streams with them in a 3×3 load neighborhood and a 2-tile unload hysteresis radius. SCO scripts run per placement and drive `[visible]`, `[usetexttexture]`, and `[usescripttexture]` surfaces; script animations/material changes, mouse events, and `[varparent]` inheritance remain incomplete. Rendering is still synchronous and resident/cull-based. General `.x` scenery, full OMSI attachments/profile semantics, and end-to-end visual/contact validation remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/MapSplineGeometry.cpp), [`MapRoadGeometry.cpp`](src/MapRoadGeometry.cpp), [`MapCollisionBuilder.cpp`](src/MapCollisionBuilder.cpp), [`MapCollisionStreamer.cpp`](src/MapCollisionStreamer.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapCollisionBuilderProbe.cpp`](tests/MapCollisionBuilderProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`MapRoadGeometryProbe.cpp`](tests/MapRoadGeometryProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp), [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp); in-context visual validation remains |
+| Scripts and dynamic displays | Vehicle script/text textures and scenery per-placement script/text texture surfaces, `init`/`frame`, and `[visible]` control are active; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/ScriptRuntime.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
 | Sound | Player sound runtime is active; full OMSI sound and AI sound selection remain incomplete. | [`SoundEngine.cpp`](src/SoundEngine.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp) |
 | AI, passengers, routes, and articulated vehicles | Runtime support is incomplete; parsed configuration is not evidence of these behaviors. | [vehicle configuration](src/VehicleConfigLoader.cpp), [map configuration](src/MapConfigLoader.cpp) | No end-to-end regression probe; see the [completion TODO](TODO.md) |
 
 ### Map runtime scope
 
-The current map path loads `global.cfg`, uses its first entrypoint by default,
-and supports selecting a spawn with `OPENBUS_MAP_ENTRY` set to a zero-based
-entrypoint index or a case-insensitive entrypoint name. It synchronously
+The current map path loads `global.cfg` and uses its first entrypoint by default.
+When `OPENBUS_MAP_SPAWN` is unset, startup prints all spawn points with their
+zero-based indexes, names, world coordinates, and yaw. Set it to an index (for
+example, `OPENBUS_MAP_SPAWN=1`) to spawn at that entrypoint's parsed position
+and rotation. The older `OPENBUS_MAP_ENTRY` index/name selector remains
+supported when `OPENBUS_MAP_SPAWN` is unset. It synchronously
 parses/builds the listed map tiles. It uses the first `[groundtex]` entry as the
 base and applies numeric per-tile `.map.<index>.dds` alpha masks to subsequent
 `[groundtex]` layers. Set `OPENBUS_MAP_GROUNDTEX` to a zero-based
@@ -39,14 +42,30 @@ it does not stream tiles in/out or unload their GPU buffers. Camera movement
 does not trigger a chunk load; map startup/build work is still synchronous and
 can be long for large maps.
 
+ODE terrain and road/scenery collision is loaded separately around the player:
+the load radius is one tile, and collision remains resident until a tile is
+more than two tiles away. This bounds active collision to the local map
+neighborhood; rendered map geometry is still fully resident as described above.
+
 Ordinary scenery gets a bilinearly sampled terrain height plus its authored
 vertical placement value, unless its SCO/model declares `[absheight]`, in which
 case the authored vertical coordinate is absolute.
 Same-tile spline attachments/repeaters use typed spline-relative placement;
-cross-tile chains and `[attachObj]` rendering are not complete. `[attachObj]`
-fixed fields and IDs are parsed, but parent anchor semantics are not applied.
-`[varparent]` IDs are retained for object/attachment records but are not used
-to transform their placements.
+cross-tile chains are not complete. `[attachObj]` children resolve their parent
+placement IDs across map tiles and use the indexed `[new_attachment]` point from
+the parent SCO/model config, including the authored anchor and child rotations.
+Missing parents/anchors and attachment cycles are skipped with diagnostics.
+`[varparent]` editor object numbers are retained separately from map placement
+IDs and checked against tile `Object Nr.` labels. Their scenery-script variable
+inheritance effect is not evaluated, and they are not spatial attachment links.
+`[spline_terrain_align]` currently tilts marked scenery so its local up axis
+follows the sampled terrain normal, without changing its position. OMSI's exact
+semantics for this marker have not been independently verified, so this is a
+conservative renderer interpretation; `[spline_terrain_align_2]` remains
+unsupported.
+Scenery `[texttexture]` and `[scripttexture]` materials are bound per placed
+instance, with independent live texture state and transparent text blending;
+visual parity against installed directional-sign assets still needs validation.
 Supported scenery meshes
 are O3D at LOD 0; `.x` scenery is skipped except that `[tree]` assets use a
 crossed-texture-plane preview. `.sli` rendering parses a subset of
@@ -60,18 +79,21 @@ The following map behavior is **not implemented** or remains explicitly
 partial:
 
 - General DirectX `.x` scenery loading; the tree preview is not the original
-  mesh. Cross-tile attachment/repeater resolution, `[attachObj]`, scenery
-  scripts, mouse events, and non-authored scenery collision are incomplete.
+  mesh. Cross-tile attachment/repeater resolution, full `[attachObj]` scripting,
+  scenery script-driven animation/material changes, scenery mouse events, and
+  non-authored scenery collision are incomplete. Per-placement scenery
+  `init`/`frame`, `[visible]`, `[usetexttexture]`, and `[usescripttexture]`
+  surfaces are active.
 - Full `.sli` semantics and visual validation of curved sidewalks, road seams,
   and lane markings. Road-profile textures/material alpha, cant/banking, and
   texture phase across linked splines need representative asset tests. Parsed
   v11+ chain offsets now affect road texture V, but do not resolve links or
   prove visual parity.
 - Supported `.sli` profile-strip road geometry and declared SCO/model
-  `[collision_mesh]` O3D geometry are connected to ODE across all listed map
-  tiles; terrain collision also covers all listed terrain tiles. The static
-  collision set is not streamed, `[boundingbox]` is not yet used for map
-  scenery, and overlapping road/terrain contacts still need tuning.
+  `[collision_mesh]` O3D geometry are connected to ODE for tiles within one
+  tile of the bus; terrain and road/scenery collision are unloaded beyond a
+  two-tile radius. `[boundingbox]` is not yet used for map scenery, and
+  overlapping road/terrain contacts still need tuning.
 - Per-tile/detail/seasonal ground-texture rendering, water rendering, tile
   lightmaps, Chrono map variants, and asynchronous map construction are absent.
   Per-tile DDS filenames are inventoried, but their payloads and mapping to
@@ -336,7 +358,10 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   script trigger availability when the overlay is enabled.
 - Press `C` to show the active ODE terrain and road/scenery collision trimeshes
   as an orange wireframe, plus the bus fallback collision box. Static map
-  collision covers all listed map tiles at startup; it is not streamed.
+  collision streams around the bus (one-tile load radius, two-tile unload
+  radius); the debug wireframe refreshes as tiles enter and leave that set.
+- Press `U` to raise the player bus and its physics bodies 5 m at the current
+  X/Y location; it then falls naturally under gravity.
 - VSync is enabled by default; set `OPENBUS_VSYNC=0`, `off`, or `false` before
   launching to run above the display refresh cadence
 - Reflection mirrors render at `256x256` by default. Set
@@ -364,7 +389,7 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   backends. Conditions and logical inputs treat zero as false and any non-zero
   value as true; logical and comparison results are canonical `0` or `1`.
 - Scripts normally follow the render rate. Set `OPENBUS_SCRIPT_HZ=30` to run
-  vehicle scripts at 30 Hz while rendering continues at the display rate;
+  vehicle and scenery scripts at 30 Hz while rendering continues at the display rate;
   fixed-rate script ticks receive `Timegap=1/30` and catch up for short frame
   hitches with a bounded tick budget.
 - Profiling retains at most `1,000,000` events by default. Set

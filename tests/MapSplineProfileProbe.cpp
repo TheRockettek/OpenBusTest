@@ -1,5 +1,6 @@
 #include "MapSplineProfile.h"
 
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -25,6 +26,25 @@ void runProbe(const std::filesystem::path& fixture) {
     require(profile.textures.size() == 2, "both profile textures are loaded");
     require(profile.textures[0] == "sidewalk.bmp", "first texture order is preserved");
     require(profile.textures[1] == "road.bmp", "second texture order is preserved");
+        require(profile.heightProfiles.size() == 4,
+            "complete, malformed, and truncated height-profile records are retained");
+    require(profile.heightProfiles[0].valid &&
+                profile.heightProfiles[0].values ==
+                    std::array<double, 4>{-4.0, -3.0, 0.25, 0.1} &&
+                profile.heightProfiles[0].rawFields ==
+                    std::array<std::string, 4>{"-4.0", "-3.0", "0.25", "0.10"},
+            "height profile preserves four source fields and their numeric values");
+    require(profile.heightProfiles[1].valid &&
+                profile.heightProfiles[1].values ==
+                    std::array<double, 4>{-3.0, 3.0, 0.1, 0.1},
+            "second height-profile range is parsed in order");
+    require(!profile.heightProfiles[2].valid &&
+                profile.heightProfiles[2].rawFields[2] == "not-a-number",
+            "malformed height values are retained but marked invalid");
+    require(!profile.heightProfiles[3].valid &&
+                profile.heightProfiles[3].rawFields[0] == "4.0" &&
+                profile.heightProfiles[3].rawFields[1] == "5.0",
+            "truncated height-profile records remain visible as invalid records");
     require(profile.sections.size() == 2, "both cross-section lanes are loaded");
     require(profile.sections[0].textureIndex == 0, "first lane uses texture zero");
     require(profile.sections[1].textureIndex == 1, "second lane uses texture one");
@@ -41,6 +61,9 @@ void runInstalledProfileSmoke(const std::filesystem::path& path) {
     const openbus::map::MapSplineProfile profile = openbus::map::loadMapSplineProfile(path);
     require(!profile.editorOnly, "selected installed road profile is runtime-visible");
     require(!profile.textures.empty(), "installed profile provides textures");
+    for (const openbus::map::MapSplineHeightProfile& heightProfile : profile.heightProfiles) {
+        require(heightProfile.valid, "installed profile height records are numeric and complete");
+    }
     bool hasRenderableSection = false;
     for (const openbus::map::MapSplineProfileSection& section : profile.sections) {
         if (section.points.size() >= 2 && section.textureIndex >= 0 &&

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ModelConfigTypes.h"
+#include "VehicleConfigLoader.h"
 
 #include <array>
 #include <filesystem>
@@ -33,13 +33,14 @@ struct SceneryObjectConfig {
     std::vector<std::string> variableLists;
     std::vector<std::string> stringVariableLists;
     std::vector<std::string> constantFiles;
+    VehicleConfig scriptConfiguration;
     std::vector<SceneryTreeDefinition> trees;
+    std::vector<ModelAttachmentPoint> attachmentPoints;
     ConfigurationDiagnostics diagnostics;
 };
 
 SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPath);
-std::filesystem::path
-resolveSceneryObjectModelConfigPath(const SceneryObjectConfig& configuration);
+std::filesystem::path resolveSceneryObjectModelConfigPath(const SceneryObjectConfig& configuration);
 
 ModelConfig loadSceneryObjectConfig(const std::filesystem::path& configPath,
                                     const std::filesystem::path& modelRoot,

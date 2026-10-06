@@ -90,6 +90,55 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             }
             continue;
         }
+        if (keyword == "new_attachment") {
+            ModelAttachmentPoint attachment;
+            bool sawOperation = false;
+            Line entry;
+            while (reader.next(entry)) {
+                if (entry.isKeyword()) {
+                    reader.pushBack(std::move(entry));
+                    break;
+                }
+                const std::string operation = lower(entry.text);
+                std::size_t valueCount = 0;
+                if (operation == "attach_trans") {
+                    valueCount = 3;
+                    attachment.hasTranslation = true;
+                } else if (operation == "attach_rot_x" || operation == "attach_rot_y" ||
+                           operation == "attach_rot_z") {
+                    valueCount = 1;
+                    attachment.hasRotation = true;
+                } else {
+                    if (attachment.name.empty() && !sawOperation) {
+                        attachment.name = entry.text;
+                    }
+                    continue;
+                }
+                sawOperation = true;
+                for (std::size_t index = 0; index < valueCount; ++index) {
+                    Line value;
+                    if (!reader.readPayload(value, result.diagnostics, keyword)) {
+                        break;
+                    }
+                    double parsed = 0.0;
+                    if (!parseDouble(value.text, parsed)) {
+                        result.diagnostics.error(value.number, keyword,
+                                                 "attachment transform must be numeric");
+                        continue;
+                    }
+                    if (operation == "attach_trans") {
+                        attachment.translation[index] = parsed;
+                    } else {
+                        const std::size_t axis = operation == "attach_rot_x"   ? 0
+                                                 : operation == "attach_rot_y" ? 1
+                                                                               : 2;
+                        attachment.rotationDegrees[axis] = parsed;
+                    }
+                }
+            }
+            result.attachmentPoints.push_back(std::move(attachment));
+            continue;
+        }
         if (keyword == "tree") {
             std::vector<std::string> values;
             if (reader.readPayloads(5, values, result.diagnostics, keyword) && values.size() == 5) {
@@ -188,6 +237,15 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
     if (result.modelPath.empty() && result.trees.empty()) {
         result.diagnostics.error(0, "model", "SceneryObject configuration has no [model] entry");
     }
+    result.scriptConfiguration.sourcePath = configPath;
+    result.scriptConfiguration.scripts = result.scripts;
+    result.scriptConfiguration.variableLists = result.variableLists;
+    result.scriptConfiguration.stringVariableLists = result.stringVariableLists;
+    result.scriptConfiguration.constantFiles = result.constantFiles;
+    prepareScriptConfiguration(result.scriptConfiguration);
+    result.diagnostics.entries.insert(result.diagnostics.entries.end(),
+                                      result.scriptConfiguration.diagnostics.entries.begin(),
+                                      result.scriptConfiguration.diagnostics.entries.end());
     return result;
 }
 

@@ -369,6 +369,69 @@ int main() {
         return 1;
     }
 
+    const std::filesystem::path sceneryScriptPath = root / "scenery.osc";
+    {
+        std::ofstream sceneryScript(sceneryScriptPath);
+        sceneryScript << "{init}\n0 (S.L.frame_count)\n{end}\n"
+                         "{frame}\n(L.L.frame_count) 1 + (S.L.frame_count)\n"
+                         "(L.L.frame_count) (S.L.lamp_visible)\n{end}\n";
+    }
+    VehicleConfig sceneryConfiguration;
+    sceneryConfiguration.sourcePath = root / "object.sco";
+    sceneryConfiguration.scripts.push_back(sceneryScriptPath.filename().string());
+    sceneryConfiguration.floatVariables = {"frame_count", "lamp_visible"};
+    if (!setScriptBackend(nullptr)) {
+        std::cerr << "could not select the native backend for scenery runtime probe\n";
+        return 1;
+    }
+    {
+        openbus::scripting::SceneryObject firstObject;
+        openbus::scripting::SceneryObject secondObject;
+        SimulationState scenerySimulation;
+        ScriptRuntime firstRuntime(sceneryConfiguration, firstObject, scenerySimulation);
+        ScriptRuntime secondRuntime(sceneryConfiguration, secondObject, scenerySimulation);
+        firstObject.declareString("sign_text");
+        secondObject.declareString("sign_text");
+        firstObject.setString("sign_text", "A");
+        secondObject.setString("sign_text", "B");
+        const std::vector<ModelTextTexture> signText = {
+            ModelTextTexture{0, false,
+                             {"sign_text", "ProbeFont", "6", "4", "0", "255", "255", "255"}}};
+        firstRuntime.configureTextTextures(signText);
+        secondRuntime.configureTextTextures(signText);
+        firstRuntime.initialize();
+        secondRuntime.initialize();
+        ScriptRuntime::ScriptTextureSnapshot firstSign;
+        ScriptRuntime::ScriptTextureSnapshot secondSign;
+        if (!firstRuntime.copyTextTexture(0, firstSign) ||
+            !secondRuntime.copyTextTexture(0, secondSign) ||
+            firstSign.pixels == secondSign.pixels) {
+            std::cerr << "scenery text textures were not rendered from per-placement strings\n";
+            return 1;
+        }
+        firstRuntime.update(false);
+        if (firstObject.get("frame_count") != 1.0 ||
+            secondObject.get("frame_count") != 0.0 ||
+            firstObject.get("lamp_visible") != 1.0 ||
+            secondObject.get("lamp_visible") != 0.0) {
+            std::cerr << "scenery script state was not isolated per placed object\n";
+            return 1;
+        }
+        secondRuntime.update(false);
+        firstRuntime.update(false);
+        if (firstObject.get("frame_count") != 2.0 ||
+            secondObject.get("frame_count") != 1.0 ||
+            firstObject.get("lamp_visible") != 2.0 ||
+            secondObject.get("lamp_visible") != 1.0) {
+            std::cerr << "scenery frame scripts did not tick independently\n";
+            return 1;
+        }
+    }
+    if (!setScriptBackend("lua")) {
+        std::cerr << "could not restore the Lua backend for following runtime probes\n";
+        return 1;
+    }
+
     Variables variables(ScriptObjectKind::Vehicle);
     SimulationState simulation;
     ScriptRuntime runtime(configuration, variables, simulation);

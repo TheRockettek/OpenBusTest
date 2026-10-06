@@ -81,6 +81,7 @@ class RenderLoop {
     void endFrame();
     void captureViews(const BusSimulation& simulation, const std::filesystem::path& directory);
     bool consumeCaptureRequest();
+    bool consumeRaisePlayerRequest();
     bool isCaptureReady() const;
     double throttle() const;
     double steering() const;
@@ -125,6 +126,8 @@ class RenderLoop {
     std::array<bool, 10> previousViewKeyStates_ = {};
     std::array<bool, 2> previousCameraNavigationStates_ = {};
     bool previousCaptureKeyState_ = false;
+    bool previousRaisePlayerKeyState_ = false;
+    bool raisePlayerRequestPending_ = false;
     bool previousLeftMouseState_ = false;
     bool leftMousePressed_ = false;
     bool previousClickableDebugKeyState_ = false;
@@ -132,6 +135,7 @@ class RenderLoop {
     bool previousCollisionDebugKeyState_ = false;
     bool collisionDebugOverlay_ = false;
     bool collisionWireframeBuilt_ = false;
+    std::uint64_t collisionWireframeRevision_ = 0;
     bool clickableHoverCacheValid_ = false;
     bool clickableHoverCacheHit_ = false;
     double clickableHoverCacheX_ = 0.0;

@@ -3,7 +3,7 @@
 #include "CrashHandler.h"
 #include "Environment.h"
 #include "Logger.h"
-#include "MapCollisionBuilder.h"
+#include "MapCollisionStreamer.h"
 #include "MapConfigLoader.h"
 #include "ModelConfigLoader.h"
 #include "PerfTrace.h"
@@ -16,7 +16,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -42,21 +44,11 @@ int positiveEnvironmentInt(const char* name, int fallback, int maximum) {
     return static_cast<int>(std::min(parsed, static_cast<long>(maximum)));
 }
 
-std::vector<TerrainCollisionGrid> loadMapTerrain(const openbus::map::MapDefinition& map) {
-    std::vector<TerrainCollisionGrid> terrain;
-    terrain.reserve(map.tiles.size());
-    for (const openbus::map::MapTileReference& tile : map.tiles) {
-        if (!tile.hasTerrainFile) {
-            continue;
-        }
-        const openbus::map::TerrainGrid grid = openbus::map::loadTerrainGrid(tile.terrainPath);
-        terrain.push_back(
-            {tile.x, tile.y, openbus::map::OMSI_TILE_SIZE_METERS, grid.intervals, grid.heights});
-    }
-    if (terrain.empty()) {
-        throw std::runtime_error("No terrain collision files found in the selected map");
-    }
-    return terrain;
+std::string formatPlacement(const VehiclePlacement& placement) {
+    std::ostringstream formatted;
+    formatted << std::fixed << std::setprecision(3) << '(' << placement.position[0] << ", "
+              << placement.position[1] << ", " << placement.position[2] << ')';
+    return formatted.str();
 }
 
 VehiclePlacement aiVehiclePlacement(int index, int vehicleCount) {
@@ -167,14 +159,39 @@ int main() {
             applicationLog.Log("Map global.cfg line " + std::to_string(diagnostic.line) + " [" +
                                diagnostic.keyword + "]: " + diagnostic.message);
         }
+        const std::string configuredSpawn = environmentValue("OPENBUS_MAP_SPAWN");
+        const std::string configuredEntryPoint = environmentValue("OPENBUS_MAP_ENTRY");
+        if (configuredSpawn.empty()) {
+            applicationLog.Log("Map spawn points (set OPENBUS_MAP_SPAWN to a zero-based index):");
+            if (mapDefinition.entryPoints.empty()) {
+                applicationLog.Log("  (no spawn points in global.cfg)");
+            }
+            for (std::size_t index = 0; index < mapDefinition.entryPoints.size(); ++index) {
+                const openbus::map::MapEntryPoint& entryPoint = mapDefinition.entryPoints[index];
+                const openbus::map::MapTileReference& tile =
+                    mapDefinition.tiles[static_cast<std::size_t>(entryPoint.tileIndex)];
+                applicationLog.Log(
+                    "  [" + std::to_string(index) + "] " +
+                    (entryPoint.name.empty() ? std::string("(unnamed)") : entryPoint.name) +
+                    " - tile (" + std::to_string(tile.x) + ", " + std::to_string(tile.y) +
+                    "), position " + formatPlacement(entryPoint.placement) + " m, yaw " +
+                    std::to_string(entryPoint.placement.yawDegrees) + " deg");
+            }
+        }
         const std::size_t spawnEntryPoint =
-            openbus::map::selectMapEntryPoint(mapDefinition, environmentValue("OPENBUS_MAP_ENTRY"));
+            !configuredSpawn.empty()
+                ? openbus::map::selectMapSpawnPoint(mapDefinition, configuredSpawn)
+                : (!configuredEntryPoint.empty()
+                       ? openbus::map::selectMapEntryPoint(mapDefinition, configuredEntryPoint)
+                       : openbus::map::selectMapSpawnPoint(mapDefinition, {}));
         const std::size_t groundTextureIndex = openbus::map::selectMapGroundTextureIndex(
             mapDefinition, environmentValue("OPENBUS_MAP_GROUNDTEX"));
         const VehiclePlacement busPlacement = mapDefinition.entryPoints[spawnEntryPoint].placement;
-        applicationLog.Log("Map " + mapDirectory.string() +
-                           " spawn: " + mapDefinition.entryPoints[spawnEntryPoint].name +
-                           " (entrypoint " + std::to_string(spawnEntryPoint) + ")");
+        applicationLog.Log("Map " + mapDirectory.string() + " spawn: [" +
+                           std::to_string(spawnEntryPoint) + "] " +
+                           mapDefinition.entryPoints[spawnEntryPoint].name + " at " +
+                           formatPlacement(busPlacement) + " m, yaw " +
+                           std::to_string(busPlacement.yawDegrees) + " deg");
 
         BusConfiguration configuration;
         {
@@ -187,19 +204,6 @@ int main() {
             openbus::rendering::TraceScope trace("config", "main.loadBusModelConfiguration");
             modelConfiguration = loadBusModelConfiguration(busConfigPath);
         }
-
-        openbus::map::MapRoadCollisionResult roadCollision =
-            openbus::map::buildMapRoadCollision(mapDefinition, omsiRootPath());
-        applicationLog.Log(
-            "Map collision prepared for full map: tiles=" + std::to_string(roadCollision.tilesVisited) +
-            ", sections=" + std::to_string(roadCollision.splineSectionsAdded) +
-            ", scenery collision objects=" +
-            std::to_string(roadCollision.sceneryCollisionObjectsAdded) +
-            ", missing scenery collision meshes=" +
-            std::to_string(roadCollision.sceneryCollisionMeshesMissing) +
-            ", meshes=" + std::to_string(roadCollision.meshes.size()) +
-            ", skipped profiles=" + std::to_string(roadCollision.skippedProfiles) +
-            ", skipped splines=" + std::to_string(roadCollision.skippedSplines) + ".");
 
         {
             openbus::rendering::TraceScope trace("config", "main.writeConfigurationSnapshots");
@@ -221,13 +225,18 @@ int main() {
             modelConfigurationOutput.flush();
         }
 
-        BusSimulation simulation(
-            configuration, busPlacement, 60.0, 8, busPlacement.position[2],
-            [&] {
-                openbus::rendering::TraceScope trace("map", "main.loadMapCollisionTerrain");
-                return loadMapTerrain(mapDefinition);
-            }(),
-            std::move(roadCollision.meshes));
+        BusSimulation simulation(configuration, busPlacement, 60.0, 8, busPlacement.position[2], {},
+                                 {}, false);
+        openbus::map::MapCollisionStreamer collisionStreamer(mapDefinition, omsiRootPath(),
+                                                             simulation);
+        {
+            openbus::rendering::TraceScope trace("map", "main.loadSpawnCollisionNeighborhood");
+            collisionStreamer.update(busPlacement.position[0], busPlacement.position[1]);
+        }
+        applicationLog.Log("Map collision streaming enabled: resident tiles=" +
+                           std::to_string(collisionStreamer.loadedTileCount()) +
+                           " around spawn; map manifest tiles=" +
+                           std::to_string(mapDefinition.tiles.size()) + ".");
 
         const bool benchmarkMode =
             openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
@@ -278,6 +287,7 @@ int main() {
                     renderer.physicsWheelBrakeForces(simulation.axleCount()),
                     renderer.physicsAxleSpringFactors(simulation.axleCount()));
                 renderer.updatePostPhysicsVariables(simulation);
+                collisionStreamer.update(simulation.positionX(), simulation.positionY());
                 renderer.draw(simulation);
                 renderer.endFrame();
             };
@@ -358,6 +368,10 @@ int main() {
                 previousTime = currentTime;
 
                 renderer.beginFrame();
+                if (renderer.consumeRaisePlayerRequest()) {
+                    simulation.translateVertically(5.0);
+                    applicationLog.Log("Raised player vehicle 5 m above its current location");
+                }
 
                 const std::vector<KeyEvent> frameKeyEvents = renderer.consumeKeyEvents();
                 pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(),
@@ -369,6 +383,7 @@ int main() {
                     renderer.physicsWheelBrakeForces(simulation.axleCount()),
                     renderer.physicsAxleSpringFactors(simulation.axleCount()));
                 renderer.updatePostPhysicsVariables(simulation);
+                collisionStreamer.update(simulation.positionX(), simulation.positionY());
                 renderer.draw(simulation);
 
                 if (renderer.consumeCaptureRequest()) {

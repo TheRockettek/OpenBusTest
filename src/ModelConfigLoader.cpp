@@ -71,6 +71,7 @@ bool isKnownKeyword(const std::string& keyword) {
                                                              "mesh_ident",
                                                              "mouseevent",
                                                              "newanim",
+                                                             "new_attachment",
                                                              "nocollision",
                                                              "rendertype",
                                                              "scripttexture",
@@ -103,6 +104,9 @@ bool validForKind(const std::string& keyword, ModelConfigKind kind) {
         return false;
     }
     if (keyword == "rendertype" && kind != ModelConfigKind::SceneryObject) {
+        return false;
+    }
+    if (keyword == "new_attachment" && kind != ModelConfigKind::SceneryObject) {
         return false;
     }
     if ((keyword == "isshadow" || keyword == "viewpoint") &&
@@ -764,6 +768,56 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             if (current != nullptr) {
                 parseNewAnimation(reader, line, *current, variables, result.diagnostics);
             }
+            continue;
+        }
+        // [new_attachment]: optional name followed by local translation/rotation operations.
+        if (keyword == "new_attachment") {
+            ModelAttachmentPoint attachment;
+            bool sawOperation = false;
+            Line entry;
+            while (reader.next(entry)) {
+                if (entry.isKeyword()) {
+                    reader.pushBack(std::move(entry));
+                    break;
+                }
+                const std::string operation = lower(trim(entry.text));
+                std::size_t valueCount = 0;
+                if (operation == "attach_trans") {
+                    valueCount = 3;
+                    attachment.hasTranslation = true;
+                } else if (operation == "attach_rot_x" || operation == "attach_rot_y" ||
+                           operation == "attach_rot_z") {
+                    valueCount = 1;
+                    attachment.hasRotation = true;
+                } else {
+                    if (attachment.name.empty() && !sawOperation) {
+                        attachment.name = trim(entry.text);
+                    }
+                    continue;
+                }
+                sawOperation = true;
+                for (std::size_t index = 0; index < valueCount; ++index) {
+                    Line value;
+                    if (!reader.readPayload(value, result.diagnostics, keyword)) {
+                        break;
+                    }
+                    double parsed = 0.0;
+                    if (!parseDouble(value.text, parsed)) {
+                        result.diagnostics.error(value.number, keyword,
+                                                 "attachment transform must be numeric");
+                        continue;
+                    }
+                    if (operation == "attach_trans") {
+                        attachment.translation[index] = parsed;
+                    } else {
+                        const std::size_t axis = operation == "attach_rot_x"   ? 0
+                                                 : operation == "attach_rot_y" ? 1
+                                                                               : 2;
+                        attachment.rotationDegrees[axis] = parsed;
+                    }
+                }
+            }
+            result.attachmentPoints.push_back(std::move(attachment));
             continue;
         }
         // [mouseevent]: one event identifier; the event behavior is script-defined.

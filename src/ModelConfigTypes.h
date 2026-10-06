@@ -143,6 +143,14 @@ struct ModelCollisionMesh {
     bool hasPart = false;
 };
 
+struct ModelAttachmentPoint {
+    std::string name;
+    std::array<double, 3> translation = {};
+    std::array<double, 3> rotationDegrees = {};
+    bool hasTranslation = false;
+    bool hasRotation = false;
+};
+
 struct ModelCtcTemplate {
     std::string name;
     std::string texturePath;
@@ -187,6 +195,7 @@ struct ModelConfig {
     std::vector<ModelScriptTexture> scriptTextures;
     std::vector<ModelTextTexture> textTextures;
     std::vector<ModelCollisionMesh> collisionMeshes;
+    std::vector<ModelAttachmentPoint> attachmentPoints;
     bool hasBoundingBox = false;
     // OMSI model bounds: size X/Y/Z followed by center X/Y/Z.
     std::array<double, 6> boundingBox = {};

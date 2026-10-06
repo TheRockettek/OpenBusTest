@@ -69,6 +69,32 @@ void runProbe() {
                     "chain texture offset leaves road height unchanged");
     }
 
+    openbus::map::MapSplinePlacement bankedSpline = spline;
+    bankedSpline.length = 10.0;
+    bankedSpline.elevation = 0.0;
+    bankedSpline.gradientStart = 0.0;
+    bankedSpline.gradientEnd = 0.0;
+    bankedSpline.cantStart = 2.0;
+    bankedSpline.cantEnd = 4.0;
+    openbus::map::MapSplineProfileSection bankedSection;
+    bankedSection.points = {{-2.0, 0.0, 0.0, 0.0}, {2.0, 0.0, 1.0, 0.0}};
+    const std::vector<openbus::map::MapSplineSample> bankSamples = {
+        {0.0, 0.0, 0.0, 0.0}, {0.0, 5.0, 5.0, 0.0}, {0.0, 10.0, 10.0, 0.0}};
+    const auto banked = openbus::map::buildMapRoadSectionGeometry(
+        bankedSpline, bankSamples, bankedSection);
+    requireNear(banked.vertices[0].z, 0.04,
+                "positive cant raises the negative-lateral profile edge at spline start");
+    requireNear(banked.vertices[1].z, -0.04,
+                "positive cant lowers the positive-lateral profile edge at spline start");
+    requireNear(banked.vertices[2].z, 0.06,
+                "cant is interpolated linearly at the spline midpoint");
+    requireNear(banked.vertices[3].z, -0.06,
+                "interpolated cant is applied symmetrically across the section");
+    requireNear(banked.vertices[4].z, 0.08,
+                "end cant reaches the negative-lateral endpoint height");
+    requireNear(banked.vertices[5].z, -0.08,
+                "end cant reaches the positive-lateral endpoint height");
+
     spline.chainOffsetValid = false;
     spline.chainOffset = 0.0;
     spline.radius = 20.0;

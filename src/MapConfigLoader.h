@@ -92,6 +92,7 @@ struct MapTileRule {
 
 struct MapSceneryPlacement {
     std::string label;
+    std::optional<int> editorObjectNumber;
     std::string line1;
     std::string assetPath;
     int id = 0;
@@ -124,17 +125,21 @@ struct MapSplinePlacement {
     double gradientEnd = 0.0;
     double cantStart = 0.0;
     double cantEnd = 0.0;
+    double skewStart = 0.0;
+    double skewEnd = 0.0;
     double heightDelta = 0.0;
     double chainOffset = 0.0;
     std::optional<std::string> splineTerrainAlign2;
     std::vector<MapTileRule> rules;
     bool elevated = false;
+    bool mirrored = false;
     bool geometryValid = false;
     bool chainOffsetValid = false;
 };
 
 struct MapSplineAttachment {
     std::string label;
+    std::optional<int> editorObjectNumber;
     std::string assetPath;
     int id = 0;
     int splineIndex = -1;
@@ -154,6 +159,7 @@ struct MapSplineAttachment {
 
 struct MapAttachedObject {
     std::string label;
+    std::optional<int> editorObjectNumber;
     std::string line1;
     std::string assetPath;
     int id = 0;
@@ -236,6 +242,7 @@ struct WaterData {
 };
 
 MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory);
+std::size_t selectMapSpawnPoint(const MapDefinition& map, std::string_view selector);
 std::size_t selectMapEntryPoint(const MapDefinition& map, std::string_view selector);
 std::size_t selectMapGroundTextureIndex(const MapDefinition& map, std::string_view selector);
 MapTileData loadMapTile(const MapTileReference& tile);

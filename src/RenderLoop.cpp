@@ -149,22 +149,38 @@ constexpr int COORDINATE_HUD_TEXTURE_HEIGHT = 24;
 
 std::array<std::uint8_t, 7> coordinateHudGlyph(char character) {
     switch (character) {
-    case '0': return {0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110};
-    case '1': return {0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110};
-    case '2': return {0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111};
-    case '3': return {0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110};
-    case '4': return {0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010};
-    case '5': return {0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110};
-    case '6': return {0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110};
-    case '7': return {0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000};
-    case '8': return {0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110};
-    case '9': return {0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110};
-    case 'X': return {0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b01010, 0b10001};
-    case 'Y': return {0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100};
-    case 'Z': return {0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111};
-    case '-': return {0, 0, 0, 0b01110, 0, 0, 0};
-    case '.': return {0, 0, 0, 0, 0, 0b00100, 0b00100};
-    default: return {};
+    case '0':
+        return {0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110};
+    case '1':
+        return {0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110};
+    case '2':
+        return {0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111};
+    case '3':
+        return {0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110};
+    case '4':
+        return {0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010};
+    case '5':
+        return {0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110};
+    case '6':
+        return {0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110};
+    case '7':
+        return {0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000};
+    case '8':
+        return {0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110};
+    case '9':
+        return {0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110};
+    case 'X':
+        return {0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b01010, 0b10001};
+    case 'Y':
+        return {0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100};
+    case 'Z':
+        return {0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111};
+    case '-':
+        return {0, 0, 0, 0b01110, 0, 0, 0};
+    case '.':
+        return {0, 0, 0, 0, 0, 0b00100, 0b00100};
+    default:
+        return {};
     }
 }
 
@@ -4439,7 +4455,8 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        const std::vector<std::uint8_t> initialPixels = makeCoordinateHudPixels("X 0.0 Y 0.0 Z 0.0");
+        const std::vector<std::uint8_t> initialPixels =
+            makeCoordinateHudPixels("X 0.0 Y 0.0 Z 0.0");
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, COORDINATE_HUD_TEXTURE_WIDTH,
                      COORDINATE_HUD_TEXTURE_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                      initialPixels.data());
@@ -4549,7 +4566,7 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     }
     mapRenderer_ = std::make_unique<openbus::rendering::MapRenderer>(
         map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex),
-        groundTextureIndex, omsiRoot);
+        groundTextureIndex, omsiRoot, simulationState_);
 }
 
 void RenderLoop::logDiagnosticVariables() const {
@@ -4587,12 +4604,18 @@ void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
 
 void RenderLoop::updateScripts() {
     TraceScope trace("script", "RenderLoop::updateScripts");
-    const double renderTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
-    if (scriptRateHz_ <= 0.0) {
-        simulationState_.sharedVariables().set("timegap", renderTimeStep);
+    const auto updateAllScripts = [&] {
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
             vehicle->updateScripts(vehicle.get() != playerVehicle_);
         }
+        if (mapRenderer_ != nullptr) {
+            mapRenderer_->updateScripts();
+        }
+    };
+    const double renderTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
+    if (scriptRateHz_ <= 0.0) {
+        simulationState_.sharedVariables().set("timegap", renderTimeStep);
+        updateAllScripts();
         return;
     }
 
@@ -4602,9 +4625,7 @@ void RenderLoop::updateScripts() {
     while (scriptAccumulator_ >= scriptTimeStep && ticks < MAX_SCRIPT_CATCH_UP_TICKS) {
         scriptAccumulator_ -= scriptTimeStep;
         simulationState_.sharedVariables().set("timegap", scriptTimeStep);
-        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-            vehicle->updateScripts(vehicle.get() != playerVehicle_);
-        }
+        updateAllScripts();
         ++ticks;
     }
     if (ticks == MAX_SCRIPT_CATCH_UP_TICKS && scriptAccumulator_ >= scriptTimeStep) {
@@ -4929,6 +4950,13 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                         (collisionDebugOverlay_ ? "enabled" : "disabled"));
         }
         previousCollisionDebugKeyState_ = collisionDebugKeyPressed;
+    }
+    {
+        const bool raisePlayerKeyPressed = glfwGetKey(window_, GLFW_KEY_U) == GLFW_PRESS;
+        if (raisePlayerKeyPressed && !previousRaisePlayerKeyState_) {
+            raisePlayerRequestPending_ = true;
+        }
+        previousRaisePlayerKeyState_ = raisePlayerKeyPressed;
     }
     int width = 1;
     int height = 1;
@@ -5273,11 +5301,11 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 clickableHoverCacheLookPitch_ = viewLookPitch_;
                 clickableHoverCacheRevision_ = clickableRevision;
                 clickableHoverCacheTimestamp_ = currentTime;
-                clickableHoverCacheHit_ = playerVehicle_->hasVisibleClickable(interactionContext) &&
-                                          playerVehicle_->hasClickableAt(
-                                              framebufferCursorX, framebufferCursorY,
-                                              framebufferWidth_, framebufferHeight_,
-                                              interactionContext);
+                clickableHoverCacheHit_ =
+                    playerVehicle_->hasVisibleClickable(interactionContext) &&
+                    playerVehicle_->hasClickableAt(framebufferCursorX, framebufferCursorY,
+                                                   framebufferWidth_, framebufferHeight_,
+                                                   interactionContext);
             }
         } else {
             pendingMouseClick_ = false;
@@ -5402,7 +5430,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         }
     }
     if (!renderingReflection_ && collisionDebugOverlay_) {
-        if (!collisionWireframeBuilt_) {
+        const std::uint64_t collisionRevision = simulation.collisionDebugRevision();
+        if (!collisionWireframeBuilt_ || collisionWireframeRevision_ != collisionRevision) {
+            collisionWireframeVertices_.clear();
             const std::vector<StaticCollisionMesh> meshes = simulation.collisionDebugMeshes();
             std::size_t triangleCount = 0;
             for (const StaticCollisionMesh& mesh : meshes) {
@@ -5411,16 +5441,14 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 }
                 triangleCount += mesh.indices.size() / 3;
                 for (std::size_t index = 0; index + 2 < mesh.indices.size(); index += 3) {
-                    const std::array<int, 3> triangle = {mesh.indices[index],
-                                                         mesh.indices[index + 1],
-                                                         mesh.indices[index + 2]};
+                    const std::array<int, 3> triangle = {
+                        mesh.indices[index], mesh.indices[index + 1], mesh.indices[index + 2]};
                     for (int edge = 0; edge < 3; ++edge) {
                         for (const int vertexIndex :
                              {triangle[static_cast<std::size_t>(edge)],
                               triangle[static_cast<std::size_t>((edge + 1) % 3)]}) {
-                            if (vertexIndex < 0 ||
-                                static_cast<std::size_t>(vertexIndex) * 3 + 2 >=
-                                    mesh.vertices.size()) {
+                            if (vertexIndex < 0 || static_cast<std::size_t>(vertexIndex) * 3 + 2 >=
+                                                       mesh.vertices.size()) {
                                 continue;
                             }
                             const std::size_t vertexOffset =
@@ -5428,13 +5456,14 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                             collisionWireframeVertices_.push_back(
                                 {static_cast<float>(mesh.vertices[vertexOffset]),
                                  static_cast<float>(mesh.vertices[vertexOffset + 1]),
-                                 static_cast<float>(mesh.vertices[vertexOffset + 2] + 0.025),
-                                 1.0F, 0.58F, 0.08F});
+                                 static_cast<float>(mesh.vertices[vertexOffset + 2] + 0.025), 1.0F,
+                                 0.58F, 0.08F});
                         }
                     }
                 }
             }
             collisionWireframeBuilt_ = true;
+            collisionWireframeRevision_ = collisionRevision;
             gameLog.Log("Collision wireframe cached: " + std::to_string(triangleCount) +
                         " triangles across " + std::to_string(meshes.size()) +
                         " active terrain/road meshes");
@@ -5446,13 +5475,13 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
         openbus::rendering::drawStaticPrimitives(collisionWireframeBuffer_,
-                              collisionWireframeVertices_, GL_LINES, 1.5F);
+                                                 collisionWireframeVertices_, GL_LINES, 1.5F);
         if (collision.enabled && !collision.mesh) {
             pushMatrix();
             applyPose(chassis);
             translate(collision.offsetX, collision.offsetY, collision.offsetZ);
-            openbus::rendering::drawBox(collision.length, collision.width, collision.height,
-                                        1.0, 0.15, 0.12);
+            openbus::rendering::drawBox(collision.length, collision.width, collision.height, 1.0,
+                                        0.15, 0.12);
             popMatrix();
         }
         glDepthMask(depthWriteWasEnabled);
@@ -5484,8 +5513,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         const float scale = std::min(
-            {1.5F, static_cast<float>(std::max(framebufferWidth_ - 24, 1)) /
-                       COORDINATE_HUD_TEXTURE_WIDTH,
+            {1.5F,
+             static_cast<float>(std::max(framebufferWidth_ - 24, 1)) / COORDINATE_HUD_TEXTURE_WIDTH,
              static_cast<float>(std::max(framebufferHeight_ - 24, 1)) /
                  COORDINATE_HUD_TEXTURE_HEIGHT});
         const float hudWidth = COORDINATE_HUD_TEXTURE_WIDTH * scale;
@@ -5494,8 +5523,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         const float bottomPixels = framebufferHeight_ - 12.0F - hudHeight;
         openbus::rendering::drawTextureQuad(
             coordinateHudTexture_, -1.0F + 2.0F * leftPixels / framebufferWidth_,
-            -1.0F + 2.0F * bottomPixels / framebufferHeight_,
-            2.0F * hudWidth / framebufferWidth_, 2.0F * hudHeight / framebufferHeight_);
+            -1.0F + 2.0F * bottomPixels / framebufferHeight_, 2.0F * hudWidth / framebufferWidth_,
+            2.0F * hudHeight / framebufferHeight_);
         if (depthWasEnabled) {
             glEnable(GL_DEPTH_TEST);
         }
@@ -5685,4 +5714,10 @@ std::vector<KeyEvent> RenderLoop::consumeKeyEvents() {
     std::vector<KeyEvent> events;
     events.swap(keyEvents_);
     return events;
+}
+
+bool RenderLoop::consumeRaisePlayerRequest() {
+    const bool requested = raisePlayerRequestPending_;
+    raisePlayerRequestPending_ = false;
+    return requested;
 }

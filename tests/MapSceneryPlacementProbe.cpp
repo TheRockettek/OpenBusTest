@@ -68,6 +68,63 @@ void runProbe() {
                 "terrain-relative ordinary scenery adds sampled terrain height");
     requireNear(mapSceneryWorldHeight(ordinaryPose->z, 12.0, true), 4.75, 1e-9,
                 "absolute-height ordinary scenery ignores terrain height");
+        TerrainGrid slopedTerrain;
+        slopedTerrain.intervals = 1;
+        slopedTerrain.heights = {0.0F, 30.0F, 60.0F, 90.0F};
+        const auto terrainNormal = sampleMapTerrainNormal(slopedTerrain, 150.0, 150.0);
+        const double normalScale = 1.0 / std::sqrt(1.05);
+        require(terrainNormal.has_value(), "valid terrain grid yields a normal");
+        requireNear((*terrainNormal)[0], -0.1 * normalScale, 1e-9,
+            "terrain normal includes the eastward terrain gradient");
+        requireNear((*terrainNormal)[1], -0.2 * normalScale, 1e-9,
+            "terrain normal includes the northward terrain gradient");
+        requireNear((*terrainNormal)[2], normalScale, 1e-9,
+            "terrain normal is normalized with positive up");
+        require(!sampleMapTerrainNormal(TerrainGrid{}, 0.0, 0.0).has_value(),
+            "empty terrain grid has no terrain normal");
+    const MapSceneryPose identityParent{};
+    const MapSceneryPose anchored = composeMapAttachedObjectPose(
+        identityParent, {1.0, 2.0, 3.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
+    requireNear(anchored.x, 1.0, 1e-9, "attachment translation offsets parent X");
+    requireNear(anchored.y, 2.0, 1e-9, "attachment translation offsets parent Y");
+    requireNear(anchored.z, 3.0, 1e-9, "attachment translation offsets parent Z");
+    requireNear(transformMapSceneryVector(anchored, {1.0, 0.0, 0.0})[0], 1.0, 1e-9,
+                "identity attached orientation preserves local X");
+
+    MapSceneryPose rotatedParent;
+    rotatedParent.rotationDegrees[0] = 90.0;
+    rotatedParent.rotationCount = 3;
+    const MapSceneryPose rotatedAnchor = composeMapAttachedObjectPose(
+        rotatedParent, {1.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
+    requireNear(rotatedAnchor.x, 0.0, 1e-9, "parent heading rotates anchor translation in X");
+    requireNear(rotatedAnchor.y, -1.0, 1e-9, "parent heading rotates anchor translation in Y");
+
+    const MapSceneryPose childRotated = composeMapAttachedObjectPose(
+        identityParent, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {90.0, 0.0, 0.0});
+    const std::array<double, 3> childAxis =
+        transformMapSceneryVector(childRotated, {1.0, 0.0, 0.0});
+    requireNear(childAxis[0], 0.0, 1e-9, "child yaw rotates local X");
+    requireNear(childAxis[1], -1.0, 1e-9, "child yaw follows map renderer handedness");
+
+    MapSceneryPose terrainAligned;
+    terrainAligned.rotationDegrees[0] = 30.0;
+    terrainAligned.rotationCount = 3;
+    const std::array<double, 3> slopeNormal = {0.0, -0.6, 0.8};
+    require(alignMapSceneryPoseToTerrainNormal(terrainAligned, slopeNormal),
+            "finite terrain normal produces an aligned scenery pose");
+    const std::array<double, 3> alignedUp =
+        transformMapSceneryVector(terrainAligned, {0.0, 0.0, 1.0});
+    requireNear(alignedUp[0], slopeNormal[0], 1e-9,
+                "terrain-aligned local up matches sampled terrain normal X");
+    requireNear(alignedUp[1], slopeNormal[1], 1e-9,
+                "terrain-aligned local up matches sampled terrain normal Y");
+    requireNear(alignedUp[2], slopeNormal[2], 1e-9,
+                "terrain-aligned local up matches sampled terrain normal Z");
+    requireNear(terrainAligned.x, 0.0, 1e-9,
+                "terrain alignment preserves the scenery placement position");
+    require(!alignMapSceneryPoseToTerrainNormal(terrainAligned, {0.0, 0.0, 0.0}),
+            "degenerate terrain normal is rejected");
+
     ordinaryObject.transformValid = false;
     require(!placeMapSceneryObject(ordinaryObject, -2, 3).has_value(),
             "invalid ordinary scenery transform does not produce a pose");

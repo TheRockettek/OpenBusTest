@@ -13,6 +13,9 @@ taskkill.exe /F /IM OpenBus.exe
 set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
 set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
 
+@REM set "OPENBUS_MAP_PATH=Grundorf"
+set "OPENBUS_MAP_PATH=Grande Porto 2022"
+
 set "OPENBUS_VSYNC=off"
 
 set "OPENBUS_REFLECTION_TRANSPARENT=0"

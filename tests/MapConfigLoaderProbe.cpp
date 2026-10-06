@@ -67,7 +67,7 @@ void runFixtureProbe() {
                      "[unknown_global]\n opaque global payload \n\n"
                      "[entrypoints]\n2\n"
                      "2\n11\n0\n10\n20\n0\n0\n0\n0\n1\n0\nDepot\n"
-                     "3\n12\n0\n30\n5\n40\n0\n0\n0\n1\n0\nDepot East\n"
+                     "3\n12\n0\n30\n5\n40\n2\n5\n3\n7\n1\nDepot East\n"
                      "[map]\n0\n0\ntile_0_0.map\n[map]\n1\n0\ntile_1_0.map\n");
         writeUtf16Le(root / "tile_0_0.map",
                  "Fixture tile\n[version]\n14\n[terrain]\n[water]\n"
@@ -185,6 +185,24 @@ void runFixtureProbe() {
                     definition.entryPoints[0].placement.position[1] == 0.0 &&
                     definition.entryPoints[0].placement.position[2] == 20.0,
                 "entrypoint placement maps tile-local coordinates into map coordinates");
+        require(definition.entryPoints[1].placement.position[0] == 330.0 &&
+                    definition.entryPoints[1].placement.position[1] == 40.0 &&
+                    definition.entryPoints[1].placement.position[2] == 5.0 &&
+                    std::abs(definition.entryPoints[1].placement.yawDegrees -
+                             std::atan2(82.0, 19.0) * 180.0 / 3.14159265358979323846) < 1.0e-9,
+                "indexed entrypoint placement includes tile offset, elevation, and quaternion yaw");
+        require(openbus::map::selectMapSpawnPoint(definition, "") == 0 &&
+                    openbus::map::selectMapSpawnPoint(definition, "1") == 1,
+                "map spawn selection defaults to index zero and accepts zero-based indices");
+        for (const std::string invalidSpawn : {"-1", "2", "depot east", "not-an-index"}) {
+            bool invalidSpawnRejected = false;
+            try {
+                static_cast<void>(openbus::map::selectMapSpawnPoint(definition, invalidSpawn));
+            } catch (const std::runtime_error&) {
+                invalidSpawnRejected = true;
+            }
+            require(invalidSpawnRejected, "invalid map spawn index is rejected");
+        }
         require(openbus::map::selectMapEntryPoint(definition, "") == 0 &&
                     openbus::map::selectMapEntryPoint(definition, "1") == 1 &&
                     openbus::map::selectMapEntryPoint(definition, "depot east") == 1,
@@ -233,6 +251,7 @@ void runFixtureProbe() {
                     tile.attachedObjects.size() == 1,
                 "tile record families counted");
         require(tile.attachedObjects[0].label == "Object Nr. 7" &&
+                tile.attachedObjects[0].editorObjectNumber == 7 &&
                     tile.attachedObjects[0].line1 == "0" &&
                     tile.attachedObjects[0].assetPath == "Scenery\\attached.sco" &&
                     tile.attachedObjects[0].id == 17 &&
@@ -268,6 +287,7 @@ void runFixtureProbe() {
                                                    "spline rule 3", "spline rule 4"},
                 "elevated spline geometry, delta height, and raw spline modifiers parsed");
         require(tile.sceneryObjects.size() == 1 && tile.sceneryObjects[0].id == 5 &&
+                tile.sceneryObjects[0].editorObjectNumber == 4 &&
                     tile.sceneryObjects[0].label == "Object Nr. 4" &&
                     tile.sceneryObjects[0].line1 == "0" &&
                     tile.sceneryObjects[0].assetPath == "Scenery\\tree.sco" &&
@@ -286,6 +306,7 @@ void runFixtureProbe() {
                 "scenery object placement fields preserved without treating label text as a section");
         require(tile.splineAttachments.size() == 2 &&
                     tile.splineAttachments[0].assetPath == "Scenery\\lamp.sco" &&
+                    tile.splineAttachments[0].editorObjectNumber == 5 &&
                     tile.splineAttachments[0].transformValid &&
                     tile.splineAttachments[0].splineIndex == 1 &&
                     tile.splineAttachments[0].offset[0] == 3.0 &&
@@ -417,11 +438,14 @@ void runFixtureProbe() {
                     version11Spline.splines[0].chainOffset == 18.0,
                 "version 11 spline reads detail, neighbor IDs, cant, and chain texture offset");
         const auto version14Spline = loadVersionedSpline(
-            "14", "[spline]\n0\nSplines\\v14.sli\n141\n140\n142\n10\n20\n0.5\n45\n50\n-30\n0\n0\n1.5\n2.5\n11.25\n22.5\n77\n");
+            "14", "[spline]\n0\nSplines\\v14.sli\n141\n140\n142\n10\n20\n0.5\n45\n50\n-30\n0\n0\n1.5\n2.5\n11.25\n22.5\n77\nmirror\n");
         require(version14Spline.splines.size() == 1 &&
                     version14Spline.splines[0].geometryValid &&
                     version14Spline.splines[0].cantStart == 1.5 &&
                     version14Spline.splines[0].cantEnd == 2.5 &&
+                    version14Spline.splines[0].skewStart == 11.25 &&
+                    version14Spline.splines[0].skewEnd == 22.5 &&
+                    version14Spline.splines[0].mirrored &&
                     version14Spline.splines[0].chainOffsetValid &&
                     version14Spline.splines[0].chainOffset == 77.0,
                 "version 14 spline skips skew fields before reading chain texture offset");

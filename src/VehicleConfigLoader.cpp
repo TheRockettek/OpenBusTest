@@ -502,6 +502,11 @@ bool parseAxle(Reader& reader, VehicleConfig& result, const Line& keywordLine) {
 
 } // namespace
 
+void prepareScriptConfiguration(VehicleConfig& configuration) {
+    loadReferencedDefinitions(configuration.sourcePath, configuration);
+    convertVehicleScripts(configuration.sourcePath, configuration);
+}
+
 VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, VehicleFileKind kind) {
     openbus::rendering::TraceScope trace("config", "loadVehicleConfig");
     VehicleConfig result;
@@ -805,7 +810,8 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
         result.diagnostics.error(ticketSellingLine, "view_ticketselling",
                                  "must follow at least one [add_camera_driver]");
     }
-    loadReferencedDefinitions(configPath, result);
+    // Shared script resources are also consumed by scenery-object configurations.
+    prepareScriptConfiguration(result);
     loadPassengerCabin(result, result);
     loadPassengerPaths(result, result);
     loadRegistrationEntries(result.numberConfigPath, result.vehicleNumbers, result);
@@ -818,7 +824,6 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             "are ignored");
     }
     selectRegistrationAtIndex(result, 0);
-    convertVehicleScripts(configPath, result);
     return result;
 }
 

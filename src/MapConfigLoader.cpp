@@ -130,6 +130,22 @@ bool parseInteger(const std::string& value, int& result) {
     return begin != end && parsed.ec == std::errc{} && parsed.ptr == end;
 }
 
+std::optional<int> parseEditorObjectNumber(const std::string& label) {
+    std::string normalized = trim(label);
+    std::transform(
+        normalized.begin(), normalized.end(), normalized.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    constexpr std::string_view prefix = "object nr.";
+    if (!normalized.starts_with(prefix)) {
+        return std::nullopt;
+    }
+    int number = 0;
+    if (!parseInteger(trim(normalized.substr(prefix.size())), number) || number < 0) {
+        return std::nullopt;
+    }
+    return number;
+}
+
 bool parseSize(const std::string& value, std::size_t& result) {
     int parsed = 0;
     if (!parseInteger(value, parsed) || parsed < 0) {
@@ -425,23 +441,57 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
         double localX = 0.0;
         double elevation = 0.0;
         double localY = 0.0;
+        double quaternionX = 0.0;
         double quaternionY = 0.0;
+        double quaternionZ = 0.0;
         double quaternionW = 0.0;
         if (!parseReal(entryPoint.rawFields[3], localX) ||
             !parseReal(entryPoint.rawFields[4], elevation) ||
             !parseReal(entryPoint.rawFields[5], localY) ||
+            !parseReal(entryPoint.rawFields[6], quaternionX) ||
             !parseReal(entryPoint.rawFields[7], quaternionY) ||
+            !parseReal(entryPoint.rawFields[8], quaternionZ) ||
             !parseReal(entryPoint.rawFields[9], quaternionW)) {
             throw std::runtime_error("Invalid position or orientation in [entrypoints] record in " +
                                      globalPath.string());
         }
+        const double quaternionNorm =
+            std::hypot(std::hypot(quaternionX, quaternionY), std::hypot(quaternionZ, quaternionW));
+        if (quaternionNorm <= std::numeric_limits<double>::epsilon()) {
+            throw std::runtime_error("Zero orientation quaternion in [entrypoints] record in " +
+                                     globalPath.string());
+        }
+        quaternionX /= quaternionNorm;
+        quaternionY /= quaternionNorm;
+        quaternionZ /= quaternionNorm;
+        quaternionW /= quaternionNorm;
+        const double yawNumerator = 2.0 * (quaternionW * quaternionY + quaternionX * quaternionZ);
+        const double yawDenominator =
+            1.0 - 2.0 * (quaternionY * quaternionY + quaternionZ * quaternionZ);
         const MapTileReference& tile = definition.tiles[entryPoint.tileIndex];
         entryPoint.placement = {
             {static_cast<double>(tile.x) * OMSI_TILE_SIZE_METERS + localX,
              static_cast<double>(tile.y) * OMSI_TILE_SIZE_METERS + localY, elevation},
-            2.0 * std::atan2(quaternionY, quaternionW) * 180.0 / 3.14159265358979323846};
+            std::atan2(yawNumerator, yawDenominator) * 180.0 / 3.14159265358979323846};
     }
     return definition;
+}
+
+std::size_t selectMapSpawnPoint(const MapDefinition& map, std::string_view selector) {
+    if (map.entryPoints.empty()) {
+        throw std::runtime_error("Map has no [entrypoints]");
+    }
+    const std::string requested = trim(selector);
+    if (requested.empty()) {
+        return 0;
+    }
+
+    int index = 0;
+    if (!parseInteger(requested, index) || index < 0 ||
+        static_cast<std::size_t>(index) >= map.entryPoints.size()) {
+        throw std::runtime_error("Map spawn index is outside the [entrypoints] list: " + requested);
+    }
+    return static_cast<std::size_t>(index);
 }
 
 std::size_t selectMapEntryPoint(const MapDefinition& map, std::string_view selector) {
@@ -665,10 +715,8 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             }
             // Versions 14+ add skew at both ends before the v11+ chain texture offset.
             if (hasField(14)) {
-                double ignoredSkewStart = 0.0;
-                double ignoredSkewEnd = 0.0;
-                readSplineReal(ignoredSkewStart);
-                readSplineReal(ignoredSkewEnd);
+                readSplineReal(spline.skewStart);
+                readSplineReal(spline.skewEnd);
             }
             if (hasField(11)) {
                 spline.chainOffsetValid = parseReal(trim(readSplineField()), spline.chainOffset);
@@ -676,6 +724,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             spline.geometryValid = numericFieldsValid;
             // [mirror] is a bare marker after the numeric record, not a fixed-width field.
             if (hasField(7) && field < lines.size() && trim(lines[field]) == "mirror") {
+                spline.mirrored = true;
                 readSplineField();
             }
             if (elevated) {
@@ -706,6 +755,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             };
             MapSceneryPlacement object;
             object.label = cursor == 0 ? std::string{} : trim(lines[cursor - 1]);
+            object.editorObjectNumber = parseEditorObjectNumber(object.label);
             object.line1 = trim(requireObjectField(field));
             if (hasField(9)) {
                 if (!parseInteger(trim(requireObjectField(field++)), object.detailLevel)) {
@@ -771,6 +821,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             };
             MapAttachedObject object;
             object.label = cursor == 0 ? std::string{} : trim(lines[cursor - 1]);
+            object.editorObjectNumber = parseEditorObjectNumber(object.label);
             object.line1 = trim(requireField(field++));
             object.assetPath = trim(requireField(field++));
             object.hasExplicitId = tileVersion >= 6;
@@ -841,6 +892,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             };
             MapSplineAttachment attachment;
             attachment.label = cursor == 0 ? std::string{} : trim(lines[cursor - 1]);
+            attachment.editorObjectNumber = parseEditorObjectNumber(attachment.label);
             attachment.repeater = repeater;
             if (repeater) {
                 if (!parseInteger(trim(requireField(field++)),

@@ -1,5 +1,7 @@
 #include "MapCollisionBuilder.h"
 
+#include <ode/ode.h>
+
 #include <array>
 #include <bit>
 #include <cmath>
@@ -119,6 +121,12 @@ void runProbe() {
 
     const openbus::map::MapRoadCollisionResult result =
         openbus::map::buildMapRoadCollision(map, omsiRoot);
+    const openbus::map::MapRoadCollisionResult selectedTile =
+        openbus::map::buildMapRoadCollisionTile(map, omsiRoot, 0, -1);
+    require(selectedTile.tilesVisited == 1 && selectedTile.meshes.size() == 1,
+            "streaming collision builder processes only the requested tile");
+    require(openbus::map::buildMapRoadCollisionTile(map, omsiRoot, 99, 99).tilesVisited == 0,
+            "streaming collision builder ignores coordinates absent from the map manifest");
     require(result.tilesVisited == 3, "collision includes tiles beyond the spawn neighborhood");
     require(result.splineSectionsAdded == 3, "road strips are collected from every map tile");
     require(result.meshes.size() == 3, "collision meshes cover every fixture tile");
@@ -154,6 +162,28 @@ void runProbe() {
                             (junctionThird[0] - junctionFirst[0]) >
                     0.0,
                 "junction O3D winding produces upward-facing ODE contact normals");
+        require(dInitODE2(0) != 0, "ODE initializes for the junction contact regression");
+        dTriMeshDataID junctionData = dGeomTriMeshDataCreate();
+        const std::vector<double> junctionContactVertices = {
+            junctionFirst[0], junctionFirst[1], junctionFirst[2],
+            junctionSecond[0], junctionSecond[1], junctionSecond[2],
+            junctionThird[0], junctionThird[1], junctionThird[2]};
+        const std::vector<int> junctionContactIndices = {0, 1, 2};
+        dGeomTriMeshDataBuildDouble(junctionData, junctionContactVertices.data(), 3 * sizeof(double), 3,
+                                    junctionContactIndices.data(), 3, 3 * sizeof(int));
+        dGeomID junctionGeometry = dCreateTriMesh(nullptr, junctionData, nullptr, nullptr, nullptr);
+        dGeomID probeSphere = dCreateSphere(nullptr, 0.25);
+        dGeomSetPosition(probeSphere, (junctionFirst[0] + junctionSecond[0] + junctionThird[0]) / 3.0,
+                         (junctionFirst[1] + junctionSecond[1] + junctionThird[1]) / 3.0, 4.1);
+        dContactGeom contacts[4] = {};
+        const int contactCount = dCollide(probeSphere, junctionGeometry, 4, contacts,
+                                          sizeof(dContactGeom));
+        require(contactCount > 0,
+                "ODE detects a body above the transformed authored junction collision surface");
+        dGeomDestroy(probeSphere);
+        dGeomDestroy(junctionGeometry);
+        dGeomTriMeshDataDestroy(junctionData);
+        dCloseODE();
         const StaticCollisionMesh& mesh = result.meshes.front();
         const int first = mesh.indices[0];
         const int second = mesh.indices[1];

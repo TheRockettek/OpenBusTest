@@ -162,6 +162,7 @@ add_executable(OpenBus
     src/MapConfigLoader.cpp
     src/MapSceneryPlacement.cpp
     src/MapCollisionBuilder.cpp
+    src/MapCollisionStreamer.cpp
     src/MapRoadGeometry.cpp
     src/MapSplineGeometry.cpp
     src/MapSplineProfile.cpp
@@ -368,10 +369,39 @@ add_executable(OpenBusMapCollisionBuilderProbe
     src/PerfTrace.cpp
     src/SceneryObjectConfigLoader.cpp
     src/Variables.cpp
+    src/VehicleConfigLoader.cpp
+    src/osc/osc.cpp
 )
 openbus_configure_perf_trace(OpenBusMapCollisionBuilderProbe)
 target_include_directories(OpenBusMapCollisionBuilderProbe PRIVATE src)
+target_link_libraries(OpenBusMapCollisionBuilderProbe PRIVATE ${OPENBUS_ODE_TARGET})
 add_test(NAME OpenBusMapCollisionBuilderProbe COMMAND OpenBusMapCollisionBuilderProbe)
+
+add_executable(OpenBusMapCollisionStreamerProbe
+    tests/MapCollisionStreamerProbe.cpp
+    src/BusSimulation.cpp
+    src/ConfigurationParser.cpp
+    src/Logger.cpp
+    src/MapCollisionBuilder.cpp
+    src/MapCollisionStreamer.cpp
+    src/MapConfigLoader.cpp
+    src/MapSceneryPlacement.cpp
+    src/MapRoadGeometry.cpp
+    src/MapSplineGeometry.cpp
+    src/MapSplineProfile.cpp
+    src/ModelConfigLoader.cpp
+    src/O3DLoader.cpp
+    src/PerfTrace.cpp
+    src/RoadFeatures.cpp
+    src/SceneryObjectConfigLoader.cpp
+    src/Variables.cpp
+    src/VehicleConfigLoader.cpp
+    src/osc/osc.cpp
+)
+openbus_configure_perf_trace(OpenBusMapCollisionStreamerProbe)
+target_include_directories(OpenBusMapCollisionStreamerProbe PRIVATE src src/osc)
+target_link_libraries(OpenBusMapCollisionStreamerProbe PRIVATE ${OPENBUS_ODE_TARGET})
+add_test(NAME OpenBusMapCollisionStreamerProbe COMMAND OpenBusMapCollisionStreamerProbe)
 
 add_executable(OpenBusMapSceneryPlacementProbe
     tests/MapSceneryPlacementProbe.cpp
@@ -450,8 +480,10 @@ add_executable(OpenBusModelConfigProbe
     src/SceneryObjectConfigLoader.cpp
     src/PerfTrace.cpp
     src/Variables.cpp
+    src/VehicleConfigLoader.cpp
+    src/osc/osc.cpp
 )
-target_include_directories(OpenBusModelConfigProbe PRIVATE src)
+target_include_directories(OpenBusModelConfigProbe PRIVATE src src/osc)
 add_test(NAME OpenBusModelConfigProbe COMMAND OpenBusModelConfigProbe)
 
 add_executable(OpenBusVehicleConfigProbe

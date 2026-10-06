@@ -128,7 +128,9 @@ class Parser {
     }
 
   private:
-    bool atEnd() const { return cursor_ >= tokens_.size(); }
+    bool atEnd() const {
+        return cursor_ >= tokens_.size();
+    }
 
     const std::string& peek() const {
         if (atEnd()) {
@@ -203,8 +205,7 @@ class Parser {
         for (std::size_t row = 0; row < 4; ++row) {
             for (std::size_t column = 0; column < 4; ++column) {
                 for (std::size_t inner = 0; inner < 4; ++inner) {
-                    result[row * 4 + column] +=
-                        left[row * 4 + inner] * right[inner * 4 + column];
+                    result[row * 4 + column] += left[row * 4 + inner] * right[inner * 4 + column];
                 }
             }
         }
@@ -212,20 +213,17 @@ class Parser {
     }
 
     static ObjPosition transformPosition(const Matrix& matrix, const ObjPosition& position) {
-        return {position.x * matrix[0] + position.y * matrix[4] + position.z * matrix[8] +
-                    matrix[12],
-                position.x * matrix[1] + position.y * matrix[5] + position.z * matrix[9] +
-                    matrix[13],
-                position.x * matrix[2] + position.y * matrix[6] + position.z * matrix[10] +
-                    matrix[14]};
+        return {
+            position.x * matrix[0] + position.y * matrix[4] + position.z * matrix[8] + matrix[12],
+            position.x * matrix[1] + position.y * matrix[5] + position.z * matrix[9] + matrix[13],
+            position.x * matrix[2] + position.y * matrix[6] + position.z * matrix[10] + matrix[14]};
     }
 
     static ObjNormal transformNormal(const Matrix& matrix, const ObjNormal& normal) {
         const double a = matrix[0], b = matrix[1], c = matrix[2];
         const double d = matrix[4], e = matrix[5], f = matrix[6];
         const double g = matrix[8], h = matrix[9], i = matrix[10];
-        const double determinant = a * (e * i - f * h) - b * (d * i - f * g) +
-                                   c * (d * h - e * g);
+        const double determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
         if (std::abs(determinant) < 1.0e-12) {
             throw std::runtime_error("singular frame transform");
         }
@@ -240,9 +238,9 @@ class Parser {
             normal.x * inverse[0] + normal.y * inverse[3] + normal.z * inverse[6],
             normal.x * inverse[1] + normal.y * inverse[4] + normal.z * inverse[7],
             normal.x * inverse[2] + normal.y * inverse[5] + normal.z * inverse[8]};
-        const double length = std::sqrt(transformed.x * transformed.x +
-                                        transformed.y * transformed.y +
-                                        transformed.z * transformed.z);
+        const double length =
+            std::sqrt(transformed.x * transformed.x + transformed.y * transformed.y +
+                      transformed.z * transformed.z);
         if (length > 1.0e-12) {
             transformed.x /= length;
             transformed.y /= length;
@@ -471,9 +469,8 @@ class Parser {
         for (const ObjNormal& normal : mesh.normals) {
             output.normals.push_back(transformNormal(transform, normal));
         }
-        const std::vector<ObjMaterial> materials = mesh.materials.empty()
-                                                       ? std::vector<ObjMaterial>{ObjMaterial{}}
-                                                       : mesh.materials;
+        const std::vector<ObjMaterial> materials =
+            mesh.materials.empty() ? std::vector<ObjMaterial>{ObjMaterial{}} : mesh.materials;
         for (std::size_t index = 0; index < materials.size(); ++index) {
             ObjMaterial material = materials[index];
             material.materialIndex = materialBase + static_cast<int>(index);
@@ -482,9 +479,8 @@ class Parser {
         }
         for (std::size_t faceIndex = 0; faceIndex < mesh.faces.size(); ++faceIndex) {
             const std::vector<int>& face = mesh.faces[faceIndex];
-            const int localMaterial = faceIndex < mesh.faceMaterials.size()
-                                          ? mesh.faceMaterials[faceIndex]
-                                          : 0;
+            const int localMaterial =
+                faceIndex < mesh.faceMaterials.size() ? mesh.faceMaterials[faceIndex] : 0;
             const std::string materialName = "matl_" + std::to_string(materialBase + localMaterial);
             for (std::size_t corner = 2; corner < face.size(); ++corner) {
                 const std::array<std::size_t, 3> corners = {0, corner - 1, corner};
@@ -492,8 +488,7 @@ class Parser {
                 triangle.material = materialName;
                 for (std::size_t vertex = 0; vertex < corners.size(); ++vertex) {
                     const std::size_t faceCorner = corners[vertex];
-                    const std::size_t positionIndex =
-                        static_cast<std::size_t>(face[faceCorner]);
+                    const std::size_t positionIndex = static_cast<std::size_t>(face[faceCorner]);
                     int normalIndex = 0;
                     if (faceIndex < mesh.normalFaces.size() &&
                         mesh.normalFaces[faceIndex].size() == face.size()) {
@@ -506,9 +501,8 @@ class Parser {
                     if (positionIndex < mesh.texCoords.size()) {
                         texCoordIndex = static_cast<int>(texCoordBase + positionIndex + 1);
                     }
-                    triangle.indices[vertex] = {
-                        static_cast<int>(positionBase + positionIndex + 1), texCoordIndex,
-                        normalIndex};
+                    triangle.indices[vertex] = {static_cast<int>(positionBase + positionIndex + 1),
+                                                texCoordIndex, normalIndex};
                 }
                 if (triangle.indices[0].normal == 0 || triangle.indices[1].normal == 0 ||
                     triangle.indices[2].normal == 0) {
@@ -519,11 +513,10 @@ class Parser {
                                  az = second.z - first.z;
                     const double bx = third.x - first.x, by = third.y - first.y,
                                  bz = third.z - first.z;
-                    ObjNormal generated = {az * by - ay * bz, ax * bz - az * bx,
-                                           ay * bx - ax * by};
-                    const double length = std::sqrt(generated.x * generated.x +
-                                                    generated.y * generated.y +
-                                                    generated.z * generated.z);
+                    ObjNormal generated = {az * by - ay * bz, ax * bz - az * bx, ay * bx - ax * by};
+                    const double length =
+                        std::sqrt(generated.x * generated.x + generated.y * generated.y +
+                                  generated.z * generated.z);
                     if (length > 1.0e-12) {
                         generated.x /= length;
                         generated.y /= length;
@@ -561,7 +554,8 @@ std::shared_ptr<ParsedObj> XLoader::parse(const std::filesystem::path& path) {
     std::string normalizedHeader(header);
     std::transform(normalizedHeader.begin(), normalizedHeader.end(), normalizedHeader.begin(),
                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-    if (normalizedHeader.rfind("xof ", 0) != 0 || normalizedHeader.find("txt") == std::string::npos) {
+    if (normalizedHeader.rfind("xof ", 0) != 0 ||
+        normalizedHeader.find("txt") == std::string::npos) {
         return {};
     }
     try {

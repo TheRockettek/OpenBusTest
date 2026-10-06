@@ -2,6 +2,7 @@
 #include "InteriorLighting.h"
 #include "SceneryObjectConfigLoader.h"
 #include "Variables.h"
+#include "osc/OscConverter.h"
 
 #include <filesystem>
 #include <fstream>
@@ -24,6 +25,7 @@ int main() {
               "[CTC]\nColorscheme\nTexture\\Advert\n0\n"
               "[CTCTexture]\nFarbschema_Tex1\n3803_l.tga\n"
               "[mesh]\ndisplay.obj\n"
+              "[visible]\nscenery_lamp\n1\n"
               "[absheight]\n"
               "[shadow]\n"
               "[isshadow]\n"
@@ -111,6 +113,69 @@ int main() {
         std::cerr << "tree SCO absolute-height marker was not retained\n";
         return 1;
     }
+    const std::filesystem::path attachmentConfigPath = root / "attachment.sco";
+    std::ofstream attachmentConfig(attachmentConfigPath);
+    attachmentConfig << "[model]\nattachment.cfg\n"
+                        "[new_attachment]\nleft\nattach_rot_z\n180\n"
+                        "attach_trans\n0\n0.04\n0.8\n"
+                        "[new_attachment]\nright\nattach_trans\n1\n2\n3\n";
+    attachmentConfig.close();
+    const SceneryObjectConfig attachmentConfiguration =
+        loadSceneryObjectFile(attachmentConfigPath);
+    if (attachmentConfiguration.diagnostics.hasErrors() ||
+        attachmentConfiguration.attachmentPoints.size() != 2 ||
+        attachmentConfiguration.attachmentPoints[0].name != "left" ||
+        attachmentConfiguration.attachmentPoints[0].translation !=
+            std::array<double, 3>{0.0, 0.04, 0.8} ||
+        attachmentConfiguration.attachmentPoints[0].rotationDegrees !=
+            std::array<double, 3>{0.0, 0.0, 180.0} ||
+        attachmentConfiguration.attachmentPoints[1].name != "right" ||
+        attachmentConfiguration.attachmentPoints[1].translation !=
+            std::array<double, 3>{1.0, 2.0, 3.0}) {
+        std::cerr << "SCO new_attachment blocks were not retained in order\n";
+        return 1;
+    }
+    const std::filesystem::path sceneryVariableListPath = root / "signal_varlist.txt";
+    std::ofstream sceneryVariableList(sceneryVariableListPath);
+    sceneryVariableList << "SignalState\nLampMode\n";
+    sceneryVariableList.close();
+    const std::filesystem::path sceneryStringListPath = root / "signal_stringlist.txt";
+    std::ofstream sceneryStringList(sceneryStringListPath);
+    sceneryStringList << "SignalText\n";
+    sceneryStringList.close();
+    const std::filesystem::path sceneryConstantPath = root / "signal_const.cfg";
+    std::ofstream sceneryConstants(sceneryConstantPath);
+    sceneryConstants << "[const]\nEnabled\n1\n[newcurve]\nLampCurve\n"
+                        "[pnt]\n0\n0\n[pnt]\n1\n1\n";
+    sceneryConstants.close();
+    const std::filesystem::path sceneryScriptPath = root / "signal.osc";
+    std::ofstream sceneryScript(sceneryScriptPath);
+    sceneryScript << "{init}\n(C.L.Enabled) (S.L.SignalState)\n{end}\n";
+    sceneryScript.close();
+    const std::filesystem::path scriptedSceneryPath = root / "signal.sco";
+    std::ofstream scriptedScenery(scriptedSceneryPath);
+    scriptedScenery << "[model]\nsignal.cfg\n"
+                       "[script]\n1\nsignal.osc\n"
+                       "[varnamelist]\n1\nsignal_varlist.txt\n"
+                       "[stringvarnamelist]\n1\nsignal_stringlist.txt\n"
+                       "[constfile]\n1\nsignal_const.cfg\n";
+    scriptedScenery.close();
+    const SceneryObjectConfig scriptedSceneryConfiguration =
+        loadSceneryObjectFile(scriptedSceneryPath);
+    if (scriptedSceneryConfiguration.diagnostics.hasErrors() ||
+        scriptedSceneryConfiguration.scriptConfiguration.sourcePath != scriptedSceneryPath ||
+        scriptedSceneryConfiguration.scriptConfiguration.scripts !=
+            std::vector<std::string>{"signal.osc"} ||
+        scriptedSceneryConfiguration.scriptConfiguration.floatVariables !=
+            std::vector<std::string>{"signalstate", "lampmode"} ||
+        scriptedSceneryConfiguration.scriptConfiguration.stringVariables !=
+            std::vector<std::string>{"signaltext"} ||
+        scriptedSceneryConfiguration.scriptConfiguration.constants.at("enabled") != 1.0F ||
+        scriptedSceneryConfiguration.scriptConfiguration.curves.count("lampcurve") != 1 ||
+        !std::filesystem::exists(generatedLuaPath(sceneryScriptPath))) {
+        std::cerr << "SCO script, variable lists, constants, or OSC preparation were not loaded\n";
+        return 1;
+    }
     const std::filesystem::path treeWithHelperPath = root / "tree_with_editor_helper.sco";
     std::ofstream treeWithHelper(treeWithHelperPath);
     treeWithHelper << "[tree]\ntree.bmp\n5\n10\n0.5\n1.5\n"
@@ -155,14 +220,21 @@ int main() {
     convertedXMesh.close();
     const std::filesystem::path xModelConfigPath = root / "scenery_model.cfg";
     std::ofstream xModelConfig(xModelConfigPath);
-    xModelConfig << "[mesh]\ntree.x\n";
+    xModelConfig << "[new_attachment]\nmodel_anchor\nattach_rot_y\n15\n"
+                    "attach_trans\n2\n3\n4\n[mesh]\ntree.x\n";
     xModelConfig.close();
     Variables xSceneryVariables(ScriptObjectKind::SceneryObject);
     const ModelConfig xModelConfiguration =
         loadModelConfig(xModelConfigPath, xModelRoot, ModelConfigKind::SceneryObject,
                         xSceneryVariables);
     if (xModelConfiguration.parts.size() != 1 ||
-        xModelConfiguration.parts[0].objPath != xModelRoot / "tree.x") {
+        xModelConfiguration.parts[0].objPath != xModelRoot / "tree.x" ||
+        xModelConfiguration.attachmentPoints.size() != 1 ||
+        xModelConfiguration.attachmentPoints[0].name != "model_anchor" ||
+        xModelConfiguration.attachmentPoints[0].translation !=
+            std::array<double, 3>{2.0, 3.0, 4.0} ||
+        xModelConfiguration.attachmentPoints[0].rotationDegrees !=
+            std::array<double, 3>{0.0, 15.0, 0.0}) {
         std::cerr << "scenery model resolver did not retain the authored X mesh path\n";
         return 1;
     }
@@ -227,6 +299,9 @@ int main() {
         result.ctcTextures.size() != 1 || result.ctcTextures[0].slot != "farbschema_tex1" ||
         result.ctcTextures[0].textureName != "3803_l.tga" ||
         result.parts[0].mouseEvent != "routedisplay" ||
+        sceneryResult.parts.size() != 1 ||
+        sceneryResult.parts[0].visibleVariable != "scenery_lamp" ||
+        sceneryResult.parts[0].visibleValue != 1 || !sceneryVariables.has("scenery_lamp") ||
         result.parts[0].interiorLightIndexes != std::array<int, 4>{2, -1, 4, 5} ||
         result.interiorLights.size() != 1 ||
         result.interiorLights[0].controller != "cockpit_lights" ||

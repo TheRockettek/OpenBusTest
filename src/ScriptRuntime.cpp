@@ -1102,9 +1102,11 @@ struct ScriptRuntime::Impl {
         for (const std::string& variable : configuration.stringVariables) {
             localState.declareString(variable);
         }
-        for (const char* variable : {"ident", "number", "act_route", "act_busstop", "setlineto",
-                                     "yard", "file_schedule"}) {
-            localState.declareString(variable);
+        if (localState.objectKind() == ScriptObjectKind::Vehicle) {
+            for (const char* variable : {"ident", "number", "act_route", "act_busstop", "setlineto",
+                                         "yard", "file_schedule"}) {
+                localState.declareString(variable);
+            }
         }
         if (!configuration.selectedRegistration.empty() ||
             !configuration.selectedVehicleNumber.empty()) {

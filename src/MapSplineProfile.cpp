@@ -5,6 +5,7 @@
 #include <array>
 #include <charconv>
 #include <cmath>
+#include <utility>
 #include <cstddef>
 #include <fstream>
 #include <iterator>
@@ -117,6 +118,20 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
         const std::string& section = lines[cursor++];
         if (section == "[onlyeditor]") {
             profile.editorOnly = true;
+        } else if (section == "[heightprofile]") {
+            MapSplineHeightProfile heightProfile;
+            bool complete = true;
+            bool numeric = true;
+            for (std::size_t index = 0; index < heightProfile.rawFields.size(); ++index) {
+                if (!readPayload(lines, cursor, heightProfile.rawFields[index])) {
+                    complete = false;
+                    break;
+                }
+                numeric = parseReal(heightProfile.rawFields[index], heightProfile.values[index]) &&
+                          numeric;
+            }
+            heightProfile.valid = complete && numeric;
+            profile.heightProfiles.push_back(std::move(heightProfile));
         } else if (section == "[texture]") {
             std::string texture;
             if (readPayload(lines, cursor, texture)) {
