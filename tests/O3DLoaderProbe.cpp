@@ -1,6 +1,8 @@
 #include "O3DLoader.h"
 #include "Environment.h"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -13,10 +15,65 @@ int main(int argc, char** argv) {
         std::cerr << "expected an O3D path\n";
         return 1;
     }
+    if (openbus::rendering::convertO3DPositionToMapAxes(1.0, 0.0, 0.0) !=
+            std::array<double, 3>{1.0, 0.0, 0.0} ||
+        openbus::rendering::convertO3DPositionToMapAxes(0.0, 1.0, 0.0) !=
+            std::array<double, 3>{0.0, 0.0, 1.0} ||
+        openbus::rendering::convertO3DPositionToMapAxes(0.0, 0.0, 1.0) !=
+            std::array<double, 3>{0.0, 1.0, 0.0}) {
+        std::cerr << "O3D-to-map axis conversion is incorrect\n";
+        return 1;
+    }
+    if (openbus::rendering::convertO3DMapPositionToVehicleAxes(1.0, 0.0, 0.0) !=
+            std::array<double, 3>{0.0, -1.0, 0.0} ||
+        openbus::rendering::convertO3DMapPositionToVehicleAxes(0.0, 1.0, 0.0) !=
+            std::array<double, 3>{1.0, 0.0, 0.0} ||
+        openbus::rendering::convertO3DMapPositionToVehicleAxes(0.0, 0.0, 1.0) !=
+            std::array<double, 3>{0.0, 0.0, 1.0}) {
+        std::cerr << "O3D map-to-vehicle axis conversion is incorrect\n";
+        return 1;
+    }
     const auto parsed = openbus::rendering::O3DLoader::parse(argv[1]);
     if (!parsed || parsed->positions.empty() || parsed->triangles.empty() ||
         parsed->materials.empty()) {
         std::cerr << "failed to parse O3D fixture\n";
+        return 1;
+    }
+    std::array<double, 3> boundsMinimum = {std::numeric_limits<double>::max(),
+                                           std::numeric_limits<double>::max(),
+                                           std::numeric_limits<double>::max()};
+    std::array<double, 3> boundsMaximum = {std::numeric_limits<double>::lowest(),
+                                           std::numeric_limits<double>::lowest(),
+                                           std::numeric_limits<double>::lowest()};
+    std::vector<std::array<double, 3>> vehiclePositions;
+    vehiclePositions.reserve(parsed->positions.size());
+    for (const auto& position : parsed->positions) {
+        const auto vehiclePosition = openbus::rendering::convertO3DMapPositionToVehicleAxes(
+            position.x, position.y, position.z);
+        vehiclePositions.push_back(vehiclePosition);
+        for (std::size_t axis = 0; axis < vehiclePosition.size(); ++axis) {
+            boundsMinimum[axis] = std::min(boundsMinimum[axis], vehiclePosition[axis]);
+            boundsMaximum[axis] = std::max(boundsMaximum[axis], vehiclePosition[axis]);
+        }
+    }
+    for (std::size_t axis = 0; axis < boundsMinimum.size(); ++axis) {
+        const double expectedCenter = (boundsMinimum[axis] + boundsMaximum[axis]) * 0.5;
+        const double expectedSize = boundsMaximum[axis] - boundsMinimum[axis];
+        if (std::abs(parsed->boundsCenter[axis] - expectedCenter) > 1.0e-8 ||
+            std::abs(parsed->boundsSize[axis] - expectedSize) > 1.0e-8) {
+            std::cerr << "O3D culling bounds do not enclose vertices in vehicle render axes\n";
+            return 1;
+        }
+    }
+    double expectedRadius = 0.0;
+    for (const auto& position : vehiclePositions) {
+        const double x = position[0] - parsed->boundsCenter[0];
+        const double y = position[1] - parsed->boundsCenter[1];
+        const double z = position[2] - parsed->boundsCenter[2];
+        expectedRadius = std::max(expectedRadius, std::sqrt(x * x + y * y + z * z));
+    }
+    if (std::abs(parsed->boundsRadius - expectedRadius) > 1.0e-8) {
+        std::cerr << "O3D culling sphere is not centered in vehicle render axes\n";
         return 1;
     }
     for (const auto& triangle : parsed->triangles) {

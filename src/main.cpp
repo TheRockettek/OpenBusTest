@@ -3,6 +3,7 @@
 #include "CrashHandler.h"
 #include "Environment.h"
 #include "Logger.h"
+#include "MapCollisionBuilder.h"
 #include "MapConfigLoader.h"
 #include "ModelConfigLoader.h"
 #include "PerfTrace.h"
@@ -18,6 +19,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -103,11 +105,10 @@ int main() {
 #if OPENBUS_ENABLE_PERF_TRACE
         const std::string traceEnabled = environmentValue("OPENBUS_TRACE");
         const std::string tracePath = environmentValue("OPENBUS_TRACE_FILE");
-        applicationLog.Log("Performance tracing instrumentation is compiled in; runtime=" +
-                   (traceEnabled.empty() ? std::string("disabled") : traceEnabled) +
-                   ", output=" +
-                   (tracePath.empty() ? std::string("openbus_trace.json") : tracePath) +
-                   ".");
+        applicationLog.Log(
+            "Performance tracing instrumentation is compiled in; runtime=" +
+            (traceEnabled.empty() ? std::string("disabled") : traceEnabled) + ", output=" +
+            (tracePath.empty() ? std::string("openbus_trace.json") : tracePath) + ".");
 #else
         applicationLog.Log("Performance tracing instrumentation is not compiled in.");
 #endif
@@ -138,8 +139,8 @@ int main() {
                 aiVehicleCount = positiveEnvironmentInt("OPENBUS_AI_COUNT", 1, 200);
             }
             const std::string configuredMapPath = environmentValue("OPENBUS_MAP_PATH");
-            mapDirectory = configuredMapPath.empty() ? omsiRootPath() / "maps" / "Grande Porto 2022"
-                                                     : std::filesystem::path(configuredMapPath);
+            mapDirectory = omsiRootPath() / "maps" /
+                           (configuredMapPath.empty() ? "Grande Porto 2022" : configuredMapPath);
             if (mapDirectory.is_relative()) {
                 mapDirectory = omsiRootPath() / mapDirectory;
             }
@@ -153,20 +154,34 @@ int main() {
         const std::size_t terrainSidecars = static_cast<std::size_t>(std::count_if(
             mapDefinition.tiles.begin(), mapDefinition.tiles.end(),
             [](const openbus::map::MapTileReference& tile) { return tile.hasTerrainFile; }));
-        applicationLog.Log("Map manifest loaded: tiles=" +
-                           std::to_string(mapDefinition.tiles.size()) + ", terrain sidecars=" +
-                           std::to_string(terrainSidecars) + ", ground textures=" +
-                           std::to_string(mapDefinition.groundTextures.size()) +
-                           ", entrypoints=" +
-                           std::to_string(mapDefinition.entryPoints.size()) + ".");
-        if (mapDefinition.entryPoints.empty()) {
-            throw std::runtime_error("Map has no [entrypoints]: " + mapDirectory.string());
+        std::size_t groundTextureSidecars = 0;
+        for (const openbus::map::MapTileReference& tile : mapDefinition.tiles) {
+            groundTextureSidecars += tile.groundTextureSidecars.size();
         }
-        constexpr std::size_t defaultSpawnEntryPoint = 0;
-        const VehiclePlacement busPlacement =
-            mapDefinition.entryPoints[defaultSpawnEntryPoint].placement;
+        const std::string displayMapName = !mapDefinition.metadata.friendlyName.empty()
+                                               ? mapDefinition.metadata.friendlyName
+                                               : mapDefinition.metadata.name;
+        const std::string mapNameSummary =
+            displayMapName.empty() ? std::string{} : ", name=" + displayMapName;
+        applicationLog.Log(
+            "Map manifest loaded: tiles=" + std::to_string(mapDefinition.tiles.size()) +
+            ", terrain sidecars=" + std::to_string(terrainSidecars) +
+            ", ground-texture sidecars=" + std::to_string(groundTextureSidecars) +
+            ", ground textures=" + std::to_string(mapDefinition.groundTextures.size()) +
+            ", entrypoints=" + std::to_string(mapDefinition.entryPoints.size()) + mapNameSummary +
+            ".");
+        for (const ConfigurationDiagnostic& diagnostic : mapDefinition.diagnostics.entries) {
+            applicationLog.Log("Map global.cfg line " + std::to_string(diagnostic.line) + " [" +
+                               diagnostic.keyword + "]: " + diagnostic.message);
+        }
+        const std::size_t spawnEntryPoint =
+            openbus::map::selectMapEntryPoint(mapDefinition, environmentValue("OPENBUS_MAP_ENTRY"));
+        const std::size_t groundTextureIndex = openbus::map::selectMapGroundTextureIndex(
+            mapDefinition, environmentValue("OPENBUS_MAP_GROUNDTEX"));
+        const VehiclePlacement busPlacement = mapDefinition.entryPoints[spawnEntryPoint].placement;
         applicationLog.Log("Map " + mapDirectory.string() +
-                           " spawn: " + mapDefinition.entryPoints[defaultSpawnEntryPoint].name);
+                           " spawn: " + mapDefinition.entryPoints[spawnEntryPoint].name +
+                           " (entrypoint " + std::to_string(spawnEntryPoint) + ")");
 
         BusConfiguration configuration;
         {
@@ -179,6 +194,15 @@ int main() {
             openbus::rendering::TraceScope trace("config", "main.loadBusModelConfiguration");
             modelConfiguration = loadBusModelConfiguration(busConfigPath);
         }
+
+        openbus::map::MapRoadCollisionResult roadCollision = openbus::map::buildSpawnRoadCollision(
+            mapDefinition, mapDefinition.entryPoints[spawnEntryPoint].tileIndex, omsiRootPath());
+        applicationLog.Log(
+            "Map road collision prepared: tiles=" + std::to_string(roadCollision.tilesVisited) +
+            ", sections=" + std::to_string(roadCollision.splineSectionsAdded) +
+            ", meshes=" + std::to_string(roadCollision.meshes.size()) +
+            ", skipped profiles=" + std::to_string(roadCollision.skippedProfiles) +
+            ", skipped splines=" + std::to_string(roadCollision.skippedSplines) + ".");
 
         {
             openbus::rendering::TraceScope trace("config", "main.writeConfigurationSnapshots");
@@ -204,10 +228,10 @@ int main() {
             configuration, busPlacement, 60.0, 8, busPlacement.position[2],
             [&] {
                 openbus::rendering::TraceScope trace("map", "main.loadSpawnCollisionTerrain");
-                return loadSpawnTerrain(
-                    mapDefinition,
-                    mapDefinition.entryPoints[defaultSpawnEntryPoint].tileIndex);
-            }());
+                return loadSpawnTerrain(mapDefinition,
+                                        mapDefinition.entryPoints[spawnEntryPoint].tileIndex);
+            }(),
+            std::move(roadCollision.meshes));
 
         const bool benchmarkMode =
             openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
@@ -216,7 +240,7 @@ int main() {
         const int windowHeight =
             benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384) : 1080;
         RenderLoop renderer(windowWidth, windowHeight, "OpenBus");
-        renderer.SetMap(mapDefinition, defaultSpawnEntryPoint, omsiRootPath());
+        renderer.SetMap(mapDefinition, spawnEntryPoint, groundTextureIndex, omsiRootPath());
         Vehicle* playerVehicle =
             renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
                                 {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});

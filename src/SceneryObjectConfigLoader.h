@@ -25,6 +25,7 @@ struct SceneryObjectConfig {
     std::filesystem::path collisionMesh;
     bool noCollision = false;
     bool surface = false;
+    bool absoluteHeight = false;
     bool hasBoundingBox = false;
     std::array<double, 6> boundingBox = {};
     std::vector<std::string> scripts;

@@ -56,6 +56,13 @@ records commonly point outside the map directory to shared OMSI assets.
 | `timeline.prt.cfg` | Root file observed in Grande Porto with 15 Chrono paths and a trailing data block. It is not in the merger's registered parser/copy set; its schema is unknown here. |
 | `laststn.osn`, `laststn.osn.owt`, `laststn.osn_*.dds` | Opaque companion files observed in the map folder, rather than tile geometry. They are outside the merger's registered parser/copy set; their schema and runtime role are unknown here. |
 
+The current OpenBus manifest inventories numeric-suffix `.dds` sidecar paths
+per listed tile and preserves the suffix text verbatim. It does not decode the
+DDS payload or establish how the suffix maps to `[groundtex]` entries; no
+sidecar is currently bound to rendered terrain. Tile `.map.LM.bmp` and
+`.map.terrain_0.rdy` paths and presence are also inventoried, but their payloads
+are not decoded or applied.
+
 The map also depends on `Sceneryobjects\...`, `Splines\...`, vehicles,
 textures, and other assets that may live elsewhere under the OMSI installation
 or in add-ons. Do not assume that a map directory contains every referenced
@@ -124,9 +131,12 @@ The parser model is line-oriented:
 6. Variable/unknown lines occur inside some records. Preserve them verbatim;
    do not treat every unrecognized line as a comment or safely discardable.
 
-A robust future parser should retain raw lines and unknown records even when it
-also constructs typed fields. Round-trip and forward-compatibility are safer
-than normalizing undocumented data.
+OpenBus preserves the raw payload lines and source section line for unsupported
+bracketed sections in `global.cfg` and tile `.map` files while also emitting a
+diagnostic. This is storage-only: it does not establish the section's meaning
+or apply it to rendering/simulation. A robust parser should retain raw lines
+and unknown records even when it also constructs typed fields; round-trip and
+forward-compatibility are safer than normalizing undocumented data.
 
 ## 4. `global.cfg`
 
@@ -244,6 +254,14 @@ After the fixed positions, supported modifiers include:
 - `[spline_terrain_align]` as a marker (no fixed value in the grammar).
 - Repeated `[rule]` or `[kill_rule]`, each followed by four lines.
 - Optional object-specific lines not matching the next structural tag.
+
+OpenBus preserves `[attachObj]`'s attach-point index, three rotation strings,
+and label-count string verbatim. It also exposes numeric attach-point and
+rotation values when those strings parse, with a validity flag; failed
+conversions do not discard or rewrite the raw text. The label count remains
+opaque and does not determine how many optional tail lines are consumed.
+Neither typed values nor the retained fields imply that parent-anchor
+transforms are implemented.
 
 The merger offsets object IDs, `AttachObj.attached_to_object_id`, and present
 `varparent` values during merge. That makes them reference-sensitive fields;

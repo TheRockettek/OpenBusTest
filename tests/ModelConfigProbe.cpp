@@ -1,5 +1,6 @@
 #include "ModelConfigLoader.h"
 #include "InteriorLighting.h"
+#include "SceneryObjectConfigLoader.h"
 #include "Variables.h"
 
 #include <filesystem>
@@ -23,6 +24,7 @@ int main() {
               "[CTC]\nColorscheme\nTexture\\Advert\n0\n"
               "[CTCTexture]\nFarbschema_Tex1\n3803_l.tga\n"
               "[mesh]\ndisplay.obj\n"
+              "[absheight]\n"
               "[shadow]\n"
               "[isshadow]\n"
               "[nocollision]\n"
@@ -51,6 +53,9 @@ int main() {
     }
     const ModelConfig result =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
+    Variables sceneryVariables(ScriptObjectKind::SceneryObject);
+    const ModelConfig sceneryResult =
+        loadModelConfig(configPath, root, ModelConfigKind::SceneryObject, sceneryVariables);
     bool shadowMarkerWarned = false;
     for (const ConfigurationDiagnostic& diagnostic : result.diagnostics.entries) {
         shadowMarkerWarned = shadowMarkerWarned ||
@@ -86,6 +91,7 @@ int main() {
     const ModelConfig conditional =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
     if (conditional.diagnostics.hasErrors() ||
+        conditional.absoluteHeight ||
         conditional.parts[0].materialStatesInOrder.size() != 3 ||
         conditional.collisionMeshes.size() != 1 ||
         conditional.collisionMeshes[0].sourcePath != "collision.obj" ||
@@ -94,6 +100,15 @@ int main() {
         conditional.collisionMeshes[0].partIndex != 0 || !conditional.hasBoundingBox ||
         conditional.boundingBox != std::array<double, 6>{2.5, 13.5, 3.66, 0.0, 0.0, 2.23}) {
         std::cerr << "conditional material fixture failed to parse\n";
+        return 1;
+    }
+    const std::filesystem::path treeConfigPath = root / "tree.sco";
+    std::ofstream treeConfig(treeConfigPath);
+    treeConfig << "[absheight]\n[tree]\ntree.bmp\n5\n10\n0.5\n1.5\n";
+    treeConfig.close();
+    const SceneryObjectConfig treeConfiguration = loadSceneryObjectFile(treeConfigPath);
+    if (!treeConfiguration.absoluteHeight || treeConfiguration.trees.size() != 1) {
+        std::cerr << "tree SCO absolute-height marker was not retained\n";
         return 1;
     }
     const auto& base = conditional.parts[0].materialStatesInOrder[0];
@@ -168,7 +183,7 @@ int main() {
         result.parts[0].materialStatesInOrder[0].textTextureIndex != 0 ||
         result.parts[0].materialStatesInOrder[0].textureChanges.size() != 1 ||
         result.parts[0].materialStatesInOrder[0].textureChanges[0].activationVariable !=
-            "cockpit_lights") {
+            "cockpit_lights" || !sceneryResult.absoluteHeight) {
         std::cerr << "model texture records were not retained and bound\n";
         return 1;
     }

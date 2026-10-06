@@ -215,7 +215,8 @@ void calculateBounds(ParsedObj& result) {
                                      std::numeric_limits<double>::lowest(),
                                      std::numeric_limits<double>::lowest()};
     for (const ObjPosition& position : result.positions) {
-        const std::array<double, 3> converted = {position.y, -position.x, position.z};
+        const std::array<double, 3> converted =
+            convertO3DMapPositionToVehicleAxes(position.x, position.y, position.z);
         for (int axis = 0; axis < 3; ++axis) {
             minimum[axis] = std::min(minimum[axis], converted[axis]);
             maximum[axis] = std::max(maximum[axis], converted[axis]);
@@ -226,14 +227,24 @@ void calculateBounds(ParsedObj& result) {
         result.boundsSize[axis] = maximum[axis] - minimum[axis];
     }
     for (const ObjPosition& position : result.positions) {
-        const double x = position.y - result.boundsCenter[0];
-        const double y = -position.x - result.boundsCenter[1];
-        const double z = position.z - result.boundsCenter[2];
+        const std::array<double, 3> converted =
+            convertO3DMapPositionToVehicleAxes(position.x, position.y, position.z);
+        const double x = converted[0] - result.boundsCenter[0];
+        const double y = converted[1] - result.boundsCenter[1];
+        const double z = converted[2] - result.boundsCenter[2];
         result.boundsRadius = std::max(result.boundsRadius, std::sqrt(x * x + y * y + z * z));
     }
 }
 
 } // namespace
+
+std::array<double, 3> convertO3DPositionToMapAxes(double x, double y, double z) {
+    return {x, z, y};
+}
+
+std::array<double, 3> convertO3DMapPositionToVehicleAxes(double east, double north, double up) {
+    return {north, -east, up};
+}
 
 std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
     TraceScope trace("o3d", "parseO3D");
@@ -284,7 +295,8 @@ std::shared_ptr<ParsedObj> O3DLoader::parse(const std::filesystem::path& path) {
                     float u = reader.f32();
                     float v = reader.f32();
                     decodeVertex(vertexDecodeState, x, y, z, normalX, normalY, normalZ, u, v);
-                    result->positions.push_back({x, z, y});
+                    const std::array<double, 3> mapPosition = convertO3DPositionToMapAxes(x, y, z);
+                    result->positions.push_back({mapPosition[0], mapPosition[1], mapPosition[2]});
                     result->normals.push_back({-normalX, -normalZ, -normalY});
                     result->texCoords.push_back({u, 1.0 - v});
                 }

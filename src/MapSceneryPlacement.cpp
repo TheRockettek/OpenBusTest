@@ -9,6 +9,28 @@
 
 namespace openbus::map {
 
+std::optional<MapSceneryPose> placeMapSceneryObject(const MapSceneryPlacement& object, int tileX,
+                                                    int tileY) {
+    if (!object.transformValid) {
+        return std::nullopt;
+    }
+    MapSceneryPose pose;
+    pose.x = static_cast<double>(tileX) * OMSI_TILE_SIZE_METERS + object.localPosition[0];
+    pose.y = static_cast<double>(tileY) * OMSI_TILE_SIZE_METERS + object.localPosition[1];
+    pose.z = object.localPosition[2];
+    std::copy(object.rotationDegrees.begin(), object.rotationDegrees.end(),
+              pose.rotationDegrees.begin());
+    pose.rotationCount = object.rotationDegrees.size();
+    if (!std::isfinite(pose.x) || !std::isfinite(pose.y) || !std::isfinite(pose.z)) {
+        return std::nullopt;
+    }
+    return pose;
+}
+
+double mapSceneryWorldHeight(double authoredZ, double terrainHeight, bool absoluteHeight) {
+    return authoredZ + (absoluteHeight ? 0.0 : terrainHeight);
+}
+
 std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& attachment,
                                                      const std::vector<MapSplinePlacement>& splines,
                                                      int tileX, int tileY) {

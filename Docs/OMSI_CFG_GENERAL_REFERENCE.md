@@ -106,6 +106,24 @@ Marks the current mesh as a fake shadow. OpenBus keeps the authored mesh and
 material, draws it through the transparent pass, and projects it onto the
 ground plane so chassis bounce and body roll do not lift or tilt the shadow.
 
+### Scenery-object CFGs (`.sco`) in the map runtime
+
+Do not assume the bus-model behavior above applies automatically to map
+scenery. Grande Porto `.sco` examples commonly declare `[mesh]` directly; tree
+objects may also have `[tree]` texture/size data and an editor-only helper
+mesh. OpenBus currently renders supported O3D meshes at LOD 0 and uses crossed
+textured planes for `[tree]` previews. General DirectX `.x` meshes, scenery
+scripts, mouse events, and full LOD selection are not implemented.
+
+The scenery loader retains `[collision_mesh]`, `[boundingbox]`, and
+`[nocollision]` information, but map scenery does not yet create ODE colliders
+from it. Parsing these fields is not evidence of collision behavior. Likewise,
+road-profile and scenery collision are separate from the bus chassis collision
+path described above. Ordinary map objects currently receive a bilinearly
+sampled terrain height plus their authored vertical placement value unless the
+SCO/model declares `[absheight]`; those placements use the authored vertical
+coordinate as an absolute world height and do not add terrain elevation.
+
 ## Camera keywords
 
 ### `[add_camera_driver]` and `[add_camera_pax]`

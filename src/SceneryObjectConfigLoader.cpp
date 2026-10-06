@@ -128,6 +128,10 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             result.noCollision = true;
             continue;
         }
+        if (keyword == "absheight") {
+            result.absoluteHeight = true;
+            continue;
+        }
         if (keyword == "surface") {
             result.surface = true;
             continue;

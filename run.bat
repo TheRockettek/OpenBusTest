@@ -3,6 +3,8 @@ taskkill.exe /F /IM OpenBus.exe
 set "OPENBUS_BUS_CONFIG=Vehicles/MAN_DL05/MAN_DL05.bus"
 set "OPENBUS_MODEL_CONFIG=Vehicles/MAN_DL05/Model/DL05.cfg"
 
+set "OPENBUS_MAP_PATH=Grundorf"
+
 @REM set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
 @REM set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
 
@@ -33,5 +35,6 @@ set "OPENBUS_SCRIPT_HZ=60"
 
 set "OPENBUS_ASSET_WORKERS=4"
 set "OPENBUS_DOPPLER=1"
+set "OPENBUS_CAPTURE_VIEWS="
 
 cmake -S . -B build-ode -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DOPENBUS_ENABLE_PERF_TRACE=OFF && cmake --build build-ode --target OpenBus && .\build-ode\OpenBus.exe

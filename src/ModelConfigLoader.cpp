@@ -1033,6 +1033,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         // [fixed]/[absheight]: marker records with no payload consumed here.
         if (keyword == "fixed" || keyword == "absheight") {
             requirePart();
+            if (keyword == "absheight" && kind == ModelConfigKind::SceneryObject) {
+                result.absoluteHeight = true;
+            }
             continue;
         }
         // [boundingbox]: collision box size X/Y/Z followed by center X/Y/Z.

@@ -4456,13 +4456,14 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
 }
 
 void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
-                        const std::filesystem::path& omsiRoot) {
+                        std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot) {
     TraceScope trace("map", "RenderLoop::SetMap");
     if (spawnEntryPointIndex >= map.entryPoints.size()) {
         throw std::out_of_range("Selected map spawn entrypoint is outside [entrypoints]");
     }
     mapRenderer_ = std::make_unique<openbus::rendering::MapRenderer>(
-        map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex), omsiRoot);
+        map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex),
+        groundTextureIndex, omsiRoot);
 }
 
 void RenderLoop::logDiagnosticVariables() const {

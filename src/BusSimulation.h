@@ -14,7 +14,8 @@ class BusSimulation {
     explicit BusSimulation(BusConfiguration configuration, VehiclePlacement placement,
                            double physicsHz = 60.0, int maxCatchUpSteps = 8,
                            double groundPlaneZ = 0.0,
-                           std::vector<TerrainCollisionGrid> terrain = {});
+                           std::vector<TerrainCollisionGrid> terrain = {},
+                           std::vector<StaticCollisionMesh> staticCollision = {});
     ~BusSimulation();
 
     BusSimulation(const BusSimulation&) = delete;

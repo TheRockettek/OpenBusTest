@@ -51,6 +51,27 @@ openbus::map::MapSplineAttachment row(int splineIndex, double lateral, double he
 void runProbe() {
     using namespace openbus::map;
 
+    MapSceneryPlacement ordinaryObject;
+    ordinaryObject.localPosition = {12.5, -3.25, 4.75};
+    ordinaryObject.rotationDegrees = {17.0, -23.0, 41.0};
+    ordinaryObject.transformValid = true;
+    const auto ordinaryPose = placeMapSceneryObject(ordinaryObject, -2, 3);
+    require(ordinaryPose.has_value(), "valid ordinary scenery transform produces a pose");
+    requireNear(ordinaryPose->x, -587.5, 1e-9, "object X uses tile origin plus authored X");
+    requireNear(ordinaryPose->y, 896.75, 1e-9, "object Y uses tile origin plus authored Y");
+    requireNear(ordinaryPose->z, 4.75, 1e-9, "object authored Z is preserved before terrain offset");
+    require(ordinaryPose->rotationCount == 3 &&
+                ordinaryPose->rotationDegrees ==
+                    std::array<double, 6>{17.0, -23.0, 41.0, 0.0, 0.0, 0.0},
+            "ordinary object rotation order is preserved");
+    requireNear(mapSceneryWorldHeight(ordinaryPose->z, 12.0, false), 16.75, 1e-9,
+                "terrain-relative ordinary scenery adds sampled terrain height");
+    requireNear(mapSceneryWorldHeight(ordinaryPose->z, 12.0, true), 4.75, 1e-9,
+                "absolute-height ordinary scenery ignores terrain height");
+    ordinaryObject.transformValid = false;
+    require(!placeMapSceneryObject(ordinaryObject, -2, 3).has_value(),
+            "invalid ordinary scenery transform does not produce a pose");
+
     // A northbound attachment row: right is east, height is spline-relative, and
     // the row interval/range are measured from its authored chain distance.
     MapSplinePlacement north = spline(1, 0, 0, 100.0, 200.0, 0.0, 100.0);

@@ -16,43 +16,85 @@ prove end-to-end rendering or runtime semantics.
 | Physics and wheel simulation | Fixed-step ODE and per-wheel simulation are active; the deterministic bump/steering/braking stress probe covers two- and three-axle fixtures. Broader tuning remains incomplete. | [`BusSimulation.cpp`](src/BusSimulation.cpp) | [`BusSimulationSteeringProbe.cpp`](tests/BusSimulationSteeringProbe.cpp), [`BusSimulationStabilityProbe.cpp`](tests/BusSimulationStabilityProbe.cpp), [`BusSimulationStressProbe.cpp`](tests/BusSimulationStressProbe.cpp) |
 | Vehicle/model loading | Core MAN DL05 and E400 configuration paths are implemented; broad OMSI configuration coverage remains partial. | [`VehicleConfigLoader.cpp`](src/VehicleConfigLoader.cpp), [`ModelConfigLoader.cpp`](src/ModelConfigLoader.cpp), [`RenderLoop.cpp`](src/RenderLoop.cpp) | [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); visual procedure: [screenshot plan](Docs/SCREENSHOT_VALIDATION_PLAN.md) |
 | Texture decoding and materials | Texture decoding has a probe; several material semantics and visual parity checks remain incomplete, including alpha mode 2 and environment maps. | [`TextureLoader.cpp`](src/TextureLoader.cpp), [`CoreRenderer.cpp`](src/CoreRenderer.cpp) | [`TextureLoaderProbe.cpp`](tests/TextureLoaderProbe.cpp); GL/material checks: [incomplete visual checks](Docs/SCREENSHOT_VALIDATION_PLAN.md#incomplete-feature-visual-checks) |
-| Map, terrain, scenery, and roads | Partial: terrain, limited O3D/tree scenery, and supported straight roads render; curved roads and general `.x` scenery remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`RoadFeaturesProbe.cpp`](tests/RoadFeaturesProbe.cpp), [`O3DLoaderProbe.cpp`](tests/O3DLoaderProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); no end-to-end map-renderer probe yet |
-| Map, terrain, scenery, and roads | Partial: terrain, limited O3D/tree scenery, and two-profile straight/curved road centerlines render; general `.x` scenery and full OMSI road profiles remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/MapSplineGeometry.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`RoadFeaturesProbe.cpp`](tests/RoadFeaturesProbe.cpp), [`O3DLoaderProbe.cpp`](tests/O3DLoaderProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); no end-to-end map-renderer probe yet |
+| Map, terrain, scenery, and roads | Partial: the map manifest, terrain, O3D LOD-0 scenery, tree texture previews, typed spline attachments, and a subset of `.sli` profiles render. Supported visible profile strips also produce ODE road trimeshes in the spawn 3x3 neighborhood. Terrain/roads/scenery remain resident and are distance/frustum culled; map construction is still synchronous. Scenery collision, general `.x` meshes, full OMSI attachments/profile semantics, and end-to-end visual tests remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/MapSplineGeometry.cpp), [`MapRoadGeometry.cpp`](src/MapRoadGeometry.cpp), [`MapCollisionBuilder.cpp`](src/MapCollisionBuilder.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapCollisionBuilderProbe.cpp`](tests/MapCollisionBuilderProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`MapRoadGeometryProbe.cpp`](tests/MapRoadGeometryProbe.cpp), [`BusSimulationStabilityProbe.cpp`](tests/BusSimulationStabilityProbe.cpp); no full in-context road-contact regression yet |
 | Scripts and dynamic displays | Script textures and text surfaces have runtime paths; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/ScriptRuntime.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
 | Sound | Player sound runtime is active; full OMSI sound and AI sound selection remain incomplete. | [`SoundEngine.cpp`](src/SoundEngine.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp) |
 | AI, passengers, routes, and articulated vehicles | Runtime support is incomplete; parsed configuration is not evidence of these behaviors. | [vehicle configuration](src/VehicleConfigLoader.cpp), [map configuration](src/MapConfigLoader.cpp) | No end-to-end regression probe; see the [completion TODO](TODO.md) |
 
-### Grande Porto map runtime scope
+### Map runtime scope
 
 The current map path loads `global.cfg`, uses its first entrypoint by default,
-parses tile object/spline placements and `.terrain` grids, and renders the
-terrain patch around that spawn. It uses the first `[groundtex]` entry. Nearby
-scenery is limited to vertical placements with supported O3D LOD-0 meshes;
-`[tree]` SCOs without a usable mesh get a crossed-texture-plane preview. Road
-rendering recognizes two Freyfurt 6.5 m asphalt profiles, tessellates straight
-and signed-radius centerlines, and approximates their cross-section and grade.
+and supports selecting a spawn with `OPENBUS_MAP_ENTRY` set to a zero-based
+entrypoint index or a case-insensitive entrypoint name. It synchronously
+parses/builds the listed map tiles. It uses the first `[groundtex]` entry by
+default. Set `OPENBUS_MAP_GROUNDTEX` to a zero-based `[groundtex]` index to
+preview another base texture uniformly across terrain; this debugging override
+is not OMSI per-tile, detail-layer, or seasonal selection. The renderer retains
+uploaded terrain, road, and scenery geometry.
+The renderer distance- and frustum-culls terrain tiles and roads, and uses
+spatially grouped scenery chunks so instances in rejected chunks are not
+scanned or submitted. This changes draw-time visibility work, not residency:
+it does not stream tiles in/out or unload their GPU buffers. Camera movement
+does not trigger a chunk load; map startup/build work is still synchronous and
+can be long for large maps.
+
+Ordinary scenery gets a bilinearly sampled terrain height plus its authored
+vertical placement value, unless its SCO/model declares `[absheight]`, in which
+case the authored vertical coordinate is absolute.
+Same-tile spline attachments/repeaters use typed spline-relative placement;
+cross-tile chains and `[attachObj]` rendering are not complete. `[attachObj]`
+fixed fields and IDs are parsed, but parent anchor semantics are not applied.
+`[varparent]` IDs are retained for object/attachment records but are not used
+to transform their placements.
+Supported scenery meshes
+are O3D at LOD 0; `.x` scenery is skipped except that `[tree]` assets use a
+crossed-texture-plane preview. `.sli` rendering parses a subset of
+`[texture]`, `[profile]`, and `[profilepnt]` records and tessellates straight
+and signed-radius centerlines, but complete road/profile, banking, material,
+and lane-marking behavior is not established. Road UV V uses a valid parsed
+v11+ spline chain offset as its longitudinal origin; visual continuity and
+OMSI parity still need confirmation against linked installed splines.
 
 The following map behavior is **not implemented** or remains explicitly
 partial:
 
 - General DirectX `.x` scenery loading; the tree preview is not the original
-  mesh. Scenery pitch/bank, attachments/repeaters, object scripts, and scenery
-  collision are also unsupported.
-- Road profile discovery and full `.sli` semantics. Targeted curve/seam visual
-  capture is still pending. Other spline families,
-  road widths/materials/markings, and non-vertical/elevated spline behavior are
-  not covered by the two hard-coded profiles.
-- Per-tile/detail/seasonal ground textures, water rendering, tile lightmaps,
-  Chrono map variants, and streamed terrain/scenery/collision outside the
-  spawn-neighborhood patch.
-- Entrypoint selection, HOF/timetable/route integration, scheduled OMSI AI
-  traffic, and signal behavior. A configured static AI vehicle grid is only a
-  development aid; the inspected Grande Porto `signalroutes.cfg` has no route
+  mesh. Cross-tile attachment/repeater resolution, `[attachObj]`, scenery
+  scripts, mouse events, and map-object collision are incomplete.
+- Full `.sli` semantics and visual validation of curved sidewalks, road seams,
+  and lane markings. Road-profile textures/material alpha, cant/banking, and
+  texture phase across linked splines need representative asset tests. Parsed
+  v11+ chain offsets now affect road texture V, but do not resolve links or
+  prove visual parity.
+- Supported `.sli` profile-strip road geometry is connected to ODE only in the
+  3x3 spawn neighborhood, alongside terrain. The physics window is not updated
+  as the bus drives, and overlapping road/terrain contacts still need tuning.
+  Scenery `[collision_mesh]`/`[boundingbox]`/`[nocollision]` are not connected
+  to ODE yet.
+- Per-tile/detail/seasonal ground-texture rendering, water rendering, tile
+  lightmaps, Chrono map variants, and asynchronous map construction are absent.
+  Per-tile DDS filenames are inventoried, but their payloads and mapping to
+  `[groundtex]` ordinals are unresolved. All map geometry stays resident after
+  construction; culling does not free GPU memory.
+  `.map.water` records are size/finite-value validated and reported, but their
+  spatial height ordering is unresolved, so no water geometry is drawn.
+  Unimplemented bracketed sections in tile files and `global.cfg` are reported
+  with line numbers during map loading. Global identity, description, seasons,
+  density, and other documented metadata are retained, but not used to drive
+  runtime map behavior.
+  `[variable_terrain]` and `[variable_terrainlightmap]` markers are recognized
+  and reported, but their dynamic terrain/lightmap behavior is not rendered.
+  `[varparent]`, `[rule]`, `[kill_rule]`, and spline-terrain alignment data are
+  retained on supported records but do not affect runtime placement/visibility.
+- HOF/timetable/route integration, scheduled OMSI AI traffic, and signal
+  behavior. A configured static AI vehicle grid is only a
+  development aid; the inspected `signalroutes.cfg` has no route
   records and does not establish enough semantics to implement signal control.
 
-The next rendering increment is curved centerline geometry for the two
-recognized asphalt profiles. Geometry probes do not replace an in-context map
-visual check; the [map TODOs](TODO.md#grande-porto-map-support) track both.
+The existing centerline probe validates linked endpoints and signed curve
+directions, but does not validate cross-section profile placement, sidewalks,
+markings, or visual seams. The [map TODOs](TODO.md#grande-porto-map-support)
+track the missing runtime paths and visual evidence.
 
 ## Prerequisites
 
@@ -486,5 +528,4 @@ work.
 The OMSI 2 map-package reference is in
 [Docs/OMSI2_MAP_FORMAT_REFERENCE.md](C:/Users/blane/Desktop/OpenBusTest/Docs/OMSI2_MAP_FORMAT_REFERENCE.md).
 It documents `global.cfg`, tile records and sidecars, Chrono variants, AI lists,
-timetable files, parser limitations, and validation against the installed
-Grande Porto 2022 map.
+timetable files, parser limitations, and validation against the installed map.

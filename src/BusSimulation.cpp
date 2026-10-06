@@ -154,6 +154,9 @@ struct BusSimulation::Impl {
     std::vector<dTriMeshDataID> terrainMeshData;
     std::vector<std::vector<double>> terrainVertices;
     std::vector<std::vector<int>> terrainIndices;
+    std::vector<dGeomID> mapCollisionGeoms;
+    std::vector<dTriMeshDataID> mapCollisionMeshData;
+    std::vector<StaticCollisionMesh> mapCollisionMeshes;
     dGeomID chassisGeom = nullptr;
     BusConfiguration configuration;
     VehiclePlacement placement;
@@ -190,6 +193,16 @@ struct BusSimulation::Impl {
             }
         }
         for (dTriMeshDataID data : roadMeshData) {
+            if (data) {
+                dGeomTriMeshDataDestroy(data);
+            }
+        }
+        for (dGeomID geometry : mapCollisionGeoms) {
+            if (geometry) {
+                dGeomDestroy(geometry);
+            }
+        }
+        for (dTriMeshDataID data : mapCollisionMeshData) {
             if (data) {
                 dGeomTriMeshDataDestroy(data);
             }
@@ -268,6 +281,49 @@ struct BusSimulation::Impl {
         terrainIndices.push_back(std::move(indices));
         terrainMeshData.push_back(meshData);
         terrainGeoms.push_back(geometry);
+    }
+
+    void addStaticCollision(StaticCollisionMesh mesh) {
+        if (mesh.vertices.empty() && mesh.indices.empty()) {
+            return;
+        }
+        if (mesh.vertices.empty() || mesh.vertices.size() % 3 != 0 || mesh.indices.empty() ||
+            mesh.indices.size() % 3 != 0) {
+            throw std::invalid_argument("Map static collision mesh has invalid buffers");
+        }
+        const std::size_t vertexCount = mesh.vertices.size() / 3;
+        checkedOdeCount(vertexCount, "map static collision vertex count");
+        checkedOdeCount(mesh.indices.size(), "map static collision index count");
+        if (!std::all_of(mesh.vertices.begin(), mesh.vertices.end(),
+                         [](double value) { return std::isfinite(value); })) {
+            throw std::invalid_argument("Map static collision mesh contains a non-finite vertex");
+        }
+        for (const int index : mesh.indices) {
+            if (index < 0 || static_cast<std::size_t>(index) >= vertexCount) {
+                throw std::invalid_argument("Map static collision mesh has an invalid index");
+            }
+        }
+
+        mapCollisionGeoms.reserve(mapCollisionGeoms.size() + 1);
+        mapCollisionMeshData.reserve(mapCollisionMeshData.size() + 1);
+        mapCollisionMeshes.reserve(mapCollisionMeshes.size() + 1);
+        const dTriMeshDataID meshData = dGeomTriMeshDataCreate();
+        if (!meshData) {
+            throw std::runtime_error("Failed to create map static collision data");
+        }
+        dGeomTriMeshDataBuildDouble(
+            meshData, mesh.vertices.data(), 3 * sizeof(double),
+            checkedOdeCount(vertexCount, "map static collision vertex count"), mesh.indices.data(),
+            checkedOdeCount(mesh.indices.size(), "map static collision index count"),
+            3 * sizeof(int));
+        const dGeomID geometry = dCreateTriMesh(ode.space, meshData, nullptr, nullptr, nullptr);
+        if (!geometry) {
+            dGeomTriMeshDataDestroy(meshData);
+            throw std::runtime_error("Failed to create map static collision geometry");
+        }
+        mapCollisionMeshes.push_back(std::move(mesh));
+        mapCollisionMeshData.push_back(meshData);
+        mapCollisionGeoms.push_back(geometry);
     }
 
     static void nearCallback(void* context, dGeomID first, dGeomID second) {
@@ -498,7 +554,8 @@ struct BusSimulation::Impl {
     }
 
     Impl(BusConfiguration vehicle, VehiclePlacement vehiclePlacement, double physicsHz,
-         int catchUpSteps, double groundPlaneZ, std::vector<TerrainCollisionGrid> terrain)
+         int catchUpSteps, double groundPlaneZ, std::vector<TerrainCollisionGrid> terrain,
+         std::vector<StaticCollisionMesh> staticCollision)
         : configuration(std::move(vehicle)), placement(vehiclePlacement),
           maxCatchUpSteps(catchUpSteps) {
         if (!std::isfinite(physicsHz) || physicsHz <= 0.0 || catchUpSteps <= 0) {
@@ -563,6 +620,9 @@ struct BusSimulation::Impl {
             for (const TerrainCollisionGrid& tile : terrain) {
                 addTerrainCollision(tile);
             }
+        }
+        for (StaticCollisionMesh& mesh : staticCollision) {
+            addStaticCollision(std::move(mesh));
         }
         chassis = dBodyCreate(ode.world);
         dMass mass;
@@ -1006,9 +1066,10 @@ struct BusSimulation::Impl {
 
 BusSimulation::BusSimulation(BusConfiguration configuration, VehiclePlacement placement,
                              double physicsHz, int maxCatchUpSteps, double groundPlaneZ,
-                             std::vector<TerrainCollisionGrid> terrain)
+                             std::vector<TerrainCollisionGrid> terrain,
+                             std::vector<StaticCollisionMesh> staticCollision)
     : impl_(std::make_unique<Impl>(std::move(configuration), placement, physicsHz, maxCatchUpSteps,
-                                   groundPlaneZ, std::move(terrain))) {
+                                   groundPlaneZ, std::move(terrain), std::move(staticCollision))) {
     openbus::rendering::TraceScope trace("startup", "BusSimulation::BusSimulation");
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }

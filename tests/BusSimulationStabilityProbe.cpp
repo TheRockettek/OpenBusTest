@@ -62,6 +62,21 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    StaticCollisionMesh raisedRoad;
+    raisedRoad.vertices = {-162.0, 735.0, 4.0, -138.0, 735.0, 4.0,
+                           -138.0, 765.0, 4.0, -162.0, 765.0, 4.0};
+    raisedRoad.indices = {0, 1, 2, 0, 2, 3};
+    BusSimulation roadSimulation(caetanoConfiguration(true),
+                                 VehiclePlacement{{-150.0, 750.0, 4.0}, 0.0}, 60.0, 8, 0.0,
+                                 {terrain}, {raisedRoad});
+    for (int step = 0; step < 600; ++step) {
+        roadSimulation.step(0.0, 0.0, 1.0);
+    }
+    if (std::abs(roadSimulation.chassisPose().position[2] - 5.3) > 0.3) {
+        std::cerr << "Bus did not settle on the raised static map road above terrain\n";
+        return 1;
+    }
+
     BusConfiguration meshCollisionConfiguration = caetanoConfiguration(true);
     meshCollisionConfiguration.hasCollisionMesh = true;
     meshCollisionConfiguration.collisionMeshVertices = {-1.0, -1.0, 0.0,

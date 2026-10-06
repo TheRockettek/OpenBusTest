@@ -2,14 +2,17 @@
 
 #include "PerfTrace.h"
 
+#include <algorithm>
 #include <bit>
 #include <charconv>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace openbus::map {
@@ -169,6 +172,56 @@ void parseTileFilename(const std::string& filename, int& x, int& y) {
     }
 }
 
+std::unordered_map<std::string, std::vector<MapGroundTextureSidecar>>
+discoverGroundTextureSidecars(const std::filesystem::path& mapDirectory) {
+    std::unordered_map<std::string, std::vector<MapGroundTextureSidecar>> sidecarsByTile;
+    const std::filesystem::path sidecarDirectory = mapDirectory / "texture" / "map";
+    std::error_code error;
+    std::filesystem::directory_iterator iterator(sidecarDirectory, error);
+    if (error) {
+        return sidecarsByTile;
+    }
+    const std::filesystem::directory_iterator end;
+    for (; iterator != end; iterator.increment(error)) {
+        if (error) {
+            break;
+        }
+        std::error_code statusError;
+        if (!iterator->is_regular_file(statusError) || statusError) {
+            continue;
+        }
+        const std::string candidate = iterator->path().filename().string();
+        constexpr std::string_view extension = ".dds";
+        if (!candidate.starts_with("tile_") || !candidate.ends_with(extension)) {
+            continue;
+        }
+        const std::string stem = candidate.substr(0, candidate.size() - extension.size());
+        const std::size_t separator = stem.rfind('.');
+        if (separator == std::string::npos) {
+            continue;
+        }
+        const std::string tileFilename = stem.substr(0, separator);
+        const std::string suffix = stem.substr(separator + 1);
+        if (!tileFilename.ends_with(".map")) {
+            continue;
+        }
+        if (suffix.empty() || !std::all_of(suffix.begin(), suffix.end(), [](unsigned char value) {
+                return std::isdigit(value) != 0;
+            })) {
+            continue;
+        }
+        sidecarsByTile[tileFilename].push_back({suffix, iterator->path()});
+    }
+    for (auto& [tileFilename, sidecars] : sidecarsByTile) {
+        static_cast<void>(tileFilename);
+        std::sort(sidecars.begin(), sidecars.end(),
+                  [](const MapGroundTextureSidecar& left, const MapGroundTextureSidecar& right) {
+                      return left.ordinalSuffix < right.ordinalSuffix;
+                  });
+    }
+    return sidecarsByTile;
+}
+
 } // namespace
 
 MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
@@ -177,13 +230,99 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     definition.rootPath = mapDirectory;
     const std::filesystem::path globalPath = mapDirectory / "global.cfg";
     const std::vector<std::string> lines = splitLines(decodeText(globalPath));
+    const auto groundTextureSidecarsByTile = discoverGroundTextureSidecars(mapDirectory);
     std::unordered_set<std::string> tileNames;
     std::unordered_set<std::uint64_t> tileCoordinates;
+    std::size_t cursor = 0;
+    const auto isSectionHeader = [](const std::string& value) {
+        return value.size() > 2 && value.front() == '[' && value.back() == ']';
+    };
+    const auto readOptionalValue = [&]() {
+        if (cursor >= lines.size() || isSectionHeader(trim(lines[cursor]))) {
+            return std::string{};
+        }
+        return trim(lines[cursor++]);
+    };
+    const auto readMetadataFields = [&](auto& fields, const std::string& section) {
+        for (std::string& field : fields) {
+            field = readField(lines, cursor, globalPath, section);
+        }
+    };
 
-    for (std::size_t cursor = 0; cursor < lines.size();) {
+    for (; cursor < lines.size();) {
+        const std::size_t sectionLine = cursor;
         const std::string section = trim(lines[cursor]);
         ++cursor;
-        if (section == "[groundtex]") {
+        if (section == "[name]") {
+            definition.metadata.name = readOptionalValue();
+        } else if (section == "[friendlyname]") {
+            definition.metadata.friendlyName = readOptionalValue();
+        } else if (section == "[version]") {
+            definition.metadata.version = readOptionalValue();
+        } else if (section == "[NextIDCode]") {
+            definition.metadata.nextIdCode = readOptionalValue();
+        } else if (section == "[description]") {
+            bool firstLine = true;
+            bool foundEnd = false;
+            while (cursor < lines.size()) {
+                if (trim(lines[cursor]) == "[end]") {
+                    ++cursor;
+                    foundEnd = true;
+                    break;
+                }
+                if (!firstLine) {
+                    definition.metadata.description.push_back('\n');
+                }
+                definition.metadata.description += lines[cursor++];
+                firstLine = false;
+            }
+            if (!foundEnd) {
+                throw std::runtime_error("Unterminated [description] in " + globalPath.string());
+            }
+        } else if (section == "[worldcoordinates]") {
+            definition.metadata.hasWorldCoordinates = true;
+        } else if (section == "[dynhelperactive]") {
+            definition.metadata.hasDynamicHelperActive = true;
+        } else if (section == "[realrail]") {
+            definition.metadata.hasRealRail = true;
+        } else if (section == "[backgroundimage]") {
+            readMetadataFields(definition.metadata.backgroundImage, "backgroundimage");
+            definition.metadata.hasBackgroundImage = true;
+        } else if (section == "[mapcam]") {
+            readMetadataFields(definition.metadata.mapCamera, "mapcam");
+            definition.metadata.hasMapCamera = true;
+        } else if (section == "[moneysystem]") {
+            definition.metadata.moneySystem = readOptionalValue();
+        } else if (section == "[ticketpack]") {
+            definition.metadata.ticketPack = readOptionalValue();
+        } else if (section == "[repair_time_min]") {
+            definition.metadata.repairTimeMin = readOptionalValue();
+        } else if (section == "[years]") {
+            readMetadataFields(definition.metadata.years, "years");
+        } else if (section == "[realyearoffset]") {
+            definition.metadata.realYearOffset = readOptionalValue();
+        } else if (section == "[standarddepot]") {
+            definition.metadata.standardDepot = readOptionalValue();
+        } else if (section == "[addseason]") {
+            MapSeasonDefinition season;
+            if (sectionLine > 0) {
+                season.label = trim(lines[sectionLine - 1]);
+            }
+            if (!season.label.ends_with(':')) {
+                definition.diagnostics.warning(sectionLine + 1, "addseason",
+                                               "expected a preceding season label ending in ':'");
+            }
+            readMetadataFields(season.fields, "addseason");
+            definition.metadata.seasons.push_back(std::move(season));
+        } else if (section == "[trafficdensity_road]") {
+            std::array<std::string, 2> values;
+            readMetadataFields(values, "trafficdensity_road");
+            definition.metadata.roadTrafficDensity.push_back(std::move(values));
+        } else if (section == "[trafficdensity_passenger]") {
+            std::array<std::string, 2> values;
+            readMetadataFields(values, "trafficdensity_passenger");
+            definition.metadata.passengerTrafficDensity.push_back(std::move(values));
+        } else if (section == "[groundtex]") {
             GroundTextureDefinition groundTexture;
             groundTexture.texturePath = readField(lines, cursor, globalPath, "groundtex");
             groundTexture.detailTexturePath = readField(lines, cursor, globalPath, "groundtex");
@@ -248,7 +387,29 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             }
             tile.terrainPath = std::filesystem::path(tile.textPath.string() + ".terrain");
             tile.hasTerrainFile = std::filesystem::is_regular_file(tile.terrainPath);
+            tile.waterPath = std::filesystem::path(tile.textPath.string() + ".water");
+            tile.hasWaterFile = std::filesystem::is_regular_file(tile.waterPath);
+            tile.lightmapPath = std::filesystem::path(tile.textPath.string() + ".LM.bmp");
+            tile.hasLightmapFile = std::filesystem::is_regular_file(tile.lightmapPath);
+            tile.terrainReadinessPath =
+                std::filesystem::path(tile.textPath.string() + ".terrain_0.rdy");
+            tile.hasTerrainReadinessFile =
+                std::filesystem::is_regular_file(tile.terrainReadinessPath);
+            const auto sidecars = groundTextureSidecarsByTile.find(filename);
+            if (sidecars != groundTextureSidecarsByTile.end()) {
+                tile.groundTextureSidecars = sidecars->second;
+            }
             definition.tiles.push_back(std::move(tile));
+        } else if (isSectionHeader(section)) {
+            definition.diagnostics.warning(sectionLine + 1, section.substr(1, section.size() - 2),
+                                           "global.cfg section is not implemented");
+            MapOpaqueSection opaqueSection;
+            opaqueSection.keyword = section.substr(1, section.size() - 2);
+            opaqueSection.sectionLine = sectionLine + 1;
+            while (cursor < lines.size() && !isSectionHeader(trim(lines[cursor]))) {
+                opaqueSection.payloadLines.push_back(lines[cursor++]);
+            }
+            definition.unsupportedSections.push_back(std::move(opaqueSection));
         }
     }
 
@@ -283,90 +444,379 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     return definition;
 }
 
-MapTileData loadMapTile(const MapTileReference& tile) {
+std::size_t selectMapEntryPoint(const MapDefinition& map, std::string_view selector) {
+    if (map.entryPoints.empty()) {
+        throw std::runtime_error("Map has no [entrypoints]");
+    }
+    const std::string requested = trim(selector);
+    if (requested.empty()) {
+        return 0;
+    }
+
+    int index = 0;
+    if (parseInteger(requested, index)) {
+        if (index < 0 || static_cast<std::size_t>(index) >= map.entryPoints.size()) {
+            throw std::runtime_error("Map entrypoint index is outside the [entrypoints] list: " +
+                                     requested);
+        }
+        return static_cast<std::size_t>(index);
+    }
+
+    const auto equalsIgnoringAsciiCase = [](std::string_view left, std::string_view right) {
+        if (left.size() != right.size()) {
+            return false;
+        }
+        for (std::size_t position = 0; position < left.size(); ++position) {
+            const auto leftChar = static_cast<unsigned char>(left[position]);
+            const auto rightChar = static_cast<unsigned char>(right[position]);
+            if (std::tolower(leftChar) != std::tolower(rightChar)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    for (std::size_t candidate = 0; candidate < map.entryPoints.size(); ++candidate) {
+        if (equalsIgnoringAsciiCase(map.entryPoints[candidate].name, requested)) {
+            return candidate;
+        }
+    }
+    throw std::runtime_error("No map entrypoint matches [" + requested + "]");
+}
+
+std::size_t selectMapGroundTextureIndex(const MapDefinition& map, std::string_view selector) {
+    if (map.groundTextures.empty()) {
+        throw std::runtime_error("Map has no [groundtex] records");
+    }
+    const std::string requested = trim(selector);
+    if (requested.empty()) {
+        return 0;
+    }
+    int index = 0;
+    if (!parseInteger(requested, index) || index < 0 ||
+        static_cast<std::size_t>(index) >= map.groundTextures.size()) {
+        throw std::runtime_error("Map ground-texture preview index is outside the [groundtex] "
+                                 "list: " +
+                                 requested);
+    }
+    return static_cast<std::size_t>(index);
+}
+
+static MapTileData loadMapTileInternal(const MapTileReference& tile,
+                                       MapChronoTileData* chronoData) {
     openbus::rendering::TraceScope trace("map", "MapConfigLoader::loadMapTile");
     MapTileData data;
     data.reference = tile;
     const std::vector<std::string> lines = splitLines(decodeText(tile.textPath));
+    if (chronoData != nullptr) {
+        chronoData->rawLines = lines;
+        if (!lines.empty()) {
+            chronoData->initialComment = lines.front();
+        }
+    }
+    const auto isChronoRecordBoundary = [](const std::string& line) {
+        constexpr std::array<std::string_view, 10> boundaries = {"[selspline]",
+                                                                 "[selobject]",
+                                                                 "[spline_terrain_align_2]",
+                                                                 "[spline]",
+                                                                 "[spline_h]",
+                                                                 "[spline_terrain_align]",
+                                                                 "[object]",
+                                                                 "[attachObj]",
+                                                                 "[splineAttachement]",
+                                                                 "[splineAttachement_repeater]"};
+        return std::find(boundaries.begin(), boundaries.end(), line) != boundaries.end();
+    };
+    std::size_t automaticRecordId = 0;
+    enum class ModifierTarget { None, SceneryObject, AttachedObject, SplineAttachment, Spline };
+    ModifierTarget modifierTarget = ModifierTarget::None;
+    std::size_t modifierTargetIndex = 0;
     for (std::size_t cursor = 0; cursor < lines.size(); ++cursor) {
         const std::string section = trim(lines[cursor]);
+        if (chronoData != nullptr && section == "[object]") {
+            // Chrono object payloads can contain selector-looking text; preserve the complete
+            // source in rawLines, but do not reinterpret that tail as the selector inventory.
+            break;
+        }
+        if (chronoData != nullptr && section != "[version]" && section != "[selobject]" &&
+            section != "[selspline]") {
+            // Chrono tile data is retained verbatim. Only its selector records are typed here;
+            // normal tile records and selector override keywords have separate semantics.
+            continue;
+        }
+        const bool isModifier = section == "[varparent]" || section == "[spline_terrain_align]" ||
+                                section == "[spline_terrain_align_2]" || section == "[rule]" ||
+                                section == "[kill_rule]";
+        if (!isModifier && section.size() > 2 && section.front() == '[' && section.back() == ']') {
+            modifierTarget = ModifierTarget::None;
+        }
         if (section == "[version]") {
             if (cursor + 1 >= lines.size()) {
                 throw std::runtime_error("Truncated [version] in " + tile.textPath.string());
             }
             data.version = trim(lines[++cursor]);
+            if (chronoData != nullptr) {
+                chronoData->version = data.version;
+            }
+        } else if (chronoData != nullptr &&
+                   (section == "[selobject]" || section == "[selspline]")) {
+            MapChronoSelector selector;
+            selector.keyword = section.substr(1, section.size() - 2);
+            selector.sectionLine = cursor + 1;
+            std::size_t field = cursor + 1;
+            if (field < lines.size() && !isChronoRecordBoundary(trim(lines[field]))) {
+                selector.rawId = lines[field];
+                selector.idLine = field + 1;
+                int selectorId = 0;
+                if (parseInteger(trim(selector.rawId), selectorId)) {
+                    selector.id = selectorId;
+                } else {
+                    data.diagnostics.warning(selector.idLine, selector.keyword,
+                                             "selector ID is not an integer; raw text retained");
+                }
+                ++field;
+            } else {
+                data.diagnostics.warning(selector.sectionLine, selector.keyword,
+                                         "selector ID is missing; source lines retained");
+            }
+            while (field < lines.size() && !isChronoRecordBoundary(trim(lines[field]))) {
+                selector.followingLines.push_back(lines[field++]);
+            }
+            chronoData->selectors.push_back(std::move(selector));
+            cursor = field - 1;
         } else if (section == "[terrain]") {
             data.hasTerrainMarker = true;
+        } else if (section == "[water]") {
+            data.hasWaterMarker = true;
+        } else if (section == "[variable_terrain]") {
+            data.hasVariableTerrainMarker = true;
+        } else if (section == "[variable_terrainlightmap]") {
+            data.hasVariableTerrainLightmapMarker = true;
         } else if (section == "[spline]" || section == "[spline_h]") {
             const bool elevated = section == "[spline_h]";
-            const std::size_t fieldCount = elevated ? 20 : 19;
-            if (cursor + fieldCount >= lines.size()) {
-                throw std::runtime_error("Truncated " + section + " record in " +
-                                         tile.textPath.string());
+            int tileVersion = 0;
+            if (!data.version.empty() && !parseInteger(data.version, tileVersion)) {
+                throw std::runtime_error("Invalid [version] in " + tile.textPath.string());
             }
+            const auto hasField = [tileVersion](int version) {
+                return tileVersion == 0 || tileVersion >= version;
+            };
+            std::size_t field = cursor + 1;
             MapSplinePlacement spline;
             spline.elevated = elevated;
-            for (std::size_t field = 0; field < fieldCount; ++field) {
-                spline.rawFields[field] = trim(lines[cursor + 1 + field]);
+            std::size_t rawFieldCount = 0;
+            const auto readSplineField = [&]() -> const std::string& {
+                if (field >= lines.size()) {
+                    throw std::runtime_error("Truncated " + section + " record in " +
+                                             tile.textPath.string());
+                }
+                const std::string& value = lines[field++];
+                if (rawFieldCount < spline.rawFields.size()) {
+                    spline.rawFields[rawFieldCount++] = trim(value);
+                }
+                return value;
+            };
+            if (hasField(9)) {
+                readSplineField(); // detail level
             }
-            spline.assetPath = spline.rawFields[1];
-            const std::size_t cantStartField = elevated ? 14 : 13;
-            const std::size_t chainOffsetField = fieldCount - 1;
-            spline.geometryValid =
-                parseReal(spline.rawFields[5], spline.localX) &&
-                parseReal(spline.rawFields[6], spline.elevation) &&
-                parseReal(spline.rawFields[7], spline.localY) &&
-                parseReal(spline.rawFields[8], spline.rotationDegrees) &&
-                parseReal(spline.rawFields[9], spline.length) &&
-                parseReal(spline.rawFields[10], spline.radius) &&
-                parseReal(spline.rawFields[11], spline.gradientStart) &&
-                parseReal(spline.rawFields[12], spline.gradientEnd) &&
-                (!elevated || parseReal(spline.rawFields[13], spline.heightDelta));
-            parseInteger(spline.rawFields[2], spline.splineId);
-            parseInteger(spline.rawFields[3], spline.previousSplineId);
-            parseInteger(spline.rawFields[4], spline.nextSplineId);
-            if (fieldCount > cantStartField + 1) {
-                parseReal(spline.rawFields[cantStartField], spline.cantStart);
-                parseReal(spline.rawFields[cantStartField + 1], spline.cantEnd);
+            spline.assetPath = trim(readSplineField());
+            if (hasField(6)) {
+                if (!parseInteger(trim(readSplineField()), spline.splineId)) {
+                    throw std::runtime_error("Invalid spline ID in " + tile.textPath.string());
+                }
+            } else {
+                spline.splineId = -static_cast<int>(++automaticRecordId);
             }
-            spline.chainOffsetValid =
-                data.version.empty() || data.version == "0" || std::stoi(data.version) >= 11
-                    ? parseReal(spline.rawFields[chainOffsetField], spline.chainOffset)
-                    : false;
+            if (hasField(11)) {
+                if (!parseInteger(trim(readSplineField()), spline.previousSplineId) ||
+                    !parseInteger(trim(readSplineField()), spline.nextSplineId)) {
+                    throw std::runtime_error("Invalid spline links in " + tile.textPath.string());
+                }
+            } else {
+                int linkedToPrevious = -1;
+                if (!parseInteger(trim(readSplineField()), linkedToPrevious)) {
+                    throw std::runtime_error("Invalid legacy spline link in " +
+                                             tile.textPath.string());
+                }
+                if (linkedToPrevious != -1 && !data.splines.empty()) {
+                    spline.previousSplineId = data.splines.back().splineId;
+                    data.splines.back().nextSplineId = spline.splineId;
+                }
+            }
+            bool numericFieldsValid = true;
+            const auto readSplineReal = [&](double& destination) {
+                const bool valid = parseReal(trim(readSplineField()), destination);
+                numericFieldsValid = valid && numericFieldsValid;
+                return valid;
+            };
+            readSplineReal(spline.localX);
+            readSplineReal(spline.elevation);
+            readSplineReal(spline.localY);
+            readSplineReal(spline.rotationDegrees);
+            readSplineReal(spline.length);
+            readSplineReal(spline.radius);
+            readSplineReal(spline.gradientStart);
+            readSplineReal(spline.gradientEnd);
+            if (elevated) {
+                readSplineReal(spline.heightDelta);
+            }
+            if (hasField(5)) {
+                readSplineReal(spline.cantStart);
+                readSplineReal(spline.cantEnd);
+            }
+            // Versions 14+ add skew at both ends before the v11+ chain texture offset.
+            if (hasField(14)) {
+                double ignoredSkewStart = 0.0;
+                double ignoredSkewEnd = 0.0;
+                readSplineReal(ignoredSkewStart);
+                readSplineReal(ignoredSkewEnd);
+            }
+            if (hasField(11)) {
+                spline.chainOffsetValid = parseReal(trim(readSplineField()), spline.chainOffset);
+            }
+            spline.geometryValid = numericFieldsValid;
+            // [mirror] is a bare marker after the numeric record, not a fixed-width field.
+            if (hasField(7) && field < lines.size() && trim(lines[field]) == "mirror") {
+                readSplineField();
+            }
             if (elevated) {
                 ++data.elevatedSplineCount;
             } else {
                 ++data.splineCount;
             }
             data.splines.push_back(std::move(spline));
-            cursor += fieldCount;
+            modifierTarget = ModifierTarget::Spline;
+            modifierTargetIndex = data.splines.size() - 1;
+            cursor = field - 1;
         } else if (section == "[object]") {
             ++data.objectCount;
-            if (cursor + 10 >= lines.size()) {
-                throw std::runtime_error("Truncated [object] record in " + tile.textPath.string());
+            int tileVersion = 0;
+            if (!data.version.empty() && !parseInteger(data.version, tileVersion)) {
+                throw std::runtime_error("Invalid [version] in " + tile.textPath.string());
             }
+            const auto hasField = [tileVersion](int version) {
+                return tileVersion == 0 || tileVersion >= version;
+            };
+            std::size_t field = cursor + 1;
+            const auto requireObjectField = [&](std::size_t at) -> const std::string& {
+                if (at >= lines.size()) {
+                    throw std::runtime_error("Truncated [object] record in " +
+                                             tile.textPath.string());
+                }
+                return lines[at];
+            };
             MapSceneryPlacement object;
             object.label = cursor == 0 ? std::string{} : trim(lines[cursor - 1]);
-            object.line1 = trim(lines[cursor + 1]);
-            object.assetPath = trim(lines[cursor + 2]);
-            if (!parseInteger(trim(lines[cursor + 3]), object.id)) {
-                throw std::runtime_error("Invalid [object] ID in " + tile.textPath.string());
+            object.line1 = trim(requireObjectField(field));
+            if (hasField(9)) {
+                if (!parseInteger(trim(requireObjectField(field++)), object.detailLevel)) {
+                    throw std::runtime_error("Invalid [object] detail level in " +
+                                             tile.textPath.string());
+                }
             }
-            for (std::size_t field = 0; field < object.rawTransformFields.size(); ++field) {
-                object.rawTransformFields[field] = trim(lines[cursor + 4 + field]);
+            object.assetPath = trim(requireObjectField(field++));
+            if (hasField(6)) {
+                if (!parseInteger(trim(requireObjectField(field++)), object.id)) {
+                    throw std::runtime_error("Invalid [object] ID in " + tile.textPath.string());
+                }
+            } else {
+                object.id = -static_cast<int>(++automaticRecordId);
             }
             object.transformValid = true;
             for (std::size_t axis = 0; axis < object.localPosition.size(); ++axis) {
+                object.rawTransformFields[axis] = trim(requireObjectField(field++));
                 object.transformValid =
                     parseReal(object.rawTransformFields[axis], object.localPosition[axis]) &&
+                    object.transformValid;
+            }
+            const std::size_t rotationFields = hasField(12) ? 3 : (hasField(8) ? 1 : 0);
+            for (std::size_t axis = 0; axis < rotationFields; ++axis) {
+                object.rawTransformFields[axis + 3] = trim(requireObjectField(field++));
+                object.transformValid =
                     parseReal(object.rawTransformFields[axis + 3], object.rotationDegrees[axis]) &&
                     object.transformValid;
             }
-            object.trailingField = trim(lines[cursor + 10]);
+            for (std::size_t axis = rotationFields; axis < object.rotationDegrees.size(); ++axis) {
+                object.rawTransformFields[axis + 3] = "0";
+                object.rotationDegrees[axis] = 0.0;
+            }
+            if (hasField(4)) {
+                std::size_t labelCount = 0;
+                object.trailingField = trim(requireObjectField(field++));
+                if (!parseSize(object.trailingField, labelCount) || labelCount > 4096 ||
+                    labelCount > lines.size() - std::min(field, lines.size())) {
+                    throw std::runtime_error("Invalid [object] label count in " +
+                                             tile.textPath.string());
+                }
+                object.labels.reserve(labelCount);
+                for (std::size_t index = 0; index < labelCount; ++index) {
+                    object.labels.push_back(requireObjectField(field++));
+                }
+            }
             data.sceneryObjects.push_back(std::move(object));
-            cursor += 10;
+            modifierTarget = ModifierTarget::SceneryObject;
+            modifierTargetIndex = data.sceneryObjects.size() - 1;
+            cursor = field - 1;
         } else if (section == "[attachObj]") {
-            ++data.attachedObjectCount;
+            int tileVersion = 0;
+            if (!data.version.empty() && !parseInteger(data.version, tileVersion)) {
+                throw std::runtime_error("Invalid [version] in " + tile.textPath.string());
+            }
+            std::size_t field = cursor + 1;
+            const auto requireField = [&](std::size_t at) -> const std::string& {
+                if (at >= lines.size()) {
+                    throw std::runtime_error("Truncated [attachObj] record in " +
+                                             tile.textPath.string());
+                }
+                return lines[at];
+            };
+            MapAttachedObject object;
+            object.label = cursor == 0 ? std::string{} : trim(lines[cursor - 1]);
+            object.line1 = trim(requireField(field++));
+            object.assetPath = trim(requireField(field++));
+            object.hasExplicitId = tileVersion >= 6;
+            if (object.hasExplicitId) {
+                if (!parseInteger(trim(requireField(field++)), object.id)) {
+                    throw std::runtime_error("Invalid [attachObj] ID in " + tile.textPath.string());
+                }
+            } else {
+                object.id = -static_cast<int>(++automaticRecordId);
+            }
+            if (!parseInteger(trim(requireField(field++)), object.attachedToObjectId)) {
+                throw std::runtime_error("Invalid [attachObj] parent object ID in " +
+                                         tile.textPath.string());
+            }
+            object.line5 = trim(requireField(field++));
+            object.attachPointIndex = trim(requireField(field++));
+            object.transformValid =
+                parseInteger(object.attachPointIndex, object.attachPointIndexValue);
+            for (std::size_t axis = 0; axis < object.rotationFields.size(); ++axis) {
+                object.rotationFields[axis] = trim(requireField(field++));
+                object.transformValid =
+                    parseReal(object.rotationFields[axis], object.rotationDegrees[axis]) &&
+                    object.transformValid;
+            }
+            object.labelCount = trim(requireField(field++));
+
+            // labelCount remains opaque and does not define the number of tail lines. Preserve
+            // object-specific text while leaving the next record's description for its parser.
+            while (field < lines.size()) {
+                const std::string candidate = trim(lines[field]);
+                if (candidate.size() > 2 && candidate.front() == '[' && candidate.back() == ']') {
+                    break;
+                }
+                if (field + 1 < lines.size()) {
+                    const std::string next = trim(lines[field + 1]);
+                    if (next == "[object]" || next == "[attachObj]" ||
+                        next == "[splineAttachement]" || next == "[splineAttachement_repeater]") {
+                        break;
+                    }
+                }
+                object.optionalLines.push_back(lines[field++]);
+            }
+            data.attachedObjects.push_back(std::move(object));
+            modifierTarget = ModifierTarget::AttachedObject;
+            modifierTargetIndex = data.attachedObjects.size() - 1;
+            cursor = field - 1;
         } else if (section == "[splineAttachement]" || section == "[splineAttachement_repeater]") {
             const bool repeater = section == "[splineAttachement_repeater]";
             if (repeater) {
@@ -375,6 +825,9 @@ MapTileData loadMapTile(const MapTileReference& tile) {
                 ++data.splineAttachmentCount;
             }
             const int tileVersion = data.version.empty() ? 0 : std::stoi(data.version);
+            if (tileVersion < 6) {
+                ++automaticRecordId;
+            }
             const bool hasDetail = tileVersion == 0 || tileVersion >= 9;
             const bool modernRotation = tileVersion == 0 || tileVersion >= 12;
             const bool hasStrings = tileVersion == 0 || tileVersion >= 4;
@@ -433,16 +886,136 @@ MapTileData loadMapTile(const MapTileReference& tile) {
                 field += stringCount;
             }
             data.splineAttachments.push_back(std::move(attachment));
+            modifierTarget = ModifierTarget::SplineAttachment;
+            modifierTargetIndex = data.splineAttachments.size() - 1;
+            cursor = field - 1;
+        } else if (section == "[varparent]") {
+            if (cursor + 1 >= lines.size()) {
+                throw std::runtime_error("Truncated [varparent] in " + tile.textPath.string());
+            }
+            int parentId = 0;
+            if (!parseInteger(trim(lines[cursor + 1]), parentId)) {
+                throw std::runtime_error("Invalid [varparent] ID in " + tile.textPath.string());
+            }
+            switch (modifierTarget) {
+            case ModifierTarget::SceneryObject:
+                data.sceneryObjects[modifierTargetIndex].variableParentId = parentId;
+                break;
+            case ModifierTarget::AttachedObject:
+                data.attachedObjects[modifierTargetIndex].variableParentId = parentId;
+                break;
+            case ModifierTarget::SplineAttachment:
+                data.splineAttachments[modifierTargetIndex].variableParentId = parentId;
+                break;
+            case ModifierTarget::None:
+                data.diagnostics.warning(cursor + 1, "varparent",
+                                         "modifier has no supported preceding tile object");
+                break;
+            case ModifierTarget::Spline:
+                data.diagnostics.warning(cursor + 1, "varparent",
+                                         "modifier is not valid for a spline record");
+                break;
+            }
+            ++cursor;
+        } else if (section == "[spline_terrain_align]") {
+            switch (modifierTarget) {
+            case ModifierTarget::SceneryObject:
+                data.sceneryObjects[modifierTargetIndex].splineTerrainAlign = true;
+                break;
+            case ModifierTarget::AttachedObject:
+                data.attachedObjects[modifierTargetIndex].splineTerrainAlign = true;
+                break;
+            case ModifierTarget::SplineAttachment:
+                data.splineAttachments[modifierTargetIndex].splineTerrainAlign = true;
+                break;
+            case ModifierTarget::None:
+            case ModifierTarget::Spline:
+                data.diagnostics.warning(cursor + 1, "spline_terrain_align",
+                                         "marker has no supported preceding object record");
+                break;
+            }
+        } else if (section == "[spline_terrain_align_2]") {
+            if (cursor + 1 >= lines.size()) {
+                throw std::runtime_error("Truncated [spline_terrain_align_2] in " +
+                                         tile.textPath.string());
+            }
+            if (modifierTarget == ModifierTarget::Spline) {
+                data.splines[modifierTargetIndex].splineTerrainAlign2 = lines[cursor + 1];
+            } else {
+                data.diagnostics.warning(cursor + 1, "spline_terrain_align_2",
+                                         "record has no supported preceding spline");
+            }
+            ++cursor;
+        } else if (section == "[rule]" || section == "[kill_rule]") {
+            MapTileRule rule;
+            rule.kill = section == "[kill_rule]";
+            for (std::size_t index = 0; index < rule.fields.size(); ++index) {
+                const std::size_t field = cursor + index + 1;
+                if (field >= lines.size()) {
+                    throw std::runtime_error("Truncated " + section + " record in " +
+                                             tile.textPath.string());
+                }
+                rule.fields[index] = lines[field];
+            }
+            switch (modifierTarget) {
+            case ModifierTarget::SceneryObject:
+                data.sceneryObjects[modifierTargetIndex].rules.push_back(std::move(rule));
+                break;
+            case ModifierTarget::AttachedObject:
+                data.attachedObjects[modifierTargetIndex].rules.push_back(std::move(rule));
+                break;
+            case ModifierTarget::SplineAttachment:
+                data.splineAttachments[modifierTargetIndex].rules.push_back(std::move(rule));
+                break;
+            case ModifierTarget::Spline:
+                data.splines[modifierTargetIndex].rules.push_back(std::move(rule));
+                break;
+            case ModifierTarget::None:
+                data.diagnostics.warning(cursor + 1, section.substr(1, section.size() - 2),
+                                         "modifier has no supported preceding tile record");
+                break;
+            }
+            cursor += rule.fields.size();
+        } else if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
+            data.diagnostics.warning(cursor + 1, section.substr(1, section.size() - 2),
+                                     "map tile section is not implemented");
+            MapOpaqueSection opaqueSection;
+            opaqueSection.keyword = section.substr(1, section.size() - 2);
+            opaqueSection.sectionLine = cursor + 1;
+            std::size_t field = cursor + 1;
+            while (field < lines.size()) {
+                const std::string candidate = trim(lines[field]);
+                if (candidate.size() > 2 && candidate.front() == '[' && candidate.back() == ']') {
+                    break;
+                }
+                opaqueSection.payloadLines.push_back(lines[field++]);
+            }
+            data.unsupportedSections.push_back(std::move(opaqueSection));
             cursor = field - 1;
         }
     }
     if (data.version.empty()) {
         throw std::runtime_error("No [version] section found in " + tile.textPath.string());
     }
-    if (!data.hasTerrainMarker) {
+    if (chronoData == nullptr && !data.hasTerrainMarker) {
         throw std::runtime_error("No [terrain] section found in " + tile.textPath.string());
     }
+    if (chronoData != nullptr) {
+        chronoData->diagnostics = data.diagnostics;
+    }
     return data;
+}
+
+MapTileData loadMapTile(const MapTileReference& tile) {
+    return loadMapTileInternal(tile, nullptr);
+}
+
+MapChronoTileData loadChronoTile(const std::filesystem::path& chronoTilePath) {
+    MapTileReference tile;
+    tile.textPath = chronoTilePath;
+    MapChronoTileData chronoData;
+    static_cast<void>(loadMapTileInternal(tile, &chronoData));
+    return chronoData;
 }
 
 TerrainGrid loadTerrainGrid(const std::filesystem::path& terrainPath) {
@@ -479,6 +1052,46 @@ TerrainGrid loadTerrainGrid(const std::filesystem::path& terrainPath) {
         grid.heights.push_back(height);
     }
     return grid;
+}
+
+WaterData loadWaterData(const std::filesystem::path& waterPath) {
+    openbus::rendering::TraceScope trace("map", "MapConfigLoader::loadWaterData");
+    std::ifstream input(waterPath, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error("Could not open water file: " + waterPath.string());
+    }
+    const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(input)),
+                                           std::istreambuf_iterator<char>());
+    if (bytes.size() < 4) {
+        throw std::runtime_error("Water file is shorter than its header: " + waterPath.string());
+    }
+    const std::uint32_t surfaceCount = readU32(bytes, 0);
+    constexpr std::uint32_t MAX_WATER_SURFACES = 1'000'000;
+    if (surfaceCount > MAX_WATER_SURFACES) {
+        throw std::runtime_error("Water surface count exceeds the supported limit in " +
+                                 waterPath.string());
+    }
+    const std::uint64_t expectedBytes = 4U + static_cast<std::uint64_t>(surfaceCount) * 16U;
+    if (bytes.size() != expectedBytes) {
+        throw std::runtime_error("Water file size does not match its surface count: " +
+                                 waterPath.string());
+    }
+
+    WaterData water;
+    water.surfaces.reserve(surfaceCount);
+    std::size_t offset = 4;
+    for (std::uint32_t index = 0; index < surfaceCount; ++index) {
+        WaterSurface surface;
+        for (float& height : surface.heights) {
+            height = std::bit_cast<float>(readU32(bytes, offset));
+            offset += 4;
+            if (!std::isfinite(height)) {
+                throw std::runtime_error("Non-finite water height in " + waterPath.string());
+            }
+        }
+        water.surfaces.push_back(surface);
+    }
+    return water;
 }
 
 } // namespace openbus::map

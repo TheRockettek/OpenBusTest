@@ -10,7 +10,7 @@ namespace openbus::rendering {
 class MapRenderer {
   public:
     MapRenderer(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
-                const std::filesystem::path& omsiRoot);
+                std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot);
     ~MapRenderer();
 
     MapRenderer(const MapRenderer&) = delete;

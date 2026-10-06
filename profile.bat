@@ -3,15 +3,15 @@ setlocal
 
 taskkill.exe /F /IM OpenBus.exe
 
-set "OPENBUS_BUS_CONFIG=Vehicles\[SP] Studio Polygon 400MMC\E400MMC_ADL_10.9m_Voith_LowHeight.bus"
-set "OPENBUS_MODEL_CONFIG=Vehicles\[SP] Studio Polygon 400MMC\Model\Configuration Files\E400MMC_ADL_10.9m_Voith_LowHeight.cfg"
+@REM set "OPENBUS_BUS_CONFIG=Vehicles\[SP] Studio Polygon 400MMC\E400MMC_ADL_10.9m_Voith_LowHeight.bus"
+@REM set "OPENBUS_MODEL_CONFIG=Vehicles\[SP] Studio Polygon 400MMC\Model\Configuration Files\E400MMC_ADL_10.9m_Voith_LowHeight.cfg"
 
-set "OPENBUS_AI_BUS_CONFIG=Vehicles/VW_Golf_2/ai_vw_golf_2.bus"
-set "OPENBUS_AI_MODEL_CONFIG=Vehicles/VW_Golf_2/model/model.cfg"
-set "OPENBUS_AI_COUNT=200"
+@REM set "OPENBUS_AI_BUS_CONFIG=Vehicles/VW_Golf_2/ai_vw_golf_2.bus"
+@REM set "OPENBUS_AI_MODEL_CONFIG=Vehicles/VW_Golf_2/model/model.cfg"
+@REM set "OPENBUS_AI_COUNT=200"
 
-@REM set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
-@REM set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
+set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
+set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
 
 set "OPENBUS_VSYNC=off"
 

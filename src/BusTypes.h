@@ -89,6 +89,13 @@ struct TerrainCollisionGrid {
     std::vector<float> heights;
 };
 
+struct StaticCollisionMesh {
+    // World-space XYZ triples and zero-based triangle indices. The simulation retains these
+    // buffers for the lifetime of the corresponding ODE trimesh.
+    std::vector<double> vertices;
+    std::vector<int> indices;
+};
+
 struct ChassisCollisionBox {
     double length;
     double width;

@@ -191,5 +191,6 @@ struct ModelConfig {
     // OMSI model bounds: size X/Y/Z followed by center X/Y/Z.
     std::array<double, 6> boundingBox = {};
     std::vector<double> lodThresholds;
+    bool absoluteHeight = false;
     ConfigurationDiagnostics diagnostics;
 };

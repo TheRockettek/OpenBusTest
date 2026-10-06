@@ -124,34 +124,24 @@ change from their controlling variables without manual texture replacement.
 
 ### E400 OMSI/OpenBus comparison gaps
 
-- [ ] Implement `[VFDmaxmin]` display limits and `[tex_detail_factor]` instead
   of consuming them only for parser alignment; verify the dashboard LCD,
   odometer, and center display against the OMSI reference capture.
-- [ ] Implement `[CTC]` and `[CTCTexture]` template selection and texture
   substitution. The active E400 configuration uses these records for dashboard
   and body variants, so retaining their payloads is not sufficient for visual
   parity.
-- [~] Basic `[illumination_interior]`/`[interiorlight]` emission is active for
   assigned meshes, but `[light_enh_2]` and `[spotlight]` remain storage-only;
   the comparison still shows dashboard-lighting parity gaps.
-- [ ] Implement `[matl_bumpmap]` and complete `[matl_envmap]` material
   semantics, including strength and lighting interaction, then compare the
   dashboard binnacle and cab surfaces again.
-- [~] Complete `[texttexture]`/`[texttexture_enh]` compatibility with authored
   OMSI fonts, layout, and display-background/alpha semantics. Enhanced horizontal
   alignments 0–5, authored grid spacing, and `Refresh_Strings`-gated changed-string
   updates are implemented; the fallback rasterizer and remaining format details
   still differ from OMSI.
-- [x] Pair the selected number-list entry with `[registration_list]`, expose
   the plate as `ident`, and rasterize its text texture on initialization; the
   default E400 plate is visible on the real model capture.
-- [ ] Complete registration persistence/full OMSI selection UI and verify
   odometer parity against the reference capture.
-- [ ] Add a repeatable OMSI/OpenBus screenshot comparison for the E400 cockpit
   that checks the dashboard LCD, odometer, warning lamps, illumination, and
   text surfaces independently of camera framing.
-
-The keyword audit for the active E400 CFG found no completely unknown keywords
 for the current parser. The remaining visual differences are therefore mostly
 recognized-but-incomplete semantics, not missing keyword dispatch entries.
 
@@ -395,35 +385,124 @@ diagnostic before it can be moved to the implemented baseline.
 
 ## 6. Rendering and platform completeness
 
-### Grande Porto map support
+### Map support
 
-Implemented foundation: `global.cfg` and tile/terrain parsing, first-entrypoint
-spawn, local terrain rendering/collision, nearby supported O3D scenery, tree
-preview cards, and a narrow two-profile road renderer. These are not equivalent
-to full OMSI map support; see the README's map scope for the explicit boundary.
+Implemented foundation: `global.cfg` and tile/terrain parsing, configurable
+entrypoint spawn, synchronous full-map terrain/scenery/road render construction with
+distance/frustum culling, a 3x3 spawn-neighborhood terrain collision patch,
+supported O3D scenery, tree preview cards, and a subset of `.sli` road profiles.
+These are not equivalent to full OMSI map support; see the README's map scope
+for the explicit boundary.
+
+#### Keyword support audit (current implementation)
+
+- `[map]` and `[entrypoints]` are loaded; entrypoint zero is the default, with
+  optional index/name selection. `[groundtex]` records are retained; the first
+  base texture is rendered by default. `OPENBUS_MAP_GROUNDTEX` can select a
+  different base texture uniformly as a preview/debug override. Per-tile DDS
+  sidecar paths are inventoried, but their suffix mapping, detail layers, and
+  seasonal changes are not applied.
+- `[version]`, `[terrain]`, `[object]`, `[spline]`, `[spline_h]`,
+  `[splineAttachement]`, and `[splineAttachement_repeater]` have typed parser
+  paths. Ordinary objects, road strips, and same-tile spline attachments have
+  runtime paths, but object labels, spline skew/mirror behavior, cross-tile
+  attachment chains, and repeater-master resolution remain incomplete.
+- `[attachObj]` fixed fields and version-dependent IDs are parsed and retained,
+  including non-destructive typed attach-point/rotation values while preserving
+  raw fields and opaque label counts. Placement/rendering remains unsupported
+  because parent anchor semantics are unresolved. `[water]` markers and binary sidecars are
+  parsed/validated and summarized at load, but no water surfaces are rendered.
+  `[variable_terrain]` and `[variable_terrainlightmap]` marker presence is
+  parsed and reported, but dynamic terrain/lightmap rendering is unsupported.
+  `[varparent]` IDs, four raw fields from `[rule]`/`[kill_rule]`, the
+  `[spline_terrain_align]` marker, and `[spline_terrain_align_2]` spline data
+  are retained on supported records, but none of these modifiers affects
+  runtime placement or visibility yet.
+- Chrono tile parsing now retains the complete source lines and comment/version,
+  types `[selobject]` and `[selspline]` integer IDs before the opaque object
+  payload, and preserves selector override lines as opaque data. Selector/date
+  resolution is not applied to the map; `[delete]`, `[typ]`, and `[relabel]`
+  have no independent runtime semantics.
+  Global identity/description, version, background/map-camera data, marker flags,
+  seasons, and traffic-density records are retained as metadata, but fields such
+  as `[worldcoordinates]` have no runtime effect; timetable/HOF and AI-list map
+  state remain out of scope. Unsupported `global.cfg` and tile sections retain
+  their raw payload lines with source line numbers; their runtime semantics
+  remain unimplemented.
+- `.map.water` presence and count-plus-four-float records are decoded and
+  validated; rendering remains deferred because the four heights' spatial
+  order is not verified. Numeric-suffix `.map.<n>.dds` paths are inventoried
+  per tile, but their payloads and suffix-to-groundtex mapping are unresolved.
+  `.map.LM.bmp` and `.map.terrain_0.rdy` paths/presence are inventoried but
+  their payloads are not decoded or rendered.
+  Unimplemented bracketed sections in tile files and `global.cfg` now produce
+  line-numbered warnings and preserve each section's opaque payload lines;
+  no runtime meaning is inferred from them.
 
 - [x] Add curved centerline tessellation for the recognized Freyfurt asphalt
   profiles. Signed-radius geometry is checked by `OpenBusMapSplineGeometryProbe`
   against linked Grande Porto spline endpoints in both turn directions; a
-  zero-radius straight case and invalid inputs are covered. The startup map
-  capture smoke test passes, but a camera-framed capture that clearly shows a
-  representative curve remains open.
+  zero-radius straight case and invalid inputs are covered. This verifies the
+  centerline only, not cross-section sidewalks, markings, seams, or lighting.
 - [ ] Add targeted, repeatable in-context screenshot evidence for curved-road
-  geometry and seams at linked spline boundaries.
+  geometry, sidewalks, markings, texture phase, and seams at linked spline
+  boundaries.
 - [ ] Load general scenery `.x` meshes, or keep them explicitly unsupported;
   tree SCO previews currently use crossed textured planes rather than their
   editor/helper mesh.
-- [ ] Read supported road profiles from `.sli` files instead of hard-coding two
-  profile paths, a 6.5 m width, and a grade approximation; cover markings,
-  materials, and elevation behavior with fixtures.
-- [ ] Support scenery pitch/bank and attachment/repeater records; connect
-  scenery scripts, mouse events, and collision only when their runtime
-  semantics are defined.
-- [ ] Add per-tile/detail/seasonal ground textures and implement or explicitly
-  scope out water, map lightmaps, and Chrono tile variants.
-- [ ] Stream terrain, scenery, and collision as the player leaves the current
-  3x3 spawn-neighborhood patch.
-- [ ] Add entrypoint selection and HOF/timetable-backed map state. Defer
+- [~] Read a subset of road profiles from `.sli` files (`[texture]`, `[profile]`,
+  `[profilepnt]`); height profiles, complete texture/material semantics,
+  banking, marking behavior, and representative visual evidence remain
+  incomplete. Road UV V now includes a valid parsed v11+ spline chain offset;
+  continuity and OMSI parity still need validation against installed linked
+  spline assets.
+- [x] Decode `[object]`, `[spline]`, and `[spline_h]` field layouts by tile
+  version, including legacy spline links and v11+ chain offsets; version 5/7/11
+  and current-version fixtures are covered by `OpenBusMapConfigProbe`.
+- [x] Apply SCO/model `[absheight]` to ordinary map scenery so its vertical
+  placement is not offset by terrain height; model and tree-SCO parsing have
+  regression coverage in `OpenBusModelConfigProbe`.
+- [~] Ordinary object rotation and same-tile spline attachment/repeater
+  placement have runtime paths and parser/placement probes. A deterministic
+  probe covers ordinary object x/y/z order, tile-origin translation, rotation
+  retention, and relative/absolute terrain height; add visual transform
+  regression evidence against installed map assets. Finish cross-tile chains,
+  repeater-master resolution, and `[attachObj]` rendering. `[attachObj]`
+  records now have typed IDs and preserved fixed/optional fields, covered by
+  modern and legacy parser fixtures. `[varparent]` references are parsed on
+  object, attached-object, and spline-attachment records; applying parent
+  transforms remains open. `[attachObj]` label counts remain opaque and its
+  optional tail is preserved independently of the count.
+- [~] Add ODE road trimeshes for the runtime-visible supported `.sli` strips in
+  the spawn tile's 3x3 neighborhood. Rendering and physics now share generated
+  road-section geometry; a stability probe checks a raised static surface over
+  terrain, and a geometry probe covers straight, curved, and elevated profiles.
+  Still validate contact against representative installed curves/sidewalks and
+  tune duplicate contacts where road strips overlap terrain; physics is not
+  streamed as the bus leaves the neighborhood.
+- [ ] Implement scenery collision honoring `.sco`/model `[collision_mesh]`,
+  `[boundingbox]`, and `[nocollision]`; define safe static-world ownership and
+  add placement/collision probes before connecting to ODE.
+- [ ] Connect scenery scripts and mouse events only after their runtime
+  semantics and ownership are defined.
+- [~] Decode `.map.water` sidecars into per-surface four-height records;
+  determine corner/quadrant ordering and implement water rendering. Per-tile/
+  detail/seasonal ground textures, map lightmaps, and Chrono variant resolution
+  remain. Chrono selector IDs and opaque override payload lines are parser-only.
+- [~] Map rendering now applies the 500 m distance limit and view-frustum
+  culling to resident terrain/road geometry, and groups scenery by spatial tile
+  so rejected chunks do not scan every instance. All map tiles are still
+  synchronously parsed/uploaded at startup and remain resident; there is no
+  asynchronous map build, dynamic collision update, or GPU unload/streaming.
+  Add runtime visibility/performance evidence and make map construction
+  non-blocking before claiming streaming support.
+- [ ] Update terrain and road collision as the player leaves the current 3x3
+  spawn-neighborhood patch; preserve a bounded physics/collision residency
+  window independently from render visibility.
+- [x] Select map entrypoints at startup by zero-based index or case-insensitive
+  name through `OPENBUS_MAP_ENTRY`; the default remains the first entrypoint.
+  Selection and invalid-index behavior are covered by `OpenBusMapConfigProbe`.
+- [ ] Add HOF/timetable-backed map state. Defer
   scheduled AI and signal behavior until route/signal formats provide enough
   verified data; the inspected Grande Porto signal-route file is only a
   header/template.

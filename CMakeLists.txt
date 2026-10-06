@@ -161,6 +161,8 @@ add_executable(OpenBus
     src/ConfigurationParser.cpp
     src/MapConfigLoader.cpp
     src/MapSceneryPlacement.cpp
+    src/MapCollisionBuilder.cpp
+    src/MapRoadGeometry.cpp
     src/MapSplineGeometry.cpp
     src/MapSplineProfile.cpp
     src/VehicleConfigLoader.cpp
@@ -187,7 +189,6 @@ add_executable(OpenBus
     src/SoundEngine.cpp
     src/VehicleSoundBank.cpp
     src/osc/osc.cpp
-    src/MapSceneryPlacement.cpp
 )
 
 openbus_configure_perf_trace(OpenBus)
@@ -330,12 +331,40 @@ add_executable(OpenBusMapConfigProbe
 target_include_directories(OpenBusMapConfigProbe PRIVATE src)
 add_test(NAME OpenBusMapConfigProbe COMMAND OpenBusMapConfigProbe)
 
+add_executable(OpenBusMapChronoTileProbe
+    tests/MapChronoTileProbe.cpp
+    src/MapConfigLoader.cpp
+)
+target_include_directories(OpenBusMapChronoTileProbe PRIVATE src)
+add_test(NAME OpenBusMapChronoTileProbe COMMAND OpenBusMapChronoTileProbe)
+
 add_executable(OpenBusMapSplineGeometryProbe
     tests/MapSplineGeometryProbe.cpp
     src/MapSplineGeometry.cpp
 )
 target_include_directories(OpenBusMapSplineGeometryProbe PRIVATE src)
 add_test(NAME OpenBusMapSplineGeometryProbe COMMAND OpenBusMapSplineGeometryProbe)
+
+add_executable(OpenBusMapRoadGeometryProbe
+    tests/MapRoadGeometryProbe.cpp
+    src/MapRoadGeometry.cpp
+    src/MapSplineGeometry.cpp
+)
+target_include_directories(OpenBusMapRoadGeometryProbe PRIVATE src)
+add_test(NAME OpenBusMapRoadGeometryProbe COMMAND OpenBusMapRoadGeometryProbe)
+
+add_executable(OpenBusMapCollisionBuilderProbe
+    tests/MapCollisionBuilderProbe.cpp
+    src/MapCollisionBuilder.cpp
+    src/MapConfigLoader.cpp
+    src/MapRoadGeometry.cpp
+    src/MapSplineGeometry.cpp
+    src/MapSplineProfile.cpp
+    src/PerfTrace.cpp
+)
+openbus_configure_perf_trace(OpenBusMapCollisionBuilderProbe)
+target_include_directories(OpenBusMapCollisionBuilderProbe PRIVATE src)
+add_test(NAME OpenBusMapCollisionBuilderProbe COMMAND OpenBusMapCollisionBuilderProbe)
 
 add_executable(OpenBusMapSceneryPlacementProbe
     tests/MapSceneryPlacementProbe.cpp

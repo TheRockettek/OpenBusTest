@@ -70,7 +70,7 @@ class RenderLoop {
 
     void SetPlayerVehicle(Vehicle* vehicle);
     void SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
-                const std::filesystem::path& omsiRoot);
+                std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot);
 
     void beginFrame(double fixedTimeStep = -1.0);
     void updatePlayerVariables(const BusSimulation& simulation, double throttle, double steering,
