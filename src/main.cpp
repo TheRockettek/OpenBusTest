@@ -42,18 +42,11 @@ int positiveEnvironmentInt(const char* name, int fallback, int maximum) {
     return static_cast<int>(std::min(parsed, static_cast<long>(maximum)));
 }
 
-std::vector<TerrainCollisionGrid> loadSpawnTerrain(const openbus::map::MapDefinition& map,
-                                                   std::size_t centerTileIndex) {
-    constexpr int tileRadius = 1;
-    if (centerTileIndex >= map.tiles.size()) {
-        throw std::runtime_error("Selected map spawn references an invalid tile");
-    }
-    const openbus::map::MapTileReference& center = map.tiles[centerTileIndex];
+std::vector<TerrainCollisionGrid> loadMapTerrain(const openbus::map::MapDefinition& map) {
     std::vector<TerrainCollisionGrid> terrain;
-    terrain.reserve(9);
+    terrain.reserve(map.tiles.size());
     for (const openbus::map::MapTileReference& tile : map.tiles) {
-        if (std::abs(tile.x - center.x) > tileRadius || std::abs(tile.y - center.y) > tileRadius ||
-            !tile.hasTerrainFile) {
+        if (!tile.hasTerrainFile) {
             continue;
         }
         const openbus::map::TerrainGrid grid = openbus::map::loadTerrainGrid(tile.terrainPath);
@@ -61,7 +54,7 @@ std::vector<TerrainCollisionGrid> loadSpawnTerrain(const openbus::map::MapDefini
             {tile.x, tile.y, openbus::map::OMSI_TILE_SIZE_METERS, grid.intervals, grid.heights});
     }
     if (terrain.empty()) {
-        throw std::runtime_error("No terrain collision files found around the selected spawn");
+        throw std::runtime_error("No terrain collision files found in the selected map");
     }
     return terrain;
 }
@@ -195,11 +188,15 @@ int main() {
             modelConfiguration = loadBusModelConfiguration(busConfigPath);
         }
 
-        openbus::map::MapRoadCollisionResult roadCollision = openbus::map::buildSpawnRoadCollision(
-            mapDefinition, mapDefinition.entryPoints[spawnEntryPoint].tileIndex, omsiRootPath());
+        openbus::map::MapRoadCollisionResult roadCollision =
+            openbus::map::buildMapRoadCollision(mapDefinition, omsiRootPath());
         applicationLog.Log(
-            "Map road collision prepared: tiles=" + std::to_string(roadCollision.tilesVisited) +
+            "Map collision prepared for full map: tiles=" + std::to_string(roadCollision.tilesVisited) +
             ", sections=" + std::to_string(roadCollision.splineSectionsAdded) +
+            ", scenery collision objects=" +
+            std::to_string(roadCollision.sceneryCollisionObjectsAdded) +
+            ", missing scenery collision meshes=" +
+            std::to_string(roadCollision.sceneryCollisionMeshesMissing) +
             ", meshes=" + std::to_string(roadCollision.meshes.size()) +
             ", skipped profiles=" + std::to_string(roadCollision.skippedProfiles) +
             ", skipped splines=" + std::to_string(roadCollision.skippedSplines) + ".");
@@ -227,9 +224,8 @@ int main() {
         BusSimulation simulation(
             configuration, busPlacement, 60.0, 8, busPlacement.position[2],
             [&] {
-                openbus::rendering::TraceScope trace("map", "main.loadSpawnCollisionTerrain");
-                return loadSpawnTerrain(mapDefinition,
-                                        mapDefinition.entryPoints[spawnEntryPoint].tileIndex);
+                openbus::rendering::TraceScope trace("map", "main.loadMapCollisionTerrain");
+                return loadMapTerrain(mapDefinition);
             }(),
             std::move(roadCollision.meshes));
 

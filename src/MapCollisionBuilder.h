@@ -13,14 +13,15 @@ struct MapRoadCollisionResult {
     std::vector<StaticCollisionMesh> meshes;
     std::size_t tilesVisited = 0;
     std::size_t splineSectionsAdded = 0;
+    std::size_t sceneryCollisionObjectsAdded = 0;
+    std::size_t sceneryCollisionMeshesMissing = 0;
     std::size_t skippedProfiles = 0;
     std::size_t skippedSplines = 0;
 };
 
-// Builds collision from runtime-visible .sli profile strips in the spawn tile and its
-// eight immediate neighbours, matching the current terrain collision residency window.
-MapRoadCollisionResult buildSpawnRoadCollision(const MapDefinition& map,
-                                               std::size_t centerTileIndex,
-                                               const std::filesystem::path& omsiRoot);
+// Builds map collision from road-profile strips and authored SCO/model [collision_mesh]
+// scenery throughout the selected map, partitioned into per-tile ODE mesh inputs.
+MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
+                                              const std::filesystem::path& omsiRoot);
 
 } // namespace openbus::map

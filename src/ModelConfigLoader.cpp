@@ -176,13 +176,25 @@ void declareIfVariable(const std::string& value, Variables& variables) {
 }
 
 std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
-                                  const std::string& meshValue, bool includeO3D = true) {
-    // Prefer converted OBJ files, then fall back to the source O3D mesh.
+                                  const std::string& meshValue, bool includeO3D = true,
+                                  bool includeX = false) {
+    // Prefer the named source X mesh for scenery; otherwise use converted OBJ
+    // files and fall back to source O3D/X meshes.
     std::string normalized = trim(meshValue);
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
     const std::filesystem::path source = normalized;
-    const std::array<const char*, 2> extensions = {".obj", ".o3d"};
-    const std::size_t extensionCount = includeO3D ? extensions.size() : 1;
+    const bool preferX = includeX && lower(source.extension().string()) == ".x";
+    std::vector<const char*> extensions;
+    if (preferX) {
+        extensions.push_back(".x");
+    }
+    extensions.push_back(".obj");
+    if (includeO3D) {
+        extensions.push_back(".o3d");
+    }
+    if (includeX && !preferX) {
+        extensions.push_back(".x");
+    }
     std::vector<std::filesystem::path> roots = {modelRoot};
     if (!modelRoot.parent_path().empty()) {
         roots.push_back(modelRoot.parent_path());
@@ -193,8 +205,7 @@ std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
             roots.push_back(modelRoot.parent_path() / sourceDirectory);
         }
     }
-    for (std::size_t extensionIndex = 0; extensionIndex < extensionCount; ++extensionIndex) {
-        const char* extension = extensions[extensionIndex];
+    for (const char* extension : extensions) {
         std::filesystem::path relative = source;
         relative.replace_extension(extension);
         for (const std::filesystem::path& root : roots) {
@@ -496,7 +507,11 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             std::filesystem::path objPath;
             std::string bundleEntry;
             const std::filesystem::path bundlePath = modelRoot / "openbus.obx";
-            const std::filesystem::path resolvedMesh = resolveMesh(modelRoot, meshValue, false);
+            const bool allowXMesh = kind == ModelConfigKind::SceneryObject;
+            const bool preferSourceX =
+                allowXMesh && lower(std::filesystem::path(meshValue).extension().string()) == ".x";
+            const std::filesystem::path resolvedMesh =
+                resolveMesh(modelRoot, meshValue, false, preferSourceX);
             if (!resolvedMesh.empty()) {
                 objPath = resolvedMesh;
             } else if (std::filesystem::exists(bundlePath)) {
@@ -505,7 +520,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 bundleEntry = lower(relativeMesh.generic_string());
                 objPath = bundlePath;
             } else {
-                objPath = resolveMesh(modelRoot, meshValue);
+                objPath = resolveMesh(modelRoot, meshValue, true, allowXMesh);
             }
             if (objPath.empty()) {
                 bundleEntry.clear();

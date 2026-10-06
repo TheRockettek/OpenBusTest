@@ -327,14 +327,39 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
     const bool dxt1 = fourCC == "DXT1";
     const bool dxt2 = fourCC == "DXT2";
     const bool dxt3 = fourCC == "DXT3";
+    const bool dxt4 = fourCC == "DXT4";
     const bool dxt5 = fourCC == "DXT5";
+    const bool interpolatedAlpha = dxt4 || dxt5;
+    const bool premultipliedAlpha = dxt2 || dxt4;
     const std::uint32_t rgbBitCount = readU32(data, 88);
     const std::uint32_t redMask = readU32(data, 92);
     const std::uint32_t greenMask = readU32(data, 96);
     const std::uint32_t blueMask = readU32(data, 100);
     const std::uint32_t alphaMask = readU32(data, 104);
-    const bool dxt1HasAlpha = dxt1 && (pixelFormatFlags & 0x1U) != 0;
-    if (!dxt1 && !dxt2 && !dxt3 && !dxt5) {
+    if ((pixelFormatFlags & 0x2U) != 0 && (pixelFormatFlags & 0x40U) == 0 &&
+        rgbBitCount == 8 && alphaMask == 0xffU) {
+        std::size_t pixelCount = 0;
+        if (!checkedBufferSize(static_cast<std::size_t>(image.width),
+                               static_cast<std::size_t>(image.height), 1, pixelCount) ||
+            data.size() < 128 + pixelCount) {
+            return false;
+        }
+        std::size_t rgbaSize = 0;
+        if (!checkedBufferSize(static_cast<std::size_t>(image.width),
+                               static_cast<std::size_t>(image.height), 4, rgbaSize)) {
+            return false;
+        }
+        image.rgba.resize(rgbaSize);
+        for (std::size_t pixel = 0; pixel < pixelCount; ++pixel) {
+            const std::size_t targetOffset = pixel * 4;
+            image.rgba[targetOffset + 0] = 255;
+            image.rgba[targetOffset + 1] = 255;
+            image.rgba[targetOffset + 2] = 255;
+            image.rgba[targetOffset + 3] = data[128 + pixel];
+        }
+        return true;
+    }
+    if (!dxt1 && !dxt2 && !dxt3 && !interpolatedAlpha) {
         if ((pixelFormatFlags & 0x40U) == 0 || (rgbBitCount != 24 && rgbBitCount != 32)) {
             return false;
         }
@@ -397,7 +422,7 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
     const std::size_t blocksX = (static_cast<std::size_t>(image.width) + 3) / 4;
     const std::size_t blocksY = (static_cast<std::size_t>(image.height) + 3) / 4;
     const bool explicitAlpha = dxt2 || dxt3;
-    const std::size_t blockSize = dxt5 || explicitAlpha ? 16 : 8;
+    const std::size_t blockSize = interpolatedAlpha || explicitAlpha ? 16 : 8;
     if (blocksX > std::numeric_limits<std::size_t>::max() / blocksY ||
         blocksX * blocksY > (std::numeric_limits<std::size_t>::max() - 128) / blockSize) {
         return false;
@@ -422,7 +447,7 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
                     alphaIndices |= static_cast<std::uint64_t>(data[sourceOffset + byte])
                                     << (8 * byte);
                 }
-            } else if (dxt5) {
+            } else if (interpolatedAlpha) {
                 const std::uint8_t alpha0 = data[sourceOffset];
                 const std::uint8_t alpha1 = data[sourceOffset + 1];
                 alphaValues[0] = alpha0;
@@ -445,7 +470,8 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
                                     << (8 * byte);
                 }
             }
-            const std::size_t colorOffset = sourceOffset + (dxt5 || explicitAlpha ? 8 : 0);
+            const std::size_t colorOffset =
+                sourceOffset + (interpolatedAlpha || explicitAlpha ? 8 : 0);
             const std::uint16_t color0 = readU16(data, colorOffset);
             const std::uint16_t color1 = readU16(data, colorOffset + 2);
             const std::uint32_t indices = readU32(data, colorOffset + 4);
@@ -459,7 +485,7 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
             };
             decode565(color0, colors[0].data());
             decode565(color1, colors[1].data());
-            if (color0 > color1 || dxt5 || explicitAlpha) {
+            if (color0 > color1 || interpolatedAlpha || explicitAlpha) {
                 for (int channel = 0; channel < 3; ++channel) {
                     colors[2][channel] = static_cast<std::uint8_t>(
                         (2 * colors[0][channel] + colors[1][channel]) / 3);
@@ -473,7 +499,9 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
                         static_cast<std::uint8_t>((colors[0][channel] + colors[1][channel]) / 2);
                 }
                 colors[2][3] = 255;
-                colors[3] = {0, 0, 0, static_cast<std::uint8_t>(dxt1HasAlpha ? 0 : 255)};
+                // BC1/DXT1 defines selector 3 as transparent whenever color0 <= color1.
+                // Some OMSI-authored DDS files omit DDPF_ALPHAPIXELS despite using that mode.
+                colors[3] = {0, 0, 0, 0};
             }
             for (int row = 0; row < 4; ++row) {
                 for (int column = 0; column < 4; ++column) {
@@ -491,9 +519,17 @@ bool readDdsImage(const std::filesystem::path& path, Image& image) {
                     if (explicitAlpha) {
                         image.rgba[target + 3] = static_cast<std::uint8_t>(
                             ((alphaIndices >> (4 * pixelIndex)) & 0xF) * 17);
-                    } else if (dxt5) {
+                    } else if (interpolatedAlpha) {
                         image.rgba[target + 3] =
                             alphaValues[(alphaIndices >> (3 * pixelIndex)) & 0x7];
+                    }
+                    if (premultipliedAlpha && image.rgba[target + 3] != 0) {
+                        for (std::size_t channel = 0; channel < 3; ++channel) {
+                            image.rgba[target + channel] = static_cast<std::uint8_t>(
+                                std::min(255U, (static_cast<unsigned>(image.rgba[target + channel]) *
+                                                255U + image.rgba[target + 3] / 2U) /
+                                                   image.rgba[target + 3]));
+                        }
                     }
                 }
             }

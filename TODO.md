@@ -317,7 +317,9 @@ for alignment is not mistaken for supporting it.
   tile lightmaps.
 - [ ] Implement passenger-cabin `[noticketsale]` eligibility for ticket
   interactions; the keyword is currently unhandled.
-- [ ] Connect scenery-object `[model]`, `[script]`, `[varnamelist]`,
+- [x] Resolve scenery-object `[model]` CFG references for static map geometry
+  and material loading.
+- [ ] Connect scenery-object `[script]`, `[varnamelist]`,
   `[stringvarnamelist]`, and `[mouseevent]` records to an active runtime, or
   diagnose them as unsupported instead of retaining parse-only state.
 - [ ] Complete passenger-cabin behavior for `[linkToNextVeh]`,
@@ -390,23 +392,25 @@ diagnostic before it can be moved to the implemented baseline.
 Implemented foundation: `global.cfg` and tile/terrain parsing, configurable
 entrypoint spawn, synchronous full-map terrain/scenery/road render construction with
 distance/frustum culling, a 3x3 spawn-neighborhood terrain collision patch,
-supported O3D scenery, tree preview cards, and a subset of `.sli` road profiles.
+supported O3D scenery (including external SCO `[model]` CFGs, transmaps, and
+O3D material alpha), tree preview cards, and a subset of `.sli` road profiles.
 These are not equivalent to full OMSI map support; see the README's map scope
 for the explicit boundary.
 
 #### Keyword support audit (current implementation)
 
 - `[map]` and `[entrypoints]` are loaded; entrypoint zero is the default, with
-  optional index/name selection. `[groundtex]` records are retained; the first
-  base texture is rendered by default. `OPENBUS_MAP_GROUNDTEX` can select a
-  different base texture uniformly as a preview/debug override. Per-tile DDS
-  sidecar paths are inventoried, but their suffix mapping, detail layers, and
-  seasonal changes are not applied.
+  optional index/name selection. The first `[groundtex]` record is the terrain
+  base; verified numeric `.map.<index>.dds` sidecars are decoded as alpha masks
+  and composite subsequent ground-texture layers per tile. `OPENBUS_MAP_GROUNDTEX`
+  still provides a uniform preview/debug override. Detail layers, variable
+  terrain/lightmaps, and seasonal changes remain unsupported.
 - `[version]`, `[terrain]`, `[object]`, `[spline]`, `[spline_h]`,
   `[splineAttachement]`, and `[splineAttachement_repeater]` have typed parser
   paths. Ordinary objects, road strips, and same-tile spline attachments have
-  runtime paths, but object labels, spline skew/mirror behavior, cross-tile
-  attachment chains, and repeater-master resolution remain incomplete.
+  runtime paths. SCOs marked `[onlyeditor]` are omitted from map rendering;
+  object labels, spline skew/mirror behavior, cross-tile attachment chains,
+  and repeater-master resolution remain incomplete.
 - `[attachObj]` fixed fields and version-dependent IDs are parsed and retained,
   including non-destructive typed attach-point/rotation values while preserving
   raw fields and opaque label counts. Placement/rendering remains unsupported
@@ -429,12 +433,10 @@ for the explicit boundary.
   state remain out of scope. Unsupported `global.cfg` and tile sections retain
   their raw payload lines with source line numbers; their runtime semantics
   remain unimplemented.
-- `.map.water` presence and count-plus-four-float records are decoded and
+  `.map.water` presence and count-plus-four-float records are decoded and
   validated; rendering remains deferred because the four heights' spatial
-  order is not verified. Numeric-suffix `.map.<n>.dds` paths are inventoried
-  per tile, but their payloads and suffix-to-groundtex mapping are unresolved.
-  `.map.LM.bmp` and `.map.terrain_0.rdy` paths/presence are inventoried but
-  their payloads are not decoded or rendered.
+  order is not verified. `.map.LM.bmp` and `.map.terrain_0.rdy` paths/presence
+  are inventoried but their payloads are not decoded or rendered.
   Unimplemented bracketed sections in tile files and `global.cfg` now produce
   line-numbered warnings and preserve each section's opaque payload lines;
   no runtime meaning is inferred from them.
@@ -447,9 +449,11 @@ for the explicit boundary.
 - [ ] Add targeted, repeatable in-context screenshot evidence for curved-road
   geometry, sidewalks, markings, texture phase, and seams at linked spline
   boundaries.
-- [ ] Load general scenery `.x` meshes, or keep them explicitly unsupported;
-  tree SCO previews currently use crossed textured planes rather than their
-  editor/helper mesh.
+- [~] Load static text-mode scenery `.x` meshes with frame transforms,
+  triangulation, normals, UVs, and inline materials. Binary/compressed X,
+  skinning/animation, and named external materials remain unsupported. Tree
+  SCO previews still use crossed textured planes rather than their editor/helper
+  mesh.
 - [~] Read a subset of road profiles from `.sli` files (`[texture]`, `[profile]`,
   `[profilepnt]`); height profiles, complete texture/material semantics,
   banking, marking behavior, and representative visual evidence remain
@@ -473,16 +477,15 @@ for the explicit boundary.
   object, attached-object, and spline-attachment records; applying parent
   transforms remains open. `[attachObj]` label counts remain opaque and its
   optional tail is preserved independently of the count.
-- [~] Add ODE road trimeshes for the runtime-visible supported `.sli` strips in
-  the spawn tile's 3x3 neighborhood. Rendering and physics now share generated
-  road-section geometry; a stability probe checks a raised static surface over
-  terrain, and a geometry probe covers straight, curved, and elevated profiles.
-  Still validate contact against representative installed curves/sidewalks and
-  tune duplicate contacts where road strips overlap terrain; physics is not
-  streamed as the bus leaves the neighborhood.
-- [ ] Implement scenery collision honoring `.sco`/model `[collision_mesh]`,
-  `[boundingbox]`, and `[nocollision]`; define safe static-world ownership and
-  add placement/collision probes before connecting to ODE.
+- [~] Add ODE trimeshes for supported `.sli` strips throughout the map and
+  authored SCO/model `[collision_mesh]` O3Ds, including junctions. Terrain
+  collision also covers every listed terrain tile. Builder probes cover
+  beyond-spawn spline coverage, O3D world placement/rotation/winding, and
+  `[nocollision]`; validate contact while driving representative installed
+  roads and tune duplicate contacts where road strips overlap terrain.
+- [ ] Stream the full-map static collision set or otherwise bound ODE memory
+  for very large maps; `[boundingbox]`-only scenery and non-O3D collision
+  formats remain unsupported.
 - [ ] Connect scenery scripts and mouse events only after their runtime
   semantics and ownership are defined.
 - [~] Decode `.map.water` sidecars into per-surface four-height records;
@@ -496,9 +499,10 @@ for the explicit boundary.
   asynchronous map build, dynamic collision update, or GPU unload/streaming.
   Add runtime visibility/performance evidence and make map construction
   non-blocking before claiming streaming support.
-- [ ] Update terrain and road collision as the player leaves the current 3x3
-  spawn-neighborhood patch; preserve a bounded physics/collision residency
-  window independently from render visibility.
+- [x] Extend terrain and road collision beyond the spawn neighborhood so all
+  listed map tiles, road profiles, and authored junction collision meshes are
+  physically represented from startup. Bounded streaming remains a memory
+  optimization for large maps, not a current coverage limitation.
 - [x] Select map entrypoints at startup by zero-based index or case-insensitive
   name through `OPENBUS_MAP_ENTRY`; the default remains the first entrypoint.
   Selection and invalid-index behavior are covered by `OpenBusMapConfigProbe`.

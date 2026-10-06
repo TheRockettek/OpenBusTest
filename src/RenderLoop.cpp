@@ -144,6 +144,66 @@ constexpr double DEFAULT_FIELD_OF_VIEW = 60.0;
 constexpr double MIN_FIELD_OF_VIEW = 20.0;
 constexpr double MAX_FIELD_OF_VIEW = 120.0;
 constexpr double GROUND_SHADOW_OFFSET_Z = 0.015;
+constexpr int COORDINATE_HUD_TEXTURE_WIDTH = 224;
+constexpr int COORDINATE_HUD_TEXTURE_HEIGHT = 24;
+
+std::array<std::uint8_t, 7> coordinateHudGlyph(char character) {
+    switch (character) {
+    case '0': return {0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110};
+    case '1': return {0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110};
+    case '2': return {0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111};
+    case '3': return {0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110};
+    case '4': return {0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010};
+    case '5': return {0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110};
+    case '6': return {0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110};
+    case '7': return {0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000};
+    case '8': return {0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110};
+    case '9': return {0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110};
+    case 'X': return {0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b01010, 0b10001};
+    case 'Y': return {0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100};
+    case 'Z': return {0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111};
+    case '-': return {0, 0, 0, 0b01110, 0, 0, 0};
+    case '.': return {0, 0, 0, 0, 0, 0b00100, 0b00100};
+    default: return {};
+    }
+}
+
+std::vector<std::uint8_t> makeCoordinateHudPixels(std::string_view text) {
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(COORDINATE_HUD_TEXTURE_WIDTH) *
+                                     COORDINATE_HUD_TEXTURE_HEIGHT * 4);
+    for (std::size_t index = 0; index < pixels.size(); index += 4) {
+        pixels[index] = 10;
+        pixels[index + 1] = 16;
+        pixels[index + 2] = 24;
+        pixels[index + 3] = 196;
+    }
+    constexpr int glyphAdvance = 6;
+    constexpr int glyphTop = (COORDINATE_HUD_TEXTURE_HEIGHT - 7) / 2;
+    constexpr int horizontalPadding = 6;
+    for (std::size_t glyphIndex = 0; glyphIndex < text.size(); ++glyphIndex) {
+        const int glyphLeft = horizontalPadding + static_cast<int>(glyphIndex) * glyphAdvance;
+        if (glyphLeft + 5 > COORDINATE_HUD_TEXTURE_WIDTH) {
+            break;
+        }
+        const auto glyph = coordinateHudGlyph(text[glyphIndex]);
+        for (int row = 0; row < static_cast<int>(glyph.size()); ++row) {
+            const int y = COORDINATE_HUD_TEXTURE_HEIGHT - 1 - (glyphTop + row);
+            for (int column = 0; column < 5; ++column) {
+                if ((glyph[static_cast<std::size_t>(row)] & (1U << (4 - column))) == 0) {
+                    continue;
+                }
+                const int x = glyphLeft + column;
+                const std::size_t pixelIndex =
+                    (static_cast<std::size_t>(y) * COORDINATE_HUD_TEXTURE_WIDTH + x) * 4;
+                pixels[pixelIndex] = 245;
+                pixels[pixelIndex + 1] = 249;
+                pixels[pixelIndex + 2] = 255;
+                pixels[pixelIndex + 3] = 255;
+            }
+        }
+    }
+    return pixels;
+}
 
 struct VehicleKeyBinding {
     const char* action;
@@ -4371,6 +4431,27 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         glfwTerminate();
         throw std::runtime_error("Failed to initialize core OpenGL renderer");
     }
+    pglActiveTexture(GL_TEXTURE0);
+    glGenTextures(1, &coordinateHudTexture_);
+    if (coordinateHudTexture_ != 0) {
+        glBindTexture(GL_TEXTURE_2D, coordinateHudTexture_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        const std::vector<std::uint8_t> initialPixels = makeCoordinateHudPixels("X 0.0 Y 0.0 Z 0.0");
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, COORDINATE_HUD_TEXTURE_WIDTH,
+                     COORDINATE_HUD_TEXTURE_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     initialPixels.data());
+        openbus::rendering::invalidateTextureBindings();
+        if (glGetError() != GL_NO_ERROR) {
+            glDeleteTextures(1, &coordinateHudTexture_);
+            coordinateHudTexture_ = 0;
+            gameLog.Log("Coordinate HUD texture initialization failed");
+        }
+    } else {
+        gameLog.Log("Coordinate HUD texture could not be allocated");
+    }
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.45f, 0.65f, 0.88f, 1.0f);
     gameLog.Log("RenderLoop initialized");
@@ -4384,6 +4465,11 @@ RenderLoop::~RenderLoop() {
     assetRequestManager_->join();
     vehicles_.clear();
     Vehicle::clearSharedDisplayCache();
+    if (coordinateHudTexture_ != 0) {
+        glDeleteTextures(1, &coordinateHudTexture_);
+        coordinateHudTexture_ = 0;
+        openbus::rendering::invalidateTextureBindings();
+    }
     openbus::rendering::shutdownCoreRenderer();
     assetRequestManager_.reset();
 
@@ -4750,6 +4836,11 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                     std::string_view(binding.action) == "debug_dump_variables";
                 if (mouseControlToggle && pressed) {
                     mouseControlEnabled_ = !mouseControlEnabled_;
+                    if (mouseControlEnabled_) {
+                        pendingMouseClick_ = false;
+                        clickableHoverCacheValid_ = false;
+                        clickableHoverCacheHit_ = false;
+                    }
                     gameLog.Log(std::string("Mouse bus control ") +
                                 (mouseControlEnabled_ ? "enabled" : "disabled"));
                 } else if (dumpVariables && pressed) {
@@ -4830,6 +4921,15 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         }
         previousClickableDebugKeyState_ = clickableDebugKeyPressed;
     }
+    {
+        const bool collisionDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_C) == GLFW_PRESS;
+        if (collisionDebugKeyPressed && !previousCollisionDebugKeyState_) {
+            collisionDebugOverlay_ = !collisionDebugOverlay_;
+            gameLog.Log(std::string("Collision wireframe overlay ") +
+                        (collisionDebugOverlay_ ? "enabled" : "disabled"));
+        }
+        previousCollisionDebugKeyState_ = collisionDebugKeyPressed;
+    }
     int width = 1;
     int height = 1;
     double cursorX = 0.0;
@@ -4896,7 +4996,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         previousCursorY_ = cursorY;
         const bool leftMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
         leftMousePressed_ = leftMouse;
-        if (leftMouse && !previousLeftMouseState_ && !rightMouse && !middleMouse) {
+        if (!mouseControlEnabled_ && leftMouse && !previousLeftMouseState_ && !rightMouse &&
+            !middleMouse) {
             pendingMouseClick_ = true;
             pendingMouseClickX_ = cursorX;
             pendingMouseClickY_ = cursorY;
@@ -5107,7 +5208,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         const RenderViewContext interactionContext = isExteriorView()
                                                          ? RenderViewContext::PlayerExterior
                                                          : RenderViewContext::PlayerInterior;
-        if (benchmarkClickDiscoveryPending_) {
+        if (!mouseControlEnabled_ && benchmarkClickDiscoveryPending_) {
             TraceScope trace("benchmark", "Benchmark.discoverClickable");
             benchmarkClickDiscoveryPending_ = false;
             benchmarkClickDiscoveryComplete_ = true;
@@ -5132,49 +5233,56 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 }
             }
         }
-        if (benchmarkClickQueued_ && benchmarkClickTargetFound_) {
+        if (!mouseControlEnabled_ && benchmarkClickQueued_ && benchmarkClickTargetFound_) {
             pendingMouseClick_ = true;
             pendingMouseClickX_ = benchmarkClickFramebufferX_ / framebufferScaleX;
             pendingMouseClickY_ = benchmarkClickFramebufferY_ / framebufferScaleY;
         }
         benchmarkClickQueued_ = false;
-        const int interactionContextValue = static_cast<int>(interactionContext);
-        const std::uint64_t clickableRevision = playerVehicle_->clickableRevision();
-        // Pose changes every simulation step; while the pointer is stationary, refresh
-        // animated/moving hit targets at 13 Hz instead of scanning all triangles per frame.
-        constexpr double clickableHoverRefreshInterval = 0.075;
-        const double currentTime = glfwGetTime();
-        const bool hoverCacheMatches =
-            clickableHoverCacheValid_ && clickableHoverCacheX_ == framebufferCursorX &&
-            clickableHoverCacheY_ == framebufferCursorY &&
-            clickableHoverCacheWidth_ == framebufferWidth_ &&
-            clickableHoverCacheHeight_ == framebufferHeight_ &&
-            clickableHoverCacheContext_ == interactionContextValue &&
-            clickableHoverCacheCameraView_ == cameraView_ &&
-            clickableHoverCacheCameraYaw_ == cameraYaw_ &&
-            clickableHoverCacheCameraPitch_ == cameraPitch_ &&
-            clickableHoverCacheLookYaw_ == viewLookYaw_ &&
-            clickableHoverCacheLookPitch_ == viewLookPitch_ &&
-            clickableHoverCacheRevision_ == clickableRevision &&
-            currentTime - clickableHoverCacheTimestamp_ < clickableHoverRefreshInterval;
-        if (!hoverCacheMatches) {
-            clickableHoverCacheValid_ = true;
-            clickableHoverCacheX_ = framebufferCursorX;
-            clickableHoverCacheY_ = framebufferCursorY;
-            clickableHoverCacheWidth_ = framebufferWidth_;
-            clickableHoverCacheHeight_ = framebufferHeight_;
-            clickableHoverCacheContext_ = interactionContextValue;
-            clickableHoverCacheCameraView_ = cameraView_;
-            clickableHoverCacheCameraYaw_ = cameraYaw_;
-            clickableHoverCacheCameraPitch_ = cameraPitch_;
-            clickableHoverCacheLookYaw_ = viewLookYaw_;
-            clickableHoverCacheLookPitch_ = viewLookPitch_;
-            clickableHoverCacheRevision_ = clickableRevision;
-            clickableHoverCacheTimestamp_ = currentTime;
-            clickableHoverCacheHit_ = playerVehicle_->hasVisibleClickable(interactionContext) &&
-                                      playerVehicle_->hasClickableAt(
-                                          framebufferCursorX, framebufferCursorY, framebufferWidth_,
-                                          framebufferHeight_, interactionContext);
+        if (!mouseControlEnabled_) {
+            const int interactionContextValue = static_cast<int>(interactionContext);
+            const std::uint64_t clickableRevision = playerVehicle_->clickableRevision();
+            // Pose changes every simulation step; while the pointer is stationary, refresh
+            // animated/moving hit targets at 13 Hz instead of scanning all triangles per frame.
+            constexpr double clickableHoverRefreshInterval = 0.075;
+            const double currentTime = glfwGetTime();
+            const bool hoverCacheMatches =
+                clickableHoverCacheValid_ && clickableHoverCacheX_ == framebufferCursorX &&
+                clickableHoverCacheY_ == framebufferCursorY &&
+                clickableHoverCacheWidth_ == framebufferWidth_ &&
+                clickableHoverCacheHeight_ == framebufferHeight_ &&
+                clickableHoverCacheContext_ == interactionContextValue &&
+                clickableHoverCacheCameraView_ == cameraView_ &&
+                clickableHoverCacheCameraYaw_ == cameraYaw_ &&
+                clickableHoverCacheCameraPitch_ == cameraPitch_ &&
+                clickableHoverCacheLookYaw_ == viewLookYaw_ &&
+                clickableHoverCacheLookPitch_ == viewLookPitch_ &&
+                clickableHoverCacheRevision_ == clickableRevision &&
+                currentTime - clickableHoverCacheTimestamp_ < clickableHoverRefreshInterval;
+            if (!hoverCacheMatches) {
+                clickableHoverCacheValid_ = true;
+                clickableHoverCacheX_ = framebufferCursorX;
+                clickableHoverCacheY_ = framebufferCursorY;
+                clickableHoverCacheWidth_ = framebufferWidth_;
+                clickableHoverCacheHeight_ = framebufferHeight_;
+                clickableHoverCacheContext_ = interactionContextValue;
+                clickableHoverCacheCameraView_ = cameraView_;
+                clickableHoverCacheCameraYaw_ = cameraYaw_;
+                clickableHoverCacheCameraPitch_ = cameraPitch_;
+                clickableHoverCacheLookYaw_ = viewLookYaw_;
+                clickableHoverCacheLookPitch_ = viewLookPitch_;
+                clickableHoverCacheRevision_ = clickableRevision;
+                clickableHoverCacheTimestamp_ = currentTime;
+                clickableHoverCacheHit_ = playerVehicle_->hasVisibleClickable(interactionContext) &&
+                                          playerVehicle_->hasClickableAt(
+                                              framebufferCursorX, framebufferCursorY,
+                                              framebufferWidth_, framebufferHeight_,
+                                              interactionContext);
+            }
+        } else {
+            pendingMouseClick_ = false;
+            clickableHoverCacheValid_ = false;
+            clickableHoverCacheHit_ = false;
         }
         const bool hoveringClickable = !mouseControlEnabled_ && clickableHoverCacheHit_;
         GLFWcursor* cursor = mouseControlEnabled_ ? mouseSteeringCursor_
@@ -5285,11 +5393,119 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             drawBox(collision.length, collision.width, collision.height, 0.85, 0.70, 0.08);
             popMatrix();
         }
-        if (!renderingReflection_ && clickableDebugOverlay_ && playerVehicle_ != nullptr) {
+        if (!renderingReflection_ && !mouseControlEnabled_ && clickableDebugOverlay_ &&
+            playerVehicle_ != nullptr) {
             pushMatrix();
             applyPose(chassis);
             playerVehicle_->drawClickableDebug(context);
             popMatrix();
+        }
+    }
+    if (!renderingReflection_ && collisionDebugOverlay_) {
+        if (!collisionWireframeBuilt_) {
+            const std::vector<StaticCollisionMesh> meshes = simulation.collisionDebugMeshes();
+            std::size_t triangleCount = 0;
+            for (const StaticCollisionMesh& mesh : meshes) {
+                if (mesh.vertices.size() % 3 != 0 || mesh.indices.size() % 3 != 0) {
+                    continue;
+                }
+                triangleCount += mesh.indices.size() / 3;
+                for (std::size_t index = 0; index + 2 < mesh.indices.size(); index += 3) {
+                    const std::array<int, 3> triangle = {mesh.indices[index],
+                                                         mesh.indices[index + 1],
+                                                         mesh.indices[index + 2]};
+                    for (int edge = 0; edge < 3; ++edge) {
+                        for (const int vertexIndex :
+                             {triangle[static_cast<std::size_t>(edge)],
+                              triangle[static_cast<std::size_t>((edge + 1) % 3)]}) {
+                            if (vertexIndex < 0 ||
+                                static_cast<std::size_t>(vertexIndex) * 3 + 2 >=
+                                    mesh.vertices.size()) {
+                                continue;
+                            }
+                            const std::size_t vertexOffset =
+                                static_cast<std::size_t>(vertexIndex) * 3;
+                            collisionWireframeVertices_.push_back(
+                                {static_cast<float>(mesh.vertices[vertexOffset]),
+                                 static_cast<float>(mesh.vertices[vertexOffset + 1]),
+                                 static_cast<float>(mesh.vertices[vertexOffset + 2] + 0.025),
+                                 1.0F, 0.58F, 0.08F});
+                        }
+                    }
+                }
+            }
+            collisionWireframeBuilt_ = true;
+            gameLog.Log("Collision wireframe cached: " + std::to_string(triangleCount) +
+                        " triangles across " + std::to_string(meshes.size()) +
+                        " active terrain/road meshes");
+        }
+
+        const GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+        GLboolean depthWriteWasEnabled = GL_TRUE;
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        openbus::rendering::drawStaticPrimitives(collisionWireframeBuffer_,
+                              collisionWireframeVertices_, GL_LINES, 1.5F);
+        if (collision.enabled && !collision.mesh) {
+            pushMatrix();
+            applyPose(chassis);
+            translate(collision.offsetX, collision.offsetY, collision.offsetZ);
+            openbus::rendering::drawBox(collision.length, collision.width, collision.height,
+                                        1.0, 0.15, 0.12);
+            popMatrix();
+        }
+        glDepthMask(depthWriteWasEnabled);
+        if (!depthWasEnabled) {
+            glDisable(GL_DEPTH_TEST);
+        }
+    }
+    if (!renderingReflection_ && coordinateHudTexture_ != 0) {
+        std::ostringstream coordinateText;
+        coordinateText << "X " << std::fixed << std::setprecision(1) << simulation.positionX()
+                       << " Y " << simulation.positionY() << " Z " << simulation.positionZ();
+        const std::string currentCoordinates = coordinateText.str();
+        if (currentCoordinates != coordinateHudText_) {
+            const std::vector<std::uint8_t> pixels = makeCoordinateHudPixels(currentCoordinates);
+            pglActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, coordinateHudTexture_);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, COORDINATE_HUD_TEXTURE_WIDTH,
+                            COORDINATE_HUD_TEXTURE_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
+                            pixels.data());
+            openbus::rendering::invalidateTextureBindings();
+            coordinateHudText_ = currentCoordinates;
+        }
+
+        const GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+        const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
+        const GLboolean cullWasEnabled = glIsEnabled(GL_CULL_FACE);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        const float scale = std::min(
+            {1.5F, static_cast<float>(std::max(framebufferWidth_ - 24, 1)) /
+                       COORDINATE_HUD_TEXTURE_WIDTH,
+             static_cast<float>(std::max(framebufferHeight_ - 24, 1)) /
+                 COORDINATE_HUD_TEXTURE_HEIGHT});
+        const float hudWidth = COORDINATE_HUD_TEXTURE_WIDTH * scale;
+        const float hudHeight = COORDINATE_HUD_TEXTURE_HEIGHT * scale;
+        const float leftPixels = 12.0F;
+        const float bottomPixels = framebufferHeight_ - 12.0F - hudHeight;
+        openbus::rendering::drawTextureQuad(
+            coordinateHudTexture_, -1.0F + 2.0F * leftPixels / framebufferWidth_,
+            -1.0F + 2.0F * bottomPixels / framebufferHeight_,
+            2.0F * hudWidth / framebufferWidth_, 2.0F * hudHeight / framebufferHeight_);
+        if (depthWasEnabled) {
+            glEnable(GL_DEPTH_TEST);
+        }
+        if (blendWasEnabled) {
+            glEnable(GL_BLEND);
+        } else {
+            glDisable(GL_BLEND);
+        }
+        if (cullWasEnabled) {
+            glEnable(GL_CULL_FACE);
         }
     }
     if (!renderingReflection_ && playerVehicle_ && glfwGetTime() - lastStatsTitleTime_ > 0.25) {

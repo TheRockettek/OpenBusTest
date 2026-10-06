@@ -54,6 +54,16 @@ int main(int argc, char** argv) {
     BusSimulation terrainSimulation(caetanoConfiguration(true),
                                     VehiclePlacement{{-150.0, 750.0, 3.5}, 0.0}, 60.0, 8, 0.0,
                                     {terrain});
+    const std::vector<StaticCollisionMesh> terrainDebugMeshes =
+        terrainSimulation.collisionDebugMeshes();
+    if (terrainDebugMeshes.size() != 1 || terrainDebugMeshes[0].vertices.size() != 27 ||
+        terrainDebugMeshes[0].indices.size() != 24 ||
+        terrainDebugMeshes[0].vertices[0] != -300.0 ||
+        terrainDebugMeshes[0].vertices[1] != 600.0 ||
+        terrainDebugMeshes[0].vertices[2] != 3.0) {
+        std::cerr << "Terrain collision debug mesh did not expose the active ODE geometry\n";
+        return 1;
+    }
     for (int step = 0; step < 600; ++step) {
         terrainSimulation.step(0.0, 0.0, 1.0);
     }
@@ -69,6 +79,12 @@ int main(int argc, char** argv) {
     BusSimulation roadSimulation(caetanoConfiguration(true),
                                  VehiclePlacement{{-150.0, 750.0, 4.0}, 0.0}, 60.0, 8, 0.0,
                                  {terrain}, {raisedRoad});
+    const std::vector<StaticCollisionMesh> roadDebugMeshes = roadSimulation.collisionDebugMeshes();
+    if (roadDebugMeshes.size() != 2 || roadDebugMeshes[1].vertices != raisedRoad.vertices ||
+        roadDebugMeshes[1].indices != raisedRoad.indices) {
+        std::cerr << "Map road collision debug mesh did not expose the active ODE geometry\n";
+        return 1;
+    }
     for (int step = 0; step < 600; ++step) {
         roadSimulation.step(0.0, 0.0, 1.0);
     }

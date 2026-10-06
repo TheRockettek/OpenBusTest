@@ -1163,6 +1163,16 @@ double BusSimulation::positionZ() const {
     return dBodyGetPosition(impl_->chassis)[2];
 }
 
+std::vector<StaticCollisionMesh> BusSimulation::collisionDebugMeshes() const {
+    std::vector<StaticCollisionMesh> meshes;
+    meshes.reserve(impl_->terrainVertices.size() + impl_->mapCollisionMeshes.size());
+    for (std::size_t index = 0; index < impl_->terrainVertices.size(); ++index) {
+        meshes.push_back({impl_->terrainVertices[index], impl_->terrainIndices[index]});
+    }
+    meshes.insert(meshes.end(), impl_->mapCollisionMeshes.begin(), impl_->mapCollisionMeshes.end());
+    return meshes;
+}
+
 double BusSimulation::yaw() const {
     const dReal* bodyRotation = dBodyGetRotation(impl_->chassis);
     return std::atan2(bodyRotation[4], bodyRotation[0]);

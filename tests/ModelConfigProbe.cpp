@@ -111,6 +111,61 @@ int main() {
         std::cerr << "tree SCO absolute-height marker was not retained\n";
         return 1;
     }
+    const std::filesystem::path treeWithHelperPath = root / "tree_with_editor_helper.sco";
+    std::ofstream treeWithHelper(treeWithHelperPath);
+    treeWithHelper << "[tree]\ntree.bmp\n5\n10\n0.5\n1.5\n"
+                      "[mesh]\ntreehelper.x\n[onlyeditor]\n";
+    treeWithHelper.close();
+    const SceneryObjectConfig treeWithHelperConfiguration =
+        loadSceneryObjectFile(treeWithHelperPath);
+    if (!treeWithHelperConfiguration.onlyEditor ||
+        treeWithHelperConfiguration.trees.size() != 1 ||
+        treeWithHelperConfiguration.diagnostics.hasErrors()) {
+        std::cerr << "tree definition was not retained with an editor-only helper mesh\n";
+        return 1;
+    }
+    const std::filesystem::path editorOnlySCOPath = root / "editor_only.sco";
+    std::ofstream editorOnlySCO(editorOnlySCOPath);
+    editorOnlySCO << "[onlyeditor]\n[model]\nmodel.cfg\n";
+    editorOnlySCO.close();
+    const SceneryObjectConfig editorOnlyConfiguration =
+        loadSceneryObjectFile(editorOnlySCOPath);
+    if (!editorOnlyConfiguration.onlyEditor || editorOnlyConfiguration.diagnostics.hasErrors()) {
+        std::cerr << "SCO [onlyeditor] marker was not retained\n";
+        return 1;
+    }
+    const std::filesystem::path externalModelSCOPath = root / "external_model.sco";
+    std::ofstream externalModelSCO(externalModelSCOPath);
+    externalModelSCO << "[model]\nmodel\\model_parked.cfg\n";
+    externalModelSCO.close();
+    const SceneryObjectConfig externalModelSCOConfig =
+        loadSceneryObjectFile(externalModelSCOPath);
+    if (resolveSceneryObjectModelConfigPath(externalModelSCOConfig) !=
+        root / "model" / "model_parked.cfg") {
+        std::cerr << "relative SCO [model] reference was not resolved from its config directory\n";
+        return 1;
+    }
+    const std::filesystem::path xModelRoot = root / "scenery_model";
+    std::filesystem::create_directories(xModelRoot);
+    std::ofstream xMesh(xModelRoot / "tree.x");
+    xMesh << "xof 0303txt 0032\n";
+    xMesh.close();
+    std::ofstream convertedXMesh(xModelRoot / "tree.obj");
+    convertedXMesh << "# converted alternate\n";
+    convertedXMesh.close();
+    const std::filesystem::path xModelConfigPath = root / "scenery_model.cfg";
+    std::ofstream xModelConfig(xModelConfigPath);
+    xModelConfig << "[mesh]\ntree.x\n";
+    xModelConfig.close();
+    Variables xSceneryVariables(ScriptObjectKind::SceneryObject);
+    const ModelConfig xModelConfiguration =
+        loadModelConfig(xModelConfigPath, xModelRoot, ModelConfigKind::SceneryObject,
+                        xSceneryVariables);
+    if (xModelConfiguration.parts.size() != 1 ||
+        xModelConfiguration.parts[0].objPath != xModelRoot / "tree.x") {
+        std::cerr << "scenery model resolver did not retain the authored X mesh path\n";
+        return 1;
+    }
     const auto& base = conditional.parts[0].materialStatesInOrder[0];
     const auto selected = [&](double mode) -> const ModelMaterialState& {
         variables.set("displaymode", mode);

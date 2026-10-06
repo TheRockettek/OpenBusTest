@@ -41,6 +41,7 @@ class BusSimulation {
     double positionX() const;
     double positionY() const;
     double positionZ() const;
+    std::vector<StaticCollisionMesh> collisionDebugMeshes() const;
     double yaw() const;
     double steeringAngle() const;
     std::array<double, 3> centerOfGravity() const;

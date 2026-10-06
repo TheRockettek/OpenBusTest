@@ -25,6 +25,7 @@ struct SceneryObjectConfig {
     std::filesystem::path collisionMesh;
     bool noCollision = false;
     bool surface = false;
+    bool onlyEditor = false;
     bool absoluteHeight = false;
     bool hasBoundingBox = false;
     std::array<double, 6> boundingBox = {};
@@ -37,6 +38,8 @@ struct SceneryObjectConfig {
 };
 
 SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPath);
+std::filesystem::path
+resolveSceneryObjectModelConfigPath(const SceneryObjectConfig& configuration);
 
 ModelConfig loadSceneryObjectConfig(const std::filesystem::path& configPath,
                                     const std::filesystem::path& modelRoot,

@@ -4,6 +4,8 @@
 #include "ModelConfigLoader.h"
 #include "Variables.h"
 
+#include <algorithm>
+
 namespace {
 
 using openbus::config::Line;
@@ -128,6 +130,10 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             result.noCollision = true;
             continue;
         }
+        if (keyword == "onlyeditor") {
+            result.onlyEditor = true;
+            continue;
+        }
         if (keyword == "absheight") {
             result.absoluteHeight = true;
             continue;
@@ -183,6 +189,21 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         result.diagnostics.error(0, "model", "SceneryObject configuration has no [model] entry");
     }
     return result;
+}
+
+std::filesystem::path
+resolveSceneryObjectModelConfigPath(const SceneryObjectConfig& configuration) {
+    if (configuration.modelPath.empty()) {
+        return configuration.sourcePath.lexically_normal();
+    }
+
+    std::string normalized = configuration.modelPath.generic_string();
+    std::replace(normalized.begin(), normalized.end(), '\\', '/');
+    const std::filesystem::path modelPath(normalized);
+    if (modelPath.is_absolute()) {
+        return modelPath.lexically_normal();
+    }
+    return (configuration.sourcePath.parent_path() / modelPath).lexically_normal();
 }
 
 ModelConfig loadSceneryObjectConfig(const std::filesystem::path& configPath,

@@ -184,6 +184,7 @@ add_executable(OpenBus
     src/TextureLoader.cpp
     src/ObjLoader.cpp
     src/O3DLoader.cpp
+    src/XLoader.cpp
     src/OpenGLFunctions.cpp
     src/ScriptRuntime.cpp
     src/SoundEngine.cpp
@@ -355,12 +356,18 @@ add_test(NAME OpenBusMapRoadGeometryProbe COMMAND OpenBusMapRoadGeometryProbe)
 
 add_executable(OpenBusMapCollisionBuilderProbe
     tests/MapCollisionBuilderProbe.cpp
+    src/ConfigurationParser.cpp
     src/MapCollisionBuilder.cpp
     src/MapConfigLoader.cpp
+    src/MapSceneryPlacement.cpp
     src/MapRoadGeometry.cpp
     src/MapSplineGeometry.cpp
     src/MapSplineProfile.cpp
+    src/ModelConfigLoader.cpp
+    src/O3DLoader.cpp
     src/PerfTrace.cpp
+    src/SceneryObjectConfigLoader.cpp
+    src/Variables.cpp
 )
 openbus_configure_perf_trace(OpenBusMapCollisionBuilderProbe)
 target_include_directories(OpenBusMapCollisionBuilderProbe PRIVATE src)
@@ -424,6 +431,17 @@ openbus_configure_perf_trace(OpenBusO3DLoaderProbe)
 target_include_directories(OpenBusO3DLoaderProbe PRIVATE src)
 add_test(NAME OpenBusO3DLoaderProbe
          COMMAND OpenBusO3DLoaderProbe ${CMAKE_CURRENT_SOURCE_DIR}/uno3d/SitzeU.o3d)
+
+# Exercise text-X geometry parsing without requiring an OpenGL context.
+add_executable(OpenBusXLoaderProbe
+    tests/XLoaderProbe.cpp
+    src/XLoader.cpp
+)
+openbus_configure_perf_trace(OpenBusXLoaderProbe)
+target_include_directories(OpenBusXLoaderProbe PRIVATE src)
+add_test(NAME OpenBusXLoaderProbe
+         COMMAND OpenBusXLoaderProbe
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scenery_text_mesh.x)
 
 add_executable(OpenBusModelConfigProbe
     tests/ModelConfigProbe.cpp

@@ -57,11 +57,10 @@ records commonly point outside the map directory to shared OMSI assets.
 | `laststn.osn`, `laststn.osn.owt`, `laststn.osn_*.dds` | Opaque companion files observed in the map folder, rather than tile geometry. They are outside the merger's registered parser/copy set; their schema and runtime role are unknown here. |
 
 The current OpenBus manifest inventories numeric-suffix `.dds` sidecar paths
-per listed tile and preserves the suffix text verbatim. It does not decode the
-DDS payload or establish how the suffix maps to `[groundtex]` entries; no
-sidecar is currently bound to rendered terrain. Tile `.map.LM.bmp` and
-`.map.terrain_0.rdy` paths and presence are also inventoried, but their payloads
-are not decoded or applied.
+per listed tile and preserves the suffix text verbatim. Rendering decodes
+8-bit alpha-only DDS masks and binds valid suffixes to corresponding non-base
+`[groundtex]` layers. Tile `.map.LM.bmp` and `.map.terrain_0.rdy` paths and
+presence are also inventoried, but their payloads are not decoded or applied.
 
 The map also depends on `Sceneryobjects\...`, `Splines\...`, vehicles,
 textures, and other assets that may live elsewhere under the OMSI installation
@@ -263,6 +262,11 @@ opaque and does not determine how many optional tail lines are consumed.
 Neither typed values nor the retained fields imply that parent-anchor
 transforms are implemented.
 
+Scenery-object configuration files can contain the marker `[onlyeditor]`.
+OpenBus skips placements for editor-only SCOs, but if the SCO also defines a
+`[tree]` preview, it renders the tree preview and omits the editor-only helper
+mesh. The marker is not inferred from asset names or map-global editor metadata.
+
 The merger offsets object IDs, `AttachObj.attached_to_object_id`, and present
 `varparent` values during merge. That makes them reference-sensitive fields;
 copying records without remapping can break relationships.
@@ -286,8 +290,15 @@ and [`chrono_tile.py`](https://github.com/barteg77/omsi_map_merger/blob/00c2ceb1
 
 The merger registers these optional tile-related copy patterns: `<tile>.terrain`,
 `<tile>.water`, `<tile>.LM.bmp`, a road-map bitmap under `texture/map/`, and
-per-ground-texture DDS files under `texture/map/`. It does not decode their
-binary payloads. Some patterns vary with `[groundtex]` count. This list is not
+per-ground-texture DDS files under `texture/map/`. Its filename template is
+`texture/map/tile_{pos_x}_{pos_y}.map.{groundtex_index}.dds`; the merger scans
+numeric suffixes starting at 1 and offsets each stored `groundtex_index` when
+merging `[groundtex]` tables. This supports treating the suffix as the index of
+the corresponding non-base ground-texture layer. OpenBus decodes the installed
+8-bit alpha-only DDS masks and composites those layers per tile. This is
+reverse-engineering evidence from the merger's copy/remap behavior and installed
+Grundorf assets, not an official OMSI format specification. Other binary
+payloads remain undecoded. Some patterns vary with `[groundtex]` count. This list is not
 an exhaustive inventory of files emitted or consumed by OMSI.
 
 | Observed Grande Porto item | Sample evidence | Safe current handling |

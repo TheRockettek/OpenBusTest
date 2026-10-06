@@ -1,21 +1,25 @@
 #include "MapRenderer.h"
 
 #include "CoreRenderer.h"
+#include "Environment.h"
 #include "Logger.h"
 #include "MapRoadGeometry.h"
 #include "MapSceneryPlacement.h"
 #include "MapSplineGeometry.h"
 #include "MapSplineProfile.h"
 #include "ModelConfigLoader.h"
+#include "ObjLoader.h"
 #include "O3DLoader.h"
 #include "OpenGLFunctions.h"
 #include "PerfTrace.h"
 #include "SceneryObjectConfigLoader.h"
 #include "TextureLoader.h"
 #include "Variables.h"
+#include "XLoader.h"
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -26,6 +30,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -72,21 +77,16 @@ void recordSkipped(SkipSummaries& summaries, const std::string& reason, const st
     summary.count += count;
     if (!example.empty() && summary.examples.size() < MAX_SKIP_EXAMPLES) {
         summary.examples.push_back(example);
+        gameLog.Log("Map skip encountered: " + reason + "; example: " + example);
     }
 }
 
 void logSkipped(const SkipSummaries& summaries) {
     for (const auto& [reason, summary] : summaries) {
-        std::string message = "Skipped " + std::to_string(summary.count) + " " + reason;
+        std::string message = "Map skip summary: skipped " + std::to_string(summary.count) +
+                              " " + reason;
         if (!summary.examples.empty()) {
-            message += " (examples: ";
-            for (std::size_t index = 0; index < summary.examples.size(); ++index) {
-                if (index != 0) {
-                    message += "; ";
-                }
-                message += summary.examples[index];
-            }
-            message += ")";
+            message += " (context logged when encountered)";
         }
         gameLog.Log(message);
     }
@@ -149,7 +149,7 @@ std::filesystem::path groundTexturePath(const openbus::map::MapDefinition& map,
     throw std::runtime_error("Could not resolve map ground texture: " + configuredPath);
 }
 
-GLuint loadTexture(const std::filesystem::path& path) {
+GLuint loadTexture(const std::filesystem::path& path, bool repeat = true) {
     Image image;
     if (!TextureLoader::readImage(path, image)) {
         throw std::runtime_error("Could not decode map ground texture: " + path.string());
@@ -160,8 +160,9 @@ GLuint loadTexture(const std::filesystem::path& path) {
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    const GLint wrapMode = repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
                  image.rgba.data());
     openbus::rendering::invalidateTextureBindings();
@@ -176,6 +177,45 @@ std::filesystem::path normalizedAssetPath(const std::string& value) {
     std::string normalized = value;
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
     return std::filesystem::path(normalized);
+}
+
+std::string lowercasePathComponent(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return value;
+}
+
+std::filesystem::path findCaseInsensitiveFile(const std::filesystem::path& path) {
+    if (std::filesystem::is_regular_file(path)) {
+        return path;
+    }
+    std::filesystem::path resolved = path.root_path();
+    for (const std::filesystem::path& component : path.relative_path()) {
+        const std::filesystem::path exact = resolved / component;
+        if (std::filesystem::exists(exact)) {
+            resolved = exact;
+            continue;
+        }
+        std::error_code error;
+        if (!std::filesystem::is_directory(resolved, error) || error) {
+            return {};
+        }
+        const std::string targetName = lowercasePathComponent(component.string());
+        bool matched = false;
+        for (std::filesystem::directory_iterator entry(resolved, error), end;
+             !error && entry != end; entry.increment(error)) {
+            if (lowercasePathComponent(entry->path().filename().string()) == targetName) {
+                resolved = entry->path();
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            return {};
+        }
+    }
+    return std::filesystem::is_regular_file(resolved) ? resolved : std::filesystem::path{};
 }
 
 std::filesystem::path findSceneryTexture(const std::filesystem::path& objectRoot,
@@ -196,8 +236,28 @@ std::filesystem::path findSceneryTexture(const std::filesystem::path& objectRoot
         omsiRoot / relative,
         omsiRoot / "Texture" / relative};
     for (const std::filesystem::path& candidate : candidates) {
-        if (std::filesystem::is_regular_file(candidate)) {
-            return candidate;
+        const std::filesystem::path exact = findCaseInsensitiveFile(candidate);
+        if (!exact.empty()) {
+            return exact;
+        }
+        std::string extension = lowercasePathComponent(candidate.extension().string());
+        constexpr std::array<const char*, 6> textureExtensions = {
+            ".dds", ".bmp", ".tga", ".png", ".jpg", ".jpeg"};
+        const bool supportedExtension = std::any_of(
+            textureExtensions.begin(), textureExtensions.end(),
+            [&extension](const char* supported) { return extension == supported; });
+        if (supportedExtension) {
+            for (const char* alternativeExtension : textureExtensions) {
+                if (extension == alternativeExtension) {
+                    continue;
+                }
+                std::filesystem::path alternate = candidate;
+                alternate.replace_extension(alternativeExtension);
+                const std::filesystem::path alternateMatch = findCaseInsensitiveFile(alternate);
+                if (!alternateMatch.empty()) {
+                    return alternateMatch;
+                }
+            }
         }
     }
     return {};
@@ -352,6 +412,7 @@ struct MapRenderer::Impl {
         int tileY = 0;
         double minZ = 0.0;
         double maxZ = 0.0;
+        std::vector<ModelMaterial> groundTextureLayers;
     };
 
     struct ModelBatch {
@@ -361,6 +422,7 @@ struct MapRenderer::Impl {
         std::size_t indexCount = 0;
         ModelMaterial material;
         std::array<double, 3> color = {1.0, 1.0, 1.0};
+        double alpha = 1.0;
         int alphaMode = 0;
         bool hasVisibilityBounds = false;
         double minX = 0.0;
@@ -452,11 +514,20 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
         throw std::runtime_error("OpenGL buffer functions are unavailable for map terrain");
     }
 
-    const std::filesystem::path texturePath =
-        groundTexturePath(map, omsiRoot, map.groundTextures[groundTextureIndex].texturePath);
-    gameLog.Log("Map base-ground-texture preview: [groundtex] index=" +
-                std::to_string(groundTextureIndex) + ", path=" + texturePath.generic_string() +
-                "; applied uniformly (not OMSI per-tile selection).");
+    const char* groundTextureOverride = openbus::getEnvironment("OPENBUS_MAP_GROUNDTEX");
+    const bool uniformGroundTexturePreview =
+        groundTextureOverride != nullptr && *groundTextureOverride != '\0';
+    const std::size_t baseGroundTextureIndex = uniformGroundTexturePreview ? groundTextureIndex : 0;
+    const std::filesystem::path texturePath = groundTexturePath(
+        map, omsiRoot, map.groundTextures[baseGroundTextureIndex].texturePath);
+    if (uniformGroundTexturePreview) {
+        gameLog.Log("Map base-ground-texture preview override: [groundtex] index=" +
+                    std::to_string(groundTextureIndex) + ", path=" + texturePath.generic_string() +
+                    "; applied uniformly.");
+    } else {
+        gameLog.Log("Map base-ground-texture: [groundtex] index=0, path=" +
+                    texturePath.generic_string() + "; per-tile ground-texture masks enabled.");
+    }
     {
         TraceScope phase("map", "MapRenderer.loadGroundTexture");
         impl_->texture = loadTexture(texturePath);
@@ -464,6 +535,19 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
 
     std::unordered_map<std::uint64_t, openbus::map::TerrainGrid> terrainByCoordinate;
     terrainByCoordinate.reserve(map.tiles.size());
+    std::unordered_map<std::string, GLuint> textureCache;
+    const auto getTexture = [&](const std::filesystem::path& path, bool repeat = true) {
+        const std::string key = path.lexically_normal().generic_string() +
+                                (repeat ? "|repeat" : "|clamp");
+        const auto found = textureCache.find(key);
+        if (found != textureCache.end()) {
+            return found->second;
+        }
+        const GLuint texture = loadTexture(path, repeat);
+        textureCache.emplace(key, texture);
+        impl_->ownedTextures.push_back(texture);
+        return texture;
+    };
     const openbus::map::MapTileReference& center = map.tiles[centerTileIndex];
     SkipSummaries skipped;
     gameLog.Log("Map loading started: root=" + map.rootPath.generic_string() +
@@ -526,6 +610,47 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
             buffer.indexCount = indices.size();
             buffer.tileX = tile.x;
             buffer.tileY = tile.y;
+            if (!uniformGroundTexturePreview) {
+                std::map<std::size_t, const openbus::map::MapGroundTextureSidecar*> layersByIndex;
+                for (const openbus::map::MapGroundTextureSidecar& sidecar :
+                     tile.groundTextureSidecars) {
+                    std::size_t textureIndex = 0;
+                    const char* suffixBegin = sidecar.ordinalSuffix.data();
+                    const char* suffixEnd = suffixBegin + sidecar.ordinalSuffix.size();
+                    const auto parsed = std::from_chars(suffixBegin, suffixEnd, textureIndex);
+                    if (parsed.ec != std::errc{} || parsed.ptr != suffixEnd || textureIndex == 0 ||
+                        textureIndex >= map.groundTextures.size()) {
+                        recordSkipped(skipped, "ground-texture sidecars with invalid groundtex indices",
+                                      tile.textPath.filename().string() + " sidecar=" +
+                                          sidecar.path.filename().string());
+                        continue;
+                    }
+                    if (!layersByIndex.emplace(textureIndex, &sidecar).second) {
+                        recordSkipped(skipped, "duplicate ground-texture sidecar indices",
+                                      tile.textPath.filename().string() + " index=" +
+                                          std::to_string(textureIndex));
+                    }
+                }
+                for (const auto& [textureIndex, sidecar] : layersByIndex) {
+                    try {
+                        ModelMaterial layer;
+                        const std::filesystem::path layerTexturePath = groundTexturePath(
+                            map, omsiRoot, map.groundTextures[textureIndex].texturePath);
+                        layer.texture = getTexture(layerTexturePath);
+                        layer.textured = true;
+                        layer.transmap = getTexture(sidecar->path, false);
+                        layer.useTransmap = true;
+                        // OMSI ground-texture DDS rows run opposite the terrain mesh's map northing.
+                        layer.flipTransmapY = true;
+                        const float inverseIntervals = 1.0F / static_cast<float>(grid.intervals);
+                        layer.transmapScale = {inverseIntervals, inverseIntervals};
+                        buffer.groundTextureLayers.push_back(layer);
+                    } catch (const std::exception& error) {
+                        recordSkipped(skipped, "ground-texture layers that failed to load",
+                                      sidecar->path.filename().string() + ": " + error.what());
+                    }
+                }
+            }
             const auto [minimumHeight, maximumHeight] =
                 std::minmax_element(grid.heights.begin(), grid.heights.end());
             buffer.minZ = *minimumHeight;
@@ -561,19 +686,6 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
         throw std::runtime_error("No terrain files found in the selected map");
     }
 
-    std::unordered_map<std::string, GLuint> textureCache;
-    const auto getTexture = [&](const std::filesystem::path& path) {
-        const std::string key = path.lexically_normal().generic_string();
-        const auto found = textureCache.find(key);
-        if (found != textureCache.end()) {
-            return found->second;
-        }
-        const GLuint texture = loadTexture(path);
-        textureCache.emplace(key, texture);
-        impl_->ownedTextures.push_back(texture);
-        return texture;
-    };
-
     const auto sampleTerrainHeight = [&](int tileX, int tileY, double localX,
                                          double localY) -> std::optional<double> {
         const auto found = terrainByCoordinate.find(tileKey(tileX, tileY));
@@ -604,7 +716,10 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     };
 
     std::unordered_map<std::string, std::vector<std::size_t>> sceneryAssetBatches;
+    std::unordered_set<std::string> editorOnlySceneryAssets;
     std::unordered_set<std::string> absoluteHeightSceneryAssets;
+    const bool verboseAlphaMaterials =
+        parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_READ"));
     const auto loadSceneryAsset =
         [&](const std::filesystem::path& configPath) -> const std::vector<std::size_t>& {
         const std::string cacheKey = configPath.lexically_normal().generic_string();
@@ -616,8 +731,26 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
         std::vector<std::size_t> batchIndexes;
         try {
             const std::filesystem::path objectRoot = configPath.parent_path();
-            const std::filesystem::path modelRoot = objectRoot / "model";
             const SceneryObjectConfig objectConfiguration = loadSceneryObjectFile(configPath);
+            // Tree SCOs may mark their helper mesh [onlyeditor] while their [tree]
+            // definition is runtime scenery. The tree preview below replaces that mesh.
+            if (objectConfiguration.onlyEditor && objectConfiguration.trees.empty()) {
+                editorOnlySceneryAssets.insert(cacheKey);
+                return sceneryAssetBatches.emplace(cacheKey, std::move(batchIndexes))
+                    .first->second;
+            }
+            std::filesystem::path modelConfigPath =
+                resolveSceneryObjectModelConfigPath(objectConfiguration);
+            bool usesExternalModelConfig = !objectConfiguration.modelPath.empty();
+            if (usesExternalModelConfig && !std::filesystem::is_regular_file(modelConfigPath)) {
+                recordSkipped(skipped, "scenery external model configs not found",
+                              configPath.filename().string() + " model=" +
+                                  modelConfigPath.generic_string());
+                modelConfigPath = configPath;
+                usesExternalModelConfig = false;
+            }
+            const std::filesystem::path modelRoot =
+                usesExternalModelConfig ? modelConfigPath.parent_path() : objectRoot / "model";
             if (objectConfiguration.absoluteHeight) {
                 absoluteHeightSceneryAssets.insert(cacheKey);
             }
@@ -673,7 +806,8 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
             }
             openbus::scripting::SceneryObject variables;
             const ModelConfig configuration =
-                loadModelConfig(configPath, modelRoot, ModelConfigKind::SceneryObject, variables);
+                loadModelConfig(modelConfigPath, modelRoot, ModelConfigKind::SceneryObject,
+                                variables);
             if (configuration.absoluteHeight) {
                 absoluteHeightSceneryAssets.insert(cacheKey);
             }
@@ -682,29 +816,36 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error"
                                                                                     : "warning";
                 recordSkipped(skipped, "scenery model config diagnostics",
-                              configPath.filename().string() +
+                              modelConfigPath.filename().string() +
                                   " line=" + std::to_string(diagnostic.line) + " [" +
                                   diagnostic.keyword + "] " + severity + ": " + diagnostic.message);
             }
             for (const ModelPart& part : configuration.parts) {
                 if (part.lodIndex > 0) {
                     recordSkipped(skipped, "scenery model parts in nonzero LODs (unsupported)",
-                                  configPath.filename().string() + " " +
+                                  modelConfigPath.filename().string() + " " +
                                       part.objPath.generic_string());
                     continue;
                 }
                 if (part.objPath.empty()) {
                     recordSkipped(skipped, "scenery model parts with no resolved mesh path",
-                                  configPath.filename().string());
+                                  modelConfigPath.filename().string());
                     continue;
                 }
-                if (part.objPath.extension() != ".o3d") {
+                std::string meshExtension = part.objPath.extension().string();
+                std::transform(meshExtension.begin(), meshExtension.end(), meshExtension.begin(),
+                               [](unsigned char value) {
+                                   return static_cast<char>(std::tolower(value));
+                               });
+                if (meshExtension != ".o3d" && meshExtension != ".x") {
                     recordSkipped(skipped, "scenery model parts with unsupported mesh formats",
-                                  configPath.filename().string() + " " +
+                                  modelConfigPath.filename().string() + " " +
                                       part.objPath.generic_string());
                     continue;
                 }
-                const std::shared_ptr<ParsedObj> parsed = O3DLoader::parse(part.objPath);
+                const std::shared_ptr<ParsedObj> parsed =
+                    meshExtension == ".x" ? XLoader::parse(part.objPath)
+                                          : O3DLoader::parse(part.objPath);
                 if (!parsed) {
                     recordSkipped(skipped, "scenery O3D meshes that failed to parse",
                                   configPath.filename().string() + " " +
@@ -756,7 +897,12 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                             const ObjTexCoord& coordinate =
                                 parsed->texCoords[static_cast<std::size_t>(index.texCoord - 1)];
                             u = static_cast<float>(coordinate.u);
-                            v = static_cast<float>(1.0 - coordinate.v);
+                            // Text .x foliage assets may author a negative V range that already
+                            // establishes the intended orientation. O3D's stored coordinate has
+                            // already been converted by O3DLoader, so retain the map renderer's
+                            // existing second conversion only for that format.
+                            v = static_cast<float>(meshExtension == ".x" ? coordinate.v
+                                                                         : 1.0 - coordinate.v);
                         }
                         verticesByMaterial[materialIndex].push_back(
                             {static_cast<float>(sourcePosition.x),
@@ -776,8 +922,39 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     const auto sourceMaterial =
                         parsed->materials.find("matl_" + std::to_string(materialIndex));
                     const auto stateFound = statesByMaterial.find(materialIndex);
-                    const ModelMaterialState* state =
-                        stateFound == statesByMaterial.end() ? nullptr : stateFound->second;
+                    const ModelMaterialState* state = stateFound == statesByMaterial.end()
+                                                          ? nullptr
+                                                          : stateFound->second;
+                    // Some OMSI O3D meshes number their material slots differently from the
+                    // SCO's [matl] index. When the numeric slot misses, safely bind a unique
+                    // matching texture override by basename so [matl_alpha] and friends survive.
+                    if (state == nullptr && sourceMaterial != parsed->materials.end()) {
+                        const std::string sourceTextureName = lowercasePathComponent(
+                            std::filesystem::path(sourceMaterial->second.textureName)
+                                .filename()
+                                .string());
+                        if (!sourceTextureName.empty()) {
+                            const ModelMaterialState* matchingState = nullptr;
+                            bool ambiguousMatch = false;
+                            for (const ModelMaterialState& candidate : part.materialStatesInOrder) {
+                                const std::string candidateTextureName = lowercasePathComponent(
+                                    std::filesystem::path(candidate.textureName)
+                                        .filename()
+                                        .string());
+                                if (candidateTextureName != sourceTextureName) {
+                                    continue;
+                                }
+                                if (matchingState != nullptr) {
+                                    ambiguousMatch = true;
+                                    break;
+                                }
+                                matchingState = &candidate;
+                            }
+                            if (!ambiguousMatch) {
+                                state = matchingState;
+                            }
+                        }
+                    }
                     std::string textureName = sourceMaterial == parsed->materials.end()
                                                   ? std::string{}
                                                   : sourceMaterial->second.textureName;
@@ -808,16 +985,44 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                         material.textured = true;
                     } else if (!textureName.empty()) {
                         recordSkipped(skipped, "scenery material textures not found",
-                                      configPath.filename().string() +
+                                      modelConfigPath.filename().string() +
                                           " mesh=" + part.objPath.filename().string() +
                                           " texture=" + textureName);
+                    }
+                    if (state != nullptr && !state->transmapTextureName.empty()) {
+                        const std::filesystem::path transmapTexture = findSceneryTexture(
+                            objectRoot, modelRoot, omsiRoot, state->transmapTextureName);
+                        if (transmapTexture.empty()) {
+                            recordSkipped(skipped, "scenery transmap textures not found",
+                                          modelConfigPath.filename().string() +
+                                              " mesh=" + part.objPath.filename().string() +
+                                              " transmap=" + state->transmapTextureName);
+                        } else {
+                            material.transmap = getTexture(transmapTexture);
+                            material.useTransmap = material.transmap != 0;
+                        }
                     }
                     Impl::ModelBatch batch;
                     batch.vertexCount = vertices.size();
                     batch.boundingRadius = vertexBoundingRadius(vertices);
                     batch.material = material;
                     batch.color = color;
+                    batch.alpha = sourceMaterial == parsed->materials.end()
+                                      ? 1.0
+                                      : std::clamp(sourceMaterial->second.alpha, 0.0, 1.0);
                     batch.alphaMode = state == nullptr ? 0 : state->alphaMode;
+                    if (batch.alphaMode == 0 && batch.alpha < 1.0 - 1.0e-6) {
+                        batch.alphaMode = 2;
+                    }
+                    if (verboseAlphaMaterials && batch.alphaMode != 0) {
+                        gameLog.Log("Map scenery alpha material: asset=" +
+                                    modelConfigPath.filename().string() + " mesh=" +
+                                    part.objPath.filename().string() + " index=" +
+                                    std::to_string(materialIndex) + " mode=" +
+                                    std::to_string(batch.alphaMode) + " state=" +
+                                    (state == nullptr ? "none" : std::to_string(state->alphaMode)) +
+                                    " texture=" + materialTexture.generic_string());
+                    }
                     pglGenBuffers(1, &batch.buffer);
                     pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
                     pglBufferData(
@@ -978,6 +1183,12 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     return;
                 }
                 const std::vector<std::size_t>& batchIndexes = loadSceneryAsset(configPath);
+                if (editorOnlySceneryAssets.contains(
+                        configPath.lexically_normal().generic_string())) {
+                    recordSkipped(skipped, "map scenery placements marked [onlyeditor]",
+                                  description + " config=" + configPath.filename().string());
+                    return;
+                }
                 const bool absoluteHeight = absoluteHeightSceneryAssets.contains(
                     configPath.lexically_normal().generic_string());
                 const double worldZ = openbus::map::mapSceneryWorldHeight(
@@ -1278,6 +1489,19 @@ void MapRenderer::draw() const {
         }
         drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, material,
                               {1.0, 1.0, 1.0}, 1.0, 0);
+        if (!tile.groundTextureLayers.empty()) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthFunc(GL_LEQUAL);
+            glDepthMask(GL_FALSE);
+            for (const ModelMaterial& layer : tile.groundTextureLayers) {
+                drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, layer,
+                                      {1.0, 1.0, 1.0}, 1.0, 2);
+            }
+            glDepthMask(GL_TRUE);
+            glDepthFunc(GL_LESS);
+            glDisable(GL_BLEND);
+        }
     }
     for (const Impl::ModelBatch& road : impl_->roadBatches) {
         if (road.hasVisibilityBounds &&
@@ -1327,7 +1551,7 @@ void MapRenderer::draw() const {
             rotate(-instance.rotationDegrees[ownRotationOffset], 0.0, 0.0, 1.0);
             rotate(-instance.rotationDegrees[ownRotationOffset + 2], 0.0, 1.0, 0.0);
             rotate(-instance.rotationDegrees[ownRotationOffset + 1], 1.0, 0.0, 0.0);
-            drawModelBatch(batch.buffer, batch.vertexCount, batch.material, batch.color, 1.0,
+            drawModelBatch(batch.buffer, batch.vertexCount, batch.material, batch.color, batch.alpha,
                            batch.alphaMode);
             popMatrix();
             if (blended) {

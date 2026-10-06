@@ -2,6 +2,7 @@
 
 #include "BusTypes.h"
 #include "MapConfigLoader.h"
+#include "CoreRenderer.h"
 #include "SoundEngine.h"
 #include "VehicleConfigLoader.h"
 #include "Viewpoint.h"
@@ -128,6 +129,9 @@ class RenderLoop {
     bool leftMousePressed_ = false;
     bool previousClickableDebugKeyState_ = false;
     bool clickableDebugOverlay_ = false;
+    bool previousCollisionDebugKeyState_ = false;
+    bool collisionDebugOverlay_ = false;
+    bool collisionWireframeBuilt_ = false;
     bool clickableHoverCacheValid_ = false;
     bool clickableHoverCacheHit_ = false;
     double clickableHoverCacheX_ = 0.0;
@@ -161,6 +165,10 @@ class RenderLoop {
     double frameTimeStep_ = 0.0;
     int framebufferWidth_ = 1;
     int framebufferHeight_ = 1;
+    unsigned int coordinateHudTexture_ = 0;
+    std::string coordinateHudText_;
+    openbus::rendering::StaticPrimitiveBuffer collisionWireframeBuffer_;
+    std::vector<openbus::rendering::PrimitiveVertex> collisionWireframeVertices_;
     std::array<int, 4> viewport_ = {0, 0, 1, 1};
     double scriptRateHz_ = 0.0;
     double scriptAccumulator_ = 0.0;

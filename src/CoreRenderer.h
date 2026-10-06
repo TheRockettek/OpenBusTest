@@ -25,6 +25,9 @@
 #ifndef GL_TEXTURE_2D_ARRAY
 #define GL_TEXTURE_2D_ARRAY 0x8C1A
 #endif
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
 #ifndef GL_ARRAY_BUFFER
 #define GL_ARRAY_BUFFER 0x8892
 #endif
@@ -66,6 +69,8 @@ struct ModelMaterial {
     GLuint lightmap = 0;
     GLuint nightmap = 0;
     GLuint transmap = 0;
+    std::array<float, 2> transmapScale = {1.0F, 1.0F};
+    bool flipTransmapY = false;
     GLuint bumpmap = 0;
     GLuint freeTexture = 0;
     GLuint textTexture = 0;

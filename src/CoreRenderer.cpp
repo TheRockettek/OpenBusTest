@@ -52,6 +52,8 @@ struct Uniforms {
     GLint lightmap = -1;
     GLint nightmap = -1;
     GLint transmap = -1;
+    GLint transmapScale = -1;
+    GLint flipTransmapY = -1;
     GLint bumpmap = -1;
     GLint freeTexture = -1;
     GLint textTexture = -1;
@@ -92,6 +94,7 @@ struct ModelUniformState {
     bool useLightmap = false;
     bool useNightmap = false;
     bool useTransmap = false;
+    bool flipTransmapY = false;
     bool useBumpmap = false;
     bool useFreeTexture = false;
     bool useTextTexture = false;
@@ -107,6 +110,7 @@ struct ModelUniformState {
     float lightmapStrength = 0.0f;
     float nightmapStrength = 0.0f;
     float bumpmapStrength = 0.0f;
+    std::array<float, 2> transmapScale = {1.0F, 1.0F};
     int interiorLightCount = 0;
     std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightViewPositions = {};
     std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightColors = {};
@@ -195,6 +199,8 @@ uniform sampler2DArray uTextureArray;
 uniform sampler2D uLightmap;
 uniform sampler2D uNightmap;
 uniform sampler2D uTransmap;
+uniform vec2 uTransmapScale;
+uniform bool uFlipTransmapY;
 uniform sampler2D uBumpmap;
 uniform sampler2D uFreeTexture;
 uniform sampler2D uTextTexture;
@@ -259,7 +265,11 @@ void main() {
                         uNightmapStrength * nightmapCoverage);
     }
     if (!uUseTextTexture && uUseTransmap) {
-        color.a = texture(uTransmap, vTexCoord.xy).a;
+        vec2 transmapCoordinate = vTexCoord.xy * uTransmapScale;
+        if (uFlipTransmapY) {
+            transmapCoordinate.y = 1.0 - transmapCoordinate.y;
+        }
+        color.a = texture(uTransmap, transmapCoordinate).a;
     }
     if (!uUseTextTexture && uUseBumpmap) {
         vec3 surfaceNormal = normalize(vNormal);
@@ -497,6 +507,8 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.lightmap = pglGetUniformLocation(program, "uLightmap");
         uniforms.nightmap = pglGetUniformLocation(program, "uNightmap");
         uniforms.transmap = pglGetUniformLocation(program, "uTransmap");
+        uniforms.transmapScale = pglGetUniformLocation(program, "uTransmapScale");
+        uniforms.flipTransmapY = pglGetUniformLocation(program, "uFlipTransmapY");
         uniforms.bumpmap = pglGetUniformLocation(program, "uBumpmap");
         uniforms.freeTexture = pglGetUniformLocation(program, "uFreeTexture");
         uniforms.textTexture = pglGetUniformLocation(program, "uTextTexture");
@@ -655,6 +667,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         modelUniformState.useLightmap != material.useLightmap ||
         modelUniformState.useNightmap != material.useNightmap ||
         modelUniformState.useTransmap != material.useTransmap ||
+        modelUniformState.flipTransmapY != material.flipTransmapY ||
         modelUniformState.useBumpmap != material.useBumpmap ||
         modelUniformState.useFreeTexture != material.useFreeTexture ||
         modelUniformState.useTextTexture != material.useTextTexture ||
@@ -667,6 +680,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         pglUniform1i(modelUniforms.useLightmap, material.useLightmap ? 1 : 0);
         pglUniform1i(modelUniforms.useNightmap, material.useNightmap ? 1 : 0);
         pglUniform1i(modelUniforms.useTransmap, material.useTransmap ? 1 : 0);
+        pglUniform1i(modelUniforms.flipTransmapY, material.flipTransmapY ? 1 : 0);
         pglUniform1i(modelUniforms.useBumpmap, material.useBumpmap ? 1 : 0);
         pglUniform1i(modelUniforms.useFreeTexture, material.useFreeTexture ? 1 : 0);
         pglUniform1i(modelUniforms.useTextTexture, material.useTextTexture ? 1 : 0);
@@ -686,6 +700,10 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     }
     if (!modelUniformState.valid || modelUniformState.bumpmapStrength != material.bumpmapStrength) {
         pglUniform1f(modelUniforms.bumpmapStrength, material.bumpmapStrength);
+    }
+    if (!modelUniformState.valid || modelUniformState.transmapScale != material.transmapScale) {
+        pglUniform2f(modelUniforms.transmapScale, material.transmapScale[0],
+                     material.transmapScale[1]);
     }
     if (!modelUniformState.valid ||
         modelUniformState.interiorLightViewPositions != material.interiorLightViewPositions) {
@@ -729,6 +747,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.useLightmap = material.useLightmap;
     modelUniformState.useNightmap = material.useNightmap;
     modelUniformState.useTransmap = material.useTransmap;
+    modelUniformState.flipTransmapY = material.flipTransmapY;
     modelUniformState.useBumpmap = material.useBumpmap;
     modelUniformState.useFreeTexture = material.useFreeTexture;
     modelUniformState.useTextTexture = material.useTextTexture;
@@ -738,6 +757,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.lightmapStrength = material.lightmapStrength;
     modelUniformState.nightmapStrength = material.nightmapStrength;
     modelUniformState.bumpmapStrength = material.bumpmapStrength;
+    modelUniformState.transmapScale = material.transmapScale;
     modelUniformState.interiorLightCount = material.interiorLightCount;
     modelUniformState.interiorLightViewPositions = material.interiorLightViewPositions;
     modelUniformState.interiorLightColors = material.interiorLightColors;
