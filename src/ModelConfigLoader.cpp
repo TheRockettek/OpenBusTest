@@ -299,7 +299,8 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
             const std::string candidate = lower(trim(variableLine.text));
             static const std::unordered_set<std::string> animationFields = {
                 "origin_from_mesh", "origin_trans", "origin_rot_x", "origin_rot_y",
-                "origin_rot_z", "delay", "maxspeed", "offset", "anim_rot", "anim_trans"};
+                "origin_rot_z",     "delay",        "maxspeed",     "offset",
+                "anim_rot",         "anim_trans"};
             if (animationFields.find(candidate) != animationFields.end() ||
                 variableLine.text == "--" || isSeparatorLine(variableLine.text)) {
                 reader.pushBack(std::move(variableLine));
@@ -323,8 +324,9 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
             const std::string variable = lower(trim(variableLine.text));
             double scale = 0.0;
             if (variable.empty() || !parseDouble(scaleLine.text, scale)) {
-                diagnostics.warning(field.number, name,
-                                    "ignored animation operation with an invalid variable or scale");
+                diagnostics.warning(
+                    field.number, name,
+                    "ignored animation operation with an invalid variable or scale");
                 continue;
             }
             ModelAnimation driven;
@@ -459,8 +461,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             implicitMaterial.materialIndex = 0;
             currentPart->materialStatesInOrder.push_back(implicitMaterial);
             currentPart->materialStates.emplace(currentMaterialKey, implicitMaterial);
-            result.diagnostics.warning(line.number, line.keyword(),
-                                       "no preceding [matl]; applying modifier to material index 0");
+            result.diagnostics.warning(
+                line.number, line.keyword(),
+                "no preceding [matl]; applying modifier to material index 0");
             return &currentPart->materialStatesInOrder.back();
         };
 

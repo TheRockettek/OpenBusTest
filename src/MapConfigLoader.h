@@ -45,12 +45,16 @@ struct MapSceneryPlacement {
     std::array<double, 3> localPosition = {};
     std::array<double, 3> rotationDegrees = {};
     bool transformValid = false;
+    bool splineAttachment = false;
     std::string trailingField;
 };
 
 struct MapSplinePlacement {
-    std::array<std::string, 19> rawFields;
+    std::array<std::string, 20> rawFields;
     std::string assetPath;
+    int splineId = 0;
+    int previousSplineId = 0;
+    int nextSplineId = 0;
     double localX = 0.0;
     double elevation = 0.0;
     double localY = 0.0;
@@ -59,7 +63,29 @@ struct MapSplinePlacement {
     double radius = 0.0;
     double gradientStart = 0.0;
     double gradientEnd = 0.0;
+    double cantStart = 0.0;
+    double cantEnd = 0.0;
+    double heightDelta = 0.0;
+    double chainOffset = 0.0;
+    bool elevated = false;
     bool geometryValid = false;
+    bool chainOffsetValid = false;
+};
+
+struct MapSplineAttachment {
+    std::string label;
+    std::string assetPath;
+    int id = 0;
+    int splineIndex = -1;
+    std::array<double, 3> offset = {}; // lateral, height, distance along the chain
+    std::array<double, 3> rotationDegrees = {};
+    double interval = 0.0;
+    double range = 0.0;
+    bool tilt = false;
+    bool repeater = false;
+    int repeaterMasterTileIndex = -1;
+    std::size_t repeaterFirstObjectIndex = 0;
+    bool transformValid = false;
 };
 
 struct MapDefinition {
@@ -77,6 +103,7 @@ struct MapTileData {
     std::size_t splineCount = 0;
     std::size_t elevatedSplineCount = 0;
     std::vector<MapSplinePlacement> splines;
+    std::vector<MapSplineAttachment> splineAttachments;
     std::size_t objectCount = 0;
     std::vector<MapSceneryPlacement> sceneryObjects;
     std::size_t attachedObjectCount = 0;

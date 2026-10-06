@@ -1,5 +1,7 @@
 #include "MapConfigLoader.h"
 
+#include "PerfTrace.h"
+
 #include <bit>
 #include <charconv>
 #include <cmath>
@@ -77,10 +79,8 @@ std::string decodeText(const std::filesystem::path& path) {
     if (bytes.size() >= 2 && bytes[0] == 0xfeU && bytes[1] == 0xffU) {
         throw std::runtime_error("UTF-16BE map text is not supported: " + path.string());
     }
-    std::size_t offset = bytes.size() >= 3 && bytes[0] == 0xefU && bytes[1] == 0xbbU &&
-                                 bytes[2] == 0xbfU
-                             ? 3
-                             : 0;
+    std::size_t offset =
+        bytes.size() >= 3 && bytes[0] == 0xefU && bytes[1] == 0xbbU && bytes[2] == 0xbfU ? 3 : 0;
     return std::string(bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.end());
 }
 
@@ -127,6 +127,15 @@ bool parseInteger(const std::string& value, int& result) {
     return begin != end && parsed.ec == std::errc{} && parsed.ptr == end;
 }
 
+bool parseSize(const std::string& value, std::size_t& result) {
+    int parsed = 0;
+    if (!parseInteger(value, parsed) || parsed < 0) {
+        return false;
+    }
+    result = static_cast<std::size_t>(parsed);
+    return true;
+}
+
 bool parseReal(const std::string& value, double& result) {
     if (value.empty()) {
         return false;
@@ -163,6 +172,7 @@ void parseTileFilename(const std::string& filename, int& x, int& y) {
 } // namespace
 
 MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
+    openbus::rendering::TraceScope trace("map", "MapConfigLoader::loadMapDefinition");
     MapDefinition definition;
     definition.rootPath = mapDirectory;
     const std::filesystem::path globalPath = mapDirectory / "global.cfg";
@@ -181,7 +191,8 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
                 parameter = readField(lines, cursor, globalPath, "groundtex");
             }
             if (groundTexture.texturePath.empty()) {
-                throw std::runtime_error("Empty base texture in [groundtex] in " + globalPath.string());
+                throw std::runtime_error("Empty base texture in [groundtex] in " +
+                                         globalPath.string());
             }
             definition.groundTextures.push_back(std::move(groundTexture));
         } else if (section == "[entrypoints]") {
@@ -211,26 +222,29 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             const std::string filename = readField(lines, cursor, globalPath, "map");
             MapTileReference tile;
             if (!parseInteger(xText, tile.x) || !parseInteger(yText, tile.y)) {
-                throw std::runtime_error("Invalid tile coordinates in [map] in " + globalPath.string());
+                throw std::runtime_error("Invalid tile coordinates in [map] in " +
+                                         globalPath.string());
             }
             int filenameX = 0;
             int filenameY = 0;
             parseTileFilename(filename, filenameX, filenameY);
             if (filenameX != tile.x || filenameY != tile.y) {
-                throw std::runtime_error("[map] coordinates do not match tile filename: " + filename);
+                throw std::runtime_error("[map] coordinates do not match tile filename: " +
+                                         filename);
             }
             if (!tileNames.insert(filename).second) {
                 throw std::runtime_error("Duplicate tile filename in [map]: " + filename);
             }
-            const std::uint64_t key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tile.x))
-                                       << 32U) |
-                                      static_cast<std::uint32_t>(tile.y);
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tile.x)) << 32U) |
+                static_cast<std::uint32_t>(tile.y);
             if (!tileCoordinates.insert(key).second) {
                 throw std::runtime_error("Duplicate tile coordinates in [map]: " + filename);
             }
             tile.textPath = mapDirectory / filename;
             if (!std::filesystem::is_regular_file(tile.textPath)) {
-                throw std::runtime_error("Listed map tile does not exist: " + tile.textPath.string());
+                throw std::runtime_error("Listed map tile does not exist: " +
+                                         tile.textPath.string());
             }
             tile.terrainPath = std::filesystem::path(tile.textPath.string() + ".terrain");
             tile.hasTerrainFile = std::filesystem::is_regular_file(tile.terrainPath);
@@ -270,6 +284,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
 }
 
 MapTileData loadMapTile(const MapTileReference& tile) {
+    openbus::rendering::TraceScope trace("map", "MapConfigLoader::loadMapTile");
     MapTileData data;
     data.reference = tile;
     const std::vector<std::string> lines = splitLines(decodeText(tile.textPath));
@@ -282,33 +297,49 @@ MapTileData loadMapTile(const MapTileReference& tile) {
             data.version = trim(lines[++cursor]);
         } else if (section == "[terrain]") {
             data.hasTerrainMarker = true;
-        } else if (section == "[spline]") {
-            ++data.splineCount;
-            if (cursor + 19 >= lines.size()) {
-                throw std::runtime_error("Truncated [spline] record in " + tile.textPath.string());
+        } else if (section == "[spline]" || section == "[spline_h]") {
+            const bool elevated = section == "[spline_h]";
+            const std::size_t fieldCount = elevated ? 20 : 19;
+            if (cursor + fieldCount >= lines.size()) {
+                throw std::runtime_error("Truncated " + section + " record in " +
+                                         tile.textPath.string());
             }
             MapSplinePlacement spline;
-            for (std::size_t field = 0; field < spline.rawFields.size(); ++field) {
+            spline.elevated = elevated;
+            for (std::size_t field = 0; field < fieldCount; ++field) {
                 spline.rawFields[field] = trim(lines[cursor + 1 + field]);
             }
             spline.assetPath = spline.rawFields[1];
-            spline.geometryValid = parseReal(spline.rawFields[5], spline.localX) &&
-                                   parseReal(spline.rawFields[6], spline.elevation) &&
-                                   parseReal(spline.rawFields[7], spline.localY) &&
-                                   parseReal(spline.rawFields[8], spline.rotationDegrees) &&
-                                   parseReal(spline.rawFields[9], spline.length) &&
-                                   parseReal(spline.rawFields[10], spline.radius) &&
-                                   parseReal(spline.rawFields[11], spline.gradientStart) &&
-                                   parseReal(spline.rawFields[12], spline.gradientEnd);
-            data.splines.push_back(std::move(spline));
-            cursor += 19;
-        } else if (section == "[spline_h]") {
-            ++data.elevatedSplineCount;
-            if (cursor + 20 >= lines.size()) {
-                throw std::runtime_error("Truncated [spline_h] record in " +
-                                         tile.textPath.string());
+            const std::size_t cantStartField = elevated ? 14 : 13;
+            const std::size_t chainOffsetField = fieldCount - 1;
+            spline.geometryValid =
+                parseReal(spline.rawFields[5], spline.localX) &&
+                parseReal(spline.rawFields[6], spline.elevation) &&
+                parseReal(spline.rawFields[7], spline.localY) &&
+                parseReal(spline.rawFields[8], spline.rotationDegrees) &&
+                parseReal(spline.rawFields[9], spline.length) &&
+                parseReal(spline.rawFields[10], spline.radius) &&
+                parseReal(spline.rawFields[11], spline.gradientStart) &&
+                parseReal(spline.rawFields[12], spline.gradientEnd) &&
+                (!elevated || parseReal(spline.rawFields[13], spline.heightDelta));
+            parseInteger(spline.rawFields[2], spline.splineId);
+            parseInteger(spline.rawFields[3], spline.previousSplineId);
+            parseInteger(spline.rawFields[4], spline.nextSplineId);
+            if (fieldCount > cantStartField + 1) {
+                parseReal(spline.rawFields[cantStartField], spline.cantStart);
+                parseReal(spline.rawFields[cantStartField + 1], spline.cantEnd);
             }
-            cursor += 20;
+            spline.chainOffsetValid =
+                data.version.empty() || data.version == "0" || std::stoi(data.version) >= 11
+                    ? parseReal(spline.rawFields[chainOffsetField], spline.chainOffset)
+                    : false;
+            if (elevated) {
+                ++data.elevatedSplineCount;
+            } else {
+                ++data.splineCount;
+            }
+            data.splines.push_back(std::move(spline));
+            cursor += fieldCount;
         } else if (section == "[object]") {
             ++data.objectCount;
             if (cursor + 10 >= lines.size()) {
@@ -328,8 +359,7 @@ MapTileData loadMapTile(const MapTileReference& tile) {
             for (std::size_t axis = 0; axis < object.localPosition.size(); ++axis) {
                 object.transformValid =
                     parseReal(object.rawTransformFields[axis], object.localPosition[axis]) &&
-                    parseReal(object.rawTransformFields[axis + 3],
-                              object.rotationDegrees[axis]) &&
+                    parseReal(object.rawTransformFields[axis + 3], object.rotationDegrees[axis]) &&
                     object.transformValid;
             }
             object.trailingField = trim(lines[cursor + 10]);
@@ -337,10 +367,73 @@ MapTileData loadMapTile(const MapTileReference& tile) {
             cursor += 10;
         } else if (section == "[attachObj]") {
             ++data.attachedObjectCount;
-        } else if (section == "[splineAttachement]") {
-            ++data.splineAttachmentCount;
-        } else if (section == "[splineAttachement_repeater]") {
-            ++data.splineRepeaterCount;
+        } else if (section == "[splineAttachement]" || section == "[splineAttachement_repeater]") {
+            const bool repeater = section == "[splineAttachement_repeater]";
+            if (repeater) {
+                ++data.splineRepeaterCount;
+            } else {
+                ++data.splineAttachmentCount;
+            }
+            const int tileVersion = data.version.empty() ? 0 : std::stoi(data.version);
+            const bool hasDetail = tileVersion == 0 || tileVersion >= 9;
+            const bool modernRotation = tileVersion == 0 || tileVersion >= 12;
+            const bool hasStrings = tileVersion == 0 || tileVersion >= 4;
+            std::size_t field = cursor + 1 + (hasDetail ? 1 : 0);
+            const auto requireField = [&](std::size_t at) -> const std::string& {
+                if (at >= lines.size()) {
+                    throw std::runtime_error("Truncated " + section + " record in " +
+                                             tile.textPath.string());
+                }
+                return lines[at];
+            };
+            MapSplineAttachment attachment;
+            attachment.label = cursor == 0 ? std::string{} : trim(lines[cursor - 1]);
+            attachment.repeater = repeater;
+            if (repeater) {
+                if (!parseInteger(trim(requireField(field++)),
+                                  attachment.repeaterMasterTileIndex) ||
+                    !parseSize(trim(requireField(field++)), attachment.repeaterFirstObjectIndex)) {
+                    throw std::runtime_error("Invalid repeater index in " + tile.textPath.string());
+                }
+            }
+            attachment.assetPath = trim(requireField(field++));
+            if (!parseInteger(trim(requireField(field++)), attachment.id) ||
+                !parseInteger(trim(requireField(field++)), attachment.splineIndex)) {
+                throw std::runtime_error("Invalid ID or spline index in " + section + " in " +
+                                         tile.textPath.string());
+            }
+            attachment.transformValid = true;
+            for (double& offset : attachment.offset) {
+                attachment.transformValid =
+                    parseReal(trim(requireField(field++)), offset) && attachment.transformValid;
+            }
+            const std::size_t rotationCount = modernRotation ? 3 : 1;
+            for (std::size_t axis = 0; axis < rotationCount; ++axis) {
+                attachment.transformValid =
+                    parseReal(trim(requireField(field++)), attachment.rotationDegrees[axis]) &&
+                    attachment.transformValid;
+            }
+            if (!parseReal(trim(requireField(field++)), attachment.interval) ||
+                !parseReal(trim(requireField(field++)), attachment.range)) {
+                attachment.transformValid = false;
+            }
+            if (modernRotation) {
+                int tilt = 0;
+                attachment.transformValid =
+                    parseInteger(trim(requireField(field++)), tilt) && attachment.transformValid;
+                attachment.tilt = tilt != 0;
+            }
+            if (hasStrings) {
+                std::size_t stringCount = 0;
+                if (!parseSize(trim(requireField(field++)), stringCount) || stringCount > 4096 ||
+                    stringCount > lines.size() - std::min(field, lines.size())) {
+                    throw std::runtime_error("Invalid label count in " + section + " in " +
+                                             tile.textPath.string());
+                }
+                field += stringCount;
+            }
+            data.splineAttachments.push_back(std::move(attachment));
+            cursor = field - 1;
         }
     }
     if (data.version.empty()) {
@@ -353,6 +446,7 @@ MapTileData loadMapTile(const MapTileReference& tile) {
 }
 
 TerrainGrid loadTerrainGrid(const std::filesystem::path& terrainPath) {
+    openbus::rendering::TraceScope trace("map", "MapConfigLoader::loadTerrainGrid");
     std::ifstream input(terrainPath, std::ios::binary);
     if (!input) {
         throw std::runtime_error("Could not open terrain file: " + terrainPath.string());
@@ -360,7 +454,8 @@ TerrainGrid loadTerrainGrid(const std::filesystem::path& terrainPath) {
     const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(input)),
                                            std::istreambuf_iterator<char>());
     if (bytes.size() < 4) {
-        throw std::runtime_error("Terrain file is shorter than its header: " + terrainPath.string());
+        throw std::runtime_error("Terrain file is shorter than its header: " +
+                                 terrainPath.string());
     }
     const std::uint32_t intervals = readU32(bytes, 0);
     if (intervals == 0 || intervals > 1024U) {

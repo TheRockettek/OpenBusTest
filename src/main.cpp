@@ -40,8 +40,8 @@ int positiveEnvironmentInt(const char* name, int fallback, int maximum) {
     return static_cast<int>(std::min(parsed, static_cast<long>(maximum)));
 }
 
-std::vector<TerrainCollisionGrid> loadSpawnTerrain(
-    const openbus::map::MapDefinition& map, std::size_t centerTileIndex) {
+std::vector<TerrainCollisionGrid> loadSpawnTerrain(const openbus::map::MapDefinition& map,
+                                                   std::size_t centerTileIndex) {
     constexpr int tileRadius = 1;
     if (centerTileIndex >= map.tiles.size()) {
         throw std::runtime_error("Selected map spawn references an invalid tile");
@@ -50,13 +50,13 @@ std::vector<TerrainCollisionGrid> loadSpawnTerrain(
     std::vector<TerrainCollisionGrid> terrain;
     terrain.reserve(9);
     for (const openbus::map::MapTileReference& tile : map.tiles) {
-        if (std::abs(tile.x - center.x) > tileRadius ||
-            std::abs(tile.y - center.y) > tileRadius || !tile.hasTerrainFile) {
+        if (std::abs(tile.x - center.x) > tileRadius || std::abs(tile.y - center.y) > tileRadius ||
+            !tile.hasTerrainFile) {
             continue;
         }
         const openbus::map::TerrainGrid grid = openbus::map::loadTerrainGrid(tile.terrainPath);
-        terrain.push_back({tile.x, tile.y, openbus::map::OMSI_TILE_SIZE_METERS,
-                   grid.intervals, grid.heights});
+        terrain.push_back(
+            {tile.x, tile.y, openbus::map::OMSI_TILE_SIZE_METERS, grid.intervals, grid.heights});
     }
     if (terrain.empty()) {
         throw std::runtime_error("No terrain collision files found around the selected spawn");
@@ -100,6 +100,17 @@ int main() {
     Logger applicationLog("Application");
     try {
         applicationLog.Log("Starting OpenBus");
+#if OPENBUS_ENABLE_PERF_TRACE
+        const std::string traceEnabled = environmentValue("OPENBUS_TRACE");
+        const std::string tracePath = environmentValue("OPENBUS_TRACE_FILE");
+        applicationLog.Log("Performance tracing instrumentation is compiled in; runtime=" +
+                   (traceEnabled.empty() ? std::string("disabled") : traceEnabled) +
+                   ", output=" +
+                   (tracePath.empty() ? std::string("openbus_trace.json") : tracePath) +
+                   ".");
+#else
+        applicationLog.Log("Performance tracing instrumentation is not compiled in.");
+#endif
 
         // Resolve configuration paths for the bus and model.
         std::filesystem::path busConfigPath;
@@ -127,24 +138,35 @@ int main() {
                 aiVehicleCount = positiveEnvironmentInt("OPENBUS_AI_COUNT", 1, 200);
             }
             const std::string configuredMapPath = environmentValue("OPENBUS_MAP_PATH");
-            mapDirectory = configuredMapPath.empty()
-                               ? omsiRootPath() / "maps" / "Grande Porto 2022"
-                               : std::filesystem::path(configuredMapPath);
+            mapDirectory = configuredMapPath.empty() ? omsiRootPath() / "maps" / "Grande Porto 2022"
+                                                     : std::filesystem::path(configuredMapPath);
             if (mapDirectory.is_relative()) {
                 mapDirectory = omsiRootPath() / mapDirectory;
             }
         }
 
-        const openbus::map::MapDefinition mapDefinition =
-            openbus::map::loadMapDefinition(mapDirectory);
+        openbus::map::MapDefinition mapDefinition;
+        {
+            openbus::rendering::TraceScope trace("map", "main.loadMapDefinition");
+            mapDefinition = openbus::map::loadMapDefinition(mapDirectory);
+        }
+        const std::size_t terrainSidecars = static_cast<std::size_t>(std::count_if(
+            mapDefinition.tiles.begin(), mapDefinition.tiles.end(),
+            [](const openbus::map::MapTileReference& tile) { return tile.hasTerrainFile; }));
+        applicationLog.Log("Map manifest loaded: tiles=" +
+                           std::to_string(mapDefinition.tiles.size()) + ", terrain sidecars=" +
+                           std::to_string(terrainSidecars) + ", ground textures=" +
+                           std::to_string(mapDefinition.groundTextures.size()) +
+                           ", entrypoints=" +
+                           std::to_string(mapDefinition.entryPoints.size()) + ".");
         if (mapDefinition.entryPoints.empty()) {
             throw std::runtime_error("Map has no [entrypoints]: " + mapDirectory.string());
         }
         constexpr std::size_t defaultSpawnEntryPoint = 0;
         const VehiclePlacement busPlacement =
             mapDefinition.entryPoints[defaultSpawnEntryPoint].placement;
-        applicationLog.Log("Map " + mapDirectory.string() + " spawn: " +
-                           mapDefinition.entryPoints[defaultSpawnEntryPoint].name);
+        applicationLog.Log("Map " + mapDirectory.string() +
+                           " spawn: " + mapDefinition.entryPoints[defaultSpawnEntryPoint].name);
 
         BusConfiguration configuration;
         {
@@ -180,15 +202,19 @@ int main() {
 
         BusSimulation simulation(
             configuration, busPlacement, 60.0, 8, busPlacement.position[2],
-            loadSpawnTerrain(mapDefinition,
-                             mapDefinition.entryPoints[defaultSpawnEntryPoint].tileIndex));
+            [&] {
+                openbus::rendering::TraceScope trace("map", "main.loadSpawnCollisionTerrain");
+                return loadSpawnTerrain(
+                    mapDefinition,
+                    mapDefinition.entryPoints[defaultSpawnEntryPoint].tileIndex);
+            }());
 
         const bool benchmarkMode =
             openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
         const int windowWidth =
-            benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_WIDTH", 1280, 16384) : 2560;
+            benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_WIDTH", 1280, 16384) : 1920;
         const int windowHeight =
-            benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384) : 1440;
+            benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384) : 1080;
         RenderLoop renderer(windowWidth, windowHeight, "OpenBus");
         renderer.SetMap(mapDefinition, defaultSpawnEntryPoint, omsiRootPath());
         Vehicle* playerVehicle =

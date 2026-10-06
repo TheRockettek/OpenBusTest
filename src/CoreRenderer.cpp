@@ -17,6 +17,28 @@ namespace {
 constexpr GLsizei MODEL_VERTEX_STRIDE = static_cast<GLsizei>(9 * sizeof(float));
 constexpr std::size_t MAX_MATERIAL_TEXTURES = 8;
 constexpr std::size_t MAX_TEXTURE_UNITS = 16;
+std::size_t submittedFrameTriangleCount = 0;
+
+std::size_t trianglesForPrimitive(GLenum primitive, std::size_t vertexCount) {
+    switch (primitive) {
+    case GL_TRIANGLES:
+        return vertexCount / 3;
+    case GL_TRIANGLE_STRIP:
+    case GL_TRIANGLE_FAN:
+    case GL_POLYGON:
+        return vertexCount >= 3 ? vertexCount - 2 : 0;
+    case GL_QUADS:
+        return (vertexCount / 4) * 2;
+    case GL_QUAD_STRIP:
+        return vertexCount >= 4 ? (vertexCount / 2 - 1) * 2 : 0;
+    default:
+        return 0;
+    }
+}
+
+void recordTriangleSubmission(std::size_t triangles) {
+    submittedFrameTriangleCount += triangles;
+}
 
 struct Uniforms {
     GLint projection = -1;
@@ -727,6 +749,14 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
 
 } // namespace
 
+void resetFrameTriangleCount() {
+    submittedFrameTriangleCount = 0;
+}
+
+std::size_t frameTriangleCount() {
+    return submittedFrameTriangleCount;
+}
+
 bool initializeCoreRenderer() {
     modelProgram = createProgram(modelVertexShader, modelFragmentShader);
     materialProgram = createProgram(modelVertexShader, materialFragmentShader);
@@ -903,7 +933,44 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     bindTexture(GL_TEXTURE_2D, material.textTexture);
     selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
+    recordTriangleSubmission(vertexCount / 3);
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
+}
+
+void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexCount,
+                           const ModelMaterial& material, const std::array<double, 3>& color,
+                           double alpha, int alphaMode) {
+    TraceScope trace("render", "CoreRenderer::drawIndexedModelBatch");
+    if (modelProgram == 0 || buffer == 0 || indexBuffer == 0 || indexCount == 0) {
+        return;
+    }
+    useProgram(modelProgram);
+    uploadMatrices(modelUniforms);
+    uploadModelUniforms(material, color, alpha, alphaMode);
+    selectTextureUnit(GL_TEXTURE0);
+    const GLenum textureTarget = material.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+    bindTexture(textureTarget, material.texture);
+    if (material.texture != 0) {
+        setTextureWrap(textureTarget, material.texture, material.textureWrapS,
+                       material.textureWrapT);
+    }
+    selectTextureUnit(GL_TEXTURE1);
+    bindTexture(GL_TEXTURE_2D, material.lightmap);
+    selectTextureUnit(GL_TEXTURE2);
+    bindTexture(GL_TEXTURE_2D, material.nightmap);
+    selectTextureUnit(GL_TEXTURE3);
+    bindTexture(GL_TEXTURE_2D, material.transmap);
+    selectTextureUnit(GL_TEXTURE0 + 6);
+    bindTexture(GL_TEXTURE_2D, material.bumpmap);
+    selectTextureUnit(GL_TEXTURE4);
+    bindTexture(GL_TEXTURE_2D, material.freeTexture);
+    selectTextureUnit(GL_TEXTURE0 + 5);
+    bindTexture(GL_TEXTURE_2D, material.textTexture);
+    selectTextureUnit(GL_TEXTURE0);
+    bindModelVertexBuffer(buffer, modelVertexArray);
+    pglBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+    recordTriangleSubmission(indexCount / 3);
+    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT, nullptr);
 }
 
 void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
@@ -936,6 +1003,7 @@ void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
     }
     selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
+    recordTriangleSubmission(vertexCount / 3);
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
 }
 
@@ -950,6 +1018,7 @@ void drawEnvironmentBatch(GLuint buffer, std::size_t vertexCount, GLuint texture
     selectTextureUnit(GL_TEXTURE0);
     bindTexture(GL_TEXTURE_2D, texture);
     bindModelVertexBuffer(buffer, modelVertexArray);
+    recordTriangleSubmission(vertexCount / 3);
     glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
 }
 
@@ -981,6 +1050,7 @@ void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primiti
     glLineWidth(lineWidth);
     {
         TraceScope phase("render", "CoreRenderer::drawPrimitives.submit");
+        recordTriangleSubmission(trianglesForPrimitive(primitive, vertices.size()));
         glDrawArrays(primitive, 0, static_cast<GLsizei>(vertices.size()));
     }
 }
@@ -1044,6 +1114,7 @@ void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
     glLineWidth(lineWidth);
     {
         TraceScope phase("render", "CoreRenderer::drawStaticPrimitives.submit");
+        recordTriangleSubmission(trianglesForPrimitive(primitive, cache.vertexCount));
         glDrawArrays(primitive, 0, static_cast<GLsizei>(cache.vertexCount));
     }
 }
@@ -1068,6 +1139,7 @@ void drawTextureQuad(GLuint texture, float x, float y, float width, float height
     pglUniform1i(textureQuadFlipTextureY, flipTextureY ? 1 : 0);
     selectTextureUnit(GL_TEXTURE0);
     bindTexture(GL_TEXTURE_2D, texture);
+    recordTriangleSubmission(trianglesForPrimitive(GL_TRIANGLE_STRIP, 4));
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 

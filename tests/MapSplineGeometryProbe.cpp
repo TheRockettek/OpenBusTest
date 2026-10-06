@@ -81,6 +81,29 @@ void runProbe() {
                 "straight endpoint heading");
     verifySampling(straight, 50.0);
 
+        const auto north = openbus::map::sampleMapSpline(0.0, 0.0, 0.0, 20.0, 0.0, 10.0);
+        require(north.has_value(), "northbound spline can be sampled at an arc-length position");
+        requireNear(north->x, 0.0, 1.0e-9, "northbound sampled X");
+        requireNear(north->y, 10.0, 1.0e-9, "northbound sampled Y");
+        const auto east = openbus::map::sampleMapSpline(0.0, 0.0, 90.0, 20.0, 0.0, 10.0);
+        require(east.has_value(), "eastbound spline can be sampled");
+        requireNear(east->x, 10.0, 1.0e-9, "eastbound sampled X");
+        requireNear(east->y, 0.0, 1.0e-9, "eastbound sampled Y");
+        requireNear(openbus::map::mapSplineRightOffset(0.0, 3.0)[0], 3.0, 1.0e-9,
+            "right of a northbound spline is east");
+        requireNear(openbus::map::mapSplineRightOffset(0.0, 3.0)[1], 0.0, 1.0e-9,
+            "northbound lateral offset has no north component");
+        requireNear(openbus::map::mapSplineRightOffset(std::numbers::pi / 2.0, 3.0)[1], -3.0,
+            1.0e-9, "right of an eastbound spline is south");
+        requireNear(openbus::map::mapSplineElevation(0.0, 100.0, 0.0, 10.0, std::nullopt, 50.0),
+            1.25, 1.0e-9, "plain spline uses its gradient parabola");
+        requireNear(openbus::map::mapSplineElevation(-5.79, 73.86, 6.19, 0.0, 5.85, 0.0),
+            -5.79, 1.0e-9, "elevated spline starts at its authored height");
+        requireNear(openbus::map::mapSplineElevation(-5.79, 73.86, 6.19, 0.0, 5.85, 73.86),
+            0.06, 1.0e-9, "elevated spline ends exactly at its authored height delta");
+        require(!openbus::map::sampleMapSpline(0.0, 0.0, 0.0, 20.0, 0.0, 21.0),
+            "out-of-range spline samples are rejected");
+
     require(openbus::map::tessellateMapSpline(0.0, 0.0, 0.0, 0.0, 0.0).empty(),
             "zero-length spline is rejected");
     require(openbus::map::tessellateMapSpline(0.0, 0.0, 0.0, 10.0,

@@ -1,7 +1,7 @@
 taskkill.exe /F /IM OpenBus.exe
 
-@REM set "OPENBUS_BUS_CONFIG=Vehicles/MAN_DL05/MAN_DL05.bus"
-@REM set "OPENBUS_MODEL_CONFIG=Vehicles/MAN_DL05/Model/DL05.cfg"
+set "OPENBUS_BUS_CONFIG=Vehicles/MAN_DL05/MAN_DL05.bus"
+set "OPENBUS_MODEL_CONFIG=Vehicles/MAN_DL05/Model/DL05.cfg"
 
 @REM set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
 @REM set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
@@ -12,8 +12,8 @@ if errorlevel 1 exit /b %errorlevel%
 @REM set "OPENBUS_BUS_CONFIG=Vehicles\[SP] Studio Polygon 400MMC\E400MMC_ADL_10.9m_Voith_LowHeight.bus"
 @REM set "OPENBUS_MODEL_CONFIG=Vehicles\[SP] Studio Polygon 400MMC\Model\Configuration Files\E400MMC_ADL_10.9m_Voith_LowHeight.cfg"
 
-set "OPENBUS_BUS_CONFIG=Vehicles\V3D - Enviro 200 MMC\e200mmc_115.bus"
-set "OPENBUS_MODEL_CONFIG=Vehicles\V3D - Enviro 200 MMC\Model\e200mmc_115.cfg"
+@REM set "OPENBUS_BUS_CONFIG=Vehicles\V3D - Enviro 200 MMC\e200mmc_115.bus"
+@REM set "OPENBUS_MODEL_CONFIG=Vehicles\V3D - Enviro 200 MMC\Model\e200mmc_115.cfg"
 
 
 set "OPENBUS_VSYNC=off"

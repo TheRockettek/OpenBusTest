@@ -160,7 +160,9 @@ add_executable(OpenBus
     src/Variables.cpp
     src/ConfigurationParser.cpp
     src/MapConfigLoader.cpp
+    src/MapSceneryPlacement.cpp
     src/MapSplineGeometry.cpp
+    src/MapSplineProfile.cpp
     src/VehicleConfigLoader.cpp
     src/ModelConfigLoader.cpp
     src/ModelConfigJson.cpp
@@ -185,6 +187,7 @@ add_executable(OpenBus
     src/SoundEngine.cpp
     src/VehicleSoundBank.cpp
     src/osc/osc.cpp
+    src/MapSceneryPlacement.cpp
 )
 
 openbus_configure_perf_trace(OpenBus)
@@ -333,6 +336,23 @@ add_executable(OpenBusMapSplineGeometryProbe
 )
 target_include_directories(OpenBusMapSplineGeometryProbe PRIVATE src)
 add_test(NAME OpenBusMapSplineGeometryProbe COMMAND OpenBusMapSplineGeometryProbe)
+
+add_executable(OpenBusMapSceneryPlacementProbe
+    tests/MapSceneryPlacementProbe.cpp
+    src/MapSceneryPlacement.cpp
+    src/MapSplineGeometry.cpp
+)
+target_include_directories(OpenBusMapSceneryPlacementProbe PRIVATE src)
+add_test(NAME OpenBusMapSceneryPlacementProbe COMMAND OpenBusMapSceneryPlacementProbe)
+
+add_executable(OpenBusMapSplineProfileProbe
+    tests/MapSplineProfileProbe.cpp
+    src/MapSplineProfile.cpp
+)
+target_include_directories(OpenBusMapSplineProfileProbe PRIVATE src)
+add_test(NAME OpenBusMapSplineProfileProbe
+         COMMAND OpenBusMapSplineProfileProbe
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/map_spline_profile.sli)
 
 add_executable(OpenBusTextureLoaderProbe
     tests/TextureLoaderProbe.cpp

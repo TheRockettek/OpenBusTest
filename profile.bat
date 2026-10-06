@@ -32,7 +32,7 @@ set "OPENBUS_DOPPLER=1"
 
 set "OPENBUS_TRACE=1"
 set "OPENBUS_TRACE_FILE=openbus_trace.json"
-set "OPENBUS_TRACE_MAX_EVENTS=500000"
+set "OPENBUS_TRACE_MAX_EVENTS=10000000"
 set "OPENBUS_TRACE_MIN_US=1"
 
 call "%~dp0windows_clang_env.bat"

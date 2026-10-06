@@ -28,6 +28,9 @@
 #ifndef GL_ARRAY_BUFFER
 #define GL_ARRAY_BUFFER 0x8892
 #endif
+#ifndef GL_ELEMENT_ARRAY_BUFFER
+#define GL_ELEMENT_ARRAY_BUFFER 0x8893
+#endif
 #ifndef GL_STATIC_DRAW
 #define GL_STATIC_DRAW 0x88E4
 #endif
@@ -90,9 +93,15 @@ struct ModelMaterial {
 bool initializeCoreRenderer();
 void shutdownCoreRenderer();
 void invalidateTextureBindings();
+// Frame-local total of triangle primitives submitted through the renderer.
+void resetFrameTriangleCount();
+std::size_t frameTriangleCount();
 
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
                     const std::array<double, 3>& color, double alpha, int alphaMode);
+void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexCount,
+                           const ModelMaterial& material, const std::array<double, 3>& color,
+                           double alpha, int alphaMode);
 void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
                        const std::vector<std::array<float, 4>>& colors,
                        const std::vector<GLuint>& textures, const std::vector<bool>& flipTextureY);

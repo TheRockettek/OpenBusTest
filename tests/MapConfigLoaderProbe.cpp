@@ -53,8 +53,14 @@ void runFixtureProbe() {
                      "Fixture tile\n[version]\n14\n[terrain]\n\n"
                      "[spline]\n0\nSplines\\road.sli\n30273\n30272\n0\n10\n20\n30\n"
                      "0\n50\n0\n0\n0\n0\n0\n0\n0\n0\n\n"
+                     "[spline_h]\n0\nSplines\\bridge.sli\n30274\n0\n0\n11\n21\n31\n"
+                     "0\n70\n0\n12\n12\n3.5\n0\n0\n0\n0\n0\n\n"
                      "Object Nr. 4\n[object]\n0\n"
                      "Scenery\\tree.sco\n5\n1\n2\n0\n0\n0\n0\n0\n"
+                     "Object Nr. 5\n[splineAttachement]\n0\nScenery\\lamp.sco\n7\n1\n"
+                     "3\n-0.2\n4\n90\n0\n0\n10\n2\n0\n0\n\n"
+                     "Object Nr. 6\n[splineAttachement_repeater]\n0\n0\n1\n"
+                     "Scenery\\lamp.sco\n8\n0\n1\n0.2\n4\n0\n0\n0\n10\n20\n0\n0\n\n"
                      "[attachObj]\n");
         {
             std::ofstream terrain(root / "tile_0_0.map.terrain", std::ios::binary);
@@ -81,14 +87,19 @@ void runFixtureProbe() {
 
         const openbus::map::MapTileData tile = openbus::map::loadMapTile(definition.tiles[0]);
         require(tile.version == "14" && tile.hasTerrainMarker, "tile header parsed");
-        require(tile.splineCount == 1 && tile.objectCount == 1 &&
+        require(tile.splineCount == 1 && tile.elevatedSplineCount == 1 && tile.objectCount == 1 &&
+                    tile.splineAttachmentCount == 1 && tile.splineRepeaterCount == 1 &&
                     tile.attachedObjectCount == 1,
                 "tile record families counted");
-        require(tile.splines.size() == 1 && tile.splines[0].geometryValid &&
+        require(tile.splines.size() == 2 && tile.splines[0].geometryValid &&
                     tile.splines[0].assetPath == "Splines\\road.sli" &&
                     tile.splines[0].localX == 10.0 && tile.splines[0].elevation == 20.0 &&
                     tile.splines[0].localY == 30.0 && tile.splines[0].length == 50.0,
                 "fixed-width spline geometry parsed while raw fields remain available");
+        require(tile.splines[1].geometryValid && tile.splines[1].elevated &&
+                    tile.splines[1].assetPath == "Splines\\bridge.sli" &&
+                    tile.splines[1].length == 70.0 && tile.splines[1].heightDelta == 3.5,
+                "elevated spline geometry and delta height parsed");
         require(tile.sceneryObjects.size() == 1 && tile.sceneryObjects[0].id == 5 &&
                     tile.sceneryObjects[0].label == "Object Nr. 4" &&
                     tile.sceneryObjects[0].line1 == "0" &&
@@ -97,6 +108,25 @@ void runFixtureProbe() {
                     tile.sceneryObjects[0].localPosition[0] == 1.0 &&
                     tile.sceneryObjects[0].localPosition[1] == 2.0,
                 "scenery object placement fields preserved");
+        require(tile.splineAttachments.size() == 2 &&
+                    tile.splineAttachments[0].assetPath == "Scenery\\lamp.sco" &&
+                    tile.splineAttachments[0].transformValid &&
+                    tile.splineAttachments[0].splineIndex == 1 &&
+                    tile.splineAttachments[0].offset[0] == 3.0 &&
+                    tile.splineAttachments[0].offset[1] == -0.2 &&
+                    tile.splineAttachments[0].offset[2] == 4.0 &&
+                    tile.splineAttachments[0].rotationDegrees[0] == 90.0 &&
+                    tile.splineAttachments[0].interval == 10.0 &&
+                    tile.splineAttachments[0].range == 2.0 &&
+                    !tile.splineAttachments[0].tilt,
+                "spline attachment fields decoded as typed spline-relative values");
+        require(tile.splineAttachments[1].repeater &&
+                    tile.splineAttachments[1].repeaterMasterTileIndex == 0 &&
+                    tile.splineAttachments[1].repeaterFirstObjectIndex == 1 &&
+                    tile.splineAttachments[1].splineIndex == 0 &&
+                    tile.splineAttachments[1].interval == 10.0 &&
+                    tile.splineAttachments[1].range == 20.0,
+                "spline repeater master and row fields decoded");
 
         const openbus::map::TerrainGrid terrain =
             openbus::map::loadTerrainGrid(definition.tiles[0].terrainPath);
@@ -119,7 +149,7 @@ void runInstalledMapProbe(const std::filesystem::path& root) {
     for (const openbus::map::MapTileReference& reference : definition.tiles) {
         const openbus::map::MapTileData tile = openbus::map::loadMapTile(reference);
         splineCount += tile.splineCount + tile.elevatedSplineCount;
-        sceneryPlacementCount += tile.sceneryObjects.size();
+        sceneryPlacementCount += tile.sceneryObjects.size() + tile.splineAttachments.size();
         objectCount += tile.objectCount + tile.attachedObjectCount +
                        tile.splineAttachmentCount + tile.splineRepeaterCount;
         if (reference.hasTerrainFile) {

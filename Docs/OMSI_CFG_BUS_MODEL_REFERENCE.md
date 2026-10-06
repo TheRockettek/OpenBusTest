@@ -41,13 +41,6 @@ bit mask made by adding:
 `0` means all viewpoints. This is a mesh-level optimization and is separate
 from selecting a camera.
 
-### `[shadow]`
-
-OMSI per-mesh shadow marker for the preceding mesh. OpenBus recognizes this
-marker to keep valid vehicle CFGs warning-free, but does not currently render
-OMSI's per-mesh cast-shadow behavior. This is distinct from `[isshadow]`, which
-marks an authored fake ground-shadow mesh for OpenBus's ground-shadow handling.
-
 ### `[fixed]`
 
 Marks the following object as fixed/static rather than attached to an animated
@@ -124,8 +117,6 @@ One alpha/rendering mode integer:
 ### `[matl_noZcheck]`
 
 Marker disabling depth-buffer comparison for the material.
-For `[isshadow]` fake-shadow meshes, OpenBus retains depth testing so the
-vehicle body occludes its ground-projected shadow.
 
 ### `[matl_noZwrite]`
 

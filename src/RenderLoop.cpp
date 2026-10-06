@@ -981,7 +981,6 @@ struct Vehicle {
         std::array<double, 3> center;
         std::array<double, 3> size;
         double radius;
-        std::size_t triangleCount;
         std::vector<ModelAnimation> animations;
         std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
         std::vector<AnimationState> animationStates;
@@ -1036,7 +1035,6 @@ struct Vehicle {
     std::vector<double> lodThresholds;
     std::unordered_map<std::string, std::string> ctcTextureReplacements;
     std::size_t opaqueDisplayCount = 0;
-    mutable std::size_t lastRenderedTriangles = 0;
     std::uint64_t viewDepthGeneration = 0;
     // The outer visibility pass advances this once; reflection views and the main
     // view then share unchanged material selections for the rest of that frame.
@@ -2514,15 +2512,6 @@ struct Vehicle {
                                      }
                                      return first.depth > second.depth;
                                  });
-                if (renderPass != VehicleRenderPass::Transparent) {
-                    lastRenderedTriangles = 0;
-                }
-                for (DisplayPart* part : opaqueParts) {
-                    lastRenderedTriangles += part->triangleCount;
-                }
-                for (const TransparentBatch& transparent : transparentBatches) {
-                    lastRenderedTriangles += transparent.batch->vertexCount / 3;
-                }
             }
             preparedDrawListsValid = renderPass == VehicleRenderPass::Opaque;
             if (preparedDrawListsValid) {
@@ -2659,10 +2648,6 @@ struct Vehicle {
             glDepthMask(GL_TRUE);
         }
         popMatrix();
-    }
-
-    std::size_t renderedTriangles() const {
-        return lastRenderedTriangles;
     }
 
     bool areObjectsLoaded() const {
@@ -3960,12 +3945,10 @@ struct Vehicle {
         }
         const std::filesystem::path fallbackTexturePath = part.texturePath;
         const std::string fallbackTextureName = part.textureName;
-        std::size_t renderedTriangleCount = 0;
         bool hasTransparentMaterial = false;
         {
             TraceScope materialTrace("obj", "loadObj.groupMaterials");
             for (const auto& triangle : triangles) {
-                ++renderedTriangleCount;
                 const auto material = materials.find(triangle.material);
                 std::filesystem::path texturePath =
                     material != materials.end() && !material->second.texturePath.empty()
@@ -4000,8 +3983,8 @@ struct Vehicle {
                         states->second[static_cast<std::size_t>(occurrence->second)] != nullptr) {
                         state = *states->second[static_cast<std::size_t>(occurrence->second)];
                     } else {
-                        const auto implicitState = implicitMaterialStatesByIndex.find(
-                            material->second.materialIndex);
+                        const auto implicitState =
+                            implicitMaterialStatesByIndex.find(material->second.materialIndex);
                         if (implicitState != implicitMaterialStatesByIndex.end()) {
                             state = *implicitState->second;
                         }
@@ -4065,7 +4048,6 @@ struct Vehicle {
         displayPart.center = boundsCenter;
         displayPart.size = boundsSize;
         displayPart.radius = boundsRadius;
-        displayPart.triangleCount = renderedTriangleCount;
         displayPart.animations = std::move(animations);
         displayPart.interiorLightIndexes = part.interiorLightIndexes;
         const std::string wheelVariable = lower(part.wheelAnimation.rotationVariable);
@@ -4473,9 +4455,9 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
     }
 }
 
-void RenderLoop::SetMap(const openbus::map::MapDefinition& map,
-                        std::size_t spawnEntryPointIndex,
+void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
                         const std::filesystem::path& omsiRoot) {
+    TraceScope trace("map", "RenderLoop::SetMap");
     if (spawnEntryPointIndex >= map.entryPoints.size()) {
         throw std::out_of_range("Selected map spawn entrypoint is outside [entrypoints]");
     }
@@ -4932,6 +4914,9 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
 
 void RenderLoop::draw(const BusSimulation& simulation) {
     TraceScope trace("frame", "RenderLoop::draw");
+    if (!renderingReflection_) {
+        openbus::rendering::resetFrameTriangleCount();
+    }
     const BodyPose chassis = simulation.chassisPose();
     const ChassisCollisionBox collision = simulation.chassisCollisionBox();
     constexpr double radiansToDegrees = 180.0 / 3.14159265358979323846;
@@ -5317,7 +5302,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         std::ostringstream title;
         title << "OpenBus - " << speedMph << " mph / " << speedKmh << " km/h - Throttle "
               << throttlePercent << "% - Brake " << brakePercent << "% - "
-              << playerVehicle_->renderedTriangles() << " triangles";
+              << openbus::rendering::frameTriangleCount() << " triangles/frame";
         glfwSetWindowTitle(window_, title.str().c_str());
         lastStatsTitleTime_ = glfwGetTime();
     }

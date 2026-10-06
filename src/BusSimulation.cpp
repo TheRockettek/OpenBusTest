@@ -244,12 +244,10 @@ struct BusSimulation::Impl {
                 const std::size_t topRight = topLeft + 1;
                 const std::size_t bottomLeft = topLeft + side;
                 const std::size_t bottomRight = bottomLeft + 1;
-                indices.insert(indices.end(), {static_cast<int>(topLeft),
-                                               static_cast<int>(topRight),
-                                               static_cast<int>(bottomRight),
-                                               static_cast<int>(topLeft),
-                                               static_cast<int>(bottomRight),
-                                               static_cast<int>(bottomLeft)});
+                indices.insert(indices.end(),
+                               {static_cast<int>(topLeft), static_cast<int>(topRight),
+                                static_cast<int>(bottomRight), static_cast<int>(topLeft),
+                                static_cast<int>(bottomRight), static_cast<int>(bottomLeft)});
             }
         }
 
@@ -257,11 +255,10 @@ struct BusSimulation::Impl {
         if (!meshData) {
             throw std::runtime_error("Failed to create map terrain collision data");
         }
-        dGeomTriMeshDataBuildDouble(meshData, vertices.data(), 3 * sizeof(double),
-                                    checkedOdeCount(vertexCount, "map terrain vertex count"),
-                                    indices.data(),
-                                    checkedOdeCount(indices.size(), "map terrain index count"),
-                                    3 * sizeof(int));
+        dGeomTriMeshDataBuildDouble(
+            meshData, vertices.data(), 3 * sizeof(double),
+            checkedOdeCount(vertexCount, "map terrain vertex count"), indices.data(),
+            checkedOdeCount(indices.size(), "map terrain index count"), 3 * sizeof(int));
         const dGeomID geometry = dCreateTriMesh(ode.space, meshData, nullptr, nullptr, nullptr);
         if (!geometry) {
             dGeomTriMeshDataDestroy(meshData);
@@ -1010,8 +1007,8 @@ struct BusSimulation::Impl {
 BusSimulation::BusSimulation(BusConfiguration configuration, VehiclePlacement placement,
                              double physicsHz, int maxCatchUpSteps, double groundPlaneZ,
                              std::vector<TerrainCollisionGrid> terrain)
-    : impl_(std::make_unique<Impl>(std::move(configuration), placement, physicsHz,
-                                  maxCatchUpSteps, groundPlaneZ, std::move(terrain))) {
+    : impl_(std::make_unique<Impl>(std::move(configuration), placement, physicsHz, maxCatchUpSteps,
+                                   groundPlaneZ, std::move(terrain))) {
     openbus::rendering::TraceScope trace("startup", "BusSimulation::BusSimulation");
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }

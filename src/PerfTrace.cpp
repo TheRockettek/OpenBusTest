@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <iostream>
 #include <string>
 
 #if OPENBUS_ENABLE_PERF_TRACE
@@ -51,6 +52,10 @@ class PerfTraceState {
             if (traceOutput) {
                 traceOutput << "{\n  \"traceEvents\": [\n";
                 traceWriter = std::thread(&PerfTraceState::traceWriterLoop, this);
+            } else {
+                std::cerr << "Failed to open performance trace output: " << traceOutputPath.string()
+                          << '\n';
+                enabled = false;
             }
         }
     }
