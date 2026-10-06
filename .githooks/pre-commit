@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Format source files and block staged Git blobs larger than GitHub's 100 MiB limit.
+set -uo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+format_script=$(cygpath -w "$repo_root/format.bat")
+printf 'Running format.bat...\n'
+if ! cmd.exe /c "$format_script"; then
+    printf 'ERROR: format.bat failed; commit cancelled.\n' >&2
+    exit 1
+fi
+
+# format.bat edits the working tree. Require any resulting edits to be reviewed
+# and staged, rather than silently committing a stale index snapshot.
+if ! git diff --quiet -- src uno3d; then
+    printf '\nFormatting changed files under src/ or uno3d/. Review and stage those changes, then commit again.\n' >&2
+    exit 1
+fi
+
+limit=$((100 * 1024 * 1024))
+found_large=0
+
+while IFS= read -r -d '' path; do
+    oid=$(git rev-parse --verify ":$path" 2>/dev/null) || continue
+    size=$(git cat-file -s "$oid" 2>/dev/null) || continue
+
+    if (( size > limit )); then
+        printf "ERROR: staged file exceeds GitHub's 100 MiB limit (%s bytes): %q\n" "$size" "$path" >&2
+        found_large=1
+    fi
+done < <(git diff --cached --name-only -z --diff-filter=ACMRT)
+
+if (( found_large )); then
+    printf '\nCommit blocked. Remove the file from the index, reduce it, or store it with Git LFS.\n' >&2
+    exit 1
+fi
