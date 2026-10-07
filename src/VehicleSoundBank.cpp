@@ -102,6 +102,7 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
     untriggeredLoopSounds_.clear();
     activeTriggeredLoops_.clear();
     activeAmbientLoops_.clear();
+    activeOneShots_.clear();
 
     openbus::config::Reader reader(configPath);
     if (!reader.isOpen()) {
@@ -109,6 +110,7 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
         return;
     }
 
+    SoundDefinitionId nextDefinitionId = 1;
     SoundTriggerDefinition current;
     bool hasSound = false;
     std::vector<std::string> currentTriggerNames;
@@ -117,7 +119,7 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
             std::vector<SoundTriggerDefinition>& definitions = triggers_[lower(name)];
             const auto existing = std::find_if(
                 definitions.begin(), definitions.end(),
-                [&](const SoundTriggerDefinition& value) { return value.file == current.file; });
+                [&](const SoundTriggerDefinition& value) { return value.id == current.id; });
             if (existing == definitions.end()) {
                 definitions.push_back(current);
             } else {
@@ -150,6 +152,7 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
                 continue;
             }
             current = {};
+            current.id = nextDefinitionId++;
             current.file = resolve(configPath.parent_path(), openbus::config::trim(value.text));
             current.loop = keyword == "loopsound" || isLoopSoundFile(current.file);
             if (keyword == "sound") {
@@ -353,14 +356,22 @@ bool VehicleSoundBank::hasTrigger(const std::string& name) const {
     return triggers_.find(lower(name)) != triggers_.end();
 }
 
-void VehicleSoundBank::stopLoopFile(SoundPlayback& playback, const std::filesystem::path& path) {
-    const std::string key = pathKey(path);
-    const auto loop = activeTriggeredLoops_.find(key);
+void VehicleSoundBank::stopTriggeredLoop(SoundPlayback& playback, SoundDefinitionId id) {
+    const auto loop = activeTriggeredLoops_.find(id);
     if (loop == activeTriggeredLoops_.end()) {
         return;
     }
-    playback.stopLoop(loop->second);
+    playback.stopLoop(loop->second.handle);
     activeTriggeredLoops_.erase(loop);
+}
+
+void VehicleSoundBank::stopOneShot(SoundPlayback& playback, SoundDefinitionId id) {
+    const auto active = activeOneShots_.find(id);
+    if (active == activeOneShots_.end()) {
+        return;
+    }
+    playback.stop(active->second.handle);
+    activeOneShots_.erase(active);
 }
 
 void VehicleSoundBank::stopAmbientLoopFile(SoundPlayback& playback,
@@ -377,18 +388,17 @@ void VehicleSoundBank::stopAmbientLoopFile(SoundPlayback& playback,
 void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
                                const std::filesystem::path& overrideFile, float controlValue,
                                const Variables& variables,
-                               openbus::rendering::ViewpointContext viewpoint) {
+                               openbus::rendering::ViewpointContext viewpoint,
+                               SoundRetriggerPolicy retriggerPolicy) {
     openbus::rendering::TraceScope trace("sound", "VehicleSoundBank::trigger");
     const auto found = triggers_.find(lower(name));
-    if (found == triggers_.end() && overrideFile.empty()) {
+    if (found == triggers_.end()) {
         soundLog.Log("Skipping unknown sound trigger: " + name);
         return;
     }
-    std::vector<SoundTriggerDefinition> definitions;
-    if (found != triggers_.end()) {
-        definitions = found->second;
-    }
+    std::vector<SoundTriggerDefinition> definitions = found->second;
     if (overrideFile.empty()) {
+        // Retain the existing filename-family heuristic, not verified native OMSI behavior.
         std::vector<SoundTriggerDefinition> inferredLoops;
         for (const SoundTriggerDefinition& definition : definitions) {
             if (definition.loop) {
@@ -398,11 +408,11 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
                 if (belongsToStartFamily(loop.file, definition.file) &&
                     std::none_of(definitions.begin(), definitions.end(),
                                  [&loop](const SoundTriggerDefinition& existing) {
-                                     return existing.file == loop.file;
+                                     return existing.id == loop.id;
                                  }) &&
                     std::none_of(inferredLoops.begin(), inferredLoops.end(),
                                  [&loop](const SoundTriggerDefinition& existing) {
-                                     return existing.file == loop.file;
+                                     return existing.id == loop.id;
                                  })) {
                     inferredLoops.push_back(loop);
                 }
@@ -410,14 +420,11 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
         }
         definitions.insert(definitions.end(), inferredLoops.begin(), inferredLoops.end());
     }
-    if (definitions.empty() && overrideFile.empty()) {
-        soundLog.Log("Skipping unknown sound trigger: " + name);
-        return;
-    }
     if (!overrideFile.empty()) {
-        SoundTriggerDefinition overrideDefinition;
-        overrideDefinition.file = overrideFile;
-        definitions = {std::move(overrideDefinition)};
+        // T.F changes the clip, not the configured channel, metadata or loop mode.
+        for (SoundTriggerDefinition& definition : definitions) {
+            definition.file = overrideFile;
+        }
     }
     definitions.erase(std::remove_if(definitions.begin(), definitions.end(),
                                      [viewpoint, &variables](const auto& definition) {
@@ -438,12 +445,13 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
             for (const auto& entry : triggers_) {
                 for (const SoundTriggerDefinition& candidate : entry.second) {
                     if (candidate.loop && belongsToSoundFamily(candidate.file, definition.file)) {
-                        stopLoopFile(playback, resolvedFile(candidate));
+                        stopTriggeredLoop(playback, candidate.id);
                     }
                 }
             }
             for (const SoundTriggerDefinition& candidate : untriggeredLoopSounds_) {
                 if (belongsToSoundFamily(candidate.file, definition.file)) {
+                    stopTriggeredLoop(playback, candidate.id);
                     stopAmbientLoopFile(playback, resolvedFile(candidate));
                 }
             }
@@ -456,29 +464,50 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
             gain *= evaluateCurve(definition.volumeCurve, controlValue);
         }
         gain = std::clamp(gain, 0.0, 1.0);
-        if (gain <= 0.0) {
+        // Keep the existing silent-loop behavior. A live KeepPlaying one-shot must
+        // still receive parameter changes, including a gain that has reached zero.
+        if (gain <= 0.0 && definition.loop) {
             soundLog.Log("Skipping silent sound: trigger=" + name +
                          " gain=" + std::to_string(gain));
             continue;
         }
         const SoundPlaybackParameters parameters{static_cast<float>(gain), 1.0F,
                                                  definition.position, definition.maxDistance};
+        auto& ownedSources = definition.loop ? activeTriggeredLoops_ : activeOneShots_;
+        const auto active = ownedSources.find(definition.id);
+        if (active != ownedSources.end()) {
+            if (!definition.loop && !playback.isPlaying(active->second.handle)) {
+                ownedSources.erase(active);
+            } else if (pathKey(active->second.file) == pathKey(file) &&
+                       (definition.loop || retriggerPolicy == SoundRetriggerPolicy::KeepPlaying)) {
+                // OpenBus KeepPlaying policy: update a live voice instead of restarting it.
+                // Exact native OMSI same-file retrigger behavior is still unverified.
+                if (definition.loop) {
+                    playback.updateLoop(active->second.handle, parameters);
+                } else {
+                    playback.update(active->second.handle, parameters);
+                }
+                continue;
+            } else {
+                if (definition.loop) {
+                    playback.stopLoop(active->second.handle);
+                } else {
+                    playback.stop(active->second.handle);
+                }
+                ownedSources.erase(active);
+            }
+        }
+        if (gain <= 0.0) {
+            soundLog.Log("Skipping silent sound: trigger=" + name +
+                         " gain=" + std::to_string(gain));
+            continue;
+        }
         soundLog.Log("Sound playback requested: trigger=" + name + " file=" + file.string() +
                      " gain=" + std::to_string(gain) +
                      " loop=" + (definition.loop ? "true" : "false"));
-        if (!definition.loop) {
-            playback.play(file, false, parameters);
-            continue;
-        }
-        const std::string key = pathKey(file);
-        const auto active = activeTriggeredLoops_.find(key);
-        if (active != activeTriggeredLoops_.end()) {
-            playback.updateLoop(active->second, parameters);
-            continue;
-        }
-        const SoundPlaybackHandle handle = playback.play(file, true, parameters);
+        const SoundPlaybackHandle handle = playback.play(file, definition.loop, parameters);
         if (handle != 0) {
-            activeTriggeredLoops_.emplace(key, handle);
+            ownedSources.emplace(definition.id, ActiveSound{file, handle});
         }
     }
 }
@@ -489,13 +518,13 @@ void VehicleSoundBank::stop(SoundPlayback& playback, const std::string& name) {
         return;
     }
     for (const SoundTriggerDefinition& definition : found->second) {
-        if (definition.loop) {
-            stopLoopFile(playback, resolvedFile(definition));
-        }
+        stopOneShot(playback, definition.id);
+        stopTriggeredLoop(playback, definition.id);
     }
     for (const SoundTriggerDefinition& definition : untriggeredLoopSounds_) {
         for (const SoundTriggerDefinition& trigger : found->second) {
             if (belongsToStartFamily(definition.file, trigger.file)) {
+                stopTriggeredLoop(playback, definition.id);
                 stopAmbientLoopFile(playback, resolvedFile(definition));
             }
         }
@@ -505,6 +534,13 @@ void VehicleSoundBank::stop(SoundPlayback& playback, const std::string& name) {
 void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& variables,
                                      openbus::rendering::ViewpointContext viewpoint) {
     openbus::rendering::TraceScope trace("sound", "VehicleSoundBank::updateAmbient");
+    for (auto active = activeOneShots_.begin(); active != activeOneShots_.end();) {
+        if (!playback.isPlaying(active->second.handle)) {
+            active = activeOneShots_.erase(active);
+        } else {
+            ++active;
+        }
+    }
     struct DesiredLoop {
         std::filesystem::path path;
         SoundPlaybackParameters parameters;
@@ -563,9 +599,9 @@ void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& v
 }
 
 void VehicleSoundBank::stopAllLoops(SoundPlayback& playback) {
-    for (const auto& [key, handle] : activeTriggeredLoops_) {
-        (void)key;
-        playback.stopLoop(handle);
+    for (const auto& [id, source] : activeTriggeredLoops_) {
+        (void)id;
+        playback.stopLoop(source.handle);
     }
     for (const auto& [key, handle] : activeAmbientLoops_) {
         (void)key;
@@ -573,4 +609,13 @@ void VehicleSoundBank::stopAllLoops(SoundPlayback& playback) {
     }
     activeTriggeredLoops_.clear();
     activeAmbientLoops_.clear();
+}
+
+void VehicleSoundBank::stopAll(SoundPlayback& playback) {
+    stopAllLoops(playback);
+    for (const auto& [id, source] : activeOneShots_) {
+        (void)id;
+        playback.stop(source.handle);
+    }
+    activeOneShots_.clear();
 }

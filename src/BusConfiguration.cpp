@@ -252,9 +252,25 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
     return configuration;
 }
 
-std::filesystem::path resolveModelConfigPath(const std::filesystem::path& busPath,
+std::filesystem::path resolveModelConfigPath(const std::filesystem::path& busConfigPath,
                                              const std::filesystem::path& modelPath) {
-    return busPath.parent_path() / normalizedPath(modelPath);
+    return busConfigPath.parent_path() / normalizedPath(modelPath);
+}
+
+std::filesystem::path modelRootForConfig(const std::filesystem::path& modelConfigPath) {
+    // OMSI model CFGs may live several folders below Model while their mesh
+    // paths remain relative to the Model directory itself.
+    for (std::filesystem::path directory = modelConfigPath.parent_path(); !directory.empty();) {
+        if (openbus::config::lower(directory.filename().string()) == "model") {
+            return directory;
+        }
+        const std::filesystem::path parent = directory.parent_path();
+        if (parent == directory) {
+            break;
+        }
+        directory = parent;
+    }
+    return modelConfigPath.parent_path();
 }
 
 std::optional<std::size_t> steeringAxleIndex(const std::string& variable) {
@@ -327,8 +343,8 @@ ModelConfig loadBusModelConfiguration(const std::filesystem::path& busConfigPath
     openbus::rendering::TraceScope trace("config", "loadBusModelConfiguration");
     const std::filesystem::path modelConfigPath = modelConfigurationPathForBus(busConfigPath);
     openbus::scripting::Vehicle variables;
-    return loadModelConfig(modelConfigPath, modelConfigPath.parent_path(), ModelConfigKind::Bus,
-                           variables);
+    return loadModelConfig(modelConfigPath, modelRootForConfig(modelConfigPath),
+                           ModelConfigKind::Bus, variables);
 }
 
 BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath) {
@@ -360,13 +376,16 @@ BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath) {
         throw std::runtime_error("Bus configuration contains no valid [newachse] entries: " +
                                  configPath.string());
     }
-    const ModelConfig model = loadBusModelConfiguration(configPath);
+    const std::filesystem::path modelConfigPath = modelConfigurationPathForBus(configPath);
+    openbus::scripting::Vehicle variables;
+    const ModelConfig model = loadModelConfig(modelConfigPath, modelRootForConfig(modelConfigPath),
+                                              ModelConfigKind::Bus, variables);
     if (model.diagnostics.hasErrors()) {
         for (const ConfigurationDiagnostic& diagnostic : model.diagnostics.entries) {
             if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error) {
-                throw std::runtime_error("Invalid bus model configuration " + configPath.string() +
-                                         " at line " + std::to_string(diagnostic.line) + ": " +
-                                         diagnostic.message);
+                throw std::runtime_error(
+                    "Invalid bus model configuration " + modelConfigPath.string() + " at line " +
+                    std::to_string(diagnostic.line) + ": " + diagnostic.message);
             }
         }
     }

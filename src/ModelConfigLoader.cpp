@@ -551,7 +551,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             currentMaterialIndex = static_cast<std::size_t>(-1);
             continue;
         }
-        // [mesh_ident]: one unique identifier used by later [animparent] records.
+        // [mesh_ident]: identifier used by later [animparent] records. OMSI
+        // configs may reuse one across mutually exclusive mesh variants.
         if (keyword == "mesh_ident") {
             ModelPart* current = requirePart();
             Line value;
@@ -560,11 +561,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 if (identifier.empty()) {
                     result.diagnostics.error(value.number, "mesh_ident",
                                              "identifier cannot be empty");
-                } else if (!meshIdentifiers.insert(identifier).second) {
-                    result.diagnostics.error(value.number, "mesh_ident",
-                                             "duplicate mesh identifier: " + identifier);
                 } else {
-                    // Identifiers are later used to validate [animparent] links.
+                    meshIdentifiers.insert(identifier);
                     current->meshIdentifier = identifier;
                 }
             }
@@ -689,13 +687,23 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
-        // [light_enh]: 13 fields; [light_enh_2]: 23 or 24 fields. Each has a fixed
-        // controller-variable field and numeric light parameters.
+        // [light_enh]: 12 mandatory fields and an optional trailing alpha-map path;
+        // [light_enh_2]: 23 mandatory fields and an optional bitmap.
         if (keyword == "light_enh" || keyword == "light_enh_2") {
             std::vector<std::string> values;
-            const std::size_t count = keyword == "light_enh" ? 13 : 23;
+            const std::size_t count = keyword == "light_enh" ? 12 : 23;
             if (readValues(reader, line.number, keyword, count, values, result.diagnostics)) {
-                if (keyword == "light_enh_2") {
+                std::string optionalTextureName;
+                if (keyword == "light_enh") {
+                    Line optionalTexture;
+                    if (reader.next(optionalTexture)) {
+                        if (optionalTexture.isKeyword()) {
+                            reader.pushBack(std::move(optionalTexture));
+                        } else {
+                            optionalTextureName = trim(optionalTexture.text);
+                        }
+                    }
+                } else {
                     Line optionalTexture;
                     if (reader.next(optionalTexture)) {
                         if (optionalTexture.isKeyword()) {
@@ -708,6 +716,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 const std::size_t controllerIndex = keyword == "light_enh" ? 7 : 17;
                 ModelEnhancedLight light;
                 light.enhanced = keyword == "light_enh_2";
+                light.textureName = std::move(optionalTextureName);
                 light.controller = lower(trim(values[controllerIndex]));
                 declareIfVariable(light.controller, variables);
                 bool valid = true;

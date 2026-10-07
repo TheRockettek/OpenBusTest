@@ -502,12 +502,15 @@ bool parseAxle(Reader& reader, VehicleConfig& result, const Line& keywordLine) {
 
 } // namespace
 
-void prepareScriptConfiguration(VehicleConfig& configuration) {
+void prepareScriptConfiguration(VehicleConfig& configuration, bool convertScripts) {
     loadReferencedDefinitions(configuration.sourcePath, configuration);
-    convertVehicleScripts(configuration.sourcePath, configuration);
+    if (convertScripts) {
+        convertVehicleScripts(configuration.sourcePath, configuration);
+    }
 }
 
-VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, VehicleFileKind kind) {
+VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, VehicleFileKind kind,
+                                bool convertScripts) {
     openbus::rendering::TraceScope trace("config", "loadVehicleConfig");
     VehicleConfig result;
     result.kind = kind;
@@ -811,7 +814,7 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                                  "must follow at least one [add_camera_driver]");
     }
     // Shared script resources are also consumed by scenery-object configurations.
-    prepareScriptConfiguration(result);
+    prepareScriptConfiguration(result, convertScripts);
     loadPassengerCabin(result, result);
     loadPassengerPaths(result, result);
     loadRegistrationEntries(result.numberConfigPath, result.vehicleNumbers, result);

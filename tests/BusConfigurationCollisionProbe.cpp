@@ -1,4 +1,5 @@
 #include "BusConfiguration.h"
+#include "ModelConfigTypes.h"
 
 #include <cmath>
 #include <filesystem>
@@ -114,11 +115,46 @@ int main() {
                                     nearlyEqual(noCollisionConfiguration.collisionLength, 13.5) &&
                                     nearlyEqual(noCollisionConfiguration.collisionHeight, 3.66);
 
+    const std::filesystem::path nestedModelRoot = root / "Model";
+    const std::filesystem::path nestedConfigDirectory =
+        nestedModelRoot / "Configuration Files" / "Regional";
+    std::filesystem::create_directories(nestedConfigDirectory);
+    {
+        std::ofstream bus(root / "nested.bus");
+        bus << "[model]\nModel\\Configuration Files\\Regional\\model.cfg\n"
+               "[mass]\n12.0\n"
+               "[boundingbox]\n2.4\n12.0\n3.2\n0\n0\n1.6\n"
+               "[schwerpunkt]\n1.2\n"
+               "[newachse]\nachse_long\n0\n"
+               "achse_maxwidth\n2.2\n"
+               "achse_minwidth\n1.8\n"
+               "achse_raddurchmesser\n1.0\n"
+               "achse_feder\n200\n"
+               "achse_maxforce\n100\n"
+               "achse_daempfer\n20\n"
+               "achse_antrieb\n0\n";
+    }
+    const std::filesystem::path nestedMeshPath = nestedModelRoot / "body.obj";
+    {
+        std::ofstream nestedMesh(nestedMeshPath);
+        nestedMesh << "v 0 0 0\n";
+    }
+    {
+        std::ofstream nestedModel(nestedConfigDirectory / "model.cfg");
+        nestedModel << "[mesh]\nbody.obj\n";
+    }
+    const ModelConfig nestedModelConfiguration =
+        loadBusModelConfiguration(root / "nested.bus");
+    const bool nestedModelMeshResolved =
+        !nestedModelConfiguration.diagnostics.hasErrors() &&
+        nestedModelConfiguration.parts.size() == 1 &&
+        nestedModelConfiguration.parts.front().objPath == nestedMeshPath;
+
     std::filesystem::remove_all(root);
     if (!meshWasBuilt || !modelBoundsApplied || !wheelColliderMatchesVisualEnvelope ||
-        !boxFallbackApplied) {
-        std::cerr << "Bus collision mesh, wheel collider fit, nocollision filtering, or model "
-                     "bounding box failed\n";
+        !boxFallbackApplied || !nestedModelMeshResolved) {
+        std::cerr << "Bus collision mesh, wheel collider fit, nocollision filtering, model "
+                     "bounding box, or nested model-root resolution failed\n";
         return 1;
     }
     return 0;

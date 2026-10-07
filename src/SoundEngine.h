@@ -17,6 +17,9 @@ class SoundEngine : public SoundPlayback {
                          const std::array<double, 3>& forward, const std::array<double, 3>& up);
     SoundPlaybackHandle play(const std::filesystem::path& path, bool looped,
                              const SoundPlaybackParameters& parameters) override;
+    bool isPlaying(SoundPlaybackHandle handle) override;
+    void update(SoundPlaybackHandle handle, const SoundPlaybackParameters& parameters) override;
+    void stop(SoundPlaybackHandle handle) override;
     void updateLoop(SoundPlaybackHandle handle, const SoundPlaybackParameters& parameters) override;
     void stopLoop(SoundPlaybackHandle handle) override;
 

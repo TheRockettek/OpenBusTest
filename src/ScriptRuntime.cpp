@@ -1662,6 +1662,17 @@ struct ScriptRuntime::Impl {
             if (character == '\r') {
                 continue;
             }
+            if (character == 0xef && characterIndex + 3 < value.size() &&
+                static_cast<unsigned char>(value[characterIndex + 1]) == 0xbf &&
+                static_cast<unsigned char>(value[characterIndex + 2]) == 0xbd &&
+                value[characterIndex + 3] == 'c' && font.glyphs[176].defined) {
+                // Some legacy CP1252 scripts contain UTF-8 replacement bytes where a
+                // degree sign was lost. Only the exact replacement-byte + lowercase-c suffix
+                // is unambiguous.
+                lines.back().push_back(&font.glyphs[176]);
+                characterIndex += 2;
+                continue;
+            }
             int code = character;
             if (character == 0xc2 && characterIndex + 1 < value.size() &&
                 static_cast<unsigned char>(value[characterIndex + 1]) == 0xb0) {
@@ -2432,7 +2443,7 @@ void ScriptRuntime::invokeInputEvent(const std::string& keyName, bool pressed) {
     }
 }
 
-void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool pressed) {
+void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool pressed, bool logEvent) {
     if (!impl_ || bindingName.empty()) {
         return;
     }
@@ -2447,12 +2458,12 @@ void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool presse
         invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                        : impl_->invoke(functionName.c_str());
         if (!invoked) {
-            if (hasScriptEntryPoint(functionName)) {
+            if (logEvent && hasScriptEntryPoint(functionName)) {
                 impl_->log("warning: key binding " + normalized +
                            (pressed ? " pressed" : " released") + " -> " + functionName +
                            " not found");
             }
-        } else {
+        } else if (logEvent) {
             impl_->log("trigger ran: " + functionName + " (key binding " + normalized +
                        (pressed ? " pressed)" : " released)"));
             if (pressed &&
@@ -2548,13 +2559,27 @@ void ScriptRuntime::invokeMouseDrag(const std::string& eventName, float deltaX, 
     // GLFW and the authored OMSI drag handlers use screen-space Y deltas: positive
     // means moving down. Keep that convention unchanged for every mouse event;
     // object scripts provide any control-specific scale or sign themselves.
-    impl_->sharedState.sharedVariables().set("mouse_x", deltaX);
-    impl_->sharedState.sharedVariables().set("mouse_y", deltaY);
+    Variables& system = impl_->sharedState.sharedVariables();
+    struct ScopedMouseMotion {
+        Variables& variables;
+        float previousX;
+        float previousY;
+        ~ScopedMouseMotion() {
+            variables.set("mouse_x", previousX);
+            variables.set("mouse_y", previousY);
+        }
+    } motion{system, system.get("mouse_x"), system.get("mouse_y")};
+    system.set("mouse_x", deltaX);
+    system.set("mouse_y", deltaY);
     impl_->localState.setString("mouse_event", normalized);
     if (impl_->nativeBackend || impl_->state) {
         impl_->floatStack.clear();
         impl_->stringStack.clear();
         const std::string functionName = "trigger_" + scriptName(normalized) + "_drag";
+        // _drag is optional, even for a mesh whose button remains held.
+        if (!hasScriptEntryPoint(functionName)) {
+            return;
+        }
         const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                                   : impl_->invoke(functionName.c_str());
         if (!invoked) {

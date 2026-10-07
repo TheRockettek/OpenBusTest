@@ -10,8 +10,11 @@ taskkill.exe /F /IM OpenBus.exe
 @REM set "OPENBUS_AI_MODEL_CONFIG=Vehicles/VW_Golf_2/model/model.cfg"
 @REM set "OPENBUS_AI_COUNT=200"
 
-set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
-set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
+@REM set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
+@REM set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
+
+set "OPENBUS_BUS_CONFIG=Vehicles\V3D - Enviro 200 MMC\e200mmc_115.bus"
+set "OPENBUS_MODEL_CONFIG=Vehicles\V3D - Enviro 200 MMC\Model\e200mmc_115.cfg"
 
 set "OPENBUS_MAP_PATH=Cotterell"
 @REM set "OPENBUS_MAP_PATH=Grundorf"

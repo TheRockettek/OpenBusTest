@@ -179,6 +179,7 @@ add_executable(OpenBus
     src/SceneryObjectConfigLoader.cpp
     src/PerfTrace.cpp
     src/RenderLoop.cpp
+    src/VehicleInputBindings.cpp
     src/AssetRequestManager.cpp
     src/ScreenshotWriter.cpp
     src/TextureAssetLoader.cpp
@@ -318,6 +319,14 @@ add_executable(OpenBusVariablesProbe
 )
 target_include_directories(OpenBusVariablesProbe PRIVATE src)
 add_test(NAME OpenBusVariablesProbe COMMAND OpenBusVariablesProbe)
+
+add_executable(OpenBusVehicleInputBindingsProbe
+    tests/VehicleInputBindingsProbe.cpp
+    src/VehicleInputBindings.cpp
+)
+target_include_directories(OpenBusVehicleInputBindingsProbe PRIVATE src)
+target_link_libraries(OpenBusVehicleInputBindingsProbe PRIVATE OpenBus::GLFW)
+add_test(NAME OpenBusVehicleInputBindingsProbe COMMAND OpenBusVehicleInputBindingsProbe)
 
 add_executable(OpenBusConfigurationParserProbe
     tests/ConfigurationParserProbe.cpp
@@ -498,6 +507,17 @@ add_executable(OpenBusVehicleConfigProbe
 target_include_directories(OpenBusVehicleConfigProbe PRIVATE src src/osc)
 add_test(NAME OpenBusVehicleConfigProbe COMMAND OpenBusVehicleConfigProbe)
 
+add_executable(OpenBusConfigAudit
+    tools/config_audit.cpp
+    src/ConfigurationParser.cpp
+    src/ModelConfigLoader.cpp
+    src/PerfTrace.cpp
+    src/Variables.cpp
+    src/VehicleConfigLoader.cpp
+    src/osc/osc.cpp
+)
+target_include_directories(OpenBusConfigAudit PRIVATE src src/osc)
+
 add_executable(OpenBusBusConfigurationCollisionProbe
     tests/BusConfigurationCollisionProbe.cpp
     src/BusConfiguration.cpp
@@ -543,6 +563,20 @@ target_include_directories(OpenBusScriptTextureRuntimeProbe SYSTEM PRIVATE
     ${stb_SOURCE_DIR})
 target_link_libraries(OpenBusScriptTextureRuntimeProbe PRIVATE OpenBusLua)
 add_test(NAME OpenBusScriptTextureRuntimeProbe COMMAND OpenBusScriptTextureRuntimeProbe)
+
+add_executable(OpenBusScriptInputRuntimeProbe
+    tests/ScriptInputRuntimeProbe.cpp
+    src/Logger.cpp
+    src/PerfTrace.cpp
+    src/ScriptRuntime.cpp
+    src/TextureLoader.cpp
+    src/Variables.cpp
+    src/osc/osc.cpp
+)
+target_include_directories(OpenBusScriptInputRuntimeProbe PRIVATE src src/osc)
+target_include_directories(OpenBusScriptInputRuntimeProbe SYSTEM PRIVATE ${stb_SOURCE_DIR})
+target_link_libraries(OpenBusScriptInputRuntimeProbe PRIVATE OpenBusLua)
+add_test(NAME OpenBusScriptInputRuntimeProbe COMMAND OpenBusScriptInputRuntimeProbe)
 
 add_executable(uno3d_converter
     uno3d/o3d_to_obj.cpp

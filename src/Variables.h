@@ -51,7 +51,8 @@ class SystemVariables : public Variables {
   public:
     SystemVariables();
 
-    void updateFrame(float timegap, float getTime, float mouseX, float mouseY);
+    // Cursor position is separate from handler-scoped OMSI mouse_x/y deltas.
+    void updateFrame(float timegap, float getTime, float cursorX, float cursorY);
 };
 
 class SimulationState {

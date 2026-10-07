@@ -211,6 +211,28 @@ Run the prototype:
 The executable opens a simple OpenGL preview window while the physics runs at
 the configured fixed rate.
 
+### OMSI configuration audit
+
+On Windows, run the helper with an OMSI directory (or another directory to
+inspect). It builds `OpenBusConfigAudit` in `build-ode` before scanning:
+
+```powershell
+.\audit.bat "C:\Path\To\OMSI 2"
+```
+
+Without an argument, the helper uses `OMSI_ROOT` if set, or prompts for a
+directory. Set `OPENBUS_BUILD_DIR` to use a different existing CMake build
+directory.
+
+The auditor recursively checks `.bus` files, recognized model `.cfg` files,
+and `.osc` scripts without writing translated Lua files. Build/output, vendor,
+and virtual-environment directories are skipped. Results distinguish
+`INVALID` from `UNSUPPORTED`; unknown `.cfg` families are reported as
+unsupported instead of being parsed under the wrong grammar. OSC reported as
+unsupported by OpenBus's native compiler is not treated as definitely invalid.
+The process returns 1 if invalid files were found, 0 otherwise, and 2 for an
+invalid invocation/root path.
+
 ### Optional binary mesh bundle
 
 To reduce startup parsing and file-open overhead, generate an `.obx` bundle

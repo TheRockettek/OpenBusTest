@@ -73,6 +73,9 @@ int main() {
         writeTestBmp(fonts / "probe.bmp", 4, 2, {255, 255, 80, 80, 255, 255, 80, 80});
         writeTestBmp(fonts / "probe_alpha.bmp", 4, 2,
              {255, 255, 128, 128, 255, 255, 128, 128});
+           writeTestBmp(fonts / "unit.bmp", 4, 2, {255, 255, 255, 255, 255, 255, 255, 255});
+           writeTestBmp(fonts / "unit_alpha.bmp", 4, 2,
+                     {255, 255, 255, 255, 255, 255, 255, 255});
         std::ofstream font(fonts / "probe.oft");
         font << "[newfont]\nProbeFont\nprobe.bmp\nprobe_alpha.bmp\n2\n0\n"
             "[char]\nA\n0\n2\n0\n"
@@ -80,6 +83,17 @@ int main() {
             font << "[char]\n0\n0\n2\n0\n"
                 "[char]\n1\n2\n4\n0\n";
         font.close();
+            std::ofstream unitFont(fonts / "unit.oft");
+            unitFont << "[newfont]\nUnitFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
+                    "[char]\nA\n0\n1\n0\n"
+                    "[char]\nc\n1\n2\n0\n"
+                    "[char]\n176\n2\n4\n0\n";
+            unitFont.close();
+            std::ofstream legacyFont(fonts / "legacy.oft");
+            legacyFont << "[newfont]\nLegacyFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
+                      "[char]\nA\n0\n1\n0\n"
+                      "[char]\nc\n1\n2\n0\n";
+            legacyFont.close();
     const std::filesystem::path scriptPath = root / "probe.osc";
     std::ofstream source(scriptPath);
     source << "{InIt}\n"
@@ -437,9 +451,11 @@ int main() {
     ScriptRuntime runtime(configuration, variables, simulation);
 
     simulation.sharedVariables().updateFrame(0.016, 1.0, 900.0, 700.0);
-    if (simulation.sharedVariables().get("mouse_x") != 900.0 ||
-        simulation.sharedVariables().get("mouse_y") != 700.0) {
-        std::cerr << "system cursor frame update was not applied\n";
+    if (simulation.sharedVariables().get("mouse_x") != 0.0 ||
+        simulation.sharedVariables().get("mouse_y") != 0.0 ||
+        simulation.sharedVariables().get("mouse_cursor_x") != 900.0 ||
+        simulation.sharedVariables().get("mouse_cursor_y") != 700.0) {
+        std::cerr << "system cursor position was not separated from drag motion\n";
         return 1;
     }
     runtime.invokeInputEvent("W", true);
@@ -459,16 +475,16 @@ int main() {
         variables.get("key_binding_release_seen") != 1.0 ||
         variables.get("mouse_drag_x") != 3.0 || variables.get("mouse_drag_y") != -2.0 ||
         variables.get("mouse_cursor_x") != 120.0 || variables.get("mouse_cursor_y") != 80.0 ||
-        simulation.sharedVariables().get("mouse_x") != 3.0 ||
-        simulation.sharedVariables().get("mouse_y") != -2.0) {
+        simulation.sharedVariables().get("mouse_x") != 0.0 ||
+        simulation.sharedVariables().get("mouse_y") != 0.0) {
         std::cerr << "input events were not exposed to the script state\n";
         return 1;
     }
     runtime.invokeMouseDrag("TicketerGimble", 3.0, -2.0, 120.0, 80.0);
     if (variables.get("ticketer_drag_seen") != 1.0 ||
         variables.get("mouse_drag_x") != 3.0 || variables.get("mouse_drag_y") != -2.0 ||
-        simulation.sharedVariables().get("mouse_x") != 3.0 ||
-        simulation.sharedVariables().get("mouse_y") != -2.0) {
+        simulation.sharedVariables().get("mouse_x") != 0.0 ||
+        simulation.sharedVariables().get("mouse_y") != 0.0) {
         std::cerr << "ticketer vertical drag did not use the expected Y direction\n";
         return 1;
     }
@@ -495,7 +511,11 @@ int main() {
         ModelTextTexture{5, false, {"ident", "probe-font", "32", "16", "0", "255", "255", "255"}},
         ModelTextTexture{6, true, {"gridcenterdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "3", "1"}},
         ModelTextTexture{7, true, {"gridleftdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "4", "1"}},
-        ModelTextTexture{8, true, {"gridrightdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "5", "0"}}});
+        ModelTextTexture{8, true, {"gridrightdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "5", "0"}},
+        ModelTextTexture{9, true, {"unitdisplay", "UnitFont", "12", "4", "0", "10", "20", "30", "0"}},
+        ModelTextTexture{10, true, {"legacyunitdisplay", "LegacyFont", "12", "4", "0", "10", "20", "30", "0"}},
+        ModelTextTexture{11, true, {"unitreference", "UnitFont", "12", "4", "0", "10", "20", "30", "0"}},
+        ModelTextTexture{12, true, {"legacyreference", "LegacyFont", "12", "4", "0", "10", "20", "30", "0"}}});
     variables.setString("display", "HELLO\n123");
     variables.setString("bitmapdisplay", "A@AB");
     variables.setString("centerdisplay", "A");
@@ -504,6 +524,10 @@ int main() {
     variables.setString("gridcenterdisplay", "AB");
     variables.setString("gridleftdisplay", "AB");
     variables.setString("gridrightdisplay", "AB");
+    variables.setString("unitdisplay", std::string("\xef\xbf\xbd" "c", 4));
+    variables.setString("legacyunitdisplay", std::string("\xef\xbf\xbd" "c", 4));
+    variables.setString("unitreference", std::string("\xc2\xb0" "c", 3));
+    variables.setString("legacyreference", "AAAc");
     runtime.initialize();
     ScriptRuntime::ScriptTextureSnapshot initialText;
     ScriptRuntime::ScriptTextureSnapshot initialPlateText;
@@ -544,6 +568,10 @@ int main() {
     ScriptRuntime::ScriptTextureSnapshot gridCenterTextTexture;
     ScriptRuntime::ScriptTextureSnapshot gridLeftTextTexture;
     ScriptRuntime::ScriptTextureSnapshot gridRightTextTexture;
+    ScriptRuntime::ScriptTextureSnapshot repairedUnitTexture;
+    ScriptRuntime::ScriptTextureSnapshot expectedUnitTexture;
+    ScriptRuntime::ScriptTextureSnapshot unchangedLegacyUnitTexture;
+    ScriptRuntime::ScriptTextureSnapshot expectedLegacyTexture;
     if (!runtime.copyScriptTexture(3, scriptTexture) || scriptTexture.width != 4 ||
         scriptTexture.height != 5 || scriptTexture.pixels.size() != 4U * 5U * 4U ||
         !runtime.copyTextTexture(0, textTexture) || textTexture.width != 32 ||
@@ -560,8 +588,17 @@ int main() {
         leftTextTexture.height != 4 || leftTextTexture.pixels.size() != 8U * 4U * 4U ||
         !runtime.copyTextTexture(6, gridCenterTextTexture) ||
         !runtime.copyTextTexture(7, gridLeftTextTexture) ||
-        !runtime.copyTextTexture(8, gridRightTextTexture)) {
+        !runtime.copyTextTexture(8, gridRightTextTexture) ||
+        !runtime.copyTextTexture(9, repairedUnitTexture) ||
+        !runtime.copyTextTexture(10, unchangedLegacyUnitTexture) ||
+        !runtime.copyTextTexture(11, expectedUnitTexture) ||
+        !runtime.copyTextTexture(12, expectedLegacyTexture)) {
         std::cerr << "configured texture surfaces were not created\n";
+        return 1;
+    }
+    if (repairedUnitTexture.pixels != expectedUnitTexture.pixels ||
+        unchangedLegacyUnitTexture.pixels != expectedLegacyTexture.pixels) {
+        std::cerr << "legacy replacement-byte Celsius suffix was not conditionally repaired\n";
         return 1;
     }
     ScriptRuntime::ScriptTextureSnapshot rejectedTexture;

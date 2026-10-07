@@ -38,6 +38,10 @@ int main() {
               "[usescripttexture]\n0\n"
               "[illumination_interior]\n2\n-1\n4\n5\n"
               "[interiorlight]\nCockpit_Lights\n1\n2\n3\n0.1\n0.2\n0.3\n4\n"
+              "[light_enh]\n-0.998978\n3.97046\n2.33735\n243\n243\n243\n"
+              "0.025\ndoor_light_1\n0.5\n0.1\n3\n0.01\n"
+              "[light_enh]\n-0.998942\n4.05412\n2.33734\n243\n243\n243\n"
+              "0.025\ndoor_light_1\n0.5\n0.1\n3\n0.01\nalpha_mask.bmp\n"
               "[texttexture]\nident\nfont\n128\n32\n"
               "[usetexttexture]\n0\n";
     config.close();
@@ -55,6 +59,30 @@ int main() {
     }
     const ModelConfig result =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
+    if (result.enhancedLights.size() != 2 ||
+        !result.enhancedLights[0].textureName.empty() ||
+        result.enhancedLights[1].textureName != "alpha_mask.bmp" ||
+        result.enhancedLights[0].parameters.size() != 11 ||
+        result.enhancedLights[1].parameters.size() != 11) {
+        std::cerr << "enhanced-light optional alpha was not retained correctly\n";
+        return 1;
+    }
+    const std::filesystem::path duplicateIdentifiersPath = root / "duplicate_ids.cfg";
+    std::ofstream duplicateIdentifiers(duplicateIdentifiersPath);
+    duplicateIdentifiers << "[mesh]\ndisplay.obj\n[mesh_ident]\nEnginebaydoor\n"
+                            "[mesh]\ndisplay.obj\n[mesh_ident]\nEnginebaydoor\n"
+                            "[mesh]\ndisplay.obj\n[animparent]\nEnginebaydoor\n";
+    duplicateIdentifiers.close();
+    const ModelConfig duplicateIdentifierConfig =
+        loadModelConfig(duplicateIdentifiersPath, root, ModelConfigKind::Bus, variables);
+    if (duplicateIdentifierConfig.diagnostics.hasErrors() ||
+        duplicateIdentifierConfig.parts.size() != 3 ||
+        duplicateIdentifierConfig.parts[0].meshIdentifier != "Enginebaydoor" ||
+        duplicateIdentifierConfig.parts[1].meshIdentifier != "Enginebaydoor" ||
+        duplicateIdentifierConfig.parts[2].animationParent != "Enginebaydoor") {
+        std::cerr << "reused mesh identifiers were not accepted for variant meshes\n";
+        return 1;
+    }
     Variables sceneryVariables(ScriptObjectKind::SceneryObject);
     const ModelConfig sceneryResult =
         loadModelConfig(configPath, root, ModelConfigKind::SceneryObject, sceneryVariables);

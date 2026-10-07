@@ -443,8 +443,8 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             throw std::runtime_error("[entrypoints] tile index is outside the [map] list in " +
                                      globalPath.string());
         }
-        entryPoint.tileIndex = static_cast<int>(tileOrdinalToUniqueIndex[
-            static_cast<std::size_t>(entryPoint.tileIndex)]);
+        entryPoint.tileIndex = static_cast<int>(
+            tileOrdinalToUniqueIndex[static_cast<std::size_t>(entryPoint.tileIndex)]);
         double localX = 0.0;
         double elevation = 0.0;
         double localY = 0.0;

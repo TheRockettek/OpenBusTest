@@ -142,11 +142,11 @@ SystemVariables::SystemVariables() : Variables(ScriptObjectKind::System) {
         {"month", static_cast<float>(localDate.tm_mon + 1)},
         {"year", static_cast<float>(localDate.tm_year + 1900)},
         {"dayofyear", static_cast<float>(localDate.tm_yday)},
-        // These are initialized for the system-variable contract. updateFrame()
-        // supplies the live cursor position, and ScriptRuntime temporarily
-        // overwrites them with OMSI drag deltas while invoking a drag handler.
+        // Drag motion is scoped to interaction callbacks, not absolute cursor position.
         {"mouse_x", 0.0},
         {"mouse_y", 0.0},
+        {"mouse_cursor_x", 0.0},
+        {"mouse_cursor_y", 0.0},
         {"preciptype", 0.0},
         {"preciprate", 0.0},
         {"coll_pos_x", 0.0},
@@ -161,12 +161,14 @@ SystemVariables::SystemVariables() : Variables(ScriptObjectKind::System) {
     });
 }
 
-void SystemVariables::updateFrame(float timegap, float getTime, float mouseX, float mouseY) {
+void SystemVariables::updateFrame(float timegap, float getTime, float cursorX, float cursorY) {
     setValues({
         {"timegap", timegap},
         {"gettime", getTime},
-        {"mouse_x", mouseX},
-        {"mouse_y", mouseY},
+        {"mouse_x", 0.0},
+        {"mouse_y", 0.0},
+        {"mouse_cursor_x", cursorX},
+        {"mouse_cursor_y", cursorY},
         {"preciprate", 0.0},
         {"preciptype", 0.0},
     });

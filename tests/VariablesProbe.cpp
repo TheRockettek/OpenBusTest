@@ -39,6 +39,16 @@ int main() {
     valid &= require(!sceneryObject.supportsSystemTrigger("collision"),
                      "scenery excludes vehicle trigger");
 
+    simulation.sharedVariables().set("mouse_x", 9.0F);
+    simulation.sharedVariables().set("mouse_y", -4.0F);
+    simulation.sharedVariables().updateFrame(0.125F, 10.0F, 800.0F, 600.0F);
+    valid &= require(simulation.sharedVariables().get("mouse_x") == 0.0F &&
+                         simulation.sharedVariables().get("mouse_y") == 0.0F &&
+                         simulation.sharedVariables().get("mouse_cursor_x") == 800.0F &&
+                         simulation.sharedVariables().get("mouse_cursor_y") == 600.0F &&
+                         simulation.sharedVariables().get("timegap") == 0.125F,
+                     "frame refresh resets motion and retains separate cursor position/time");
+
     vehicle.setString("ident", "probe");
     valid &= require(vehicle.hasString("ident") && vehicle.getString("ident") == "probe",
                      "vehicle string state");

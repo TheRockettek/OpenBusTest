@@ -19,7 +19,15 @@ class SoundPlayback {
 
     virtual SoundPlaybackHandle play(const std::filesystem::path& path, bool looped,
                                      const SoundPlaybackParameters& parameters) = 0;
-    virtual void updateLoop(SoundPlaybackHandle handle,
-                            const SoundPlaybackParameters& parameters) = 0;
-    virtual void stopLoop(SoundPlaybackHandle handle) = 0;
+    virtual bool isPlaying(SoundPlaybackHandle handle) = 0;
+    virtual void update(SoundPlaybackHandle handle, const SoundPlaybackParameters& parameters) = 0;
+    virtual void stop(SoundPlaybackHandle handle) = 0;
+
+    // Compatibility wrappers for callers that own loop handles.
+    virtual void updateLoop(SoundPlaybackHandle handle, const SoundPlaybackParameters& params) {
+        update(handle, params);
+    }
+    virtual void stopLoop(SoundPlaybackHandle handle) {
+        stop(handle);
+    }
 };

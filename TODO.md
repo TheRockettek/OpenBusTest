@@ -286,9 +286,9 @@ for alignment is not mistaken for supporting it.
 - [~] Implement basic `[illumination_interior]`/`[interiorlight]` emission,
   controller variables, and mesh assignments. `[light_enh]`, `[light_enh_2]`,
   and `[spotlight]` geometry, falloff, and render ordering remain pending.
-  Fix parsing as part of this work: `[light_enh]` currently treats its alpha
-  bitmap path as numeric, and `[light_enh_2]` drops the time constant when the
-  optional bitmap field is absent.
+  `[light_enh]` now accepts its optional alpha bitmap and defaults to no bitmap
+  when omitted. `[light_enh_2]` still drops the time constant when its optional
+  bitmap field is absent.
 - [x] Correct `[viewpoint]` filtering: player exterior, player interior, and
   non-player vehicles now use their individual documented bits (`1`, `2`, and
   `4`). Model visibility and sound playback share zero-means-all,

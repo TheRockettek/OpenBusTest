@@ -22,6 +22,7 @@
 #include "ScreenshotWriter.h"
 #include "SoundEngine.h"
 #include "VehicleSoundBank.h"
+#include "VehicleInputBindings.h"
 #include "TextureAssetLoader.h"
 #include "TextureLoader.h"
 #include "Viewpoint.h"
@@ -139,7 +140,7 @@ enum class VehicleRenderPass {
 };
 
 constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
-constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 1;
+constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 8;
 constexpr double DEFAULT_FIELD_OF_VIEW = 60.0;
 constexpr double MIN_FIELD_OF_VIEW = 20.0;
 constexpr double MAX_FIELD_OF_VIEW = 120.0;
@@ -221,16 +222,11 @@ std::vector<std::uint8_t> makeCoordinateHudPixels(std::string_view text) {
     return pixels;
 }
 
-struct VehicleKeyBinding {
-    const char* action;
-    int key;
-    int flags;
-};
-
-constexpr int kBindingHeld = 1;
-constexpr int kBindingShift = 2;
-constexpr int kBindingControl = 4;
-constexpr int kBindingAlt = 8;
+using openbus::input::kBindingAlt;
+using openbus::input::kBindingControl;
+using openbus::input::kBindingHeld;
+using openbus::input::kBindingShift;
+using openbus::input::VehicleKeyBinding;
 
 void logVariableSet(const std::string& scope, const Variables& variables) {
     std::vector<std::string> numericNames;
@@ -326,101 +322,6 @@ const std::vector<VehicleKeyBinding>& defaultVehicleKeyBindings() {
     return bindings;
 }
 
-int glfwKeyFromKeyboardConfigCode(int code) {
-    if (code >= 2 && code <= 11) {
-        return GLFW_KEY_1 + (code - 2);
-    }
-    switch (code) {
-    case 15:
-        return GLFW_KEY_TAB;
-    case 16:
-        return GLFW_KEY_Q;
-    case 17:
-        return GLFW_KEY_W;
-    case 18:
-        return GLFW_KEY_E;
-    case 19:
-        return GLFW_KEY_R;
-    case 20:
-        return GLFW_KEY_T;
-    case 24:
-        return GLFW_KEY_O;
-    case 26:
-        return GLFW_KEY_LEFT_BRACKET;
-    case 29:
-        return GLFW_KEY_LEFT_CONTROL;
-    case 32:
-        return GLFW_KEY_D;
-    case 33:
-        return GLFW_KEY_F;
-    case 35:
-        return GLFW_KEY_H;
-    case 38:
-        return GLFW_KEY_L;
-    case 42:
-        return GLFW_KEY_LEFT_SHIFT;
-    case 48:
-        return GLFW_KEY_B;
-    case 49:
-        return GLFW_KEY_N;
-    case 50:
-        return GLFW_KEY_M;
-    case 52:
-        return GLFW_KEY_PERIOD;
-    case 53:
-        return GLFW_KEY_SLASH;
-    case 55:
-        return GLFW_KEY_KP_MULTIPLY;
-    case 56:
-        return GLFW_KEY_LEFT_ALT;
-    case 63:
-        return GLFW_KEY_F5;
-    case 64:
-        return GLFW_KEY_F6;
-    case 65:
-        return GLFW_KEY_F7;
-    case 66:
-        return GLFW_KEY_F8;
-    case 70:
-        return GLFW_KEY_SCROLL_LOCK;
-    case 71:
-        return GLFW_KEY_KP_7;
-    case 72:
-        return GLFW_KEY_KP_8;
-    case 73:
-        return GLFW_KEY_KP_9;
-    case 74:
-        return GLFW_KEY_KP_SUBTRACT;
-    case 75:
-        return GLFW_KEY_KP_4;
-    case 76:
-        return GLFW_KEY_KP_5;
-    case 77:
-        return GLFW_KEY_KP_6;
-    case 78:
-        return GLFW_KEY_KP_ADD;
-    case 80:
-        return GLFW_KEY_KP_2;
-    case 83:
-        return GLFW_KEY_KP_DECIMAL;
-    case 88:
-        return GLFW_KEY_F12;
-    case 181:
-        return GLFW_KEY_KP_DIVIDE;
-    default:
-        return GLFW_KEY_UNKNOWN;
-    }
-}
-
-std::string trimKeyBindingText(std::string value) {
-    const std::size_t first = value.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos) {
-        return {};
-    }
-    const std::size_t last = value.find_last_not_of(" \t\r\n");
-    return value.substr(first, last - first + 1);
-}
-
 void inheritVehicleKeyBindingsFromOmsi(std::vector<VehicleKeyBinding>& bindings) {
     const std::filesystem::path configPath = omsiRootPath() / "Inputs" / "keyboard.cfg";
     std::ifstream input(configPath);
@@ -430,64 +331,10 @@ void inheritVehicleKeyBindingsFromOmsi(std::vector<VehicleKeyBinding>& bindings)
         return;
     }
 
-    bool inVehiclesSection = false;
-    bool readingEntry = false;
-    int valueIndex = 0;
-    std::string action;
-    int keyCode = 0;
-    int flags = 0;
-    std::string line;
-    while (std::getline(input, line)) {
-        line = trimKeyBindingText(line);
-        if (line.empty()) {
-            continue;
-        }
-        if (line.front() == '[' && line.back() == ']') {
-            const std::string section = line.substr(1, line.size() - 2);
-            if (section == "vehicles") {
-                inVehiclesSection = true;
-                readingEntry = false;
-            } else if (section == "entry") {
-                readingEntry = inVehiclesSection;
-            } else {
-                inVehiclesSection = false;
-                readingEntry = false;
-            }
-            valueIndex = 0;
-            continue;
-        }
-        if (!inVehiclesSection || !readingEntry) {
-            continue;
-        }
-        if (valueIndex == 0) {
-            action = line;
-        } else if (valueIndex == 1) {
-            try {
-                keyCode = std::stoi(line);
-            } catch (const std::exception&) {
-                readingEntry = false;
-                continue;
-            }
-        } else if (valueIndex == 2) {
-            try {
-                flags = std::stoi(line);
-            } catch (const std::exception&) {
-                readingEntry = false;
-                continue;
-            }
-            const auto found = std::find_if(
-                bindings.begin(), bindings.end(),
-                [&action](const VehicleKeyBinding& binding) { return action == binding.action; });
-            if (found != bindings.end()) {
-                found->key = glfwKeyFromKeyboardConfigCode(keyCode);
-                found->flags = flags;
-            }
-            readingEntry = false;
-            continue;
-        }
-        ++valueIndex;
-    }
-    gameLog.Log("Inherited OMSI vehicle keybindings from " + configPath.generic_string());
+    const bool inherited = openbus::input::inheritVehicleKeyBindings(input, bindings);
+    gameLog.Log(std::string(inherited ? "Inherited OMSI vehicle keybindings from "
+                                      : "No supported OMSI vehicle keybindings in ") +
+                configPath.generic_string());
 }
 
 const std::vector<VehicleKeyBinding>& vehicleKeyBindings() {
@@ -509,7 +356,7 @@ const VehicleKeyBinding* findVehicleKeyBinding(const char* action) {
 }
 
 bool vehicleBindingPressed(GLFWwindow* window, const VehicleKeyBinding& binding) {
-    if (glfwGetKey(window, binding.key) != GLFW_PRESS) {
+    if (binding.key == GLFW_KEY_UNKNOWN || glfwGetKey(window, binding.key) != GLFW_PRESS) {
         return false;
     }
     const bool shift = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
@@ -2193,7 +2040,7 @@ struct Vehicle {
 
     ~Vehicle() {
         if (soundPlayback != nullptr) {
-            soundBank.stopAllLoops(*soundPlayback);
+            soundBank.stopAll(*soundPlayback);
         }
         joinTextureWorkers();
         const auto deleteBuffers = [](const std::vector<DisplayPart>& parts) {
@@ -4631,6 +4478,8 @@ void RenderLoop::updateScripts() {
     if (ticks == MAX_SCRIPT_CATCH_UP_TICKS && scriptAccumulator_ >= scriptTimeStep) {
         scriptAccumulator_ = std::fmod(scriptAccumulator_, scriptTimeStep);
     }
+    // Fixed script ticks must not leak their timestep into later mouse handlers.
+    simulationState_.sharedVariables().set("timegap", frameTimeStep_);
 }
 
 bool RenderLoop::isExteriorView() const {
@@ -4840,6 +4689,24 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     previousVariableTime_ = currentTime;
     hasPreviousVariableTime_ = true;
     frameTimeStep_ = timegap;
+    mouseInteractionPending_ = true;
+    int width = 1;
+    int height = 1;
+    double cursorX = 0.0;
+    double cursorY = 0.0;
+    {
+        TraceScope phase("frame", "RenderLoop::beginFrame.windowAndVariables");
+        glfwGetFramebufferSize(window_, &width, &height);
+        framebufferWidth_ = std::max(width, 1);
+        framebufferHeight_ = std::max(height, 1);
+        glfwGetCursorPos(window_, &cursorX, &cursorY);
+        simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
+        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+            vehicle->updateFrameVariables(vehicle.get() != playerVehicle_, timegap);
+        }
+        soundViewpoint_ = isExteriorView() ? RenderViewContext::PlayerExterior
+                                           : RenderViewContext::PlayerInterior;
+    }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.keyboardInput");
         const auto& bindings = vehicleKeyBindings();
@@ -4849,12 +4716,11 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         for (std::size_t index = 0; index < bindings.size(); ++index) {
             const VehicleKeyBinding& binding = bindings[index];
             const bool pressed = vehicleBindingPressed(window_, binding);
-            if (pressed != previousVehicleKeyStates_[index]) {
+            const bool changed = pressed != previousVehicleKeyStates_[index];
+            const bool mouseControlToggle = binding.action == "mouse_control_toggle";
+            const bool dumpVariables = binding.action == "debug_dump_variables";
+            if (changed) {
                 keyEvents_.push_back({binding.action, pressed, glfwGetTime()});
-                const bool mouseControlToggle =
-                    std::string_view(binding.action) == "mouse_control_toggle";
-                const bool dumpVariables =
-                    std::string_view(binding.action) == "debug_dump_variables";
                 if (mouseControlToggle && pressed) {
                     mouseControlEnabled_ = !mouseControlEnabled_;
                     if (mouseControlEnabled_) {
@@ -4866,20 +4732,19 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                                 (mouseControlEnabled_ ? "enabled" : "disabled"));
                 } else if (dumpVariables && pressed) {
                     logDiagnosticVariables();
-                } else if (!mouseControlToggle && !dumpVariables && playerVehicle_ != nullptr &&
-                           playerVehicle_->scripts) {
-                    playerVehicle_->scripts->invokeKeyBinding(binding.action, pressed);
                 }
                 if (!mouseControlToggle) {
                     gameLog.Log(std::string("Key binding ") + binding.action +
                                 (pressed ? " pressed" : " released"));
                 }
-                previousVehicleKeyStates_[index] = pressed;
             }
-            if (pressed && std::string_view(binding.action) == "horn" &&
-                playerVehicle_ != nullptr && playerVehicle_->scripts) {
-                playerVehicle_->scripts->invokeKeyBinding(binding.action, true);
+            if (!mouseControlToggle && !dumpVariables && playerVehicle_ != nullptr &&
+                playerVehicle_->scripts &&
+                openbus::input::shouldDispatchKeyBinding(binding.flags, pressed,
+                                                         previousVehicleKeyStates_[index])) {
+                playerVehicle_->scripts->invokeKeyBinding(binding.action, pressed, changed);
             }
+            previousVehicleKeyStates_[index] = pressed;
         }
     }
     {
@@ -4958,16 +4823,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         }
         previousRaisePlayerKeyState_ = raisePlayerKeyPressed;
     }
-    int width = 1;
-    int height = 1;
-    double cursorX = 0.0;
-    double cursorY = 0.0;
     {
-        TraceScope phase("frame", "RenderLoop::beginFrame.windowAndVariables");
-        glfwGetFramebufferSize(window_, &width, &height);
-        framebufferWidth_ = std::max(width, 1);
-        framebufferHeight_ = std::max(height, 1);
-        glfwGetCursorPos(window_, &cursorX, &cursorY);
+        TraceScope phase("frame", "RenderLoop::beginFrame.mouseControl");
         if (mouseControlEnabled_) {
             int windowWidth = 1;
             int windowHeight = 1;
@@ -4978,11 +4835,6 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             mouseThrottle_ = inputs.throttle;
             mouseSteering_ = inputs.steering;
             mouseBrake_ = inputs.brake;
-        }
-        simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
-        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-            const bool isAiVehicle = vehicle.get() != playerVehicle_;
-            vehicle->updateFrameVariables(isAiVehicle, timegap);
         }
     }
     {
@@ -5217,8 +5069,10 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             }
         }
     }
-    if (!renderingReflection_ && playerVehicle_ != nullptr) {
+    if (!renderingReflection_ && playerVehicle_ != nullptr && mouseInteractionPending_) {
         TraceScope phase("input", "RenderLoop::draw.interaction");
+        // Reflections, captures and repeated draws are not additional input frames.
+        mouseInteractionPending_ = false;
         double cursorX = 0.0;
         double cursorY = 0.0;
         glfwGetCursorPos(window_, &cursorX, &cursorY);
@@ -5317,34 +5171,34 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                              : hoveringClickable  ? clickableCursor_
                                                   : nullptr;
         glfwSetCursor(window_, cursor);
+        const auto releaseMouse = [this](const std::string& event) {
+            if (playerVehicle_->scripts) {
+                playerVehicle_->scripts->invokeMouseRelease(event);
+            }
+        };
         if (mouseControlEnabled_) {
             pendingMouseClick_ = false;
-            if (!activeMouseEvent_.empty() && playerVehicle_->scripts) {
-                playerVehicle_->scripts->invokeMouseRelease(activeMouseEvent_);
-            }
-            activeMouseEvent_.clear();
+            mouseInteraction_.cancel(releaseMouse);
         } else if (pendingMouseClick_) {
-            activeMouseEvent_ = playerVehicle_->mouseEventAt(
+            std::string event = playerVehicle_->mouseEventAt(
                 pendingMouseClickX_ * framebufferScaleX, pendingMouseClickY_ * framebufferScaleY,
                 framebufferWidth_, framebufferHeight_, interactionContext);
-            playerVehicle_->handleMouseClick(activeMouseEvent_);
-            previousMouseInteractionX_ = pendingMouseClickX_;
-            previousMouseInteractionY_ = pendingMouseClickY_;
+            mouseInteraction_.press(
+                std::move(event), pendingMouseClickX_, pendingMouseClickY_,
+                [this](const std::string& pressedEvent) {
+                    playerVehicle_->handleMouseClick(pressedEvent);
+                },
+                releaseMouse);
             pendingMouseClick_ = false;
-        } else if (!leftMousePressed_) {
-            if (!activeMouseEvent_.empty()) {
-                playerVehicle_->scripts->invokeMouseRelease(activeMouseEvent_);
-            }
-            activeMouseEvent_.clear();
-        } else if (!activeMouseEvent_.empty()) {
-            const double deltaX = cursorX - previousMouseInteractionX_;
-            const double deltaY = cursorY - previousMouseInteractionY_;
-            if (deltaX != 0.0 || deltaY != 0.0) {
-                playerVehicle_->scripts->invokeMouseDrag(activeMouseEvent_, deltaX, deltaY, cursorX,
-                                                         cursorY);
-                previousMouseInteractionX_ = cursorX;
-                previousMouseInteractionY_ = cursorY;
-            }
+        } else {
+            mouseInteraction_.update(
+                true, leftMousePressed_, cursorX, cursorY,
+                [this](const std::string& event, double deltaX, double deltaY, double x, double y) {
+                    if (playerVehicle_->scripts) {
+                        playerVehicle_->scripts->invokeMouseDrag(event, deltaX, deltaY, x, y);
+                    }
+                },
+                releaseMouse);
         }
         popMatrix();
     }

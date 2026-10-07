@@ -2,6 +2,7 @@
 
 #include "BusTypes.h"
 #include "MapConfigLoader.h"
+#include "MouseInteraction.h"
 #include "CoreRenderer.h"
 #include "SoundEngine.h"
 #include "VehicleConfigLoader.h"
@@ -160,12 +161,11 @@ class RenderLoop {
     bool hasPreviousVariableTime_ = false;
     bool captureRequested_ = false;
     bool captureMode_ = false;
+    bool mouseInteractionPending_ = false;
     bool pendingMouseClick_ = false;
     double pendingMouseClickX_ = 0.0;
     double pendingMouseClickY_ = 0.0;
-    std::string activeMouseEvent_;
-    double previousMouseInteractionX_ = 0.0;
-    double previousMouseInteractionY_ = 0.0;
+    openbus::input::MouseInteraction mouseInteraction_;
     double frameTimeStep_ = 0.0;
     int framebufferWidth_ = 1;
     int framebufferHeight_ = 1;

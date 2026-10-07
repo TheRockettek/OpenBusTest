@@ -38,7 +38,7 @@ class ScriptRuntime {
     void invokeEntryPoint(const std::string& functionName);
     void invokeSystemTrigger(const std::string& triggerName);
     void invokeInputEvent(const std::string& keyName, bool pressed);
-    void invokeKeyBinding(const std::string& bindingName, bool pressed);
+    void invokeKeyBinding(const std::string& bindingName, bool pressed, bool logEvent = true);
     void invokeMouseEvent(const std::string& eventName);
     bool hasScriptEntryPoint(const std::string& functionName) const;
     void invokeMouseRelease(const std::string& eventName);

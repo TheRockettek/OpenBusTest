@@ -291,6 +291,7 @@ struct SoundEngine::Backend {
             return;
         }
         std::lock_guard<std::mutex> lock(mutex);
+        cleanupStoppedSourcesLocked();
         const auto now = std::chrono::steady_clock::now();
         std::array<float, 3> velocity = {};
         if (dopplerEnabled && hasListenerPosition) {
@@ -366,15 +367,40 @@ struct SoundEngine::Backend {
         return createSourceLocked(path, looped, parameters);
     }
 
-    void updateLoop(SoundPlaybackHandle handle, const SoundPlaybackParameters& parameters) {
-        openbus::rendering::TraceScope trace("sound", "Backend::updateLoop");
+    bool isPlaying(SoundPlaybackHandle handle) {
+        if (context == nullptr || handle == 0) {
+            return false;
+        }
+        std::lock_guard<std::mutex> lock(mutex);
+        cleanupStoppedSourcesLocked();
+        const auto found = std::find_if(active.begin(), active.end(), [handle](const auto& source) {
+            return source.handle == handle;
+        });
+        if (found == active.end()) {
+            return false;
+        }
+        ALint state = AL_STOPPED;
+        alGetSourcei(found->source, AL_SOURCE_STATE, &state);
+        // A one-shot can finish after the cleanup pass. Keep loop ownership unchanged.
+        if (state == AL_STOPPED && !found->loop) {
+            alDeleteSources(1, &found->source);
+            active.erase(found);
+        }
+        return state == AL_PLAYING;
+    }
+
+    void update(SoundPlaybackHandle handle, const SoundPlaybackParameters& parameters,
+                bool loopsOnly = false) {
+        openbus::rendering::TraceScope trace("sound", "Backend::update");
         if (context == nullptr || handle == 0) {
             return;
         }
         std::lock_guard<std::mutex> lock(mutex);
-        const auto found = std::find_if(active.begin(), active.end(), [handle](const auto& source) {
-            return source.handle == handle && source.loop;
-        });
+        cleanupStoppedSourcesLocked();
+        const auto found =
+            std::find_if(active.begin(), active.end(), [handle, loopsOnly](const auto& source) {
+                return source.handle == handle && (!loopsOnly || source.loop);
+            });
         if (found == active.end()) {
             return;
         }
@@ -398,14 +424,15 @@ struct SoundEngine::Backend {
         found->lastPositionUpdate = now;
     }
 
-    void stopLoop(SoundPlaybackHandle handle) {
+    void stop(SoundPlaybackHandle handle, bool loopsOnly = false) {
         if (context == nullptr || handle == 0) {
             return;
         }
         std::lock_guard<std::mutex> lock(mutex);
-        const auto found = std::find_if(active.begin(), active.end(), [handle](const auto& source) {
-            return source.handle == handle && source.loop;
-        });
+        const auto found =
+            std::find_if(active.begin(), active.end(), [handle, loopsOnly](const auto& source) {
+                return source.handle == handle && (!loopsOnly || source.loop);
+            });
         if (found == active.end()) {
             return;
         }
@@ -430,11 +457,24 @@ SoundPlaybackHandle SoundEngine::play(const std::filesystem::path& path, bool lo
     return backend_->play(path, looped, parameters);
 }
 
+bool SoundEngine::isPlaying(SoundPlaybackHandle handle) {
+    return backend_->isPlaying(handle);
+}
+
+void SoundEngine::update(SoundPlaybackHandle handle, const SoundPlaybackParameters& parameters) {
+    backend_->update(handle, parameters);
+}
+
+void SoundEngine::stop(SoundPlaybackHandle handle) {
+    backend_->stop(handle);
+}
+
 void SoundEngine::updateLoop(SoundPlaybackHandle handle,
                              const SoundPlaybackParameters& parameters) {
-    backend_->updateLoop(handle, parameters);
+    // Preserve the engine's loop-only compatibility API; update() accepts any source.
+    backend_->update(handle, parameters, true);
 }
 
 void SoundEngine::stopLoop(SoundPlaybackHandle handle) {
-    backend_->stopLoop(handle);
+    backend_->stop(handle, true);
 }
