@@ -108,6 +108,35 @@ void runProbe() {
     require(std::abs(curved.vertices.back().x - straight.vertices.back().x) > 0.1,
             "curved road vertices follow the curved centerline");
 
+    openbus::map::MapSplinePlacement mirroredSpline = spline;
+    mirroredSpline.mirrored = true;
+    const auto mirroredCurved = openbus::map::buildMapRoadSectionGeometry(
+        mirroredSpline, curvedCenterline, section);
+    require(mirroredCurved.vertices.size() == curved.vertices.size(),
+            "mirroring preserves curved cross-section vertex count");
+    for (std::size_t sampleIndex = 0; sampleIndex < curvedCenterline.size(); ++sampleIndex) {
+        const std::size_t profileBase = sampleIndex * section.points.size();
+        for (std::size_t pointIndex = 0; pointIndex < section.points.size(); ++pointIndex) {
+            const openbus::map::MapRoadVertex& original =
+                curved.vertices[profileBase + pointIndex];
+            const openbus::map::MapRoadVertex& reflected =
+                mirroredCurved.vertices[profileBase + pointIndex];
+            requireNear((original.x + reflected.x) * 0.5, curvedCenterline[sampleIndex].x,
+                        "mirrored curve reflects profile across centerline X");
+            requireNear((original.y + reflected.y) * 0.5, curvedCenterline[sampleIndex].y,
+                        "mirrored curve reflects profile across centerline Y");
+            requireNear(reflected.z, original.z,
+                        "mirroring leaves authored profile height unchanged");
+            requireNear(reflected.textureU, original.textureU,
+                        "mirroring preserves authored cross-section texture coordinates");
+        }
+    }
+    require(mirroredCurved.indices.size() == curved.indices.size() &&
+                mirroredCurved.indices[0] == curved.indices[0] &&
+                mirroredCurved.indices[1] == curved.indices[2] &&
+                mirroredCurved.indices[2] == curved.indices[1],
+            "mirrored strips reverse triangle winding to preserve surface orientation");
+
     spline.elevated = true;
     spline.heightDelta = 4.0;
     spline.gradientStart = 0.0;

@@ -220,8 +220,11 @@ OpenBus evaluates ordinary spline elevation from its endpoint gradients and
 gradients and `delta_h`. Cant is parsed and provisionally applied as a linearly
 interpolated percentage crossfall to `.sli` profile heights in both rendered
 and collision geometry; its sign and unit interpretation still need OMSI
-visual confirmation. The v14 skew values and literal `mirror` marker are
-retained by the parser, but are not yet applied to geometry.
+visual confirmation. The literal `mirror` marker reflects `.sli` cross-section
+lateral offsets across the spline centerline in shared render/collision geometry,
+while preserving authored texture coordinates and correcting triangle winding.
+Visual parity against OMSI remains to be confirmed. The v14 skew values are
+retained by the parser but are not yet applied to geometry.
 
 The `.sli` reader supports `[texture]`, `[profile]`, and `[profilepnt]` for
 textured cross-section strips. It also retains the four raw/numeric fields of

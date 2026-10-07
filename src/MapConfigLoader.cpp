@@ -247,8 +247,8 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     const std::filesystem::path globalPath = mapDirectory / "global.cfg";
     const std::vector<std::string> lines = splitLines(decodeText(globalPath));
     const auto groundTextureSidecarsByTile = discoverGroundTextureSidecars(mapDirectory);
-    std::unordered_set<std::string> tileNames;
-    std::unordered_set<std::uint64_t> tileCoordinates;
+    std::unordered_map<std::uint64_t, std::size_t> tileIndicesByCoordinates;
+    std::vector<std::size_t> tileOrdinalToUniqueIndex;
     std::size_t cursor = 0;
     const auto isSectionHeader = [](const std::string& value) {
         return value.size() > 2 && value.front() == '[' && value.back() == ']';
@@ -387,14 +387,17 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
                 throw std::runtime_error("[map] coordinates do not match tile filename: " +
                                          filename);
             }
-            if (!tileNames.insert(filename).second) {
-                throw std::runtime_error("Duplicate tile filename in [map]: " + filename);
-            }
             const std::uint64_t key =
                 (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tile.x)) << 32U) |
                 static_cast<std::uint32_t>(tile.y);
-            if (!tileCoordinates.insert(key).second) {
-                throw std::runtime_error("Duplicate tile coordinates in [map]: " + filename);
+            const auto existingTile = tileIndicesByCoordinates.find(key);
+            if (existingTile != tileIndicesByCoordinates.end()) {
+                definition.diagnostics.warning(
+                    sectionLine + 1, "map",
+                    "duplicate tile record ignored; tile index aliases the first occurrence: " +
+                        filename);
+                tileOrdinalToUniqueIndex.push_back(existingTile->second);
+                continue;
             }
             tile.textPath = mapDirectory / filename;
             if (!std::filesystem::is_regular_file(tile.textPath)) {
@@ -415,7 +418,9 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             if (sidecars != groundTextureSidecarsByTile.end()) {
                 tile.groundTextureSidecars = sidecars->second;
             }
+            tileIndicesByCoordinates.emplace(key, definition.tiles.size());
             definition.tiles.push_back(std::move(tile));
+            tileOrdinalToUniqueIndex.push_back(definition.tiles.size() - 1);
         } else if (isSectionHeader(section)) {
             definition.diagnostics.warning(sectionLine + 1, section.substr(1, section.size() - 2),
                                            "global.cfg section is not implemented");
@@ -434,10 +439,12 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     }
     for (MapEntryPoint& entryPoint : definition.entryPoints) {
         if (entryPoint.tileIndex < 0 ||
-            static_cast<std::size_t>(entryPoint.tileIndex) >= definition.tiles.size()) {
+            static_cast<std::size_t>(entryPoint.tileIndex) >= tileOrdinalToUniqueIndex.size()) {
             throw std::runtime_error("[entrypoints] tile index is outside the [map] list in " +
                                      globalPath.string());
         }
+        entryPoint.tileIndex = static_cast<int>(tileOrdinalToUniqueIndex[
+            static_cast<std::size_t>(entryPoint.tileIndex)]);
         double localX = 0.0;
         double elevation = 0.0;
         double localY = 0.0;

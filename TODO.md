@@ -188,6 +188,10 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   vehicle-specific view systems.
 - [ ] Implement sound configuration coverage beyond the current player sound
   runtime path, including selecting `sound_ai` for AI vehicles.
+- [ ] Investigate the 1,007 unknown sound-trigger skips in the Cotterell run,
+  especially `ev_bremse_hup` (376), ABS wheel-state triggers (610 total),
+  `ev_bremszischen`, `ev_kompressor_ein`, and `ev_schluessel_steck`; determine
+  which should map to existing sound events versus remain explicitly unsupported.
 - [ ] Add diagnostics that distinguish "recognized and active" from
   "recognized but ignored" for every parsed configuration record.
 
@@ -417,7 +421,7 @@ for the explicit boundary.
   `[splineAttachement]`, and `[splineAttachement_repeater]` have typed parser
   paths. Ordinary objects, road strips, and same-tile spline attachments have
   runtime paths. SCOs marked `[onlyeditor]` are omitted from map rendering;
-  object labels, spline skew/mirror behavior, cross-tile attachment chains,
+  object labels, spline skew behavior, cross-tile attachment chains,
   and repeater-master resolution remain incomplete.
 - `[attachObj]` fixed fields and version-dependent IDs are parsed and retained,
   including non-destructive typed attach-point/rotation values while preserving
@@ -452,6 +456,48 @@ for the explicit boundary.
   Unimplemented bracketed sections in tile files and `global.cfg` now produce
   line-numbered warnings and preserve each section's opaque payload lines;
   no runtime meaning is inferred from them.
+
+- [ ] Implement or explicitly scope out the runtime effects of retained
+  `global.cfg` settings: `[description]`, `[NextIDCode]`,
+  `[worldcoordinates]`, `[dynhelperactive]`, `[realrail]`, `[LHT]`,
+  `[backgroundimage]`, `[mapcam]`, `[moneysystem]`, `[ticketpack]`,
+  `[repair_time_min]`, `[years]`, `[realyearoffset]`, `[standarddepot]`, `[addseason]`,
+  `[trafficdensity_road]`, and `[trafficdensity_passenger]`.
+- [ ] Verify and apply spline `skewStart`/`skewEnd` fields and `.sli`
+  `[heightprofile]` records; both are parsed/retained but currently do not alter
+  road geometry. The Cotterell log reports 951 profile strips with fewer than
+  two points (including `pavement_a.sli`); verify whether these are intentional
+  degenerate/editor strips or a profile-reader/geometry omission.
+- [ ] Complete remaining map-section semantics: render `[water]`, implement
+  `[variable_terrain]` and `[variable_terrainlightmap]`, apply `[rule]` and
+  `[kill_rule]`, and resolve `[spline_terrain_align_2]`. Decode/render
+  `.map.LM.bmp` and `.map.terrain_0.rdy` adjunct data where applicable. The
+  Cotterell run skipped 8 water surfaces, 27 variable-terrain tiles, 27
+  variable-terrain-lightmap tiles, 2,212 `[rule]` records, and 1 `[kill_rule]`.
+- [ ] Resolve Chrono map variants using `[selobject]`, `[selspline]`,
+  `[delete]`, `[typ]`, and `[relabel]`; these records are currently parser-only
+  or have no independent runtime effect.
+- [ ] Investigate two Cotterell ground-texture sidecars named `.map.8.dds`
+  that were rejected as invalid `[groundtex]` indices; verify the map's texture
+  count/index convention before changing the sidecar mapping.
+- [ ] Investigate why Cotterell visited 27 terrain tiles but uploaded only 26
+  terrain meshes, despite the manifest reporting 27 terrain sidecars; identify
+  the missing/rejected tile and ensure it is surfaced in diagnostics.
+- [ ] Investigate the 7 spline attachments with no local placement in the
+  Cotterell run (examples reference `splineIndex=154`, `102`, and `5`); determine
+  whether they are cross-tile references, unresolved master chains, or bad IDs.
+- [ ] Add or explicitly scope out nonzero-LOD scenery model parts; 9 parts were
+  skipped in the Cotterell run, including Streetobjects_RUE light models.
+- [ ] Investigate Cotterell scenery-config warnings for `[groups]`,
+  `[helparrow]`, and an empty `[friendlyname]` in route-arrow SCOs. Determine
+  whether these are supported dialect fields, malformed assets, or parser
+  alignment issues (the run recorded 2,354 SCO and 1,041 model-config
+  diagnostic occurrences). Route-arrow `text.bmp` textures were among 27
+  missing scenery textures; verify whether these should be script-generated.
+- [ ] Investigate the rejected parked Opel Manta asset (`manta_b.dds` decode
+  failure) and the standalone texture failure log entry with empty name/path;
+  identify unsupported DDS data versus missing references and add useful
+  source context to texture diagnostics.
 
 - [x] Add curved centerline tessellation for the recognized Freyfurt asphalt
   profiles. Signed-radius geometry is checked by `OpenBusMapSplineGeometryProbe`

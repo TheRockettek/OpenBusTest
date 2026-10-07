@@ -67,8 +67,9 @@ void runFixtureProbe() {
                      "[unknown_global]\n opaque global payload \n\n"
                      "[entrypoints]\n2\n"
                      "2\n11\n0\n10\n20\n0\n0\n0\n0\n1\n0\nDepot\n"
-                     "3\n12\n0\n30\n5\n40\n2\n5\n3\n7\n1\nDepot East\n"
-                     "[map]\n0\n0\ntile_0_0.map\n[map]\n1\n0\ntile_1_0.map\n");
+                     "3\n12\n0\n30\n5\n40\n2\n5\n3\n7\n2\nDepot East\n"
+                     "[map]\n0\n0\ntile_0_0.map\n[map]\n0\n0\ntile_0_0.map\n"
+                     "[map]\n1\n0\ntile_1_0.map\n");
         writeUtf16Le(root / "tile_0_0.map",
                  "Fixture tile\n[version]\n14\n[terrain]\n[water]\n"
                  "[unknown_future_section]\n opaque tile payload \n\n"
@@ -144,10 +145,14 @@ void runFixtureProbe() {
                     definition.metadata.passengerTrafficDensity[0] ==
                         std::array<std::string, 2>{"0", "0.2"},
                 "repeated global season and traffic-density records captured");
-        require(definition.diagnostics.entries.size() == 1 &&
-                    definition.diagnostics.entries[0].keyword == "unknown_global" &&
-                    definition.diagnostics.entries[0].line > 0,
-                "unsupported global.cfg sections produce line-numbered warnings");
+        require(definition.diagnostics.entries.size() == 2 &&
+                definition.diagnostics.entries[0].keyword == "unknown_global" &&
+                definition.diagnostics.entries[0].line > 0 &&
+                definition.diagnostics.entries[1].keyword == "map" &&
+                definition.diagnostics.entries[1].line > 0 &&
+                definition.diagnostics.entries[1].message.find("duplicate tile record") !=
+                std::string::npos,
+            "unsupported sections and duplicate tile rows produce line-numbered warnings");
         require(definition.unsupportedSections.size() == 1 &&
                     definition.unsupportedSections[0].keyword == "unknown_global" &&
                     definition.unsupportedSections[0].sectionLine ==
@@ -185,7 +190,8 @@ void runFixtureProbe() {
                     definition.entryPoints[0].placement.position[1] == 0.0 &&
                     definition.entryPoints[0].placement.position[2] == 20.0,
                 "entrypoint placement maps tile-local coordinates into map coordinates");
-        require(definition.entryPoints[1].placement.position[0] == 330.0 &&
+        require(definition.entryPoints[1].tileIndex == 1 &&
+                definition.entryPoints[1].placement.position[0] == 330.0 &&
                     definition.entryPoints[1].placement.position[1] == 40.0 &&
                     definition.entryPoints[1].placement.position[2] == 5.0 &&
                     std::abs(definition.entryPoints[1].placement.yawDegrees -

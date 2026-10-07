@@ -3,8 +3,8 @@ taskkill.exe /F /IM OpenBus.exe
 set "OPENBUS_BUS_CONFIG=Vehicles/MAN_DL05/MAN_DL05.bus"
 set "OPENBUS_MODEL_CONFIG=Vehicles/MAN_DL05/Model/DL05.cfg"
 
-@REM set "OPENBUS_MAP_PATH=Grundorf"
-set "OPENBUS_MAP_PATH=Grande Porto 2022"
+set "OPENBUS_MAP_PATH=Cotterell"
+@REM set "OPENBUS_MAP_PATH=Grande Porto 2022"
 
 @REM set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
 @REM set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"

@@ -37,11 +37,12 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
             spline.elevated ? std::optional<double>(spline.heightDelta) : std::nullopt,
             sample.distance);
         for (const MapSplineProfilePoint& point : section.points) {
+            const double profileLateral = spline.mirrored ? -point.lateral : point.lateral;
             const std::array<double, 2> lateral =
-                mapSplineRightOffset(sample.headingRadians, point.lateral);
+                mapSplineRightOffset(sample.headingRadians, profileLateral);
             // Cant is expressed as a crossfall percentage, matching the map attachment-row
             // placement convention: positive cant lowers the right-positive side.
-            const double cantLift = -point.lateral * cant / 100.0;
+            const double cantLift = -profileLateral * cant / 100.0;
             MapRoadVertex vertex{sample.x + lateral[0], sample.y + lateral[1],
                                  elevation + point.height + cantLift, point.textureU,
                                  (chainOffset + sample.distance) * point.textureVPerMeter};
@@ -61,10 +62,19 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
             const std::size_t endLeft = endBase + pointIndex - 1;
             const std::size_t endRight = endBase + pointIndex;
             const std::size_t startRight = startBase + pointIndex;
-            geometry.indices.insert(geometry.indices.end(),
-                                    {static_cast<int>(startLeft), static_cast<int>(endLeft),
-                                     static_cast<int>(endRight), static_cast<int>(startLeft),
-                                     static_cast<int>(endRight), static_cast<int>(startRight)});
+            if (spline.mirrored) {
+                // Reflecting lateral coordinates reverses the cross-section orientation.
+                // Reverse each triangle as well to keep the renderer's winding convention.
+                geometry.indices.insert(geometry.indices.end(),
+                                        {static_cast<int>(startLeft), static_cast<int>(endRight),
+                                         static_cast<int>(endLeft), static_cast<int>(startLeft),
+                                         static_cast<int>(startRight), static_cast<int>(endRight)});
+            } else {
+                geometry.indices.insert(geometry.indices.end(),
+                                        {static_cast<int>(startLeft), static_cast<int>(endLeft),
+                                         static_cast<int>(endRight), static_cast<int>(startLeft),
+                                         static_cast<int>(endRight), static_cast<int>(startRight)});
+            }
         }
     }
     return geometry;
