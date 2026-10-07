@@ -176,7 +176,7 @@ class RenderLoop {
     std::array<int, 4> viewport_ = {0, 0, 1, 1};
     double scriptRateHz_ = 0.0;
     double scriptAccumulator_ = 0.0;
-    double steeringSmoothingRate_ = 6.0;
+    double steeringSmoothingRate_ = 0.0;
     double smoothedSteering_ = 0.0;
     std::vector<KeyEvent> keyEvents_;
     std::vector<VehicleCamera> vehicleCameras_;

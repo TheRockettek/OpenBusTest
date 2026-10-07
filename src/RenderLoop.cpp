@@ -139,7 +139,7 @@ enum class VehicleRenderPass {
 };
 
 constexpr double ENVIRONMENT_MAP_OPACITY = 0.1;
-constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 8;
+constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 1;
 constexpr double DEFAULT_FIELD_OF_VIEW = 60.0;
 constexpr double MIN_FIELD_OF_VIEW = 20.0;
 constexpr double MAX_FIELD_OF_VIEW = 120.0;

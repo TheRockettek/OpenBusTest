@@ -22,6 +22,14 @@ double dot(const std::array<double, 3>& left, const std::array<double, 3>& right
 
 int main() {
     constexpr double pi = 3.14159265358979323846;
+    openbus::rendering::setPerspective(1280.0, 720.0, 60.0);
+    const openbus::rendering::Matrix4& projection = openbus::rendering::projectionMatrix();
+    if (!std::all_of(projection.begin(), projection.end(), [](double value) {
+            return std::isfinite(value);
+        }) || projection[10] <= -1.0001 || projection[10] >= -1.0) {
+        std::cerr << "Camera projection far clip is not configured for long map visibility\n";
+        return 1;
+    }
     const VehiclePlacement groundPlacement{{4.0, -7.0, 0.0}, 37.0};
     constexpr double modelOffsetZ = -0.4;
     constexpr double groundPlaneZ = 0.015;

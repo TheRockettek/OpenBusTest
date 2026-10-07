@@ -7,6 +7,8 @@ namespace openbus::rendering {
 
 namespace {
 
+constexpr double CAMERA_FAR_PLANE = 10000.0;
+
 Matrix4 cachedModelViewMatrix = {};
 Matrix4 cachedProjectionMatrix = {};
 std::vector<Matrix4> modelViewStack;
@@ -40,7 +42,7 @@ void setModelViewMatrix(const Matrix4& matrix) {
 void setPerspective(double width, double height, double fieldOfView) {
     const double aspect = width / height;
     const double nearPlane = 0.1;
-    const double farPlane = 500.0;
+    const double farPlane = CAMERA_FAR_PLANE;
     const double fov = fieldOfView * 3.141592653589793 / 180.0;
     const double top = nearPlane * std::tan(fov * 0.5);
     const double right = top * aspect;

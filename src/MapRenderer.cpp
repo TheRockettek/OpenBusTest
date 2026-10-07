@@ -54,7 +54,7 @@ namespace openbus::rendering {
 namespace {
 
 constexpr std::size_t MAX_SKIP_EXAMPLES = 3;
-constexpr double MAP_VISIBILITY_RADIUS_METERS = 500.0;
+constexpr double MAP_VISIBILITY_RADIUS_METERS = 10000.0;
 constexpr double MAP_VISIBILITY_RADIUS_SQUARED =
     MAP_VISIBILITY_RADIUS_METERS * MAP_VISIBILITY_RADIUS_METERS;
 

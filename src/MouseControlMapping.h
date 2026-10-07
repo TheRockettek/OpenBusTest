@@ -5,6 +5,11 @@
 
 namespace openbus::input {
 
+inline double steeringResponse(double input) {
+    const double clamped = std::clamp(input, -1.0, 1.0);
+    return clamped * std::abs(clamped);
+}
+
 struct MouseControlInputs {
     double throttle = 0.0;
     double steering = 0.0;
@@ -20,7 +25,7 @@ inline MouseControlInputs mouseControlInputs(double cursorX, double cursorY, dou
 
     const double horizontal = std::clamp(2.0 * cursorX / width - 1.0, -1.0, 1.0);
     const double vertical = std::clamp(2.0 * cursorY / height - 1.0, -1.0, 1.0);
-    return {std::max(0.0, -vertical), horizontal, std::max(0.0, vertical)};
+    return {std::max(0.0, -vertical), steeringResponse(horizontal), std::max(0.0, vertical)};
 }
 
 inline double smoothSteeringInput(double current, double requested, double elapsedSeconds,
