@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -55,14 +56,19 @@ bool alignMapSceneryPoseToTerrainNormal(MapSceneryPose& pose,
 
 // Places a spline-attachment row on its spline and subsequent linked splines in the same tile.
 // A repeater resumes the row at the encoded first-object index on its own spline.
-std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& attachment,
-                                                     const std::vector<MapSplinePlacement>& splines,
-                                                     int tileX, int tileY);
+// Resolve metadata for the actual host at each segment, not just the row's first spline.
+using MapSplineCantWidthResolver = std::function<std::optional<double>(const MapSplinePlacement&)>;
+
+std::vector<MapSceneryPose>
+placeMapSplineAttachment(const MapSplineAttachment& attachment,
+                         const std::vector<MapSplinePlacement>& splines, int tileX, int tileY,
+                         const MapSplineCantWidthResolver& cantWidth = {});
 
 // Returns the first generated pose for a spline-attachment record when it is used as an
 // [attachObj] parent; its ID identifies the authored row, not every repeated child instance.
-std::optional<MapSceneryPose> placeMapSplineAttachmentParent(
-    const MapSplineAttachment& attachment, const std::vector<MapSplinePlacement>& splines,
-    int tileX, int tileY);
+std::optional<MapSceneryPose>
+placeMapSplineAttachmentParent(const MapSplineAttachment& attachment,
+                               const std::vector<MapSplinePlacement>& splines, int tileX, int tileY,
+                               const MapSplineCantWidthResolver& cantWidth = {});
 
 } // namespace openbus::map

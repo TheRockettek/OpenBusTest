@@ -239,8 +239,7 @@ int main() {
         RenderLoop renderer(windowWidth, windowHeight, "OpenBus");
         renderer.SetMap(mapDefinition, spawnEntryPoint, groundTextureIndex, omsiRootPath());
         renderer.updateMapStreaming(busPlacement.position[0], busPlacement.position[1]);
-        const std::vector<std::pair<int, int>> spawnLoadedGeometryTiles =
-            renderer.loadedMapTiles();
+        const std::vector<std::pair<int, int>> spawnLoadedGeometryTiles = renderer.loadedMapTiles();
         {
             openbus::rendering::TraceScope trace("map", "main.loadSpawnCollisionNeighborhood");
             collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
@@ -248,9 +247,9 @@ int main() {
             collisionStreamer.waitForPendingBuilds();
             for (std::size_t tileIndex = 0; tileIndex < spawnLoadedGeometryTiles.size();
                  ++tileIndex) {
-                 collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
+                collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
                                          spawnLoadedGeometryTiles);
-              }
+            }
         }
         applicationLog.Log("Map collision streaming enabled: resident tiles=" +
                            std::to_string(collisionStreamer.loadedTileCount()) +

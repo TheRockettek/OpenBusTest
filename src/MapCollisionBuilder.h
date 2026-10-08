@@ -25,12 +25,14 @@ struct MapRoadCollisionResult {
 MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
                                              const std::filesystem::path& omsiRoot);
 // Builds only the requested tile; an absent tile returns an empty result.
-MapRoadCollisionResult buildMapRoadCollisionTile(const MapDefinition& map,
-                                                 const std::filesystem::path& omsiRoot, int tileX,
-                                                 int tileY,
-                                                 const MapRoadConnectionIndex* connections = nullptr);
+MapRoadCollisionResult
+buildMapRoadCollisionTile(const MapDefinition& map, const std::filesystem::path& omsiRoot,
+                          int tileX, int tileY,
+                          const MapRoadConnectionIndex* connections = nullptr);
 
 // Metadata only, independent of geometry residency. Streaming workers retain this once per map.
-MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map);
+// Resolve profile cant widths before finalizing joins; unavailable widths retain legacy cant.
+MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map,
+                                              const std::filesystem::path& omsiRoot = {});
 
 } // namespace openbus::map

@@ -17,7 +17,10 @@ set "OPENBUS_BUS_CONFIG=Vehicles\V3D - Enviro 200 MMC\e200mmc_115.bus"
 set "OPENBUS_MODEL_CONFIG=Vehicles\V3D - Enviro 200 MMC\Model\e200mmc_115.cfg"
 
 @REM set "OPENBUS_MAP_PATH=TestMap"
+
 set "OPENBUS_MAP_PATH=Cotterell"
+set "OPENBUS_MAP_SPAWN=0"
+
 @REM set "OPENBUS_MAP_PATH=Grundorf"
 @REM set "OPENBUS_MAP_PATH=Grande Porto 2022"
 

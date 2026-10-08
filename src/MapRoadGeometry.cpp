@@ -13,6 +13,15 @@ namespace {
 constexpr double JOIN_DISTANCE_METERS = 0.25;
 constexpr double MAX_MITER_SCALE = 4.0;
 
+double frameCantHeightOffset(const MapRoadEndpointFrame& frame, double lateral) {
+    double height = 0.0;
+    for (const auto& contribution : frame.cantContributions) {
+        height +=
+            mapSplineCantHeightOffset(lateral, contribution.cantPercent, contribution.halfWidth);
+    }
+    return height;
+}
+
 double elevationAt(const MapSplinePlacement& spline, double distance) {
     const double clamped = std::clamp(distance, 0.0, spline.length);
     double elevation = mapSplineElevation(
@@ -27,15 +36,18 @@ double elevationAt(const MapSplinePlacement& spline, double distance) {
     return elevation;
 }
 
-MapRoadEndpointFrame endpointFrame(const MapSplinePlacement& spline,
-                                   const MapSplineSample& sample, bool end) {
+MapRoadEndpointFrame endpointFrame(const MapSplinePlacement& spline, const MapSplineSample& sample,
+                                   bool end, std::optional<double> cantHalfWidth) {
     const double skew = end ? spline.skewEnd : spline.skewStart;
     const double grade = (end ? spline.gradientEnd : spline.gradientStart) / 100.0;
-    const double cantCrossSlope = (end ? spline.cantEnd : spline.cantStart) / 100.0;
+    const double cantPercent = end ? spline.cantEnd : spline.cantStart;
     const auto right = mapSplineRightOffset(sample.headingRadians, 1.0);
-    return {{sample.x, sample.y, elevationAt(spline, sample.distance)},
-            {right[0] + skew * std::sin(sample.headingRadians),
-             right[1] + skew * std::cos(sample.headingRadians), skew * grade - cantCrossSlope}};
+    MapRoadEndpointFrame frame;
+    frame.center = {sample.x, sample.y, elevationAt(spline, sample.distance)};
+    frame.lateralAxis = {right[0] + skew * std::sin(sample.headingRadians),
+                         right[1] + skew * std::cos(sample.headingRadians), skew * grade};
+    frame.cantContributions[0] = {cantPercent, cantHalfWidth};
+    return frame;
 }
 
 bool finiteFrame(const MapRoadEndpointFrame& frame) {
@@ -44,17 +56,28 @@ bool finiteFrame(const MapRoadEndpointFrame& frame) {
             return false;
         }
     }
+    for (const auto& contribution : frame.cantContributions) {
+        if (!std::isfinite(contribution.cantPercent) ||
+            (contribution.halfWidth.has_value() &&
+             (!std::isfinite(*contribution.halfWidth) || *contribution.halfWidth < 0.0))) {
+            return false;
+        }
+    }
     return true;
 }
 
 } // namespace
 
-void MapRoadConnectionIndex::addSpline(const MapSplinePlacement& spline, int tileX, int tileY) {
+void MapRoadConnectionIndex::addSpline(const MapSplinePlacement& spline, int tileX, int tileY,
+                                       std::optional<double> cantHalfWidth) {
+    // Validate before changing the index so a rejected width cannot invalidate existing joins.
+    static_cast<void>(mapSplineCantHeightOffset(0.0, 0.0, cantHalfWidth));
     joins_.clear();
     if (spline.splineId == 0 || ambiguousIds_.contains(spline.splineId)) {
         return;
     }
-    if (!placements_.emplace(spline.splineId, Placement{spline, tileX, tileY}).second) {
+    if (!placements_.emplace(spline.splineId, Placement{spline, tileX, tileY, cantHalfWidth})
+             .second) {
         placements_.erase(spline.splineId);
         ambiguousIds_.insert(spline.splineId);
     }
@@ -84,7 +107,7 @@ void MapRoadConnectionIndex::finalize() {
             if (other == placements_.end() || !sample) {
                 continue;
             }
-            const auto ownFrame = endpointFrame(spline, *sample, end);
+            const auto ownFrame = endpointFrame(spline, *sample, end, placement.cantHalfWidth);
             if (!finiteFrame(ownFrame)) {
                 continue;
             }
@@ -100,7 +123,8 @@ void MapRoadConnectionIndex::finalize() {
                 if (!candidate) {
                     continue;
                 }
-                const auto frame = endpointFrame(neighbor, *candidate, candidateEnd);
+                const auto frame =
+                    endpointFrame(neighbor, *candidate, candidateEnd, other->second.cantHalfWidth);
                 if (!finiteFrame(frame)) {
                     continue;
                 }
@@ -127,7 +151,8 @@ void MapRoadConnectionIndex::finalize() {
             if (oppositeLink == otherId) {
                 const auto opposite = sampleEndpoint(placement, !end);
                 if (opposite) {
-                    const auto oppositeFrame = endpointFrame(spline, *opposite, !end);
+                    const auto oppositeFrame =
+                        endpointFrame(spline, *opposite, !end, placement.cantHalfWidth);
                     if (finiteFrame(oppositeFrame) &&
                         std::hypot(oppositeFrame.center[0] - neighborFrame.center[0],
                                    oppositeFrame.center[1] - neighborFrame.center[1],
@@ -146,25 +171,29 @@ void MapRoadConnectionIndex::finalize() {
             }
             MapRoadEndpointFrame seam;
             for (std::size_t axis = 0; axis < 3; ++axis) {
-                seam.center[axis] = std::midpoint(ownFrame.center[axis], neighborFrame.center[axis]);
+                seam.center[axis] =
+                    std::midpoint(ownFrame.center[axis], neighborFrame.center[axis]);
             }
             // Automatic miter plus the mean authored shear in the common traversal frame.
             for (std::size_t axis = 0; axis < 2; ++axis) {
-                seam.lateralAxis[axis] = (right[axis] + otherRight[axis]) / denominator +
-                                 0.5 * (ownFrame.lateralAxis[axis] - right[axis] +
-                                     sign * neighborFrame.lateralAxis[axis] -
-                                     otherRight[axis]);
+                seam.lateralAxis[axis] =
+                    (right[axis] + otherRight[axis]) / denominator +
+                    0.5 * (ownFrame.lateralAxis[axis] - right[axis] +
+                           sign * neighborFrame.lateralAxis[axis] - otherRight[axis]);
             }
             const double along = seam.lateralAxis[0] * std::sin(sample->headingRadians) +
                                  seam.lateralAxis[1] * std::cos(sample->headingRadians);
-            const double otherAlong = seam.lateralAxis[0] * std::sin(neighborSample->headingRadians) +
-                                      seam.lateralAxis[1] * std::cos(neighborSample->headingRadians);
+            const double otherAlong =
+                seam.lateralAxis[0] * std::sin(neighborSample->headingRadians) +
+                seam.lateralAxis[1] * std::cos(neighborSample->headingRadians);
             seam.lateralAxis[2] =
-                0.5 * (along * (end ? spline.gradientEnd : spline.gradientStart) / 100.0 -
-                       (end ? spline.cantEnd : spline.cantStart) / 100.0 +
+                0.5 * (along * (end ? spline.gradientEnd : spline.gradientStart) / 100.0 +
                        otherAlong * (*neighborEnd ? neighbor.gradientEnd : neighbor.gradientStart) /
-                           100.0 -
-                       sign * (*neighborEnd ? neighbor.cantEnd : neighbor.cantStart) / 100.0);
+                           100.0);
+            seam.cantContributions[0] = ownFrame.cantContributions[0];
+            seam.cantContributions[0].cantPercent *= 0.5;
+            seam.cantContributions[1] = neighborFrame.cantContributions[0];
+            seam.cantContributions[1].cantPercent *= 0.5 * sign;
             if (!finiteFrame(seam)) {
                 continue;
             }
@@ -172,13 +201,16 @@ void MapRoadConnectionIndex::finalize() {
             for (double& component : seam.lateralAxis) {
                 component *= sign;
             }
+            for (auto& contribution : seam.cantContributions) {
+                contribution.cantPercent *= sign;
+            }
             (*neighborEnd ? joins_[otherId].end : joins_[otherId].start) = seam;
         }
     }
 }
 
-MapRoadSplineJoins MapRoadConnectionIndex::joinsFor(const MapSplinePlacement& spline,
-                                                   int tileX, int tileY) const {
+MapRoadSplineJoins MapRoadConnectionIndex::joinsFor(const MapSplinePlacement& spline, int tileX,
+                                                    int tileY) const {
     const auto placement = placements_.find(spline.splineId);
     if (placement == placements_.end() || placement->second.tileX != tileX ||
         placement->second.tileY != tileY) {
@@ -191,11 +223,15 @@ MapRoadSplineJoins MapRoadConnectionIndex::joinsFor(const MapSplinePlacement& sp
 MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spline,
                                                    const std::vector<MapSplineSample>& centerline,
                                                    const MapSplineProfileSection& section,
-                                                   const MapRoadSplineJoins& joins) {
+                                                   const MapRoadSplineJoins& joins,
+                                                   std::optional<double> cantHalfWidth) {
     MapRoadSectionGeometry geometry;
     if (!spline.geometryValid || !std::isfinite(spline.length) || spline.length <= 0.0 ||
         centerline.size() < 2 || section.points.size() < 2) {
         return geometry;
+    }
+    if (cantHalfWidth.has_value() && (!std::isfinite(*cantHalfWidth) || *cantHalfWidth < 0.0)) {
+        throw std::invalid_argument("Map road cant half-width must be finite and non-negative");
     }
     if (centerline.size() > std::numeric_limits<std::size_t>::max() / section.points.size()) {
         throw std::length_error("Map road section vertex count overflows size_t");
@@ -212,8 +248,8 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
     geometry.vertices.reserve(vertexCount);
     geometry.indices.reserve((centerline.size() - 1) * (section.points.size() - 1) * 6);
     const double chainOffset = spline.chainOffsetValid ? spline.chainOffset : 0.0;
-    const auto startFrame = endpointFrame(spline, centerline.front(), false);
-    const auto endFrame = endpointFrame(spline, centerline.back(), true);
+    const auto startFrame = endpointFrame(spline, centerline.front(), false, cantHalfWidth);
+    const auto endFrame = endpointFrame(spline, centerline.back(), true, cantHalfWidth);
     for (const MapSplineSample& sample : centerline) {
         // Use the sample's spline-distance parameter divided directly by the authored
         // segment length. Radius shapes the centerline only; it does not rescale the transition.
@@ -230,11 +266,13 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
             const double elevation = elevationAt(spline, sample.distance + skewShift);
             // Runtime cant is a percentage: rise/run = percent / 100. Positive cant lowers
             // the right-positive side in the current map-axis convention.
-            const double cantLift = -profileLateral * cantPercent / 100.0;
-            MapRoadVertex vertex{sample.x + lateral[0] + skewShift * std::sin(sample.headingRadians),
-                                 sample.y + lateral[1] + skewShift * std::cos(sample.headingRadians),
-                                 elevation + point.height + cantLift, point.textureU,
-                                 (chainOffset + sample.distance + skewShift) * point.textureVPerMeter};
+            const double cantLift =
+                mapSplineCantHeightOffset(profileLateral, cantPercent, cantHalfWidth);
+            MapRoadVertex vertex{
+                sample.x + lateral[0] + skewShift * std::sin(sample.headingRadians),
+                sample.y + lateral[1] + skewShift * std::cos(sample.headingRadians),
+                elevation + point.height + cantLift, point.textureU,
+                (chainOffset + sample.distance + skewShift) * point.textureVPerMeter};
             const auto applyJoin = [&](const std::optional<MapRoadEndpointFrame>& join,
                                        const MapRoadEndpointFrame& original, double fromEnd,
                                        bool end) {
@@ -243,14 +281,18 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
                 }
                 std::array<double, 3> delta;
                 for (std::size_t axis = 0; axis < 3; ++axis) {
-                    delta[axis] = join->center[axis] - original.center[axis] + profileLateral *
-                                  (join->lateralAxis[axis] - original.lateralAxis[axis]);
+                    delta[axis] =
+                        join->center[axis] - original.center[axis] +
+                        profileLateral * (join->lateralAxis[axis] - original.lateralAxis[axis]);
                 }
                 const double endpointDistance = end ? spline.length : 0.0;
                 const double endpointSkew = end ? spline.skewEnd : spline.skewStart;
                 const double endpointGrade = end ? spline.gradientEnd : spline.gradientStart;
                 delta[2] -= elevationAt(spline, endpointDistance + profileLateral * endpointSkew) -
-                            original.center[2] - profileLateral * endpointSkew * endpointGrade / 100.0;
+                            original.center[2] -
+                            profileLateral * endpointSkew * endpointGrade / 100.0;
+                delta[2] += frameCantHeightOffset(*join, profileLateral) -
+                            frameCantHeightOffset(original, profileLateral);
                 const double blendLength =
                     std::min(spline.length * 0.5,
                              std::max(2.0, 2.0 * std::hypot(delta[0], delta[1], delta[2])));
@@ -266,7 +308,8 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
                     // Use the exact shared expression on both sides, including nonlinear grades.
                     vertex.x = join->center[0] + profileLateral * join->lateralAxis[0];
                     vertex.y = join->center[1] + profileLateral * join->lateralAxis[1];
-                    vertex.z = join->center[2] + profileLateral * join->lateralAxis[2] + point.height;
+                    vertex.z = join->center[2] + profileLateral * join->lateralAxis[2] +
+                               frameCantHeightOffset(*join, profileLateral) + point.height;
                 }
             };
             applyJoin(joins.start, startFrame, sample.distance, false);
@@ -302,7 +345,49 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
             }
         }
     }
+
     return geometry;
+}
+
+std::vector<std::array<double, 3>>
+computeMapRoadVertexNormals(const MapRoadSectionGeometry& geometry) {
+    // Road strips are wound clockwise from above for the renderer's GL_CW convention.
+    // Accumulate the reversed triangle cross products so normals point toward map-up,
+    // following cant, grade, curvature, skew, and the final seam corrections.
+    std::vector<std::array<double, 3>> normals(geometry.vertices.size());
+    for (std::size_t index = 0; index + 2 < geometry.indices.size(); index += 3) {
+        const std::size_t firstIndex = static_cast<std::size_t>(geometry.indices[index]);
+        const std::size_t secondIndex = static_cast<std::size_t>(geometry.indices[index + 1]);
+        const std::size_t thirdIndex = static_cast<std::size_t>(geometry.indices[index + 2]);
+        const MapRoadVertex& first = geometry.vertices[firstIndex];
+        const MapRoadVertex& second = geometry.vertices[secondIndex];
+        const MapRoadVertex& third = geometry.vertices[thirdIndex];
+        const std::array<double, 3> firstEdge = {third.x - first.x, third.y - first.y,
+                                                 third.z - first.z};
+        const std::array<double, 3> secondEdge = {second.x - first.x, second.y - first.y,
+                                                  second.z - first.z};
+        const std::array<double, 3> faceNormal = {
+            firstEdge[1] * secondEdge[2] - firstEdge[2] * secondEdge[1],
+            firstEdge[2] * secondEdge[0] - firstEdge[0] * secondEdge[2],
+            firstEdge[0] * secondEdge[1] - firstEdge[1] * secondEdge[0]};
+        for (const std::size_t vertexIndex : {firstIndex, secondIndex, thirdIndex}) {
+            for (std::size_t axis = 0; axis < faceNormal.size(); ++axis) {
+                normals[vertexIndex][axis] += faceNormal[axis];
+            }
+        }
+    }
+    for (std::array<double, 3>& normal : normals) {
+        const double normalLength = std::hypot(normal[0], normal[1], normal[2]);
+        if (!std::isfinite(normalLength) ||
+            normalLength <= std::numeric_limits<double>::epsilon()) {
+            normal = {0.0, 0.0, 1.0};
+            continue;
+        }
+        for (double& component : normal) {
+            component /= normalLength;
+        }
+    }
+    return normals;
 }
 
 } // namespace openbus::map

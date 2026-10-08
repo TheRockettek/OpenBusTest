@@ -247,6 +247,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                 ++result.skippedSplines;
                 continue;
             }
+            const std::optional<double> cantHalfWidth = mapSplineProfileCantHalfWidth(profile);
             for (const MapSplineProfileSection& section : profile.sections) {
                 // The renderer only submits strips with a valid texture reference. Missing image
                 // files still render untextured, so they do not remove collision geometry.
@@ -258,7 +259,8 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                 try {
                     sectionGeometry = buildMapRoadSectionGeometry(
                         spline, centerline, section,
-                        connections.joinsFor(spline, tileReference.x, tileReference.y));
+                        connections.joinsFor(spline, tileReference.x, tileReference.y),
+                        cantHalfWidth);
                 } catch (const std::exception&) {
                     ++result.skippedSplines;
                     continue;
@@ -364,7 +366,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
 
 MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
                                              const std::filesystem::path& omsiRoot) {
-    const auto connections = loadMapRoadConnections(map);
+    const auto connections = loadMapRoadConnections(map, omsiRoot);
     return buildMapRoadCollisionImpl(map, omsiRoot, nullptr, connections);
 }
 
@@ -381,17 +383,35 @@ MapRoadCollisionResult buildMapRoadCollisionTile(const MapDefinition& map,
     if (connections != nullptr) {
         return buildMapRoadCollisionImpl(map, omsiRoot, &*tile, *connections);
     }
-    const auto ownedConnections = loadMapRoadConnections(map);
+    const auto ownedConnections = loadMapRoadConnections(map, omsiRoot);
     return buildMapRoadCollisionImpl(map, omsiRoot, &*tile, ownedConnections);
 }
 
-MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map) {
+MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map,
+                                              const std::filesystem::path& omsiRoot) {
     MapRoadConnectionIndex connections;
+    std::unordered_map<std::string, std::optional<double>> cantHalfWidths;
     for (const auto& reference : map.tiles) {
         try {
             const auto tile = loadMapTile(reference);
             for (const auto& spline : tile.splines) {
-                connections.addSpline(spline, reference.x, reference.y);
+                const std::string assetKey =
+                    normalizedAssetPath(spline.assetPath).lexically_normal().generic_string();
+                const auto [width, inserted] = cantHalfWidths.try_emplace(assetKey, std::nullopt);
+                if (inserted) {
+                    // Cache unavailable widths too: a bad asset must not be reparsed for
+                    // every placement, nor prevent later splines in this tile registering.
+                    try {
+                        const auto profilePath = resolveProfile(map, omsiRoot, spline.assetPath);
+                        if (!profilePath.empty()) {
+                            width->second =
+                                mapSplineProfileCantHalfWidth(loadMapSplineProfile(profilePath));
+                        }
+                    } catch (const std::exception&) {
+                        // Missing/malformed profiles retain legacy unbounded cant metadata.
+                    }
+                }
+                connections.addSpline(spline, reference.x, reference.y, width->second);
             }
         } catch (const std::exception&) {
             // An unrelated missing/malformed tile must not prevent a selected tile loading.

@@ -4259,8 +4259,8 @@ void RenderLoop::scrollCallback(GLFWwindow* window, double, double yOffset) {
         return;
     }
     if (renderer->freeCameraEnabled_) {
-        renderer->freeCameraSpeed_ = std::clamp(renderer->freeCameraSpeed_ + yOffset * 2.0,
-                                                1.0, 100.0);
+        renderer->freeCameraSpeed_ =
+            std::clamp(renderer->freeCameraSpeed_ + yOffset * 2.0, 1.0, 100.0);
         return;
     }
     if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
@@ -4353,11 +4353,11 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        const std::vector<std::uint8_t> initialPixels = makeStatusHudPixels(
-            "X 0.0 Y 0.0 Z 0.0\nCHUNKS 0/0 TERRAIN 0/0 OBJECTS 0/0\n"
-            "ROADS 0/0 COLLISION TILES 0 VEHICLES 0");
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, STATUS_HUD_TEXTURE_WIDTH,
-                     STATUS_HUD_TEXTURE_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, initialPixels.data());
+        const std::vector<std::uint8_t> initialPixels =
+            makeStatusHudPixels("X 0.0 Y 0.0 Z 0.0\nCHUNKS 0/0 TERRAIN 0/0 OBJECTS 0/0\n"
+                                "ROADS 0/0 COLLISION TILES 0 VEHICLES 0");
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, STATUS_HUD_TEXTURE_WIDTH, STATUS_HUD_TEXTURE_HEIGHT,
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, initialPixels.data());
         openbus::rendering::invalidateTextureBindings();
         if (glGetError() != GL_NO_ERROR) {
             glDeleteTextures(1, &statusHudTexture_);
@@ -5492,14 +5492,14 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     if (!renderingReflection_ && statusHudTexture_ != 0) {
         const openbus::rendering::MapRenderStats mapStats =
             mapRenderer_ != nullptr ? mapRenderer_->renderStats()
-                                   : openbus::rendering::MapRenderStats{};
+                                    : openbus::rendering::MapRenderStats{};
         std::ostringstream statusText;
         statusText << "X " << std::fixed << std::setprecision(1) << simulation.positionX() << " Y "
                    << simulation.positionY() << " Z " << simulation.positionZ() << '\n'
-                   << "CHUNKS " << mapStats.activeTiles << '/' << mapStats.totalTiles
-                   << " TERRAIN " << mapStats.activeTerrainTiles << '/'
-                   << mapStats.totalTerrainTiles << " OBJECTS " << mapStats.activeSceneryObjects
-                   << '/' << mapStats.totalSceneryObjects << '\n'
+                   << "CHUNKS " << mapStats.activeTiles << '/' << mapStats.totalTiles << " TERRAIN "
+                   << mapStats.activeTerrainTiles << '/' << mapStats.totalTerrainTiles
+                   << " OBJECTS " << mapStats.activeSceneryObjects << '/'
+                   << mapStats.totalSceneryObjects << '\n'
                    << "ROADS " << mapStats.activeRoadBatches << '/' << mapStats.totalRoadBatches
                    << " COLLISION TILES " << simulation.loadedMapCollisionTileCount()
                    << " VEHICLES " << vehicles_.size();
@@ -5524,8 +5524,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         const float scale = std::min(
             {1.5F,
              static_cast<float>(std::max(framebufferWidth_ - 24, 1)) / STATUS_HUD_TEXTURE_WIDTH,
-             static_cast<float>(std::max(framebufferHeight_ - 24, 1)) /
-                 STATUS_HUD_TEXTURE_HEIGHT});
+             static_cast<float>(std::max(framebufferHeight_ - 24, 1)) / STATUS_HUD_TEXTURE_HEIGHT});
         const float hudWidth = STATUS_HUD_TEXTURE_WIDTH * scale;
         const float hudHeight = STATUS_HUD_TEXTURE_HEIGHT * scale;
         const float leftPixels = 12.0F;

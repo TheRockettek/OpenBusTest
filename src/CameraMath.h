@@ -39,6 +39,7 @@ void setModelViewMatrix(const Matrix4& matrix);
 std::array<double, 3> transformLocalPoint(const BodyPose& pose, const std::array<double, 3>& local);
 std::array<double, 3> freeCameraForward(double yawRadians, double pitchRadians);
 FreeCameraPose moveFreeCamera(const FreeCameraPose& pose, double forwardInput, double rightInput,
-                              double verticalInput, double deltaSeconds, double speedMetersPerSecond);
+                              double verticalInput, double deltaSeconds,
+                              double speedMetersPerSecond);
 
 } // namespace openbus::rendering

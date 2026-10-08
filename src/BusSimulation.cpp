@@ -1075,7 +1075,6 @@ struct BusSimulation::Impl {
                           -std::clamp(pitchAngle, -0.6, 0.6) * BODY_PITCH_STIFFNESS -
                               localAngularY * BODY_ATTITUDE_DAMPING,
                           0.0);
-
     }
     void fixedUpdate(double driveCommand, double steering,
                      const std::vector<double>& wheelBrakeForces,

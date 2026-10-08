@@ -217,15 +217,20 @@ only IDs/link fields have clearly typed handling in its parser.
 
 OpenBus evaluates ordinary spline elevation from its endpoint gradients and
 `[spline_h]` elevation from a cubic profile constrained by the endpoint
-gradients and `delta_h`. Serialized cant values are interpreted as hundredths
-of a percentage point (for example, `-500` becomes `-5%`), then applied as a
-linearly interpolated crossfall to `.sli` profile heights in both rendered and
-collision geometry using rise/run = percent / 100. This scale is inferred from
-installed Cotterell map values; the positive/negative side convention still
-needs OMSI visual confirmation. The literal `mirror` marker reflects `.sli`
-cross-section lateral offsets across the spline centerline in shared render/collision geometry,
-while preserving authored texture coordinates and correcting triangle winding.
-Visual parity against OMSI remains to be confirmed.
+gradients and `delta_h`. Serialized cant values are percentage points as entered
+in the map editor (for example, `-50` means `-50%`). They are applied as a
+linearly interpolated crossfall in both rendered and collision geometry using
+rise/run = percent / 100. When valid `[heightprofile]` records provide lateral
+extents, OpenBus clamps the profile lateral coordinate to the maximum absolute
+extent before applying cant. Profiles without a valid extent retain the prior
+unbounded behavior. Thus `-100%` changes height by one profile width only for
+unbounded profiles; for example, Cotterell's `±0.060 m` half-width limits
+`-120%` cant to approximately `±0.072 m` at the outer profile edges. This
+height-profile clamp is reverse-engineered behavior; visual parity against OMSI
+remains to be confirmed. The literal `mirror` marker reflects `.sli`
+cross-section lateral offsets across the spline centerline in shared
+render/collision geometry, while preserving authored texture coordinates and
+correcting triangle winding.
 
 The start-to-end cant transition is evaluated per spline record with
 `t = clamp(segmentDistance / spline.length, 0, 1)`, using the authored segment
@@ -244,9 +249,10 @@ The following is a **best-guess OpenBus model, not an established OMSI formula**
   Thus `1` cuts the profile at 45 degrees and differing endpoint skew can form a
   wedge. Mirroring changes `x` before applying skew. On curves this is tangent
   shear, not moving each point to a different circular-arc station.
-- Grade elevation and texture V use the shifted distance `s+x*k`. Heights outside
-  the authored length continue the endpoint gradient. Cant remains the normalized,
-  interpolated percentage crossfall; no arbitrary clamp is applied to its value.
+- Grade elevation and texture V use the shifted distance `s+x*k`; heights outside
+  the authored length continue the endpoint gradient. Cant remains the linearly
+  interpolated percentage crossfall; the percentage is not clamped, while a
+  valid height-profile extent may clamp the lateral coordinate as described above.
 - A map-wide, owned placement index resolves unique nonzero spline IDs. Nearby
   reciprocal previous/next links are accepted for start/end, start/start, and
   end/end connections, including across tiles. Same-end links reverse the
@@ -254,9 +260,13 @@ The following is a **best-guess OpenBus model, not an established OMSI formula**
   have reversed profile-point order, unless the neighbor is mirrored.
 - Endpoint center positions within 0.25 m in **3D** use their shared midpoint.
   The joined lateral axis is the offset-edge miter of the two traversal directions,
-  plus their mean authored shear. The vertical component averages grade/cant
-  contributions in that shared frame. Compatible lateral/profile-height points
-  land on identical XYZ positions, without adding overlapping bridge faces.
+  plus their mean authored shear. Its vertical component averages grade
+  contributions; cant averages the two endpoint **height displacements**, each
+  evaluated with its own profile half-width, rather than averaging percentages
+  and then applying a different width on each side. Both sides retain the same
+  pair of weighted cant contributions, including reversed traversal. Compatible
+  lateral/profile-height points land on identical
+  XYZ positions, without adding overlapping bridge faces.
   Different profile widths/heights are not retopologized or automatically matched.
 - Seam corrections fade with smoothstep over at least 2 m (longer for larger
   corrections), capped at half the segment length; authored centerline and interior
@@ -267,8 +277,10 @@ The following is a **best-guess OpenBus model, not an established OMSI formula**
   intact; V includes shear/join longitudinal displacement, but arbitrary corner
   joins are not guaranteed to have seamless texture phase between different assets.
 
-Connection metadata is independent of GPU/collision tile residency, so rebuilding
-either side later gives the same seam. The collision worker builds and retains its
+Connection metadata includes cached `.sli` cant widths and is independent of
+GPU/collision tile residency, so rebuilding either side later gives the same seam.
+Both render and collision indexing resolve assets using the configured OMSI root
+and map-root fallback. The collision worker builds and retains its
 index once per map; live editing/Chrono replacement would require index invalidation.
 The regression probes validate this model's internal geometry and render/collision
 agreement, **not visual parity with OMSI**.
@@ -276,8 +288,11 @@ agreement, **not visual parity with OMSI**.
 The `.sli` reader supports `[texture]`, `[profile]`, and `[profilepnt]` for
 textured cross-section strips. It also retains the four raw/numeric fields of
 each `[heightprofile]` record, marking malformed or truncated records invalid.
-Those records do not currently alter road vertices: their relationship to the
-graphical profile points and terrain editing is not verified.
+Valid lateral extents bound cant displacement as described above; the authored
+height fields and terrain-editing semantics are not applied. Graphical strips
+still interpolate between authored vertices: they are not subdivided at cant
+clamp boundaries, so the analytic clamped cross-section and a sparse strip's
+triangle surface can differ between vertices.
 
 After a spline's fixed fields, the grammar can accept an optional
 `[spline_terrain_align_2]` block and repeated `[rule]` / `[kill_rule]` blocks.
@@ -291,6 +306,15 @@ the merger. The literal zero connection values are preserved for ordinary
 spline links by the merger, but other runtime semantics still belong to OMSI.
 
 ### 5.2 Scenery and attachment records
+
+Spline attachment rows (including repeaters and the first pose used as an
+`[attachObj]` parent) resolve cant width for their actual host segment. Their
+cant height uses the same clamped displacement helper as road vertices.
+Tilt uses the local derivative of that analytic cross-section: bank is zero
+outside the half-width, and at the clamp boundary the saturated side is used.
+A zero half-width disables cant; unavailable profile widths retain legacy
+unbounded height/bank behavior. Attachment placement does not yet sample the
+final road triangles or follow provisional road seam/skew corrections.
 
 For the object-family records, the grammar requires a preceding nonempty
 label/description line. The field names below reflect the parser's data model;

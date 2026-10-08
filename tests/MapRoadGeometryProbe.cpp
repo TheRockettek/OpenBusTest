@@ -426,6 +426,27 @@ void runProbe() {
                 "5% cant lowers the positive-lateral edge by 0.075 m at 1.5 m");
     requireNear(fivePercent.vertices[1].z - fivePercent.vertices[0].z, -0.15,
                 "5% cant changes height by 0.15 m across a 3 m road width");
+    const auto fivePercentNormals = computeMapRoadVertexNormals(fivePercent);
+    const double expectedNormalLength = std::sqrt(1.0 + 0.05 * 0.05);
+    requireNear(fivePercentNormals[0][0], 0.05 / expectedNormalLength,
+                "render normal tilts with positive cant across the road");
+    requireNear(fivePercentNormals[0][1], 0.0,
+                "straight-road cant does not tilt the normal along the road");
+    requireNear(fivePercentNormals[0][2], 1.0 / expectedNormalLength,
+                "banked-road normal remains unit length and upward-facing");
+    openbus::map::MapSplinePlacement fortyFiveDegreeSpline = bankedSpline;
+    fortyFiveDegreeSpline.cantStart = fortyFiveDegreeSpline.cantEnd = -100.0;
+    openbus::map::MapSplineProfileSection fullRoadWidthSection;
+    fullRoadWidthSection.points = {{0.0, 0.0, 0.0, 0.0}, {4.55, 0.0, 1.0, 0.0}};
+    const auto fortyFiveDegreeBank = openbus::map::buildMapRoadSectionGeometry(
+        fortyFiveDegreeSpline, bankSamples, fullRoadWidthSection);
+    requireNear(fortyFiveDegreeBank.vertices[1].z - fortyFiveDegreeBank.vertices[0].z, 4.55,
+                "-100% cant raises the far road edge by one full road width");
+    const auto fortyFiveDegreeNormals = computeMapRoadVertexNormals(fortyFiveDegreeBank);
+    requireNear(fortyFiveDegreeNormals[0][0], -std::sqrt(0.5),
+                "-100% cant produces the expected 45-degree normal tilt");
+    requireNear(fortyFiveDegreeNormals[0][2], std::sqrt(0.5),
+                "-100% cant retains an upward-facing 45-degree normal");
     openbus::map::MapSplineProfileSection hundredMeterSection;
     hundredMeterSection.points = {{-50.0, 0.0, 0.0, 0.0}, {50.0, 0.0, 1.0, 0.0}};
     const auto hundredMeter = openbus::map::buildMapRoadSectionGeometry(
@@ -546,6 +567,147 @@ void runProbe() {
             "invalid spline placement does not create road geometry");
 }
 
+void runHeightProfileCantProbe() {
+    using namespace openbus::map;
+    constexpr double cantHalfWidth = 0.06;
+    MapSplinePlacement ramp;
+    ramp.geometryValid = true;
+    ramp.length = 3.0;
+    ramp.cantStart = ramp.cantEnd = -120.0;
+    MapSplineProfileSection section;
+    section.points = {{-1.35, 0.0, 0.0, 0.0}, {1.5, 0.0, 1.0, 0.0}};
+    const auto rampSamples = tessellateMapSpline(0.0, 1.0, 0.0, ramp.length, 0.0);
+    const auto clampedRamp =
+        buildMapRoadSectionGeometry(ramp, rampSamples, section, {}, cantHalfWidth);
+    for (std::size_t station = 0; station < rampSamples.size(); ++station) {
+        const std::size_t firstVertex = station * section.points.size();
+        requireNear(clampedRamp.vertices[firstVertex].z, -0.072,
+                    "-120% cant is limited to 7.2 cm at the negative profile edge");
+        requireNear(clampedRamp.vertices[firstVertex + 1].z, 0.072,
+                    "-120% cant is limited to 7.2 cm at the positive profile edge");
+    }
+    const auto unboundedRamp = buildMapRoadSectionGeometry(ramp, rampSamples, section);
+    requireNear(unboundedRamp.vertices[0].z, -1.62,
+                "profiles without a height-profile width retain the legacy crossfall");
+    requireNear(unboundedRamp.vertices[1].z, 1.8,
+                "unbounded crossfall remains distinct from the height-profile clamp");
+
+    MapSplinePlacement previous = ramp;
+    previous.splineId = 1;
+    previous.nextSplineId = 2;
+    previous.localY = 0.0;
+    previous.length = 1.0;
+    previous.cantStart = 0.0;
+    MapSplinePlacement linkedRamp = ramp;
+    linkedRamp.splineId = 2;
+    linkedRamp.previousSplineId = 1;
+    linkedRamp.nextSplineId = 3;
+    linkedRamp.localY = 1.0;
+    MapSplinePlacement next = ramp;
+    next.splineId = 3;
+    next.previousSplineId = 2;
+    next.localY = 4.0;
+    next.length = 1.0;
+    next.cantEnd = 0.0;
+
+    MapRoadConnectionIndex connections;
+    connections.addSpline(previous, 0, 0, cantHalfWidth);
+    connections.addSpline(linkedRamp, 0, 0, cantHalfWidth);
+    connections.addSpline(next, 0, 0, cantHalfWidth);
+    connections.finalize();
+    const auto previousSamples = tessellateMapSpline(0.0, 0.0, 0.0, 1.0, 0.0);
+    const auto nextSamples = tessellateMapSpline(0.0, 4.0, 0.0, 1.0, 0.0);
+    const auto previousGeometry = buildMapRoadSectionGeometry(
+        previous, previousSamples, section, connections.joinsFor(previous, 0, 0), cantHalfWidth);
+    const auto rampGeometry = buildMapRoadSectionGeometry(
+        linkedRamp, rampSamples, section, connections.joinsFor(linkedRamp, 0, 0), cantHalfWidth);
+    const auto nextGeometry = buildMapRoadSectionGeometry(
+        next, nextSamples, section, connections.joinsFor(next, 0, 0), cantHalfWidth);
+    for (std::size_t point = 0; point < section.points.size(); ++point) {
+        requireSamePosition(previousGeometry.vertices[previousGeometry.vertices.size() -
+                                                       section.points.size() + point],
+                            rampGeometry.vertices[point]);
+        requireSamePosition(rampGeometry.vertices[rampGeometry.vertices.size() -
+                                                   section.points.size() + point],
+                            nextGeometry.vertices[point]);
+    }
+}
+
+void runMixedWidthJoinProbe() {
+    using namespace openbus::map;
+    MapSplinePlacement a;
+    a.geometryValid = true;
+    a.splineId = 1;
+    a.nextSplineId = 2;
+    a.length = 10.0;
+    a.cantStart = a.cantEnd = -120.0;
+    MapSplinePlacement b = a;
+    b.splineId = 2;
+    b.previousSplineId = 1;
+    b.nextSplineId = 0;
+    b.localY = 10.0;
+    MapSplineProfileSection section;
+    section.points = {{-1.5, 0.25, 0.0, 0.2}, {-0.08, 0.25, 0.3, 0.2},
+                      {0.0, 0.25, 0.5, 0.2}, {0.08, 0.25, 0.7, 0.2},
+                      {1.5, 0.25, 1.0, 0.2}};
+    const auto aSamples = tessellateMapSpline(0.0, 0.0, 0.0, a.length, 0.0);
+    for (const bool reversed : {false, true}) {
+        b.previousSplineId = reversed ? 0 : 1;
+        b.nextSplineId = reversed ? 1 : 0;
+        b.localY = reversed ? 20.0 : 10.0;
+        b.rotationDegrees = reversed ? 180.0 : 0.0;
+        b.mirrored = reversed;
+        b.cantStart = b.cantEnd = reversed ? 120.0 : -120.0;
+        const auto bSamples = tessellateMapSpline(0.0, b.localY, b.rotationDegrees, b.length, 0.0);
+        for (const std::optional<double> otherWidth :
+             {std::optional<double>{0.12}, std::optional<double>{0.0}, std::optional<double>{}}) {
+            MapRoadConnectionIndex index;
+            index.addSpline(a, 0, 0, 0.06);
+            index.addSpline(b, 0, 0, otherWidth);
+            index.finalize();
+            const auto aJoins = index.joinsFor(a, 0, 0);
+            const auto bJoins = index.joinsFor(b, 0, 0);
+            require(aJoins.end.has_value() && (reversed ? bJoins.end : bJoins.start).has_value(),
+                    "mixed-width joins resolve in both traversal directions");
+            const auto first = buildMapRoadSectionGeometry(a, aSamples, section, aJoins, 0.06);
+            const auto second = buildMapRoadSectionGeometry(b, bSamples, section, bJoins, otherWidth);
+            const std::size_t aBase = first.vertices.size() - section.points.size();
+            const std::size_t bBase = reversed ? second.vertices.size() - section.points.size() : 0;
+            for (std::size_t p = 0; p < section.points.size(); ++p) {
+                requireSamePosition(first.vertices[aBase + p], second.vertices[bBase + p]);
+                const double x = section.points[p].lateral;
+                const double expected = section.points[p].height +
+                    0.5 * (mapSplineCantHeightOffset(x, -120.0, 0.06) +
+                           mapSplineCantHeightOffset(x, -120.0, otherWidth));
+                requireNear(first.vertices[aBase + p].z, expected,
+                            "seam averages the two independently clamped displacements");
+            }
+            // No load-order dependence, and no change outside the seam fade.
+            MapRoadConnectionIndex reverseIndex;
+            reverseIndex.addSpline(b, 0, 0, otherWidth);
+            reverseIndex.addSpline(a, 0, 0, 0.06);
+            reverseIndex.finalize();
+            const auto reorder = buildMapRoadSectionGeometry(
+                a, aSamples, section, reverseIndex.joinsFor(a, 0, 0), 0.06);
+            requireSamePosition(first.vertices.back(), reorder.vertices.back());
+            const auto independent = buildMapRoadSectionGeometry(a, aSamples, section, {}, 0.06);
+            requireSamePosition(first.vertices[2 * section.points.size()],
+                                independent.vertices[2 * section.points.size()]);
+        }
+    }
+    for (const double badWidth : {-1.0, std::numeric_limits<double>::infinity(),
+                                 std::numeric_limits<double>::quiet_NaN()}) {
+        bool rejected = false;
+        try {
+            MapRoadConnectionIndex index;
+            index.addSpline(a, 0, 0, badWidth);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        require(rejected, "connection metadata rejects negative/non-finite cant widths");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -553,6 +715,8 @@ int main() {
         runProbe();
         runSkewProbe();
         runJoinProbe();
+        runHeightProfileCantProbe();
+        runMixedWidthJoinProbe();
     } catch (const std::exception& error) {
         std::cerr << "map road geometry probe failed: " << error.what() << '\n';
         return 1;

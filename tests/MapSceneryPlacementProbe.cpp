@@ -1,7 +1,9 @@
 #include "MapSceneryPlacement.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <numbers>
 #include <stdexcept>
 #include <string>
@@ -16,7 +18,7 @@ void require(bool condition, const char* description) {
 }
 
 void requireNear(double actual, double expected, double tolerance, const char* description) {
-    if (std::abs(actual - expected) > tolerance) {
+    if (!std::isfinite(actual) || !std::isfinite(expected) || std::abs(actual - expected) > tolerance) {
         throw std::runtime_error(std::string(description) + ": expected " +
                                  std::to_string(expected) + ", got " +
                                  std::to_string(actual));
@@ -318,11 +320,80 @@ void runProbe() {
                 "child attachment height composes with spline-parent elevation");
 }
 
+void runProfileCantProbe() {
+    using namespace openbus::map;
+    MapSplinePlacement host = spline(60, 0, 61, 0.0, 0.0, 0.0, 3.0);
+    host.cantStart = host.cantEnd = -120.0;
+    host.assetPath = "narrow.sli";
+    MapSplinePlacement next = spline(61, 60, 0, 0.0, 3.0, 0.0, 3.0);
+    next.cantStart = next.cantEnd = -120.0;
+    next.assetPath = "wide.sli";
+    const MapSplineCantWidthResolver widths = [](const MapSplinePlacement& placement) {
+        return std::optional<double>{placement.assetPath == "narrow.sli" ? 0.06 : 0.12};
+    };
+    for (const double lateral : {-1.5, -0.03, 0.0, 0.03, 0.06, 1.5}) {
+        auto attachment = row(0, lateral, 0.25, 1.0, 0.0, 0.0);
+        attachment.tilt = true;
+        const auto poses = placeMapSplineAttachment(attachment, {host}, 0, 0, widths);
+        require(poses.size() == 1, "clamped host places the row object");
+        requireNear(poses[0].z, 0.25 + 1.2 * std::clamp(lateral, -0.06, 0.06), 1e-9,
+                    "attachment height uses the host's clamped cant");
+        requireNear(poses[0].rotationDegrees[2],
+                    std::abs(lateral) < 0.06 ? std::atan(-1.2) * 180.0 / std::numbers::pi : 0.0,
+                    1e-9, "bank is flat outside the clamp and follows crossfall inside");
+        const auto parent = placeMapSplineAttachmentParent(attachment, {host}, 0, 0, widths);
+        require(parent.has_value(), "clamped row resolves as an attachment parent");
+        requireNear(parent->z, poses[0].z, 1e-9, "parent and rendered row use identical cant height");
+        requireNear(parent->rotationDegrees[2], poses[0].rotationDegrees[2], 1e-9,
+                    "parent and rendered row use identical cant bank");
+    }
+    const auto chained = placeMapSplineAttachment(row(0, 1.5, 0.0, 1.0, 3.0, 3.0),
+                                                  {host, next}, 0, 0, widths);
+    require(chained.size() == 2, "profile-aware row continues onto its next host");
+    requireNear(chained[0].z, 0.072, 1e-9, "first segment uses narrow profile width");
+    requireNear(chained[1].z, 0.144, 1e-9, "continued segment resolves its own wider profile");
+    // Same-end continuation reverses the host's physical lateral axis and cant sign.
+    next.previousSplineId = 0;
+    next.nextSplineId = host.splineId;
+    next.localY = 6.0;
+    next.rotationDegrees = 180.0;
+    next.cantStart = next.cantEnd = 120.0;
+    const auto reverse = placeMapSplineAttachment(row(0, 1.5, 0.0, 4.0, 0.0, 0.0),
+                                                  {host, next}, 0, 0, widths);
+    require(reverse.size() == 1, "profile-aware row traverses a reversed host");
+    requireNear(reverse[0].z, 0.144, 1e-9, "reversed host retains physical cant displacement");
+    const MapSplineCantWidthResolver zeroWidth = [](const MapSplinePlacement&) {
+        return std::optional<double>{0.0};
+    };
+    auto centered = row(0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    centered.tilt = true;
+    const auto flat = placeMapSplineAttachment(centered, {host}, 0, 0, zeroWidth);
+    requireNear(flat[0].z, 0.0, 1e-9, "zero half-width disables cant height");
+    requireNear(flat[0].rotationDegrees[2], 0.0, 1e-9, "zero half-width disables bank at centerline");
+    const MapSplineCantWidthResolver missingWidth = [](const MapSplinePlacement&) {
+        return std::optional<double>{};
+    };
+    const auto legacy = placeMapSplineAttachment(row(0, 1.5, 0.0, 1.0, 0.0, 0.0),
+                                                 {host}, 0, 0, missingWidth);
+    requireNear(legacy[0].z, 1.8, 1e-9, "missing profile width preserves legacy unbounded cant");
+    bool rejected = false;
+    try {
+        const MapSplineCantWidthResolver badWidth = [](const MapSplinePlacement&) {
+            return std::optional<double>{std::numeric_limits<double>::quiet_NaN()};
+        };
+        placeMapSplineAttachment(centered, {host}, 0, 0, badWidth);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "attachment cant helpers reject invalid profile widths");
+}
+
 } // namespace
 
 int main() {
     try {
         runProbe();
+        runProfileCantProbe();
     } catch (const std::exception& error) {
         std::cerr << "map scenery placement probe failed: " << error.what() << '\n';
         return 1;

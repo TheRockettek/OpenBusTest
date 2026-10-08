@@ -407,20 +407,22 @@ std::filesystem::path findSplineTexture(const std::filesystem::path& profilePath
 void appendRoadProfile(RoadMeshGeometry& road, const openbus::map::MapSplinePlacement& spline,
                        const std::vector<openbus::map::MapSplineSample>& centerline,
                        const openbus::map::MapSplineProfileSection& section,
-                       const openbus::map::MapRoadSplineJoins& joins) {
-    const openbus::map::MapRoadSectionGeometry geometry =
-        openbus::map::buildMapRoadSectionGeometry(spline, centerline, section, joins);
+                       const openbus::map::MapRoadSplineJoins& joins,
+                       std::optional<double> cantHalfWidth) {
+    const openbus::map::MapRoadSectionGeometry geometry = openbus::map::buildMapRoadSectionGeometry(
+        spline, centerline, section, joins, cantHalfWidth);
+    const std::vector<std::array<double, 3>> normals =
+        openbus::map::computeMapRoadVertexNormals(geometry);
     const std::uint32_t baseVertex = static_cast<std::uint32_t>(road.vertices.size());
-    for (const openbus::map::MapRoadVertex& vertex : geometry.vertices) {
-        const ModelVertex generated{static_cast<float>(vertex.x),
-                                    static_cast<float>(vertex.y),
-                                    static_cast<float>(vertex.z),
-                                    static_cast<float>(vertex.textureU),
-                                    static_cast<float>(vertex.textureV),
-                                    0.0F,
-                                    0.0F,
-                                    0.0F,
-                                    1.0F};
+    for (std::size_t vertexIndex = 0; vertexIndex < geometry.vertices.size(); ++vertexIndex) {
+        const openbus::map::MapRoadVertex& vertex = geometry.vertices[vertexIndex];
+        const std::array<double, 3>& normal = normals[vertexIndex];
+        const ModelVertex generated{
+            static_cast<float>(vertex.x),        static_cast<float>(vertex.y),
+            static_cast<float>(vertex.z),        static_cast<float>(vertex.textureU),
+            static_cast<float>(vertex.textureV), 0.0F,
+            static_cast<float>(normal[0]),       static_cast<float>(normal[1]),
+            static_cast<float>(normal[2])};
         road.minX = std::min(road.minX, vertex.x);
         road.minY = std::min(road.minY, vertex.y);
         road.maxX = std::max(road.maxX, vertex.x);
@@ -583,9 +585,8 @@ struct MapRenderer::Impl {
 };
 
 MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
-                         double spawnWorldX, double spawnWorldY,
-                         std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot,
-                         SimulationState& simulationState)
+                         double spawnWorldX, double spawnWorldY, std::size_t groundTextureIndex,
+                         const std::filesystem::path& omsiRoot, SimulationState& simulationState)
     : impl_(std::make_unique<Impl>()) {
     TraceScope trace("map", "MapRenderer::MapRenderer");
     impl_->simulationState = &simulationState;
@@ -741,8 +742,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                         layer.texture = getTexture(layerTexturePath);
                         layer.textured = true;
                         const double layerRepeatsPerTile =
-                            openbus::map::mapGroundTextureTiling(
-                                map.groundTextures[textureIndex])
+                            openbus::map::mapGroundTextureTiling(map.groundTextures[textureIndex])
                                 .textureRepeatsPerTile;
                         const float layerTextureScale =
                             static_cast<float>(layerRepeatsPerTile) * inverseIntervals;
@@ -1236,6 +1236,45 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     std::unordered_map<std::string, openbus::map::MapSplineProfile> splineProfiles;
     std::unordered_set<std::string> failedSplineProfiles;
     std::unordered_set<std::string> editorOnlySplineProfiles;
+    const auto cachedSplineProfile =
+        [&](const std::filesystem::path& path) -> const openbus::map::MapSplineProfile* {
+        if (path.empty()) {
+            return nullptr;
+        }
+        const std::string key = path.lexically_normal().generic_string();
+        if (failedSplineProfiles.contains(key)) {
+            return nullptr;
+        }
+        auto found = splineProfiles.find(key);
+        if (found == splineProfiles.end()) {
+            try {
+                found = splineProfiles.emplace(key, openbus::map::loadMapSplineProfile(path)).first;
+            } catch (const std::exception& error) {
+                failedSplineProfiles.insert(key);
+                recordSkipped(skipped, "spline profile files that failed to parse",
+                              path.filename().string() + ": " + error.what());
+                return nullptr;
+            }
+        }
+        return &found->second;
+    };
+    // Share profile metadata across join indexing, row/parent placement, and road generation.
+    // Each asset is resolved/parsed once, including absent and rejected assets.
+    std::unordered_map<std::string, std::optional<double>> splineCantWidths;
+    const openbus::map::MapSplineCantWidthResolver splineCantWidth =
+        [&](const openbus::map::MapSplinePlacement& spline) -> std::optional<double> {
+        const auto found = splineCantWidths.find(spline.assetPath);
+        if (found != splineCantWidths.end()) {
+            return found->second;
+        }
+        const auto* profile =
+            cachedSplineProfile(resolveSplineProfile(map, omsiRoot, spline.assetPath));
+        const std::optional<double> width =
+            profile != nullptr ? openbus::map::mapSplineProfileCantHalfWidth(*profile)
+                               : std::nullopt;
+        splineCantWidths.emplace(spline.assetPath, width);
+        return width;
+    };
     const auto mapContentStart = std::chrono::steady_clock::now();
     std::size_t tilesProcessed = 0;
     std::size_t sceneryPlacementsParsed = 0;
@@ -1267,7 +1306,9 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
         const openbus::map::MapTileData tile = openbus::map::loadMapTile(tileReference);
         const std::uint64_t currentTileKey = tileKey(tileReference.x, tileReference.y);
         for (const auto& spline : tile.splines) {
-            roadConnections.addSpline(spline, tileReference.x, tileReference.y);
+            roadConnections.addSpline(spline, tileReference.x, tileReference.y,
+                                      spline.geometryValid ? splineCantWidth(spline)
+                                                           : std::nullopt);
         }
         for (const openbus::map::MapSceneryPlacement& object : tile.sceneryObjects) {
             IndexedSceneryObject indexed;
@@ -1442,18 +1483,18 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                              .first;
         }
         const auto& splineAttachmentRecord = parentTile->second.splineAttachments;
-        const auto record = std::find_if(
-            splineAttachmentRecord.begin(), splineAttachmentRecord.end(),
-            [objectId](const openbus::map::MapSplineAttachment& candidate) {
-                return candidate.id == objectId;
-            });
+        const auto record =
+            std::find_if(splineAttachmentRecord.begin(), splineAttachmentRecord.end(),
+                         [objectId](const openbus::map::MapSplineAttachment& candidate) {
+                             return candidate.id == objectId;
+                         });
         if (record == splineAttachmentRecord.end()) {
             return std::nullopt;
         }
         const std::optional<openbus::map::MapSceneryPose> parentPose =
             openbus::map::placeMapSplineAttachmentParent(
                 *record, parentTile->second.splines, parentTile->second.reference.x,
-                parentTile->second.reference.y);
+                parentTile->second.reference.y, splineCantWidth);
         if (!parentPose.has_value()) {
             return std::nullopt;
         }
@@ -1606,9 +1647,9 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                         (!scriptConfiguration->second.scripts.empty() ||
                          !sharedDefinition->scriptTextures.empty() ||
                          !sharedDefinition->textTextures.empty());
-                    definition = sceneryRuntimeDefinitions
-                                     .emplace(assetKey, std::move(sharedDefinition))
-                                     .first;
+                    definition =
+                        sceneryRuntimeDefinitions.emplace(assetKey, std::move(sharedDefinition))
+                            .first;
                 }
                 scriptState->definition = definition->second;
                 scriptStateIndex = impl_->sceneryScriptStates.size();
@@ -1722,7 +1763,8 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                 continue;
             }
             const std::vector<openbus::map::MapSceneryPose> poses =
-                openbus::map::placeMapSplineAttachment(attachment, tile.splines, tileX, tileY);
+                openbus::map::placeMapSplineAttachment(attachment, tile.splines, tileX, tileY,
+                                                       splineCantWidth);
             if (poses.empty()) {
                 recordSkipped(skipped, "spline attachment records with no local placement",
                               description);
@@ -1753,24 +1795,11 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                 continue;
             }
             const std::string profileKey = profilePath.lexically_normal().generic_string();
-            if (failedSplineProfiles.contains(profileKey)) {
+            const auto* loadedProfile = cachedSplineProfile(profilePath);
+            if (loadedProfile == nullptr) {
                 continue;
             }
-            auto profileFound = splineProfiles.find(profileKey);
-            if (profileFound == splineProfiles.end()) {
-                try {
-                    profileFound =
-                        splineProfiles
-                            .emplace(profileKey, openbus::map::loadMapSplineProfile(profilePath))
-                            .first;
-                } catch (const std::exception& error) {
-                    failedSplineProfiles.insert(profileKey);
-                    recordSkipped(skipped, "spline profile files that failed to parse",
-                                  profilePath.filename().string() + ": " + error.what());
-                    continue;
-                }
-            }
-            const openbus::map::MapSplineProfile& profile = profileFound->second;
+            const openbus::map::MapSplineProfile& profile = *loadedProfile;
             if (profile.editorOnly) {
                 if (editorOnlySplineProfiles.insert(profileKey).second) {
                     recordSkipped(skipped, "editor-only spline profiles",
@@ -1795,6 +1824,8 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                               splineDescription);
                 continue;
             }
+            const std::optional<double> cantHalfWidth =
+                openbus::map::mapSplineProfileCantHalfWidth(profile);
             for (const openbus::map::MapSplineProfileSection& section : profile.sections) {
                 if (section.points.size() < 2) {
                     recordSkipped(skipped, "spline profile strips with fewer than two points",
@@ -1813,7 +1844,8 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                 const std::filesystem::path roadTexture =
                     findSplineTexture(profilePath, omsiRoot, textureName);
                 const int alphaMode =
-                    static_cast<std::size_t>(section.textureIndex) < profile.textureAlphaModes.size()
+                    static_cast<std::size_t>(section.textureIndex) <
+                            profile.textureAlphaModes.size()
                         ? profile.textureAlphaModes[static_cast<std::size_t>(section.textureIndex)]
                         : 0;
                 const bool textured = !roadTexture.empty();
@@ -1825,9 +1857,10 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                 const std::string tileBatchPrefix =
                     std::to_string(tileX) + "," + std::to_string(tileY) + "|";
                 const std::string batchKey =
-                    tileBatchPrefix + (textured ? roadTexture.lexically_normal().generic_string()
-                                                : "untextured:" + profileKey + "#" +
-                                                      std::to_string(section.textureIndex)) +
+                    tileBatchPrefix +
+                    (textured ? roadTexture.lexically_normal().generic_string()
+                              : "untextured:" + profileKey + "#" +
+                                    std::to_string(section.textureIndex)) +
                     "|alpha:" + std::to_string(alphaMode);
                 RoadMeshGeometry& road = roadVertices[batchKey];
                 if (road.vertices.empty()) {
@@ -1838,7 +1871,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     road.alphaMode = alphaMode;
                 }
                 appendRoadProfile(road, spline, centerline, section,
-                                  roadConnections.joinsFor(spline, tileX, tileY));
+                                  roadConnections.joinsFor(spline, tileX, tileY), cantHalfWidth);
             }
         }
         if (tilesProcessed % 100 == 0 || tilesProcessed == map.tiles.size()) {
@@ -1952,9 +1985,9 @@ void MapRenderer::initializeActiveScripts() {
             continue;
         }
         if (!scriptState.runtime) {
-            scriptState.runtime = std::make_unique<ScriptRuntime>(
-                scriptState.definition->configuration, scriptState.variables,
-                *impl_->simulationState);
+            scriptState.runtime =
+                std::make_unique<ScriptRuntime>(scriptState.definition->configuration,
+                                                scriptState.variables, *impl_->simulationState);
             scriptState.runtime->configureScriptTextures(scriptState.definition->scriptTextures);
             scriptState.runtime->configureTextTextures(scriptState.definition->textTextures);
             ++impl_->sceneryScriptRuntimeCount;
@@ -2007,7 +2040,8 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
     impl_->activeSceneryScriptStateIndices.reserve(impl_->sceneryScriptStates.size());
     for (std::size_t stateIndex = 0; stateIndex < impl_->sceneryScriptStates.size(); ++stateIndex) {
         const Impl::SceneryScriptState& scriptState = *impl_->sceneryScriptStates[stateIndex];
-        if (impl_->activeTileKeys.contains(tileKey(scriptState.ownerTileX, scriptState.ownerTileY))) {
+        if (impl_->activeTileKeys.contains(
+                tileKey(scriptState.ownerTileX, scriptState.ownerTileY))) {
             impl_->activeSceneryScriptStateIndices.push_back(stateIndex);
         }
     }
@@ -2176,8 +2210,8 @@ void MapRenderer::draw() const {
             continue;
         }
         for (const Impl::SceneryInstance& instance : chunk.instances) {
-            if (!impl_->activeTileKeys.contains(tileKey(instance.sourceTileX,
-                                                        instance.sourceTileY)) ||
+            if (!impl_->activeTileKeys.contains(
+                    tileKey(instance.sourceTileX, instance.sourceTileY)) ||
                 instance.batchIndex >= impl_->sceneryBatches.size() ||
                 outsideVisibilityBounds(
                     instance.x - instance.boundingRadius, instance.y - instance.boundingRadius,

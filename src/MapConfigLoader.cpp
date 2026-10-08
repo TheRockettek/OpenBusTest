@@ -19,8 +19,6 @@ namespace openbus::map {
 
 namespace {
 
-constexpr double CANT_SERIALIZED_UNITS_PER_PERCENT = 100.0;
-
 std::string trim(std::string_view value) {
     const std::size_t first = value.find_first_not_of(" \t\r\n");
     if (first == std::string_view::npos) {
@@ -560,8 +558,8 @@ std::size_t selectMapGroundTextureIndex(const MapDefinition& map, std::string_vi
     return static_cast<std::size_t>(index);
 }
 
-MapGroundTextureTiling mapGroundTextureTiling(
-    const GroundTextureDefinition& groundTexture) noexcept {
+MapGroundTextureTiling
+mapGroundTextureTiling(const GroundTextureDefinition& groundTexture) noexcept {
     const auto parseRepeatCount = [](const std::string& text) {
         if (text.empty()) {
             return 1.0;
@@ -730,14 +728,6 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 numericFieldsValid = valid && numericFieldsValid;
                 return valid;
             };
-            const auto readSplineCantPercent = [&](double& destination) {
-                double serializedCant = 0.0;
-                if (readSplineReal(serializedCant)) {
-                    // OMSI map records store cant in hundredths of a percentage point;
-                    // geometry uses percentage points (for example, 500 means 5%).
-                    destination = serializedCant / CANT_SERIALIZED_UNITS_PER_PERCENT;
-                }
-            };
             readSplineReal(spline.localX);
             readSplineReal(spline.elevation);
             readSplineReal(spline.localY);
@@ -750,8 +740,9 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 readSplineReal(spline.heightDelta);
             }
             if (hasField(5)) {
-                readSplineCantPercent(spline.cantStart);
-                readSplineCantPercent(spline.cantEnd);
+                // The map editor serializes cant directly in percentage points.
+                readSplineReal(spline.cantStart);
+                readSplineReal(spline.cantEnd);
             }
             // Versions 14+ add skew at both ends before the v11+ chain texture offset.
             if (hasField(14)) {

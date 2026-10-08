@@ -31,4 +31,14 @@ double mapSplineElevation(double startElevation, double length, double gradientS
 // Lateral offset in the right-positive OMSI map frame (x east, y north).
 std::array<double, 2> mapSplineRightOffset(double headingRadians, double distance);
 
+// Cant is in percentage points; nullopt keeps the legacy unbounded lateral crossfall.
+// A supplied half-width must be finite and non-negative (zero disables cant).
+double mapSplineCantHeightOffset(double lateral, double cantPercent,
+                                 std::optional<double> cantHalfWidth = std::nullopt);
+
+// Local cant bank angle: beyond the half-width, the clamped height is constant.
+// At the clamp boundary, use the saturated (flat) side of the derivative.
+double mapSplineCantBankRadians(double lateral, double cantPercent,
+                                std::optional<double> cantHalfWidth = std::nullopt);
+
 } // namespace openbus::map

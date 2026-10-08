@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <stdexcept>
 
 namespace openbus::map {
 namespace {
@@ -13,6 +14,12 @@ constexpr double STRAIGHT_RADIUS_EPSILON = 1.0e-8;
 constexpr double MAX_SEGMENT_LENGTH_METERS = 2.0;
 constexpr double MAX_HEADING_STEP_RADIANS = 5.0 * std::numbers::pi / 180.0;
 constexpr std::size_t MAX_SPLINE_SEGMENTS = 4096;
+
+void validateCantHalfWidth(const std::optional<double>& halfWidth) {
+    if (halfWidth.has_value() && (!std::isfinite(*halfWidth) || *halfWidth < 0.0)) {
+        throw std::invalid_argument("Map spline cant half-width must be finite and non-negative");
+    }
+}
 
 std::optional<MapSplineSample> sampleUnchecked(double startX, double startY, double headingDegrees,
                                                double radius, double distance) {
@@ -68,6 +75,24 @@ double mapSplineElevation(double startElevation, double length, double gradientS
 
 std::array<double, 2> mapSplineRightOffset(double headingRadians, double distance) {
     return {distance * std::cos(headingRadians), -distance * std::sin(headingRadians)};
+}
+
+double mapSplineCantHeightOffset(double lateral, double cantPercent,
+                                 std::optional<double> cantHalfWidth) {
+    validateCantHalfWidth(cantHalfWidth);
+    if (cantHalfWidth.has_value()) {
+        lateral = std::clamp(lateral, -*cantHalfWidth, *cantHalfWidth);
+    }
+    return -lateral * cantPercent / 100.0;
+}
+
+double mapSplineCantBankRadians(double lateral, double cantPercent,
+                                std::optional<double> cantHalfWidth) {
+    validateCantHalfWidth(cantHalfWidth);
+    if (cantHalfWidth.has_value() && std::abs(lateral) >= *cantHalfWidth) {
+        return 0.0;
+    }
+    return std::atan(cantPercent / 100.0);
 }
 
 std::vector<MapSplineSample> tessellateMapSpline(double startX, double startY,

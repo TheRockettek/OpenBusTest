@@ -57,10 +57,10 @@ RotationMatrix mapRotation(const std::array<double, 6>& degrees, std::size_t cou
         const bool splineFrame = hasSplineFrame && group == 0;
         const double pitchSign = splineFrame ? 1.0 : -1.0;
         const double bankSign = splineFrame ? 1.0 : -1.0;
-        const RotationMatrix euler = multiplyRotation(
-            multiplyRotation(rotationZ(-degrees[offset]),
-                             rotationY(bankSign * degrees[offset + 2])),
-            rotationX(pitchSign * degrees[offset + 1]));
+        const RotationMatrix euler =
+            multiplyRotation(multiplyRotation(rotationZ(-degrees[offset]),
+                                              rotationY(bankSign * degrees[offset + 2])),
+                             rotationX(pitchSign * degrees[offset + 1]));
         result = multiplyRotation(result, euler);
     }
     return result;
@@ -158,10 +158,10 @@ MapSceneryPose composeMapAttachedObjectPose(const MapSceneryPose& parent,
     // Convert CFG attachment rotation axes into map axes as well: CFG x -> map -Y,
     // CFG y -> map +X, and CFG z -> map +Z. OMSI's local attachment rotations use
     // the negative authored angle, matching the scenery model transform convention.
-    const RotationMatrix attachmentRotation = multiplyRotation(
-        multiplyRotation(rotationZ(-attachmentRotationXYZ[2]),
-                         rotationX(-attachmentRotationXYZ[1])),
-        rotationY(attachmentRotationXYZ[0]));
+    const RotationMatrix attachmentRotation =
+        multiplyRotation(multiplyRotation(rotationZ(-attachmentRotationXYZ[2]),
+                                          rotationX(-attachmentRotationXYZ[1])),
+                         rotationY(attachmentRotationXYZ[0]));
     const std::array<double, 6> childRotations = {
         childRotationDegrees[0], childRotationDegrees[1], childRotationDegrees[2], 0.0, 0.0, 0.0};
 
@@ -216,9 +216,10 @@ bool alignMapSceneryPoseToTerrainNormal(MapSceneryPose& pose,
 
 namespace {
 
-std::vector<MapSceneryPose> placeMapSplineAttachmentImpl(
-    const MapSplineAttachment& attachment, const std::vector<MapSplinePlacement>& splines,
-    int tileX, int tileY, bool firstPlacementOnly) {
+std::vector<MapSceneryPose>
+placeMapSplineAttachmentImpl(const MapSplineAttachment& attachment,
+                             const std::vector<MapSplinePlacement>& splines, int tileX, int tileY,
+                             bool firstPlacementOnly, const MapSplineCantWidthResolver& cantWidth) {
     std::vector<MapSceneryPose> placements;
     if (!attachment.transformValid || attachment.splineIndex < 0 ||
         static_cast<std::size_t>(attachment.splineIndex) >= splines.size()) {
@@ -252,6 +253,7 @@ std::vector<MapSceneryPose> placeMapSplineAttachmentImpl(
         if (!spline.geometryValid || spline.length <= 0.0) {
             break;
         }
+        const std::optional<double> cantHalfWidth = cantWidth ? cantWidth(spline) : std::nullopt;
         for (std::size_t rowIndex = firstRowIndex; rowIndex < rowCount; ++rowIndex) {
             const double distanceFromChainStart =
                 attachment.offset[2] + static_cast<double>(rowIndex) * interval;
@@ -276,25 +278,26 @@ std::vector<MapSceneryPose> placeMapSplineAttachmentImpl(
             const auto lateralOffset = mapSplineRightOffset(center->headingRadians, lateral);
             // Interpolate against the authored segment length directly; radius only affects
             // the sampled centerline position and heading, not transition progress.
-            const double segmentProgress =
-                std::clamp(segmentDistance / spline.length, 0.0, 1.0);
+            const double segmentProgress = std::clamp(segmentDistance / spline.length, 0.0, 1.0);
             const double cantPercent =
                 spline.cantStart + (spline.cantEnd - spline.cantStart) * segmentProgress;
-            const double cantLift = -lateral * cantPercent / 100.0;
+            const double cantLift = mapSplineCantHeightOffset(lateral, cantPercent, cantHalfWidth);
             const double elevation = mapSplineElevation(
                 spline.elevation, spline.length, spline.gradientStart, spline.gradientEnd,
                 spline.elevated ? std::optional<double>(spline.heightDelta) : std::nullopt,
                 segmentDistance);
-            const double pitch = attachment.tilt
-                                     ? std::atan((spline.gradientStart +
-                                                  (spline.gradientEnd - spline.gradientStart) *
-                                                      segmentProgress) /
-                                                 100.0) *
-                                           180.0 / std::numbers::pi
-                                     : 0.0;
-            const double bank = attachment.tilt && std::abs(lateral) <= 10.0
-                                    ? std::atan(cantPercent / 100.0) * 180.0 / std::numbers::pi
-                                    : 0.0;
+            const double pitch =
+                attachment.tilt
+                    ? std::atan((spline.gradientStart +
+                                 (spline.gradientEnd - spline.gradientStart) * segmentProgress) /
+                                100.0) *
+                          180.0 / std::numbers::pi
+                    : 0.0;
+            const double bank =
+                attachment.tilt && (cantHalfWidth.has_value() || std::abs(lateral) <= 10.0)
+                    ? mapSplineCantBankRadians(lateral, cantPercent, cantHalfWidth) * 180.0 /
+                          std::numbers::pi
+                    : 0.0;
             const double reverseTurn = backwards ? 180.0 : 0.0;
             placements.push_back(
                 {center->x + lateralOffset[0],
@@ -336,15 +339,17 @@ std::vector<MapSceneryPose> placeMapSplineAttachmentImpl(
 
 std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& attachment,
                                                      const std::vector<MapSplinePlacement>& splines,
-                                                     int tileX, int tileY) {
-    return placeMapSplineAttachmentImpl(attachment, splines, tileX, tileY, false);
+                                                     int tileX, int tileY,
+                                                     const MapSplineCantWidthResolver& cantWidth) {
+    return placeMapSplineAttachmentImpl(attachment, splines, tileX, tileY, false, cantWidth);
 }
 
-std::optional<MapSceneryPose> placeMapSplineAttachmentParent(
-    const MapSplineAttachment& attachment, const std::vector<MapSplinePlacement>& splines,
-    int tileX, int tileY) {
+std::optional<MapSceneryPose>
+placeMapSplineAttachmentParent(const MapSplineAttachment& attachment,
+                               const std::vector<MapSplinePlacement>& splines, int tileX, int tileY,
+                               const MapSplineCantWidthResolver& cantWidth) {
     const std::vector<MapSceneryPose> placements =
-        placeMapSplineAttachmentImpl(attachment, splines, tileX, tileY, true);
+        placeMapSplineAttachmentImpl(attachment, splines, tileX, tileY, true, cantWidth);
     if (placements.empty()) {
         return std::nullopt;
     }

@@ -26,8 +26,8 @@ struct MapGroundTextureTiling {
     double detailTextureRepeatsPerTile = 1.0;
 };
 
-MapGroundTextureTiling mapGroundTextureTiling(
-    const GroundTextureDefinition& groundTexture) noexcept;
+MapGroundTextureTiling
+mapGroundTextureTiling(const GroundTextureDefinition& groundTexture) noexcept;
 
 struct MapSeasonDefinition {
     std::string label;
@@ -131,7 +131,7 @@ struct MapSplinePlacement {
     double radius = 0.0;
     double gradientStart = 0.0;
     double gradientEnd = 0.0;
-    // Runtime percentage points; serialized map fields are hundredths of a percent.
+    // Percentage points, matching the values serialized by the map editor.
     double cantStart = 0.0;
     double cantEnd = 0.0;
     double skewStart = 0.0;

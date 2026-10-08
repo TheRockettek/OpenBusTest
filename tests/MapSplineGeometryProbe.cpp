@@ -17,7 +17,7 @@ void require(bool condition, const char* description) {
 }
 
 void requireNear(double actual, double expected, double tolerance, const char* description) {
-    if (std::abs(actual - expected) > tolerance) {
+    if (!std::isfinite(actual) || !std::isfinite(expected) || std::abs(actual - expected) > tolerance) {
         throw std::runtime_error(std::string(description) + ": expected " +
                                  std::to_string(expected) + ", got " +
                                  std::to_string(actual));
@@ -37,6 +37,44 @@ void verifySampling(const std::vector<openbus::map::MapSplineSample>& samples,
     }
     requireNear(samples.back().distance, expectedLength, 1.0e-9,
                 "last sample reaches the spline arc length");
+}
+
+void runCantProbe() {
+    using namespace openbus::map;
+    for (const double cant : {-120.0, 120.0}) {
+        requireNear(mapSplineCantHeightOffset(1.5, cant), -1.5 * cant / 100.0, 1e-12,
+                    "missing width preserves unbounded percentage displacement");
+        requireNear(mapSplineCantHeightOffset(1.5, cant, 0.06), -0.06 * cant / 100.0,
+                    1e-12, "positive lateral is clamped to half-width");
+        requireNear(mapSplineCantHeightOffset(-1.5, cant, 0.06), 0.06 * cant / 100.0,
+                    1e-12, "negative lateral is clamped symmetrically");
+        requireNear(mapSplineCantBankRadians(0.03, cant, 0.06), std::atan(cant / 100.0),
+                    1e-12, "inside clamp uses authored bank");
+        requireNear(mapSplineCantBankRadians(0.06, cant, 0.06), 0.0, 1e-12,
+                    "clamp boundary uses saturated-side bank");
+        requireNear(mapSplineCantBankRadians(-1.5, cant, 0.06), 0.0, 1e-12,
+                    "outside clamp is locally flat");
+        requireNear(mapSplineCantHeightOffset(1.5, cant, 0.0), 0.0, 1e-12,
+                    "zero width disables cant height");
+        requireNear(mapSplineCantBankRadians(0.0, cant, 0.0), 0.0, 1e-12,
+                    "zero width disables bank at centerline");
+    }
+    for (const double width : {-1.0, std::numeric_limits<double>::infinity(),
+                               std::numeric_limits<double>::quiet_NaN()}) {
+        bool heightRejected = false;
+        bool bankRejected = false;
+        try {
+            mapSplineCantHeightOffset(0.0, 0.0, width);
+        } catch (const std::invalid_argument&) {
+            heightRejected = true;
+        }
+        try {
+            mapSplineCantBankRadians(0.0, 0.0, width);
+        } catch (const std::invalid_argument&) {
+            bankRejected = true;
+        }
+        require(heightRejected && bankRejected, "both helpers reject invalid widths");
+    }
 }
 
 void runProbe() {
@@ -120,6 +158,7 @@ void runProbe() {
 int main() {
     try {
         runProbe();
+        runCantProbe();
     } catch (const std::exception& error) {
         std::cerr << "map spline geometry probe failed: " << error.what() << '\n';
         return 1;

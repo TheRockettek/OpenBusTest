@@ -2,6 +2,7 @@
 
 #include "PerfTrace.h"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
@@ -187,6 +188,22 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
     }
 
     return profile;
+}
+
+std::optional<double> mapSplineProfileCantHalfWidth(const MapSplineProfile& profile) noexcept {
+    std::optional<double> halfWidth;
+    for (const MapSplineHeightProfile& heightProfile : profile.heightProfiles) {
+        if (!heightProfile.valid || !std::isfinite(heightProfile.values[0]) ||
+            !std::isfinite(heightProfile.values[1])) {
+            continue;
+        }
+        const double extent =
+            std::max(std::abs(heightProfile.values[0]), std::abs(heightProfile.values[1]));
+        if (!halfWidth.has_value() || extent > *halfWidth) {
+            halfWidth = extent;
+        }
+    }
+    return halfWidth;
 }
 
 } // namespace openbus::map

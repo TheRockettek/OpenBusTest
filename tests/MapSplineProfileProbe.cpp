@@ -41,6 +41,10 @@ void runProbe(const std::filesystem::path& fixture) {
                 profile.heightProfiles[1].values ==
                     std::array<double, 4>{-3.0, 3.0, 0.1, 0.1},
             "second height-profile range is parsed in order");
+    const std::optional<double> cantHalfWidth = mapSplineProfileCantHalfWidth(profile);
+    require(cantHalfWidth.has_value(), "valid height-profile ranges provide a cant half-width");
+    requireNear(*cantHalfWidth, 4.0,
+                "cant half-width is the maximum absolute lateral height-profile extent");
     require(!profile.heightProfiles[2].valid &&
                 profile.heightProfiles[2].rawFields[2] == "not-a-number",
             "malformed height values are retained but marked invalid");

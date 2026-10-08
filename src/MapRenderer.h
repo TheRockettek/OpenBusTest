@@ -13,21 +13,21 @@ class SimulationState;
 namespace openbus::rendering {
 
 struct MapRenderStats {
-  std::size_t activeTiles = 0;
-  std::size_t totalTiles = 0;
-  std::size_t activeTerrainTiles = 0;
-  std::size_t totalTerrainTiles = 0;
-  std::size_t activeSceneryObjects = 0;
-  std::size_t totalSceneryObjects = 0;
-  std::size_t activeRoadBatches = 0;
-  std::size_t totalRoadBatches = 0;
+    std::size_t activeTiles = 0;
+    std::size_t totalTiles = 0;
+    std::size_t activeTerrainTiles = 0;
+    std::size_t totalTerrainTiles = 0;
+    std::size_t activeSceneryObjects = 0;
+    std::size_t totalSceneryObjects = 0;
+    std::size_t activeRoadBatches = 0;
+    std::size_t totalRoadBatches = 0;
 };
 
 class MapRenderer {
   public:
     MapRenderer(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
-          double spawnWorldX, double spawnWorldY, std::size_t groundTextureIndex,
-          const std::filesystem::path& omsiRoot, SimulationState& simulationState);
+                double spawnWorldX, double spawnWorldY, std::size_t groundTextureIndex,
+                const std::filesystem::path& omsiRoot, SimulationState& simulationState);
     ~MapRenderer();
 
     MapRenderer(const MapRenderer&) = delete;

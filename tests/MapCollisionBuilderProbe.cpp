@@ -90,26 +90,32 @@ void runLinkedProbe() {
     using namespace openbus::map;
     const auto root = std::filesystem::temp_directory_path() / "OpenBusMapLinkedCollisionProbe";
     std::filesystem::remove_all(root);
-    writeText(root / "Splines" / "Test.sli",
+        const auto mapRoot = root / "map";
+        const auto omsiRoot = root / "omsi";
+        const std::string crossSection =
           "[texture]\nroad.bmp\n[profile]\n0\n"
-          "[profilepnt]\n-2\n0.25\n0\n0.2\n[profilepnt]\n2\n0.25\n1\n0.2\n");
+          "[profilepnt]\n-2\n0.25\n0\n0.2\n[profilepnt]\n2\n0.25\n1\n0.2\n";
+        writeText(omsiRoot / "Splines" / "Test.sli",
+              "[heightprofile]\n-0.06\n0.06\n0\n0\n" + crossSection);
+        writeText(omsiRoot / "Splines" / "Wide.sli",
+              "[heightprofile]\n-0.12\n0.12\n0\n0\n" + crossSection);
     MapDefinition map;
-    map.rootPath = root;
+        map.rootPath = mapRoot;
     MapTileReference aTile;
-    aTile.textPath = root / "tile_0_0.map";
+        aTile.textPath = mapRoot / "tile_0_0.map";
     MapTileReference bTile;
     bTile.x = 1;
-    bTile.textPath = root / "tile_1_0.map";
+        bTile.textPath = mapRoot / "tile_1_0.map";
     writeText(aTile.textPath,
           "[version]\n14\n[terrain]\n[spline]\n0\nSplines/Test.sli\n"
           "10\n0\n20\n290\n0\n0\n90\n10\n0\n12\n12\n200\n200\n0.5\n0.5\n0\n\n");
     writeText(bTile.textPath,
-          "[version]\n14\n[terrain]\n[spline]\n0\nSplines/Test.sli\n"
+            "[version]\n14\n[terrain]\n[spline]\n0\nSplines/Wide.sli\n"
           "20\n10\n0\n0\n1.25\n0\n0\n10\n0\n-11.2\n-11.2\n-120\n-120\n-0.25\n0\n10\n\n");
     map.tiles = {aTile, bTile};
-    const auto full = buildMapRoadCollision(map, root);
-    const auto first = buildMapRoadCollisionTile(map, root, 0, 0);
-    const auto second = buildMapRoadCollisionTile(map, root, 1, 0);
+        const auto full = buildMapRoadCollision(map, omsiRoot);
+        const auto first = buildMapRoadCollisionTile(map, omsiRoot, 0, 0);
+        const auto second = buildMapRoadCollisionTile(map, omsiRoot, 1, 0);
     require(full.meshes.size() == 2 && first.meshes.size() == 1 && second.meshes.size() == 1,
         "linked cross-tile roads remain partitioned for independent streaming");
     require(full.meshes[0].vertices == first.meshes[0].vertices &&
@@ -119,32 +125,67 @@ void runLinkedProbe() {
         "stitched collision is identical for full-map and independent tile builds");
     const auto& firstVertices = first.meshes[0].vertices;
     const auto& secondVertices = second.meshes[0].vertices;
+    require(firstVertices.size() >= 6 && secondVertices.size() >= 6,
+            "linked roads contain both seam edge vertices");
     for (std::size_t coordinate = 0; coordinate < 6; ++coordinate) {
-    require(std::abs(firstVertices[firstVertices.size() - 6 + coordinate] -
-             secondVertices[coordinate]) < 1.0e-8,
-        "cross-tile skew/cant/gradient seam has no collision crack");
+        require(std::abs(firstVertices[firstVertices.size() - 6 + coordinate] -
+                         secondVertices[coordinate]) < 1.0e-8,
+                "cross-tile skew/cant/gradient seam has no collision crack");
     }
-    const auto connections = loadMapRoadConnections(map);
-    const auto tile = loadMapTile(aTile);
-    const auto& spline = tile.splines.front();
-    const auto profile = loadMapSplineProfile(root / "Splines" / "Test.sli");
-    const auto samples = tessellateMapSpline(spline.localX, spline.localY,
-                         spline.rotationDegrees, spline.length, spline.radius);
-    const auto rendered = buildMapRoadSectionGeometry(spline, samples, profile.sections[0],
-                              connections.joinsFor(spline, 0, 0));
-    require(rendered.vertices.size() * 3 == firstVertices.size(),
-        "collision retains shared renderer road vertices");
-    for (std::size_t vertex = 0; vertex < rendered.vertices.size(); ++vertex) {
-    require(rendered.vertices[vertex].x == firstVertices[vertex * 3] &&
-            rendered.vertices[vertex].y == firstVertices[vertex * 3 + 1] &&
-            rendered.vertices[vertex].z == firstVertices[vertex * 3 + 2],
-        "collision and render skew/stitching use identical XYZ geometry");
+    // Shared center 1.225, grade/skew lift +/-0.276, profile height 0.25,
+    // and separately clamped mean cant lift +/-(-0.06 + 0.072).
+    require(std::abs(secondVertices[2] - 1.187) < 1.0e-8 &&
+                std::abs(secondVertices[5] - 1.763) < 1.0e-8,
+            "seam height averages each authored width's cant displacement independently");
+    const auto connections = loadMapRoadConnections(map, omsiRoot);
+    const std::array<const MapTileReference*, 2> references = {&aTile, &bTile};
+    const std::array<const StaticCollisionMesh*, 2> meshes = {
+        &first.meshes[0], &second.meshes[0]};
+    for (std::size_t tileIndex = 0; tileIndex < references.size(); ++tileIndex) {
+        const auto& reference = *references[tileIndex];
+        const auto& mesh = *meshes[tileIndex];
+        const auto cached = buildMapRoadCollisionTile(map, omsiRoot, reference.x, reference.y,
+                                                      &connections);
+        require(cached.meshes.size() == 1 && cached.meshes[0].vertices == mesh.vertices &&
+                    cached.meshes[0].indices == mesh.indices,
+                "retained hydrated connections match independently loaded tile metadata");
+        const auto tile = loadMapTile(reference);
+        const auto& spline = tile.splines.front();
+        const auto profile = loadMapSplineProfile(omsiRoot / spline.assetPath);
+        const auto cantHalfWidth = mapSplineProfileCantHalfWidth(profile);
+        const double expectedWidth = tileIndex == 0 ? 0.06 : 0.12;
+        require(cantHalfWidth.has_value() &&
+                    std::abs(*cantHalfWidth - expectedWidth) < 1.0e-9,
+                "collision profiles expose distinct authored cant half-widths");
+        const auto samples = tessellateMapSpline(
+            reference.x * OMSI_TILE_SIZE_METERS + spline.localX,
+            reference.y * OMSI_TILE_SIZE_METERS + spline.localY,
+            spline.rotationDegrees, spline.length, spline.radius);
+        const auto rendered = buildMapRoadSectionGeometry(
+            spline, samples, profile.sections[0],
+            connections.joinsFor(spline, reference.x, reference.y), cantHalfWidth);
+        require(rendered.vertices.size() * 3 == mesh.vertices.size(),
+                "collision retains shared renderer road vertices");
+        for (std::size_t vertex = 0; vertex < rendered.vertices.size(); ++vertex) {
+            require(rendered.vertices[vertex].x == mesh.vertices[vertex * 3] &&
+                        rendered.vertices[vertex].y == mesh.vertices[vertex * 3 + 1] &&
+                        rendered.vertices[vertex].z == mesh.vertices[vertex * 3 + 2],
+                    "collision and render skew/stitching use identical XYZ geometry");
+        }
+        require(rendered.indices.size() == mesh.indices.size(),
+                "collision retains shared renderer road triangles");
+        for (std::size_t index = 0; index < rendered.indices.size(); index += 3) {
+            require(rendered.indices[index] == mesh.indices[index] &&
+                        rendered.indices[index + 1] == mesh.indices[index + 2] &&
+                        rendered.indices[index + 2] == mesh.indices[index + 1],
+                    "collision matches renderer indices with only ODE winding reversed");
+        }
     }
     MapTileReference missing;
     missing.x = 99;
-    missing.textPath = root / "missing.map";
+    missing.textPath = mapRoot / "missing.map";
     map.tiles.push_back(missing);
-    require(buildMapRoadCollisionTile(map, root, 0, 0).meshes[0].vertices == firstVertices,
+    require(buildMapRoadCollisionTile(map, omsiRoot, 0, 0).meshes[0].vertices == firstVertices,
         "missing unrelated tile cannot break selected-tile seam metadata loading");
     std::filesystem::remove_all(root);
 }

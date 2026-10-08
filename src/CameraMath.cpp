@@ -219,8 +219,7 @@ std::array<double, 3> freeCameraForward(double yawRadians, double pitchRadians) 
     constexpr double maxPitch = 1.5533430342749532;
     const double pitch = std::clamp(pitchRadians, -maxPitch, maxPitch);
     const double horizontal = std::cos(pitch);
-    return {horizontal * std::cos(yawRadians), horizontal * std::sin(yawRadians),
-            std::sin(pitch)};
+    return {horizontal * std::cos(yawRadians), horizontal * std::sin(yawRadians), std::sin(pitch)};
 }
 
 FreeCameraPose moveFreeCamera(const FreeCameraPose& pose, double forwardInput, double rightInput,
@@ -237,26 +236,25 @@ FreeCameraPose moveFreeCamera(const FreeCameraPose& pose, double forwardInput, d
     if (!std::isfinite(result.pitchRadians)) {
         result.pitchRadians = 0.0;
     }
-    result.pitchRadians = std::clamp(result.pitchRadians, -1.5533430342749532,
-                                     1.5533430342749532);
+    result.pitchRadians = std::clamp(result.pitchRadians, -1.5533430342749532, 1.5533430342749532);
     if (!std::isfinite(deltaSeconds) || !std::isfinite(speedMetersPerSecond) ||
         deltaSeconds <= 0.0 || speedMetersPerSecond <= 0.0) {
         return result;
     }
     const double forward = std::isfinite(forwardInput) ? std::clamp(forwardInput, -1.0, 1.0) : 0.0;
     const double right = std::isfinite(rightInput) ? std::clamp(rightInput, -1.0, 1.0) : 0.0;
-    const double vertical = std::isfinite(verticalInput) ? std::clamp(verticalInput, -1.0, 1.0) : 0.0;
+    const double vertical =
+        std::isfinite(verticalInput) ? std::clamp(verticalInput, -1.0, 1.0) : 0.0;
     const std::array<double, 3> forwardDirection =
         freeCameraForward(result.yawRadians, result.pitchRadians);
     const std::array<double, 3> rightDirection = {std::sin(result.yawRadians),
-                                                   -std::cos(result.yawRadians), 0.0};
+                                                  -std::cos(result.yawRadians), 0.0};
     std::array<double, 3> movement = {};
     for (std::size_t axis = 0; axis < result.position.size(); ++axis) {
         movement[axis] = forward * forwardDirection[axis] + right * rightDirection[axis] +
                          (axis == 2 ? vertical : 0.0);
     }
-    const double movementLength = std::sqrt(movement[0] * movement[0] +
-                                            movement[1] * movement[1] +
+    const double movementLength = std::sqrt(movement[0] * movement[0] + movement[1] * movement[1] +
                                             movement[2] * movement[2]);
     if (movementLength <= 1.0e-12) {
         return result;

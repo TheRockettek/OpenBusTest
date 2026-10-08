@@ -89,21 +89,20 @@ struct MapCollisionStreamer::WorkerState {
             result.tileX = job.tileX;
             result.tileY = job.tileY;
             try {
-                const auto tile = std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& ref) {
-                    return ref.x == job.tileX && ref.y == job.tileY;
-                });
+                const auto tile =
+                    std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& ref) {
+                        return ref.x == job.tileX && ref.y == job.tileY;
+                    });
                 if (tile == map.tiles.end()) {
                     throw std::runtime_error("Collision request references a missing map tile");
                 }
                 if (tile->hasTerrainFile) {
                     const TerrainGrid grid = loadTerrainGrid(tile->terrainPath);
-                    result.terrain = TerrainCollisionGrid{job.tileX, job.tileY,
-                                                          OMSI_TILE_SIZE_METERS, grid.intervals,
-                                                          grid.heights};
+                    result.terrain = TerrainCollisionGrid{
+                        job.tileX, job.tileY, OMSI_TILE_SIZE_METERS, grid.intervals, grid.heights};
                 }
-                MapRoadCollisionResult roadCollision =
-                    buildMapRoadCollisionTile(map, omsiRoot, job.tileX, job.tileY,
-                                             &roadConnections());
+                MapRoadCollisionResult roadCollision = buildMapRoadCollisionTile(
+                    map, omsiRoot, job.tileX, job.tileY, &roadConnections());
                 result.meshes = std::move(roadCollision.meshes);
             } catch (...) {
                 result.error = std::current_exception();
@@ -120,7 +119,7 @@ struct MapCollisionStreamer::WorkerState {
 
     const MapRoadConnectionIndex& roadConnections() {
         if (!connections) {
-            connections = loadMapRoadConnections(map);
+            connections = loadMapRoadConnections(map, omsiRoot);
         }
         return *connections;
     }
@@ -154,9 +153,8 @@ MapCollisionStreamer::MapCollisionStreamer(const MapDefinition& map,
 
 MapCollisionStreamer::~MapCollisionStreamer() = default;
 
-void MapCollisionStreamer::update(
-    double worldX, double worldY,
-    const std::vector<MapTileCoordinate>& loadedGeometryTiles) {
+void MapCollisionStreamer::update(double worldX, double worldY,
+                                  const std::vector<MapTileCoordinate>& loadedGeometryTiles) {
     const int centerX = mapWorldTile(worldX);
     const int centerY = mapWorldTile(worldY);
 
@@ -182,24 +180,24 @@ void MapCollisionStreamer::update(
             desiredTiles.push_back(&tile);
         }
     }
-    std::sort(desiredTiles.begin(), desiredTiles.end(), [centerX, centerY](const auto* left,
-                                                                          const auto* right) {
-        const int leftX = std::abs(left->x - centerX);
-        const int leftY = std::abs(left->y - centerY);
-        const int rightX = std::abs(right->x - centerX);
-        const int rightY = std::abs(right->y - centerY);
-        const int leftChebyshev = std::max(leftX, leftY);
-        const int rightChebyshev = std::max(rightX, rightY);
-        if (leftChebyshev != rightChebyshev) {
-            return leftChebyshev < rightChebyshev;
-        }
-        const int leftManhattan = leftX + leftY;
-        const int rightManhattan = rightX + rightY;
-        if (leftManhattan != rightManhattan) {
-            return leftManhattan < rightManhattan;
-        }
-        return std::pair{left->x, left->y} < std::pair{right->x, right->y};
-    });
+    std::sort(desiredTiles.begin(), desiredTiles.end(),
+              [centerX, centerY](const auto* left, const auto* right) {
+                  const int leftX = std::abs(left->x - centerX);
+                  const int leftY = std::abs(left->y - centerY);
+                  const int rightX = std::abs(right->x - centerX);
+                  const int rightY = std::abs(right->y - centerY);
+                  const int leftChebyshev = std::max(leftX, leftY);
+                  const int rightChebyshev = std::max(rightX, rightY);
+                  if (leftChebyshev != rightChebyshev) {
+                      return leftChebyshev < rightChebyshev;
+                  }
+                  const int leftManhattan = leftX + leftY;
+                  const int rightManhattan = rightX + rightY;
+                  if (leftManhattan != rightManhattan) {
+                      return leftManhattan < rightManhattan;
+                  }
+                  return std::pair{left->x, left->y} < std::pair{right->x, right->y};
+              });
 
     std::deque<WorkerState::Result> completed;
     {
@@ -251,8 +249,7 @@ void MapCollisionStreamer::update(
 
     for (const MapTileReference* tile : desiredTiles) {
         const std::uint64_t key = tileKey(tile->x, tile->y);
-        if (loadedTiles_.contains(key) ||
-            failedTiles_.contains(key)) {
+        if (loadedTiles_.contains(key) || failedTiles_.contains(key)) {
             continue;
         }
         std::lock_guard<std::mutex> lock(worker_->mutex);
