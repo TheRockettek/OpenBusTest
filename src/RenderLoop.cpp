@@ -1154,17 +1154,6 @@ struct Vehicle {
                 }
                 const double variableValue = variables.get(animation.variable);
                 const double targetAmount = variableValue * animation.scale + animation.offset;
-                const bool targetChanged = !state.initialized || targetAmount != state.targetAmount;
-                if (animation.type == "anim_trans" && targetChanged &&
-                    std::abs(targetAmount - state.currentAmount) > 0.5) {
-                    gameLog.Log("Animation translation variable=" + animation.variable +
-                                " value=" + std::to_string(variableValue) +
-                                " scale=" + std::to_string(animation.scale) +
-                                " offset=" + std::to_string(animation.offset) +
-                                " target=" + std::to_string(targetAmount) +
-                                " current=" + std::to_string(state.currentAmount) +
-                                " mesh=" + part.meshIdentifier + " mouse_event=" + part.mouseEvent);
-                }
                 if (!state.initialized) {
                     state.currentAmount = targetAmount;
                     state.targetAmount = targetAmount;
@@ -4275,6 +4264,12 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     : window_(nullptr), assetRequestManager_(std::make_unique<AssetRequestManager>()),
       reflectionRenderer_(std::make_unique<openbus::rendering::ReflectionRenderer>()) {
     TraceScope trace("startup", "RenderLoop::RenderLoop");
+    if (const char* diagnostics = std::getenv("OPENBUS_SCRIPT_DIAGNOSTICS")) {
+        drivetrainDiagnosticsEnabled_ = std::string(diagnostics) == "1";
+    }
+    if (drivetrainDiagnosticsEnabled_) {
+        gameLog.Log("Native drivetrain variable diagnostics enabled (1 Hz)");
+    }
     if (const char* scriptRate = std::getenv("OPENBUS_SCRIPT_HZ")) {
         try {
             scriptRateHz_ = std::clamp(std::stod(scriptRate), 0.0, 1000.0);
@@ -4496,6 +4491,33 @@ void RenderLoop::logDiagnosticVariables() const {
     logVariableSet("system", simulationState_.sharedVariables());
 }
 
+void RenderLoop::logDrivetrainDiagnosticVariables() const {
+    if (playerVehicle_ == nullptr) {
+        return;
+    }
+    static constexpr const char* variableNames[] = {
+        "throttle",                 "brake",                   "velocity",
+        "engine_on",                "engine_injection_on",      "engine_n",
+        "engine_internal_throttle", "engine_throttle_injection", "engine_m",
+        "engine_m_restriction",     "antrieb_getr_gangwahl",    "antrieb_getr_aktugang",
+        "antrieb_getr_ratio",       "antrieb_getr_m_an",        "antrieb_gear_engaged_timer",
+        "m_wheel",                  "n_wheel",                  "bremse_feststell",
+        "bremse_feststell_sw",      "bremse_luft",              "bremse_kompressor",
+        "bremse_p_leitung01",       "bremse_p_leitung02",       "bremse_p_tank01",
+        "bremse_p_tank02",          "bremse_p_tank03",          "bremse_ueventil_3",
+        "bremse_a_ueventil_3",      "bremse_a_ueventil_1",      "bremse_a_ueventil_2",
+        "bremse_zieldruck_fba",     "bremse_p_brzyl_fba",       "bremse_a_brventil_fba",
+        "bremse_p_brzyl_ha",        "bremse_zieldruck_ha",
+        "axle_brakeforce_0_l",      "axle_brakeforce_0_r",      "axle_brakeforce_1_l",
+        "axle_brakeforce_1_r"};
+    std::ostringstream line;
+    line << "Native drivetrain variables" << std::setprecision(7);
+    for (const char* name : variableNames) {
+        line << ' ' << name << '=' << playerVehicle_->variables.get(name);
+    }
+    gameLog.Log(line.str());
+}
+
 void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
                                        double steering, double brake) {
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
@@ -4507,6 +4529,13 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
         playerVehicle_->updateSimulationVariables(simulation, throttle, smoothedSteering_, brake);
     }
     updateScripts();
+    if (drivetrainDiagnosticsEnabled_) {
+        const double now = glfwGetTime();
+        if (lastDrivetrainDiagnosticTime_ < 0.0 || now - lastDrivetrainDiagnosticTime_ >= 1.0) {
+            lastDrivetrainDiagnosticTime_ = now;
+            logDrivetrainDiagnosticVariables();
+        }
+    }
 }
 
 void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {

@@ -556,7 +556,7 @@ class Emitter {
 
     // ------------------------------------------------------------------ body
     // Consumes until {end}, {endif}, or {else}  (does NOT consume the stopper)
-    void emit_body(std::string& out, int depth) {
+    void emit_body(std::string& out, int depth, bool stopAtEndif = false) {
         while (true) {
             if (peek().type == TT::Eof) {
                 std::cerr << "Warning: EOF inside body (missing {end}?) at line " << peek().line
@@ -568,9 +568,14 @@ class Emitter {
                 consume();
                 break;
             }
-            if (is_kw("endif") || is_kw("else")) {
+            if (is_kw("else") || (stopAtEndif && is_kw("endif"))) {
                 flush_pending(out, depth);
                 break;
+            }
+            if (is_kw("endif")) {
+                flush_pending(out, depth);
+                consume();
+                continue;
             }
             size_t before = pos;
             emit_stmt(out, depth);
@@ -1142,7 +1147,7 @@ class Emitter {
                    "; _pushf(a<=b and 1 or 0) end\n";
             return;
         }
-        if (op == "$>=") {
+        if (op == "$>=" || op == "$=>") {
             flush_pending(out, depth);
             out += ind(depth) + "do local b=" + pop_str_expr() + "; local a=" + pop_str_expr() +
                    "; _pushf(a>=b and 1 or 0) end\n";
@@ -1176,12 +1181,12 @@ class Emitter {
             out += ind(depth) + "local _osc_condition=" + expr + "\n";
             out += ind(depth) + "if compare(_osc_condition,1) then\n";
         }
-        emit_body(out, depth + 1);
+        emit_body(out, depth + 1, true);
 
         if (is_kw("else")) {
             consume();
             out += ind(depth) + "else\n";
-            emit_body(out, depth + 1);
+            emit_body(out, depth + 1, true);
         }
 
         if (is_kw("endif"))
@@ -1438,7 +1443,7 @@ class BytecodeCompiler {
             emit(code, OscOpcode::StringGreater);
         } else if (op == "$<=") {
             emit(code, OscOpcode::StringLessEqual);
-        } else if (op == "$>=") {
+        } else if (op == "$>=" || op == "$=>") {
             emit(code, OscOpcode::StringGreaterEqual);
         } else if (op == "$") {
             emit(code, OscOpcode::StringNoOp);
@@ -1455,10 +1460,15 @@ class BytecodeCompiler {
         return tokens_[position_].type == TT::BlockKW && tokens_[position_].val == keyword;
     }
 
-    void compileBody(std::vector<OscInstruction>& code) {
+    void compileBody(std::vector<OscInstruction>& code, bool stopAtEndif = false) {
         while (!error_.empty() == false && peek().type != TT::Eof) {
-            if (is("end") || is("else") || is("endif")) {
+            if (is("end") || is("else") || (stopAtEndif && is("endif"))) {
                 return;
+            }
+            if (is("endif")) {
+                // A stray legacy {endif} must not terminate the containing macro/frame.
+                consume();
+                continue;
             }
             const Token token = consume();
             if (token.type == TT::Comment) {
@@ -1474,12 +1484,12 @@ class BytecodeCompiler {
                 compileIdentifier(token, code);
             } else if (token.type == TT::BlockKW && token.val == "if") {
                 const std::size_t falseJump = emitJump(code, OscOpcode::JumpIfFalse);
-                compileBody(code);
+                compileBody(code, true);
                 if (is("else")) {
                     consume();
                     const std::size_t endJump = emitJump(code, OscOpcode::Jump);
                     code[falseJump].index = static_cast<int>(code.size());
-                    compileBody(code);
+                    compileBody(code, true);
                     if (is("endif")) {
                         consume();
                     } else {

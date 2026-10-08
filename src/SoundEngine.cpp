@@ -350,9 +350,9 @@ struct SoundEngine::Backend {
         }
         active.push_back(
             {handle, source, looped, parameters.position, std::chrono::steady_clock::now()});
-        soundLog.Log("OpenAL playback started: file=" + path.string() + " loop=" +
-                     (looped ? "true" : "false") + " gain=" + std::to_string(parameters.gain) +
-                     " pitch=" + std::to_string(parameters.pitch));
+        // soundLog.Log("OpenAL playback started: file=" + path.string() + " loop=" +
+        //              (looped ? "true" : "false") + " gain=" + std::to_string(parameters.gain) +
+        //              " pitch=" + std::to_string(parameters.pitch));
         return handle;
     }
 

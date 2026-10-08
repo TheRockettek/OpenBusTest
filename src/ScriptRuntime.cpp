@@ -478,13 +478,13 @@ struct ScriptRuntime::Impl {
         float value = nativePeekFloat();
         std::string positionVariable;
         std::string lastPositionVariable;
-        if (name == "ev_cabwindow_cls" || name == "ev_cabwindow_opn") {
-            positionVariable = "cp_cabwindow_pos";
-            lastPositionVariable = "cp_cabwindow_lastpos";
-        } else if (name == "ev_cabwindow2_cls" || name == "ev_cabwindow2_opn") {
-            positionVariable = "cp_cabwindow2_pos";
-            lastPositionVariable = "cp_cabwindow2_lastpos";
-        }
+        // if (name == "ev_cabwindow_cls" || name == "ev_cabwindow_opn") {
+        //     positionVariable = "cp_cabwindow_pos";
+        //     lastPositionVariable = "cp_cabwindow_lastpos";
+        // } else if (name == "ev_cabwindow2_cls" || name == "ev_cabwindow2_opn") {
+        //     positionVariable = "cp_cabwindow2_pos";
+        //     lastPositionVariable = "cp_cabwindow2_lastpos";
+        // }
         if (!positionVariable.empty()) {
             const float timegap = sharedState.sharedVariables().get("timegap");
             if (timegap > 0.0F) {
@@ -2464,23 +2464,10 @@ void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool presse
                            " not found");
             }
         } else if (logEvent) {
-            impl_->log("trigger ran: " + functionName + " (key binding " + normalized +
-                       (pressed ? " pressed)" : " released)"));
-            if (pressed &&
-                (normalized == "cp_batterietrennschalter_toggle" || normalized == "kw_s_plus" ||
-                 normalized == "kw_wipermode_up" || normalized == "cp_wischer_intervall_toggle")) {
-                impl_->log("wiper/power state after " + normalized +
-                           ": mode=" + std::to_string(impl_->localState.get("wiper_mode")) +
-                           " pos=" + std::to_string(impl_->localState.get("wiperpos")) +
-                           " busbar=" + std::to_string(impl_->localState.get("elec_busbar_main")) +
-                           " busbar_switch=" +
-                           std::to_string(impl_->localState.get("elec_busbar_main_sw")));
-            }
+            // impl_->log("trigger ran: " + functionName + " (key binding " + normalized +
+            //            (pressed ? " pressed)" : " released)"));
         }
     }
-    // if (!pressed && normalized == "horn" && !invoked && impl_->onSoundTrigger) {
-    //     impl_->onSoundTrigger("horn_off", {}, 0.0);
-    // }
 }
 
 void ScriptRuntime::invokeMouseEvent(const std::string& eventName) {
@@ -2498,7 +2485,7 @@ void ScriptRuntime::invokeMouseEvent(const std::string& eventName) {
         if (!invoked) {
             impl_->log("warning: mouse event " + normalized + " -> " + functionName + " not found");
         } else {
-            impl_->log("trigger ran: " + functionName + " (mouse event " + normalized + ")");
+            // impl_->log("trigger ran: " + functionName + " (mouse event " + normalized + ")");
         }
     }
 }
@@ -2541,7 +2528,7 @@ void ScriptRuntime::invokeMouseRelease(const std::string& eventName) {
             impl_->log("warning: mouse release " + normalized + " -> " + functionName +
                        " not found");
         } else {
-            impl_->log("trigger ran: " + functionName + " (mouse release " + normalized + ")");
+            // impl_->log("trigger ran: " + functionName + " (mouse release " + normalized + ")");
         }
     }
 }

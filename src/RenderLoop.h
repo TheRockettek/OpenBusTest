@@ -107,6 +107,7 @@ class RenderLoop {
     void setFreeCameraEnabled(bool enabled);
     void updateScripts();
     void logDiagnosticVariables() const;
+    void logDrivetrainDiagnosticVariables() const;
     double currentFieldOfView() const;
     void renderReflectionViews(const BusSimulation& simulation);
 
@@ -179,6 +180,8 @@ class RenderLoop {
     double pendingMouseClickY_ = 0.0;
     openbus::input::MouseInteraction mouseInteraction_;
     double frameTimeStep_ = 0.0;
+    double lastDrivetrainDiagnosticTime_ = -1.0;
+    bool drivetrainDiagnosticsEnabled_ = false;
     int framebufferWidth_ = 1;
     int framebufferHeight_ = 1;
     unsigned int statusHudTexture_ = 0;

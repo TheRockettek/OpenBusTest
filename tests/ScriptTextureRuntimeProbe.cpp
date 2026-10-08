@@ -146,6 +146,72 @@ int main() {
         std::cerr << "not all mixed-case OSC identifiers were validated\n";
         return 1;
     }
+    const std::filesystem::path strayEndifScript = root / "stray_endif.osc";
+    {
+        std::ofstream strayEndifSource(strayEndifScript);
+        strayEndifSource << "{macro:legacy}\n"
+                            "1 (S.L.before_stray_endif)\n"
+                            "{endif}\n"
+                            "2 (S.L.after_stray_endif)\n"
+                            "{end}\n";
+    }
+    OscProgram strayEndifProgram;
+    std::string strayEndifError;
+    if (!compileOscToBytecode(strayEndifScript, strayEndifProgram, strayEndifError)) {
+        std::cerr << "legacy extra {endif} stopped OSC compilation: " << strayEndifError << "\n";
+        return 1;
+    }
+    const auto& strayEndifCode = strayEndifProgram.functions.at("macro_legacy");
+    if (strayEndifCode.size() != 4 || strayEndifCode[1].name != "before_stray_endif" ||
+        strayEndifCode[3].name != "after_stray_endif") {
+        std::cerr << "OSC code after a legacy extra {endif} was not compiled\n";
+        return 1;
+    }
+    std::string strayEndifLuaError;
+    if (!convertOscToLua(strayEndifScript, generatedLuaPath(strayEndifScript),
+                         strayEndifLuaError)) {
+        std::cerr << "legacy extra {endif} failed Lua conversion: " << strayEndifLuaError << "\n";
+        return 1;
+    }
+    std::ifstream strayEndifLua(generatedLuaPath(strayEndifScript));
+    const std::string strayEndifLuaSource((std::istreambuf_iterator<char>(strayEndifLua)),
+                                          std::istreambuf_iterator<char>());
+    if (strayEndifLuaSource.find("after_stray_endif") == std::string::npos) {
+        std::cerr << "Lua conversion truncated a macro at an unmatched {endif}\n";
+        return 1;
+    }
+    const std::filesystem::path stringCompareScript = root / "string_compare.osc";
+    {
+        std::ofstream stringCompareSource(stringCompareScript);
+        stringCompareSource << "{init}\n\"¹\" \"¹\" $=>\n{end}\n";
+    }
+    OscProgram stringCompareProgram;
+    std::string stringCompareError;
+    if (!compileOscToBytecode(stringCompareScript, stringCompareProgram, stringCompareError)) {
+        std::cerr << "OMSI string >= operator spelling was rejected: " << stringCompareError
+                  << "\n";
+        return 1;
+    }
+    const auto& stringCompareCode = stringCompareProgram.functions.at("init");
+    if (stringCompareCode.size() != 3 ||
+        stringCompareCode[2].opcode != OscOpcode::StringGreaterEqual) {
+        std::cerr << "OMSI string >= spelling did not compile as StringGreaterEqual\n";
+        return 1;
+    }
+    std::string stringCompareLuaError;
+    if (!convertOscToLua(stringCompareScript, generatedLuaPath(stringCompareScript),
+                         stringCompareLuaError)) {
+        std::cerr << "OMSI string >= spelling failed Lua conversion: " << stringCompareLuaError
+                  << "\n";
+        return 1;
+    }
+    std::ifstream generatedCompareLua(generatedLuaPath(stringCompareScript));
+    const std::string generatedCompareSource((std::istreambuf_iterator<char>(generatedCompareLua)),
+                                             std::istreambuf_iterator<char>());
+    if (generatedCompareSource.find("a>=b and 1 or 0") == std::string::npos) {
+        std::cerr << "Lua converter did not emit string >= comparison for $=>\n";
+        return 1;
+    }
     const auto& macroCode = parsedProgram.functions.at("macro_mixedmacro");
     if (macroCode.size() != 2 || macroCode[0].name != "mixedsystemmacro" ||
         macroCode[1].name != "macro_anothermacro") {
@@ -249,6 +315,10 @@ int main() {
     VehicleConfig fallbackConfiguration;
     fallbackConfiguration.sourcePath = root / "fallback.bus";
     fallbackConfiguration.scripts.push_back(fallbackScriptPath.filename().string());
+    if (!setScriptBackend("native")) {
+        std::cerr << "could not select native backend for fallback probe\n";
+        return 1;
+    }
     {
         Variables fallbackVariables(ScriptObjectKind::Vehicle);
         SimulationState fallbackSimulation;
@@ -282,7 +352,7 @@ int main() {
     VehicleConfig numericConfiguration;
     numericConfiguration.sourcePath = root / "numeric.bus";
     numericConfiguration.scripts.push_back(numericScriptPath.filename().string());
-    if (!setScriptBackend(nullptr)) {
+    if (!setScriptBackend("native")) {
         std::cerr << "could not select native backend for numeric semantics probe\n";
         return 1;
     }
@@ -394,7 +464,7 @@ int main() {
     sceneryConfiguration.sourcePath = root / "object.sco";
     sceneryConfiguration.scripts.push_back(sceneryScriptPath.filename().string());
     sceneryConfiguration.floatVariables = {"frame_count", "lamp_visible"};
-    if (!setScriptBackend(nullptr)) {
+    if (!setScriptBackend("native")) {
         std::cerr << "could not select the native backend for scenery runtime probe\n";
         return 1;
     }
