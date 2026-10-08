@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BusTypes.h"
+#include "CameraMath.h"
 #include "MapConfigLoader.h"
 #include "MouseInteraction.h"
 #include "CoreRenderer.h"
@@ -14,6 +15,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct GLFWwindow;
@@ -73,6 +75,9 @@ class RenderLoop {
     void SetPlayerVehicle(Vehicle* vehicle);
     void SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
                 std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot);
+    void updateMapStreaming(double worldX, double worldY);
+    std::vector<std::pair<int, int>> loadedMapTiles() const;
+    std::vector<std::pair<int, int>> activeMapTiles() const;
 
     void beginFrame(double fixedTimeStep = -1.0);
     void updatePlayerVariables(const BusSimulation& simulation, double throttle, double steering,
@@ -99,6 +104,7 @@ class RenderLoop {
     bool isExteriorView() const;
     const VehicleCamera* currentVehicleCamera() const;
     void selectVehicleCamera(int direction);
+    void setFreeCameraEnabled(bool enabled);
     void updateScripts();
     void logDiagnosticVariables() const;
     double currentFieldOfView() const;
@@ -112,6 +118,9 @@ class RenderLoop {
     double viewLookPitch_ = 0.0;
     double lastStatsTitleTime_ = 0.0;
     double cameraDistance_ = 24.0;
+    openbus::rendering::FreeCameraPose freeCameraPose_{};
+    openbus::rendering::FreeCameraPose lastMainCameraPose_{};
+    double freeCameraSpeed_ = 12.0;
     double previousVariableTime_ = 0.0;
     int cameraView_ = 0;
     double previousCursorX_ = 0.0;
@@ -119,6 +128,9 @@ class RenderLoop {
     bool draggingCamera_ = false;
     double previousFovCursorY_ = 0.0;
     bool draggingFov_ = false;
+    bool freeCameraEnabled_ = false;
+    bool lastMainCameraPoseValid_ = false;
+    bool previousFreeCameraToggleState_ = false;
     bool mouseControlEnabled_ = false;
     double mouseThrottle_ = 0.0;
     double mouseSteering_ = 0.0;
@@ -169,8 +181,8 @@ class RenderLoop {
     double frameTimeStep_ = 0.0;
     int framebufferWidth_ = 1;
     int framebufferHeight_ = 1;
-    unsigned int coordinateHudTexture_ = 0;
-    std::string coordinateHudText_;
+    unsigned int statusHudTexture_ = 0;
+    std::string statusHudText_;
     openbus::rendering::StaticPrimitiveBuffer collisionWireframeBuffer_;
     std::vector<openbus::rendering::PrimitiveVertex> collisionWireframeVertices_;
     std::array<int, 4> viewport_ = {0, 0, 1, 1};

@@ -78,5 +78,49 @@ int main() {
         std::cerr << "Coincident camera eye and target produced a non-finite view matrix\n";
         return 1;
     }
+
+    using openbus::rendering::FreeCameraPose;
+    const std::array<double, 3> forward = openbus::rendering::freeCameraForward(0.0, 0.0);
+    if (std::abs(forward[0] - 1.0) > 1.0e-12 || std::abs(forward[1]) > 1.0e-12 ||
+        std::abs(forward[2]) > 1.0e-12) {
+        std::cerr << "Free camera yaw zero must face world +X\n";
+        return 1;
+    }
+    const FreeCameraPose start{{1.0, 2.0, 3.0}, pi / 2.0, 0.0};
+    const FreeCameraPose forwardStep =
+        openbus::rendering::moveFreeCamera(start, 1.0, 0.0, 0.0, 0.1, 12.0);
+    if (std::abs(forwardStep.position[0] - 1.0) > 1.0e-12 ||
+        std::abs(forwardStep.position[1] - 3.2) > 1.0e-12 ||
+        std::abs(forwardStep.position[2] - 3.0) > 1.0e-12) {
+        std::cerr << "Free camera forward movement did not follow its world-space heading\n";
+        return 1;
+    }
+    const FreeCameraPose strafeRight =
+        openbus::rendering::moveFreeCamera(FreeCameraPose{{}, 0.0, 0.0}, 0.0, 1.0, 0.0,
+                                           0.1, 12.0);
+    const FreeCameraPose strafeLeft =
+        openbus::rendering::moveFreeCamera(FreeCameraPose{{}, 0.0, 0.0}, 0.0, -1.0, 0.0,
+                                           0.1, 12.0);
+    if (std::abs(strafeRight.position[1] + 1.2) > 1.0e-12 ||
+        std::abs(strafeLeft.position[1] - 1.2) > 1.0e-12) {
+        std::cerr << "Free camera left/right strafe direction is reversed\n";
+        return 1;
+    }
+    const FreeCameraPose diagonalStep =
+        openbus::rendering::moveFreeCamera(start, 1.0, 1.0, 0.0, 0.1, 12.0);
+    const double diagonalDistance = std::sqrt(
+        std::pow(diagonalStep.position[0] - start.position[0], 2.0) +
+        std::pow(diagonalStep.position[1] - start.position[1], 2.0) +
+        std::pow(diagonalStep.position[2] - start.position[2], 2.0));
+    if (std::abs(diagonalDistance - 1.2) > 1.0e-12) {
+        std::cerr << "Free camera diagonal movement exceeded normal movement speed\n";
+        return 1;
+    }
+    const FreeCameraPose clampedStep =
+        openbus::rendering::moveFreeCamera(start, 0.0, 0.0, 1.0, 4.0, 12.0);
+    if (std::abs(clampedStep.position[2] - 6.0) > 1.0e-12) {
+        std::cerr << "Free camera movement did not cap long frame-time steps\n";
+        return 1;
+    }
     return 0;
 }

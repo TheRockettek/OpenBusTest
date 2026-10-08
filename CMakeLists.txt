@@ -364,6 +364,10 @@ add_executable(OpenBusMapRoadGeometryProbe
 target_include_directories(OpenBusMapRoadGeometryProbe PRIVATE src)
 add_test(NAME OpenBusMapRoadGeometryProbe COMMAND OpenBusMapRoadGeometryProbe)
 
+add_executable(OpenBusStaticPrimitiveBufferProbe tests/StaticPrimitiveBufferProbe.cpp)
+target_include_directories(OpenBusStaticPrimitiveBufferProbe PRIVATE src)
+add_test(NAME OpenBusStaticPrimitiveBufferProbe COMMAND OpenBusStaticPrimitiveBufferProbe)
+
 add_executable(OpenBusMapCollisionBuilderProbe
     tests/MapCollisionBuilderProbe.cpp
     src/ConfigurationParser.cpp

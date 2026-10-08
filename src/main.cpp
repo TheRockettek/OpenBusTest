@@ -229,14 +229,6 @@ int main() {
                                  {}, false);
         openbus::map::MapCollisionStreamer collisionStreamer(mapDefinition, omsiRootPath(),
                                                              simulation);
-        {
-            openbus::rendering::TraceScope trace("map", "main.loadSpawnCollisionNeighborhood");
-            collisionStreamer.update(busPlacement.position[0], busPlacement.position[1]);
-        }
-        applicationLog.Log("Map collision streaming enabled: resident tiles=" +
-                           std::to_string(collisionStreamer.loadedTileCount()) +
-                           " around spawn; map manifest tiles=" +
-                           std::to_string(mapDefinition.tiles.size()) + ".");
 
         const bool benchmarkMode =
             openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
@@ -246,6 +238,24 @@ int main() {
             benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384) : 1080;
         RenderLoop renderer(windowWidth, windowHeight, "OpenBus");
         renderer.SetMap(mapDefinition, spawnEntryPoint, groundTextureIndex, omsiRootPath());
+        renderer.updateMapStreaming(busPlacement.position[0], busPlacement.position[1]);
+        const std::vector<std::pair<int, int>> spawnLoadedGeometryTiles =
+            renderer.loadedMapTiles();
+        {
+            openbus::rendering::TraceScope trace("map", "main.loadSpawnCollisionNeighborhood");
+            collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
+                                     spawnLoadedGeometryTiles);
+            collisionStreamer.waitForPendingBuilds();
+            for (std::size_t tileIndex = 0; tileIndex < spawnLoadedGeometryTiles.size();
+                 ++tileIndex) {
+                 collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
+                                         spawnLoadedGeometryTiles);
+              }
+        }
+        applicationLog.Log("Map collision streaming enabled: resident tiles=" +
+                           std::to_string(collisionStreamer.loadedTileCount()) +
+                           " in the active map window; map manifest tiles=" +
+                           std::to_string(mapDefinition.tiles.size()) + ".");
         Vehicle* playerVehicle =
             renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
                                 {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
@@ -287,7 +297,9 @@ int main() {
                     renderer.physicsWheelBrakeForces(simulation.axleCount()),
                     renderer.physicsAxleSpringFactors(simulation.axleCount()));
                 renderer.updatePostPhysicsVariables(simulation);
-                collisionStreamer.update(simulation.positionX(), simulation.positionY());
+                renderer.updateMapStreaming(simulation.positionX(), simulation.positionY());
+                collisionStreamer.update(simulation.positionX(), simulation.positionY(),
+                                         renderer.loadedMapTiles());
                 renderer.draw(simulation);
                 renderer.endFrame();
             };
@@ -383,7 +395,9 @@ int main() {
                     renderer.physicsWheelBrakeForces(simulation.axleCount()),
                     renderer.physicsAxleSpringFactors(simulation.axleCount()));
                 renderer.updatePostPhysicsVariables(simulation);
-                collisionStreamer.update(simulation.positionX(), simulation.positionY());
+                renderer.updateMapStreaming(simulation.positionX(), simulation.positionY());
+                collisionStreamer.update(simulation.positionX(), simulation.positionY(),
+                                         renderer.loadedMapTiles());
                 renderer.draw(simulation);
 
                 if (renderer.consumeCaptureRequest()) {

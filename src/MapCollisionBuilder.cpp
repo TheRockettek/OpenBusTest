@@ -116,7 +116,7 @@ std::array<double, 3> transformSceneryVertex(const openbus::rendering::ObjPositi
                                              const MapSceneryPose& pose, double worldZ) {
     const double radians = std::numbers::pi / 180.0;
     const double ax = -pose.rotationDegrees[1] * radians;
-    const double ay = pose.rotationDegrees[2] * radians;
+    const double ay = -pose.rotationDegrees[2] * radians;
     const double az = -pose.rotationDegrees[0] * radians;
     const double x1 = source.x;
     const double y1 = source.y * std::cos(ax) - source.z * std::sin(ax);
@@ -189,7 +189,8 @@ readSceneryCollisionMeshes(const std::filesystem::path& configPath,
 
 static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map,
                                                         const std::filesystem::path& omsiRoot,
-                                                        const MapTileReference* selectedTile) {
+                                                        const MapTileReference* selectedTile,
+                                                        const MapRoadConnectionIndex& connections) {
     MapRoadCollisionResult result;
     std::unordered_map<std::string, MapSplineProfile> profiles;
     std::unordered_set<std::string> failedProfiles;
@@ -255,7 +256,9 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                 }
                 MapRoadSectionGeometry sectionGeometry;
                 try {
-                    sectionGeometry = buildMapRoadSectionGeometry(spline, centerline, section);
+                    sectionGeometry = buildMapRoadSectionGeometry(
+                        spline, centerline, section,
+                        connections.joinsFor(spline, tileReference.x, tileReference.y));
                 } catch (const std::exception&) {
                     ++result.skippedSplines;
                     continue;
@@ -361,19 +364,42 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
 
 MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
                                              const std::filesystem::path& omsiRoot) {
-    return buildMapRoadCollisionImpl(map, omsiRoot, nullptr);
+    const auto connections = loadMapRoadConnections(map);
+    return buildMapRoadCollisionImpl(map, omsiRoot, nullptr, connections);
 }
 
 MapRoadCollisionResult buildMapRoadCollisionTile(const MapDefinition& map,
                                                  const std::filesystem::path& omsiRoot, int tileX,
-                                                 int tileY) {
+                                                 int tileY,
+                                                 const MapRoadConnectionIndex* connections) {
     const auto tile = std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& reference) {
         return reference.x == tileX && reference.y == tileY;
     });
     if (tile == map.tiles.end()) {
         return {};
     }
-    return buildMapRoadCollisionImpl(map, omsiRoot, &*tile);
+    if (connections != nullptr) {
+        return buildMapRoadCollisionImpl(map, omsiRoot, &*tile, *connections);
+    }
+    const auto ownedConnections = loadMapRoadConnections(map);
+    return buildMapRoadCollisionImpl(map, omsiRoot, &*tile, ownedConnections);
+}
+
+MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map) {
+    MapRoadConnectionIndex connections;
+    for (const auto& reference : map.tiles) {
+        try {
+            const auto tile = loadMapTile(reference);
+            for (const auto& spline : tile.splines) {
+                connections.addSpline(spline, reference.x, reference.y);
+            }
+        } catch (const std::exception&) {
+            // An unrelated missing/malformed tile must not prevent a selected tile loading.
+            // Its own collision build remains strict and reports the original parse failure.
+        }
+    }
+    connections.finalize();
+    return connections;
 }
 
 } // namespace openbus::map

@@ -1024,13 +1024,16 @@ struct BusSimulation::Impl {
                                           ? -std::copysign(std::min(brakeCapacity, stoppingTorque),
                                                            corners[index].wheelOmega)
                                           : 0.0;
+            // A bounded zero-speed hinge motor can hold the wheel at rest; a
+            // speed-scaled torque would vanish precisely when the bus stops.
+            dJointSetHingeParam(corners[index].wheelJoint, dParamVel, 0.0);
+            dJointSetHingeParam(corners[index].wheelJoint, dParamFMax, brakeCapacity);
             corners[index].driveTorque = driveTorquePerWheel;
             corners[index].brakeTorque = brakeTorque;
             corners[index].longitudinalForce =
                 (driveTorquePerWheel + brakeTorque) / corners[index].wheelRadius;
             corners[index].lateralForce = 0.0;
-            dBodyAddRelTorque(corners[index].wheelBody, 0.0, 0.0,
-                              driveTorquePerWheel + brakeTorque);
+            dBodyAddRelTorque(corners[index].wheelBody, 0.0, 0.0, driveTorquePerWheel);
 
             if (configuration.axles[axleIndex].driven) {
                 const dReal tractionForce = driveTorquePerWheel / corners[index].wheelRadius;
@@ -1073,13 +1076,6 @@ struct BusSimulation::Impl {
                               localAngularY * BODY_ATTITUDE_DAMPING,
                           0.0);
 
-        if (std::abs(driveTorque) < 0.01 &&
-            (!brakesApplied || std::abs(longitudinalSpeed) < 0.15) &&
-            std::abs(longitudinalSpeed) < 0.08 && std::abs(lateralSpeed) < 0.08 &&
-            std::abs(yawRate) < 0.08) {
-            dBodySetLinearVel(chassis, 0.0, 0.0, velocity[2]);
-            dBodySetAngularVel(chassis, 0.0, 0.0, 0.0);
-        }
     }
     void fixedUpdate(double driveCommand, double steering,
                      const std::vector<double>& wheelBrakeForces,

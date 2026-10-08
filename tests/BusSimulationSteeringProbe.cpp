@@ -292,6 +292,34 @@ int main() {
         return 1;
     }
 
+    BusConfiguration hillConfiguration = testConfiguration();
+    hillConfiguration.collisionEnabled = false;
+    StaticCollisionMesh hill;
+    hill.vertices = {-40.0, -10.0, 2.0, 40.0, -10.0, -2.0,
+                     40.0, 10.0, -2.0, -40.0, 10.0, 2.0};
+    hill.indices = {0, 1, 2, 0, 2, 3};
+    BusSimulation rollingHill(hillConfiguration, VehiclePlacement{{0.0, 0.0, 0.0}, 0.0},
+                              60.0, 8, 0.0, {}, {hill}, false);
+    BusSimulation brakedHill(hillConfiguration, VehiclePlacement{{0.0, 0.0, 0.0}, 0.0},
+                             60.0, 8, 0.0, {}, {hill}, false);
+    const double rollingHillStartX = rollingHill.positionX();
+    const double brakedHillStartX = brakedHill.positionX();
+    for (int step = 0; step < 600; ++step) {
+        rollingHill.stepWithWheelTorque(0.0, 0.0, 0.0);
+        brakedHill.stepWithWheelTorque(0.0, 0.0, 1.0);
+    }
+    const double downhillTravel = rollingHill.positionX() - rollingHillStartX;
+    const double brakedHillTravel = brakedHill.positionX() - brakedHillStartX;
+    if (downhillTravel <= 0.05 || std::abs(brakedHillTravel) > downhillTravel * 0.25 ||
+        brakedHill.speed() > 0.05) {
+        std::cerr << "service brakes did not hold the bus on a 5% grade: unbraked travel="
+                  << downhillTravel << " m, braked travel=" << brakedHillTravel
+                  << " m, braked speed=" << brakedHill.speed()
+                  << " m/s, front wheel rotation unbraked=" << rollingHill.wheelRotation(0)
+                  << " rad, braked=" << brakedHill.wheelRotation(0) << " rad\n";
+        return 1;
+    }
+
     BusSimulation parkingBrakeCheck(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
     for (int step = 0; step < 600; ++step) {
         parkingBrakeCheck.stepWithWheelTorque(0.0, 0.0, 0.0);

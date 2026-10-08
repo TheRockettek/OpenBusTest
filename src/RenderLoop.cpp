@@ -145,11 +145,45 @@ constexpr double DEFAULT_FIELD_OF_VIEW = 60.0;
 constexpr double MIN_FIELD_OF_VIEW = 20.0;
 constexpr double MAX_FIELD_OF_VIEW = 120.0;
 constexpr double GROUND_SHADOW_OFFSET_Z = 0.015;
-constexpr int COORDINATE_HUD_TEXTURE_WIDTH = 224;
-constexpr int COORDINATE_HUD_TEXTURE_HEIGHT = 24;
+constexpr int STATUS_HUD_TEXTURE_WIDTH = 400;
+constexpr int STATUS_HUD_TEXTURE_HEIGHT = 42;
 
-std::array<std::uint8_t, 7> coordinateHudGlyph(char character) {
+std::array<std::uint8_t, 7> statusHudGlyph(char character) {
     switch (character) {
+    case 'A':
+        return {0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001};
+    case 'B':
+        return {0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110};
+    case 'C':
+        return {0b01111, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b01111};
+    case 'D':
+        return {0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110};
+    case 'E':
+        return {0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111};
+    case 'H':
+        return {0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001};
+    case 'I':
+        return {0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111};
+    case 'J':
+        return {0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100};
+    case 'L':
+        return {0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111};
+    case 'N':
+        return {0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001};
+    case 'O':
+        return {0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110};
+    case 'R':
+        return {0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001};
+    case 'S':
+        return {0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110};
+    case 'T':
+        return {0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100};
+    case 'U':
+        return {0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110};
+    case 'V':
+        return {0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100};
+    case 'K':
+        return {0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001};
     case '0':
         return {0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110};
     case '1':
@@ -180,14 +214,16 @@ std::array<std::uint8_t, 7> coordinateHudGlyph(char character) {
         return {0, 0, 0, 0b01110, 0, 0, 0};
     case '.':
         return {0, 0, 0, 0, 0, 0b00100, 0b00100};
+    case '/':
+        return {0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000};
     default:
         return {};
     }
 }
 
-std::vector<std::uint8_t> makeCoordinateHudPixels(std::string_view text) {
-    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(COORDINATE_HUD_TEXTURE_WIDTH) *
-                                     COORDINATE_HUD_TEXTURE_HEIGHT * 4);
+std::vector<std::uint8_t> makeStatusHudPixels(std::string_view text) {
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(STATUS_HUD_TEXTURE_WIDTH) *
+                                     STATUS_HUD_TEXTURE_HEIGHT * 4);
     for (std::size_t index = 0; index < pixels.size(); index += 4) {
         pixels[index] = 10;
         pixels[index + 1] = 16;
@@ -195,23 +231,33 @@ std::vector<std::uint8_t> makeCoordinateHudPixels(std::string_view text) {
         pixels[index + 3] = 196;
     }
     constexpr int glyphAdvance = 6;
-    constexpr int glyphTop = (COORDINATE_HUD_TEXTURE_HEIGHT - 7) / 2;
+    constexpr int lineAdvance = 9;
+    constexpr int firstLineTop = (STATUS_HUD_TEXTURE_HEIGHT - (7 + 2 * lineAdvance)) / 2;
     constexpr int horizontalPadding = 6;
-    for (std::size_t glyphIndex = 0; glyphIndex < text.size(); ++glyphIndex) {
-        const int glyphLeft = horizontalPadding + static_cast<int>(glyphIndex) * glyphAdvance;
-        if (glyphLeft + 5 > COORDINATE_HUD_TEXTURE_WIDTH) {
+    int line = 0;
+    int glyphColumn = 0;
+    for (const char character : text) {
+        if (character == '\n') {
+            ++line;
+            glyphColumn = 0;
+            continue;
+        }
+        const int glyphLeft = horizontalPadding + glyphColumn * glyphAdvance;
+        const int glyphTop = firstLineTop + line * lineAdvance;
+        if (glyphLeft + 5 > STATUS_HUD_TEXTURE_WIDTH || glyphTop + 7 > STATUS_HUD_TEXTURE_HEIGHT) {
             break;
         }
-        const auto glyph = coordinateHudGlyph(text[glyphIndex]);
+        ++glyphColumn;
+        const auto glyph = statusHudGlyph(character);
         for (int row = 0; row < static_cast<int>(glyph.size()); ++row) {
-            const int y = COORDINATE_HUD_TEXTURE_HEIGHT - 1 - (glyphTop + row);
+            const int y = STATUS_HUD_TEXTURE_HEIGHT - 1 - (glyphTop + row);
             for (int column = 0; column < 5; ++column) {
                 if ((glyph[static_cast<std::size_t>(row)] & (1U << (4 - column))) == 0) {
                     continue;
                 }
                 const int x = glyphLeft + column;
                 const std::size_t pixelIndex =
-                    (static_cast<std::size_t>(y) * COORDINATE_HUD_TEXTURE_WIDTH + x) * 4;
+                    (static_cast<std::size_t>(y) * STATUS_HUD_TEXTURE_WIDTH + x) * 4;
                 pixels[pixelIndex] = 245;
                 pixels[pixelIndex + 1] = 249;
                 pixels[pixelIndex + 2] = 255;
@@ -4212,6 +4258,11 @@ void RenderLoop::scrollCallback(GLFWwindow* window, double, double yOffset) {
     if (renderer == nullptr) {
         return;
     }
+    if (renderer->freeCameraEnabled_) {
+        renderer->freeCameraSpeed_ = std::clamp(renderer->freeCameraSpeed_ + yOffset * 2.0,
+                                                1.0, 100.0);
+        return;
+    }
     if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
         renderer->fieldOfViewOffset_ =
             std::clamp(renderer->fieldOfViewOffset_ - yOffset * 2.0, -40.0, 60.0);
@@ -4295,26 +4346,26 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         throw std::runtime_error("Failed to initialize core OpenGL renderer");
     }
     pglActiveTexture(GL_TEXTURE0);
-    glGenTextures(1, &coordinateHudTexture_);
-    if (coordinateHudTexture_ != 0) {
-        glBindTexture(GL_TEXTURE_2D, coordinateHudTexture_);
+    glGenTextures(1, &statusHudTexture_);
+    if (statusHudTexture_ != 0) {
+        glBindTexture(GL_TEXTURE_2D, statusHudTexture_);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        const std::vector<std::uint8_t> initialPixels =
-            makeCoordinateHudPixels("X 0.0 Y 0.0 Z 0.0");
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, COORDINATE_HUD_TEXTURE_WIDTH,
-                     COORDINATE_HUD_TEXTURE_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                     initialPixels.data());
+        const std::vector<std::uint8_t> initialPixels = makeStatusHudPixels(
+            "X 0.0 Y 0.0 Z 0.0\nCHUNKS 0/0 TERRAIN 0/0 OBJECTS 0/0\n"
+            "ROADS 0/0 COLLISION TILES 0 VEHICLES 0");
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, STATUS_HUD_TEXTURE_WIDTH,
+                     STATUS_HUD_TEXTURE_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, initialPixels.data());
         openbus::rendering::invalidateTextureBindings();
         if (glGetError() != GL_NO_ERROR) {
-            glDeleteTextures(1, &coordinateHudTexture_);
-            coordinateHudTexture_ = 0;
-            gameLog.Log("Coordinate HUD texture initialization failed");
+            glDeleteTextures(1, &statusHudTexture_);
+            statusHudTexture_ = 0;
+            gameLog.Log("Status HUD texture initialization failed");
         }
     } else {
-        gameLog.Log("Coordinate HUD texture could not be allocated");
+        gameLog.Log("Status HUD texture could not be allocated");
     }
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.45f, 0.65f, 0.88f, 1.0f);
@@ -4329,9 +4380,9 @@ RenderLoop::~RenderLoop() {
     assetRequestManager_->join();
     vehicles_.clear();
     Vehicle::clearSharedDisplayCache();
-    if (coordinateHudTexture_ != 0) {
-        glDeleteTextures(1, &coordinateHudTexture_);
-        coordinateHudTexture_ = 0;
+    if (statusHudTexture_ != 0) {
+        glDeleteTextures(1, &statusHudTexture_);
+        statusHudTexture_ = 0;
         openbus::rendering::invalidateTextureBindings();
     }
     openbus::rendering::shutdownCoreRenderer();
@@ -4413,7 +4464,26 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     }
     mapRenderer_ = std::make_unique<openbus::rendering::MapRenderer>(
         map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex),
-        groundTextureIndex, omsiRoot, simulationState_);
+        map.entryPoints[spawnEntryPointIndex].placement.position[0],
+        map.entryPoints[spawnEntryPointIndex].placement.position[1], groundTextureIndex, omsiRoot,
+        simulationState_);
+}
+
+void RenderLoop::updateMapStreaming(double worldX, double worldY) {
+    if (mapRenderer_ != nullptr) {
+        mapRenderer_->updateStreaming(worldX, worldY);
+    }
+}
+
+std::vector<std::pair<int, int>> RenderLoop::activeMapTiles() const {
+    if (mapRenderer_ == nullptr) {
+        return {};
+    }
+    return mapRenderer_->activeTileCoordinates();
+}
+
+std::vector<std::pair<int, int>> RenderLoop::loadedMapTiles() const {
+    return activeMapTiles();
 }
 
 void RenderLoop::logDiagnosticVariables() const {
@@ -4483,12 +4553,41 @@ void RenderLoop::updateScripts() {
 }
 
 bool RenderLoop::isExteriorView() const {
+    if (freeCameraEnabled_ && !captureMode_ && !renderingReflection_) {
+        return true;
+    }
     if (cameraView_ == 0) {
         return true;
     }
     const VehicleCamera* camera = currentVehicleCamera();
     return camera != nullptr && camera->kind == VehicleCameraKind::Passenger &&
            camera->orbitDistance > 1.0;
+}
+
+void RenderLoop::setFreeCameraEnabled(bool enabled) {
+    if (freeCameraEnabled_ == enabled) {
+        return;
+    }
+    if (enabled && lastMainCameraPoseValid_) {
+        freeCameraPose_ = lastMainCameraPose_;
+    }
+    freeCameraEnabled_ = enabled;
+    draggingCamera_ = false;
+    draggingFov_ = false;
+    pendingMouseClick_ = false;
+    mouseInteractionPending_ = false;
+    clickableHoverCacheValid_ = false;
+    clickableHoverCacheHit_ = false;
+    if (enabled) {
+        const auto releaseMouse = [this](const std::string& event) {
+            if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
+                playerVehicle_->scripts->invokeMouseRelease(event);
+            }
+        };
+        mouseInteraction_.cancel(releaseMouse);
+        glfwSetCursor(window_, nullptr);
+    }
+    gameLog.Log(std::string("Free camera ") + (enabled ? "enabled" : "disabled"));
 }
 
 const VehicleCamera* RenderLoop::currentVehicleCamera() const {
@@ -4592,6 +4691,7 @@ std::array<int, 2> RenderLoop::framebufferSize() const {
 
 RenderBenchmarkInput RenderLoop::setBenchmarkFrame(RenderBenchmarkPhase phase, int frameInPhase,
                                                    int phaseFrameCount) {
+    setFreeCameraEnabled(false);
     const int frameCount = std::max(phaseFrameCount, 1);
     const int frame = std::clamp(frameInPhase, 0, frameCount - 1);
     const double progress = frameCount <= 1 ? 0.0 : static_cast<double>(frame) / (frameCount - 1);
@@ -4719,6 +4819,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             const bool changed = pressed != previousVehicleKeyStates_[index];
             const bool mouseControlToggle = binding.action == "mouse_control_toggle";
             const bool dumpVariables = binding.action == "debug_dump_variables";
+            const bool freeCameraToggle = binding.key == GLFW_KEY_F3;
             if (changed) {
                 keyEvents_.push_back({binding.action, pressed, glfwGetTime()});
                 if (mouseControlToggle && pressed) {
@@ -4738,14 +4839,19 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                                 (pressed ? " pressed" : " released"));
                 }
             }
-            if (!mouseControlToggle && !dumpVariables && playerVehicle_ != nullptr &&
-                playerVehicle_->scripts &&
+            if (!mouseControlToggle && !dumpVariables && !freeCameraToggle &&
+                playerVehicle_ != nullptr && playerVehicle_->scripts &&
                 openbus::input::shouldDispatchKeyBinding(binding.flags, pressed,
                                                          previousVehicleKeyStates_[index])) {
                 playerVehicle_->scripts->invokeKeyBinding(binding.action, pressed, changed);
             }
             previousVehicleKeyStates_[index] = pressed;
         }
+        const bool freeCameraTogglePressed = glfwGetKey(window_, GLFW_KEY_F3) == GLFW_PRESS;
+        if (freeCameraTogglePressed && !previousFreeCameraToggleState_) {
+            setFreeCameraEnabled(!freeCameraEnabled_);
+        }
+        previousFreeCameraToggleState_ = freeCameraTogglePressed;
     }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.viewInput");
@@ -4762,7 +4868,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                     break;
                 }
             }
-            if (keyDown && !previousViewKeyStates_[index] && !vehicleBindingPressedForKey) {
+            if (!freeCameraEnabled_ && keyDown && !previousViewKeyStates_[index] &&
+                !vehicleBindingPressedForKey) {
                 if (index == 0 || index <= vehicleCameras_.size()) {
                     cameraView_ = static_cast<int>(index);
                     viewLookYaw_ = 0.0;
@@ -4778,10 +4885,26 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         const std::array<int, 2> cameraNavigationKeys = {GLFW_KEY_LEFT, GLFW_KEY_RIGHT};
         for (std::size_t index = 0; index < cameraNavigationKeys.size(); ++index) {
             const bool pressed = glfwGetKey(window_, cameraNavigationKeys[index]) == GLFW_PRESS;
-            if (pressed && !previousCameraNavigationStates_[index]) {
+            if (!freeCameraEnabled_ && pressed && !previousCameraNavigationStates_[index]) {
                 selectVehicleCamera(index == 0 ? -1 : 1);
             }
             previousCameraNavigationStates_[index] = pressed;
+        }
+    }
+    {
+        TraceScope phase("frame", "RenderLoop::beginFrame.freeCameraMovement");
+        if (freeCameraEnabled_) {
+            const double forward =
+                static_cast<double>(glfwGetKey(window_, GLFW_KEY_UP) == GLFW_PRESS) -
+                static_cast<double>(glfwGetKey(window_, GLFW_KEY_DOWN) == GLFW_PRESS);
+            const double right =
+                static_cast<double>(glfwGetKey(window_, GLFW_KEY_RIGHT) == GLFW_PRESS) -
+                static_cast<double>(glfwGetKey(window_, GLFW_KEY_LEFT) == GLFW_PRESS);
+            const double vertical =
+                static_cast<double>(glfwGetKey(window_, GLFW_KEY_PAGE_UP) == GLFW_PRESS) -
+                static_cast<double>(glfwGetKey(window_, GLFW_KEY_PAGE_DOWN) == GLFW_PRESS);
+            freeCameraPose_ = openbus::rendering::moveFreeCamera(
+                freeCameraPose_, forward, right, vertical, timegap, freeCameraSpeed_);
         }
     }
     {
@@ -4844,7 +4967,10 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             previousFovCursorY_ = cursorY;
         } else if (rightMouse) {
             const double cursorDeltaY = cursorY - previousFovCursorY_;
-            if (cameraView_ == 0) {
+            if (freeCameraEnabled_) {
+                fieldOfViewOffset_ =
+                    std::clamp(fieldOfViewOffset_ + cursorDeltaY * 0.15, -40.0, 60.0);
+            } else if (cameraView_ == 0) {
                 cameraDistance_ = std::clamp(cameraDistance_ + cursorDeltaY * 0.1, 0.1, 80.0);
             } else {
                 fieldOfViewOffset_ =
@@ -4861,7 +4987,11 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         } else if (middleMouse) {
             const double cursorDeltaX = cursorX - previousCursorX_;
             const double cursorDeltaY = cursorY - previousCursorY_;
-            if (isExteriorView()) {
+            if (freeCameraEnabled_) {
+                freeCameraPose_.yawRadians -= cursorDeltaX * 0.005;
+                freeCameraPose_.pitchRadians =
+                    std::clamp(freeCameraPose_.pitchRadians - cursorDeltaY * 0.005, -1.35, 1.35);
+            } else if (isExteriorView()) {
                 cameraYaw_ -= cursorDeltaX * 0.005;
                 cameraPitch_ -= cursorDeltaY * 0.005;
                 cameraPitch_ = std::clamp(cameraPitch_, -1.35, 1.35);
@@ -4916,7 +5046,14 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                              : identityMatrix();
     {
         TraceScope phase("render", "RenderLoop::draw.camera");
-        if (cameraView_ == 0) {
+        if (freeCameraEnabled_ && !renderingReflection_ && !captureMode_) {
+            const std::array<double, 3> forward = openbus::rendering::freeCameraForward(
+                freeCameraPose_.yawRadians, freeCameraPose_.pitchRadians);
+            lookAt(freeCameraPose_.position[0], freeCameraPose_.position[1],
+                   freeCameraPose_.position[2], freeCameraPose_.position[0] + forward[0],
+                   freeCameraPose_.position[1] + forward[1],
+                   freeCameraPose_.position[2] + forward[2]);
+        } else if (cameraView_ == 0) {
             const std::array<double, 3> target =
                 transformLocalPoint(chassis, simulation.outsideCameraCenter());
             const double targetX = target[0];
@@ -5024,6 +5161,13 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14])};
             const std::array<double, 3> forwardWorld = {-view[2], -view[6], -view[10]};
             const std::array<double, 3> upWorld = {view[1], view[5], view[9]};
+            if (!captureMode_) {
+                lastMainCameraPose_.position = eyeWorld;
+                lastMainCameraPose_.yawRadians = std::atan2(forwardWorld[1], forwardWorld[0]);
+                lastMainCameraPose_.pitchRadians =
+                    std::atan2(forwardWorld[2], std::hypot(forwardWorld[0], forwardWorld[1]));
+                lastMainCameraPoseValid_ = true;
+            }
             const auto toLocalPoint = [&chassis](const std::array<double, 3>& world) {
                 const double x = world[0] - chassis.position[0];
                 const double y = world[1] - chassis.position[1];
@@ -5069,7 +5213,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             }
         }
     }
-    if (!renderingReflection_ && playerVehicle_ != nullptr && mouseInteractionPending_) {
+    if (!renderingReflection_ && !freeCameraEnabled_ && playerVehicle_ != nullptr &&
+        mouseInteractionPending_) {
         TraceScope phase("input", "RenderLoop::draw.interaction");
         // Reflections, captures and repeated draws are not additional input frames.
         mouseInteractionPending_ = false;
@@ -5329,7 +5474,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
         openbus::rendering::drawStaticPrimitives(collisionWireframeBuffer_,
-                                                 collisionWireframeVertices_, GL_LINES, 1.5F);
+                                                 collisionWireframeVertices_, GL_LINES, 1.5F,
+                                                 collisionRevision);
         if (collision.enabled && !collision.mesh) {
             pushMatrix();
             applyPose(chassis);
@@ -5343,20 +5489,29 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             glDisable(GL_DEPTH_TEST);
         }
     }
-    if (!renderingReflection_ && coordinateHudTexture_ != 0) {
-        std::ostringstream coordinateText;
-        coordinateText << "X " << std::fixed << std::setprecision(1) << simulation.positionX()
-                       << " Y " << simulation.positionY() << " Z " << simulation.positionZ();
-        const std::string currentCoordinates = coordinateText.str();
-        if (currentCoordinates != coordinateHudText_) {
-            const std::vector<std::uint8_t> pixels = makeCoordinateHudPixels(currentCoordinates);
+    if (!renderingReflection_ && statusHudTexture_ != 0) {
+        const openbus::rendering::MapRenderStats mapStats =
+            mapRenderer_ != nullptr ? mapRenderer_->renderStats()
+                                   : openbus::rendering::MapRenderStats{};
+        std::ostringstream statusText;
+        statusText << "X " << std::fixed << std::setprecision(1) << simulation.positionX() << " Y "
+                   << simulation.positionY() << " Z " << simulation.positionZ() << '\n'
+                   << "CHUNKS " << mapStats.activeTiles << '/' << mapStats.totalTiles
+                   << " TERRAIN " << mapStats.activeTerrainTiles << '/'
+                   << mapStats.totalTerrainTiles << " OBJECTS " << mapStats.activeSceneryObjects
+                   << '/' << mapStats.totalSceneryObjects << '\n'
+                   << "ROADS " << mapStats.activeRoadBatches << '/' << mapStats.totalRoadBatches
+                   << " COLLISION TILES " << simulation.loadedMapCollisionTileCount()
+                   << " VEHICLES " << vehicles_.size();
+        const std::string currentStatus = statusText.str();
+        if (currentStatus != statusHudText_) {
+            const std::vector<std::uint8_t> pixels = makeStatusHudPixels(currentStatus);
             pglActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, coordinateHudTexture_);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, COORDINATE_HUD_TEXTURE_WIDTH,
-                            COORDINATE_HUD_TEXTURE_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
-                            pixels.data());
+            glBindTexture(GL_TEXTURE_2D, statusHudTexture_);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, STATUS_HUD_TEXTURE_WIDTH,
+                            STATUS_HUD_TEXTURE_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
             openbus::rendering::invalidateTextureBindings();
-            coordinateHudText_ = currentCoordinates;
+            statusHudText_ = currentStatus;
         }
 
         const GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
@@ -5368,15 +5523,15 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         const float scale = std::min(
             {1.5F,
-             static_cast<float>(std::max(framebufferWidth_ - 24, 1)) / COORDINATE_HUD_TEXTURE_WIDTH,
+             static_cast<float>(std::max(framebufferWidth_ - 24, 1)) / STATUS_HUD_TEXTURE_WIDTH,
              static_cast<float>(std::max(framebufferHeight_ - 24, 1)) /
-                 COORDINATE_HUD_TEXTURE_HEIGHT});
-        const float hudWidth = COORDINATE_HUD_TEXTURE_WIDTH * scale;
-        const float hudHeight = COORDINATE_HUD_TEXTURE_HEIGHT * scale;
+                 STATUS_HUD_TEXTURE_HEIGHT});
+        const float hudWidth = STATUS_HUD_TEXTURE_WIDTH * scale;
+        const float hudHeight = STATUS_HUD_TEXTURE_HEIGHT * scale;
         const float leftPixels = 12.0F;
         const float bottomPixels = framebufferHeight_ - 12.0F - hudHeight;
         openbus::rendering::drawTextureQuad(
-            coordinateHudTexture_, -1.0F + 2.0F * leftPixels / framebufferWidth_,
+            statusHudTexture_, -1.0F + 2.0F * leftPixels / framebufferWidth_,
             -1.0F + 2.0F * bottomPixels / framebufferHeight_, 2.0F * hudWidth / framebufferWidth_,
             2.0F * hudHeight / framebufferHeight_);
         if (depthWasEnabled) {

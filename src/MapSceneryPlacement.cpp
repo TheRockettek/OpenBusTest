@@ -48,12 +48,19 @@ RotationMatrix rotationZ(double degrees) {
 
 RotationMatrix mapRotation(const std::array<double, 6>& degrees, std::size_t count) {
     RotationMatrix result = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
-    const std::size_t groups = count >= 6 ? 2 : 1;
+    const bool hasSplineFrame = count >= 6;
+    const std::size_t groups = hasSplineFrame ? 2 : 1;
     for (std::size_t group = 0; group < groups; ++group) {
         const std::size_t offset = group * 3;
+        // MapRenderer applies positive pitch/bank for a spline frame, then negative angles for
+        // the object's own rotation group. Ordinary scenery has only the latter convention.
+        const bool splineFrame = hasSplineFrame && group == 0;
+        const double pitchSign = splineFrame ? 1.0 : -1.0;
+        const double bankSign = splineFrame ? 1.0 : -1.0;
         const RotationMatrix euler = multiplyRotation(
-            multiplyRotation(rotationZ(-degrees[offset]), rotationY(degrees[offset + 2])),
-            rotationX(degrees[offset + 1]));
+            multiplyRotation(rotationZ(-degrees[offset]),
+                             rotationY(bankSign * degrees[offset + 2])),
+            rotationX(pitchSign * degrees[offset + 1]));
         result = multiplyRotation(result, euler);
     }
     return result;
@@ -95,6 +102,15 @@ double mapSceneryWorldHeight(double authoredZ, double terrainHeight, bool absolu
     return authoredZ + (absoluteHeight ? 0.0 : terrainHeight);
 }
 
+std::optional<std::size_t> mapSceneryAttachmentPointOffset(int attachmentPointNumber,
+                                                           std::size_t attachmentPointCount) {
+    if (attachmentPointNumber <= 0 ||
+        static_cast<std::size_t>(attachmentPointNumber) > attachmentPointCount) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(attachmentPointNumber - 1);
+}
+
 std::optional<std::array<double, 3>> sampleMapTerrainNormal(const TerrainGrid& terrain,
                                                             double localX, double localY) {
     if (terrain.intervals == 0 || !std::isfinite(localX) || !std::isfinite(localY)) {
@@ -133,11 +149,19 @@ MapSceneryPose composeMapAttachedObjectPose(const MapSceneryPose& parent,
                                             const std::array<double, 3>& attachmentRotationXYZ,
                                             const std::array<double, 3>& childRotationDegrees) {
     const RotationMatrix parentRotation = poseRotation(parent);
-    const std::array<double, 3> worldOffset = rotateVector(parentRotation, attachmentTranslation);
+    // Scenery CFG coordinates convert as map=(CFG y, -CFG x, CFG z).
+    const std::array<double, 3> mapAttachmentTranslation = {
+        attachmentTranslation[1], -attachmentTranslation[0], attachmentTranslation[2]};
+    const std::array<double, 3> worldOffset =
+        rotateVector(parentRotation, mapAttachmentTranslation);
 
+    // Convert CFG attachment rotation axes into map axes as well: CFG x -> map -Y,
+    // CFG y -> map +X, and CFG z -> map +Z. OMSI's local attachment rotations use
+    // the negative authored angle, matching the scenery model transform convention.
     const RotationMatrix attachmentRotation = multiplyRotation(
-        multiplyRotation(rotationZ(-attachmentRotationXYZ[2]), rotationY(attachmentRotationXYZ[1])),
-        rotationX(attachmentRotationXYZ[0]));
+        multiplyRotation(rotationZ(-attachmentRotationXYZ[2]),
+                         rotationX(-attachmentRotationXYZ[1])),
+        rotationY(attachmentRotationXYZ[0]));
     const std::array<double, 6> childRotations = {
         childRotationDegrees[0], childRotationDegrees[1], childRotationDegrees[2], 0.0, 0.0, 0.0};
 
@@ -190,9 +214,11 @@ bool alignMapSceneryPoseToTerrainNormal(MapSceneryPose& pose,
     return true;
 }
 
-std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& attachment,
-                                                     const std::vector<MapSplinePlacement>& splines,
-                                                     int tileX, int tileY) {
+namespace {
+
+std::vector<MapSceneryPose> placeMapSplineAttachmentImpl(
+    const MapSplineAttachment& attachment, const std::vector<MapSplinePlacement>& splines,
+    int tileX, int tileY, bool firstPlacementOnly) {
     std::vector<MapSceneryPose> placements;
     if (!attachment.transformValid || attachment.splineIndex < 0 ||
         static_cast<std::size_t>(attachment.splineIndex) >= splines.size()) {
@@ -237,10 +263,10 @@ std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& 
                 continue;
             }
             const double along = std::clamp(distanceOnChainDirection, 0.0, spline.length);
-            const double curveDistance = backwards ? spline.length - along : along;
+            const double segmentDistance = backwards ? spline.length - along : along;
             const auto center = sampleMapSpline(tileOriginX + spline.localX,
                                                 tileOriginY + spline.localY, spline.rotationDegrees,
-                                                spline.length, spline.radius, curveDistance);
+                                                spline.length, spline.radius, segmentDistance);
             if (!center) {
                 continue;
             }
@@ -248,21 +274,26 @@ std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& 
             const double lateral = backwards ? -attachment.offset[0] : attachment.offset[0];
             const double headingDegrees = center->headingRadians * 180.0 / std::numbers::pi;
             const auto lateralOffset = mapSplineRightOffset(center->headingRadians, lateral);
-            const double t = std::clamp(curveDistance / spline.length, 0.0, 1.0);
-            const double cant = spline.cantStart + (spline.cantEnd - spline.cantStart) * t;
-            const double cantLift = -std::clamp(lateral, -10.0, 10.0) * cant / 100.0;
+            // Interpolate against the authored segment length directly; radius only affects
+            // the sampled centerline position and heading, not transition progress.
+            const double segmentProgress =
+                std::clamp(segmentDistance / spline.length, 0.0, 1.0);
+            const double cantPercent =
+                spline.cantStart + (spline.cantEnd - spline.cantStart) * segmentProgress;
+            const double cantLift = -lateral * cantPercent / 100.0;
             const double elevation = mapSplineElevation(
                 spline.elevation, spline.length, spline.gradientStart, spline.gradientEnd,
                 spline.elevated ? std::optional<double>(spline.heightDelta) : std::nullopt,
-                curveDistance);
+                segmentDistance);
             const double pitch = attachment.tilt
                                      ? std::atan((spline.gradientStart +
-                                                  (spline.gradientEnd - spline.gradientStart) * t) /
+                                                  (spline.gradientEnd - spline.gradientStart) *
+                                                      segmentProgress) /
                                                  100.0) *
                                            180.0 / std::numbers::pi
                                      : 0.0;
             const double bank = attachment.tilt && std::abs(lateral) <= 10.0
-                                    ? std::atan(cant / 100.0) * 180.0 / std::numbers::pi
+                                    ? std::atan(cantPercent / 100.0) * 180.0 / std::numbers::pi
                                     : 0.0;
             const double reverseTurn = backwards ? 180.0 : 0.0;
             placements.push_back(
@@ -272,6 +303,9 @@ std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& 
                  {headingDegrees, pitch, bank, attachment.rotationDegrees[0] + reverseTurn,
                   attachment.rotationDegrees[1], attachment.rotationDegrees[2]},
                  6});
+            if (firstPlacementOnly) {
+                return placements;
+            }
         }
 
         accumulatedLength += spline.length;
@@ -296,6 +330,25 @@ std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& 
         visited.insert(nextId);
     }
     return placements;
+}
+
+} // namespace
+
+std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& attachment,
+                                                     const std::vector<MapSplinePlacement>& splines,
+                                                     int tileX, int tileY) {
+    return placeMapSplineAttachmentImpl(attachment, splines, tileX, tileY, false);
+}
+
+std::optional<MapSceneryPose> placeMapSplineAttachmentParent(
+    const MapSplineAttachment& attachment, const std::vector<MapSplinePlacement>& splines,
+    int tileX, int tileY) {
+    const std::vector<MapSceneryPose> placements =
+        placeMapSplineAttachmentImpl(attachment, splines, tileX, tileY, true);
+    if (placements.empty()) {
+        return std::nullopt;
+    }
+    return placements.front();
 }
 
 } // namespace openbus::map

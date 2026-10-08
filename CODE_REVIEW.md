@@ -13,25 +13,27 @@ not an exhaustive audit of every asset format or a certification of OMSI compati
 The four previously documented correctness/resource-handling findings have been fixed and
 regression-tested: optional AI configuration on Windows, script-texture bounds, the exterior
 camera's zero-distance singularity, and invalid physics rates. The current Windows Release
-build succeeds, but **23 of 24 CTest probes pass**: the collision-streaming probe fails on an
-invalid fixture before exercising its assertions.
+build succeeds and all **27 of 27 CTest probes pass**, including the repaired collision-streaming
+probe.
 
 The most important follow-ups are not just draw-call optimizations:
 
 | Priority | Area | Main risk / next action |
 | --- | --- | --- |
-| High | Script timing | A one-tick cap silently loses time below the configured script frequency; extract and test the scheduler. |
-| High | Collision-streaming latency | Tile crossings synchronously read and build colliders on the frame thread; measure boundary frames and stage reusable CPU data ahead of travel. |
+| High | Script timing | The eight-tick catch-up cap drops excess accumulated time after a hitch; extract and test the scheduler. |
+| High | Collision-streaming latency | Terrain/road/scenery mesh preparation is asynchronous, but ODE insertion/removal remains on the simulation thread and may still stall; measure publication and contact readiness. |
 | High | Advertised Linux support | The shared CMake project unconditionally links Windows Lua binaries. |
 | Medium | Renderer correctness | Raw VAO/buffer binds bypass the state cache; DXT5 capability detection uses a query invalid in the requested core profile. |
 | Medium | Memory / hot-path copies | Dynamic texture revisions are checked after copying pixels; asset caches retain CPU payloads and GPU resources without a byte-based residency policy. |
-| Medium | Future map features | Fully resident rendering, duplicated tile decoding, and separate rendered/collision placement paths make streaming and feature parity harder. |
-| Medium | Maintainability / verification | Large orchestration units and duplicated CMake source lists impede isolated tests; fix the failed streaming fixture and add scheduler/GL integration coverage. |
+| Medium | Map scalability | A shared-context worker rebuilds the full replacement geometry window on tile crossings; startup is synchronous, overlapping tiles are rebuilt, and global parsed map/placement data remains CPU-resident. |
+| Medium | Maintainability / verification | Large orchestration units and duplicated CMake source lists impede isolated tests; add scheduler/GL integration coverage. |
 
 Findings below distinguish confirmed defects from architectural scaling risks. No fresh
 render benchmark, GPU timing, memory profile, Linux build, sanitizer run, or full
-OpenGL-context test was performed. No speedup percentages or measured hitch durations are
-claimed. This update changes the review document only, not production code or test fixtures.
+OpenGL-context streaming test was performed. No speedup percentages or measured hitch durations
+are claimed. Active-window geometry residency, background renderer preparation, and
+geometry-constrained background collision preparation are implemented, but no in-game
+visual/performance/contact comparison has yet been run.
 
 ## Findings and remediation status
 
@@ -332,56 +334,63 @@ message-passing design.
 
 ## Performance and future-change findings
 
-### P1. High: Collision residency is bounded, but tile-crossing work is synchronous
+### P1. High: Collision preparation is asynchronous, but ODE publication remains synchronous
 
 **Locations:** `src/MapCollisionStreamer.cpp:51–89`; `src/MapCollisionBuilder.cpp`
 (`buildMapRoadCollisionImpl`, `readSceneryCollisionMeshes`); `src/main.cpp`
 (streamer updates between physics and drawing in both loops).
 
-On a center-tile change, `update()` scans the full manifest and performs terrain reads,
-tile/config parsing, road/scenery geometry construction, and ODE insertion on the frame
-thread. The builder's profile/terrain caches are recreated for each selected tile. Each
-ordinary scenery placement rereads its SCO/model configuration and parses the declared
-collision O3Ds; repeated placements do not share an asset-level collider cache. Returning
-after eviction repeats that work. Rendering loads its own copy of the source data separately.
+`MapCollisionStreamer` now schedules terrain reads, tile/config parsing, and road/scenery mesh
+construction on a CPU worker. Results are accepted only while their tile still has resident
+render geometry and is in the vehicle's load neighborhood. ODE geometry creation/removal stays
+on the simulation thread, with at most one completed tile published per update. The initial
+collision neighborhood is explicitly warmed before gameplay, so startup still waits. The
+builder's profile/terrain caches are recreated for each selected tile. Each ordinary scenery
+placement rereads its SCO/model configuration and parses declared collision O3Ds; repeated
+placements do not share an asset-level collider cache. Rendering loads its own source data.
 
-The 3×3 load neighborhood / two-tile unload hysteresis limits active collision residency,
-not work or latency per crossing. This is a confirmed blocking path and a scaling risk,
-not a measured hitch duration. A long boundary frame can also feed the existing physics
-and script catch-up/drop policies on the next update.
+The one-tile load neighborhood / two-tile unload hysteresis limits active collision residency,
+and collision is restricted to tiles with uploaded render geometry. These bounds limit residency,
+not all frame-thread work: ODE publication/removal can still be expensive, and one-tile lookahead
+cannot guarantee readiness for fast travel or worker delays. If preparation falls behind,
+temporary contact gaps are possible. This is an architectural risk, not a measured hitch duration.
 
-**Recommendation:** First count file opens, cache hits, tile-build time, and p95/p99 crossing
-frame time. Add a coordinate index and a bounded, revision-keyed cache of immutable terrain,
-profiles, and asset-local collision meshes. Prepare upcoming tile CPU payloads asynchronously,
-with priorities/cancellation; publish ODE objects only on the simulation owner thread between
-steps. Readiness must cover the bus's reachable/swept volume, not just the camera view, and
-teleports/failures need an explicit safe policy. Test travel in both directions, re-entry,
-negative coordinates, rapid center changes, and contact continuity before enabling deferral.
+**Recommendation:** Measure build time, ODE publication cost, and p95/p99 frame time. Add
+shared immutable asset-local collision caches and explicit readiness for the bus's reachable/
+swept volume, not just its current tile. Define safe behavior for teleports and worker failures.
+Test travel in both directions, re-entry, negative coordinates, rapid center changes, and contact
+continuity; consider moving the entire ODE world to a dedicated owner thread if publication is
+still costly.
 
-### P2. Medium: Full-map construction and residency limit larger-map scalability
+### P2. Medium: Full-window background rebuilds still limit larger-map scalability
 
-**Locations:** `src/MapRenderer.cpp:560–1787` (constructor), especially `loadAllTerrainTiles`
-and the separate `loadMapTile` calls at `1206` and `1357`; `MapRenderer::Impl` resource vectors.
+**Locations:** `src/MapRenderer.cpp` (`MapRenderer` constructor, `updateStreaming`, `draw`,
+`updateScripts`); `MapRenderer::Impl` resource vectors.
 
-The constructor synchronously decodes/builds/uploads the listed terrain, scenery, and roads,
-and retains the resulting GPU resources until destruction. Each tile's text is parsed once
-to index global placement IDs and again to build content. Road staging geometry and terrain
-grids also coexist during construction, increasing peak CPU memory. Existing distance/frustum
-and chunk rejection saves draw work, but does not reduce load cost or GPU residency.
+At startup the constructor synchronously builds/uploads terrain, scenery, and roads for the
+two-tile Chebyshev window. Later center-tile changes submit a candidate renderer to a worker with
+a shared GLFW/OpenGL context; the old window remains drawable until the full replacement window
+is ready, then its resources are released on the primary context. The worker also performs GPU
+uploads, so driver/GPU contention is possible. If shared-context setup fails, the fallback is
+synchronous. Overlapping tiles are rebuilt rather than reused. Newly encountered scenery runtimes
+are initialized on the main script thread at a cap of 32 per frame. Collision CPU preparation is
+also asynchronous, but ODE publication remains on the simulation thread. Startup parses tile
+records once into the cached CPU-side representation/global placement index, which remains
+resident for cross-tile attachment resolution. Road staging geometry and terrain grids coexist
+during construction, increasing peak CPU memory.
 
-**Recommendation:** Separate a reusable CPU map/placement representation from GPU realization.
-Parse each tile once per map revision, retain a lightweight global attachment index, and
-construct bounded nearby payloads from shared immutable asset definitions. Preserve cross-tile
-attachment dependencies when evicting tiles. Track startup/first-usable-frame time, peak CPU
-bytes, GPU bytes, tile counts, and owner-thread upload budget before implementing streaming.
-Keep visible startup content ready rather than replacing the current behavior with blank
-geometry behind unbounded futures.
+**Recommendation:** Replace full-window reconstruction with per-tile entering/leaving realization
+from the existing parsed cache. Preserve cross-tile attachment dependencies and script state while
+evicting tile-owned resources. Measure startup/first-usable-frame time, peak CPU/GPU bytes, GPU
+contention, ODE publication, and boundary-frame latency. Add a GL-context integration smoke test
+and in-game visual/contact validation before claiming smooth streaming.
 
-`MapRenderer::updateScripts()` also ticks every retained scenery runtime, not just visible
-placements. Independent per-placement state is correct, and native compiled programs are
-already cached; do not replace many mutable instances with one runtime per SCO. Attribute
-cost by runtime count and script before evaluating a documented background cadence or
-sleep/wake policy that preserves timers and externally observable state.
+`MapRenderer::updateScripts()` now initializes and ticks scenery runtimes only when their owner
+tile is active; each placement keeps independent mutable state, and native compiled programs are
+already cached. Camera-frustum rejection does not pause scripts within active tiles: a script
+can control `[visible]` or shared variables and needs a defined sleep/wake policy before
+camera-based suspension is safe. Attribute cost by active runtime count and script before
+changing cadence or timer semantics.
 
 ### P3. Medium: Dynamic texture revisions are checked after full pixel copies
 
@@ -452,22 +461,20 @@ publication, and apply a consistent worker-side fallback to base and auxiliary t
 Add a real core-context DXT5 fixture test with supported/unsupported capability cases, inspect
 GL errors, and verify every material role rather than only base textures.
 
-### P6. Medium: Collision-debug GPU data ignores same-sized geometry changes
+### P6. Resolved (2026-10-07): Collision-debug GPU data ignored same-sized geometry changes
 
 **Locations:** `src/RenderLoop.cpp:5432–5484` (collision revision / wireframe rebuild);
 `src/CoreRenderer.cpp:1078–1140` (`drawStaticPrimitives`).
 
-The CPU wireframe rebuilds when `collisionDebugRevision()` changes, but its GPU cache uploads
-again only when the vertex count differs. Replacing one streamed terrain tile with another
-of the same topology/count changes positions without changing size; the overlay can keep
-showing the old collision geometry. This undermines the debugging evidence used to validate
-streaming even though the actual ODE geometry has changed.
+The CPU wireframe rebuilds when `collisionDebugRevision()` changes. The GPU cache now receives
+that revision and reuploads when either the vertex count or revision changes, so replacing a
+streamed tile with same-sized geometry cannot leave stale orange lines. `OpenBusStaticPrimitiveBufferProbe`
+covers unchanged contents, same-sized revision changes, and vertex-count changes. The buffer
+is skipped for empty vertex sets and refreshed if geometry is later repopulated.
 
-**Recommendation:** Pass an explicit content revision/dirty signal to the static buffer
-update, or invalidate it on collision revision changes. Test equal-count replacements, empty
-sets, and subsequent repopulation. The global raw-pointer registry of caller-owned
-`StaticPrimitiveBuffer` objects also needs an explicit lifetime contract or owning handles
-before callers can be removed independently of renderer shutdown.
+**Remaining note:** The global raw-pointer registry of caller-owned `StaticPrimitiveBuffer`
+objects still needs an explicit lifetime contract or owning handles before callers can be
+removed independently of renderer shutdown.
 
 ### P7. Medium: Rendered scenery and collision use different placement semantics
 

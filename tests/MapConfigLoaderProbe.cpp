@@ -77,7 +77,7 @@ void runFixtureProbe() {
                      "[spline]\n0\nSplines\\road.sli\n30273\n30272\n0\n10\n20\n30\n"
                      "0\n50\n0\n0\n0\n0\n0\n0\n0\n0\n\n"
                      "[spline_h]\n0\nSplines\\bridge.sli\n30274\n0\n0\n11\n21\n31\n"
-                     "0\n70\n0\n12\n12\n3.5\n0\n0\n0\n0\n0\n\n"
+                     "0\n70\n0\n12\n12\n3.5\n350\n-250\n0\n0\n0\n\n"
                      "[spline_terrain_align_2]\nraw spline alignment\n[rule]\n"
                      "spline rule 1\nspline rule 2\nspline rule 3\nspline rule 4\n"
                      "Object Nr. 4\n[object]\n0\n"
@@ -168,6 +168,15 @@ void runFixtureProbe() {
                     definition.groundTextures[1].parameters ==
                         std::array<std::string, 3>{"raw-a", "raw-b", "raw-c"},
                 "additional ground texture paths and opaque parameters preserved");
+        const openbus::map::MapGroundTextureTiling grassTiling =
+            openbus::map::mapGroundTextureTiling(definition.groundTextures[0]);
+        const openbus::map::MapGroundTextureTiling fallbackTiling =
+            openbus::map::mapGroundTextureTiling(definition.groundTextures[1]);
+        require(grassTiling.textureRepeatsPerTile == 1.0 &&
+                    grassTiling.detailTextureRepeatsPerTile == 60.0 &&
+                    fallbackTiling.textureRepeatsPerTile == 1.0 &&
+                    fallbackTiling.detailTextureRepeatsPerTile == 1.0,
+                "groundtex repeat fields are parsed independently with safe defaults");
         require(openbus::map::selectMapGroundTextureIndex(definition, "") == 0 &&
                     openbus::map::selectMapGroundTextureIndex(definition, "1") == 1,
                 "ground texture preview selector defaults to first record and accepts index");
@@ -286,6 +295,7 @@ void runFixtureProbe() {
         require(tile.splines[1].geometryValid && tile.splines[1].elevated &&
                     tile.splines[1].assetPath == "Splines\\bridge.sli" &&
                     tile.splines[1].length == 70.0 && tile.splines[1].heightDelta == 3.5 &&
+                    tile.splines[1].cantStart == 3.5 && tile.splines[1].cantEnd == -2.5 &&
                     tile.splines[1].splineTerrainAlign2 == "raw spline alignment" &&
                     tile.splines[1].rules.size() == 1 &&
                     tile.splines[1].rules[0].fields ==
@@ -385,7 +395,7 @@ void runFixtureProbe() {
             return openbus::map::loadMapTile(reference);
         };
         const auto version5Spline = loadVersionedSpline(
-            "5", "[spline]\nSplines\\legacy.sli\n-1\n10\n20\n0.5\n90\n40\n-20\n1\n2\n3\n4\n");
+            "5", "[spline]\nSplines\\legacy.sli\n-1\n10\n20\n0.5\n90\n40\n-20\n1\n2\n300\n400\n");
         require(version5Spline.splines.size() == 1 &&
                     version5Spline.splines[0].splineId == -1 &&
                     version5Spline.splines[0].assetPath == "Splines\\legacy.sli" &&
@@ -393,10 +403,11 @@ void runFixtureProbe() {
                     version5Spline.splines[0].localX == 10.0 &&
                     version5Spline.splines[0].elevation == 20.0 &&
                     version5Spline.splines[0].localY == 0.5 &&
-                    version5Spline.splines[0].cantStart == 3.0,
-                "version 5 spline omits detail, ID, and neighbor IDs but retains cant fields");
+                    version5Spline.splines[0].cantStart == 3.0 &&
+                    version5Spline.splines[0].cantEnd == 4.0,
+                "version 5 spline normalizes stored hundredths-of-percent cant fields");
         const auto version5MixedRecords = loadVersionedSpline(
-            "5", "[spline]\nSplines\\legacy.sli\n-1\n10\n20\n0.5\n90\n40\n-20\n1\n2\n3\n4\n"
+            "5", "[spline]\nSplines\\legacy.sli\n-1\n10\n20\n0.5\n90\n40\n-20\n1\n2\n300\n400\n"
                   "[object]\nScenery\\legacy.sco\n1\n2\n0\n0\n"
                   "Legacy attachment\n[attachObj]\n0\nScenery\\legacy-attached.sco\n44\n"
                   "0\n1\n0\n0\n0\n0\n");
@@ -427,28 +438,31 @@ void runFixtureProbe() {
                 "attached-object numeric conversions are non-destructive and count stays opaque");
         const auto version7Splines = loadVersionedSpline(
             "7", "[spline]\nSplines\\legacy.sli\n71\n-1\n10\n20\n0.5\n90\n40\n-20\n1\n2\n"
-                  "3\n4\n[spline]\nSplines\\legacy.sli\n72\n1\n11\n21\n0.5\n90\n40\n-20\n1\n2\n3\n4\n");
+                  "300\n400\n[spline]\nSplines\\legacy.sli\n72\n1\n11\n21\n0.5\n90\n40\n-20\n1\n2\n300\n400\n");
         require(version7Splines.splines.size() == 2 &&
                     version7Splines.splines[0].nextSplineId == 72 &&
                     version7Splines.splines[1].previousSplineId == 71 &&
                     version7Splines.splines[1].cantStart == 3.0 &&
+                    version7Splines.splines[1].cantEnd == 4.0 &&
                     version7Splines.splines[1].geometryValid,
-                "version 7 legacy link flag is expanded to linked spline IDs");
+                "version 7 links and normalized cant fields are decoded");
         const auto version11Spline = loadVersionedSpline(
-            "11", "[spline]\n0\nSplines\\modern.sli\n111\n110\n112\n1\n2\n0.5\n45\n50\n-30\n0\n0\n1.5\n2.5\n18\n");
+            "11", "[spline]\n0\nSplines\\modern.sli\n111\n110\n112\n1\n2\n0.5\n45\n50\n-30\n0\n0\n150\n250\n18\n");
         require(version11Spline.splines.size() == 1 &&
                     version11Spline.splines[0].splineId == 111 &&
                     version11Spline.splines[0].previousSplineId == 110 &&
                     version11Spline.splines[0].nextSplineId == 112 &&
+                    version11Spline.splines[0].cantStart == 1.5 &&
+                    version11Spline.splines[0].cantEnd == 2.5 &&
                     version11Spline.splines[0].chainOffsetValid &&
                     version11Spline.splines[0].chainOffset == 18.0,
-                "version 11 spline reads detail, neighbor IDs, cant, and chain texture offset");
+                "version 11 spline normalizes cant and reads chain texture offset");
         const auto version14Spline = loadVersionedSpline(
-            "14", "[spline]\n0\nSplines\\v14.sli\n141\n140\n142\n10\n20\n0.5\n45\n50\n-30\n0\n0\n1.5\n2.5\n11.25\n22.5\n77\nmirror\n");
+            "14", "[spline]\n0\nSplines\\v14.sli\n141\n140\n142\n10\n20\n0.5\n45\n50\n-30\n0\n0\n500\n-500\n11.25\n22.5\n77\nmirror\n");
         require(version14Spline.splines.size() == 1 &&
                     version14Spline.splines[0].geometryValid &&
-                    version14Spline.splines[0].cantStart == 1.5 &&
-                    version14Spline.splines[0].cantEnd == 2.5 &&
+                    version14Spline.splines[0].cantStart == 5.0 &&
+                    version14Spline.splines[0].cantEnd == -5.0 &&
                     version14Spline.splines[0].skewStart == 11.25 &&
                     version14Spline.splines[0].skewEnd == 22.5 &&
                     version14Spline.splines[0].mirrored &&

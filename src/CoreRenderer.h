@@ -11,6 +11,7 @@
 #include <GL/gl.h>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #ifndef GL_TEXTURE0
@@ -54,16 +55,24 @@ struct PrimitiveVertex {
     float b;
 };
 
-// Renderer-owned GL storage for immutable primitive vertices; shutdown resets the cache.
+// Renderer-owned GL storage for cached primitive vertices; shutdown resets the cache.
 struct StaticPrimitiveBuffer {
     GLuint buffer = 0;
     std::size_t vertexCount = 0;
+    std::uint64_t contentRevision = 0;
+
+    bool requiresUpload(std::size_t requestedVertexCount,
+                        std::uint64_t requestedContentRevision) const noexcept {
+        return buffer == 0 || vertexCount != requestedVertexCount ||
+               contentRevision != requestedContentRevision;
+    }
 };
 
 struct ModelMaterial {
     GLuint texture = 0;
     bool textureArray = false;
     bool textured = false;
+    std::array<float, 2> textureScale = {1.0F, 1.0F};
     GLenum textureWrapS = GL_REPEAT;
     GLenum textureWrapT = GL_REPEAT;
     GLuint lightmap = 0;
@@ -115,7 +124,7 @@ void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primiti
                     float lineWidth = 1.0f);
 void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
                           const std::vector<PrimitiveVertex>& vertices, GLenum primitive,
-                          float lineWidth = 1.0f);
+                          float lineWidth = 1.0f, std::uint64_t contentRevision = 0);
 void drawTextureQuad(GLuint texture, float x, float y, float width, float height,
                      bool flipTextureY = false);
 

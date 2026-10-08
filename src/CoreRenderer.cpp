@@ -45,6 +45,7 @@ struct Uniforms {
     GLint modelView = -1;
     GLint texture = -1;
     GLint textureArray = -1;
+    GLint textureScale = -1;
     GLint useTexture = -1;
     GLint useTextureArray = -1;
     GLint color = -1;
@@ -110,6 +111,7 @@ struct ModelUniformState {
     float lightmapStrength = 0.0f;
     float nightmapStrength = 0.0f;
     float bumpmapStrength = 0.0f;
+    std::array<float, 2> textureScale = {1.0F, 1.0F};
     std::array<float, 2> transmapScale = {1.0F, 1.0F};
     int interiorLightCount = 0;
     std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightViewPositions = {};
@@ -141,14 +143,14 @@ GLint textureQuadFlipTextureY = -1;
 GLuint currentProgram = 0;
 GLuint currentVertexArray = 0;
 GLuint currentArrayBuffer = 0;
-GLenum currentTextureUnit = GL_TEXTURE0;
-std::array<GLuint, MAX_TEXTURE_UNITS> boundTexture2D = {};
-std::array<GLuint, MAX_TEXTURE_UNITS> boundTextureArray = {};
-bool wrapParametersValid = false;
-GLuint wrapParametersTexture = 0;
-GLenum wrapParametersTarget = 0;
-GLint wrapParametersS = 0;
-GLint wrapParametersT = 0;
+thread_local GLenum currentTextureUnit = GL_TEXTURE0;
+thread_local std::array<GLuint, MAX_TEXTURE_UNITS> boundTexture2D = {};
+thread_local std::array<GLuint, MAX_TEXTURE_UNITS> boundTextureArray = {};
+thread_local bool wrapParametersValid = false;
+thread_local GLuint wrapParametersTexture = 0;
+thread_local GLenum wrapParametersTarget = 0;
+thread_local GLint wrapParametersS = 0;
+thread_local GLint wrapParametersT = 0;
 GLuint matrixProgram = 0;
 Matrix4 cachedProjection = {};
 Matrix4 cachedModelView = {};
@@ -196,6 +198,7 @@ uniform float uAmbientLight;
 uniform float uDiffuseLight;
 uniform sampler2D uTexture;
 uniform sampler2DArray uTextureArray;
+uniform vec2 uTextureScale;
 uniform sampler2D uLightmap;
 uniform sampler2D uNightmap;
 uniform sampler2D uTransmap;
@@ -227,14 +230,15 @@ uniform int uAlphaMode;
 out vec4 fragmentColor;
 void main() {
     vec4 color = uColor;
+    vec2 textureCoordinate = vTexCoord.xy * uTextureScale;
     if (uUseTextTexture) {
         color *= texture(uTextTexture, vTexCoord.xy);
     } else if (uUseFreeTexture) {
-        color *= texture(uFreeTexture, vTexCoord.xy);
+        color *= texture(uFreeTexture, textureCoordinate);
     } else if (uUseTextureArray) {
-        color *= texture(uTextureArray, vTexCoord);
+        color *= texture(uTextureArray, vec3(textureCoordinate, vTexCoord.z));
     } else if (uUseTexture) {
-        color *= texture(uTexture, vTexCoord.xy);
+        color *= texture(uTexture, textureCoordinate);
     }
     vec3 diffuseReflectance = color.rgb;
     vec3 unlitColor = color.rgb;
@@ -500,6 +504,7 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
     } else {
         uniforms.texture = pglGetUniformLocation(program, "uTexture");
         uniforms.textureArray = pglGetUniformLocation(program, "uTextureArray");
+        uniforms.textureScale = pglGetUniformLocation(program, "uTextureScale");
         uniforms.useTexture = pglGetUniformLocation(program, "uUseTexture");
         uniforms.useTextureArray = pglGetUniformLocation(program, "uUseTextureArray");
         uniforms.color = pglGetUniformLocation(program, "uColor");
@@ -701,6 +706,10 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     if (!modelUniformState.valid || modelUniformState.bumpmapStrength != material.bumpmapStrength) {
         pglUniform1f(modelUniforms.bumpmapStrength, material.bumpmapStrength);
     }
+    if (!modelUniformState.valid || modelUniformState.textureScale != material.textureScale) {
+        pglUniform2f(modelUniforms.textureScale, material.textureScale[0],
+                     material.textureScale[1]);
+    }
     if (!modelUniformState.valid || modelUniformState.transmapScale != material.transmapScale) {
         pglUniform2f(modelUniforms.transmapScale, material.transmapScale[0],
                      material.transmapScale[1]);
@@ -757,6 +766,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.lightmapStrength = material.lightmapStrength;
     modelUniformState.nightmapStrength = material.nightmapStrength;
     modelUniformState.bumpmapStrength = material.bumpmapStrength;
+    modelUniformState.textureScale = material.textureScale;
     modelUniformState.transmapScale = material.transmapScale;
     modelUniformState.interiorLightCount = material.interiorLightCount;
     modelUniformState.interiorLightViewPositions = material.interiorLightViewPositions;
@@ -1077,7 +1087,7 @@ void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primiti
 
 void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
                           const std::vector<PrimitiveVertex>& vertices, GLenum primitive,
-                          float lineWidth) {
+                          float lineWidth, std::uint64_t contentRevision) {
     TraceScope trace("render", "CoreRenderer::drawStaticPrimitives");
     if (primitiveProgram == 0 || vertices.empty()) {
         return;
@@ -1091,6 +1101,7 @@ void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
         }
         staticPrimitiveBuffers.push_back(&cache);
         cache.vertexCount = vertices.size();
+        cache.contentRevision = contentRevision;
         if (currentVertexArray != primitiveVertexArray) {
             pglBindVertexArray(primitiveVertexArray);
             currentVertexArray = primitiveVertexArray;
@@ -1103,8 +1114,9 @@ void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
                           static_cast<std::ptrdiff_t>(vertices.size() * sizeof(PrimitiveVertex)),
                           vertices.data(), GL_STATIC_DRAW);
         }
-    } else if (cache.vertexCount != vertices.size()) {
+    } else if (cache.requiresUpload(vertices.size(), contentRevision)) {
         cache.vertexCount = vertices.size();
+        cache.contentRevision = contentRevision;
         if (currentVertexArray != primitiveVertexArray) {
             pglBindVertexArray(primitiveVertexArray);
             currentVertexArray = primitiveVertexArray;

@@ -28,6 +28,7 @@ struct MapSplineHeightProfile {
 
 struct MapSplineProfile {
     std::vector<std::string> textures;
+    std::vector<int> textureAlphaModes;
     std::vector<MapSplineProfileSection> sections;
     std::vector<MapSplineHeightProfile> heightProfiles;
     bool editorOnly = false;

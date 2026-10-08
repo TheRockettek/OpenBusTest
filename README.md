@@ -16,7 +16,7 @@ prove end-to-end rendering or runtime semantics.
 | Physics and wheel simulation | Fixed-step ODE and per-wheel simulation are active; the deterministic bump/steering/braking stress probe covers two- and three-axle fixtures. Broader tuning remains incomplete. | [`BusSimulation.cpp`](src/BusSimulation.cpp) | [`BusSimulationSteeringProbe.cpp`](tests/BusSimulationSteeringProbe.cpp), [`BusSimulationStabilityProbe.cpp`](tests/BusSimulationStabilityProbe.cpp), [`BusSimulationStressProbe.cpp`](tests/BusSimulationStressProbe.cpp) |
 | Vehicle/model loading | Core MAN DL05 and E400 configuration paths are implemented; broad OMSI configuration coverage remains partial. | [`VehicleConfigLoader.cpp`](src/VehicleConfigLoader.cpp), [`ModelConfigLoader.cpp`](src/ModelConfigLoader.cpp), [`RenderLoop.cpp`](src/RenderLoop.cpp) | [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); visual procedure: [screenshot plan](Docs/SCREENSHOT_VALIDATION_PLAN.md) |
 | Texture decoding and materials | Texture decoding has a probe; several material semantics and visual parity checks remain incomplete, including alpha mode 2 and environment maps. | [`TextureLoader.cpp`](src/TextureLoader.cpp), [`CoreRenderer.cpp`](src/CoreRenderer.cpp) | [`TextureLoaderProbe.cpp`](tests/TextureLoaderProbe.cpp); GL/material checks: [incomplete visual checks](Docs/SCREENSHOT_VALIDATION_PLAN.md#incomplete-feature-visual-checks) |
-| Map, terrain, scenery, and roads | Partial: supported `.sli` profile strips and authored SCO/model `[collision_mesh]` O3Ds are built into static ODE trimeshes for nearby map tiles; terrain collision streams with them in a 3×3 load neighborhood and a 2-tile unload hysteresis radius. SCO scripts run per placement and drive `[visible]`, `[usetexttexture]`, and `[usescripttexture]` surfaces; script animations/material changes, mouse events, and `[varparent]` inheritance remain incomplete. Rendering is still synchronous and resident/cull-based. General `.x` scenery, full OMSI attachments/profile semantics, and end-to-end visual/contact validation remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/MapSplineGeometry.cpp), [`MapRoadGeometry.cpp`](src/MapRoadGeometry.cpp), [`MapCollisionBuilder.cpp`](src/MapCollisionBuilder.cpp), [`MapCollisionStreamer.cpp`](src/MapCollisionStreamer.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapCollisionBuilderProbe.cpp`](tests/MapCollisionBuilderProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`MapRoadGeometryProbe.cpp`](tests/MapRoadGeometryProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp), [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp); in-context visual validation remains |
+| Map, terrain, scenery, and roads | Partial: only active-window terrain, scenery meshes, and road geometry are built/uploaded; on tile changes a shared-context worker builds the replacement window while the previous one remains drawable. Collision mesh preparation runs in a CPU worker and ODE publication stays on the simulation thread, limited to one tile per update. Startup window creation and initial collision warm-up remain synchronous; if a shared GL context cannot be created, renderer loading falls back to synchronous work. Startup still parses map tile text once to build the global attachment index. General `.x` scenery, full OMSI attachment/profile semantics, and end-to-end visual/contact validation remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/MapSplineGeometry.cpp), [`MapRoadGeometry.cpp`](src/MapRoadGeometry.cpp), [`MapCollisionBuilder.cpp`](src/MapCollisionBuilder.cpp), [`MapCollisionStreamer.cpp`](src/MapCollisionStreamer.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapCollisionBuilderProbe.cpp`](tests/MapCollisionBuilderProbe.cpp), [`MapCollisionStreamerProbe.cpp`](tests/MapCollisionStreamerProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`MapRoadGeometryProbe.cpp`](tests/MapRoadGeometryProbe.cpp); in-context visual validation remains |
 | Scripts and dynamic displays | Vehicle script/text textures and scenery per-placement script/text texture surfaces, `init`/`frame`, and `[visible]` control are active; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/ScriptRuntime.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
 | Sound | Player sound runtime is active; full OMSI sound and AI sound selection remain incomplete. | [`SoundEngine.cpp`](src/SoundEngine.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp) |
 | AI, passengers, routes, and articulated vehicles | Runtime support is incomplete; parsed configuration is not evidence of these behaviors. | [vehicle configuration](src/VehicleConfigLoader.cpp), [map configuration](src/MapConfigLoader.cpp) | No end-to-end regression probe; see the [completion TODO](TODO.md) |
@@ -28,24 +28,46 @@ When `OPENBUS_MAP_SPAWN` is unset, startup prints all spawn points with their
 zero-based indexes, names, world coordinates, and yaw. Set it to an index (for
 example, `OPENBUS_MAP_SPAWN=1`) to spawn at that entrypoint's parsed position
 and rotation. The older `OPENBUS_MAP_ENTRY` index/name selector remains
-supported when `OPENBUS_MAP_SPAWN` is unset. It synchronously
-parses/builds the listed map tiles. It uses the first `[groundtex]` entry as the
+supported when `OPENBUS_MAP_SPAWN` is unset. Startup parses tile text once and
+caches the parsed tile records/global placement-attachment index, then constructs
+render geometry only for listed tiles in a two-tile Chebyshev window around the
+bus (up to 5×5 tiles).
+It uses the first `[groundtex]` entry as the
 base and applies numeric per-tile `.map.<index>.dds` alpha masks to subsequent
 `[groundtex]` layers. Set `OPENBUS_MAP_GROUNDTEX` to a zero-based
 `[groundtex]` index to preview that texture uniformly, bypassing per-tile masks.
-Detail-layer and seasonal selection remain unsupported. The renderer retains
-uploaded terrain, road, and scenery geometry.
-The renderer distance- and frustum-culls terrain tiles and roads, and uses
-spatially grouped scenery chunks so instances in rejected chunks are not
-scanned or submitted. This changes draw-time visibility work, not residency:
-it does not stream tiles in/out or unload their GPU buffers. Camera movement
-does not trigger a chunk load; map startup/build work is still synchronous and
-can be long for large maps.
+Detail-layer and seasonal selection remain unsupported. Terrain, road, and
+scenery geometry and their window-owned GPU textures/buffers are created only
+for that active window. On a tile crossing, a background worker builds and
+uploads a complete replacement window using a GLFW shared OpenGL context; the
+current window remains drawable until the replacement is ready, then its GPU
+resources are released. If shared-context creation fails, loading falls back to
+the synchronous path. Terrain and roads then use distance/frustum
+rejection, scenery uses spatial chunks and per-instance culling, and `[visible]`
+is checked per model part. Scenery runtimes are initialized/ticked only while
+their source tile is active; their per-placement script state survives window
+reloads. Scripts are not paused merely because the camera frustum excludes them.
+Tile crossings still rebuild the full active window (rather than only the
+entering tile), but construction and upload happen on the worker. Initial map
+window construction at startup remains synchronous. Scenery script runtimes
+created by a streamed window are initialized on the main script thread, at most
+32 new runtimes per frame. Parsed tile records and the global placement index
+remain CPU-cached for cross-tile attachment resolution. GPU contention and
+boundary latency have not been measured.
 
 ODE terrain and road/scenery collision is loaded separately around the player:
 the load radius is one tile, and collision remains resident until a tile is
-more than two tiles away. This bounds active collision to the local map
-neighborhood; rendered map geometry is still fully resident as described above.
+more than two tiles away, but only for tiles with successfully uploaded render
+geometry in the current window. Terrain and road/scenery collision meshes are
+prepared on a background CPU worker; ODE objects are published/removed on the
+simulation thread, at most one completed tile per update.
+Thus collision is independent of the camera frustum and scenery `[visible]`,
+and collision residency also updates if the resident geometry set changes while
+the player remains in the same center tile.
+The initial collision neighborhood is warmed synchronously before gameplay;
+runtime collision preparation is asynchronous, but ODE setup can still cost time
+on publication. If preparation falls behind the player, temporary contact gaps
+are possible. Physics residency follows loaded map tiles, not camera visibility.
 
 Ordinary scenery gets a bilinearly sampled terrain height plus its authored
 vertical placement value, unless its SCO/model declares `[absheight]`, in which
@@ -98,7 +120,7 @@ partial:
   lightmaps, Chrono map variants, and asynchronous map construction are absent.
   Per-tile DDS filenames are inventoried, but their payloads and mapping to
   `[groundtex]` ordinals are unresolved. All map geometry stays resident after
-  construction; culling does not free GPU memory.
+  construction; active-window gating does not free GPU memory.
   `.map.water` records are size/finite-value validated and reported, but their
   spatial height ordering is unresolved, so no water geometry is drawn.
   Unimplemented bracketed sections in tile files and `global.cfg` are reported
@@ -375,6 +397,13 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Hold right mouse and drag vertically: adjust FOV in configured views, or
   move closer/farther in the outside orbit view
 - Scroll up/down: zoom in/out
+- Press `F3` to toggle the no-clip free camera. Use the up/down arrows to move
+  forward/back and left/right to strafe; use `Page Up` / `Page Down` to move
+  vertically. Middle-mouse drag looks around, the mouse wheel adjusts movement
+  speed, and right-mouse drag adjusts FOV. Freecam does not move the bus or
+  change its physics. The active map window and collision streaming remain
+  centered on the bus; flying beyond the nearby active tiles will not trigger
+  camera-centered map streaming.
 - Press `I` to show clickable mesh bounds; the currently hovered clickable part
   is highlighted. `game.log` lists mesh dimensions, mouse events, and mapped
   script trigger availability when the overlay is enabled.

@@ -1,11 +1,13 @@
 #include "BusSimulation.h"
 #include "MapCollisionStreamer.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -13,7 +15,7 @@ namespace {
 void writeTile(const std::filesystem::path& path) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream output(path, std::ios::binary);
-    if (!output || !(output << "[version]\n12\n")) {
+    if (!output || !(output << "[version]\n12\n[terrain]\n")) {
         throw std::runtime_error("failed to write map collision streaming fixture");
     }
 }
@@ -60,25 +62,47 @@ void runProbe() {
         writeTile(tile.textPath);
         map.tiles.push_back(std::move(tile));
     }
+    std::vector<openbus::map::MapTileCoordinate> mapTileCoordinates;
+    for (const openbus::map::MapTileReference& tile : map.tiles) {
+        mapTileCoordinates.emplace_back(tile.x, tile.y);
+    }
 
     BusSimulation simulation(probeConfiguration(), VehiclePlacement{{5.0, 5.0, 0.0}, 0.0},
                              60.0, 8, 0.0, {}, {}, false);
     openbus::map::MapCollisionStreamer streamer(map, root / "omsi", simulation);
-    streamer.update(5.0, 5.0);
-    require(streamer.loadedTileCount() == 3 && simulation.loadedMapCollisionTileCount() == 3,
-            "startup should load only the 3x3 neighborhood intersecting available tiles");
+    const auto updateUntilSettled = [&](double worldX, double worldY,
+                                        const std::vector<openbus::map::MapTileCoordinate>& tiles,
+                                        std::size_t expectedCount, const char* message) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        do {
+            streamer.update(worldX, worldY, tiles);
+            streamer.waitForPendingBuilds();
+            streamer.update(worldX, worldY, tiles);
+            if (streamer.loadedTileCount() == expectedCount &&
+                simulation.loadedMapCollisionTileCount() == expectedCount) {
+                return;
+            }
+            std::this_thread::yield();
+        } while (std::chrono::steady_clock::now() < deadline);
+        require(false, message);
+    };
 
-    streamer.update(605.0, 5.0);
-    require(streamer.loadedTileCount() == 4 && simulation.loadedMapCollisionTileCount() == 4,
-            "tiles should load ahead while the previous tile remains in the hysteresis ring");
-
-    streamer.update(905.0, 5.0);
-    require(streamer.loadedTileCount() == 3 && simulation.loadedMapCollisionTileCount() == 3,
-            "tiles outside the unload radius should be removed as the bus advances");
-
-    streamer.update(-0.01, 5.0);
-    require(streamer.loadedTileCount() == 4 && simulation.loadedMapCollisionTileCount() == 4,
-            "negative world positions should use floor-based tile selection");
+    updateUntilSettled(5.0, 5.0, {{0, 0}}, 1,
+                       "collision must load only geometry-resident map tiles");
+    updateUntilSettled(
+        605.0, 5.0,
+        openbus::map::selectMapTilesWithinRadius(mapTileCoordinates, 605.0, 5.0, 2), 4,
+        "tiles should load ahead while the previous tile remains in the hysteresis ring");
+    updateUntilSettled(
+        905.0, 5.0,
+        openbus::map::selectMapTilesWithinRadius(mapTileCoordinates, 905.0, 5.0, 2), 3,
+        "tiles outside the unload radius should be removed as the bus advances");
+    updateUntilSettled(
+        -0.01, 5.0,
+        openbus::map::selectMapTilesWithinRadius(mapTileCoordinates, -0.01, 5.0, 2), 4,
+        "negative world positions should use floor-based tile selection");
+    updateUntilSettled(-0.01, 5.0, {{-1, 0}}, 1,
+                       "collision residency must follow geometry changes without center movement");
     std::filesystem::remove_all(root);
 }
 

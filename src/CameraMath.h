@@ -8,6 +8,12 @@ namespace openbus::rendering {
 
 using Matrix4 = std::array<double, 16>;
 
+struct FreeCameraPose {
+    std::array<double, 3> position = {};
+    double yawRadians = 0.0;
+    double pitchRadians = 0.0;
+};
+
 void setPerspective(double width, double height, double fieldOfView);
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ);
 void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ,
@@ -31,5 +37,8 @@ const Matrix4& modelViewMatrix();
 const Matrix4& projectionMatrix();
 void setModelViewMatrix(const Matrix4& matrix);
 std::array<double, 3> transformLocalPoint(const BodyPose& pose, const std::array<double, 3>& local);
+std::array<double, 3> freeCameraForward(double yawRadians, double pitchRadians);
+FreeCameraPose moveFreeCamera(const FreeCameraPose& pose, double forwardInput, double rightInput,
+                              double verticalInput, double deltaSeconds, double speedMetersPerSecond);
 
 } // namespace openbus::rendering

@@ -400,8 +400,8 @@ diagnostic before it can be moved to the implemented baseline.
 ### Map support
 
 Implemented foundation: `global.cfg` and tile/terrain parsing, configurable
-entrypoint spawn, synchronous full-map terrain/scenery/road render construction with
-distance/frustum culling, a 3x3 spawn-neighborhood terrain collision patch,
+entrypoint spawn, synchronous full-map terrain/scenery/road construction with
+distance/frustum culling and a two-tile bus-centered draw/script active window;
 supported O3D scenery (including external SCO `[model]` CFGs, transmaps, and
 O3D material alpha), tree preview cards, and a subset of `.sli` road profiles.
 These are not equivalent to full OMSI map support; see the README's map scope
@@ -554,12 +554,19 @@ for the explicit boundary.
   determine corner/quadrant ordering and implement water rendering. Per-tile/
   detail/seasonal ground textures, map lightmaps, and Chrono variant resolution
   remain. Chrono selector IDs and opaque override payload lines are parser-only.
-- [~] Map rendering applies the 500 m distance limit and view-frustum culling
-  to resident terrain/road geometry, and groups scenery by spatial tile so
-  rejected chunks do not scan every instance. Visual map geometry is still
-  synchronously parsed/uploaded at startup and remains resident; only collision
-  is streamed. Add runtime visibility/performance evidence and GPU tile unloads
-  before claiming full map streaming.
+- [~] Terrain, road, and scenery geometry is constructed/uploaded only for the
+  two-tile bus-centered window; a shared-GL-context worker builds/uploads a
+  replacement window while the old one remains drawable. Scenery script startup
+  is deferred to the main thread (at most 32 new runtimes per frame), and state
+  persists across windows. Collision mesh CPU preparation runs in a worker for
+  the one-tile neighborhood constrained to successfully uploaded render geometry;
+  ODE publication/removal remains on the simulation thread, one tile per update.
+  Initial map construction and collision warm-up are synchronous, and renderer
+  loading falls back to synchronous if shared-context creation fails. The global
+  parsed tile/placement index remains CPU-resident. Implement per-tile rather
+  than full-window rebuilds, measure ODE publication and boundary-frame latency,
+  and validate in-game visual/contact continuity before claiming hitch-free
+  streaming.
 - [x] Select map entrypoints at startup by zero-based index or case-insensitive
   name through `OPENBUS_MAP_ENTRY`; the default remains the first entrypoint.
   Selection and invalid-index behavior are covered by `OpenBusMapConfigProbe`.

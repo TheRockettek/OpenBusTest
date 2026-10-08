@@ -2,6 +2,7 @@
 
 #include "BusTypes.h"
 #include "MapConfigLoader.h"
+#include "MapRoadGeometry.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -26,6 +27,10 @@ MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
 // Builds only the requested tile; an absent tile returns an empty result.
 MapRoadCollisionResult buildMapRoadCollisionTile(const MapDefinition& map,
                                                  const std::filesystem::path& omsiRoot, int tileX,
-                                                 int tileY);
+                                                 int tileY,
+                                                 const MapRoadConnectionIndex* connections = nullptr);
+
+// Metadata only, independent of geometry residency. Streaming workers retain this once per map.
+MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map);
 
 } // namespace openbus::map

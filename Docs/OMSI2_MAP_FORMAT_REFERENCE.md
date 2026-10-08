@@ -217,14 +217,61 @@ only IDs/link fields have clearly typed handling in its parser.
 
 OpenBus evaluates ordinary spline elevation from its endpoint gradients and
 `[spline_h]` elevation from a cubic profile constrained by the endpoint
-gradients and `delta_h`. Cant is parsed and provisionally applied as a linearly
-interpolated percentage crossfall to `.sli` profile heights in both rendered
-and collision geometry; its sign and unit interpretation still need OMSI
-visual confirmation. The literal `mirror` marker reflects `.sli` cross-section
-lateral offsets across the spline centerline in shared render/collision geometry,
+gradients and `delta_h`. Serialized cant values are interpreted as hundredths
+of a percentage point (for example, `-500` becomes `-5%`), then applied as a
+linearly interpolated crossfall to `.sli` profile heights in both rendered and
+collision geometry using rise/run = percent / 100. This scale is inferred from
+installed Cotterell map values; the positive/negative side convention still
+needs OMSI visual confirmation. The literal `mirror` marker reflects `.sli`
+cross-section lateral offsets across the spline centerline in shared render/collision geometry,
 while preserving authored texture coordinates and correcting triangle winding.
-Visual parity against OMSI remains to be confirmed. The v14 skew values are
-retained by the parser but are not yet applied to geometry.
+Visual parity against OMSI remains to be confirmed.
+
+The start-to-end cant transition is evaluated per spline record with
+`t = clamp(segmentDistance / spline.length, 0, 1)`, using the authored segment
+length directly. No curve-radius-derived rescaling or extra curve correction is
+applied; radius shapes the horizontal path only. Gradient evaluation uses the
+same spline-distance/length parameter. Linked segments use their own endpoint
+values rather than one transition spanning the chain.
+
+#### Provisional skew and linked-spline stitching
+
+The following is a **best-guess OpenBus model, not an established OMSI formula**:
+
+- Skew is a dimensionless longitudinal shear (metres forward per metre right),
+  not degrees or percent. At station `s`, `k = lerp(skewStart, skewEnd, s/length)`;
+  a physical lateral offset `x` moves forward by `x*k` along the local tangent.
+  Thus `1` cuts the profile at 45 degrees and differing endpoint skew can form a
+  wedge. Mirroring changes `x` before applying skew. On curves this is tangent
+  shear, not moving each point to a different circular-arc station.
+- Grade elevation and texture V use the shifted distance `s+x*k`. Heights outside
+  the authored length continue the endpoint gradient. Cant remains the normalized,
+  interpolated percentage crossfall; no arbitrary clamp is applied to its value.
+- A map-wide, owned placement index resolves unique nonzero spline IDs. Nearby
+  reciprocal previous/next links are accepted for start/end, start/start, and
+  end/end connections, including across tiles. Same-end links reverse the
+  neighbor's physical lateral basis; corresponding physical sides may therefore
+  have reversed profile-point order, unless the neighbor is mirrored.
+- Endpoint center positions within 0.25 m in **3D** use their shared midpoint.
+  The joined lateral axis is the offset-edge miter of the two traversal directions,
+  plus their mean authored shear. The vertical component averages grade/cant
+  contributions in that shared frame. Compatible lateral/profile-height points
+  land on identical XYZ positions, without adding overlapping bridge faces.
+  Different profile widths/heights are not retopologized or automatically matched.
+- Seam corrections fade with smoothstep over at least 2 m (longer for larger
+  corrections), capped at half the segment length; authored centerline and interior
+  remain intact outside that region. The same CPU vertices drive rendering and ODE.
+- Missing, one-way, ambiguous/duplicate-ID, distant, and near-U-turn links are left
+  unstitched. Automatic miter expansion above 4x is rejected to avoid spikes.
+  Explicit skew is not angle-clamped. Texture U and authored chain offsets remain
+  intact; V includes shear/join longitudinal displacement, but arbitrary corner
+  joins are not guaranteed to have seamless texture phase between different assets.
+
+Connection metadata is independent of GPU/collision tile residency, so rebuilding
+either side later gives the same seam. The collision worker builds and retains its
+index once per map; live editing/Chrono replacement would require index invalidation.
+The regression probes validate this model's internal geometry and render/collision
+agreement, **not visual parity with OMSI**.
 
 The `.sli` reader supports `[texture]`, `[profile]`, and `[profilepnt]` for
 textured cross-section strips. It also retains the four raw/numeric fields of
@@ -281,9 +328,17 @@ conversions do not discard or rewrite the raw text. The label count remains
 opaque and does not determine how many optional tail lines are consumed. The
 renderer resolves attached-to IDs across map tiles and composes the target
 placement with the selected `[new_attachment]` translation/rotation followed
-by the child's three rotations. The current implementation treats the anchor
-index as zero-based; missing targets, invalid indices, and parent cycles are
-skipped with diagnostics. Object-specific tail lines remain opaque. `[varparent]`
+by the child's three rotations. A target ID may refer to an ordinary object,
+another `[attachObj]`, or a `[splineAttachement]`; for a spline-generated parent,
+OpenBus uses the first generated row pose for that record ID. Anchor number `0` denotes the parent object's
+origin; positive numbers are one-based ordinals into its ordered
+`[new_attachment]` list. This matches installed Cotterell records that use both
+origin attachments and anchor `3` on poles with three configured attachment
+points. Configured attachment translation/rotation is converted from scenery
+CFG axes (`x` lateral, `y` longitudinal, `z` up) into map axes before applying
+the parent transform. Negative indices, out-of-range positive indices, missing
+targets, and parent cycles are skipped with diagnostics. Object-specific tail
+lines remain opaque. `[varparent]`
 editor ordinals are retained separately from placement IDs and tile-local
 references are checked against `Object Nr.` labels. Its variable/script runtime
 effect is not implemented because scenery script-variable inheritance is not

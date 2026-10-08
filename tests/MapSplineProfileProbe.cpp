@@ -26,6 +26,9 @@ void runProbe(const std::filesystem::path& fixture) {
     require(profile.textures.size() == 2, "both profile textures are loaded");
     require(profile.textures[0] == "sidewalk.bmp", "first texture order is preserved");
     require(profile.textures[1] == "road.bmp", "second texture order is preserved");
+    require(profile.textureAlphaModes.size() == 2 && profile.textureAlphaModes[0] == 0 &&
+                profile.textureAlphaModes[1] == 1,
+            "[matl_alpha] is retained for its preceding texture");
         require(profile.heightProfiles.size() == 4,
             "complete, malformed, and truncated height-profile records are retained");
     require(profile.heightProfiles[0].valid &&
@@ -55,12 +58,16 @@ void runProbe(const std::filesystem::path& fixture) {
     requireNear(profile.sections[1].points[0].textureU, 0.995, "profile U coordinate");
     requireNear(profile.sections[1].points[0].textureVPerMeter, 0.167,
                 "profile V repeat per meter");
+    requireNear(profile.sections[1].points[1].lateral, 3.0,
+                "leading plus sign is accepted on OMSI profile coordinates");
 }
 
 void runInstalledProfileSmoke(const std::filesystem::path& path) {
     const openbus::map::MapSplineProfile profile = openbus::map::loadMapSplineProfile(path);
     require(!profile.editorOnly, "selected installed road profile is runtime-visible");
     require(!profile.textures.empty(), "installed profile provides textures");
+        require(profile.textureAlphaModes.size() == profile.textures.size(),
+            "installed profile retains one alpha mode per texture");
     for (const openbus::map::MapSplineHeightProfile& heightProfile : profile.heightProfiles) {
         require(heightProfile.valid, "installed profile height records are numeric and complete");
     }

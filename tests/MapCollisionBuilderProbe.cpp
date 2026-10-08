@@ -1,4 +1,6 @@
 #include "MapCollisionBuilder.h"
+#include "MapRoadGeometry.h"
+#include "MapSplineProfile.h"
 
 #include <ode/ode.h>
 
@@ -84,6 +86,69 @@ std::string splineMapText() {
            "10\n2\n20\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n0\n";
 }
 
+void runLinkedProbe() {
+    using namespace openbus::map;
+    const auto root = std::filesystem::temp_directory_path() / "OpenBusMapLinkedCollisionProbe";
+    std::filesystem::remove_all(root);
+    writeText(root / "Splines" / "Test.sli",
+          "[texture]\nroad.bmp\n[profile]\n0\n"
+          "[profilepnt]\n-2\n0.25\n0\n0.2\n[profilepnt]\n2\n0.25\n1\n0.2\n");
+    MapDefinition map;
+    map.rootPath = root;
+    MapTileReference aTile;
+    aTile.textPath = root / "tile_0_0.map";
+    MapTileReference bTile;
+    bTile.x = 1;
+    bTile.textPath = root / "tile_1_0.map";
+    writeText(aTile.textPath,
+          "[version]\n14\n[terrain]\n[spline]\n0\nSplines/Test.sli\n"
+          "10\n0\n20\n290\n0\n0\n90\n10\n0\n12\n12\n200\n200\n0.5\n0.5\n0\n\n");
+    writeText(bTile.textPath,
+          "[version]\n14\n[terrain]\n[spline]\n0\nSplines/Test.sli\n"
+          "20\n10\n0\n0\n1.25\n0\n0\n10\n0\n-11.2\n-11.2\n-120\n-120\n-0.25\n0\n10\n\n");
+    map.tiles = {aTile, bTile};
+    const auto full = buildMapRoadCollision(map, root);
+    const auto first = buildMapRoadCollisionTile(map, root, 0, 0);
+    const auto second = buildMapRoadCollisionTile(map, root, 1, 0);
+    require(full.meshes.size() == 2 && first.meshes.size() == 1 && second.meshes.size() == 1,
+        "linked cross-tile roads remain partitioned for independent streaming");
+    require(full.meshes[0].vertices == first.meshes[0].vertices &&
+        full.meshes[1].vertices == second.meshes[0].vertices &&
+        full.meshes[0].indices == first.meshes[0].indices &&
+        full.meshes[1].indices == second.meshes[0].indices,
+        "stitched collision is identical for full-map and independent tile builds");
+    const auto& firstVertices = first.meshes[0].vertices;
+    const auto& secondVertices = second.meshes[0].vertices;
+    for (std::size_t coordinate = 0; coordinate < 6; ++coordinate) {
+    require(std::abs(firstVertices[firstVertices.size() - 6 + coordinate] -
+             secondVertices[coordinate]) < 1.0e-8,
+        "cross-tile skew/cant/gradient seam has no collision crack");
+    }
+    const auto connections = loadMapRoadConnections(map);
+    const auto tile = loadMapTile(aTile);
+    const auto& spline = tile.splines.front();
+    const auto profile = loadMapSplineProfile(root / "Splines" / "Test.sli");
+    const auto samples = tessellateMapSpline(spline.localX, spline.localY,
+                         spline.rotationDegrees, spline.length, spline.radius);
+    const auto rendered = buildMapRoadSectionGeometry(spline, samples, profile.sections[0],
+                              connections.joinsFor(spline, 0, 0));
+    require(rendered.vertices.size() * 3 == firstVertices.size(),
+        "collision retains shared renderer road vertices");
+    for (std::size_t vertex = 0; vertex < rendered.vertices.size(); ++vertex) {
+    require(rendered.vertices[vertex].x == firstVertices[vertex * 3] &&
+            rendered.vertices[vertex].y == firstVertices[vertex * 3 + 1] &&
+            rendered.vertices[vertex].z == firstVertices[vertex * 3 + 2],
+        "collision and render skew/stitching use identical XYZ geometry");
+    }
+    MapTileReference missing;
+    missing.x = 99;
+    missing.textPath = root / "missing.map";
+    map.tiles.push_back(missing);
+    require(buildMapRoadCollisionTile(map, root, 0, 0).meshes[0].vertices == firstVertices,
+        "missing unrelated tile cannot break selected-tile seam metadata loading");
+    std::filesystem::remove_all(root);
+}
+
 void runProbe() {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() / "OpenBusMapCollisionBuilderProbe";
@@ -113,6 +178,11 @@ void runProbe() {
                                   "9\n10\n20\n4\n90\n0\n0\n0\n"
                                   "[object]\n0\nSceneryobjects\\Test\\NoCollision.sco\n"
                                   "10\n20\n20\n4\n0\n0\n0\n0\n");
+    writeText(map.tiles[2].textPath,
+              splineMapText() + "[object]\n0\nSceneryobjects\\Test\\Junction.sco\n"
+                                  "11\n50\n20\n4\n0\n0\n10\n0\n"
+                                  "[object]\n0\nSceneryobjects\\Test\\Junction.sco\n"
+                                  "12\n80\n20\n4\n0\n10\n0\n0\n");
     writeText(omsiRoot / "Sceneryobjects" / "Test" / "Junction.sco",
               "[collision_mesh]\njunction.o3d\n");
     writeText(omsiRoot / "Sceneryobjects" / "Test" / "NoCollision.sco",
@@ -130,8 +200,8 @@ void runProbe() {
     require(result.tilesVisited == 3, "collision includes tiles beyond the spawn neighborhood");
     require(result.splineSectionsAdded == 3, "road strips are collected from every map tile");
     require(result.meshes.size() == 3, "collision meshes cover every fixture tile");
-        require(result.sceneryCollisionObjectsAdded == 1,
-            "authored SCO collision meshes are included and [nocollision] is respected");
+        require(result.sceneryCollisionObjectsAdded == 3,
+            "authored SCO collision meshes include rotated objects and respect [nocollision]");
     require(result.skippedProfiles == 0 && result.skippedSplines == 0,
             "valid fixture roads are not skipped");
     require(result.meshes.front().vertices.size() >= 6,
@@ -162,6 +232,25 @@ void runProbe() {
                             (junctionThird[0] - junctionFirst[0]) >
                     0.0,
                 "junction O3D winding produces upward-facing ODE contact normals");
+            const StaticCollisionMesh& rotatedJunctionMesh = result.meshes[2];
+            const std::size_t rotatedJunctionVertex = rotatedJunctionMesh.vertices.size() / 3 - 6;
+            const double bankRadians = 10.0 * std::acos(-1.0) / 180.0;
+            const std::size_t bankedEastVertex = rotatedJunctionVertex + 1;
+            require(std::abs(rotatedJunctionMesh.vertices[bankedEastVertex * 3] -
+                     (350.0 + std::cos(bankRadians))) < 1.0e-8 &&
+                    std::abs(rotatedJunctionMesh.vertices[bankedEastVertex * 3 + 1] + 280.0) <
+                    1.0e-8 &&
+                    std::abs(rotatedJunctionMesh.vertices[bankedEastVertex * 3 + 2] -
+                         (4.0 + std::sin(bankRadians))) < 1.0e-8,
+                "collision bank uses the same Y-axis sign as rendered scenery");
+            const std::size_t pitchedJunctionVertex = rotatedJunctionMesh.vertices.size() / 3 - 3;
+            const std::size_t pitchedNorthVertex = pitchedJunctionVertex + 2;
+            require(std::abs(rotatedJunctionMesh.vertices[pitchedNorthVertex * 3] - 380.0) < 1.0e-8 &&
+                    std::abs(rotatedJunctionMesh.vertices[pitchedNorthVertex * 3 + 1] -
+                         (-280.0 + std::cos(bankRadians))) < 1.0e-8 &&
+                    std::abs(rotatedJunctionMesh.vertices[pitchedNorthVertex * 3 + 2] -
+                         (4.0 - std::sin(bankRadians))) < 1.0e-8,
+                "collision pitch remains around X and matches rendered scenery");
         require(dInitODE2(0) != 0, "ODE initializes for the junction contact regression");
         dTriMeshDataID junctionData = dGeomTriMeshDataCreate();
         const std::vector<double> junctionContactVertices = {
@@ -207,6 +296,7 @@ void runProbe() {
 int main() {
     try {
         runProbe();
+        runLinkedProbe();
     } catch (const std::exception& error) {
         std::cerr << "map collision builder probe failed: " << error.what() << '\n';
         return 1;

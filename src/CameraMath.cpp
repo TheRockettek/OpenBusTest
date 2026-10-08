@@ -1,5 +1,6 @@
 #include "CameraMath.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -209,6 +210,63 @@ std::array<double, 3> transformLocalPoint(const BodyPose& pose,
                 pose.rotation[5] * local[2],
             pose.position[2] + pose.rotation[6] * local[0] + pose.rotation[7] * local[1] +
                 pose.rotation[8] * local[2]};
+}
+
+std::array<double, 3> freeCameraForward(double yawRadians, double pitchRadians) {
+    if (!std::isfinite(yawRadians) || !std::isfinite(pitchRadians)) {
+        return {1.0, 0.0, 0.0};
+    }
+    constexpr double maxPitch = 1.5533430342749532;
+    const double pitch = std::clamp(pitchRadians, -maxPitch, maxPitch);
+    const double horizontal = std::cos(pitch);
+    return {horizontal * std::cos(yawRadians), horizontal * std::sin(yawRadians),
+            std::sin(pitch)};
+}
+
+FreeCameraPose moveFreeCamera(const FreeCameraPose& pose, double forwardInput, double rightInput,
+                              double verticalInput, double deltaSeconds,
+                              double speedMetersPerSecond) {
+    FreeCameraPose result = pose;
+    if (!std::all_of(pose.position.begin(), pose.position.end(),
+                     [](double value) { return std::isfinite(value); })) {
+        result.position = {};
+    }
+    if (!std::isfinite(result.yawRadians)) {
+        result.yawRadians = 0.0;
+    }
+    if (!std::isfinite(result.pitchRadians)) {
+        result.pitchRadians = 0.0;
+    }
+    result.pitchRadians = std::clamp(result.pitchRadians, -1.5533430342749532,
+                                     1.5533430342749532);
+    if (!std::isfinite(deltaSeconds) || !std::isfinite(speedMetersPerSecond) ||
+        deltaSeconds <= 0.0 || speedMetersPerSecond <= 0.0) {
+        return result;
+    }
+    const double forward = std::isfinite(forwardInput) ? std::clamp(forwardInput, -1.0, 1.0) : 0.0;
+    const double right = std::isfinite(rightInput) ? std::clamp(rightInput, -1.0, 1.0) : 0.0;
+    const double vertical = std::isfinite(verticalInput) ? std::clamp(verticalInput, -1.0, 1.0) : 0.0;
+    const std::array<double, 3> forwardDirection =
+        freeCameraForward(result.yawRadians, result.pitchRadians);
+    const std::array<double, 3> rightDirection = {std::sin(result.yawRadians),
+                                                   -std::cos(result.yawRadians), 0.0};
+    std::array<double, 3> movement = {};
+    for (std::size_t axis = 0; axis < result.position.size(); ++axis) {
+        movement[axis] = forward * forwardDirection[axis] + right * rightDirection[axis] +
+                         (axis == 2 ? vertical : 0.0);
+    }
+    const double movementLength = std::sqrt(movement[0] * movement[0] +
+                                            movement[1] * movement[1] +
+                                            movement[2] * movement[2]);
+    if (movementLength <= 1.0e-12) {
+        return result;
+    }
+    const double distance = speedMetersPerSecond * std::min(deltaSeconds, 0.25);
+    for (std::size_t axis = 0; axis < result.position.size(); ++axis) {
+        result.position[axis] += movement[axis] / movementLength * distance;
+    }
+    result.yawRadians = std::remainder(result.yawRadians, 2.0 * 3.14159265358979323846);
+    return result;
 }
 
 } // namespace openbus::rendering

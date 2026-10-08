@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -68,6 +69,12 @@ void runProbe() {
                 "terrain-relative ordinary scenery adds sampled terrain height");
     requireNear(mapSceneryWorldHeight(ordinaryPose->z, 12.0, true), 4.75, 1e-9,
                 "absolute-height ordinary scenery ignores terrain height");
+    require(mapSceneryAttachmentPointOffset(1, 3) == std::optional<std::size_t>(0) &&
+                mapSceneryAttachmentPointOffset(3, 3) == std::optional<std::size_t>(2),
+            "positive map attachment numbers select one-based configured points");
+    require(!mapSceneryAttachmentPointOffset(0, 3).has_value() &&
+                !mapSceneryAttachmentPointOffset(4, 3).has_value(),
+            "origin anchor zero and out-of-range anchors have no configured-point offset");
         TerrainGrid slopedTerrain;
         slopedTerrain.intervals = 1;
         slopedTerrain.heights = {0.0F, 30.0F, 60.0F, 90.0F};
@@ -85,19 +92,85 @@ void runProbe() {
     const MapSceneryPose identityParent{};
     const MapSceneryPose anchored = composeMapAttachedObjectPose(
         identityParent, {1.0, 2.0, 3.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
-    requireNear(anchored.x, 1.0, 1e-9, "attachment translation offsets parent X");
-    requireNear(anchored.y, 2.0, 1e-9, "attachment translation offsets parent Y");
+    requireNear(anchored.x, 2.0, 1e-9,
+                "attachment longitudinal translation maps to world X");
+    requireNear(anchored.y, -1.0, 1e-9,
+                "attachment lateral translation maps to negative world Y");
     requireNear(anchored.z, 3.0, 1e-9, "attachment translation offsets parent Z");
     requireNear(transformMapSceneryVector(anchored, {1.0, 0.0, 0.0})[0], 1.0, 1e-9,
                 "identity attached orientation preserves local X");
+    const MapSceneryPose originAnchored = composeMapAttachedObjectPose(
+        identityParent, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
+    requireNear(originAnchored.x, identityParent.x, 1e-9,
+                "anchor zero leaves the child at the parent origin");
+    requireNear(originAnchored.y, identityParent.y, 1e-9,
+                "anchor zero does not select the first configured point");
+
+    const std::array<std::array<double, 3>, 3> poleAnchors = {
+        std::array<double, 3>{0.0, -0.04, 0.3},
+        std::array<double, 3>{0.0, 0.04, 0.3},
+        std::array<double, 3>{0.0, 0.0, 0.3}};
+    const std::size_t thirdAnchor = *mapSceneryAttachmentPointOffset(3, poleAnchors.size());
+    const MapSceneryPose attachedButton = composeMapAttachedObjectPose(
+        identityParent, poleAnchors[thirdAnchor], {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
+    requireNear(attachedButton.z, 0.3, 1e-9,
+                "anchor number 3 attaches to the third point on a three-anchor pole");
 
     MapSceneryPose rotatedParent;
     rotatedParent.rotationDegrees[0] = 90.0;
     rotatedParent.rotationCount = 3;
     const MapSceneryPose rotatedAnchor = composeMapAttachedObjectPose(
-        rotatedParent, {1.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
+        rotatedParent, {0.0, 1.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
     requireNear(rotatedAnchor.x, 0.0, 1e-9, "parent heading rotates anchor translation in X");
     requireNear(rotatedAnchor.y, -1.0, 1e-9, "parent heading rotates anchor translation in Y");
+
+    MapSceneryPose pitchedParent;
+    pitchedParent.rotationDegrees[1] = 90.0;
+    pitchedParent.rotationCount = 3;
+    const std::array<double, 3> pitchedForward =
+        transformMapSceneryVector(pitchedParent, {0.0, 1.0, 0.0});
+    requireNear(pitchedForward[1], 0.0, 1e-9,
+                "parent pitch follows the ordinary scenery X-axis rotation sign");
+    requireNear(pitchedForward[2], -1.0, 1e-9,
+                "parent pitch rotates the anchor frame like rendered scenery");
+
+    MapSceneryPose bankedParent;
+    bankedParent.rotationDegrees[2] = 90.0;
+    bankedParent.rotationCount = 3;
+    const std::array<double, 3> bankedRight =
+        transformMapSceneryVector(bankedParent, {1.0, 0.0, 0.0});
+    requireNear(bankedRight[0], 0.0, 1e-9,
+                "parent bank follows the ordinary scenery Y-axis rotation sign");
+    requireNear(bankedRight[2], 1.0, 1e-9,
+                "parent bank rotates the anchor frame like rendered scenery");
+
+    MapSceneryPose splineFrame;
+    splineFrame.rotationDegrees[1] = 90.0;
+    splineFrame.rotationCount = 6;
+    const std::array<double, 3> splineFrameForward =
+        transformMapSceneryVector(splineFrame, {0.0, 1.0, 0.0});
+    requireNear(splineFrameForward[2], 1.0, 1e-9,
+                "spline-frame pitch matches MapRenderer's positive X rotation");
+    MapSceneryPose splineObjectRotation;
+    splineObjectRotation.rotationDegrees[4] = 90.0;
+    splineObjectRotation.rotationCount = 6;
+    const std::array<double, 3> splineObjectUp =
+        transformMapSceneryVector(splineObjectRotation, {0.0, 0.0, 1.0});
+    requireNear(splineObjectUp[1], 1.0, 1e-9,
+                "spline attachment's own pitch matches the renderer's negative X rotation");
+
+    const MapSceneryPose configRotatedX = composeMapAttachedObjectPose(
+        identityParent, {0.0, 0.0, 0.0}, {90.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
+    const std::array<double, 3> configXUp =
+        transformMapSceneryVector(configRotatedX, {0.0, 0.0, 1.0});
+    requireNear(configXUp[0], 1.0, 1e-9,
+                "attachment config X rotation maps to the converted map Y axis");
+    const MapSceneryPose configRotatedY = composeMapAttachedObjectPose(
+        identityParent, {0.0, 0.0, 0.0}, {0.0, 90.0, 0.0}, {0.0, 0.0, 0.0});
+    const std::array<double, 3> configYUp =
+        transformMapSceneryVector(configRotatedY, {0.0, 0.0, 1.0});
+    requireNear(configYUp[1], 1.0, 1e-9,
+                "attachment config Y rotation maps to the converted map X axis");
 
     const MapSceneryPose childRotated = composeMapAttachedObjectPose(
         identityParent, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {90.0, 0.0, 0.0});
@@ -105,6 +178,15 @@ void runProbe() {
         transformMapSceneryVector(childRotated, {1.0, 0.0, 0.0});
     requireNear(childAxis[0], 0.0, 1e-9, "child yaw rotates local X");
     requireNear(childAxis[1], -1.0, 1e-9, "child yaw follows map renderer handedness");
+
+    const MapSceneryPose childPitched = composeMapAttachedObjectPose(
+        identityParent, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 90.0, 0.0});
+    const std::array<double, 3> childUp =
+        transformMapSceneryVector(childPitched, {0.0, 0.0, 1.0});
+    requireNear(childUp[1], 1.0, 1e-9,
+                "attached-child pitch uses the ordinary scenery rotation sign");
+    requireNear(childUp[2], 0.0, 1e-9,
+                "attached-child pitch rotates its orientation consistently");
 
     MapSceneryPose terrainAligned;
     terrainAligned.rotationDegrees[0] = 30.0;
@@ -151,6 +233,23 @@ void runProbe() {
     requireNear(eastLamp[0].x, 5.0, 1e-9, "eastbound spline sample X");
     requireNear(eastLamp[0].y, -3.0, 1e-9, "right of eastbound spline points south");
 
+    MapSplinePlacement bankedHost = spline(3, 0, 0, 0.0, 0.0, 0.0, 20.0);
+    bankedHost.cantStart = bankedHost.cantEnd = 5.0;
+    MapSplineAttachment bankedRow = row(0, 10.0, 0.0, 0.0, 0.0, 0.0);
+    bankedRow.tilt = true;
+    const auto bankedLamp = placeMapSplineAttachment(bankedRow, {bankedHost}, 0, 0);
+    require(bankedLamp.size() == 1, "banked spline row places its single object");
+    requireNear(bankedLamp[0].z, -0.5, 1e-9,
+                "5% cant lowers a row object 0.5 m at a 10 m lateral offset");
+    requireNear(bankedLamp[0].rotationDegrees[2],
+                std::atan(0.05) * 180.0 / std::numbers::pi, 1e-9,
+                "tilted row orientation converts 5% crossfall to its bank angle");
+    const auto farBankedLamp = placeMapSplineAttachment(
+        row(0, 20.0, 0.0, 0.0, 0.0, 0.0), {bankedHost}, 0, 0);
+    require(farBankedLamp.size() == 1, "wide-offset spline row places its object");
+    requireNear(farBankedLamp[0].z, -1.0, 1e-9,
+                "cant height remains proportional beyond a 10 m lateral offset");
+
     MapSplinePlacement first = spline(10, 0, 11, 0.0, 0.0, 0.0, 10.0);
     MapSplinePlacement second = spline(11, 10, 0, 0.0, 10.0, 0.0, 20.0);
     const auto chained = placeMapSplineAttachment(row(0, 0.0, 0.0, 5.0, 10.0, 25.0),
@@ -194,6 +293,29 @@ void runProbe() {
     requireNear(rampEnd[0].z, 0.31, 1e-9, "elevated spline height delta is honored");
     requireNear(rampEnd[0].rotationDegrees[1], 0.0, 1e-9,
                 "elevated spline reaches its authored end gradient");
+
+    MapSplinePlacement attachmentHost = spline(50, 0, 0, 100.0, 200.0, 0.0, 100.0);
+    attachmentHost.elevation = 8.0;
+    const MapSplineAttachment attachmentParent = row(0, 0.0, 0.0, 5.0, 10.0, 0.0);
+    const auto attachmentParentPose = placeMapSplineAttachmentParent(
+        attachmentParent, {attachmentHost}, 0, 0);
+    require(attachmentParentPose.has_value(),
+            "a single spline attachment can resolve as an [attachObj] parent");
+    requireNear(attachmentParentPose->x, 100.0, 1e-9,
+                "spline attachment parent retains its local spline X");
+    requireNear(attachmentParentPose->y, 205.0, 1e-9,
+                "spline attachment parent uses its authored chain distance");
+    requireNear(attachmentParentPose->z, 8.0, 1e-9,
+                "spline attachment parent retains spline elevation");
+    const MapSceneryPose attachedChild = composeMapAttachedObjectPose(
+        *attachmentParentPose, {0.04, -0.186, 2.545}, {0.0, 0.0, 0.0},
+        {0.0, 0.0, 0.0});
+    requireNear(attachedChild.x, 99.814, 1e-9,
+                "child attachment offsets a spline-generated parent in map X");
+    requireNear(attachedChild.y, 204.96, 1e-9,
+                "child attachment offsets a spline-generated parent in map Y");
+    requireNear(attachedChild.z, 10.545, 1e-9,
+                "child attachment height composes with spline-parent elevation");
 }
 
 } // namespace

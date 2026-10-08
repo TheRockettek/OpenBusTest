@@ -71,6 +71,12 @@ bool parseReal(const std::string& text, double& result) {
     }
     const char* begin = text.data();
     const char* end = begin + text.size();
+    if (*begin == '+') {
+        ++begin;
+        if (begin == end) {
+            return false;
+        }
+    }
     const auto parsed = std::from_chars(begin, end, result);
     return parsed.ec == std::errc{} && parsed.ptr == end && std::isfinite(result);
 }
@@ -113,6 +119,8 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
     const std::vector<std::string> lines = readLines(path);
     MapSplineProfile profile;
     MapSplineProfileSection* currentSection = nullptr;
+    std::size_t currentTextureIndex = 0;
+    bool hasCurrentTexture = false;
 
     for (std::size_t cursor = 0; cursor < lines.size();) {
         const std::string& section = lines[cursor++];
@@ -136,6 +144,23 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
             std::string texture;
             if (readPayload(lines, cursor, texture)) {
                 profile.textures.push_back(std::move(texture));
+                profile.textureAlphaModes.push_back(0);
+                currentTextureIndex = profile.textures.size() - 1;
+                hasCurrentTexture = true;
+            } else {
+                hasCurrentTexture = false;
+            }
+        } else if (section == "[matl_alpha]" && hasCurrentTexture) {
+            std::string alphaModeText;
+            int alphaMode = 0;
+            if (readPayload(lines, cursor, alphaModeText)) {
+                const char* begin = alphaModeText.data();
+                const char* end = begin + alphaModeText.size();
+                const auto parsed = std::from_chars(begin, end, alphaMode);
+                if (parsed.ec == std::errc{} && parsed.ptr == end && alphaMode >= 0 &&
+                    alphaMode <= 2) {
+                    profile.textureAlphaModes[currentTextureIndex] = alphaMode;
+                }
             }
         } else if (section == "[profile]") {
             std::string textureIndexText;
