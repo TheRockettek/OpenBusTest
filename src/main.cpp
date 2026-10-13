@@ -365,7 +365,7 @@ int main() {
                       << (renderer.benchmarkClickTargetFound() ? "found" : "none") << '\n';
             std::cout << "BENCHMARK_COMPLETE=1\n";
         } else {
-            bool captureOnStartup = openbus::getEnvironment("OPENBUS_CAPTURE_VIEWS") != nullptr;
+            bool captureOnStartup = openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_CAPTURE_VIEWS"));
             bool pendingCaptureRequest = captureOnStartup;
             std::vector<KeyEvent> pendingKeyEvents;
 

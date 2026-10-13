@@ -29,8 +29,15 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <psapi.h>
+#endif
+
 
 #include "overrides.h"
 #include "OscConverter.h"

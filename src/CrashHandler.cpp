@@ -218,18 +218,96 @@ void installCrashHandler() {
 #if defined(__unix__) || defined(__APPLE__)
 
 #include <execinfo.h>
+#include <cerrno>
 #include <csignal>
 #include <cstdlib>
+#include <cstdint>
 #include <exception>
 #include <fcntl.h>
 #include <signal.h>
+#include <ucontext.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 #include <unistd.h>
 
 namespace {
 
 volatile sig_atomic_t crashReportInProgress = 0;
+alignas(16) unsigned char alternateSignalStack[64 * 1024];
 
-void handlePosixSignal(int signalNumber) {
+void writeAll(int descriptor, const char* data, std::size_t size) {
+    while (size != 0) {
+        const ssize_t written = write(descriptor, data, size);
+        if (written > 0) {
+            data += written;
+            size -= static_cast<std::size_t>(written);
+        } else if (written < 0 && errno == EINTR) {
+            continue;
+        } else {
+            break;
+        }
+    }
+}
+
+void writeCString(int descriptor, const char* text) {
+    std::size_t size = 0;
+    while (text[size] != '\0') {
+        ++size;
+    }
+    writeAll(descriptor, text, size);
+}
+
+void writeHex(int descriptor, const char* label, std::uint64_t value) {
+    char digits[16];
+    std::size_t count = 0;
+    do {
+        const unsigned int digit = static_cast<unsigned int>(value & 0x0fU);
+        digits[count++] = static_cast<char>(digit < 10 ? '0' + digit : 'a' + digit - 10);
+        value >>= 4U;
+    } while (value != 0);
+    writeCString(descriptor, label);
+    writeCString(descriptor, "0x");
+    while (count != 0) {
+        writeAll(descriptor, &digits[--count], 1);
+    }
+    writeCString(descriptor, "\n");
+}
+
+void writeDecimal(int descriptor, const char* label, unsigned long value) {
+    char digits[3 * sizeof(value) + 1];
+    std::size_t count = 0;
+    do {
+        digits[count++] = static_cast<char>('0' + value % 10UL);
+        value /= 10UL;
+    } while (value != 0);
+    writeCString(descriptor, label);
+    while (count != 0) {
+        writeAll(descriptor, &digits[--count], 1);
+    }
+    writeCString(descriptor, "\n");
+}
+
+const char* signalName(int signalNumber) {
+    switch (signalNumber) {
+    case SIGABRT:
+        return "SIGABRT";
+    case SIGFPE:
+        return "SIGFPE";
+    case SIGILL:
+        return "SIGILL";
+    case SIGSEGV:
+        return "SIGSEGV";
+#ifdef SIGBUS
+    case SIGBUS:
+        return "SIGBUS";
+#endif
+    default:
+        return "unknown signal";
+    }
+}
+
+void handlePosixSignal(int signalNumber, siginfo_t* signalInfo, void* rawContext) {
     if (crashReportInProgress != 0) {
         _Exit(128 + signalNumber);
     }
@@ -237,21 +315,73 @@ void handlePosixSignal(int signalNumber) {
 
     const int descriptor = open("game.crash", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (descriptor >= 0) {
-        const char header[] = "OpenBus fatal signal; stack trace:\n";
-        write(descriptor, header, sizeof(header) - 1);
+        writeCString(descriptor, "OpenBus fatal signal\nSignal: ");
+        writeCString(descriptor, signalName(signalNumber));
+        writeCString(descriptor, "\n");
+        if (signalInfo != nullptr) {
+            writeDecimal(descriptor, "Signal code: ",
+                         static_cast<unsigned long>(signalInfo->si_code));
+            if (signalNumber == SIGSEGV
+#ifdef SIGBUS
+                || signalNumber == SIGBUS
+#endif
+                || signalNumber == SIGILL || signalNumber == SIGFPE) {
+                writeHex(descriptor, "Fault address: ",
+                         reinterpret_cast<std::uintptr_t>(signalInfo->si_addr));
+            }
+        }
+        writeDecimal(descriptor, "Process ID: ", static_cast<unsigned long>(getpid()));
+#if defined(__linux__)
+        writeDecimal(descriptor, "Thread ID: ",
+                     static_cast<unsigned long>(syscall(SYS_gettid)));
+#endif
+
+        const auto* context = static_cast<const ucontext_t*>(rawContext);
+        std::uintptr_t instructionPointer = 0;
+        std::uintptr_t stackPointer = 0;
+        std::uintptr_t framePointer = 0;
+#if defined(__x86_64__) && defined(REG_RIP) && defined(REG_RSP) && defined(REG_RBP)
+        if (context != nullptr) {
+            instructionPointer =
+                static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RIP]);
+            stackPointer = static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RSP]);
+            framePointer = static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RBP]);
+        }
+#elif defined(__aarch64__)
+        if (context != nullptr) {
+            instructionPointer = static_cast<std::uintptr_t>(context->uc_mcontext.pc);
+            stackPointer = static_cast<std::uintptr_t>(context->uc_mcontext.sp);
+            framePointer = static_cast<std::uintptr_t>(context->uc_mcontext.regs[29]);
+        }
+#endif
+        if (instructionPointer != 0) {
+            writeHex(descriptor, "Instruction pointer: ", instructionPointer);
+            writeHex(descriptor, "Stack pointer: ", stackPointer);
+            writeHex(descriptor, "Frame pointer: ", framePointer);
+        }
+
+        writeCString(descriptor, "Best-effort stack trace (signal handlers limit unwinding):\n");
         void* frames[64] = {};
         const int frameCount = backtrace(frames, 64);
         backtrace_symbols_fd(frames, frameCount, descriptor);
         close(descriptor);
     }
-    _Exit(128 + signalNumber);
+    if (signalNumber == SIGABRT) {
+        abort();
+    }
+    // SA_RESETHAND restores the default action before this handler runs. For a
+    // synchronous fault, returning re-executes the faulting instruction and
+    // lets the OS produce a normal core dump when core dumps are enabled.
 }
 
 void handleTerminate() {
-    const char message[] = "OpenBus terminated unexpectedly\n";
+    static constexpr char message[] = "OpenBus terminated unexpectedly; stack trace:\n";
     const int descriptor = open("game.crash", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (descriptor >= 0) {
-        write(descriptor, message, sizeof(message) - 1);
+        writeAll(descriptor, message, sizeof(message) - 1);
+        void* frames[64] = {};
+        const int frameCount = backtrace(frames, 64);
+        backtrace_symbols_fd(frames, frameCount, descriptor);
         close(descriptor);
     }
     _Exit(EXIT_FAILURE);
@@ -260,12 +390,21 @@ void handleTerminate() {
 } // namespace
 
 void installCrashHandler() {
-    std::signal(SIGABRT, handlePosixSignal);
-    std::signal(SIGFPE, handlePosixSignal);
-    std::signal(SIGILL, handlePosixSignal);
-    std::signal(SIGSEGV, handlePosixSignal);
+    stack_t alternateStack = {};
+    alternateStack.ss_sp = alternateSignalStack;
+    alternateStack.ss_size = sizeof(alternateSignalStack);
+    sigaltstack(&alternateStack, nullptr);
+
+    struct sigaction action = {};
+    action.sa_sigaction = handlePosixSignal;
+    sigfillset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESETHAND;
+    sigaction(SIGABRT, &action, nullptr);
+    sigaction(SIGFPE, &action, nullptr);
+    sigaction(SIGILL, &action, nullptr);
+    sigaction(SIGSEGV, &action, nullptr);
 #ifdef SIGBUS
-    std::signal(SIGBUS, handlePosixSignal);
+    sigaction(SIGBUS, &action, nullptr);
 #endif
     std::set_terminate(handleTerminate);
 }

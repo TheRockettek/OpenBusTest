@@ -1,6 +1,7 @@
 #include "AssetRequestManager.h"
 
 #include "O3DLoader.h"
+#include "XLoader.h"
 
 #include "Environment.h"
 #include "Logger.h"
@@ -165,8 +166,13 @@ AssetRequestManager::requestObj(const std::filesystem::path& path, const std::st
             std::transform(
                 extension.begin(), extension.end(), extension.begin(),
                 [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
-            return extension == ".o3d" ? O3DLoader::parse(path)
-                                       : ObjLoader::parse(path, bundleEntry);
+            if (extension == ".o3d") {
+                return O3DLoader::parse(path);
+            }
+            if (extension == ".x") {
+                return XLoader::parse(path);
+            }
+            return ObjLoader::parse(path, bundleEntry);
         });
     std::shared_future<std::shared_ptr<ParsedObj>> future = task->get_future().share();
     enqueue([task] { (*task)(); });

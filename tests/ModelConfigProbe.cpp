@@ -59,6 +59,28 @@ int main() {
     }
     const ModelConfig result =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
+    const std::filesystem::path caseVariantMesh = root / "Meshes" / "Tuertaster.O3D";
+    std::filesystem::create_directories(caseVariantMesh.parent_path());
+    std::ofstream caseVariantMeshFile(caseVariantMesh);
+    caseVariantMeshFile << "mesh fixture\n";
+    caseVariantMeshFile.close();
+    const std::filesystem::path caseVariantXMesh = root / "Meshes" / "Sign.X";
+    std::ofstream caseVariantXMeshFile(caseVariantXMesh);
+    caseVariantXMeshFile << "xof 0303txt 0032\n";
+    caseVariantXMeshFile.close();
+    const std::filesystem::path caseVariantConfigPath = root / "case_variant.cfg";
+    std::ofstream caseVariantConfig(caseVariantConfigPath);
+    caseVariantConfig << "[mesh]\nmeshes/tuertaster.o3d\n"
+                         "[mesh]\nmeshes/sign.x\n";
+    caseVariantConfig.close();
+    const ModelConfig caseVariantConfigResult =
+        loadModelConfig(caseVariantConfigPath, root, ModelConfigKind::Bus, variables);
+    if (caseVariantConfigResult.parts.size() != 2 ||
+        caseVariantConfigResult.parts[0].objPath != caseVariantMesh ||
+        caseVariantConfigResult.parts[1].objPath != caseVariantXMesh) {
+        std::cerr << "case-mismatched O3D/X model paths were not resolved on Linux\n";
+        return 1;
+    }
     if (result.enhancedLights.size() != 2 ||
         !result.enhancedLights[0].textureName.empty() ||
         result.enhancedLights[1].textureName != "alpha_mask.bmp" ||

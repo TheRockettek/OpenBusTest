@@ -293,6 +293,8 @@ void runProbe() {
                          (4.0 - std::sin(bankRadians))) < 1.0e-8,
                 "collision pitch remains around X and matches rendered scenery");
         require(dInitODE2(0) != 0, "ODE initializes for the junction contact regression");
+        require(dAllocateODEDataForThread(dAllocateFlagCollisionData) != 0,
+            "ODE allocates collision data for the junction contact regression");
         dTriMeshDataID junctionData = dGeomTriMeshDataCreate();
         const std::vector<double> junctionContactVertices = {
             junctionFirst[0], junctionFirst[1], junctionFirst[2],

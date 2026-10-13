@@ -197,14 +197,20 @@ add_executable(OpenBus
 openbus_configure_perf_trace(OpenBus)
 target_include_directories(OpenBus PRIVATE src)
 target_include_directories(OpenBus PRIVATE src/osc)
-add_library(OpenBusLua SHARED IMPORTED)
-set_target_properties(OpenBusLua PROPERTIES
-    IMPORTED_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.lib"
-    IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.dll")
-add_custom_command(TARGET OpenBus POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.dll"
-        "$<TARGET_FILE_DIR:OpenBus>/lua51.dll")
+if(WIN32)
+    add_library(OpenBusLua SHARED IMPORTED)
+    set_target_properties(OpenBusLua PROPERTIES
+        IMPORTED_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.lib"
+        IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.dll")
+    add_custom_command(TARGET OpenBus POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.dll"
+            "$<TARGET_FILE_DIR:OpenBus>/lua51.dll")
+else()
+    find_library(OPENBUS_LUA_LIBRARY NAMES lua5.1 lua51 REQUIRED)
+    add_library(OpenBusLua INTERFACE)
+    target_link_libraries(OpenBusLua INTERFACE ${OPENBUS_LUA_LIBRARY})
+endif()
 target_include_directories(OpenBus SYSTEM PRIVATE
     ${gli_SOURCE_DIR}
     ${gli_SOURCE_DIR}/external/glm
@@ -383,6 +389,7 @@ add_executable(OpenBusMapCollisionBuilderProbe
     src/SceneryObjectConfigLoader.cpp
     src/Variables.cpp
     src/VehicleConfigLoader.cpp
+    src/XLoader.cpp
     src/osc/osc.cpp
 )
 openbus_configure_perf_trace(OpenBusMapCollisionBuilderProbe)
@@ -533,6 +540,7 @@ add_executable(OpenBusBusConfigurationCollisionProbe
     src/PerfTrace.cpp
     src/Variables.cpp
     src/VehicleConfigLoader.cpp
+    src/XLoader.cpp
     src/osc/osc.cpp
 )
 openbus_configure_perf_trace(OpenBusBusConfigurationCollisionProbe)
@@ -618,4 +626,7 @@ if(MSVC)
     target_link_libraries(OpenBus PRIVATE winmm)
 else()
     target_compile_options(OpenBus PRIVATE -Wall -Wextra -Wpedantic)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_options(OpenBus PRIVATE -rdynamic)
+    endif()
 endif()

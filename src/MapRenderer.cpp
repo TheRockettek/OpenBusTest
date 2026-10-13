@@ -1,5 +1,6 @@
 #include "MapRenderer.h"
 
+#include "AssetPath.h"
 #include "CoreRenderer.h"
 #include "Environment.h"
 #include "Logger.h"
@@ -174,8 +175,10 @@ std::filesystem::path groundTexturePath(const openbus::map::MapDefinition& map,
     const std::array<std::filesystem::path, 2> candidates = {map.rootPath / relative,
                                                              omsiRoot / relative};
     for (const std::filesystem::path& candidate : candidates) {
-        if (std::filesystem::is_regular_file(candidate)) {
-            return candidate;
+        const std::filesystem::path resolved =
+            openbus::assets::resolveCaseInsensitivePath(candidate);
+        if (std::filesystem::is_regular_file(resolved)) {
+            return resolved;
         }
     }
     throw std::runtime_error("Could not resolve map ground texture: " + configuredPath);
@@ -861,8 +864,10 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
         const std::array<std::filesystem::path, 2> candidates = {omsiRoot / relative,
                                                                  map.rootPath / relative};
         for (const std::filesystem::path& candidate : candidates) {
-            if (std::filesystem::is_regular_file(candidate)) {
-                return candidate;
+            const std::filesystem::path resolved =
+                openbus::assets::resolveCaseInsensitivePath(candidate);
+            if (std::filesystem::is_regular_file(resolved)) {
+                return resolved;
             }
         }
         return std::filesystem::path{};

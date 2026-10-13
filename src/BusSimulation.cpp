@@ -92,11 +92,27 @@ std::uint64_t mapTileKey(int tileX, int tileY) {
 class OdeRuntime {
   public:
     OdeRuntime() {
-        dInitODE2(0);
+        if (dInitODE2(0) == 0) {
+            throw std::runtime_error("Failed to initialize ODE");
+        }
+        if (dAllocateODEDataForThread(dAllocateFlagCollisionData) == 0) {
+            dCloseODE();
+            throw std::runtime_error("Failed to allocate ODE collision data for this thread");
+        }
         world = dWorldCreate();
         space = dHashSpaceCreate(nullptr);
         contacts = dJointGroupCreate(0);
         if (!world || !space || !contacts) {
+            if (contacts) {
+                dJointGroupDestroy(contacts);
+            }
+            if (space) {
+                dSpaceDestroy(space);
+            }
+            if (world) {
+                dWorldDestroy(world);
+            }
+            dCloseODE();
             throw std::runtime_error("Failed to create ODE runtime");
         }
         dWorldSetGravity(world, 0.0, 0.0, GRAVITY);

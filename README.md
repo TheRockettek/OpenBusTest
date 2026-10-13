@@ -147,6 +147,8 @@ track the missing runtime paths and visual evidence.
 - A C++23 compiler
 - ODE
 - GLFW and OpenGL
+- OpenAL
+- Lua 5.1 on Linux (Windows uses the bundled Lua 5.1 runtime)
 
 On Windows with vcpkg, install standalone LLVM (for `clang-cl.exe`) and the
 Visual Studio C++ build tools (for the MSVC headers, libraries, and linker):
@@ -158,7 +160,7 @@ vcpkg install ode:x64-windows glfw3:x64-windows
 On Debian or Ubuntu, install the native development packages:
 
 ```bash
-sudo apt install build-essential cmake libode-dev libglfw3-dev libglu1-mesa-dev
+sudo apt install build-essential cmake libode-dev libglfw3-dev libglu1-mesa-dev libopenal-dev liblua5.1-0-dev
 ```
 
 The Linux build uses the system GLFW/ODE packages when available and falls

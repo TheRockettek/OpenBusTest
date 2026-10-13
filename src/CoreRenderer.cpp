@@ -170,13 +170,13 @@ layout(location = 2) in vec3 aNormal;
 uniform mat4 uProjection;
 uniform mat4 uModelView;
 uniform vec2 uTexcoordOffset;
-uniform bool uFlipTextureY;
+uniform bool uFlipModelTextureY;
 out vec3 vTexCoord;
 out vec3 vNormal;
 out vec3 vViewPosition;
 void main() {
     vec4 viewPosition = uModelView * vec4(aPosition, 1.0);
-    float textureY = uFlipTextureY ? 1.0 - aTexCoord.y : aTexCoord.y;
+    float textureY = uFlipModelTextureY ? 1.0 - aTexCoord.y : aTexCoord.y;
     vTexCoord = vec3(aTexCoord.x + uTexcoordOffset.x, textureY + uTexcoordOffset.y,
                      aTexCoord.z);
     // Normals must use the inverse-transpose so animated parts with non-uniform
@@ -542,7 +542,7 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.ambientLight = pglGetUniformLocation(program, "uAmbientLight");
         uniforms.diffuseLight = pglGetUniformLocation(program, "uDiffuseLight");
         uniforms.texcoordOffset = pglGetUniformLocation(program, "uTexcoordOffset");
-        uniforms.flipTextureY = pglGetUniformLocation(program, "uFlipTextureY");
+        uniforms.flipTextureY = pglGetUniformLocation(program, "uFlipModelTextureY");
         uniforms.useMaterialColors = pglGetUniformLocation(program, "uUseMaterialColors");
         uniforms.materialColors = pglGetUniformLocation(program, "uMaterialColors");
         uniforms.useMaterialTextures = pglGetUniformLocation(program, "uUseMaterialTextures");

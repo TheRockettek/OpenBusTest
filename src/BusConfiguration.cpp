@@ -1,5 +1,6 @@
 #include "BusConfiguration.h"
 
+#include "AssetPath.h"
 #include "BusConfigLoader.h"
 #include "ConfigurationParser.h"
 #include "Environment.h"
@@ -8,6 +9,7 @@
 #include "ObjLoader.h"
 #include "PerfTrace.h"
 #include "Variables.h"
+#include "XLoader.h"
 
 #include <algorithm>
 #include <array>
@@ -47,7 +49,7 @@ std::filesystem::path normalizedPath(const std::filesystem::path& path) {
 std::filesystem::path resolveConfiguredBusPath(const std::filesystem::path& configuredPath) {
     const std::filesystem::path relative = normalizedPath(configuredPath);
     if (relative.is_absolute()) {
-        return relative;
+        return openbus::assets::resolveCaseInsensitivePath(relative);
     }
     const std::filesystem::path root = omsiRootPath();
     const std::array<std::filesystem::path, 5> candidates = {
@@ -55,8 +57,10 @@ std::filesystem::path resolveConfiguredBusPath(const std::filesystem::path& conf
         std::filesystem::current_path().parent_path() / relative,
         std::filesystem::current_path().parent_path().parent_path() / relative};
     for (const auto& candidate : candidates) {
-        if (std::filesystem::exists(candidate)) {
-            return candidate;
+        const std::filesystem::path resolved =
+            openbus::assets::resolveCaseInsensitivePath(candidate);
+        if (std::filesystem::exists(resolved)) {
+            return resolved;
         }
     }
     return relative;
@@ -66,7 +70,7 @@ std::filesystem::path resolveConfiguredModelPath(const std::filesystem::path& bu
                                                  const std::filesystem::path& configuredPath) {
     const std::filesystem::path relative = normalizedPath(configuredPath);
     if (relative.is_absolute()) {
-        return relative;
+        return openbus::assets::resolveCaseInsensitivePath(relative);
     }
     const std::filesystem::path root = omsiRootPath();
     const std::array<std::filesystem::path, 6> candidates = {
@@ -77,8 +81,10 @@ std::filesystem::path resolveConfiguredModelPath(const std::filesystem::path& bu
         std::filesystem::current_path().parent_path() / relative,
         std::filesystem::current_path().parent_path().parent_path() / relative};
     for (const auto& candidate : candidates) {
-        if (std::filesystem::exists(candidate)) {
-            return candidate;
+        const std::filesystem::path resolved =
+            openbus::assets::resolveCaseInsensitivePath(candidate);
+        if (std::filesystem::exists(resolved)) {
+            return resolved;
         }
     }
     return relative;
@@ -111,8 +117,12 @@ std::shared_ptr<openbus::rendering::ParsedObj> parseModelMesh(const ModelPart& p
     if (part.objPath.empty()) {
         return {};
     }
-    if (openbus::config::lower(part.objPath.extension().string()) == ".o3d") {
+    const std::string extension = openbus::config::lower(part.objPath.extension().string());
+    if (extension == ".o3d") {
         return openbus::rendering::O3DLoader::parse(part.objPath);
+    }
+    if (extension == ".x") {
+        return openbus::rendering::XLoader::parse(part.objPath);
     }
     return openbus::rendering::ObjLoader::parse(part.objPath, part.bundleEntry);
 }

@@ -1,5 +1,6 @@
 #include "MapCollisionBuilder.h"
 
+#include "AssetPath.h"
 #include "MapSceneryPlacement.h"
 #include "MapRoadGeometry.h"
 #include "MapSplineGeometry.h"
@@ -40,8 +41,10 @@ std::filesystem::path resolveProfile(const MapDefinition& map,
     const std::array<std::filesystem::path, 2> candidates = {omsiRoot / relative,
                                                              map.rootPath / relative};
     for (const std::filesystem::path& candidate : candidates) {
-        if (std::filesystem::is_regular_file(candidate)) {
-            return candidate;
+        const std::filesystem::path resolved =
+            openbus::assets::resolveCaseInsensitivePath(candidate);
+        if (std::filesystem::is_regular_file(resolved)) {
+            return resolved;
         }
     }
     return {};
@@ -56,8 +59,10 @@ std::filesystem::path resolveAsset(const std::filesystem::path& relative,
     }
     for (const std::filesystem::path& candidate :
          {preferredRoot / relative, omsiRoot / relative, mapRoot / relative}) {
-        if (std::filesystem::is_regular_file(candidate)) {
-            return candidate.lexically_normal();
+        const std::filesystem::path resolved =
+            openbus::assets::resolveCaseInsensitivePath(candidate);
+        if (std::filesystem::is_regular_file(resolved)) {
+            return resolved.lexically_normal();
         }
     }
     return {};

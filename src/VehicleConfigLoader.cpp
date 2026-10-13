@@ -1,5 +1,6 @@
 #include "VehicleConfigLoader.h"
 
+#include "AssetPath.h"
 #include "ConfigurationParser.h"
 #include "ModelConfigLoader.h"
 #include "PerfTrace.h"
@@ -70,9 +71,7 @@ bool allowsBusOnly(const std::string& keyword, VehicleFileKind kind) {
 
 std::filesystem::path resolveReferencedPath(const std::filesystem::path& configPath,
                                             const std::string& referencedPath) {
-    std::string normalized = referencedPath;
-    std::replace(normalized.begin(), normalized.end(), '\\', '/');
-    return configPath.parent_path() / std::filesystem::path(normalized);
+    return openbus::assets::resolveReferencedPath(configPath, referencedPath);
 }
 
 void loadVariableFile(const std::filesystem::path& configPath, const std::string& referencedPath,

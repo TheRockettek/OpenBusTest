@@ -1,5 +1,6 @@
 #include "ModelConfigLoader.h"
 
+#include "AssetPath.h"
 #include "ConfigurationParser.h"
 #include "PerfTrace.h"
 #include "ScriptTextureLimits.h"
@@ -215,8 +216,10 @@ std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
         for (const std::filesystem::path& root : roots) {
             for (const std::filesystem::path& candidate :
                  {root / relative, root / relative.filename()}) {
-                if (std::filesystem::exists(candidate)) {
-                    return candidate;
+                const std::filesystem::path resolved =
+                    openbus::assets::resolveCaseInsensitivePath(candidate);
+                if (std::filesystem::is_regular_file(resolved)) {
+                    return resolved;
                 }
             }
         }
@@ -510,8 +513,11 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             const std::string meshValue = trim(meshLine.text);
             std::filesystem::path objPath;
             std::string bundleEntry;
-            const std::filesystem::path bundlePath = modelRoot / "openbus.obx";
-            const bool allowXMesh = kind == ModelConfigKind::SceneryObject;
+            const std::filesystem::path bundlePath =
+                openbus::assets::resolveCaseInsensitivePath(modelRoot / "openbus.obx");
+            // OMSI vehicle models may reference native text .x meshes too; the
+            // shared XLoader handles those for every model configuration kind.
+            const bool allowXMesh = true;
             const bool preferSourceX =
                 allowXMesh && lower(std::filesystem::path(meshValue).extension().string()) == ".x";
             const std::filesystem::path resolvedMesh =
@@ -1152,7 +1158,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 }
                 collisionMesh.resolvedPath = resolveMesh(modelRoot, value.text);
                 if (collisionMesh.resolvedPath.empty()) {
-                    const std::filesystem::path bundlePath = modelRoot / "openbus.obx";
+                    const std::filesystem::path bundlePath =
+                        openbus::assets::resolveCaseInsensitivePath(modelRoot / "openbus.obx");
                     if (std::filesystem::exists(bundlePath)) {
                         std::filesystem::path relativeMesh = collisionMesh.sourcePath;
                         relativeMesh.replace_extension(".obj");

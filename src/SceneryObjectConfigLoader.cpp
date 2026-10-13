@@ -1,5 +1,6 @@
 #include "SceneryObjectConfigLoader.h"
 
+#include "AssetPath.h"
 #include "ConfigurationParser.h"
 #include "ModelConfigLoader.h"
 #include "Variables.h"
@@ -259,9 +260,10 @@ resolveSceneryObjectModelConfigPath(const SceneryObjectConfig& configuration) {
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
     const std::filesystem::path modelPath(normalized);
     if (modelPath.is_absolute()) {
-        return modelPath.lexically_normal();
+        return openbus::assets::resolveCaseInsensitivePath(modelPath);
     }
-    return (configuration.sourcePath.parent_path() / modelPath).lexically_normal();
+    return openbus::assets::resolveCaseInsensitivePath(
+        configuration.sourcePath.parent_path() / modelPath);
 }
 
 ModelConfig loadSceneryObjectConfig(const std::filesystem::path& configPath,

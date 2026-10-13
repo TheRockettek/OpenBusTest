@@ -1,5 +1,6 @@
 #include "ScriptRuntime.h"
 
+#include "AssetPath.h"
 #include "Logger.h"
 #include "Variables.h"
 #include "Environment.h"
@@ -1063,10 +1064,8 @@ struct ScriptRuntime::Impl {
 
         bool compiledAnyScript = false;
         for (const std::string& referencedPath : configuration.scripts) {
-            std::string normalized = referencedPath;
-            std::replace(normalized.begin(), normalized.end(), '\\', '/');
             const std::filesystem::path sourcePath =
-                configuration.sourcePath.parent_path() / normalized;
+                openbus::assets::resolveReferencedPath(configuration.sourcePath, referencedPath);
             std::string error;
             std::shared_ptr<const OscProgram> program =
                 cachedNativeProgram(sourcePath, error, compiledAnyScript);
@@ -1800,9 +1799,8 @@ struct ScriptRuntime::Impl {
         if (!validTextureIndex(index)) {
             return false;
         }
-        std::string normalized = requestedPath;
-        std::replace(normalized.begin(), normalized.end(), '\\', '/');
-        const std::filesystem::path path = configuration.sourcePath.parent_path() / normalized;
+        const std::filesystem::path path =
+            openbus::assets::resolveReferencedPath(configuration.sourcePath, requestedPath);
         openbus::rendering::Image image;
         if (!openbus::rendering::TextureLoader::readImage(path, image) || image.rgba.empty()) {
             return false;
@@ -2149,9 +2147,8 @@ struct ScriptRuntime::Impl {
         scriptEnvironment.reference = luaL_ref(state, LUA_REGISTRYINDEX);
 
         for (const std::string& referencedPath : configuration.scripts) {
-            std::string normalized = referencedPath;
-            std::replace(normalized.begin(), normalized.end(), '\\', '/');
-            std::filesystem::path sourcePath = configuration.sourcePath.parent_path() / normalized;
+            std::filesystem::path sourcePath =
+                openbus::assets::resolveReferencedPath(configuration.sourcePath, referencedPath);
             try {
                 sourcePath = generatedLuaPath(sourcePath);
             } catch (const std::exception& exception) {

@@ -1,4 +1,5 @@
 #include "VehicleConfigLoader.h"
+#include "osc/OscConverter.h"
 
 #include <array>
 #include <filesystem>
@@ -11,7 +12,12 @@ int main() {
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     std::filesystem::create_directories(root / "model");
+    std::filesystem::create_directories(root / "Script");
     const std::filesystem::path configPath = root / "bus.bus";
+    const std::filesystem::path scriptPath = root / "Script" / "Engine.OSC";
+    std::ofstream script(scriptPath);
+    script << "{init}\n{end}\n";
+    script.close();
     std::ofstream cabin(root / "model/cabin.cfg");
     cabin << "[entry]\n0\n"
              "[exit]\n4\n"
@@ -43,6 +49,7 @@ int main() {
               "[description]\nUrban service bus.\n\n Electric drivetrain. \n[end]\n"
               "[type]\n0\n"
               "[model]\nmodel.cfg\n"
+              "[script]\n1\nscript/engine.osc\n"
               "[boundingbox]\n2.4\n12.0\n3.2\n0.1\n-0.2\n1.4\n"
               "[sound]\nsound/player.cfg\n"
               "[sound_ai]\nsound/ai.cfg\n"
@@ -57,11 +64,13 @@ int main() {
     config.close();
 
     const VehicleConfig result = loadVehicleConfig(configPath, VehicleFileKind::Bus);
+    const bool caseMismatchedScriptConverted =
+        result.scripts.size() == 1 && std::filesystem::exists(generatedLuaPath(scriptPath));
     VehicleConfig secondRegistration = result;
     selectRegistrationAtIndex(secondRegistration, 1);
     std::filesystem::remove_all(root);
 
-    if (result.diagnostics.hasErrors() ||
+    if (result.diagnostics.hasErrors() || !caseMismatchedScriptConverted ||
         result.friendlyManufacturer != "Mercedes-Benz" ||
         result.friendlyVehicleName != "Citaro E400" ||
         result.friendlyDefaultPaint != "Night blue" ||
