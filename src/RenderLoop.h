@@ -118,6 +118,10 @@ class RenderLoop {
     double viewLookYaw_ = 0.0;
     double viewLookPitch_ = 0.0;
     double lastStatsTitleTime_ = 0.0;
+    double fpsSampleStartTime_ = 0.0;
+    double displayedFps_ = 0.0;
+    std::uint64_t fpsSampleFrameCount_ = 0;
+    bool fpsSampleInitialized_ = false;
     double cameraDistance_ = 24.0;
     openbus::rendering::FreeCameraPose freeCameraPose_{};
     openbus::rendering::FreeCameraPose lastMainCameraPose_{};
@@ -130,8 +134,10 @@ class RenderLoop {
     double previousFovCursorY_ = 0.0;
     bool draggingFov_ = false;
     bool freeCameraEnabled_ = false;
+    bool mouseLookEnabled_ = false;
     bool lastMainCameraPoseValid_ = false;
     bool previousFreeCameraToggleState_ = false;
+    bool previousMouseLookToggleState_ = false;
     bool mouseControlEnabled_ = false;
     double mouseThrottle_ = 0.0;
     double mouseSteering_ = 0.0;

@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <vector>
 
 Logger gameLog("TextureLoaderProbe");
 
@@ -150,6 +151,46 @@ int main() {
     valid &= require(image.rgba.size() == 4 * 4 * 4 && image.rgba[3] == 255,
                      "DXT4 interpolated alpha is decoded");
     std::filesystem::remove(dxt4Path);
+
+    const std::filesystem::path mislabeledBmpPath =
+        std::filesystem::temp_directory_path() / "openbus_palettized_bmp_payload.dds";
+    constexpr std::uint32_t bmpPixelOffset = 14 + 124 + 256 * 4;
+    std::vector<std::uint8_t> bmpHeader(bmpPixelOffset, 0);
+    const auto writeBmpU32 = [&bmpHeader](std::size_t offset, std::uint32_t value) {
+        bmpHeader[offset + 0] = static_cast<std::uint8_t>(value & 0xffU);
+        bmpHeader[offset + 1] = static_cast<std::uint8_t>((value >> 8) & 0xffU);
+        bmpHeader[offset + 2] = static_cast<std::uint8_t>((value >> 16) & 0xffU);
+        bmpHeader[offset + 3] = static_cast<std::uint8_t>((value >> 24) & 0xffU);
+    };
+    bmpHeader[0] = 'B';
+    bmpHeader[1] = 'M';
+    writeBmpU32(2, bmpPixelOffset + 4);
+    writeBmpU32(10, bmpPixelOffset);
+    writeBmpU32(14, 124); // BITMAPV5HEADER used by the installed London textures.
+    writeBmpU32(18, 1);
+    writeBmpU32(22, 1);
+    bmpHeader[26] = 1;
+    bmpHeader[28] = 8;
+    writeBmpU32(34, 4);
+    writeBmpU32(46, 256);
+    bmpHeader[138 + 4] = 10; // Palette entry 1: blue.
+    bmpHeader[138 + 5] = 20;
+    bmpHeader[138 + 6] = 30;
+    {
+        std::ofstream output(mislabeledBmpPath, std::ios::binary);
+        output.write(reinterpret_cast<const char*>(bmpHeader.data()),
+                     static_cast<std::streamsize>(bmpHeader.size()));
+        constexpr std::array<std::uint8_t, 4> pixel = {1, 0, 0, 0};
+        output.write(reinterpret_cast<const char*>(pixel.data()),
+                     static_cast<std::streamsize>(pixel.size()));
+    }
+    valid &= require(openbus::rendering::TextureLoader::readImage(mislabeledBmpPath, image),
+                     "8-bit BMP payload with a DDS filename loads");
+    valid &= require(image.width == 1 && image.height == 1 && image.rgba.size() == 4 &&
+                         image.rgba[0] == 30 && image.rgba[1] == 20 && image.rgba[2] == 10 &&
+                         image.rgba[3] == 255,
+                     "palettized BMP palette is expanded to opaque RGBA");
+    std::filesystem::remove(mislabeledBmpPath);
 
     const std::filesystem::path tgaPath =
         std::filesystem::temp_directory_path() / "openbus_tga_alpha_without_descriptor.tga";

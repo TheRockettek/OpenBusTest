@@ -1,11 +1,114 @@
 #include "XLoader.h"
 
+#include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <stdexcept>
+#include <string_view>
+#include <vector>
+
+#include <zlib.h>
 
 using namespace openbus::rendering;
+
+namespace {
+
+void appendU16(std::vector<std::uint8_t>& bytes, std::uint16_t value) {
+    bytes.push_back(static_cast<std::uint8_t>(value & 0xffU));
+    bytes.push_back(static_cast<std::uint8_t>((value >> 8) & 0xffU));
+}
+
+void appendU32(std::vector<std::uint8_t>& bytes, std::uint32_t value) {
+    for (std::size_t byte = 0; byte < 4; ++byte) {
+        bytes.push_back(static_cast<std::uint8_t>((value >> (byte * 8)) & 0xffU));
+    }
+}
+
+void appendToken(std::vector<std::uint8_t>& bytes, std::uint16_t code) {
+    appendU16(bytes, code);
+}
+
+void appendInteger(std::vector<std::uint8_t>& bytes, std::int32_t value) {
+    appendToken(bytes, 3);
+    appendU32(bytes, static_cast<std::uint32_t>(value));
+}
+
+void appendName(std::vector<std::uint8_t>& bytes, const std::string& value) {
+    appendToken(bytes, 1);
+    appendU32(bytes, static_cast<std::uint32_t>(value.size()));
+    bytes.insert(bytes.end(), value.begin(), value.end());
+}
+
+void appendFloatList(std::vector<std::uint8_t>& bytes,
+                     const std::vector<float>& values) {
+    appendToken(bytes, 7);
+    appendU32(bytes, static_cast<std::uint32_t>(values.size()));
+    for (const float value : values) {
+        appendU32(bytes, std::bit_cast<std::uint32_t>(value));
+    }
+}
+
+void appendIntegerList(std::vector<std::uint8_t>& bytes,
+                       const std::vector<std::uint32_t>& values) {
+    appendToken(bytes, 6);
+    appendU32(bytes, static_cast<std::uint32_t>(values.size()));
+    for (const std::uint32_t value : values) {
+        appendU32(bytes, value);
+    }
+}
+
+std::vector<std::uint8_t> makeCompressedX(std::string_view format, std::string_view payload) {
+    std::vector<std::uint8_t> file = {'x', 'o', 'f', ' ', '0', '3', '0', '3'};
+    file.insert(file.end(), format.begin(), format.end());
+    file.insert(file.end(), {'0', '0', '3', '2'});
+    file.insert(file.end(), 6, 0); // Reserved checksum/flags header.
+    std::string previousBlock;
+    for (std::size_t start = 0; start < payload.size(); start += 32768) {
+        const std::string_view block =
+            payload.substr(start, (std::min<std::size_t>)(32768, payload.size() - start));
+        z_stream stream = {};
+        if (deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -MAX_WBITS, 8,
+                         Z_DEFAULT_STRATEGY) != Z_OK) {
+            throw std::runtime_error("unable to initialize compressed X fixture writer");
+        }
+        if (!previousBlock.empty() &&
+            deflateSetDictionary(&stream,
+                                 reinterpret_cast<const Bytef*>(previousBlock.data()),
+                                 static_cast<uInt>(previousBlock.size())) != Z_OK) {
+            deflateEnd(&stream);
+            throw std::runtime_error("unable to set compressed X fixture dictionary");
+        }
+        std::vector<std::uint8_t> compressed(deflateBound(&stream, block.size()));
+        stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(block.data()));
+        stream.avail_in = static_cast<uInt>(block.size());
+        stream.next_out = compressed.data();
+        stream.avail_out = static_cast<uInt>(compressed.size());
+        const int result = deflate(&stream, Z_SYNC_FLUSH);
+        const std::size_t compressedSize = stream.total_out;
+        deflateEnd(&stream);
+        if (result != Z_OK || compressedSize >= 32786 ||
+            compressedSize > std::numeric_limits<std::uint16_t>::max()) {
+            throw std::runtime_error("unable to compress X fixture block");
+        }
+        compressed.resize(compressedSize);
+        appendU16(file, static_cast<std::uint16_t>(compressed.size()));
+        file.push_back('C');
+        file.push_back('K');
+        file.insert(file.end(), compressed.begin(), compressed.end());
+        previousBlock.assign(block);
+        if (previousBlock.size() > 32768) {
+            previousBlock.erase(0, previousBlock.size() - 32768);
+        }
+    }
+    return file;
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
     if (argc != 2) {
@@ -74,6 +177,79 @@ int main(int argc, char** argv) {
     std::filesystem::remove(malformed);
     if (!malformedRejected) {
         std::cerr << "out-of-range X face index was accepted\n";
+        return 1;
+    }
+
+    const std::filesystem::path binaryMesh =
+        std::filesystem::temp_directory_path() / "openbus_binary_x_mesh.x";
+    std::vector<std::uint8_t> binary = {
+        'x', 'o', 'f', ' ', '0', '3', '0', '3', 'b', 'i', 'n', ' ', '0', '0', '3', '2'};
+    appendToken(binary, 31); // TEMPLATE
+    appendName(binary, "Header");
+    appendToken(binary, 10);
+    appendToken(binary, 5); // GUID
+    binary.insert(binary.end(), 16, 0);
+    appendToken(binary, 48); // VOID template field type
+    appendToken(binary, 20);
+    appendToken(binary, 11);
+    appendName(binary, "Mesh");
+    appendToken(binary, 10); // {
+    appendInteger(binary, 3);
+    appendToken(binary, 20); // ;
+    appendFloatList(binary, {0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F});
+    appendToken(binary, 20);
+    appendInteger(binary, 1);
+    appendToken(binary, 20);
+    appendInteger(binary, 3);
+    appendToken(binary, 20);
+    appendIntegerList(binary, {0, 1, 2});
+    appendToken(binary, 20);
+    appendToken(binary, 11); // }
+    {
+        std::ofstream output(binaryMesh, std::ios::binary);
+        output.write(reinterpret_cast<const char*>(binary.data()),
+                     static_cast<std::streamsize>(binary.size()));
+    }
+    const std::shared_ptr<ParsedObj> parsedBinary = XLoader::parse(binaryMesh);
+    std::filesystem::remove(binaryMesh);
+    if (!parsedBinary || parsedBinary->positions.size() != 3 ||
+        parsedBinary->triangles.size() != 1 ||
+        parsedBinary->triangles.front().indices[2].position != 3) {
+        std::cerr << "binary X token stream did not produce the expected triangle\n";
+        return 1;
+    }
+
+    const std::string textMesh = std::string(40000, ' ') +
+                                 "Mesh { 3; 0;0;0;, 1;0;0;, 0;1;0;; 1; 3; 0,1,2;; }\n";
+    const std::filesystem::path compressedTextMesh =
+        std::filesystem::temp_directory_path() / "openbus_compressed_text_x_mesh.x";
+    const std::vector<std::uint8_t> compressedText = makeCompressedX("tzip", textMesh);
+    {
+        std::ofstream output(compressedTextMesh, std::ios::binary);
+        output.write(reinterpret_cast<const char*>(compressedText.data()),
+                     static_cast<std::streamsize>(compressedText.size()));
+    }
+    const std::shared_ptr<ParsedObj> parsedCompressedText = XLoader::parse(compressedTextMesh);
+    std::filesystem::remove(compressedTextMesh);
+    if (!parsedCompressedText || parsedCompressedText->triangles.size() != 1) {
+        std::cerr << "MSZIP-compressed text X mesh did not parse\n";
+        return 1;
+    }
+
+    const std::filesystem::path compressedBinaryMesh =
+        std::filesystem::temp_directory_path() / "openbus_compressed_binary_x_mesh.x";
+    const std::string binaryPayload(reinterpret_cast<const char*>(binary.data() + 16),
+                                    binary.size() - 16);
+    const std::vector<std::uint8_t> compressedBinary = makeCompressedX("bzip", binaryPayload);
+    {
+        std::ofstream output(compressedBinaryMesh, std::ios::binary);
+        output.write(reinterpret_cast<const char*>(compressedBinary.data()),
+                     static_cast<std::streamsize>(compressedBinary.size()));
+    }
+    const std::shared_ptr<ParsedObj> parsedCompressedBinary = XLoader::parse(compressedBinaryMesh);
+    std::filesystem::remove(compressedBinaryMesh);
+    if (!parsedCompressedBinary || parsedCompressedBinary->triangles.size() != 1) {
+        std::cerr << "MSZIP-compressed binary X mesh did not parse\n";
         return 1;
     }
     return 0;

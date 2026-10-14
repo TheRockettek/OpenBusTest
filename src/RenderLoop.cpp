@@ -4270,6 +4270,10 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     if (drivetrainDiagnosticsEnabled_) {
         gameLog.Log("Native drivetrain variable diagnostics enabled (1 Hz)");
     }
+    mouseLookEnabled_ = parseEnabledFlag(openbus::getEnvironment("OPENBUS_MOUSE_LOOK"));
+    if (mouseLookEnabled_) {
+        gameLog.Log("Mouse camera look enabled (F4 toggles; move the mouse to look around)");
+    }
     if (const char* scriptRate = std::getenv("OPENBUS_SCRIPT_HZ")) {
         try {
             scriptRateHz_ = std::clamp(std::stod(scriptRate), 0.0, 1000.0);
@@ -4321,6 +4325,10 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     clickableCursor_ = glfwCreateStandardCursor(GLFW_HAND_CURSOR);
     mouseSteeringCursor_ = glfwCreateStandardCursor(GLFW_CROSSHAIR_CURSOR);
     glfwSetWindowUserPointer(window_, this);
+    if (mouseLookEnabled_) {
+        glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        glfwGetCursorPos(window_, &previousCursorX_, &previousCursorY_);
+    }
     glfwSetScrollCallback(window_, &RenderLoop::scrollCallback);
     const char* vsyncSetting = std::getenv("OPENBUS_VSYNC");
     const bool vsyncEnabled = vsyncSetting == nullptr || (std::string(vsyncSetting) != "0" &&
@@ -4369,6 +4377,9 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
 
 RenderLoop::~RenderLoop() {
     gameLog.Log("RenderLoop shutting down");
+    if (window_ != nullptr && mouseLookEnabled_) {
+        glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    }
     reflectionRenderer_->destroy();
     mapRenderer_.reset();
     playerVehicle_ = nullptr;
@@ -4911,13 +4922,39 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.cameraNavigation");
-        const std::array<int, 2> cameraNavigationKeys = {GLFW_KEY_LEFT, GLFW_KEY_RIGHT};
-        for (std::size_t index = 0; index < cameraNavigationKeys.size(); ++index) {
-            const bool pressed = glfwGetKey(window_, cameraNavigationKeys[index]) == GLFW_PRESS;
-            if (!freeCameraEnabled_ && pressed && !previousCameraNavigationStates_[index]) {
-                selectVehicleCamera(index == 0 ? -1 : 1);
+        const bool mouseLookTogglePressed = glfwGetKey(window_, GLFW_KEY_F4) == GLFW_PRESS;
+        if (mouseLookTogglePressed && !previousMouseLookToggleState_) {
+            mouseLookEnabled_ = !mouseLookEnabled_;
+            draggingCamera_ = false;
+            previousCursorX_ = cursorX;
+            previousCursorY_ = cursorY;
+            glfwSetInputMode(window_, GLFW_CURSOR,
+                             mouseLookEnabled_ ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+            if (mouseLookEnabled_) {
+                if (mouseControlEnabled_) {
+                    mouseControlEnabled_ = false;
+                    gameLog.Log("Mouse bus control disabled (mouse camera look enabled)");
+                }
+                pendingMouseClick_ = false;
+                clickableHoverCacheValid_ = false;
+                clickableHoverCacheHit_ = false;
             }
-            previousCameraNavigationStates_[index] = pressed;
+            previousCameraNavigationStates_.fill(false);
+            gameLog.Log(std::string("Mouse camera look ") +
+                        (mouseLookEnabled_ ? "enabled; move the mouse to look around"
+                                           : "disabled"));
+        }
+        previousMouseLookToggleState_ = mouseLookTogglePressed;
+
+        const std::array<int, 2> cameraNavigationKeys = {GLFW_KEY_LEFT, GLFW_KEY_RIGHT};
+        if (!mouseLookEnabled_) {
+            for (std::size_t index = 0; index < cameraNavigationKeys.size(); ++index) {
+                const bool pressed = glfwGetKey(window_, cameraNavigationKeys[index]) == GLFW_PRESS;
+                if (!freeCameraEnabled_ && pressed && !previousCameraNavigationStates_[index]) {
+                    selectVehicleCamera(index == 0 ? -1 : 1);
+                }
+                previousCameraNavigationStates_[index] = pressed;
+            }
         }
     }
     {
@@ -4991,6 +5028,21 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.mouseInput");
+        if (mouseLookEnabled_) {
+            const double cursorDeltaX = cursorX - previousCursorX_;
+            const double cursorDeltaY = cursorY - previousCursorY_;
+            if (freeCameraEnabled_) {
+                freeCameraPose_.yawRadians -= cursorDeltaX * 0.005;
+                freeCameraPose_.pitchRadians =
+                    std::clamp(freeCameraPose_.pitchRadians - cursorDeltaY * 0.005, -1.35, 1.35);
+            } else if (isExteriorView()) {
+                cameraYaw_ -= cursorDeltaX * 0.005;
+                cameraPitch_ = std::clamp(cameraPitch_ - cursorDeltaY * 0.005, -1.35, 1.35);
+            } else {
+                viewLookYaw_ -= cursorDeltaX * 0.005;
+                viewLookPitch_ = std::clamp(viewLookPitch_ - cursorDeltaY * 0.005, -1.35, 1.35);
+            }
+        }
         const bool rightMouse = glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
         if (rightMouse && !draggingFov_) {
             previousFovCursorY_ = cursorY;
@@ -5010,10 +5062,10 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         previousFovCursorY_ = cursorY;
         const bool middleMouse =
             glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
-        if (middleMouse && !draggingCamera_) {
+        if (!mouseLookEnabled_ && middleMouse && !draggingCamera_) {
             previousCursorX_ = cursorX;
             previousCursorY_ = cursorY;
-        } else if (middleMouse) {
+        } else if (!mouseLookEnabled_ && middleMouse) {
             const double cursorDeltaX = cursorX - previousCursorX_;
             const double cursorDeltaY = cursorY - previousCursorY_;
             if (freeCameraEnabled_) {
@@ -5242,8 +5294,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             }
         }
     }
-    if (!renderingReflection_ && !freeCameraEnabled_ && playerVehicle_ != nullptr &&
-        mouseInteractionPending_) {
+    if (!renderingReflection_ && !freeCameraEnabled_ && !mouseLookEnabled_ &&
+        playerVehicle_ != nullptr && mouseInteractionPending_) {
         TraceScope phase("input", "RenderLoop::draw.interaction");
         // Reflections, captures and repeated draws are not additional input frames.
         mouseInteractionPending_ = false;
@@ -5342,8 +5394,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         }
         const bool hoveringClickable = !mouseControlEnabled_ && clickableHoverCacheHit_;
         GLFWcursor* cursor = mouseControlEnabled_ ? mouseSteeringCursor_
-                             : hoveringClickable  ? clickableCursor_
-                                                  : nullptr;
+                     : hoveringClickable  ? clickableCursor_
+                              : nullptr;
         glfwSetCursor(window_, cursor);
         const auto releaseMouse = [this](const std::string& event) {
             if (playerVehicle_->scripts) {
@@ -5383,6 +5435,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     {
         TraceScope phase("render", "RenderLoop::draw.ground");
         if (mapRenderer_ != nullptr) {
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
             glEnable(GL_DEPTH_TEST);
             glDepthFunc(GL_LESS);
             glDepthMask(GL_TRUE);
@@ -5574,7 +5627,22 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             glEnable(GL_CULL_FACE);
         }
     }
-    if (!renderingReflection_ && playerVehicle_ && glfwGetTime() - lastStatsTitleTime_ > 0.25) {
+    const double titleUpdateTime = glfwGetTime();
+    if (!renderingReflection_ && !captureMode_) {
+        if (!fpsSampleInitialized_) {
+            fpsSampleStartTime_ = titleUpdateTime;
+            fpsSampleFrameCount_ = 0;
+            fpsSampleInitialized_ = true;
+        }
+        ++fpsSampleFrameCount_;
+        const double sampleDuration = titleUpdateTime - fpsSampleStartTime_;
+        if (sampleDuration >= 1.0) {
+            displayedFps_ = static_cast<double>(fpsSampleFrameCount_) / sampleDuration;
+            fpsSampleFrameCount_ = 0;
+            fpsSampleStartTime_ = titleUpdateTime;
+        }
+    }
+    if (!renderingReflection_ && playerVehicle_ && titleUpdateTime - lastStatsTitleTime_ > 0.25) {
         const double speedMetresPerSecond = simulation.speed();
         const long speedMph = std::lround(speedMetresPerSecond * 2.2369362921);
         const long speedKmh = std::lround(speedMetresPerSecond * 3.6);
@@ -5585,9 +5653,10 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         std::ostringstream title;
         title << "OpenBus - " << speedMph << " mph / " << speedKmh << " km/h - Throttle "
               << throttlePercent << "% - Brake " << brakePercent << "% - "
-              << openbus::rendering::frameTriangleCount() << " triangles/frame";
+              << openbus::rendering::frameTriangleCount() << " triangles/frame - "
+              << std::fixed << std::setprecision(1) << displayedFps_ << " FPS";
         glfwSetWindowTitle(window_, title.str().c_str());
-        lastStatsTitleTime_ = glfwGetTime();
+          lastStatsTitleTime_ = titleUpdateTime;
     }
 }
 
@@ -5626,10 +5695,10 @@ void RenderLoop::captureViews(const BusSimulation& simulation,
         double distance;
     };
     const std::array<CaptureView, 5> views = {{{"dashboard", 1, 0.0, 0.0, 0.0},
-                                               {"three-quarter", 0, 0.55, 0.08, 11.0},
-                                               {"front", 0, 0.0, 0.08, 10.5},
-                                               {"left", 0, 1.5707963267948966, 0.08, 10.5},
-                                               {"right", 0, -1.5707963267948966, 0.08, 10.5}}};
+                                               {"three-quarter", 0, 0.55, 0.45, 11.0},
+                                               {"front", 0, 0.0, 0.45, 10.5},
+                                               {"left", 0, 1.5707963267948966, 0.45, 10.5},
+                                               {"right", 0, -1.5707963267948966, 0.45, 10.5}}};
     for (const CaptureView& view : views) {
         TraceScope viewTrace("capture", "RenderLoop::captureViews.view");
         cameraView_ = view.cameraView;

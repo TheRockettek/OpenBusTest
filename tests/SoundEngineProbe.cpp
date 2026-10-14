@@ -543,6 +543,26 @@ int main() {
                   "[sound]\nmotor_loop.wav\n0.5\n"
                   "[sound]\nmotor_end.wav\n0.5\n[trigger]\nev_motor_end\n";
     }
+    const std::filesystem::path caseSensitiveSoundConfigPath = root / "case_sound.cfg";
+    const std::filesystem::path caseSensitiveSoundPath = root / "Sound" / "Ambience_Fahrer.wav";
+    std::filesystem::create_directories(caseSensitiveSoundPath.parent_path());
+    {
+        std::ofstream sound(caseSensitiveSoundPath, std::ios::binary);
+        sound << "fixture";
+    }
+    {
+        std::ofstream config(caseSensitiveSoundConfigPath);
+        config << "[sound]\nsound/ambience_fahrer.wav\n1\n[trigger]\nev_case\n";
+    }
+    VehicleSoundBank caseSensitiveSoundBank;
+    caseSensitiveSoundBank.load(caseSensitiveSoundConfigPath);
+    Variables caseSensitiveSoundVariables;
+    FakePlayback caseSensitivePlayback;
+    caseSensitiveSoundBank.trigger(caseSensitivePlayback, "ev_case", {}, 0.0F,
+                                   caseSensitiveSoundVariables, exterior);
+    const bool caseInsensitiveSoundPathResolved =
+        caseSensitivePlayback.started.size() == 1 &&
+        caseSensitivePlayback.started.front().path == caseSensitiveSoundPath;
 
     VehicleSoundBank firstVehicle;
     VehicleSoundBank secondVehicle;
@@ -602,12 +622,13 @@ int main() {
     extendedChecksPassed &= checkFilenameHeuristics(heuristicConfigPath);
     firstVehicle.stopAll(playback);
     secondVehicle.stopAll(playback);
+    caseSensitiveSoundBank.stopAll(caseSensitivePlayback);
 
     std::filesystem::remove_all(root);
     if (!bothVehiclesStartedTheirOwnLoops || !triggerStopIsScopedToFirstVehicle ||
         !ambientStopIsScopedToFirstVehicle || !stopAllLeavesSecondVehicleLoopsAlone ||
         !triggerLookupIsLocal || !oneShotPlaybackWorks || !repeatedOneShotIsCoalesced ||
-        !oneShotStateIsVehicleLocal || !extendedChecksPassed) {
+        !oneShotStateIsVehicleLocal || !extendedChecksPassed || !caseInsensitiveSoundPathResolved) {
         std::cerr << "vehicle sound source ownership, cancellation, or retrigger policy failed\n";
         return 1;
     }

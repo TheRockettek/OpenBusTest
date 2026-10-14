@@ -46,6 +46,9 @@ bool isKnownKeyword(const std::string& keyword) {
                                                              "ctc",
                                                              "ctctexture",
                                                              "fixed",
+                                                             "friendlyname",
+                                                             "groups",
+                                                             "helparrow",
                                                              "illumination_interior",
                                                              "interiorlight",
                                                              "isshadow",
@@ -108,6 +111,10 @@ bool validForKind(const std::string& keyword, ModelConfigKind kind) {
         return false;
     }
     if (keyword == "new_attachment" && kind != ModelConfigKind::SceneryObject) {
+        return false;
+    }
+    if ((keyword == "friendlyname" || keyword == "groups" || keyword == "helparrow") &&
+        kind != ModelConfigKind::SceneryObject) {
         return false;
     }
     if ((keyword == "isshadow" || keyword == "viewpoint") &&
@@ -427,6 +434,11 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (!validForKind(keyword, kind)) {
             result.diagnostics.error(line.number, line.keyword(),
                                      "keyword is not valid in a " + kindName(kind) + " model");
+        }
+        if (keyword == "friendlyname" || keyword == "groups" || keyword == "helparrow") {
+            // Scenery metadata is not a model directive. [friendlyname] is commonly a single
+            // optional line, while [helparrow] is a marker, so avoid fixed-width reads here.
+            continue;
         }
 
         const auto part = [&]() -> ModelPart* {

@@ -130,6 +130,7 @@ if(NOT TARGET glfw)
 endif()
 
 find_package(OpenGL REQUIRED)
+find_package(ZLIB REQUIRED)
 
 if(TARGET ODE::ODE)
     set(OPENBUS_ODE_TARGET ODE::ODE)
@@ -216,7 +217,7 @@ target_include_directories(OpenBus SYSTEM PRIVATE
     ${gli_SOURCE_DIR}/external/glm
     ${stb_SOURCE_DIR})
 target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} OpenBus::GLFW OpenGL::GL OpenBusLua
-                                      OpenAL::OpenAL)
+                                      OpenAL::OpenAL ZLIB::ZLIB)
 
 if(OPENBUS_BUILD_BGFX_LIGHTING_PROBE)
     set(OPENBUS_BGFX_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders/bgfx")
@@ -394,7 +395,7 @@ add_executable(OpenBusMapCollisionBuilderProbe
 )
 openbus_configure_perf_trace(OpenBusMapCollisionBuilderProbe)
 target_include_directories(OpenBusMapCollisionBuilderProbe PRIVATE src)
-target_link_libraries(OpenBusMapCollisionBuilderProbe PRIVATE ${OPENBUS_ODE_TARGET})
+target_link_libraries(OpenBusMapCollisionBuilderProbe PRIVATE ${OPENBUS_ODE_TARGET} ZLIB::ZLIB)
 add_test(NAME OpenBusMapCollisionBuilderProbe COMMAND OpenBusMapCollisionBuilderProbe)
 
 add_executable(OpenBusMapCollisionStreamerProbe
@@ -489,6 +490,7 @@ add_executable(OpenBusXLoaderProbe
 )
 openbus_configure_perf_trace(OpenBusXLoaderProbe)
 target_include_directories(OpenBusXLoaderProbe PRIVATE src)
+target_link_libraries(OpenBusXLoaderProbe PRIVATE ZLIB::ZLIB)
 add_test(NAME OpenBusXLoaderProbe
          COMMAND OpenBusXLoaderProbe
                  ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scenery_text_mesh.x)
@@ -545,6 +547,7 @@ add_executable(OpenBusBusConfigurationCollisionProbe
 )
 openbus_configure_perf_trace(OpenBusBusConfigurationCollisionProbe)
 target_include_directories(OpenBusBusConfigurationCollisionProbe PRIVATE src src/osc)
+target_link_libraries(OpenBusBusConfigurationCollisionProbe PRIVATE ZLIB::ZLIB)
 add_test(NAME OpenBusBusConfigurationCollisionProbe
          COMMAND OpenBusBusConfigurationCollisionProbe)
 

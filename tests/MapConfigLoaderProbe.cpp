@@ -204,7 +204,7 @@ void runFixtureProbe() {
                     definition.entryPoints[1].placement.position[1] == 40.0 &&
                     definition.entryPoints[1].placement.position[2] == 5.0 &&
                     std::abs(definition.entryPoints[1].placement.yawDegrees -
-                             std::atan2(82.0, 19.0) * 180.0 / 3.14159265358979323846) < 1.0e-9,
+                             std::atan2(29.0, 82.0) * 180.0 / 3.14159265358979323846) < 1.0e-9,
                 "indexed entrypoint placement includes tile offset, elevation, and quaternion yaw");
         require(openbus::map::selectMapSpawnPoint(definition, "") == 0 &&
                     openbus::map::selectMapSpawnPoint(definition, "1") == 1,

@@ -16,7 +16,7 @@ prove end-to-end rendering or runtime semantics.
 | Physics and wheel simulation | Fixed-step ODE and per-wheel simulation are active; the deterministic bump/steering/braking stress probe covers two- and three-axle fixtures. Broader tuning remains incomplete. | [`BusSimulation.cpp`](src/BusSimulation.cpp) | [`BusSimulationSteeringProbe.cpp`](tests/BusSimulationSteeringProbe.cpp), [`BusSimulationStabilityProbe.cpp`](tests/BusSimulationStabilityProbe.cpp), [`BusSimulationStressProbe.cpp`](tests/BusSimulationStressProbe.cpp) |
 | Vehicle/model loading | Core MAN DL05 and E400 configuration paths are implemented; broad OMSI configuration coverage remains partial. | [`VehicleConfigLoader.cpp`](src/VehicleConfigLoader.cpp), [`ModelConfigLoader.cpp`](src/ModelConfigLoader.cpp), [`RenderLoop.cpp`](src/RenderLoop.cpp) | [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); visual procedure: [screenshot plan](Docs/SCREENSHOT_VALIDATION_PLAN.md) |
 | Texture decoding and materials | Texture decoding has a probe; several material semantics and visual parity checks remain incomplete, including alpha mode 2 and environment maps. | [`TextureLoader.cpp`](src/TextureLoader.cpp), [`CoreRenderer.cpp`](src/CoreRenderer.cpp) | [`TextureLoaderProbe.cpp`](tests/TextureLoaderProbe.cpp); GL/material checks: [incomplete visual checks](Docs/SCREENSHOT_VALIDATION_PLAN.md#incomplete-feature-visual-checks) |
-| Map, terrain, scenery, and roads | Partial: only active-window terrain, scenery meshes, and road geometry are built/uploaded; on tile changes a shared-context worker builds the replacement window while the previous one remains drawable. Collision mesh preparation runs in a CPU worker and ODE publication stays on the simulation thread, limited to one tile per update. Startup window creation and initial collision warm-up remain synchronous; if a shared GL context cannot be created, renderer loading falls back to synchronous work. Startup still parses map tile text once to build the global attachment index. General `.x` scenery, full OMSI attachment/profile semantics, and end-to-end visual/contact validation remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/MapSplineGeometry.cpp), [`MapRoadGeometry.cpp`](src/MapRoadGeometry.cpp), [`MapCollisionBuilder.cpp`](src/MapCollisionBuilder.cpp), [`MapCollisionStreamer.cpp`](src/MapCollisionStreamer.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapCollisionBuilderProbe.cpp`](tests/MapCollisionBuilderProbe.cpp), [`MapCollisionStreamerProbe.cpp`](tests/MapCollisionStreamerProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`MapRoadGeometryProbe.cpp`](tests/MapRoadGeometryProbe.cpp); in-context visual validation remains |
+| Map, terrain, scenery, and roads | Partial: only active-window terrain, scenery meshes, and road geometry are built/uploaded; on tile changes a shared-context worker builds the replacement window while the previous one remains drawable. Collision mesh preparation runs in a CPU worker and ODE publication stays on the simulation thread, limited to one tile per update. Startup window creation and initial collision warm-up remain synchronous; if a shared GL context cannot be created, renderer loading falls back to synchronous work. Startup still parses map tile text once to build the global attachment index. Static text/binary/MSZIP `.x` meshes and distance-selected scenery LODs now have runtime paths; full OMSI attachment/profile semantics and end-to-end visual/contact validation remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/MapSplineGeometry.cpp), [`MapRoadGeometry.cpp`](src/MapRoadGeometry.cpp), [`MapCollisionBuilder.cpp`](src/MapCollisionBuilder.cpp), [`MapCollisionStreamer.cpp`](src/MapCollisionStreamer.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapCollisionBuilderProbe.cpp`](tests/MapCollisionBuilderProbe.cpp), [`MapCollisionStreamerProbe.cpp`](tests/MapCollisionStreamerProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`MapRoadGeometryProbe.cpp`](tests/MapRoadGeometryProbe.cpp); in-context visual validation remains |
 | Scripts and dynamic displays | Vehicle script/text textures and scenery per-placement script/text texture surfaces, `init`/`frame`, and `[visible]` control are active; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/ScriptRuntime.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
 | Sound | Player sound runtime is active; full OMSI sound and AI sound selection remain incomplete. | [`SoundEngine.cpp`](src/SoundEngine.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp) |
 | AI, passengers, routes, and articulated vehicles | Runtime support is incomplete; parsed configuration is not evidence of these behaviors. | [vehicle configuration](src/VehicleConfigLoader.cpp), [map configuration](src/MapConfigLoader.cpp) | No end-to-end regression probe; see the [completion TODO](TODO.md) |
@@ -88,9 +88,11 @@ unsupported.
 Scenery `[texttexture]` and `[scripttexture]` materials are bound per placed
 instance, with independent live texture state and transparent text blending;
 visual parity against installed directional-sign assets still needs validation.
-Supported scenery meshes
-are O3D at LOD 0; `.x` scenery is skipped except that `[tree]` assets use a
-crossed-texture-plane preview. `.sli` rendering parses a subset of
+Supported scenery meshes include O3D and static text, binary, and MSZIP-compressed `.x`;
+configured nonzero LOD parts are selected by distance using the vehicle LOD
+threshold mapping. Animated/skinned `.x` content remains unsupported, and
+`[tree]` assets use a crossed-texture-plane preview rather than their helper mesh.
+`.sli` rendering parses a subset of
 `[texture]`, `[profile]`, and `[profilepnt]` records and tessellates straight
 and signed-radius centerlines, but complete road/profile, banking, material,
 and lane-marking behavior is not established. Road UV V uses a valid parsed
@@ -100,8 +102,9 @@ OMSI parity still need confirmation against linked installed splines.
 The following map behavior is **not implemented** or remains explicitly
 partial:
 
-- General DirectX `.x` scenery loading; the tree preview is not the original
-  mesh. Cross-tile attachment/repeater resolution, full `[attachObj]` scripting,
+- Animated/skinned DirectX `.x` content; static text, binary, and MSZIP-compressed
+  `.x` meshes now load. The tree preview is not the original mesh. Cross-tile
+  repeater-master resolution, full `[attachObj]` scripting,
   scenery script-driven animation/material changes, scenery mouse events, and
   non-authored scenery collision are incomplete. Per-placement scenery
   `init`/`frame`, `[visible]`, `[usetexttexture]`, and `[usescripttexture]`
@@ -145,6 +148,7 @@ track the missing runtime paths and visual evidence.
 
 - CMake 3.20 or newer
 - A C++23 compiler
+- zlib
 - ODE
 - GLFW and OpenGL
 - OpenAL
@@ -154,13 +158,13 @@ On Windows with vcpkg, install standalone LLVM (for `clang-cl.exe`) and the
 Visual Studio C++ build tools (for the MSVC headers, libraries, and linker):
 
 ```powershell
-vcpkg install ode:x64-windows glfw3:x64-windows
+vcpkg install ode:x64-windows glfw3:x64-windows zlib:x64-windows
 ```
 
 On Debian or Ubuntu, install the native development packages:
 
 ```bash
-sudo apt install build-essential cmake libode-dev libglfw3-dev libglu1-mesa-dev libopenal-dev liblua5.1-0-dev
+sudo apt install build-essential cmake libode-dev libglfw3-dev libglu1-mesa-dev libopenal-dev liblua5.1-0-dev zlib1g-dev
 ```
 
 The Linux build uses the system GLFW/ODE packages when available and falls
@@ -396,6 +400,10 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Default camera: the driver camera selected by `[set_camera_std]`
 - Hold middle mouse and drag: orbit outside view `0`, or look around the
   selected non-third-person viewport
+- Press `F4` to toggle mouse look; while enabled, move the mouse to look around
+  without holding a middle button. The cursor is captured until `F4` is pressed
+  again, and arrow keys continue to select camera views. Set
+  `OPENBUS_MOUSE_LOOK=1` to enable it at startup.
 - Hold right mouse and drag vertically: adjust FOV in configured views, or
   move closer/farther in the outside orbit view
 - Scroll up/down: zoom in/out

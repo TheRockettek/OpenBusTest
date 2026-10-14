@@ -1,5 +1,6 @@
 #include "VehicleSoundBank.h"
 
+#include "AssetPath.h"
 #include "ConfigurationParser.h"
 #include "Logger.h"
 #include "PerfTrace.h"
@@ -25,7 +26,7 @@ std::string lower(std::string value) {
 
 std::filesystem::path resolve(const std::filesystem::path& base, std::string value) {
     std::replace(value.begin(), value.end(), '\\', '/');
-    return base / std::filesystem::path(value);
+    return openbus::assets::resolveCaseInsensitivePath(base / std::filesystem::path(value));
 }
 
 std::string pathKey(const std::filesystem::path& path) {
@@ -349,7 +350,9 @@ bool VehicleSoundBank::conditionsAllow(const SoundTriggerDefinition& definition,
 
 std::filesystem::path
 VehicleSoundBank::resolvedFile(const SoundTriggerDefinition& definition) const {
-    return definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
+    const std::filesystem::path requested =
+        definition.file.is_absolute() ? definition.file : basePath_ / definition.file;
+    return openbus::assets::resolveCaseInsensitivePath(requested);
 }
 
 bool VehicleSoundBank::hasTrigger(const std::string& name) const {

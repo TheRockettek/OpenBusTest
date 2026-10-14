@@ -2,21 +2,33 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cctype>
+#include <charconv>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
+
+#include <zlib.h>
 
 namespace openbus::rendering {
 namespace {
 
 using Matrix = std::array<double, 16>;
+
+constexpr std::size_t MAX_X_FILE_BYTES = 256U * 1024U * 1024U;
+constexpr std::size_t MAX_X_TOKENS = 50'000'000;
+constexpr std::size_t MSZIP_BLOCK_SIZE = 32786;
+constexpr std::size_t MSZIP_DICTIONARY_SIZE = 32768;
 
 constexpr Matrix identityMatrix = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
                                    0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
@@ -99,6 +111,226 @@ std::vector<std::string> tokenize(std::string_view source) {
         tokens.emplace_back(source.substr(start, index - start));
     }
     return tokens;
+}
+
+std::uint16_t readU16(std::string_view bytes, std::size_t& offset) {
+    if (offset > bytes.size() || bytes.size() - offset < 2) {
+        throw std::runtime_error("truncated binary token");
+    }
+    const auto low = static_cast<std::uint8_t>(bytes[offset]);
+    const auto high = static_cast<std::uint8_t>(bytes[offset + 1]);
+    offset += 2;
+    return static_cast<std::uint16_t>(low | (static_cast<std::uint16_t>(high) << 8));
+}
+
+std::uint32_t readU32(std::string_view bytes, std::size_t& offset) {
+    if (offset > bytes.size() || bytes.size() - offset < 4) {
+        throw std::runtime_error("truncated binary token");
+    }
+    std::uint32_t value = 0;
+    for (std::size_t byte = 0; byte < 4; ++byte) {
+        value |= static_cast<std::uint32_t>(static_cast<std::uint8_t>(bytes[offset + byte]))
+                 << (byte * 8);
+    }
+    offset += 4;
+    return value;
+}
+
+std::string numberToken(double value) {
+    std::array<char, 64> buffer = {};
+    const auto converted = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value,
+                                         std::chars_format::general,
+                                         std::numeric_limits<double>::max_digits10);
+    if (converted.ec != std::errc{}) {
+        throw std::runtime_error("unable to format binary numeric token");
+    }
+    return std::string(buffer.data(), converted.ptr);
+}
+
+std::vector<std::string> tokenizeBinary(std::string_view bytes, std::size_t offset,
+                                        std::size_t floatWidth) {
+    static constexpr std::array<std::string_view, 11> punctuation = {
+        "{", "}", "(", ")", "[", "]", "<", ">", ".", ",", ";"};
+    static constexpr std::array<std::string_view, 13> typeTokens = {
+        "", "", "", "", "", "", "", "", "void", "lpstr", "unicode", "cstring",
+        "array"};
+    std::vector<std::string> tokens;
+    const auto append = [&](std::string token) {
+        if (tokens.size() >= MAX_X_TOKENS) {
+            throw std::runtime_error("binary token count exceeds the safety limit");
+        }
+        tokens.push_back(std::move(token));
+    };
+    const auto readString = [&](std::size_t length) {
+        if (length > bytes.size() - std::min(offset, bytes.size())) {
+            throw std::runtime_error("truncated binary string token");
+        }
+        std::string value(bytes.substr(offset, length));
+        offset += length;
+        return value;
+    };
+    const auto readFloat = [&]() {
+        double value = 0.0;
+        if (floatWidth == 4) {
+            value = static_cast<double>(std::bit_cast<float>(readU32(bytes, offset)));
+        } else if (floatWidth == 8) {
+            const std::uint32_t low = readU32(bytes, offset);
+            const std::uint32_t high = readU32(bytes, offset);
+            value = std::bit_cast<double>(static_cast<std::uint64_t>(low) |
+                                          (static_cast<std::uint64_t>(high) << 32));
+        } else {
+            throw std::runtime_error("unsupported binary X float width");
+        }
+        if (!std::isfinite(value)) {
+            throw std::runtime_error("non-finite binary float token");
+        }
+        return value;
+    };
+
+    while (offset < bytes.size()) {
+        const std::uint16_t code = readU16(bytes, offset);
+        if (code == 1) { // NAME
+            append(readString(readU32(bytes, offset)));
+        } else if (code == 2) { // STRING
+            const std::size_t length = readU32(bytes, offset);
+            append(readString(length));
+            static_cast<void>(readU16(bytes, offset)); // Required trailing NUL word.
+        } else if (code == 3) { // INTEGER
+            append(std::to_string(static_cast<std::int32_t>(readU32(bytes, offset))));
+        } else if (code == 5) { // GUID; only template declarations need this token.
+            if (bytes.size() - offset < 16) {
+                throw std::runtime_error("truncated binary GUID token");
+            }
+            offset += 16;
+            append("__guid__");
+        } else if (code == 6 || code == 7) { // INTEGER_LIST / FLOAT_LIST
+            const std::uint32_t count = readU32(bytes, offset);
+            const std::size_t width = code == 6 ? 4 : floatWidth;
+            if (count > MAX_X_TOKENS ||
+                static_cast<std::uint64_t>(count) * width > bytes.size() - offset) {
+                throw std::runtime_error("invalid or truncated binary numeric list");
+            }
+            for (std::uint32_t index = 0; index < count; ++index) {
+                append(code == 6
+                           ? std::to_string(static_cast<std::int32_t>(readU32(bytes, offset)))
+                           : numberToken(readFloat()));
+                if (index + 1 < count) {
+                    append(",");
+                }
+            }
+        } else if (code >= 10 && code <= 20) {
+            append(std::string(punctuation[code - 10]));
+        } else if (code == 31) { // TEMPLATE
+            append("template");
+        } else if (code == 40) { // WORD (16-bit integer)
+            append(std::to_string(readU16(bytes, offset)));
+        } else if (code == 41) { // DWORD
+            append(std::to_string(readU32(bytes, offset)));
+        } else if (code == 42) { // FLOAT
+            append(numberToken(readFloat()));
+        } else if (code == 43) { // DOUBLE
+            const std::uint32_t low = readU32(bytes, offset);
+            const std::uint32_t high = readU32(bytes, offset);
+            const double value = std::bit_cast<double>(
+                static_cast<std::uint64_t>(low) | (static_cast<std::uint64_t>(high) << 32));
+            if (!std::isfinite(value)) {
+                throw std::runtime_error("non-finite binary double token");
+            }
+            append(numberToken(value));
+        } else if (code == 44) { // CHAR
+            if (offset >= bytes.size()) {
+                throw std::runtime_error("truncated binary CHAR token");
+            }
+            append(std::to_string(static_cast<std::int8_t>(bytes[offset++])));
+        } else if (code == 45) { // UCHAR
+            if (offset >= bytes.size()) {
+                throw std::runtime_error("truncated binary UCHAR token");
+            }
+            append(std::to_string(static_cast<std::uint8_t>(bytes[offset++])));
+        } else if (code == 46) { // SWORD
+            append(std::to_string(static_cast<std::int16_t>(readU16(bytes, offset))));
+        } else if (code == 47) { // SDWORD
+            append(std::to_string(static_cast<std::int32_t>(readU32(bytes, offset))));
+        } else if (code >= 48 && code <= 52) {
+            append(std::string(typeTokens[code - 40]));
+        } else {
+            throw std::runtime_error("unknown binary X token code " + std::to_string(code));
+        }
+    }
+    return tokens;
+}
+
+std::vector<std::uint8_t> decompressMszip(std::string_view bytes, std::size_t offset) {
+    if (offset > bytes.size() || bytes.size() - offset < 6) {
+        throw std::runtime_error("truncated compressed X header");
+    }
+    offset += 6; // The format's checksum/flags header is currently undocumented.
+
+    z_stream stream = {};
+    if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
+        throw std::runtime_error("could not initialize MSZIP decompressor");
+    }
+    struct InflateGuard {
+        z_stream& stream;
+        ~InflateGuard() {
+            inflateEnd(&stream);
+        }
+    } guard{stream};
+
+    std::vector<std::uint8_t> output;
+    std::vector<std::uint8_t> previousBlock;
+    while (bytes.size() - offset >= 4) {
+        const std::uint16_t compressedSize = readU16(bytes, offset);
+        if (compressedSize == 0 || compressedSize >= MSZIP_BLOCK_SIZE ||
+            bytes.size() - offset < 2 ||
+            static_cast<std::uint8_t>(bytes[offset]) != 'C' ||
+            static_cast<std::uint8_t>(bytes[offset + 1]) != 'K') {
+            throw std::runtime_error("invalid MSZIP block header");
+        }
+        offset += 2;
+        if (compressedSize > bytes.size() - offset) {
+            throw std::runtime_error("truncated MSZIP block");
+        }
+        if (output.size() > MAX_X_FILE_BYTES - MSZIP_BLOCK_SIZE) {
+            throw std::runtime_error("decompressed X file exceeds the safety limit");
+        }
+
+        std::array<std::uint8_t, MSZIP_BLOCK_SIZE> block = {};
+        stream.next_in = reinterpret_cast<Bytef*>(
+            const_cast<char*>(bytes.data() + static_cast<std::ptrdiff_t>(offset)));
+        stream.avail_in = compressedSize;
+        stream.next_out = block.data();
+        stream.avail_out = static_cast<uInt>(block.size());
+        const int inflateResult = inflate(&stream, Z_SYNC_FLUSH);
+        if (inflateResult != Z_OK && inflateResult != Z_STREAM_END) {
+            throw std::runtime_error("MSZIP block decompression failed");
+        }
+        const std::size_t produced = block.size() - stream.avail_out;
+        if (produced == 0 || output.size() > MAX_X_FILE_BYTES - produced) {
+            throw std::runtime_error("invalid or oversized MSZIP block output");
+        }
+        output.insert(output.end(), block.begin(),
+                      block.begin() + static_cast<std::ptrdiff_t>(produced));
+        offset += compressedSize;
+
+        if (inflateReset(&stream) != Z_OK) {
+            throw std::runtime_error("could not reset MSZIP decompressor");
+        }
+        const std::size_t dictionaryStart = produced > MSZIP_DICTIONARY_SIZE
+                            ? produced - MSZIP_DICTIONARY_SIZE
+                            : 0;
+        previousBlock.assign(block.begin() + static_cast<std::ptrdiff_t>(dictionaryStart),
+                              block.begin() + static_cast<std::ptrdiff_t>(produced));
+        if (!previousBlock.empty() &&
+            inflateSetDictionary(&stream, previousBlock.data(),
+                                 static_cast<uInt>(previousBlock.size())) != Z_OK) {
+            throw std::runtime_error("could not set MSZIP history dictionary");
+        }
+    }
+    if (output.empty()) {
+        throw std::runtime_error("compressed X file has no data blocks");
+    }
+    return output;
 }
 
 class Parser {
@@ -469,13 +701,18 @@ class Parser {
         for (const ObjNormal& normal : mesh.normals) {
             output.normals.push_back(transformNormal(transform, normal));
         }
-        const std::vector<ObjMaterial> materials =
-            mesh.materials.empty() ? std::vector<ObjMaterial>{ObjMaterial{}} : mesh.materials;
-        for (std::size_t index = 0; index < materials.size(); ++index) {
-            ObjMaterial material = materials[index];
+        const auto appendMaterial = [&](const ObjMaterial& sourceMaterial, std::size_t index) {
+            ObjMaterial material = sourceMaterial;
             material.materialIndex = materialBase + static_cast<int>(index);
             output.materials.emplace("matl_" + std::to_string(material.materialIndex),
                                      std::move(material));
+        };
+        if (mesh.materials.empty()) {
+            appendMaterial(ObjMaterial{}, 0);
+        } else {
+            for (std::size_t index = 0; index < mesh.materials.size(); ++index) {
+                appendMaterial(mesh.materials[index], index);
+            }
         }
         for (std::size_t faceIndex = 0; faceIndex < mesh.faces.size(); ++faceIndex) {
             const std::vector<int>& face = mesh.faces[faceIndex];
@@ -546,21 +783,63 @@ std::shared_ptr<ParsedObj> XLoader::parse(const std::filesystem::path& path) {
     if (!input) {
         return {};
     }
+    input.seekg(0, std::ios::end);
+    const std::streamoff fileSize = input.tellg();
+    if (fileSize < 16 || static_cast<std::uintmax_t>(fileSize) > MAX_X_FILE_BYTES) {
+        return {};
+    }
+    input.seekg(0, std::ios::beg);
     const std::string contents((std::istreambuf_iterator<char>(input)),
                                std::istreambuf_iterator<char>());
-    const std::size_t headerEnd = contents.find_first_of("\r\n");
-    const std::string_view header(contents.data(),
-                                  headerEnd == std::string::npos ? contents.size() : headerEnd);
-    std::string normalizedHeader(header);
+    if (contents.size() < 16 || contents.compare(0, 4, "xof ") != 0) {
+        return {};
+    }
+    const std::string_view format(contents.data() + 8, 4);
+    std::string normalizedFormat(format);
+    std::transform(normalizedFormat.begin(), normalizedFormat.end(), normalizedFormat.begin(),
+                   [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+    std::string normalizedHeader(contents.data(), 16);
     std::transform(normalizedHeader.begin(), normalizedHeader.end(), normalizedHeader.begin(),
                    [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
     if (normalizedHeader.rfind("xof ", 0) != 0 ||
-        normalizedHeader.find("txt") == std::string::npos) {
+        (normalizedHeader.find("0302") == std::string::npos &&
+         normalizedHeader.find("0303") == std::string::npos) ||
+        (normalizedHeader.find("0032") == std::string::npos &&
+         normalizedHeader.find("0064") == std::string::npos)) {
         return {};
     }
+    const std::size_t floatWidth = normalizedHeader.find("0064") != std::string::npos ? 8 : 4;
     try {
-        const std::size_t contentStart =
-            headerEnd == std::string::npos ? contents.size() : headerEnd + 1;
+        if (normalizedFormat == "bin ") {
+            std::size_t contentStart = 16;
+            if (contentStart < contents.size() && contents[contentStart] == '\r') {
+                ++contentStart;
+            }
+            if (contentStart < contents.size() && contents[contentStart] == '\n') {
+                ++contentStart;
+            }
+            return Parser(tokenizeBinary(contents, contentStart, floatWidth)).parse();
+        }
+        if (normalizedFormat == "tzip" || normalizedFormat == "bzip") {
+            const std::vector<std::uint8_t> decompressed = decompressMszip(contents, 16);
+            const std::string_view payload(
+                reinterpret_cast<const char*>(decompressed.data()), decompressed.size());
+            return Parser(normalizedFormat == "bzip" ? tokenizeBinary(payload, 0, floatWidth)
+                                                      : tokenize(payload))
+                .parse();
+        }
+        if (normalizedFormat != "txt ") {
+            return {};
+        }
+        const std::size_t headerEnd = contents.find_first_of("\r\n", 16);
+        if (headerEnd == std::string::npos) {
+            return {};
+        }
+        std::size_t contentStart = headerEnd + 1;
+        if (contents[headerEnd] == '\r' && contentStart < contents.size() &&
+            contents[contentStart] == '\n') {
+            ++contentStart;
+        }
         return Parser(tokenize(std::string_view(contents).substr(contentStart))).parse();
     } catch (const std::exception&) {
         return {};

@@ -163,6 +163,42 @@ int main() {
         std::cerr << "tree SCO absolute-height marker was not retained\n";
         return 1;
     }
+    const std::filesystem::path londonMetadataPath = root / "london_metadata.sco";
+    std::ofstream londonMetadata(londonMetadataPath);
+    londonMetadata << "[groups]\n2\nLondon Crossings\nRoute Arrows\n"
+                      "[friendlyname]\nLondon Route Helper Bus Stop\n"
+                      "[helparrow]\n[model]\ndisplay.cfg\n";
+    londonMetadata.close();
+    const SceneryObjectConfig londonMetadataConfiguration =
+        loadSceneryObjectFile(londonMetadataPath);
+    bool sceneryMetadataWarned = false;
+    for (const ConfigurationDiagnostic& diagnostic :
+         londonMetadataConfiguration.diagnostics.entries) {
+        sceneryMetadataWarned = sceneryMetadataWarned || diagnostic.keyword == "groups" ||
+                                diagnostic.keyword == "friendlyname" ||
+                                diagnostic.keyword == "helparrow";
+    }
+    const std::filesystem::path londonCombinedModelPath = root / "london_combined.sco";
+    std::ofstream londonCombinedModel(londonCombinedModelPath);
+    londonCombinedModel << "[groups]\n2\nLondon Crossings\nRoute Arrows\n"
+                           "[friendlyname]\nLondon Route Helper Bus Stop\n"
+                           "[helparrow]\n[mesh]\ndisplay.obj\n";
+    londonCombinedModel.close();
+    const ModelConfig londonCombinedModelConfiguration =
+        loadModelConfig(londonCombinedModelPath, root, ModelConfigKind::SceneryObject,
+                        sceneryVariables);
+    bool modelMetadataWarned = false;
+    for (const ConfigurationDiagnostic& diagnostic :
+         londonCombinedModelConfiguration.diagnostics.entries) {
+        modelMetadataWarned = modelMetadataWarned || diagnostic.keyword == "groups" ||
+                              diagnostic.keyword == "friendlyname" ||
+                              diagnostic.keyword == "helparrow";
+    }
+    if (londonMetadataConfiguration.diagnostics.hasErrors() || sceneryMetadataWarned ||
+        londonCombinedModelConfiguration.parts.size() != 1 || modelMetadataWarned) {
+        std::cerr << "London SCO metadata caused errors or was not ignored by the model parser\n";
+        return 1;
+    }
     const std::filesystem::path attachmentConfigPath = root / "attachment.sco";
     std::ofstream attachmentConfig(attachmentConfigPath);
     attachmentConfig << "[model]\nattachment.cfg\n"

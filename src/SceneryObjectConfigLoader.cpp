@@ -79,9 +79,9 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             }
             continue;
         }
-        if (keyword == "friendlyname") {
-            std::vector<std::string> values;
-            reader.readPayloads(3, values, result.diagnostics, keyword);
+        if (keyword == "groups" || keyword == "friendlyname" || keyword == "helparrow") {
+            // These SCO metadata/editor fields do not affect static model rendering. Their
+            // payload lines are intentionally left for the line-oriented parser to ignore.
             continue;
         }
         if (keyword == "model") {

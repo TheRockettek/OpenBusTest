@@ -15,6 +15,10 @@ Do not treat every CFG as a vehicle model file.
 The original CFG files have not been moved. Their relative references are part
 of the format and must remain valid.
 
+For current OpenBus implementation gaps, see the separate [configuration
+implementation status pages](CONFIGURATION_IMPLEMENTATION_STATUS.md), covering
+BUS, scenery, map, and audio file families.
+
 ## How to classify a CFG
 
 - **Bus model CFG**: large file containing `[mesh]` plus model-only sections

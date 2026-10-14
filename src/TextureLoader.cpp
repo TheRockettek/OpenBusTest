@@ -233,12 +233,22 @@ bool readBmpImage(const std::filesystem::path& path, Image& image) {
     }
     const std::uint32_t pixelOffset =
         header[10] | (header[11] << 8) | (header[12] << 16) | (header[13] << 24);
+    const auto headerU32 = [&header](std::size_t offset) {
+        return static_cast<std::uint32_t>(header[offset]) |
+               (static_cast<std::uint32_t>(header[offset + 1]) << 8) |
+               (static_cast<std::uint32_t>(header[offset + 2]) << 16) |
+               (static_cast<std::uint32_t>(header[offset + 3]) << 24);
+    };
+    const std::uint32_t dibHeaderSize = headerU32(14);
     const std::int32_t width = static_cast<std::int32_t>(header[18] | (header[19] << 8) |
                                                          (header[20] << 16) | (header[21] << 24));
     const std::int32_t height = static_cast<std::int32_t>(header[22] | (header[23] << 8) |
                                                           (header[24] << 16) | (header[25] << 24));
     const std::uint16_t bitsPerPixel = static_cast<std::uint16_t>(header[28] | (header[29] << 8));
-    if (width <= 0 || height == 0 || (bitsPerPixel != 24 && bitsPerPixel != 32)) {
+    const std::uint32_t compression = headerU32(30);
+    const std::uint32_t colorsUsed = headerU32(46);
+    if (dibHeaderSize < 40 || width <= 0 || height == 0 || compression != 0 ||
+        (bitsPerPixel != 8 && bitsPerPixel != 24 && bitsPerPixel != 32)) {
         return false;
     }
     if (height == std::numeric_limits<std::int32_t>::min()) {
@@ -246,6 +256,26 @@ bool readBmpImage(const std::filesystem::path& path, Image& image) {
     }
     const int absoluteHeight = std::abs(height);
     const int channels = bitsPerPixel / 8;
+    std::vector<std::array<std::uint8_t, 4>> palette;
+    if (bitsPerPixel == 8) {
+        const std::uint32_t paletteEntries = colorsUsed == 0 ? 256 : colorsUsed;
+        const std::uint64_t paletteOffset = 14ULL + dibHeaderSize;
+        if (paletteEntries == 0 || paletteEntries > 256 || paletteOffset > pixelOffset ||
+            static_cast<std::uint64_t>(paletteEntries) * 4ULL > pixelOffset - paletteOffset) {
+            return false;
+        }
+        palette.resize(paletteEntries);
+        input.seekg(static_cast<std::streamoff>(paletteOffset));
+        for (auto& color : palette) {
+            std::array<std::uint8_t, 4> bgra = {};
+            input.read(reinterpret_cast<char*>(bgra.data()),
+                       static_cast<std::streamsize>(bgra.size()));
+            if (!input) {
+                return false;
+            }
+            color = {bgra[2], bgra[1], bgra[0], 255};
+        }
+    }
     if (static_cast<std::size_t>(width) > std::numeric_limits<std::size_t>::max() / channels) {
         return false;
     }
@@ -261,7 +291,14 @@ bool readBmpImage(const std::filesystem::path& path, Image& image) {
         rowStride * static_cast<std::size_t>(absoluteHeight) > MAX_TEXTURE_BUFFER_BYTES) {
         return false;
     }
-    std::vector<std::uint8_t> source(rowStride * absoluteHeight);
+    const std::size_t pixelDataSize = rowStride * static_cast<std::size_t>(absoluteHeight);
+    input.seekg(0, std::ios::end);
+    const std::streamoff fileSize = input.tellg();
+    if (fileSize < 0 || pixelOffset > static_cast<std::uint64_t>(fileSize) ||
+        pixelDataSize > static_cast<std::uint64_t>(fileSize) - pixelOffset) {
+        return false;
+    }
+    std::vector<std::uint8_t> source(pixelDataSize);
     input.seekg(pixelOffset);
     input.read(reinterpret_cast<char*>(source.data()), static_cast<std::streamsize>(source.size()));
     if (!input) {
@@ -281,14 +318,21 @@ bool readBmpImage(const std::filesystem::path& path, Image& image) {
             const std::size_t sourceIndex = static_cast<std::size_t>(sourceY) * rowStride +
                                             static_cast<std::size_t>(x) * channels;
             const std::size_t targetIndex = (static_cast<std::size_t>(y) * width + x) * 4;
-            image.rgba[targetIndex + 0] = source[sourceIndex + 2];
-            image.rgba[targetIndex + 1] = source[sourceIndex + 1];
-            image.rgba[targetIndex + 2] = source[sourceIndex + 0];
-            image.rgba[targetIndex + 3] = channels == 4 ? source[sourceIndex + 3] : 255;
+            if (bitsPerPixel == 8) {
+                const std::size_t paletteIndex = source[sourceIndex];
+                if (paletteIndex >= palette.size()) {
+                    return false;
+                }
+                std::copy(palette[paletteIndex].begin(), palette[paletteIndex].end(),
+                          image.rgba.begin() + static_cast<std::ptrdiff_t>(targetIndex));
+            } else {
+                image.rgba[targetIndex + 0] = source[sourceIndex + 2];
+                image.rgba[targetIndex + 1] = source[sourceIndex + 1];
+                image.rgba[targetIndex + 2] = source[sourceIndex + 0];
+                image.rgba[targetIndex + 3] = channels == 4 ? source[sourceIndex + 3] : 255;
+            }
         }
     }
-    gameLog.Log("Successfully read image with width: " + std::to_string(image.width) +
-                " and height: " + std::to_string(image.height));
     return true;
 }
 
@@ -553,6 +597,16 @@ bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
         gameLog.Log("Reading image from path: " + path.string());
     }
     const std::string extension = lower(path.extension().string());
+    if (extension == ".dds") {
+        std::ifstream signature(path, std::ios::binary);
+        std::array<char, 2> magic = {};
+        signature.read(magic.data(), static_cast<std::streamsize>(magic.size()));
+        // Some OMSI add-ons ship palettized BMP data with a .dds extension.
+        // Detect the file contents before choosing a decoder based on its name.
+        if (signature && magic[0] == 'B' && magic[1] == 'M') {
+            return readBmpImage(path, image);
+        }
+    }
     if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".bmp") {
         if (readStbImage(path, image)) {
             return true;

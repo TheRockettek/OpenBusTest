@@ -487,6 +487,7 @@ struct MapRenderer::Impl {
         double boundingRadius = 0.0;
         int tileX = 0;
         int tileY = 0;
+        std::size_t sceneryLodIndex = 0;
     };
 
     struct SceneryInstance {
@@ -500,6 +501,7 @@ struct MapRenderer::Impl {
         std::array<double, 9> orientationMatrix = {};
         bool hasOrientationMatrix = false;
         std::size_t scriptStateIndex = std::numeric_limits<std::size_t>::max();
+        std::size_t lodThresholdSetIndex = 0;
         int sourceTileX = 0;
         int sourceTileY = 0;
     };
@@ -536,6 +538,7 @@ struct MapRenderer::Impl {
     GLuint texture = 0;
     std::vector<TileBuffer> terrainBuffers;
     std::vector<ModelBatch> sceneryBatches;
+    std::vector<std::vector<double>> sceneryLodThresholdSets;
     std::vector<std::unique_ptr<SceneryScriptState>> sceneryScriptStates;
     std::vector<std::size_t> activeSceneryScriptStateIndices;
     std::size_t sceneryScriptRuntimeCount = 0;
@@ -846,6 +849,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     };
 
     std::unordered_map<std::string, std::vector<std::size_t>> sceneryAssetBatches;
+    std::unordered_map<std::string, std::size_t> sceneryLodThresholdSetByAsset;
     std::unordered_map<std::string, std::vector<ModelAttachmentPoint>> sceneryAttachmentPoints;
     std::unordered_map<std::string, VehicleConfig> sceneryScriptConfigurations;
     std::unordered_map<std::string, std::vector<ModelScriptTexture>> sceneryModelScriptTextures;
@@ -963,6 +967,9 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
             openbus::scripting::SceneryObject variables;
             const ModelConfig configuration = loadModelConfig(
                 modelConfigPath, modelRoot, ModelConfigKind::SceneryObject, variables);
+            const std::size_t lodThresholdSetIndex = impl_->sceneryLodThresholdSets.size();
+            impl_->sceneryLodThresholdSets.push_back(configuration.lodThresholds);
+            sceneryLodThresholdSetByAsset.emplace(cacheKey, lodThresholdSetIndex);
             for (const auto& [name, value] : variables.numericValues()) {
                 static_cast<void>(value);
                 sceneryModelFloatVariables[cacheKey].push_back(name);
@@ -999,12 +1006,6 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     if (state.scriptTextureIndex >= 0 || state.textTextureIndex >= 0) {
                         sceneryAssetsNeedingVariables.insert(cacheKey);
                     }
-                }
-                if (part.lodIndex > 0) {
-                    recordSkipped(skipped, "scenery model parts in nonzero LODs (unsupported)",
-                                  modelConfigPath.filename().string() + " " +
-                                      part.objPath.generic_string());
-                    continue;
                 }
                 if (part.objPath.empty()) {
                     recordSkipped(skipped, "scenery model parts with no resolved mesh path",
@@ -1182,6 +1183,8 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     Impl::ModelBatch batch;
                     batch.vertexCount = vertices.size();
                     batch.boundingRadius = vertexBoundingRadius(vertices);
+                    batch.sceneryLodIndex =
+                        part.lodIndex < 0 ? 0U : static_cast<std::size_t>(part.lodIndex);
                     batch.material = material;
                     if (state != nullptr) {
                         batch.scriptTextureIndex = state->scriptTextureIndex;
@@ -1303,6 +1306,8 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     std::unordered_map<int, IndexedSceneryObject> sceneryObjectsById;
     std::unordered_map<int, IndexedAttachedObject> attachedObjectsById;
     std::unordered_map<int, std::size_t> splineAttachmentTileById;
+    std::unordered_map<int, openbus::map::MapSplinePlacementReference> mapSplinesById;
+    std::unordered_set<int> ambiguousMapSplineIds;
     std::unordered_map<std::uint64_t, std::unordered_set<int>> editorObjectNumbersByTile;
     openbus::map::MapRoadConnectionIndex roadConnections;
     for (std::size_t tileReferenceIndex = 0; tileReferenceIndex < map.tiles.size();
@@ -1314,6 +1319,16 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
             roadConnections.addSpline(spline, tileReference.x, tileReference.y,
                                       spline.geometryValid ? splineCantWidth(spline)
                                                            : std::nullopt);
+            if (spline.splineId != 0 && !ambiguousMapSplineIds.contains(spline.splineId)) {
+                const auto [existing, inserted] = mapSplinesById.try_emplace(
+                    spline.splineId,
+                    openbus::map::MapSplinePlacementReference{spline, tileReference.x,
+                                                              tileReference.y});
+                if (!inserted) {
+                    mapSplinesById.erase(existing);
+                    ambiguousMapSplineIds.insert(spline.splineId);
+                }
+            }
         }
         for (const openbus::map::MapSceneryPlacement& object : tile.sceneryObjects) {
             IndexedSceneryObject indexed;
@@ -1361,6 +1376,16 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
             }
         }
     }
+
+    const openbus::map::MapSplineChainResolver mapSplineResolver =
+        [&mapSplinesById](int splineId)
+        -> std::optional<openbus::map::MapSplinePlacementReference> {
+        const auto found = mapSplinesById.find(splineId);
+        if (found == mapSplinesById.end()) {
+            return std::nullopt;
+        }
+        return found->second;
+    };
 
     struct ResolvedSceneryPlacement {
         std::string assetPath;
@@ -1499,7 +1524,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
         const std::optional<openbus::map::MapSceneryPose> parentPose =
             openbus::map::placeMapSplineAttachmentParent(
                 *record, parentTile->second.splines, parentTile->second.reference.x,
-                parentTile->second.reference.y, splineCantWidth);
+                parentTile->second.reference.y, mapSplineResolver, splineCantWidth);
         if (!parentPose.has_value()) {
             return std::nullopt;
         }
@@ -1625,6 +1650,13 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                 return;
             }
             const std::string assetKey = configPath.lexically_normal().generic_string();
+            auto lodSet = sceneryLodThresholdSetByAsset.find(assetKey);
+            if (lodSet == sceneryLodThresholdSetByAsset.end()) {
+                const std::size_t index = impl_->sceneryLodThresholdSets.size();
+                impl_->sceneryLodThresholdSets.emplace_back();
+                lodSet = sceneryLodThresholdSetByAsset.emplace(assetKey, index).first;
+            }
+            const std::size_t lodThresholdSetIndex = lodSet->second;
             std::size_t scriptStateIndex = std::numeric_limits<std::size_t>::max();
             if (sceneryAssetsNeedingVariables.contains(assetKey)) {
                 auto scriptState = std::make_unique<Impl::SceneryScriptState>();
@@ -1684,6 +1716,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                 instance.rotationDegrees = rotationDegrees;
                 instance.rotationCount = rotationCount;
                 instance.scriptStateIndex = scriptStateIndex;
+                instance.lodThresholdSetIndex = lodThresholdSetIndex;
                 instance.sourceTileX = tileX;
                 instance.sourceTileY = tileY;
                 if (orientationMatrix != nullptr) {
@@ -1769,7 +1802,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
             }
             const std::vector<openbus::map::MapSceneryPose> poses =
                 openbus::map::placeMapSplineAttachment(attachment, tile.splines, tileX, tileY,
-                                                       splineCantWidth);
+                                                       mapSplineResolver, splineCantWidth);
             if (poses.empty()) {
                 recordSkipped(skipped, "spline attachment records with no local placement",
                               description);
@@ -2070,6 +2103,7 @@ void MapRenderer::draw() const {
     const MapFrustum frustum = buildMapFrustum(projectionMatrix());
     const double cameraX = -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]);
     const double cameraY = -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]);
+    const double cameraZ = -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14]);
     const auto outsideVisibilityBounds = [&](double minX, double minY, double maxX, double maxY) {
         return squaredDistanceToBounds(cameraX, cameraY, minX, minY, maxX, maxY) >
                MAP_VISIBILITY_RADIUS_SQUARED;
@@ -2170,7 +2204,8 @@ void MapRenderer::draw() const {
                                     minY + openbus::map::OMSI_TILE_SIZE_METERS)) {
             continue;
         }
-        if (outsideFrustumBounds(minX, minY, tile.minZ, minX + openbus::map::OMSI_TILE_SIZE_METERS,
+        if (outsideFrustumBounds(minX, minY, tile.minZ,
+                                 minX + openbus::map::OMSI_TILE_SIZE_METERS,
                                  minY + openbus::map::OMSI_TILE_SIZE_METERS, tile.maxZ)) {
             continue;
         }
@@ -2199,8 +2234,9 @@ void MapRenderer::draw() const {
             outsideVisibilityBounds(road.minX, road.minY, road.maxX, road.maxY)) {
             continue;
         }
-        if (road.hasVisibilityBounds && outsideFrustumBounds(road.minX, road.minY, road.minZ,
-                                                             road.maxX, road.maxY, road.maxZ)) {
+        if (road.hasVisibilityBounds &&
+            outsideFrustumBounds(road.minX, road.minY, road.minZ, road.maxX, road.maxY,
+                                 road.maxZ)) {
             continue;
         }
         drawIndexedModelBatch(road.buffer, road.indexBuffer, road.indexCount, road.material,
@@ -2226,6 +2262,17 @@ void MapRenderer::draw() const {
                 continue;
             }
             const Impl::ModelBatch& batch = impl_->sceneryBatches[instance.batchIndex];
+            const std::vector<double>* lodThresholds =
+                instance.lodThresholdSetIndex < impl_->sceneryLodThresholdSets.size()
+                    ? &impl_->sceneryLodThresholdSets[instance.lodThresholdSetIndex]
+                    : nullptr;
+            static const std::vector<double> noLodThresholds;
+            const std::size_t selectedLod = openbus::map::selectMapSceneryLod(
+                lodThresholds != nullptr ? *lodThresholds : noLodThresholds,
+                std::hypot(instance.x - cameraX, instance.y - cameraY, instance.z - cameraZ));
+            if (batch.sceneryLodIndex != selectedLod) {
+                continue;
+            }
             if (!batch.visibilityVariable.empty()) {
                 const bool hasScriptState =
                     instance.scriptStateIndex < impl_->sceneryScriptStates.size();

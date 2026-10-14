@@ -54,6 +54,19 @@ openbus::map::MapSplineAttachment row(int splineIndex, double lateral, double he
 void runProbe() {
     using namespace openbus::map;
 
+    const std::vector<double> sceneryLodThresholds = {1.0, 0.25, 0.1};
+    require(selectMapSceneryLod(sceneryLodThresholds, 24.9) == 0 &&
+                selectMapSceneryLod(sceneryLodThresholds, 25.0) == 0 &&
+                selectMapSceneryLod(sceneryLodThresholds, 25.1) == 1 &&
+                selectMapSceneryLod(sceneryLodThresholds, 100.0) == 1 &&
+                selectMapSceneryLod(sceneryLodThresholds, 100.1) == 2 &&
+                selectMapSceneryLod(sceneryLodThresholds, 251.0) == 2,
+            "scenery LOD uses the same threshold mapping as vehicle models");
+    require(selectMapSceneryLod({}, 250.0) == 0 &&
+                selectMapSceneryLod(sceneryLodThresholds,
+                                    std::numeric_limits<double>::infinity()) == 0,
+            "empty and invalid-distance LOD selection safely falls back to level zero");
+
     MapSceneryPlacement ordinaryObject;
     ordinaryObject.localPosition = {12.5, -3.25, 4.75};
     ordinaryObject.rotationDegrees = {17.0, -23.0, 41.0};
@@ -260,6 +273,36 @@ void runProbe() {
     requireNear(chained[0].y, 5.0, 1e-9, "first row object lies on master spline");
     requireNear(chained[1].y, 15.0, 1e-9, "row continues on next spline");
     requireNear(chained[2].y, 25.0, 1e-9, "chain distance remains continuous");
+
+    MapSplinePlacement boundaryStart = spline(70, 0, 71, 100.0, 290.0, 0.0, 10.0);
+    MapSplinePlacement boundaryNext = spline(71, 70, 0, 100.0, 0.0, 0.0, 20.0);
+    const MapSplineChainResolver crossTileResolver =
+        [&boundaryNext](int splineId) -> std::optional<MapSplinePlacementReference> {
+        if (splineId != boundaryNext.splineId) {
+            return std::nullopt;
+        }
+        return MapSplinePlacementReference{boundaryNext, 0, 1};
+    };
+    const auto crossTileRow = placeMapSplineAttachment(
+        row(0, 0.0, 0.0, 5.0, 10.0, 10.0), {boundaryStart}, 0, 0, crossTileResolver);
+    require(crossTileRow.size() == 2,
+            "spline attachment rows continue through reciprocal cross-tile links");
+    requireNear(crossTileRow[0].y, 295.0, 1e-9,
+                "cross-tile row retains its first segment's world position");
+    requireNear(crossTileRow[1].y, 305.0, 1e-9,
+                "cross-tile row uses the linked tile's world origin");
+    const auto crossTileParent = placeMapSplineAttachmentParent(
+        row(0, 0.0, 0.0, 15.0, 0.0, 0.0), {boundaryStart}, 0, 0, crossTileResolver);
+    require(crossTileParent.has_value(),
+            "spline-generated attachment parents resolve across tile boundaries");
+    requireNear(crossTileParent->y, 305.0, 1e-9,
+                "cross-tile attachment-parent pose follows the resolved segment");
+    const MapSplineChainResolver missingCrossTileResolver =
+        [](int) -> std::optional<MapSplinePlacementReference> { return std::nullopt; };
+    require(placeMapSplineAttachment(row(0, 0.0, 0.0, 15.0, 0.0, 0.0), {boundaryStart}, 0, 0,
+                                     missingCrossTileResolver)
+                .empty(),
+            "unresolved cross-tile spline IDs do not fabricate attachment poses");
 
     MapSplinePlacement reverseStart = spline(20, 0, 21, 0.0, 0.0, 0.0, 10.0);
     MapSplinePlacement reverseSegment = spline(21, 22, 20, 0.0, 30.0, 180.0, 20.0);

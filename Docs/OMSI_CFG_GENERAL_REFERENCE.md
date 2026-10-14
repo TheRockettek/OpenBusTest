@@ -111,9 +111,11 @@ ground plane so chassis bounce and body roll do not lift or tilt the shadow.
 Do not assume the bus-model behavior above applies automatically to map
 scenery. Grande Porto `.sco` examples commonly declare `[mesh]` directly; tree
 objects may also have `[tree]` texture/size data and an editor-only helper
-mesh. OpenBus currently renders supported O3D meshes at LOD 0 and uses crossed
-textured planes for `[tree]` previews. General DirectX `.x` meshes, scenery
-scripts, mouse events, and full LOD selection are not implemented.
+mesh. OpenBus renders supported O3D and static text, binary, and MSZIP-compressed
+DirectX `.x` meshes, selects configured nonzero LODs using its vehicle distance
+mapping, and uses crossed textured planes for `[tree]` previews. Full OMSI LOD
+parity, animated/skinned X content, scenery scripts, and scenery mouse events
+remain incomplete.
 
 The scenery loader retains `[collision_mesh]`, `[boundingbox]`, and
 `[nocollision]` information, but map scenery does not yet create ODE colliders

@@ -828,7 +828,9 @@ bool initializeCoreRenderer() {
         pglUniform1f(modelUniforms.ambientLight, 0.58f);
         pglUniform1f(modelUniforms.diffuseLight, 0.42f);
         pglUniform1i(modelUniforms.texture, 0);
-        pglUniform1i(modelUniforms.textureArray, 0);
+        // sampler2D and sampler2DArray cannot alias the same unit in GLSL 3.3;
+        // OpenGL rejects every draw even when only one shader branch is active.
+        pglUniform1i(modelUniforms.textureArray, 7);
         pglUniform1i(modelUniforms.lightmap, 1);
         pglUniform1i(modelUniforms.nightmap, 2);
         pglUniform1i(modelUniforms.transmap, 3);
@@ -943,11 +945,20 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     uploadMatrices(modelUniforms);
     uploadModelUniforms(material, color, alpha, alphaMode);
     selectTextureUnit(GL_TEXTURE0);
-    const GLenum textureTarget = material.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
-    bindTexture(textureTarget, material.texture);
-    if (material.texture != 0) {
-        setTextureWrap(textureTarget, material.texture, material.textureWrapS,
-                       material.textureWrapT);
+    if (material.textureArray) {
+        selectTextureUnit(GL_TEXTURE0 + 7);
+        bindTexture(GL_TEXTURE_2D_ARRAY, material.texture);
+        if (material.texture != 0) {
+            setTextureWrap(GL_TEXTURE_2D_ARRAY, material.texture, material.textureWrapS,
+                           material.textureWrapT);
+        }
+        selectTextureUnit(GL_TEXTURE0);
+    } else {
+        bindTexture(GL_TEXTURE_2D, material.texture);
+        if (material.texture != 0) {
+            setTextureWrap(GL_TEXTURE_2D, material.texture, material.textureWrapS,
+                           material.textureWrapT);
+        }
     }
     selectTextureUnit(GL_TEXTURE1);
     bindTexture(GL_TEXTURE_2D, material.lightmap);
@@ -978,11 +989,20 @@ void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexC
     uploadMatrices(modelUniforms);
     uploadModelUniforms(material, color, alpha, alphaMode);
     selectTextureUnit(GL_TEXTURE0);
-    const GLenum textureTarget = material.textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
-    bindTexture(textureTarget, material.texture);
-    if (material.texture != 0) {
-        setTextureWrap(textureTarget, material.texture, material.textureWrapS,
-                       material.textureWrapT);
+    if (material.textureArray) {
+        selectTextureUnit(GL_TEXTURE0 + 7);
+        bindTexture(GL_TEXTURE_2D_ARRAY, material.texture);
+        if (material.texture != 0) {
+            setTextureWrap(GL_TEXTURE_2D_ARRAY, material.texture, material.textureWrapS,
+                           material.textureWrapT);
+        }
+        selectTextureUnit(GL_TEXTURE0);
+    } else {
+        bindTexture(GL_TEXTURE_2D, material.texture);
+        if (material.texture != 0) {
+            setTextureWrap(GL_TEXTURE_2D, material.texture, material.textureWrapS,
+                           material.textureWrapT);
+        }
     }
     selectTextureUnit(GL_TEXTURE1);
     bindTexture(GL_TEXTURE_2D, material.lightmap);

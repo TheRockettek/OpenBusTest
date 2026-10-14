@@ -472,14 +472,23 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
         quaternionY /= quaternionNorm;
         quaternionZ /= quaternionNorm;
         quaternionW /= quaternionNorm;
-        const double yawNumerator = 2.0 * (quaternionW * quaternionY + quaternionX * quaternionZ);
-        const double yawDenominator =
-            1.0 - 2.0 * (quaternionY * quaternionY + quaternionZ * quaternionZ);
+        // OMSI global.cfg quaternions are in the source basis (east, up, north),
+        // where forward is +Z. Rotate that forward vector, then project it into
+        // the simulation's (east, north) plane. Simulation yaw zero points east
+        // and positive yaw turns counter-clockwise toward north.
+        const double forwardEast =
+            2.0 * (quaternionX * quaternionZ + quaternionW * quaternionY);
+        const double forwardNorth =
+            1.0 - 2.0 * (quaternionX * quaternionX + quaternionY * quaternionY);
+        if (std::hypot(forwardEast, forwardNorth) <= std::numeric_limits<double>::epsilon()) {
+            throw std::runtime_error("Vertical orientation in [entrypoints] record in " +
+                                     globalPath.string());
+        }
         const MapTileReference& tile = definition.tiles[entryPoint.tileIndex];
         entryPoint.placement = {
             {static_cast<double>(tile.x) * OMSI_TILE_SIZE_METERS + localX,
              static_cast<double>(tile.y) * OMSI_TILE_SIZE_METERS + localY, elevation},
-            std::atan2(yawNumerator, yawDenominator) * 180.0 / 3.14159265358979323846};
+            std::atan2(forwardNorth, forwardEast) * 180.0 / 3.14159265358979323846};
     }
     return definition;
 }
