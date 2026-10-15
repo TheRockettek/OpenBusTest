@@ -133,6 +133,151 @@ std::array<double, 3> transformSceneryVertex(const openbus::rendering::ObjPositi
             pose.y + x2 * std::sin(az) + y2 * std::cos(az), worldZ + z2};
 }
 
+std::vector<std::array<double, 3>> clipPolygonToTile(
+    std::vector<std::array<double, 3>> polygon, int tileX, int tileY) {
+    const double minX = static_cast<double>(tileX) * OMSI_TILE_SIZE_METERS;
+    const double minY = static_cast<double>(tileY) * OMSI_TILE_SIZE_METERS;
+    const double maxX = minX + OMSI_TILE_SIZE_METERS;
+    const double maxY = minY + OMSI_TILE_SIZE_METERS;
+    const auto clip = [](const std::vector<std::array<double, 3>>& input, std::size_t axis,
+                         double boundary, bool keepGreater) {
+        std::vector<std::array<double, 3>> output;
+        if (input.empty()) {
+            return output;
+        }
+        const auto inside = [=](const std::array<double, 3>& point) {
+            return keepGreater ? point[axis] >= boundary : point[axis] <= boundary;
+        };
+        auto previous = input.back();
+        bool previousInside = inside(previous);
+        for (const auto& current : input) {
+            const bool currentInside = inside(current);
+            if (currentInside != previousInside) {
+                const double denominator = current[axis] - previous[axis];
+                if (std::abs(denominator) > 1.0e-12) {
+                    const double amount = (boundary - previous[axis]) / denominator;
+                    std::array<double, 3> intersection{};
+                    for (std::size_t component = 0; component < 3; ++component) {
+                        intersection[component] =
+                            std::lerp(previous[component], current[component], amount);
+                    }
+                    intersection[axis] = boundary;
+                    output.push_back(intersection);
+                }
+            }
+            if (currentInside) {
+                output.push_back(current);
+            }
+            previous = current;
+            previousInside = currentInside;
+        }
+        return output;
+    };
+    polygon = clip(polygon, 0, minX, true);
+    polygon = clip(polygon, 0, maxX, false);
+    polygon = clip(polygon, 1, minY, true);
+    return clip(polygon, 1, maxY, false);
+}
+
+void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
+                                   const MapSceneryCollisionIndex& index,
+                                   int tileX, int tileY,
+                                   MapRoadCollisionResult& result) {
+    const auto found = index.objectsByTile.find(tileKey(tileX, tileY));
+    if (found == index.objectsByTile.end()) {
+        return;
+    }
+    bool objectAdded = false;
+    const double minX = static_cast<double>(tileX) * OMSI_TILE_SIZE_METERS;
+    const double minY = static_cast<double>(tileY) * OMSI_TILE_SIZE_METERS;
+    const double maxX = minX + OMSI_TILE_SIZE_METERS;
+    const double maxY = minY + OMSI_TILE_SIZE_METERS;
+    for (const std::size_t objectIndex : found->second) {
+        if (objectIndex >= index.objects.size()) {
+            continue;
+        }
+        const MapSceneryCollisionObject& object = index.objects[objectIndex];
+        for (const auto& parsed : object.meshes) {
+            if (!parsed) {
+                continue;
+            }
+            std::vector<std::array<double, 3>> worldPositions;
+            worldPositions.reserve(parsed->positions.size());
+            for (const auto& vertex : parsed->positions) {
+                worldPositions.push_back(transformSceneryVertex(vertex, object.pose, object.worldZ));
+            }
+            const bool meshFitsTile = std::all_of(
+                worldPositions.begin(), worldPositions.end(), [&](const auto& point) {
+                    return point[0] >= minX && point[0] <= maxX && point[1] >= minY &&
+                           point[1] <= maxY;
+                });
+            if (meshFitsTile) {
+                const std::size_t currentVertexCount = tileMesh.vertices.size() / 3;
+                if (worldPositions.size() > MAX_VERTICES_PER_TILE - currentVertexCount ||
+                    currentVertexCount + worldPositions.size() >
+                        static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+                    ++result.sceneryCollisionMeshesMissing;
+                    continue;
+                }
+                const int baseVertex = static_cast<int>(currentVertexCount);
+                for (const auto& point : worldPositions) {
+                    tileMesh.vertices.insert(tileMesh.vertices.end(),
+                                             {point[0], point[1], point[2]});
+                }
+                for (const auto& triangle : parsed->triangles) {
+                    for (const std::size_t corner : {0U, 2U, 1U}) {
+                        const auto& vertex = triangle.indices[corner];
+                        if (vertex.position > 0 &&
+                            static_cast<std::size_t>(vertex.position) <= worldPositions.size()) {
+                            tileMesh.indices.push_back(baseVertex + vertex.position - 1);
+                        }
+                    }
+                }
+                objectAdded = true;
+                continue;
+            }
+            for (const auto& triangle : parsed->triangles) {
+                std::vector<std::array<double, 3>> polygon;
+                polygon.reserve(3);
+                for (const std::size_t corner : {0U, 2U, 1U}) {
+                    const auto& vertex = triangle.indices[corner];
+                    if (vertex.position <= 0 ||
+                        static_cast<std::size_t>(vertex.position) > worldPositions.size()) {
+                        polygon.clear();
+                        break;
+                    }
+                    polygon.push_back(worldPositions[static_cast<std::size_t>(vertex.position - 1)]);
+                }
+                polygon = clipPolygonToTile(std::move(polygon), tileX, tileY);
+                if (polygon.size() < 3) {
+                    continue;
+                }
+                for (std::size_t corner = 1; corner + 1 < polygon.size(); ++corner) {
+                    const std::size_t currentVertexCount = tileMesh.vertices.size() / 3;
+                    if (currentVertexCount + 3 > MAX_VERTICES_PER_TILE ||
+                        currentVertexCount + 3 >
+                            static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+                        ++result.sceneryCollisionMeshesMissing;
+                        break;
+                    }
+                    const int baseVertex = static_cast<int>(currentVertexCount);
+                    for (const auto& point : {polygon[0], polygon[corner], polygon[corner + 1]}) {
+                        tileMesh.vertices.insert(tileMesh.vertices.end(),
+                                                 {point[0], point[1], point[2]});
+                    }
+                    tileMesh.indices.insert(tileMesh.indices.end(),
+                                            {baseVertex, baseVertex + 1, baseVertex + 2});
+                    objectAdded = true;
+                }
+            }
+        }
+        if (objectAdded) {
+            ++result.sceneryCollisionObjectsAdded;
+            objectAdded = false;
+        }
+    }
+}
+
 std::vector<std::filesystem::path>
 readSceneryCollisionMeshes(const std::filesystem::path& configPath,
                            const std::filesystem::path& omsiRoot,
@@ -192,14 +337,144 @@ readSceneryCollisionMeshes(const std::filesystem::path& configPath,
 
 } // namespace
 
+std::shared_ptr<const MapSceneryCollisionIndex>
+buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::path& omsiRoot) {
+    struct ConfigCollision {
+        std::vector<std::filesystem::path> paths;
+        bool noCollision = false;
+        bool onlyEditor = false;
+        bool absoluteHeight = false;
+    };
+    auto index = std::make_shared<MapSceneryCollisionIndex>();
+    std::unordered_map<std::string, ConfigCollision> configCache;
+    std::unordered_map<std::string, std::shared_ptr<openbus::rendering::ParsedObj>> meshCache;
+    std::unordered_map<std::string, std::array<double, 6>> meshLocalBoundsCache;
+    std::unordered_map<std::uint64_t, TerrainGrid> terrainCache;
+    std::unordered_set<std::uint64_t> mapTileKeys;
+    mapTileKeys.reserve(map.tiles.size());
+    for (const MapTileReference& tile : map.tiles) {
+        mapTileKeys.insert(tileKey(tile.x, tile.y));
+    }
+
+    for (const MapTileReference& tileReference : map.tiles) {
+        MapTileData tile;
+        try {
+            tile = loadMapTile(tileReference);
+        } catch (const std::exception&) {
+            continue;
+        }
+        for (const MapSceneryPlacement& placement : tile.sceneryObjects) {
+            if (!placement.transformValid) {
+                continue;
+            }
+            const std::optional<MapSceneryPose> pose =
+                placeMapSceneryObject(placement, tileReference.x, tileReference.y);
+            if (!pose) {
+                continue;
+            }
+            const std::filesystem::path configPath = resolveAsset(
+                normalizedAssetPath(placement.assetPath), map.rootPath, omsiRoot, map.rootPath);
+            if (configPath.empty()) {
+                continue;
+            }
+            const std::string configKey = configPath.lexically_normal().generic_string();
+            auto config = configCache.find(configKey);
+            if (config == configCache.end()) {
+                ConfigCollision collision;
+                collision.paths = readSceneryCollisionMeshes(
+                    configPath, omsiRoot, map.rootPath, collision.noCollision,
+                    collision.onlyEditor, collision.absoluteHeight);
+                config = configCache.emplace(configKey, std::move(collision)).first;
+            }
+            const ConfigCollision& collision = config->second;
+            if (collision.noCollision || collision.onlyEditor || collision.paths.empty()) {
+                continue;
+            }
+
+            MapSceneryCollisionObject object;
+            object.pose = *pose;
+            const double ground = collision.absoluteHeight
+                                      ? 0.0
+                                      : sampleTerrainHeight(map, pose->x, pose->y, terrainCache);
+            object.worldZ = mapSceneryWorldHeight(pose->z, ground, collision.absoluteHeight);
+            object.minX = object.minY = std::numeric_limits<double>::max();
+            object.maxX = object.maxY = std::numeric_limits<double>::lowest();
+            for (const std::filesystem::path& meshPath : collision.paths) {
+                const std::string meshKey = meshPath.lexically_normal().generic_string();
+                auto mesh = meshCache.find(meshKey);
+                if (mesh == meshCache.end()) {
+                    try {
+                        mesh = meshCache.emplace(meshKey,
+                                                 openbus::rendering::O3DLoader::parse(meshPath))
+                                   .first;
+                    } catch (const std::exception&) {
+                        mesh = meshCache.emplace(meshKey, nullptr).first;
+                    }
+                }
+                if (!mesh->second || mesh->second->triangles.empty()) {
+                    continue;
+                }
+                object.meshes.push_back(mesh->second);
+                auto bounds = meshLocalBoundsCache.find(meshKey);
+                if (bounds == meshLocalBoundsCache.end()) {
+                    std::array<double, 6> localBounds = {
+                        std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
+                        std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest(),
+                        std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
+                    for (const auto& vertex : mesh->second->positions) {
+                        localBounds[0] = std::min(localBounds[0], vertex.x);
+                        localBounds[1] = std::min(localBounds[1], vertex.y);
+                        localBounds[2] = std::min(localBounds[2], vertex.z);
+                        localBounds[3] = std::max(localBounds[3], vertex.x);
+                        localBounds[4] = std::max(localBounds[4], vertex.y);
+                        localBounds[5] = std::max(localBounds[5], vertex.z);
+                    }
+                    bounds = meshLocalBoundsCache.emplace(meshKey, localBounds).first;
+                }
+                const auto& localBounds = bounds->second;
+                for (int corner = 0; corner < 8; ++corner) {
+                    const openbus::rendering::ObjPosition vertex{
+                        (corner & 1) == 0 ? localBounds[0] : localBounds[3],
+                        (corner & 2) == 0 ? localBounds[1] : localBounds[4],
+                        (corner & 4) == 0 ? localBounds[2] : localBounds[5]};
+                    const auto world = transformSceneryVertex(vertex, object.pose, object.worldZ);
+                    object.minX = std::min(object.minX, world[0]);
+                    object.minY = std::min(object.minY, world[1]);
+                    object.maxX = std::max(object.maxX, world[0]);
+                    object.maxY = std::max(object.maxY, world[1]);
+                }
+            }
+            if (object.meshes.empty()) {
+                continue;
+            }
+            const std::size_t objectIndex = index->objects.size();
+            index->objects.push_back(std::move(object));
+            const MapSceneryCollisionObject& stored = index->objects.back();
+            const int minTileX = static_cast<int>(std::floor(stored.minX / OMSI_TILE_SIZE_METERS));
+            const int minTileY = static_cast<int>(std::floor(stored.minY / OMSI_TILE_SIZE_METERS));
+            const int maxTileX = static_cast<int>(std::floor(stored.maxX / OMSI_TILE_SIZE_METERS));
+            const int maxTileY = static_cast<int>(std::floor(stored.maxY / OMSI_TILE_SIZE_METERS));
+            for (int tileY = minTileY; tileY <= maxTileY; ++tileY) {
+                for (int tileX = minTileX; tileX <= maxTileX; ++tileX) {
+                    const std::uint64_t key = tileKey(tileX, tileY);
+                    if (mapTileKeys.contains(key)) {
+                        index->objectsByTile[key].push_back(objectIndex);
+                    }
+                }
+            }
+        }
+    }
+    return index;
+}
+
 static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map,
                                                         const std::filesystem::path& omsiRoot,
                                                         const MapTileReference* selectedTile,
-                                                        const MapRoadConnectionIndex& connections) {
+                                                        const MapRoadConnectionIndex& connections,
+                                                        const MapSceneryCollisionIndex& scenery) {
     MapRoadCollisionResult result;
     std::unordered_map<std::string, MapSplineProfile> profiles;
     std::unordered_set<std::string> failedProfiles;
-    std::unordered_map<std::uint64_t, TerrainGrid> terrainCache;
 
     for (const MapTileReference& tileReference : map.tiles) {
         if (selectedTile != nullptr &&
@@ -296,72 +571,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
             }
         }
 
-        for (const MapSceneryPlacement& object : tile.sceneryObjects) {
-            if (!object.transformValid) {
-                continue;
-            }
-            const std::optional<MapSceneryPose> pose =
-                placeMapSceneryObject(object, tileReference.x, tileReference.y);
-            if (!pose) {
-                continue;
-            }
-            const std::filesystem::path configPath = resolveAsset(
-                normalizedAssetPath(object.assetPath), map.rootPath, omsiRoot, map.rootPath);
-            if (configPath.empty()) {
-                continue;
-            }
-            bool noCollision = false;
-            bool onlyEditor = false;
-            bool absoluteHeight = false;
-            const std::vector<std::filesystem::path> collisionPaths = readSceneryCollisionMeshes(
-                configPath, omsiRoot, map.rootPath, noCollision, onlyEditor, absoluteHeight);
-            if (noCollision || onlyEditor || collisionPaths.empty()) {
-                continue;
-            }
-            const double ground =
-                absoluteHeight ? 0.0 : sampleTerrainHeight(map, pose->x, pose->y, terrainCache);
-            const double worldZ = mapSceneryWorldHeight(pose->z, ground, absoluteHeight);
-            bool objectAdded = false;
-            for (const std::filesystem::path& collisionPath : collisionPaths) {
-                const std::shared_ptr<openbus::rendering::ParsedObj> parsed =
-                    openbus::rendering::O3DLoader::parse(collisionPath);
-                if (!parsed || parsed->triangles.empty()) {
-                    ++result.sceneryCollisionMeshesMissing;
-                    continue;
-                }
-                const std::size_t currentVertexCount = tileMesh.vertices.size() / 3;
-                if (parsed->positions.size() > MAX_VERTICES_PER_TILE - currentVertexCount ||
-                    currentVertexCount + parsed->positions.size() >
-                        static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-                    ++result.skippedSplines;
-                    continue;
-                }
-                const int baseVertex = static_cast<int>(currentVertexCount);
-                for (const openbus::rendering::ObjPosition& vertex : parsed->positions) {
-                    const auto world = transformSceneryVertex(vertex, *pose, worldZ);
-                    tileMesh.vertices.insert(tileMesh.vertices.end(),
-                                             {world[0], world[1], world[2]});
-                }
-                for (const openbus::rendering::ObjTriangle& triangle : parsed->triangles) {
-                    // O3DLoader maps the file's right/up/forward basis to
-                    // east/north/up with (x, y, z) -> (x, z, y), which flips
-                    // handedness. Reverse each face so ODE receives the same
-                    // upward-facing surface orientation as the map renderer.
-                    for (const std::size_t corner : {0U, 2U, 1U}) {
-                        const openbus::rendering::ObjIndex& index = triangle.indices[corner];
-                        if (index.position <= 0 ||
-                            static_cast<std::size_t>(index.position) > parsed->positions.size()) {
-                            continue;
-                        }
-                        tileMesh.indices.push_back(baseVertex + index.position - 1);
-                    }
-                    objectAdded = true;
-                }
-            }
-            if (objectAdded) {
-                ++result.sceneryCollisionObjectsAdded;
-            }
-        }
+        appendSceneryCollisionForTile(tileMesh, scenery, tileReference.x, tileReference.y, result);
         if (!tileMesh.indices.empty()) {
             result.meshes.push_back(std::move(tileMesh));
         }
@@ -371,25 +581,32 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
 
 MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
                                              const std::filesystem::path& omsiRoot) {
+    const std::shared_ptr<const MapSceneryCollisionIndex> scenery =
+        buildMapSceneryCollisionIndex(map, omsiRoot);
     const auto connections = loadMapRoadConnections(map, omsiRoot);
-    return buildMapRoadCollisionImpl(map, omsiRoot, nullptr, connections);
+    return buildMapRoadCollisionImpl(map, omsiRoot, nullptr, connections, *scenery);
 }
 
 MapRoadCollisionResult buildMapRoadCollisionTile(const MapDefinition& map,
                                                  const std::filesystem::path& omsiRoot, int tileX,
                                                  int tileY,
-                                                 const MapRoadConnectionIndex* connections) {
+                                                 const MapRoadConnectionIndex* connections,
+                                                 const MapSceneryCollisionIndex* scenery) {
     const auto tile = std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& reference) {
         return reference.x == tileX && reference.y == tileY;
     });
     if (tile == map.tiles.end()) {
         return {};
     }
-    if (connections != nullptr) {
-        return buildMapRoadCollisionImpl(map, omsiRoot, &*tile, *connections);
-    }
-    const auto ownedConnections = loadMapRoadConnections(map, omsiRoot);
-    return buildMapRoadCollisionImpl(map, omsiRoot, &*tile, ownedConnections);
+    const auto ownedScenery = scenery == nullptr ? buildMapSceneryCollisionIndex(map, omsiRoot)
+                                                 : std::shared_ptr<const MapSceneryCollisionIndex>{};
+    const auto ownedConnections = connections == nullptr
+                                      ? std::optional<MapRoadConnectionIndex>(
+                                            loadMapRoadConnections(map, omsiRoot))
+                                      : std::nullopt;
+    return buildMapRoadCollisionImpl(map, omsiRoot, &*tile,
+                                     connections == nullptr ? *ownedConnections : *connections,
+                                     scenery == nullptr ? *ownedScenery : *scenery);
 }
 
 MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map,

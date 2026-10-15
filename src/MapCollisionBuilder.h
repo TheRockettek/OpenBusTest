@@ -2,10 +2,15 @@
 
 #include "BusTypes.h"
 #include "MapConfigLoader.h"
+#include "MapSceneryPlacement.h"
 #include "MapRoadGeometry.h"
+#include "O3DLoader.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace openbus::map {
@@ -20,6 +25,26 @@ struct MapRoadCollisionResult {
     std::size_t skippedSplines = 0;
 };
 
+struct MapSceneryCollisionObject {
+    MapSceneryPose pose;
+    double worldZ = 0.0;
+    double minX = 0.0;
+    double minY = 0.0;
+    double maxX = 0.0;
+    double maxY = 0.0;
+    std::vector<std::shared_ptr<openbus::rendering::ParsedObj>> meshes;
+};
+
+// Parsed once for streamed collision tiles. Large scenery meshes (bridges and custom
+// junctions) are indexed into every tile their collision bounds overlap.
+struct MapSceneryCollisionIndex {
+    std::vector<MapSceneryCollisionObject> objects;
+    std::unordered_map<std::uint64_t, std::vector<std::size_t>> objectsByTile;
+};
+
+std::shared_ptr<const MapSceneryCollisionIndex>
+buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::path& omsiRoot);
+
 // Builds map collision from road-profile strips and authored SCO/model [collision_mesh]
 // scenery throughout the selected map, partitioned into per-tile ODE mesh inputs.
 MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
@@ -28,7 +53,8 @@ MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
 MapRoadCollisionResult
 buildMapRoadCollisionTile(const MapDefinition& map, const std::filesystem::path& omsiRoot,
                           int tileX, int tileY,
-                          const MapRoadConnectionIndex* connections = nullptr);
+                          const MapRoadConnectionIndex* connections = nullptr,
+                          const MapSceneryCollisionIndex* scenery = nullptr);
 
 // Metadata only, independent of geometry residency. Streaming workers retain this once per map.
 // Resolve profile cant widths before finalizing joins; unavailable widths retain legacy cant.

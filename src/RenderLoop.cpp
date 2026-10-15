@@ -4668,7 +4668,9 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
     const double previousFovOffset = fieldOfViewOffset_;
     const double previousLookYaw = viewLookYaw_;
     const double previousLookPitch = viewLookPitch_;
+    bool reflectionTrianglesReset = false;
     renderingReflection_ = true;
+    openbus::rendering::setFrameTriangleCountReflectionPass(true);
     reflectionRenderer_->render(
         simulation, vehicleCameras_, viewport_,
         [this](std::size_t reflectionIndex) {
@@ -4682,8 +4684,12 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
             }
             return result;
         },
-        [this](const BusSimulation& reflectionSimulation, std::size_t cameraIndex, int width,
-               int height) {
+        [this, &reflectionTrianglesReset](const BusSimulation& reflectionSimulation,
+                          std::size_t cameraIndex, int width, int height) {
+            if (!reflectionTrianglesReset) {
+                openbus::rendering::resetFrameReflectionTriangleCount();
+                reflectionTrianglesReset = true;
+            }
             framebufferWidth_ = std::max(width, 1);
             framebufferHeight_ = std::max(height, 1);
             cameraView_ = static_cast<int>(cameraIndex + 1);
@@ -4705,6 +4711,7 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
             setPerspective(static_cast<double>(width), static_cast<double>(height),
                            currentFieldOfView());
         });
+    openbus::rendering::setFrameTriangleCountReflectionPass(false);
     renderingReflection_ = false;
 }
 
@@ -5547,7 +5554,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             collisionWireframeRevision_ = collisionRevision;
             gameLog.Log("Collision wireframe cached: " + std::to_string(triangleCount) +
                         " triangles across " + std::to_string(meshes.size()) +
-                        " active terrain/road meshes");
+                        " active terrain/road/scenery meshes");
         }
 
         const GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
@@ -5653,7 +5660,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         std::ostringstream title;
         title << "OpenBus - " << speedMph << " mph / " << speedKmh << " km/h - Throttle "
               << throttlePercent << "% - Brake " << brakePercent << "% - "
-              << openbus::rendering::frameTriangleCount() << " triangles/frame - "
+              << openbus::rendering::frameTriangleCount() << " main + "
+              << openbus::rendering::frameReflectionTriangleCount()
+              << " reflection triangles/refresh - "
               << std::fixed << std::setprecision(1) << displayedFps_ << " FPS";
         glfwSetWindowTitle(window_, title.str().c_str());
           lastStatsTitleTime_ = titleUpdateTime;

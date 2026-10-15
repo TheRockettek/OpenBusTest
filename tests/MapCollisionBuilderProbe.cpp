@@ -78,6 +78,37 @@ void writeJunctionO3D(const std::filesystem::path& path) {
     writeU16(output, 0);
 }
 
+void writeLongBridgeO3D(const std::filesystem::path& path) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary);
+    if (!output) {
+        throw std::runtime_error("failed to write long bridge O3D fixture");
+    }
+    output.put(static_cast<char>(0x84));
+    output.put(static_cast<char>(0x19));
+    output.put(static_cast<char>(3));
+    output.put(static_cast<char>(0x17));
+    writeU16(output, 3);
+    const std::array<std::array<float, 3>, 3> positions = {
+        std::array<float, 3>{50.0F, 0.0F, 50.0F},
+        std::array<float, 3>{650.0F, 0.0F, 50.0F},
+        std::array<float, 3>{50.0F, 0.0F, 250.0F}};
+    for (const auto& position : positions) {
+        for (float value : position) {
+            writeF32(output, value);
+        }
+        for (int value = 0; value < 5; ++value) {
+            writeF32(output, value == 2 ? 1.0F : 0.0F);
+        }
+    }
+    output.put(static_cast<char>(0x49));
+    writeU16(output, 1);
+    writeU16(output, 0);
+    writeU16(output, 2);
+    writeU16(output, 1);
+    writeU16(output, 0);
+}
+
 std::string splineMapText() {
     return "[version]\n12\n[terrain]\n[spline]\n"
            "test spline\n"
@@ -330,6 +361,43 @@ void runProbe() {
                        mesh.vertices[static_cast<std::size_t>(first) * 3 + 1];
         require(firstEdgeX * secondEdgeY - firstEdgeY * secondEdgeX > 0.0,
             "ODE road triangle winding produces upward-facing normals");
+
+        const std::filesystem::path longRoot = root / "long_bridge";
+        const std::filesystem::path longMapRoot = longRoot / "map";
+        const std::filesystem::path longOmsiRoot = longRoot / "omsi";
+        using namespace openbus::map;
+        MapDefinition longMap;
+        longMap.rootPath = longMapRoot;
+        for (int tileX = 0; tileX < 3; ++tileX) {
+            MapTileReference tile;
+            tile.x = tileX;
+            tile.textPath = longMapRoot / ("tile_" + std::to_string(tileX) + "_0.map");
+            writeText(tile.textPath, "[version]\n14\n[terrain]\n");
+            longMap.tiles.push_back(std::move(tile));
+        }
+        writeText(longMap.tiles[0].textPath,
+                  "[version]\n14\n[terrain]\n[object]\n0\n"
+                  "Sceneryobjects\\Test\\Bridge.sco\n1\n10\n10\n0\n0\n0\n0\n0\n");
+        writeText(longOmsiRoot / "Sceneryobjects" / "Test" / "Bridge.sco",
+                  "[model]\nbridge.cfg\n[absheight]\n");
+        writeText(longOmsiRoot / "Sceneryobjects" / "Test" / "bridge.cfg",
+                  "[collision_mesh]\nbridge.o3d\n");
+        writeLongBridgeO3D(longOmsiRoot / "Sceneryobjects" / "Test" / "bridge.o3d");
+        const auto longScenery = buildMapSceneryCollisionIndex(longMap, longOmsiRoot);
+        require(longScenery->objectsByTile.contains((std::uint64_t{1} << 32U) | 0U) &&
+                    longScenery->objectsByTile.contains((std::uint64_t{2} << 32U) | 0U),
+                "long bridge collision is indexed into every tile crossed by its mesh");
+        const auto bridgeTile = buildMapRoadCollisionTile(longMap, longOmsiRoot, 1, 0, nullptr,
+                                                           longScenery.get());
+        require(bridgeTile.meshes.size() == 1 && !bridgeTile.meshes[0].indices.empty(),
+                "streamed collision tile receives the bridge surface beyond its placement tile");
+        for (std::size_t vertex = 0; vertex + 2 < bridgeTile.meshes[0].vertices.size(); vertex += 3) {
+            require(bridgeTile.meshes[0].vertices[vertex] >= 300.0 - 1.0e-8 &&
+                        bridgeTile.meshes[0].vertices[vertex] <= 600.0 + 1.0e-8 &&
+                        bridgeTile.meshes[0].vertices[vertex + 1] >= -1.0e-8 &&
+                        bridgeTile.meshes[0].vertices[vertex + 1] <= 300.0 + 1.0e-8,
+                    "streamed bridge collision triangles are clipped to their owning tile");
+        }
 
     std::filesystem::remove_all(root);
 }

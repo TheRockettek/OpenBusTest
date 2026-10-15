@@ -18,6 +18,8 @@ constexpr GLsizei MODEL_VERTEX_STRIDE = static_cast<GLsizei>(9 * sizeof(float));
 constexpr std::size_t MAX_MATERIAL_TEXTURES = 8;
 constexpr std::size_t MAX_TEXTURE_UNITS = 16;
 std::size_t submittedFrameTriangleCount = 0;
+std::size_t submittedReflectionTriangleCount = 0;
+bool reflectionTrianglePass = false;
 
 std::size_t trianglesForPrimitive(GLenum primitive, std::size_t vertexCount) {
     switch (primitive) {
@@ -37,7 +39,11 @@ std::size_t trianglesForPrimitive(GLenum primitive, std::size_t vertexCount) {
 }
 
 void recordTriangleSubmission(std::size_t triangles) {
-    submittedFrameTriangleCount += triangles;
+    if (reflectionTrianglePass) {
+        submittedReflectionTriangleCount += triangles;
+    } else {
+        submittedFrameTriangleCount += triangles;
+    }
 }
 
 struct Uniforms {
@@ -781,10 +787,23 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
 
 void resetFrameTriangleCount() {
     submittedFrameTriangleCount = 0;
+    reflectionTrianglePass = false;
+}
+
+void resetFrameReflectionTriangleCount() {
+    submittedReflectionTriangleCount = 0;
 }
 
 std::size_t frameTriangleCount() {
     return submittedFrameTriangleCount;
+}
+
+std::size_t frameReflectionTriangleCount() {
+    return submittedReflectionTriangleCount;
+}
+
+void setFrameTriangleCountReflectionPass(bool reflectionPass) {
+    reflectionTrianglePass = reflectionPass;
 }
 
 bool initializeCoreRenderer() {

@@ -225,10 +225,38 @@ int main() {
             modelConfigurationOutput.flush();
         }
 
-        BusSimulation simulation(configuration, busPlacement, 60.0, 8, busPlacement.position[2], {},
-                                 {}, false);
+        const int spawnTileX = static_cast<int>(
+            std::floor(busPlacement.position[0] / openbus::map::OMSI_TILE_SIZE_METERS));
+        const int spawnTileY = static_cast<int>(
+            std::floor(busPlacement.position[1] / openbus::map::OMSI_TILE_SIZE_METERS));
+        std::vector<TerrainCollisionGrid> spawnTerrain;
+        std::vector<std::pair<int, int>> preloadedTerrainTiles;
+        for (const openbus::map::MapTileReference& tile : mapDefinition.tiles) {
+            if (!tile.hasTerrainFile || std::abs(tile.x - spawnTileX) > 2 ||
+                std::abs(tile.y - spawnTileY) > 2) {
+                continue;
+            }
+            try {
+                const openbus::map::TerrainGrid grid = openbus::map::loadTerrainGrid(tile.terrainPath);
+                spawnTerrain.push_back({tile.x, tile.y, openbus::map::OMSI_TILE_SIZE_METERS,
+                                        grid.intervals, grid.heights});
+                preloadedTerrainTiles.emplace_back(tile.x, tile.y);
+            } catch (const std::exception& error) {
+                applicationLog.Log("Spawn terrain collision unavailable for tile (" +
+                                   std::to_string(tile.x) + "," + std::to_string(tile.y) +
+                                   "): " + error.what());
+            }
+        }
+        if (spawnTerrain.empty()) {
+            throw std::runtime_error("No terrain collision could be loaded around the spawn point");
+        }
+        applicationLog.Log("Spawn terrain collision preloaded: " +
+                           std::to_string(spawnTerrain.size()) + " tiles.");
+        BusSimulation simulation(configuration, busPlacement, 60.0, 8, busPlacement.position[2],
+                                 std::move(spawnTerrain), {}, false);
         openbus::map::MapCollisionStreamer collisionStreamer(mapDefinition, omsiRootPath(),
-                                                             simulation);
+                                                             simulation, 1, 2,
+                                                             std::move(preloadedTerrainTiles));
 
         const bool benchmarkMode =
             openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
@@ -240,21 +268,14 @@ int main() {
         renderer.SetMap(mapDefinition, spawnEntryPoint, groundTextureIndex, omsiRootPath());
         renderer.updateMapStreaming(busPlacement.position[0], busPlacement.position[1]);
         const std::vector<std::pair<int, int>> spawnLoadedGeometryTiles = renderer.loadedMapTiles();
-        {
-            openbus::rendering::TraceScope trace("map", "main.loadSpawnCollisionNeighborhood");
-            collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
-                                     spawnLoadedGeometryTiles);
-            collisionStreamer.waitForPendingBuilds();
-            for (std::size_t tileIndex = 0; tileIndex < spawnLoadedGeometryTiles.size();
-                 ++tileIndex) {
-                collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
-                                         spawnLoadedGeometryTiles);
-            }
-        }
-        applicationLog.Log("Map collision streaming enabled: resident tiles=" +
-                           std::to_string(collisionStreamer.loadedTileCount()) +
-                           " in the active map window; map manifest tiles=" +
-                           std::to_string(mapDefinition.tiles.size()) + ".");
+        collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
+                                 spawnLoadedGeometryTiles);
+        applicationLog.Log("Map collision streaming started asynchronously with spawn terrain "
+                   "already active: resident tiles=" +
+                   std::to_string(collisionStreamer.loadedTileCount()) +
+                   "; map manifest tiles=" +
+                   std::to_string(mapDefinition.tiles.size()) + ".");
+        std::size_t reportedCollisionTileCount = collisionStreamer.loadedTileCount();
         Vehicle* playerVehicle =
             renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
                                 {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
@@ -299,6 +320,12 @@ int main() {
                 renderer.updateMapStreaming(simulation.positionX(), simulation.positionY());
                 collisionStreamer.update(simulation.positionX(), simulation.positionY(),
                                          renderer.loadedMapTiles());
+                const std::size_t collisionTileCount = collisionStreamer.loadedTileCount();
+                if (collisionTileCount != reportedCollisionTileCount) {
+                    applicationLog.Log("Map collision streaming progress: resident tiles=" +
+                                       std::to_string(collisionTileCount) + ".");
+                    reportedCollisionTileCount = collisionTileCount;
+                }
                 renderer.draw(simulation);
                 renderer.endFrame();
             };
@@ -397,6 +424,12 @@ int main() {
                 renderer.updateMapStreaming(simulation.positionX(), simulation.positionY());
                 collisionStreamer.update(simulation.positionX(), simulation.positionY(),
                                          renderer.loadedMapTiles());
+                const std::size_t collisionTileCount = collisionStreamer.loadedTileCount();
+                if (collisionTileCount != reportedCollisionTileCount) {
+                    applicationLog.Log("Map collision streaming progress: resident tiles=" +
+                                       std::to_string(collisionTileCount) + ".");
+                    reportedCollisionTileCount = collisionTileCount;
+                }
                 renderer.draw(simulation);
 
                 if (renderer.consumeCaptureRequest()) {

@@ -75,10 +75,10 @@ int main() {
         centerMouse.brake != 0.0 || topMouse.throttle != 1.0 || topMouse.brake != 0.0 ||
         bottomMouse.throttle != 0.0 || bottomMouse.brake != 1.0 || leftMouse.steering != -1.0 ||
         rightMouse.steering != 1.0 || partialMouse.throttle != 0.5 ||
-        partialMouse.steering != 0.25 || invalidMouse.throttle != 0.0 ||
+        partialMouse.steering != 0.5 || invalidMouse.throttle != 0.0 ||
         invalidMouse.steering != 0.0 || invalidMouse.brake != 0.0 ||
-        std::abs(slightlyLeftOfCenter.steering + 0.0001) > 1.0e-9 ||
-        std::abs(slightlyRightOfCenter.steering - 0.0001) > 1.0e-9 ||
+        std::abs(slightlyLeftOfCenter.steering + 0.01) > 1.0e-9 ||
+        std::abs(slightlyRightOfCenter.steering - 0.01) > 1.0e-9 ||
         std::abs(smoothedSteering - 0.6) > 1.0e-9 || unsmoothedSteering != 1.0) {
         std::cerr << "mouse mapping or steering smoothing produced an unexpected value\n";
         return 1;

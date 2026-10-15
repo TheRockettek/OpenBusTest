@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <vector>
 
 int main(int argc, char** argv) {
@@ -89,7 +90,9 @@ int main(int argc, char** argv) {
         double minimumEdge = std::numeric_limits<double>::max();
         double maximumEdge = 0.0;
         std::vector<std::pair<double, std::size_t>> longestEdges;
+        std::map<std::string, std::size_t> trianglesByMaterial;
         for (const auto& triangle : parsed->triangles) {
+            ++trianglesByMaterial[triangle.material];
             const auto distance = [&](int first, int second) {
                 const auto& left = parsed->positions[static_cast<std::size_t>(first - 1)];
                 const auto& right = parsed->positions[static_cast<std::size_t>(second - 1)];
@@ -116,8 +119,18 @@ int main(int argc, char** argv) {
         std::cout << "positions=" << parsed->positions.size()
                   << " triangles=" << parsed->triangles.size() << " boundsSize="
                   << parsed->boundsSize[0] << ',' << parsed->boundsSize[1] << ','
-                  << parsed->boundsSize[2] << " edgeRange=" << minimumEdge << ','
+                  << parsed->boundsSize[2] << " boundsCenter=" << parsed->boundsCenter[0] << ','
+                  << parsed->boundsCenter[1] << ',' << parsed->boundsCenter[2]
+                  << " edgeRange=" << minimumEdge << ','
                   << maximumEdge << '\n';
+        for (const auto& [material, triangleCount] : trianglesByMaterial) {
+            const auto sourceMaterial = parsed->materials.find(material);
+            std::cout << "material=" << material << " triangles=" << triangleCount
+                      << " texture=" << (sourceMaterial == parsed->materials.end()
+                                              ? std::string{}
+                                              : sourceMaterial->second.textureName)
+                      << '\n';
+        }
         for (std::size_t index = 0; index < std::min<std::size_t>(10, parsed->triangles.size());
              ++index) {
             const auto& triangle = parsed->triangles[index];

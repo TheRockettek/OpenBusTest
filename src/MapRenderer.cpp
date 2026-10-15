@@ -15,6 +15,7 @@
 #include "OpenGLFunctions.h"
 #include "PerfTrace.h"
 #include "SceneryObjectConfigLoader.h"
+#include "SceneryMaterialBinding.h"
 #include "ScriptRuntime.h"
 #include "TextureLoader.h"
 #include "Variables.h"
@@ -1032,10 +1033,8 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     continue;
                 }
                 std::unordered_map<int, std::vector<ModelVertex>> verticesByMaterial;
-                std::unordered_map<int, const ModelMaterialState*> statesByMaterial;
-                for (const ModelMaterialState& state : part.materialStatesInOrder) {
-                    statesByMaterial.emplace(state.materialIndex, &state);
-                }
+                const auto statesByMaterial =
+                    openbus::map::resolveSceneryMaterialStates(*parsed, part);
                 for (const ObjTriangle& triangle : parsed->triangles) {
                     const auto sourceMaterial = parsed->materials.find(triangle.material);
                     const int materialIndex = sourceMaterial == parsed->materials.end()
@@ -1103,36 +1102,6 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     const auto stateFound = statesByMaterial.find(materialIndex);
                     const ModelMaterialState* state =
                         stateFound == statesByMaterial.end() ? nullptr : stateFound->second;
-                    // Some OMSI O3D meshes number their material slots differently from the
-                    // SCO's [matl] index. When the numeric slot misses, safely bind a unique
-                    // matching texture override by basename so [matl_alpha] and friends survive.
-                    if (state == nullptr && sourceMaterial != parsed->materials.end()) {
-                        const std::string sourceTextureName = lowercasePathComponent(
-                            std::filesystem::path(sourceMaterial->second.textureName)
-                                .filename()
-                                .string());
-                        if (!sourceTextureName.empty()) {
-                            const ModelMaterialState* matchingState = nullptr;
-                            bool ambiguousMatch = false;
-                            for (const ModelMaterialState& candidate : part.materialStatesInOrder) {
-                                const std::string candidateTextureName = lowercasePathComponent(
-                                    std::filesystem::path(candidate.textureName)
-                                        .filename()
-                                        .string());
-                                if (candidateTextureName != sourceTextureName) {
-                                    continue;
-                                }
-                                if (matchingState != nullptr) {
-                                    ambiguousMatch = true;
-                                    break;
-                                }
-                                matchingState = &candidate;
-                            }
-                            if (!ambiguousMatch) {
-                                state = matchingState;
-                            }
-                        }
-                    }
                     std::string textureName = sourceMaterial == parsed->materials.end()
                                                   ? std::string{}
                                                   : sourceMaterial->second.textureName;
@@ -1469,25 +1438,28 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                 return std::nullopt;
             }
             ModelAttachmentPoint attachment;
-            if (object.attachmentIndex != 0) {
-                const std::filesystem::path parentConfig =
-                    resolveSceneryConfigPath(parent->assetPath);
-                if (parentConfig.empty()) {
-                    return std::nullopt;
-                }
+            if (object.attachmentIndex < 0) {
+                return std::nullopt;
+            }
+            const std::filesystem::path parentConfig = resolveSceneryConfigPath(parent->assetPath);
+            if (!parentConfig.empty()) {
                 static_cast<void>(loadSceneryAsset(parentConfig));
                 const auto attachmentDefinitions =
                     sceneryAttachmentPoints.find(parentConfig.lexically_normal().generic_string());
-                if (attachmentDefinitions == sceneryAttachmentPoints.end()) {
+                if (attachmentDefinitions != sceneryAttachmentPoints.end() &&
+                    !attachmentDefinitions->second.empty()) {
+                    const std::optional<std::size_t> attachmentOffset =
+                        openbus::map::mapSceneryAttachmentPointOffset(
+                            object.attachmentIndex, attachmentDefinitions->second.size());
+                    if (!attachmentOffset.has_value()) {
+                        return std::nullopt;
+                    }
+                    attachment = attachmentDefinitions->second[*attachmentOffset];
+                } else if (object.attachmentIndex != 0) {
                     return std::nullopt;
                 }
-                const std::optional<std::size_t> attachmentOffset =
-                    openbus::map::mapSceneryAttachmentPointOffset(
-                        object.attachmentIndex, attachmentDefinitions->second.size());
-                if (!attachmentOffset.has_value()) {
-                    return std::nullopt;
-                }
-                attachment = attachmentDefinitions->second[*attachmentOffset];
+            } else if (object.attachmentIndex != 0) {
+                return std::nullopt;
             }
             ResolvedSceneryPlacement resolved;
             resolved.assetPath = object.assetPath;

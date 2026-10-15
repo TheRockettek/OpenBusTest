@@ -8,8 +8,10 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
 - `[tree]` produces a crossed-textured-plane preview, not the authored helper mesh/tree behavior.
 - `[onlyeditor]` is respected: those placements are omitted from runtime rendering (except tree preview handling).
 - `[absheight]` affects scenery height placement. `[new_attachment]` transforms can be used to resolve static `[attachObj]` children.
+- `[attachObj]` translations follow the decoded scenery mesh's local X/Y basis. This keeps the London traffic-light bracket's authored CFG-Y arm offset aligned with its O3D mesh; attachment rotation parity remains provisional.
+- Repeated SCO `[matl]` overrides are associated with O3D material slots by matching texture basename and authored occurrence order when numeric slot IDs disagree. This handles the London underground entrance's repeated `Fence_3.dds` alpha modes without overwriting unrelated entrance and kerb textures.
 - `[script]`, `[varnamelist]`, `[stringvarnamelist]`, and `[constfile]` resources initialize per-placement scenery scripts. Basic `init`/`frame`, `[visible]`, and per-placement `[usescripttexture]` / `[usetexttexture]` surfaces are active.
-- `[collision_mesh]` O3D geometry can contribute map scenery collision in the active collision region. `[nocollision]` filters the relevant collision; this is not full scenery collision parity.
+- `[collision_mesh]` O3D geometry from SCOs and external model CFGs is spatially indexed and clipped into each overlapped streamed tile, including long bridges and custom junction meshes. `[nocollision]` filters the relevant collision; attached/scenery repeater collision and non-O3D formats remain unsupported.
 - `[groups]`, `[friendlyname]`, and `[helparrow]` are accepted as SCO metadata/editor fields and ignored by static rendering.
 
 ## Partial or unimplemented records
@@ -22,7 +24,7 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
 | `[varparent]` | Parsed/validated only | Editor `Object Nr.` references are kept distinct from placement IDs and checked, but scenery script-variable inheritance is not evaluated. |
 | `[script]` and model animation/material directives | Partial | Script `init`/`frame` and visibility/text/script texture paths are active. Script-driven mesh animation, full dynamic material/texture changes, sound callbacks, and scenery mouse events are not. |
 | `[spline_terrain_align]` | Provisional | Marked placements are tilted to the sampled terrain normal. Exact OMSI semantics have not been verified. |
-| `[collision_mesh]`, `[nocollision]` | Partial | Supported O3D collision meshes are used in the map collision path; unsupported formats, complete collision semantics, and broad contact validation remain. `[boundingbox]` is not used as a map scenery collision fallback. |
+| `[collision_mesh]`, `[nocollision]` | Partial | Supported O3D collision meshes from SCOs and external model CFGs are split across overlapped streamed tiles; unsupported formats, attached/repeater collision, complete collision semantics, and broad contact validation remain. `[boundingbox]` is not used as a map scenery collision fallback. |
 | `[surface]` | Parsed only | The SCO flag is retained, but no full surface-type/friction behavior is derived from it. |
 | `[maplight]`, `[nightmapmode]` | Parsed/consumed only | These records do not generate map lighting/lightmaps. |
 | `[rendertype]` | Partial | The value is consumed in the SCO header path; the full scenery render-category contract is not implemented. |

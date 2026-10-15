@@ -84,12 +84,12 @@ void runProbe() {
                 "terrain-relative ordinary scenery adds sampled terrain height");
     requireNear(mapSceneryWorldHeight(ordinaryPose->z, 12.0, true), 4.75, 1e-9,
                 "absolute-height ordinary scenery ignores terrain height");
-    require(mapSceneryAttachmentPointOffset(1, 3) == std::optional<std::size_t>(0) &&
-                mapSceneryAttachmentPointOffset(3, 3) == std::optional<std::size_t>(2),
-            "positive map attachment numbers select one-based configured points");
-    require(!mapSceneryAttachmentPointOffset(0, 3).has_value() &&
-                !mapSceneryAttachmentPointOffset(4, 3).has_value(),
-            "origin anchor zero and out-of-range anchors have no configured-point offset");
+    require(mapSceneryAttachmentPointOffset(0, 3) == std::optional<std::size_t>(0) &&
+                mapSceneryAttachmentPointOffset(2, 3) == std::optional<std::size_t>(2),
+            "map attachment anchor numbers select zero-based configured points");
+    require(!mapSceneryAttachmentPointOffset(-1, 3).has_value() &&
+                !mapSceneryAttachmentPointOffset(3, 3).has_value(),
+            "negative and out-of-range map attachment anchors are rejected");
         TerrainGrid slopedTerrain;
         slopedTerrain.intervals = 1;
         slopedTerrain.heights = {0.0F, 30.0F, 60.0F, 90.0F};
@@ -107,37 +107,41 @@ void runProbe() {
     const MapSceneryPose identityParent{};
     const MapSceneryPose anchored = composeMapAttachedObjectPose(
         identityParent, {1.0, 2.0, 3.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
-    requireNear(anchored.x, 2.0, 1e-9,
-                "attachment longitudinal translation maps to world X");
-    requireNear(anchored.y, -1.0, 1e-9,
-                "attachment lateral translation maps to negative world Y");
+    requireNear(anchored.x, 1.0, 1e-9,
+                "attachment CFG X translation follows the decoded mesh X axis");
+    requireNear(anchored.y, 2.0, 1e-9,
+                "attachment CFG Y translation follows the decoded mesh Y axis");
     requireNear(anchored.z, 3.0, 1e-9, "attachment translation offsets parent Z");
     requireNear(transformMapSceneryVector(anchored, {1.0, 0.0, 0.0})[0], 1.0, 1e-9,
                 "identity attached orientation preserves local X");
-    const MapSceneryPose originAnchored = composeMapAttachedObjectPose(
-        identityParent, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
-    requireNear(originAnchored.x, identityParent.x, 1e-9,
-                "anchor zero leaves the child at the parent origin");
-    requireNear(originAnchored.y, identityParent.y, 1e-9,
-                "anchor zero does not select the first configured point");
-
     const std::array<std::array<double, 3>, 3> poleAnchors = {
         std::array<double, 3>{0.0, -0.04, 0.3},
         std::array<double, 3>{0.0, 0.04, 0.3},
         std::array<double, 3>{0.0, 0.0, 0.3}};
-    const std::size_t thirdAnchor = *mapSceneryAttachmentPointOffset(3, poleAnchors.size());
+    const std::size_t thirdAnchor = *mapSceneryAttachmentPointOffset(2, poleAnchors.size());
     const MapSceneryPose attachedButton = composeMapAttachedObjectPose(
         identityParent, poleAnchors[thirdAnchor], {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
     requireNear(attachedButton.z, 0.3, 1e-9,
-                "anchor number 3 attaches to the third point on a three-anchor pole");
+                "anchor index 2 attaches to the third point on a three-anchor pole");
+    const std::array<double, 3> bracketTopAnchor = {0.0, -0.186, 2.545};
+    const std::size_t firstBracketAnchor = *mapSceneryAttachmentPointOffset(0, 1);
+    const MapSceneryPose trafficLightAtBracketTop = composeMapAttachedObjectPose(
+        identityParent, bracketTopAnchor, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
+    requireNear(trafficLightAtBracketTop.x, 0.0, 1e-9,
+                "London bracket mount preserves the pole's horizontal centerline");
+    requireNear(trafficLightAtBracketTop.y, -0.186, 1e-9,
+                "London bracket mount follows its authored arm offset on mesh-local Y");
+    requireNear(trafficLightAtBracketTop.z, 2.545, 1e-9,
+                "anchor index zero selects the first traffic-light bracket point, not its base");
+    require(firstBracketAnchor == 0, "traffic-light anchor zero maps to configured point zero");
 
     MapSceneryPose rotatedParent;
     rotatedParent.rotationDegrees[0] = 90.0;
     rotatedParent.rotationCount = 3;
     const MapSceneryPose rotatedAnchor = composeMapAttachedObjectPose(
         rotatedParent, {0.0, 1.0, 0.0}, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0});
-    requireNear(rotatedAnchor.x, 0.0, 1e-9, "parent heading rotates anchor translation in X");
-    requireNear(rotatedAnchor.y, -1.0, 1e-9, "parent heading rotates anchor translation in Y");
+    requireNear(rotatedAnchor.x, 1.0, 1e-9, "parent heading rotates mesh-local Y into map X");
+    requireNear(rotatedAnchor.y, 0.0, 1e-9, "parent heading rotates mesh-local Y out of map Y");
 
     MapSceneryPose pitchedParent;
     pitchedParent.rotationDegrees[1] = 90.0;
@@ -355,10 +359,10 @@ void runProbe() {
     const MapSceneryPose attachedChild = composeMapAttachedObjectPose(
         *attachmentParentPose, {0.04, -0.186, 2.545}, {0.0, 0.0, 0.0},
         {0.0, 0.0, 0.0});
-    requireNear(attachedChild.x, 99.814, 1e-9,
-                "child attachment offsets a spline-generated parent in map X");
-    requireNear(attachedChild.y, 204.96, 1e-9,
-                "child attachment offsets a spline-generated parent in map Y");
+    requireNear(attachedChild.x, 100.04, 1e-9,
+                "child attachment CFG X offset follows the spline parent's local mesh X");
+    requireNear(attachedChild.y, 204.814, 1e-9,
+                "child attachment CFG Y offset follows the spline parent's local mesh Y");
     requireNear(attachedChild.z, 10.545, 1e-9,
                 "child attachment height composes with spline-parent elevation");
 }

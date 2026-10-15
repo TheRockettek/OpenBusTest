@@ -48,8 +48,12 @@ struct MapCollisionStreamer::WorkerState {
         std::exception_ptr error;
     };
 
-    WorkerState(const MapDefinition& mapDefinition, std::filesystem::path root)
+    WorkerState(const MapDefinition& mapDefinition, std::filesystem::path root,
+                const std::vector<std::pair<int, int>>& preloadedTerrainTiles)
         : map(mapDefinition), omsiRoot(std::move(root)) {
+        for (const auto& [tileX, tileY] : preloadedTerrainTiles) {
+            preloadedTerrainKeys.insert(tileKey(tileX, tileY));
+        }
         thread = std::thread([this] { run(); });
     }
 
@@ -96,13 +100,13 @@ struct MapCollisionStreamer::WorkerState {
                 if (tile == map.tiles.end()) {
                     throw std::runtime_error("Collision request references a missing map tile");
                 }
-                if (tile->hasTerrainFile) {
+                    if (tile->hasTerrainFile && !preloadedTerrainKeys.contains(job.key)) {
                     const TerrainGrid grid = loadTerrainGrid(tile->terrainPath);
                     result.terrain = TerrainCollisionGrid{
                         job.tileX, job.tileY, OMSI_TILE_SIZE_METERS, grid.intervals, grid.heights};
                 }
                 MapRoadCollisionResult roadCollision = buildMapRoadCollisionTile(
-                    map, omsiRoot, job.tileX, job.tileY, &roadConnections());
+                    map, omsiRoot, job.tileX, job.tileY, &roadConnections(), &sceneryCollisions());
                 result.meshes = std::move(roadCollision.meshes);
             } catch (...) {
                 result.error = std::current_exception();
@@ -124,10 +128,19 @@ struct MapCollisionStreamer::WorkerState {
         return *connections;
     }
 
+    const MapSceneryCollisionIndex& sceneryCollisions() {
+        if (!sceneryCollisionIndex) {
+            sceneryCollisionIndex = buildMapSceneryCollisionIndex(map, omsiRoot);
+        }
+        return *sceneryCollisionIndex;
+    }
+
     const MapDefinition& map;
     std::filesystem::path omsiRoot;
+    std::unordered_set<std::uint64_t> preloadedTerrainKeys;
     // Only accessed by this worker thread; never conditioned on published collision tiles.
     std::optional<MapRoadConnectionIndex> connections;
+    std::shared_ptr<const MapSceneryCollisionIndex> sceneryCollisionIndex;
     std::mutex mutex;
     std::condition_variable condition;
     std::deque<Job> pending;
@@ -142,13 +155,14 @@ struct MapCollisionStreamer::WorkerState {
 MapCollisionStreamer::MapCollisionStreamer(const MapDefinition& map,
                                            const std::filesystem::path& omsiRoot,
                                            BusSimulation& simulation, int loadRadius,
-                                           int unloadRadius)
+                                                                                     int unloadRadius,
+                                                                                     std::vector<std::pair<int, int>> preloadedTerrainTiles)
     : map_(map), omsiRoot_(omsiRoot), simulation_(simulation), loadRadius_(loadRadius),
       unloadRadius_(unloadRadius) {
     if (loadRadius_ < 0 || unloadRadius_ < loadRadius_) {
         throw std::invalid_argument("Map collision unload radius must be at least the load radius");
     }
-    worker_ = std::make_unique<WorkerState>(map, omsiRoot);
+    worker_ = std::make_unique<WorkerState>(map, omsiRoot, preloadedTerrainTiles);
 }
 
 MapCollisionStreamer::~MapCollisionStreamer() = default;

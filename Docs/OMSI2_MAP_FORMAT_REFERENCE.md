@@ -354,15 +354,18 @@ renderer resolves attached-to IDs across map tiles and composes the target
 placement with the selected `[new_attachment]` translation/rotation followed
 by the child's three rotations. A target ID may refer to an ordinary object,
 another `[attachObj]`, or a `[splineAttachement]`; for a spline-generated parent,
-OpenBus uses the first generated row pose for that record ID. Anchor number `0` denotes the parent object's
-origin; positive numbers are one-based ordinals into its ordered
-`[new_attachment]` list. This matches installed Cotterell records that use both
-origin attachments and anchor `3` on poles with three configured attachment
-points. Configured attachment translation/rotation is converted from scenery
-CFG axes (`x` lateral, `y` longitudinal, `z` up) into map axes before applying
-the parent transform. Negative indices, out-of-range positive indices, missing
-targets, and parent cycles are skipped with diagnostics. Object-specific tail
-lines remain opaque. `[varparent]`
+OpenBus uses the first generated row pose for that record ID. Anchor numbers
+are zero-based indices into the parent's ordered `[new_attachment]` list;
+installed London traffic-light records use anchor `0` for a bracket's first
+configured point. If the parent has no configured points, anchor `0` falls back
+to the parent origin. Attachment translations follow the local decoded scenery
+mesh X/Y/Z basis: the London traffic-light bracket's authored CFG-Y offset
+`-0.186` matches its O3D arm along local map Y. The former bus-style CFG-to-map
+axis swap displaced children sideways from that arm. Attachment rotation angles
+still use the renderer's provisional scenery rotation convention and need wider
+asset validation. Negative indices, out-of-range indices, missing targets, and
+parent cycles are skipped with diagnostics.
+Object-specific tail lines remain opaque. `[varparent]`
 editor ordinals are retained separately from placement IDs and tile-local
 references are checked against `Object Nr.` labels. Its variable/script runtime
 effect is not implemented because scenery script-variable inheritance is not

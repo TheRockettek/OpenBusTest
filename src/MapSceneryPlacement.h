@@ -30,17 +30,17 @@ std::optional<MapSceneryPose> placeMapSceneryObject(const MapSceneryPlacement& o
 // Absolute-height assets use their authored Z directly; other assets are terrain-relative.
 double mapSceneryWorldHeight(double authoredZ, double terrainHeight, bool absoluteHeight);
 
-// Positive map [attachObj] numbers are one-based offsets into the parent's ordered
-// [new_attachment] list. Number zero denotes the parent's origin and has no list offset.
+// Map [attachObj] anchor numbers are zero-based offsets into the parent's ordered
+// [new_attachment] list. A parent with no configured points can still use anchor zero as origin.
 std::optional<std::size_t> mapSceneryAttachmentPointOffset(int attachmentPointNumber,
                                                            std::size_t attachmentPointCount);
 
 std::optional<std::array<double, 3>> sampleMapTerrainNormal(const TerrainGrid& terrain,
                                                             double localX, double localY);
 
-// Compose a child transform at an SCO attachment point. Attachment translation/rotation use the
-// scenery-config local basis (x lateral, y longitudinal, z height) and are converted to map axes;
-// child rotations use the map renderer's heading/pitch/bank convention.
+// Compose a child transform at an SCO attachment point. Attachment translations follow the
+// decoded scenery-mesh local X/Y/Z basis; child rotations use the map renderer's
+// heading/pitch/bank convention.
 MapSceneryPose composeMapAttachedObjectPose(const MapSceneryPose& parent,
                                             const std::array<double, 3>& attachmentTranslation,
                                             const std::array<double, 3>& attachmentRotationXYZ,

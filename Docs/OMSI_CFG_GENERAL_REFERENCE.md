@@ -117,14 +117,19 @@ mapping, and uses crossed textured planes for `[tree]` previews. Full OMSI LOD
 parity, animated/skinned X content, scenery scripts, and scenery mouse events
 remain incomplete.
 
-The scenery loader retains `[collision_mesh]`, `[boundingbox]`, and
-`[nocollision]` information, but map scenery does not yet create ODE colliders
-from it. Parsing these fields is not evidence of collision behavior. Likewise,
-road-profile and scenery collision are separate from the bus chassis collision
-path described above. Ordinary map objects currently receive a bilinearly
-sampled terrain height plus their authored vertical placement value unless the
-SCO/model declares `[absheight]`; those placements use the authored vertical
-coordinate as an absolute world height and do not add terrain elevation.
+Map collision construction loads supported O3D geometry referenced by SCO/model
+`[collision_mesh]` records for ordinary tile `[object]` placements, unless
+`[nocollision]` or `[onlyeditor]` excludes the object. Collision triangles are
+spatially indexed and clipped into every map tile overlapped by the transformed
+mesh, so long bridges and custom junction models remain collidable while tiles
+stream in and out. `[boundingbox]` is retained but is not a scenery-collider
+fallback; collision for attached or spline-attached scenery and unsupported
+collision-mesh formats remains incomplete. Road-profile spline collision is a
+separate path from scenery-object collision and from the bus chassis collider.
+Ordinary map objects receive a bilinearly sampled terrain height plus their
+authored vertical placement value unless the SCO/model declares `[absheight]`;
+those placements use the authored vertical coordinate as an absolute world
+height and do not add terrain elevation.
 
 ## Camera keywords
 

@@ -1311,7 +1311,7 @@ std::uint64_t BusSimulation::collisionDebugRevision() const {
 }
 
 std::size_t BusSimulation::loadedMapCollisionTileCount() const {
-    return impl_->streamedTileCollisions.size();
+    return impl_->terrainVertices.size() + impl_->streamedTileCollisions.size();
 }
 
 std::vector<StaticCollisionMesh> BusSimulation::collisionDebugMeshes() const {

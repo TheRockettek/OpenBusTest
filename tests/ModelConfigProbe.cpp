@@ -1,4 +1,5 @@
 #include "ModelConfigLoader.h"
+#include "SceneryMaterialBinding.h"
 #include "InteriorLighting.h"
 #include "SceneryObjectConfigLoader.h"
 #include "Variables.h"
@@ -47,6 +48,53 @@ int main() {
     config.close();
 
     Variables variables(ScriptObjectKind::Vehicle);
+    using openbus::rendering::ObjMaterial;
+    using openbus::rendering::ParsedObj;
+    ParsedObj undergroundMesh;
+    undergroundMesh.materials.emplace(
+        "matl_0", ObjMaterial{.materialIndex = 0, .textureName = "underground subway.dds"});
+    undergroundMesh.materials.emplace("matl_1",
+                                      ObjMaterial{.materialIndex = 1, .textureName = "kerb_low.jpg"});
+    undergroundMesh.materials.emplace(
+        "matl_2", ObjMaterial{.materialIndex = 2, .textureName = "tactile_red.jpg"});
+    undergroundMesh.materials.emplace(
+        "matl_3", ObjMaterial{.materialIndex = 3, .textureName = "SubwayEntrance.dds"});
+    undergroundMesh.materials.emplace("matl_4",
+                                      ObjMaterial{.materialIndex = 4, .textureName = "Fence_3.dds"});
+    undergroundMesh.materials.emplace("matl_5",
+                                      ObjMaterial{.materialIndex = 5, .textureName = "Fence_3.dds"});
+    ModelPart undergroundPart;
+    ModelMaterialState fenceCutout;
+    fenceCutout.materialIndex = 0;
+    fenceCutout.textureName = "Fence_3.dds";
+    fenceCutout.alphaMode = 1;
+    ModelMaterialState fenceBlend = fenceCutout;
+    fenceBlend.materialIndex = 1;
+    fenceBlend.alphaMode = 2;
+    undergroundPart.materialStatesInOrder = {fenceCutout, fenceBlend};
+    const auto undergroundBindings =
+        openbus::map::resolveSceneryMaterialStates(undergroundMesh, undergroundPart);
+    if (undergroundBindings.contains(0) || undergroundBindings.contains(1) ||
+        !undergroundBindings.contains(4) || !undergroundBindings.contains(5) ||
+        undergroundBindings.at(4)->alphaMode != 1 || undergroundBindings.at(5)->alphaMode != 2) {
+        std::cerr << "repeated Fence_3 material overrides were not bound to matching O3D slots\n";
+        return 1;
+    }
+    ParsedObj replacementMesh;
+    replacementMesh.materials.emplace("matl_0", ObjMaterial{.materialIndex = 0,
+                                                              .textureName = "base.dds"});
+    ModelPart replacementPart;
+    ModelMaterialState replacementState;
+    replacementState.materialIndex = 0;
+    replacementState.textureName = "replacement.dds";
+    replacementPart.materialStatesInOrder.push_back(replacementState);
+    const auto replacementBindings =
+        openbus::map::resolveSceneryMaterialStates(replacementMesh, replacementPart);
+    if (!replacementBindings.contains(0) || replacementBindings.at(0) !=
+                                                  &replacementPart.materialStatesInOrder[0]) {
+        std::cerr << "numeric SCO material override was not retained when it names a replacement texture\n";
+        return 1;
+    }
     openbus::rendering::Matrix4 rootModelView = {1.0, 0.0, 0.0, 0.0,
                                                   0.0, 1.0, 0.0, 0.0,
                                                   0.0, 0.0, 1.0, 0.0,

@@ -109,7 +109,10 @@ void shutdownCoreRenderer();
 void invalidateTextureBindings();
 // Frame-local total of triangle primitives submitted through the renderer.
 void resetFrameTriangleCount();
+void resetFrameReflectionTriangleCount();
 std::size_t frameTriangleCount();
+std::size_t frameReflectionTriangleCount();
+void setFrameTriangleCountReflectionPass(bool reflectionPass);
 
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
                     const std::array<double, 3>& color, double alpha, int alphaMode);

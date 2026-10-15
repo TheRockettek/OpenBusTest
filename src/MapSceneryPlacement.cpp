@@ -104,11 +104,11 @@ double mapSceneryWorldHeight(double authoredZ, double terrainHeight, bool absolu
 
 std::optional<std::size_t> mapSceneryAttachmentPointOffset(int attachmentPointNumber,
                                                            std::size_t attachmentPointCount) {
-    if (attachmentPointNumber <= 0 ||
-        static_cast<std::size_t>(attachmentPointNumber) > attachmentPointCount) {
+    if (attachmentPointNumber < 0 ||
+        static_cast<std::size_t>(attachmentPointNumber) >= attachmentPointCount) {
         return std::nullopt;
     }
-    return static_cast<std::size_t>(attachmentPointNumber - 1);
+    return static_cast<std::size_t>(attachmentPointNumber);
 }
 
 std::optional<std::array<double, 3>> sampleMapTerrainNormal(const TerrainGrid& terrain,
@@ -149,9 +149,13 @@ MapSceneryPose composeMapAttachedObjectPose(const MapSceneryPose& parent,
                                             const std::array<double, 3>& attachmentRotationXYZ,
                                             const std::array<double, 3>& childRotationDegrees) {
     const RotationMatrix parentRotation = poseRotation(parent);
-    // Scenery CFG coordinates convert as map=(CFG y, -CFG x, CFG z).
-    const std::array<double, 3> mapAttachmentTranslation = {
-        attachmentTranslation[1], -attachmentTranslation[0], attachmentTranslation[2]};
+    // Scenery [new_attachment] translations share the local X/Y basis of decoded O3D meshes.
+    // London TrafficLight_Bracket.o3d extends along local map Y, and its authored CFG-Y mount
+    // offset (-0.186 m) lands at that arm's endpoint. Swapping CFG X/Y here moved child lights
+    // sideways off the arm and away from the pole's horizontal centerline.
+    const std::array<double, 3> mapAttachmentTranslation = {attachmentTranslation[0],
+                                                            attachmentTranslation[1],
+                                                            attachmentTranslation[2]};
     const std::array<double, 3> worldOffset =
         rotateVector(parentRotation, mapAttachmentTranslation);
 

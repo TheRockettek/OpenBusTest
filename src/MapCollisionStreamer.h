@@ -20,7 +20,8 @@ namespace openbus::map {
 class MapCollisionStreamer {
   public:
     MapCollisionStreamer(const MapDefinition& map, const std::filesystem::path& omsiRoot,
-                         BusSimulation& simulation, int loadRadius = 1, int unloadRadius = 2);
+                         BusSimulation& simulation, int loadRadius = 1, int unloadRadius = 2,
+                         std::vector<std::pair<int, int>> preloadedTerrainTiles = {});
     ~MapCollisionStreamer();
 
     void update(double worldX, double worldY,
