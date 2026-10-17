@@ -81,7 +81,11 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             }
             continue;
         }
-        if (keyword == "groups" || keyword == "friendlyname" || keyword == "helparrow") {
+        if (keyword == "helparrow") {
+            result.helpArrow = true;
+            continue;
+        }
+        if (keyword == "groups" || keyword == "friendlyname") {
             // These SCO metadata/editor fields do not affect static model rendering. Their
             // payload lines are intentionally left for the line-oriented parser to ignore.
             openbus::config::logUnhandledConfigurationTag(

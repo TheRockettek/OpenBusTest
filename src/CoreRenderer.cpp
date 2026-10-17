@@ -59,6 +59,7 @@ struct Uniforms {
     GLint useTextureArray = -1;
     GLint color = -1;
     GLint alphaMode = -1;
+    GLint cullBackFaces = -1;
     GLint lightmap = -1;
     GLint nightmap = -1;
     GLint transmap = -1;
@@ -109,6 +110,7 @@ struct ModelUniformState {
     bool useBumpmap = false;
     bool useFreeTexture = false;
     bool useTextTexture = false;
+    bool cullBackFaces = false;
     bool useInteriorLight = false;
     bool flipTextureY = false;
     bool useMaterialColors = false;
@@ -241,12 +243,13 @@ uniform float uInteriorLightStrength;
 uniform vec3 uInteriorLightColor;
 uniform vec4 uColor;
 uniform int uAlphaMode;
+uniform bool uCullBackFaces;
 out vec4 fragmentColor;
 void main() {
     // Map scenery is deliberately rendered without global face culling because many
     // assets contain two-sided geometry. Dynamic text overlays, however, belong to
     // the authored front of a sign/display surface and must not show through its back.
-    if (uUseTextTexture && !gl_FrontFacing) {
+    if ((uUseTextTexture || uCullBackFaces) && !gl_FrontFacing) {
         discard;
     }
     vec4 color = uColor;
@@ -259,6 +262,12 @@ void main() {
         color *= texture(uTextureArray, vec3(textureCoordinate, vTexCoord.z));
     } else if (uUseTexture) {
         color *= texture(uTexture, textureCoordinate);
+    }
+    // Empty text-atlas pixels must remain transparent and must not occlude other
+    // scenery. Surviving glyph pixels can then safely write depth during the
+    // blended map-text pass, preventing later scenery from showing through letters.
+    if (uUseTextTexture && color.a <= 0.01) {
+        discard;
     }
     // OMSI's second [groundtex] image is a high-frequency detail map. Multiplying
     // it over the albedo preserves colored base textures and reveals detail on
@@ -538,6 +547,7 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.useTextureArray = pglGetUniformLocation(program, "uUseTextureArray");
         uniforms.color = pglGetUniformLocation(program, "uColor");
         uniforms.alphaMode = pglGetUniformLocation(program, "uAlphaMode");
+        uniforms.cullBackFaces = pglGetUniformLocation(program, "uCullBackFaces");
         uniforms.lightmap = pglGetUniformLocation(program, "uLightmap");
         uniforms.nightmap = pglGetUniformLocation(program, "uNightmap");
         uniforms.transmap = pglGetUniformLocation(program, "uTransmap");
@@ -706,6 +716,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         modelUniformState.useBumpmap != material.useBumpmap ||
         modelUniformState.useFreeTexture != material.useFreeTexture ||
         modelUniformState.useTextTexture != material.useTextTexture ||
+        modelUniformState.cullBackFaces != material.cullBackFaces ||
         modelUniformState.useInteriorLight != material.useInteriorLight ||
         modelUniformState.interiorLightCount != material.interiorLightCount;
     if (flagsChanged) {
@@ -720,6 +731,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         pglUniform1i(modelUniforms.useBumpmap, material.useBumpmap ? 1 : 0);
         pglUniform1i(modelUniforms.useFreeTexture, material.useFreeTexture ? 1 : 0);
         pglUniform1i(modelUniforms.useTextTexture, material.useTextTexture ? 1 : 0);
+        pglUniform1i(modelUniforms.cullBackFaces, material.cullBackFaces ? 1 : 0);
         pglUniform1i(modelUniforms.useInteriorLight, material.useInteriorLight ? 1 : 0);
         pglUniform1i(modelUniforms.interiorLightCount, material.interiorLightCount);
     }
@@ -797,6 +809,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.useBumpmap = material.useBumpmap;
     modelUniformState.useFreeTexture = material.useFreeTexture;
     modelUniformState.useTextTexture = material.useTextTexture;
+    modelUniformState.cullBackFaces = material.cullBackFaces;
     modelUniformState.useInteriorLight = material.useInteriorLight;
     modelUniformState.flipTextureY = material.flipTextureY;
     modelUniformState.alphaMode = alphaMode;

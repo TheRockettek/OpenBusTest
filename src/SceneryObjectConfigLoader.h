@@ -27,6 +27,7 @@ struct SceneryObjectConfig {
     bool surface = false;
     bool onlyEditor = false;
     bool absoluteHeight = false;
+    bool helpArrow = false;
     int renderType = 2;
     bool hasBoundingBox = false;
     std::array<double, 6> boundingBox = {};

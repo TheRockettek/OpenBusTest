@@ -441,9 +441,13 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             result.diagnostics.error(line.number, line.keyword(),
                                      "keyword is not valid in a " + kindName(kind) + " model");
         }
-        if (keyword == "friendlyname" || keyword == "groups" || keyword == "helparrow") {
+        if (keyword == "helparrow") {
+            // The containing SCO loader consumes this marker for scenery rendering.
+            continue;
+        }
+        if (keyword == "friendlyname" || keyword == "groups") {
             // Scenery metadata is not a model directive. [friendlyname] is commonly a single
-            // optional line, while [helparrow] is a marker, so avoid fixed-width reads here.
+            // optional line, so avoid fixed-width reads here.
             openbus::config::logUnhandledConfigurationTag(
                 "model.cfg", configPath, line.number, line.keyword(),
                 "metadata is recognized but not used by the renderer");

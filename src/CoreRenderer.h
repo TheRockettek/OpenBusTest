@@ -95,6 +95,7 @@ struct ModelMaterial {
     bool useBumpmap = false;
     bool useFreeTexture = false;
     bool useTextTexture = false;
+    bool cullBackFaces = false;
     bool useInteriorLight = false;
     bool flipTextureY = false;
     float lightmapStrength = 0.0f;

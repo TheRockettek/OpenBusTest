@@ -265,6 +265,7 @@ int main() {
                               diagnostic.keyword == "helparrow";
     }
     if (londonMetadataConfiguration.diagnostics.hasErrors() || sceneryMetadataWarned ||
+        !londonMetadataConfiguration.helpArrow ||
         londonMetadataConfiguration.renderType != 4 ||
         londonCombinedModelConfiguration.parts.size() != 1 || modelMetadataWarned) {
         std::cerr << "London SCO render type or metadata was not retained/ignored correctly\n";

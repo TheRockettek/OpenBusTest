@@ -1193,6 +1193,10 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                         }
                     }
                     ModelMaterial material;
+                    // Route-arrow assets commonly contain coincident image faces
+                    // wound in opposite directions. Keep general scenery two-sided,
+                    // but use the authored front face for these route-marker meshes.
+                    material.cullBackFaces = objectConfiguration.helpArrow;
                     const std::filesystem::path materialTexture =
                         findSceneryTexture(objectRoot, modelRoot, omsiRoot, textureName);
                     if (!materialTexture.empty()) {
@@ -2566,6 +2570,10 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         for (const SceneryDraw* scenery : transparentScenery) {
+            // Text textures are transparent overlays: write depth only where the
+            // shader retains visible glyph pixels, leaving the cleared background
+            // transparent for the rest of the scene.
+            glDepthMask(scenery->material.useTextTexture ? GL_TRUE : GL_FALSE);
             drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material,
                                 scenery->alphaMode);
         }

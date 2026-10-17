@@ -6,6 +6,7 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
 
 - `[model]` external model CFG references and inline model records can feed static scenery batches. O3D and static text, binary, and MSZIP-compressed `.x` meshes are supported; nonzero `[LOD]` model parts are selected by distance using the same threshold mapping as vehicle models. Visual OMSI parity still needs validation.
 - `[tree]` produces a crossed-textured-plane preview, not the authored helper mesh/tree behavior.
+- SCO assets marked with `[helparrow]` use front-face-only rendering to avoid z-fighting between coincident reverse-wound image faces; other scenery remains two-sided by default.
 - `[onlyeditor]` is respected: those placements are omitted from runtime rendering (except tree preview handling).
 - `[absheight]` affects scenery height placement. `[new_attachment]` transforms can be used to resolve static `[attachObj]` children.
 - `[attachObj]` translations follow the decoded scenery mesh's local X/Y basis. This keeps the London traffic-light bracket's authored CFG-Y arm offset aligned with its O3D mesh; attachment rotation parity remains provisional.
