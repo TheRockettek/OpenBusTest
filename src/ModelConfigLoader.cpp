@@ -234,7 +234,8 @@ std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
     return {};
 }
 
-bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
+bool parseNewAnimation(Reader& reader, const std::filesystem::path& configPath,
+                       const Line& keywordLine, ModelPart& part,
                        Variables& variables, ConfigurationDiagnostics& diagnostics) {
     // [newanim] is a variable-length block terminated by the next keyword or '--'.
     static_cast<void>(keywordLine);
@@ -362,6 +363,9 @@ bool parseNewAnimation(Reader& reader, const Line& keywordLine, ModelPart& part,
             variables.declare(variable);
             continue;
         }
+        openbus::config::logUnhandledConfigurationTag(
+            "model.cfg animation", configPath, field.number, field.text,
+            "animation operation is not implemented");
         break;
     }
     if (drivenAnimations.empty()) {
@@ -428,6 +432,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         const std::string keyword = lower(line.keyword());
         if (!isKnownKeyword(keyword)) {
+            openbus::config::logUnhandledConfigurationTag(
+                "model.cfg", configPath, line.number, line.keyword(), "unknown keyword");
             result.diagnostics.warning(line.number, line.keyword(), "unknown keyword");
             continue;
         }
@@ -438,6 +444,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (keyword == "friendlyname" || keyword == "groups" || keyword == "helparrow") {
             // Scenery metadata is not a model directive. [friendlyname] is commonly a single
             // optional line, while [helparrow] is a marker, so avoid fixed-width reads here.
+            openbus::config::logUnhandledConfigurationTag(
+                "model.cfg", configPath, line.number, line.keyword(),
+                "metadata is recognized but not used by the renderer");
             continue;
         }
 
@@ -786,6 +795,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 std::vector<std::string> values;
                 readValues(reader, line.number, keyword, 19, values, result.diagnostics);
             }
+            openbus::config::logUnhandledConfigurationTag(
+                "model.cfg", configPath, line.number, line.keyword(),
+                "payload is consumed but smoke rendering is not implemented");
             continue;
         }
         // [newanim]: a variable-length block containing origin fields and anim_rot/
@@ -793,7 +805,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (keyword == "newanim") {
             ModelPart* current = requirePart();
             if (current != nullptr) {
-                parseNewAnimation(reader, line, *current, variables, result.diagnostics);
+                parseNewAnimation(reader, configPath, line, *current, variables,
+                                  result.diagnostics);
             }
             continue;
         }
@@ -819,6 +832,10 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 } else {
                     if (attachment.name.empty() && !sawOperation) {
                         attachment.name = trim(entry.text);
+                    } else {
+                        openbus::config::logUnhandledConfigurationTag(
+                            "model.cfg attachment", configPath, entry.number, entry.text,
+                            "attachment operation is not implemented");
                     }
                     continue;
                 }
@@ -1124,6 +1141,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             // OMSI's per-mesh cast-shadow marker has no equivalent in the current renderer.
             // Recognize it to avoid warning for otherwise valid vehicle meshes.
             requirePart();
+            openbus::config::logUnhandledConfigurationTag(
+                "model.cfg", configPath, line.number, line.keyword(),
+                "recognized but per-mesh cast-shadow behavior is not implemented");
             continue;
         }
         // [fixed]/[absheight]: marker records with no payload consumed here.
@@ -1131,6 +1151,10 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             requirePart();
             if (keyword == "absheight" && kind == ModelConfigKind::SceneryObject) {
                 result.absoluteHeight = true;
+            } else if (keyword == "fixed") {
+                openbus::config::logUnhandledConfigurationTag(
+                    "model.cfg", configPath, line.number, line.keyword(),
+                    "recognized marker has no runtime behavior");
             }
             continue;
         }
@@ -1198,12 +1222,18 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         if (keyword == "vfdmaxmin") {
             std::vector<std::string> values;
             readValues(reader, line.number, keyword, 6, values, result.diagnostics);
+            openbus::config::logUnhandledConfigurationTag(
+                "model.cfg", configPath, line.number, line.keyword(),
+                "payload is consumed but VFD limits are not implemented");
             continue;
         }
         // [tex_detail_factor]: one numeric texture-detail blend factor.
         if (keyword == "tex_detail_factor") {
             std::vector<std::string> values;
             readValues(reader, line.number, keyword, 1, values, result.diagnostics);
+            openbus::config::logUnhandledConfigurationTag(
+                "model.cfg", configPath, line.number, line.keyword(),
+                "payload is consumed but detail-factor behavior is not implemented");
             continue;
         }
         // [ctc]: template name, source texture path, and template index.

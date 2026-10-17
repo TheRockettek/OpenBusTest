@@ -152,7 +152,10 @@ void loadConstantFile(const std::filesystem::path& configPath, const std::string
             } else {
                 result.curves.try_emplace(curve.name, std::move(curve));
             }
+            continue;
         }
+        openbus::config::logUnhandledConfigurationTag(
+            "constfile", path, line.number, line.keyword(), "unknown constant-file keyword");
     }
 }
 
@@ -248,6 +251,9 @@ void loadPassengerCabin(const VehicleConfig& source, VehicleConfig& result) {
         if (keyword == "end") {
             continue;
         }
+        openbus::config::logUnhandledConfigurationTag(
+            "passengercabin.cfg", source.passengerCabinConfigPath, line.number, line.keyword(),
+            "passenger-cabin keyword is not implemented");
     }
 }
 
@@ -338,6 +344,9 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
             }
             continue;
         }
+        openbus::config::logUnhandledConfigurationTag(
+            "paths.cfg", source.pathsConfigPath, line.number, line.keyword(),
+            "passenger-path keyword is not implemented");
     }
 }
 
@@ -442,6 +451,11 @@ bool parseAxle(Reader& reader, VehicleConfig& result, const Line& keywordLine) {
                                 name == "achse_feder" || name == "achse_maxforce" ||
                                 name == "achse_daempfer" || name == "achse_antrieb";
         if (!recognized) {
+            if (!name.empty() && name.front() != ';' && name.front() != '/') {
+                openbus::config::logUnhandledConfigurationTag(
+                    "vehicle axle block", result.sourcePath, field.number, field.text,
+                    "axle subdirective is not implemented");
+            }
             continue;
         }
         Line valueLine;
@@ -780,6 +794,9 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
         }
 
         result.diagnostics.warning(line.number, line.keyword(), "unknown vehicle keyword");
+        openbus::config::logUnhandledConfigurationTag(
+            kind == VehicleFileKind::Bus ? "bus.cfg" : "vehicle.cfg", configPath, line.number,
+            line.keyword(), "unknown vehicle keyword");
     }
 
     if (result.modelPath.empty()) {

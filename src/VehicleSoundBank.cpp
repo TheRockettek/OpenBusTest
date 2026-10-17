@@ -145,6 +145,10 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
             continue;
         }
         const std::string keyword = line.keyword();
+        const auto reportUnhandled = [&]() {
+            openbus::config::logUnhandledConfigurationTag(
+                "sound.cfg", configPath, line.number, keyword, "unknown sound keyword");
+        };
         if (keyword == "sound" || keyword == "loopsound") {
             retainUntriggeredLoop();
             openbus::config::Line value;
@@ -306,7 +310,9 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
             current.conditions.push_back({{}, 0.0F, -1});
             soundLog.Log("Invalid [conditionSingle] in " + configPath.string());
             updateCurrentTriggers();
+            continue;
         }
+        reportUnhandled();
     }
     retainUntriggeredLoop();
 }

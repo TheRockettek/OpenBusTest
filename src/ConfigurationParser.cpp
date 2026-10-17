@@ -1,13 +1,21 @@
 #include "ConfigurationParser.h"
 
+#include "Logger.h"
+
 #include <charconv>
 #include <cctype>
 #include <cmath>
+#include <mutex>
+#include <system_error>
+#include <unordered_set>
 
 namespace openbus::config {
 
 namespace {
 constexpr std::size_t MAX_CONFIG_RECORDS = 1'000'000;
+Logger configurationLog("Configuration");
+std::mutex unhandledTagMutex;
+std::unordered_set<std::string> loggedUnhandledTags;
 }
 
 std::string trim(const std::string& value) {
@@ -87,6 +95,32 @@ bool parseFloat(const std::string& value, float& result) {
     }
     result = singlePrecision;
     return true;
+}
+
+void logUnhandledConfigurationTag(const std::string& format,
+                                  const std::filesystem::path& sourcePath,
+                                  std::size_t line, const std::string& tag,
+                                  const std::string& disposition) {
+    std::error_code error;
+    std::filesystem::path normalizedPath = std::filesystem::weakly_canonical(sourcePath, error);
+    if (error) {
+        normalizedPath = std::filesystem::absolute(sourcePath, error).lexically_normal();
+        if (error) {
+            normalizedPath = sourcePath.lexically_normal();
+        }
+    }
+    const std::string location = normalizedPath.generic_string();
+    const std::string key = format + "\n" + location + "\n" + std::to_string(line) + "\n" + tag +
+                            "\n" + disposition;
+    {
+        std::lock_guard<std::mutex> lock(unhandledTagMutex);
+        if (!loggedUnhandledTags.insert(key).second) {
+            return;
+        }
+    }
+    configurationLog.Log("Unhandled configuration tag [" + tag + "]: " + disposition +
+                         " in " + format + " file=" + location + " line=" +
+                         std::to_string(line));
 }
 
 bool Line::isKeyword() const {

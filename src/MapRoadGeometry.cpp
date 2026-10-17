@@ -248,6 +248,11 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
     geometry.vertices.reserve(vertexCount);
     geometry.indices.reserve((centerline.size() - 1) * (section.points.size() - 1) * 6);
     const double chainOffset = spline.chainOffsetValid ? spline.chainOffset : 0.0;
+    // [scaleTexByLength] scales one texture span to this authored spline segment. Keep it
+    // segment-local (do not apply chainOffset) so a long segment stretches the mapping instead
+    // of producing one repeat for every metre as the ordinary V slope does.
+    const double textureDistanceScale =
+        section.scaleTextureByLength ? 1.0 / spline.length : 1.0;
     const auto startFrame = endpointFrame(spline, centerline.front(), false, cantHalfWidth);
     const auto endFrame = endpointFrame(spline, centerline.back(), true, cantHalfWidth);
     for (const MapSplineSample& sample : centerline) {
@@ -268,11 +273,13 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
             // the right-positive side in the current map-axis convention.
             const double cantLift =
                 mapSplineCantHeightOffset(profileLateral, cantPercent, cantHalfWidth);
+            const double textureDistance =
+                section.scaleTextureByLength ? sample.distance : chainOffset + sample.distance;
             MapRoadVertex vertex{
                 sample.x + lateral[0] + skewShift * std::sin(sample.headingRadians),
                 sample.y + lateral[1] + skewShift * std::cos(sample.headingRadians),
                 elevation + point.height + cantLift, point.textureU,
-                (chainOffset + sample.distance + skewShift) * point.textureVPerMeter};
+                (textureDistance + skewShift) * point.textureVPerMeter * textureDistanceScale};
             const auto applyJoin = [&](const std::optional<MapRoadEndpointFrame>& join,
                                        const MapRoadEndpointFrame& original, double fromEnd,
                                        bool end) {
@@ -301,7 +308,7 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
                 vertex.x += delta[0] * weight;
                 vertex.y += delta[1] * weight;
                 vertex.z += delta[2] * weight;
-                vertex.textureV += weight * point.textureVPerMeter *
+                vertex.textureV += weight * point.textureVPerMeter * textureDistanceScale *
                                    (delta[0] * std::sin(sample.headingRadians) +
                                     delta[1] * std::cos(sample.headingRadians));
                 if (fromEnd == 0.0) {

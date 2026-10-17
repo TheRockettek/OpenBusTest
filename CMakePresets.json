@@ -20,6 +20,17 @@
       }
     },
     {
+      "name": "windows-clang-ninja",
+      "displayName": "Windows Clang Release (Ninja, parallel)",
+      "inherits": "windows-clang-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-ninja",
+      "cacheVariables": {
+        "CMAKE_MAKE_PROGRAM": "C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe",
+        "OPENBUS_ENABLE_PERF_TRACE": "OFF"
+      }
+    },
+    {
       "name": "windows-clang-benchmark",
       "displayName": "Windows Clang Release (Benchmark Tracing)",
       "inherits": "windows-clang-release",
@@ -40,6 +51,7 @@
   ],
   "buildPresets": [
     { "name": "windows-clang-release", "configurePreset": "windows-clang-release" },
+    { "name": "windows-clang-ninja", "configurePreset": "windows-clang-ninja", "jobs": 12 },
     { "name": "windows-clang-benchmark", "configurePreset": "windows-clang-benchmark" },
     { "name": "windows-clang-bgfx", "configurePreset": "windows-clang-bgfx" }
   ],

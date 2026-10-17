@@ -52,7 +52,10 @@ struct Uniforms {
     GLint texture = -1;
     GLint textureArray = -1;
     GLint textureScale = -1;
+    GLint detailTexture = -1;
+    GLint detailTextureScale = -1;
     GLint useTexture = -1;
+    GLint useDetailTexture = -1;
     GLint useTextureArray = -1;
     GLint color = -1;
     GLint alphaMode = -1;
@@ -98,6 +101,7 @@ struct ModelUniformState {
     bool valid = false;
     bool textured = false;
     bool textureArray = false;
+    bool useDetailTexture = false;
     bool useLightmap = false;
     bool useNightmap = false;
     bool useTransmap = false;
@@ -118,6 +122,7 @@ struct ModelUniformState {
     float nightmapStrength = 0.0f;
     float bumpmapStrength = 0.0f;
     std::array<float, 2> textureScale = {1.0F, 1.0F};
+    std::array<float, 2> detailTextureScale = {1.0F, 1.0F};
     std::array<float, 2> transmapScale = {1.0F, 1.0F};
     int interiorLightCount = 0;
     std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightViewPositions = {};
@@ -205,6 +210,8 @@ uniform float uDiffuseLight;
 uniform sampler2D uTexture;
 uniform sampler2DArray uTextureArray;
 uniform vec2 uTextureScale;
+uniform sampler2D uDetailTexture;
+uniform vec2 uDetailTextureScale;
 uniform sampler2D uLightmap;
 uniform sampler2D uNightmap;
 uniform sampler2D uTransmap;
@@ -214,6 +221,7 @@ uniform sampler2D uBumpmap;
 uniform sampler2D uFreeTexture;
 uniform sampler2D uTextTexture;
 uniform bool uUseTexture;
+uniform bool uUseDetailTexture;
 uniform bool uUseTextureArray;
 uniform bool uUseLightmap;
 uniform bool uUseNightmap;
@@ -245,6 +253,12 @@ void main() {
         color *= texture(uTextureArray, vec3(textureCoordinate, vTexCoord.z));
     } else if (uUseTexture) {
         color *= texture(uTexture, textureCoordinate);
+    }
+    // OMSI's second [groundtex] image is a high-frequency detail map. Multiplying
+    // it over the albedo preserves colored base textures and reveals detail on
+    // deliberately white base images such as Cotterell's wh_white.bmp.
+    if (uUseDetailTexture) {
+        color.rgb *= texture(uDetailTexture, vTexCoord.xy * uDetailTextureScale).rgb;
     }
     vec3 diffuseReflectance = color.rgb;
     vec3 unlitColor = color.rgb;
@@ -511,7 +525,10 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.texture = pglGetUniformLocation(program, "uTexture");
         uniforms.textureArray = pglGetUniformLocation(program, "uTextureArray");
         uniforms.textureScale = pglGetUniformLocation(program, "uTextureScale");
+        uniforms.detailTexture = pglGetUniformLocation(program, "uDetailTexture");
+        uniforms.detailTextureScale = pglGetUniformLocation(program, "uDetailTextureScale");
         uniforms.useTexture = pglGetUniformLocation(program, "uUseTexture");
+        uniforms.useDetailTexture = pglGetUniformLocation(program, "uUseDetailTexture");
         uniforms.useTextureArray = pglGetUniformLocation(program, "uUseTextureArray");
         uniforms.color = pglGetUniformLocation(program, "uColor");
         uniforms.alphaMode = pglGetUniformLocation(program, "uAlphaMode");
@@ -675,6 +692,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     const bool flagsChanged =
         !modelUniformState.valid || modelUniformState.textured != material.textured ||
         modelUniformState.textureArray != (material.textured && material.textureArray) ||
+        modelUniformState.useDetailTexture != material.useDetailTexture ||
         modelUniformState.useLightmap != material.useLightmap ||
         modelUniformState.useNightmap != material.useNightmap ||
         modelUniformState.useTransmap != material.useTransmap ||
@@ -688,6 +706,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         pglUniform1i(modelUniforms.useTexture, material.textured ? 1 : 0);
         pglUniform1i(modelUniforms.useTextureArray,
                      material.textured && material.textureArray ? 1 : 0);
+        pglUniform1i(modelUniforms.useDetailTexture, material.useDetailTexture ? 1 : 0);
         pglUniform1i(modelUniforms.useLightmap, material.useLightmap ? 1 : 0);
         pglUniform1i(modelUniforms.useNightmap, material.useNightmap ? 1 : 0);
         pglUniform1i(modelUniforms.useTransmap, material.useTransmap ? 1 : 0);
@@ -715,6 +734,11 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     if (!modelUniformState.valid || modelUniformState.textureScale != material.textureScale) {
         pglUniform2f(modelUniforms.textureScale, material.textureScale[0],
                      material.textureScale[1]);
+    }
+    if (!modelUniformState.valid ||
+        modelUniformState.detailTextureScale != material.detailTextureScale) {
+        pglUniform2f(modelUniforms.detailTextureScale, material.detailTextureScale[0],
+                     material.detailTextureScale[1]);
     }
     if (!modelUniformState.valid || modelUniformState.transmapScale != material.transmapScale) {
         pglUniform2f(modelUniforms.transmapScale, material.transmapScale[0],
@@ -759,6 +783,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.valid = true;
     modelUniformState.textured = material.textured;
     modelUniformState.textureArray = material.textured && material.textureArray;
+    modelUniformState.useDetailTexture = material.useDetailTexture;
     modelUniformState.useLightmap = material.useLightmap;
     modelUniformState.useNightmap = material.useNightmap;
     modelUniformState.useTransmap = material.useTransmap;
@@ -773,6 +798,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.nightmapStrength = material.nightmapStrength;
     modelUniformState.bumpmapStrength = material.bumpmapStrength;
     modelUniformState.textureScale = material.textureScale;
+    modelUniformState.detailTextureScale = material.detailTextureScale;
     modelUniformState.transmapScale = material.transmapScale;
     modelUniformState.interiorLightCount = material.interiorLightCount;
     modelUniformState.interiorLightViewPositions = material.interiorLightViewPositions;
@@ -850,6 +876,7 @@ bool initializeCoreRenderer() {
         // sampler2D and sampler2DArray cannot alias the same unit in GLSL 3.3;
         // OpenGL rejects every draw even when only one shader branch is active.
         pglUniform1i(modelUniforms.textureArray, 7);
+        pglUniform1i(modelUniforms.detailTexture, 8);
         pglUniform1i(modelUniforms.lightmap, 1);
         pglUniform1i(modelUniforms.nightmap, 2);
         pglUniform1i(modelUniforms.transmap, 3);
@@ -991,6 +1018,8 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     bindTexture(GL_TEXTURE_2D, material.freeTexture);
     selectTextureUnit(GL_TEXTURE0 + 5);
     bindTexture(GL_TEXTURE_2D, material.textTexture);
+    selectTextureUnit(GL_TEXTURE8);
+    bindTexture(GL_TEXTURE_2D, material.detailTexture);
     selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
     recordTriangleSubmission(vertexCount / 3);
@@ -1035,6 +1064,8 @@ void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexC
     bindTexture(GL_TEXTURE_2D, material.freeTexture);
     selectTextureUnit(GL_TEXTURE0 + 5);
     bindTexture(GL_TEXTURE_2D, material.textTexture);
+    selectTextureUnit(GL_TEXTURE8);
+    bindTexture(GL_TEXTURE_2D, material.detailTexture);
     selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
     pglBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);

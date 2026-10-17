@@ -1,6 +1,7 @@
 #include "ScriptRuntime.h"
 
 #include "AssetPath.h"
+#include "ConfigurationParser.h"
 #include "Logger.h"
 #include "Variables.h"
 #include "Environment.h"
@@ -409,6 +410,13 @@ struct ScriptRuntime::Impl {
         const std::vector<std::string> lines = readFontLines(fontPath);
         for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
             if (lines[lineIndex] != "[newfont]" && lines[lineIndex] != "[char]") {
+                if (lines[lineIndex].size() > 2 && lines[lineIndex].front() == '[' &&
+                    lines[lineIndex].back() == ']') {
+                    openbus::config::logUnhandledConfigurationTag(
+                        "font (.oft)", fontPath, lineIndex + 1,
+                        lines[lineIndex].substr(1, lines[lineIndex].size() - 2),
+                        "font section is not implemented");
+                }
                 continue;
             }
             const std::size_t valueCount = lines[lineIndex] == "[newfont]" ? 5 : 4;
@@ -475,7 +483,7 @@ struct ScriptRuntime::Impl {
         return floatStack.empty() ? 0.0F : floatStack.back();
     }
 
-    float soundControlValue(const std::string& name) const {
+    float soundControlValue() const {
         float value = nativePeekFloat();
         std::string positionVariable;
         std::string lastPositionVariable;
@@ -1038,13 +1046,13 @@ struct ScriptRuntime::Impl {
                     break;
                 case OscOpcode::SoundTrigger:
                     if (onSoundTrigger) {
-                        onSoundTrigger(instruction.name, {}, soundControlValue(instruction.name));
+                        onSoundTrigger(instruction.name, {}, soundControlValue());
                     }
                     break;
                 case OscOpcode::SoundTriggerFile: {
                     const std::string file = nativePopString();
                     if (onSoundTrigger) {
-                        onSoundTrigger(instruction.name, file, soundControlValue(instruction.name));
+                        onSoundTrigger(instruction.name, file, soundControlValue());
                     }
                     break;
                 }
@@ -1318,7 +1326,7 @@ struct ScriptRuntime::Impl {
         Impl* runtime = runtimeFor(lua);
         const std::string name = luaL_checkstring(lua, 1);
         if (runtime->onSoundTrigger) {
-            runtime->onSoundTrigger(name, {}, runtime->soundControlValue(name));
+            runtime->onSoundTrigger(name, {}, runtime->soundControlValue());
         }
         return 0;
     }
@@ -1328,7 +1336,7 @@ struct ScriptRuntime::Impl {
         const std::string name = luaL_checkstring(lua, 1);
         const std::string file = luaL_checkstring(lua, 2);
         if (runtime->onSoundTrigger) {
-            runtime->onSoundTrigger(name, file, runtime->soundControlValue(name));
+            runtime->onSoundTrigger(name, file, runtime->soundControlValue());
         }
         return 0;
     }

@@ -161,6 +161,15 @@ void runFixtureProbe() {
                         std::vector<std::string>{" opaque global payload ", ""},
                 "unsupported global section payload is preserved verbatim");
         require(definition.groundTextures.size() == 2, "multiple groundtex records parsed");
+        require(openbus::map::resolveMapGroundTextureSidecarIndex("1", 8) == 1 &&
+                openbus::map::resolveMapGroundTextureSidecarIndex("7", 8) == 7 &&
+                openbus::map::resolveMapGroundTextureSidecarIndex("8", 8) == 7 &&
+                openbus::map::resolveMapGroundTextureSidecarIndex("08", 8) == 7 &&
+                !openbus::map::resolveMapGroundTextureSidecarIndex("0", 8) &&
+                !openbus::map::resolveMapGroundTextureSidecarIndex("9", 8) &&
+                !openbus::map::resolveMapGroundTextureSidecarIndex("8", 1) &&
+                !openbus::map::resolveMapGroundTextureSidecarIndex("x", 8),
+            "ground-texture sidecar suffixes resolve direct indices and terminal layer ordinal");
         require(definition.groundTextures[0].texturePath == "Texture\\grass.bmp",
                 "ground texture path preserved");
         require(definition.groundTextures[1].texturePath == "Texture\\asphalt.bmp" &&

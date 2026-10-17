@@ -1,5 +1,6 @@
 #include "MapSplineProfile.h"
 
+#include "ConfigurationParser.h"
 #include "PerfTrace.h"
 
 #include <algorithm>
@@ -122,8 +123,10 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
     MapSplineProfileSection* currentSection = nullptr;
     std::size_t currentTextureIndex = 0;
     bool hasCurrentTexture = false;
+    std::vector<bool> scaleTextureByLength;
 
     for (std::size_t cursor = 0; cursor < lines.size();) {
+        const std::size_t sectionLine = cursor + 1;
         const std::string& section = lines[cursor++];
         if (section == "[onlyeditor]") {
             profile.editorOnly = true;
@@ -146,6 +149,7 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
             if (readPayload(lines, cursor, texture)) {
                 profile.textures.push_back(std::move(texture));
                 profile.textureAlphaModes.push_back(0);
+                scaleTextureByLength.push_back(false);
                 currentTextureIndex = profile.textures.size() - 1;
                 hasCurrentTexture = true;
             } else {
@@ -163,6 +167,8 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
                     profile.textureAlphaModes[currentTextureIndex] = alphaMode;
                 }
             }
+        } else if (section == "[scaleTexByLength]" && hasCurrentTexture) {
+            scaleTextureByLength[currentTextureIndex] = true;
         } else if (section == "[profile]") {
             std::string textureIndexText;
             int textureIndex = -1;
@@ -171,7 +177,11 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
                 const char* end = begin + textureIndexText.size();
                 const auto parsed = std::from_chars(begin, end, textureIndex);
                 if (parsed.ec == std::errc{} && parsed.ptr == end) {
-                    profile.sections.push_back({textureIndex, {}});
+                    const bool scalesByLength =
+                        textureIndex >= 0 &&
+                        static_cast<std::size_t>(textureIndex) < scaleTextureByLength.size() &&
+                        scaleTextureByLength[static_cast<std::size_t>(textureIndex)];
+                    profile.sections.push_back({textureIndex, scalesByLength, {}});
                     currentSection = &profile.sections.back();
                 } else {
                     currentSection = nullptr;
@@ -184,6 +194,16 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
             if (readRealPayloads(lines, cursor, values)) {
                 currentSection->points.push_back({values[0], values[1], values[2], values[3]});
             }
+        } else if (section == "[matl_alpha]" || section == "[profilepnt]" ||
+                   section == "[scaleTexByLength]") {
+            openbus::config::logUnhandledConfigurationTag(
+                "spline profile (.sli)", path, sectionLine,
+                section.substr(1, section.size() - 2),
+                "directive has no applicable preceding texture mapping");
+        } else if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
+            openbus::config::logUnhandledConfigurationTag(
+                "spline profile (.sli)", path, sectionLine,
+                section.substr(1, section.size() - 2), "directive is not implemented");
         }
     }
 

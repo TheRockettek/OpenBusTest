@@ -55,6 +55,9 @@ void runProbe(const std::filesystem::path& fixture) {
     require(profile.sections.size() == 2, "both cross-section lanes are loaded");
     require(profile.sections[0].textureIndex == 0, "first lane uses texture zero");
     require(profile.sections[1].textureIndex == 1, "second lane uses texture one");
+    require(!profile.sections[0].scaleTextureByLength &&
+                profile.sections[1].scaleTextureByLength,
+            "[scaleTexByLength] applies to profile sections using its preceding texture");
     require(profile.sections[0].points.size() == 2, "first lane has both profile points");
     require(profile.sections[1].points.size() == 2, "second lane has both profile points");
     requireNear(profile.sections[1].points[0].lateral, -3.0, "profile lateral offset");

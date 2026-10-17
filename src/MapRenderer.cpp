@@ -462,6 +462,7 @@ struct MapRenderer::Impl {
         double minZ = 0.0;
         double maxZ = 0.0;
         std::array<float, 2> baseTextureScale = {1.0F, 1.0F};
+        std::array<float, 2> baseDetailTextureScale = {1.0F, 1.0F};
         std::vector<ModelMaterial> groundTextureLayers;
     };
 
@@ -538,6 +539,7 @@ struct MapRenderer::Impl {
     };
 
     GLuint texture = 0;
+    GLuint baseDetailTexture = 0;
     std::vector<TileBuffer> terrainBuffers;
     std::vector<ModelBatch> sceneryBatches;
     std::vector<std::vector<double>> sceneryLodThresholdSets;
@@ -641,6 +643,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
 
     std::unordered_map<std::uint64_t, openbus::map::TerrainGrid> terrainByCoordinate;
     terrainByCoordinate.reserve(map.tiles.size());
+    SkipSummaries skipped;
     std::unordered_map<std::string, GLuint> textureCache;
     const auto getTexture = [&](const std::filesystem::path& path, bool repeat = true) {
         const std::string key =
@@ -654,8 +657,20 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
         impl_->ownedTextures.push_back(texture);
         return texture;
     };
+    if (!uniformGroundTexturePreview) {
+        const std::string& detailTextureName =
+            map.groundTextures[baseGroundTextureIndex].detailTexturePath;
+        if (!detailTextureName.empty()) {
+            try {
+                impl_->baseDetailTexture =
+                    getTexture(groundTexturePath(map, omsiRoot, detailTextureName));
+            } catch (const std::exception& error) {
+                recordSkipped(skipped, "base ground-texture detail textures that failed to load",
+                              detailTextureName + ": " + error.what());
+            }
+        }
+    }
     const openbus::map::MapTileReference& center = map.tiles[centerTileIndex];
-    SkipSummaries skipped;
     gameLog.Log("Map loading started: root=" + map.rootPath.generic_string() +
                 ", tiles=" + std::to_string(map.tiles.size()) +
                 ", full-map loading enabled, render visibility=" +
@@ -720,22 +735,30 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
             const float baseTextureScale =
                 static_cast<float>(baseTextureRepeatsPerTile) * inverseIntervals;
             buffer.baseTextureScale = {baseTextureScale, baseTextureScale};
+            if (impl_->baseDetailTexture != 0) {
+                const double baseDetailRepeatsPerTile =
+                    openbus::map::mapGroundTextureTiling(
+                        map.groundTextures[baseGroundTextureIndex])
+                        .detailTextureRepeatsPerTile;
+                const float baseDetailScale =
+                    static_cast<float>(baseDetailRepeatsPerTile) * inverseIntervals;
+                buffer.baseDetailTextureScale = {baseDetailScale, baseDetailScale};
+            }
             if (!uniformGroundTexturePreview) {
                 std::map<std::size_t, const openbus::map::MapGroundTextureSidecar*> layersByIndex;
                 for (const openbus::map::MapGroundTextureSidecar& sidecar :
                      tile.groundTextureSidecars) {
-                    std::size_t textureIndex = 0;
-                    const char* suffixBegin = sidecar.ordinalSuffix.data();
-                    const char* suffixEnd = suffixBegin + sidecar.ordinalSuffix.size();
-                    const auto parsed = std::from_chars(suffixBegin, suffixEnd, textureIndex);
-                    if (parsed.ec != std::errc{} || parsed.ptr != suffixEnd || textureIndex == 0 ||
-                        textureIndex >= map.groundTextures.size()) {
+                    const std::optional<std::size_t> resolvedIndex =
+                        openbus::map::resolveMapGroundTextureSidecarIndex(
+                            sidecar.ordinalSuffix, map.groundTextures.size());
+                    if (!resolvedIndex) {
                         recordSkipped(skipped,
                                       "ground-texture sidecars with invalid groundtex indices",
                                       tile.textPath.filename().string() +
                                           " sidecar=" + sidecar.path.filename().string());
                         continue;
                     }
+                    const std::size_t textureIndex = *resolvedIndex;
                     if (!layersByIndex.emplace(textureIndex, &sidecar).second) {
                         recordSkipped(skipped, "duplicate ground-texture sidecar indices",
                                       tile.textPath.filename().string() +
@@ -749,12 +772,33 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                             map, omsiRoot, map.groundTextures[textureIndex].texturePath);
                         layer.texture = getTexture(layerTexturePath);
                         layer.textured = true;
-                        const double layerRepeatsPerTile =
-                            openbus::map::mapGroundTextureTiling(map.groundTextures[textureIndex])
-                                .textureRepeatsPerTile;
+                        const openbus::map::MapGroundTextureTiling tiling =
+                            openbus::map::mapGroundTextureTiling(
+                                map.groundTextures[textureIndex]);
+                        const double layerRepeatsPerTile = tiling.textureRepeatsPerTile;
                         const float layerTextureScale =
                             static_cast<float>(layerRepeatsPerTile) * inverseIntervals;
                         layer.textureScale = {layerTextureScale, layerTextureScale};
+                        const std::string& detailTextureName =
+                            map.groundTextures[textureIndex].detailTexturePath;
+                        if (!detailTextureName.empty()) {
+                            try {
+                                const std::filesystem::path detailTexturePath =
+                                    groundTexturePath(map, omsiRoot, detailTextureName);
+                                layer.detailTexture = getTexture(detailTexturePath);
+                                layer.useDetailTexture = true;
+                                const float detailTextureScale =
+                                    static_cast<float>(tiling.detailTextureRepeatsPerTile) *
+                                    inverseIntervals;
+                                layer.detailTextureScale = {detailTextureScale,
+                                                            detailTextureScale};
+                            } catch (const std::exception& error) {
+                                recordSkipped(skipped,
+                                              "ground-texture detail textures that failed to load",
+                                              sidecar->path.filename().string() + " detail=" +
+                                                  detailTextureName + ": " + error.what());
+                            }
+                        }
                         layer.transmap = getTexture(sidecar->path, false);
                         layer.useTransmap = true;
                         // OMSI ground-texture DDS rows run opposite the terrain mesh's map
@@ -2170,6 +2214,8 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         ModelMaterial material;
         material.texture = impl_->texture;
         material.textured = true;
+        material.detailTexture = impl_->baseDetailTexture;
+        material.useDetailTexture = impl_->baseDetailTexture != 0;
         for (const Impl::TileBuffer& tile : impl_->terrainBuffers) {
             if (!impl_->activeTileKeys.contains(tileKey(tile.tileX, tile.tileY))) {
                 continue;
@@ -2188,6 +2234,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                 continue;
             }
             material.textureScale = tile.baseTextureScale;
+            material.detailTextureScale = tile.baseDetailTextureScale;
             drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, material,
                                   {1.0, 1.0, 1.0}, 1.0, 0);
             if (!tile.groundTextureLayers.empty()) {

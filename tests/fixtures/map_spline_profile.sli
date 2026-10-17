@@ -6,6 +6,8 @@ sidewalk.bmp
 [texture]
 road.bmp
 
+[scaleTexByLength]
+
 [matl_alpha]
 1
 

@@ -285,8 +285,13 @@ index once per map; live editing/Chrono replacement would require index invalida
 The regression probes validate this model's internal geometry and render/collision
 agreement, **not visual parity with OMSI**.
 
-The `.sli` reader supports `[texture]`, `[profile]`, and `[profilepnt]` for
-textured cross-section strips. It also retains the four raw/numeric fields of
+The `.sli` reader supports `[texture]`, `[profile]`, `[profilepnt]`, and the
+per-texture `[scaleTexByLength]` marker for textured cross-section strips.
+For a marked texture, the longitudinal UV span is normalized to the literal
+physical length of each map spline segment and restarts at that segment's start;
+it does not repeat the ordinary per-metre V slope along a long segment. Unmarked
+textures continue to use the authored per-metre V slope and chain offset.
+It also retains the four raw/numeric fields of
 each `[heightprofile]` record, marking malformed or truncated records invalid.
 Valid lateral extents bound cant displacement as described above; the authored
 height fields and terrain-editing semantics are not applied. Graphical strips
@@ -415,12 +420,18 @@ The merger registers these optional tile-related copy patterns: `<tile>.terrain`
 per-ground-texture DDS files under `texture/map/`. Its filename template is
 `texture/map/tile_{pos_x}_{pos_y}.map.{groundtex_index}.dds`; the merger scans
 numeric suffixes starting at 1 and offsets each stored `groundtex_index` when
-merging `[groundtex]` tables. This supports treating the suffix as the index of
-the corresponding non-base ground-texture layer. OpenBus decodes the installed
-8-bit alpha-only DDS masks and composites those layers per tile. This is
-reverse-engineering evidence from the merger's copy/remap behavior and installed
-Grundorf assets, not an official OMSI format specification. Other binary
-payloads remain undecoded. Some patterns vary with `[groundtex]` count. This list is not
+merging `[groundtex]` tables. OpenBus uses suffixes 1 through N-1 as direct
+indices into the `[groundtex]` list (record 0 is the base); for maps that emit
+the terminal suffix N, it maps that suffix to the final record N-1. This
+compatibility rule includes Cotterell's intended `.map.8.dds` layers when there
+are eight records. OpenBus decodes the installed 8-bit alpha-only DDS masks and
+composites those layers per tile. This is reverse-engineering evidence from the
+merger's copy/remap behavior and installed map assets, not an official OMSI
+format specification. Each `[groundtex]` detail image is tiled at the detail
+repeat count and multiplied into its albedo before the per-tile mask is applied;
+this interpretation is implemented but remains unverified against OMSI output.
+Other binary payloads remain undecoded. Some patterns vary with `[groundtex]`
+count. This list is not
 an exhaustive inventory of files emitted or consumed by OMSI.
 
 | Observed Grande Porto item | Sample evidence | Safe current handling |

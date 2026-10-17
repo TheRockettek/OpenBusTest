@@ -184,9 +184,13 @@ reused:
 ```
 
 Native MSVC is rejected because its CMake C++23 mapping is
-`/std:c++latest`, not an exact C++23 mode. The Windows helper initializes the
-MSVC x64 environment and uses standalone Clang-cl with the NMake generator.
-For a manual configure from `cmd.exe`:
+`/std:c++latest`, not an exact C++23 mode. The Windows `run.bat` helper
+initializes the MSVC x64 environment and uses standalone Clang-cl with the
+Visual Studio-bundled Ninja executable. Its `windows-clang-ninja` preset builds
+in `build-ninja` using 12 parallel jobs; the original NMake `build-ode`
+directory remains untouched. The first Ninja build compiles from scratch, while
+subsequent builds recompile only changed sources. For a manual NMake configure
+from `cmd.exe`:
 
 ```bat
 call windows_clang_env.bat

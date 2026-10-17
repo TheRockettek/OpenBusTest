@@ -415,8 +415,9 @@ for the explicit boundary.
   available. The first `[groundtex]` record is the terrain
   base; verified numeric `.map.<index>.dds` sidecars are decoded as alpha masks
   and composite subsequent ground-texture layers per tile. `OPENBUS_MAP_GROUNDTEX`
-  still provides a uniform preview/debug override. Detail layers, variable
-  terrain/lightmaps, and seasonal changes remain unsupported.
+  still provides a uniform preview/debug override. Repeated `[groundtex]` detail
+  images are multiplied over their albedo. Variable terrain/lightmaps and
+  seasonal changes remain unsupported.
 - `[version]`, `[terrain]`, `[object]`, `[spline]`, `[spline_h]`,
   `[splineAttachement]`, and `[splineAttachement_repeater]` have typed parser
   paths. Ordinary objects, road strips, and same-tile spline attachments have
@@ -480,9 +481,10 @@ for the explicit boundary.
 - [ ] Resolve Chrono map variants using `[selobject]`, `[selspline]`,
   `[delete]`, `[typ]`, and `[relabel]`; these records are currently parser-only
   or have no independent runtime effect.
-- [ ] Investigate two Cotterell ground-texture sidecars named `.map.8.dds`
-  that were rejected as invalid `[groundtex]` indices; verify the map's texture
-  count/index convention before changing the sidecar mapping.
+- [x] Support Cotterell's intended `.map.8.dds` ground-texture layers: when a
+  sidecar suffix equals the number of `[groundtex]` records, map it to the final
+  record. Existing suffixes 1..N-1 retain their direct mapping; format semantics
+  remain reverse-engineered rather than normative.
 - [ ] Investigate why Cotterell visited 27 terrain tiles but uploaded only 26
   terrain meshes, despite the manifest reporting 27 terrain sidecars; identify
   the missing/rejected tile and ensure it is surfaced in diagnostics.

@@ -17,6 +17,7 @@ struct MapSplineProfilePoint {
 
 struct MapSplineProfileSection {
     int textureIndex = -1;
+    bool scaleTextureByLength = false;
     std::vector<MapSplineProfilePoint> points;
 };
 
@@ -36,7 +37,8 @@ struct MapSplineProfile {
 };
 
 // Reads the text-based StreetCreator/OMSI .sli sections used to define the
-// spline cross-section, per-point UV coordinates, height-profile records, and texture references.
+// spline cross-section, per-point UV coordinates, height-profile records, texture references,
+// and [scaleTexByLength] metadata.
 MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path);
 
 // Returns the maximum absolute x extent across valid [heightprofile] records.

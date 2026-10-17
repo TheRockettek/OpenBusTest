@@ -368,6 +368,16 @@ void runProbe() {
     requireNear(straight.vertices.back().textureV, 2.0,
                 "road texture V follows spline distance and profile scale");
 
+    openbus::map::MapSplineProfileSection lengthScaledSection = section;
+    lengthScaledSection.scaleTextureByLength = true;
+    lengthScaledSection.points = {{-2.0, 0.25, 0.0, 1.0}, {2.0, 0.25, 1.0, 1.0}};
+    const auto lengthScaled = openbus::map::buildMapRoadSectionGeometry(
+        spline, straightCenterline, lengthScaledSection);
+    requireNear(lengthScaled.vertices.front().textureV, 0.0,
+                "length-scaled texture phase starts at zero on each spline segment");
+    requireNear(lengthScaled.vertices.back().textureV, 1.0,
+                "scaleTexByLength maps one texture span across the literal segment length");
+
     spline.chainOffsetValid = true;
     spline.chainOffset = spline.length;
     const auto continued =
@@ -376,6 +386,12 @@ void runProbe() {
                 "chain offset continues texture phase at a linked spline start");
     requireNear(continued.vertices.back().textureV, 4.0,
                 "texture phase advances from the authored chain offset");
+    const auto continuedLengthScaled = openbus::map::buildMapRoadSectionGeometry(
+        spline, straightCenterline, lengthScaledSection);
+    requireNear(continuedLengthScaled.vertices.front().textureV, 0.0,
+                "length-scaled texture phase remains segment-local despite chain offsets");
+    requireNear(continuedLengthScaled.vertices.back().textureV, 1.0,
+                "length-scaled texture span remains one repeat on linked segments");
     require(continued.indices == straight.indices &&
                 continued.vertices.size() == straight.vertices.size(),
             "chain texture offset does not alter road topology");

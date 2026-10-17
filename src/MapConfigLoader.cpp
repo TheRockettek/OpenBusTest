@@ -1,5 +1,6 @@
 #include "MapConfigLoader.h"
 
+#include "ConfigurationParser.h"
 #include "PerfTrace.h"
 
 #include <algorithm>
@@ -422,6 +423,9 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             definition.tiles.push_back(std::move(tile));
             tileOrdinalToUniqueIndex.push_back(definition.tiles.size() - 1);
         } else if (isSectionHeader(section)) {
+            openbus::config::logUnhandledConfigurationTag(
+                "global.cfg", globalPath, sectionLine + 1,
+                section.substr(1, section.size() - 2), "section is not implemented");
             definition.diagnostics.warning(sectionLine + 1, section.substr(1, section.size() - 2),
                                            "global.cfg section is not implemented");
             MapOpaqueSection opaqueSection;
@@ -567,6 +571,23 @@ std::size_t selectMapGroundTextureIndex(const MapDefinition& map, std::string_vi
     return static_cast<std::size_t>(index);
 }
 
+std::optional<std::size_t> resolveMapGroundTextureSidecarIndex(
+    std::string_view ordinalSuffix, std::size_t groundTextureCount) noexcept {
+    if (ordinalSuffix.empty() || groundTextureCount < 2) {
+        return std::nullopt;
+    }
+    std::size_t index = 0;
+    const auto parsed = std::from_chars(ordinalSuffix.data(),
+                                        ordinalSuffix.data() + ordinalSuffix.size(), index);
+    if (parsed.ec != std::errc{} || parsed.ptr != ordinalSuffix.data() + ordinalSuffix.size() ||
+        index == 0 || index > groundTextureCount) {
+        return std::nullopt;
+    }
+    // Existing maps use the suffix directly for non-base records (1..N-1).
+    // Some maps also emit the terminal suffix N for their final record N-1.
+    return index == groundTextureCount ? groundTextureCount - 1 : index;
+}
+
 MapGroundTextureTiling
 mapGroundTextureTiling(const GroundTextureDefinition& groundTexture) noexcept {
     const auto parseRepeatCount = [](const std::string& text) {
@@ -624,12 +645,21 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
         if (chronoData != nullptr && section == "[object]") {
             // Chrono object payloads can contain selector-looking text; preserve the complete
             // source in rawLines, but do not reinterpret that tail as the selector inventory.
+            openbus::config::logUnhandledConfigurationTag(
+                "Chrono map tile", tile.textPath, cursor + 1, "object",
+                "object inventory is retained as raw data and not interpreted");
             break;
         }
         if (chronoData != nullptr && section != "[version]" && section != "[selobject]" &&
             section != "[selspline]") {
             // Chrono tile data is retained verbatim. Only its selector records are typed here;
             // normal tile records and selector override keywords have separate semantics.
+            if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
+                openbus::config::logUnhandledConfigurationTag(
+                    "Chrono map tile", tile.textPath, cursor + 1,
+                    section.substr(1, section.size() - 2),
+                    "section retained as raw Chrono data; runtime behavior is not implemented");
+            }
             continue;
         }
         const bool isModifier = section == "[varparent]" || section == "[spline_terrain_align]" ||
@@ -676,10 +706,19 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             data.hasTerrainMarker = true;
         } else if (section == "[water]") {
             data.hasWaterMarker = true;
+            openbus::config::logUnhandledConfigurationTag(
+                "map tile", tile.textPath, cursor + 1, "water",
+                "water marker is recognized but water rendering is not implemented");
         } else if (section == "[variable_terrain]") {
             data.hasVariableTerrainMarker = true;
+            openbus::config::logUnhandledConfigurationTag(
+                "map tile", tile.textPath, cursor + 1, "variable_terrain",
+                "dynamic terrain behavior is not implemented");
         } else if (section == "[variable_terrainlightmap]") {
             data.hasVariableTerrainLightmapMarker = true;
+            openbus::config::logUnhandledConfigurationTag(
+                "map tile", tile.textPath, cursor + 1, "variable_terrainlightmap",
+                "dynamic terrain lightmap behavior is not implemented");
         } else if (section == "[spline]" || section == "[spline_h]") {
             const bool elevated = section == "[spline_h]";
             int tileVersion = 0;
@@ -1027,6 +1066,9 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 break;
             }
         } else if (section == "[spline_terrain_align_2]") {
+            openbus::config::logUnhandledConfigurationTag(
+                "map tile", tile.textPath, cursor + 1, "spline_terrain_align_2",
+                "record is retained but its runtime behavior is not implemented");
             if (cursor + 1 >= lines.size()) {
                 throw std::runtime_error("Truncated [spline_terrain_align_2] in " +
                                          tile.textPath.string());
@@ -1039,6 +1081,10 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             }
             ++cursor;
         } else if (section == "[rule]" || section == "[kill_rule]") {
+            openbus::config::logUnhandledConfigurationTag(
+                "map tile", tile.textPath, cursor + 1,
+                section.substr(1, section.size() - 2),
+                "record is retained but placement filtering is not implemented");
             MapTileRule rule;
             rule.kill = section == "[kill_rule]";
             for (std::size_t index = 0; index < rule.fields.size(); ++index) {
@@ -1069,6 +1115,9 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             }
             cursor += rule.fields.size();
         } else if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
+            openbus::config::logUnhandledConfigurationTag(
+                "map tile", tile.textPath, cursor + 1,
+                section.substr(1, section.size() - 2), "section is not implemented");
             data.diagnostics.warning(cursor + 1, section.substr(1, section.size() - 2),
                                      "map tile section is not implemented");
             MapOpaqueSection opaqueSection;

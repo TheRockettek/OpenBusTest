@@ -17,6 +17,9 @@
 #ifndef GL_TEXTURE0
 #define GL_TEXTURE0 0x84C0
 #endif
+#ifndef GL_TEXTURE8
+#define GL_TEXTURE8 0x84C8
+#endif
 #ifndef GL_TEXTURE1
 #define GL_TEXTURE1 0x84C1
 #define GL_TEXTURE2 0x84C2
@@ -70,9 +73,12 @@ struct StaticPrimitiveBuffer {
 
 struct ModelMaterial {
     GLuint texture = 0;
+    GLuint detailTexture = 0;
     bool textureArray = false;
     bool textured = false;
+    bool useDetailTexture = false;
     std::array<float, 2> textureScale = {1.0F, 1.0F};
+    std::array<float, 2> detailTextureScale = {1.0F, 1.0F};
     GLenum textureWrapS = GL_REPEAT;
     GLenum textureWrapT = GL_REPEAT;
     GLuint lightmap = 0;

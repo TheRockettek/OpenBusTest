@@ -38,4 +38,4 @@ set "OPENBUS_ASSET_WORKERS=4"
 set "OPENBUS_DOPPLER=1"
 set "OPENBUS_CAPTURE_VIEWS="
 
-cmake -S . -B build-ode -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DOPENBUS_ENABLE_PERF_TRACE=OFF && cmake --build build-ode --target OpenBus && .\build-ode\OpenBus.exe
+cmake --preset windows-clang-ninja && cmake --build --preset windows-clang-ninja --target OpenBus && .\build-ninja\OpenBus.exe

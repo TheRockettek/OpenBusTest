@@ -82,6 +82,9 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         if (keyword == "groups" || keyword == "friendlyname" || keyword == "helparrow") {
             // These SCO metadata/editor fields do not affect static model rendering. Their
             // payload lines are intentionally left for the line-oriented parser to ignore.
+            openbus::config::logUnhandledConfigurationTag(
+                "scenery object (.sco)", configPath, line.number, line.keyword(),
+                "metadata is recognized but not used by the renderer");
             continue;
         }
         if (keyword == "model") {
@@ -112,6 +115,10 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                 } else {
                     if (attachment.name.empty() && !sawOperation) {
                         attachment.name = entry.text;
+                    } else {
+                        openbus::config::logUnhandledConfigurationTag(
+                            "scenery object attachment", configPath, entry.number, entry.text,
+                            "attachment operation is not implemented");
                     }
                     continue;
                 }
@@ -245,6 +252,9 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             continue;
         }
         result.diagnostics.warning(line.number, line.keyword(), "unknown SceneryObject keyword");
+        openbus::config::logUnhandledConfigurationTag(
+            "scenery object (.sco)", configPath, line.number, line.keyword(),
+            "unknown scenery-object keyword");
     }
 
     if (result.modelPath.empty() && result.trees.empty()) {

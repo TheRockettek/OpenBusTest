@@ -157,9 +157,9 @@ add_executable(OpenBus
     src/CrashHandler.cpp
     src/RoadFeatures.cpp
     src/BusSimulation.cpp
-    src/Logger.cpp
     src/Variables.cpp
     src/ConfigurationParser.cpp
+        src/Logger.cpp
     src/MapConfigLoader.cpp
     src/MapSceneryPlacement.cpp
     src/MapCollisionBuilder.cpp
@@ -338,12 +338,15 @@ add_test(NAME OpenBusVehicleInputBindingsProbe COMMAND OpenBusVehicleInputBindin
 add_executable(OpenBusConfigurationParserProbe
     tests/ConfigurationParserProbe.cpp
     src/ConfigurationParser.cpp
+    src/Logger.cpp
 )
 target_include_directories(OpenBusConfigurationParserProbe PRIVATE src)
 add_test(NAME OpenBusConfigurationParserProbe COMMAND OpenBusConfigurationParserProbe)
 
 add_executable(OpenBusMapConfigProbe
     tests/MapConfigLoaderProbe.cpp
+    src/ConfigurationParser.cpp
+    src/Logger.cpp
     src/MapConfigLoader.cpp
 )
 target_include_directories(OpenBusMapConfigProbe PRIVATE src)
@@ -351,6 +354,8 @@ add_test(NAME OpenBusMapConfigProbe COMMAND OpenBusMapConfigProbe)
 
 add_executable(OpenBusMapChronoTileProbe
     tests/MapChronoTileProbe.cpp
+    src/ConfigurationParser.cpp
+    src/Logger.cpp
     src/MapConfigLoader.cpp
 )
 target_include_directories(OpenBusMapChronoTileProbe PRIVATE src)
@@ -378,6 +383,7 @@ add_test(NAME OpenBusStaticPrimitiveBufferProbe COMMAND OpenBusStaticPrimitiveBu
 add_executable(OpenBusMapCollisionBuilderProbe
     tests/MapCollisionBuilderProbe.cpp
     src/ConfigurationParser.cpp
+    src/Logger.cpp
     src/MapCollisionBuilder.cpp
     src/MapConfigLoader.cpp
     src/MapSceneryPlacement.cpp
@@ -434,6 +440,8 @@ add_test(NAME OpenBusMapSceneryPlacementProbe COMMAND OpenBusMapSceneryPlacement
 
 add_executable(OpenBusMapSplineProfileProbe
     tests/MapSplineProfileProbe.cpp
+    src/ConfigurationParser.cpp
+    src/Logger.cpp
     src/MapSplineProfile.cpp
 )
 target_include_directories(OpenBusMapSplineProfileProbe PRIVATE src)
@@ -498,6 +506,7 @@ add_test(NAME OpenBusXLoaderProbe
 add_executable(OpenBusModelConfigProbe
     tests/ModelConfigProbe.cpp
     src/ConfigurationParser.cpp
+    src/Logger.cpp
     src/ModelConfigLoader.cpp
     src/SceneryObjectConfigLoader.cpp
     src/PerfTrace.cpp
@@ -511,6 +520,7 @@ add_test(NAME OpenBusModelConfigProbe COMMAND OpenBusModelConfigProbe)
 add_executable(OpenBusVehicleConfigProbe
     tests/VehicleConfigProbe.cpp
     src/ConfigurationParser.cpp
+    src/Logger.cpp
     src/ModelConfigLoader.cpp
     src/PerfTrace.cpp
     src/Variables.cpp
@@ -523,6 +533,7 @@ add_test(NAME OpenBusVehicleConfigProbe COMMAND OpenBusVehicleConfigProbe)
 add_executable(OpenBusConfigAudit
     tools/config_audit.cpp
     src/ConfigurationParser.cpp
+    src/Logger.cpp
     src/ModelConfigLoader.cpp
     src/PerfTrace.cpp
     src/Variables.cpp
@@ -536,6 +547,7 @@ add_executable(OpenBusBusConfigurationCollisionProbe
     src/BusConfiguration.cpp
     src/BusConfigLoader.cpp
     src/ConfigurationParser.cpp
+    src/Logger.cpp
     src/ModelConfigLoader.cpp
     src/O3DLoader.cpp
     src/ObjLoader.cpp
@@ -564,6 +576,7 @@ add_test(NAME OpenBusSoundEngineProbe COMMAND OpenBusSoundEngineProbe)
 
 add_executable(OpenBusScriptTextureRuntimeProbe
     tests/ScriptTextureRuntimeProbe.cpp
+    src/ConfigurationParser.cpp
     src/Logger.cpp
     src/PerfTrace.cpp
     src/ScriptRuntime.cpp
@@ -581,6 +594,7 @@ add_test(NAME OpenBusScriptTextureRuntimeProbe COMMAND OpenBusScriptTextureRunti
 
 add_executable(OpenBusScriptInputRuntimeProbe
     tests/ScriptInputRuntimeProbe.cpp
+    src/ConfigurationParser.cpp
     src/Logger.cpp
     src/PerfTrace.cpp
     src/ScriptRuntime.cpp
