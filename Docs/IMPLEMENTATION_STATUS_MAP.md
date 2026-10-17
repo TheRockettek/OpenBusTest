@@ -10,7 +10,7 @@ Scope: `global.cfg`, tile `tile_<x>_<y>.map` records, terrain/ground-texture adj
 | `[groundtex]` and per-tile `.map.<index>.dds` | Partial | Base textures, per-tile alpha masks, and each record's repeated detail texture are rendered. Suffixes 1..N-1 map directly to non-base records; terminal suffix N maps to record N-1 for maps such as Cotterell. Seasonal selection and other source index conventions remain unverified. Some add-on `.dds` files contain BMP data; texture loading detects this by file signature. |
 | Global metadata (`[description]`, `[NextIDCode]`, `[worldcoordinates]`, `[dynhelperactive]`, `[realrail]`, `[backgroundimage]`, `[mapcam]`, `[moneysystem]`, `[ticketpack]`, `[repair_time_min]`, `[years]`, `[realyearoffset]`, `[standarddepot]`, `[addseason]`, traffic-density records) | Parsed/retained only | Values/flags are retained, but generally do not drive map behavior. `[LHT]` and other unknown global sections are warned and preserved without runtime semantics. |
 | Tile `[terrain]` / `.map.terrain` | Partial | Static terrain sidecars are loaded and rendered. Dynamic terrain variants are not. A listed tile without a terrain sidecar has no terrain mesh. |
-| `[water]` / `.map.water` | Parsed only | Sidecar records are decoded and validated, but surfaces are not rendered because spatial ordering/geometry semantics are unresolved. |
+| `[water]` / `.map.water` | Provisional visual rendering | Each sidecar surface is rendered as a translucent, tile-wide quad with SW/SE/NE/NW corner heights. Corner order is reverse-engineered from neighboring installed OMSI maps; multiple surfaces per tile, exact material/opacity, and native OMSI visual parity are not verified. Water does not participate in vehicle collision. |
 | `[variable_terrain]`, `[variable_terrainlightmap]` | Parsed only | Marker presence is reported; dynamic terrain/lightmap updates are not implemented. |
 | `[rule]`, `[kill_rule]` | Parsed only | Four-field records are retained but do not hide, select, or otherwise affect placements. |
 | `.map.LM.bmp`, `.map.terrain_0.rdy` | Inventoried only | Paths/presence are detected; payloads are not decoded/applied. |
@@ -19,7 +19,7 @@ Scope: `global.cfg`, tile `tile_<x>_<y>.map` records, terrain/ground-texture adj
 
 | Keyword / family | Status | Current boundary |
 | --- | --- | --- |
-| `[object]` | Partial | Static supported scenery placement is active; labels, Chrono overrides, and some placement semantics are not. |
+| `[object]` | Partial | Static supported scenery placement is active. Counted placement labels feed label-oriented inline SCO text-texture slots, visible only on the authored front face; label/slot ordering is inferred and native OMSI visual parity remains unverified. Chrono overrides and some placement semantics are not implemented. |
 | `[spline]`, `[spline_h]` | Partial | Road centerlines, elevation, cant, and a subset of profile rendering are active. Full OMSI geometry/material semantics and visual parity remain incomplete. |
 | `[splineAttachement]` | Partial | Rows follow unique reciprocal spline links across tile boundaries. Missing/ambiguous IDs, invalid spline geometry, or chains without a usable local owner still produce no placement. |
 | `[splineAttachement_repeater]` | Partial | Rows follow linked spline chains from their local owner; resolving the encoded repeater master tile/object index is still incomplete. |

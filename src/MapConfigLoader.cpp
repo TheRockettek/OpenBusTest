@@ -706,9 +706,6 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             data.hasTerrainMarker = true;
         } else if (section == "[water]") {
             data.hasWaterMarker = true;
-            openbus::config::logUnhandledConfigurationTag(
-                "map tile", tile.textPath, cursor + 1, "water",
-                "water marker is recognized but water rendering is not implemented");
         } else if (section == "[variable_terrain]") {
             data.hasVariableTerrainMarker = true;
             openbus::config::logUnhandledConfigurationTag(

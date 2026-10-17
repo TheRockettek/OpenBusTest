@@ -77,6 +77,7 @@ struct ModelTextTexture {
     int slot = -1;
     bool enhanced = false;
     std::vector<std::string> values;
+    bool placementLabel = false;
 };
 
 struct ModelWheelAnimation {

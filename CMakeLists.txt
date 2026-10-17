@@ -167,6 +167,7 @@ add_executable(OpenBus
     src/MapRoadGeometry.cpp
     src/MapSplineGeometry.cpp
     src/MapSplineProfile.cpp
+    src/MapWaterGeometry.cpp
     src/VehicleConfigLoader.cpp
     src/ModelConfigLoader.cpp
     src/ModelConfigJson.cpp
@@ -375,6 +376,13 @@ add_executable(OpenBusMapRoadGeometryProbe
 )
 target_include_directories(OpenBusMapRoadGeometryProbe PRIVATE src)
 add_test(NAME OpenBusMapRoadGeometryProbe COMMAND OpenBusMapRoadGeometryProbe)
+
+add_executable(OpenBusMapWaterGeometryProbe
+    tests/MapWaterGeometryProbe.cpp
+    src/MapWaterGeometry.cpp
+)
+target_include_directories(OpenBusMapWaterGeometryProbe PRIVATE src)
+add_test(NAME OpenBusMapWaterGeometryProbe COMMAND OpenBusMapWaterGeometryProbe)
 
 add_executable(OpenBusStaticPrimitiveBufferProbe tests/StaticPrimitiveBufferProbe.cpp)
 target_include_directories(OpenBusStaticPrimitiveBufferProbe PRIVATE src)
@@ -591,6 +599,27 @@ target_include_directories(OpenBusScriptTextureRuntimeProbe SYSTEM PRIVATE
     ${stb_SOURCE_DIR})
 target_link_libraries(OpenBusScriptTextureRuntimeProbe PRIVATE OpenBusLua)
 add_test(NAME OpenBusScriptTextureRuntimeProbe COMMAND OpenBusScriptTextureRuntimeProbe)
+
+add_executable(OpenBusMapPlacementLabelProbe
+    tests/MapPlacementLabelProbe.cpp
+    src/ConfigurationParser.cpp
+    src/Logger.cpp
+    src/ModelConfigLoader.cpp
+    src/PerfTrace.cpp
+    src/SceneryObjectConfigLoader.cpp
+    src/ScriptRuntime.cpp
+    src/TextureLoader.cpp
+    src/Variables.cpp
+    src/VehicleConfigLoader.cpp
+    src/osc/osc.cpp
+)
+target_include_directories(OpenBusMapPlacementLabelProbe PRIVATE src src/osc)
+target_include_directories(OpenBusMapPlacementLabelProbe SYSTEM PRIVATE
+    ${gli_SOURCE_DIR}
+    ${gli_SOURCE_DIR}/external/glm
+    ${stb_SOURCE_DIR})
+target_link_libraries(OpenBusMapPlacementLabelProbe PRIVATE OpenBusLua)
+add_test(NAME OpenBusMapPlacementLabelProbe COMMAND OpenBusMapPlacementLabelProbe)
 
 add_executable(OpenBusScriptInputRuntimeProbe
     tests/ScriptInputRuntimeProbe.cpp

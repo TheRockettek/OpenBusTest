@@ -45,7 +45,8 @@ class ScriptRuntime {
     void invokeMouseDrag(const std::string& eventName, float deltaX, float deltaY, float cursorX,
                          float cursorY);
     void configureScriptTextures(const std::vector<ModelScriptTexture>& definitions);
-    void configureTextTextures(const std::vector<ModelTextTexture>& definitions);
+    void configureTextTextures(const std::vector<ModelTextTexture>& definitions,
+                   const std::vector<std::string>& placementLabels = {});
     bool copyScriptTexture(int index, ScriptTextureSnapshot& snapshot) const;
     bool copyTextTexture(int index, ScriptTextureSnapshot& snapshot) const;
 

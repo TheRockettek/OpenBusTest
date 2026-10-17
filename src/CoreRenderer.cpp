@@ -243,6 +243,12 @@ uniform vec4 uColor;
 uniform int uAlphaMode;
 out vec4 fragmentColor;
 void main() {
+    // Map scenery is deliberately rendered without global face culling because many
+    // assets contain two-sided geometry. Dynamic text overlays, however, belong to
+    // the authored front of a sign/display surface and must not show through its back.
+    if (uUseTextTexture && !gl_FrontFacing) {
+        discard;
+    }
     vec4 color = uColor;
     vec2 textureCoordinate = vTexCoord.xy * uTextureScale;
     if (uUseTextTexture) {

@@ -8,6 +8,7 @@
 #include "MapSceneryPlacement.h"
 #include "MapSplineGeometry.h"
 #include "MapSplineProfile.h"
+#include "MapWaterGeometry.h"
 #include "MapTileWindow.h"
 #include "ModelConfigLoader.h"
 #include "ObjLoader.h"
@@ -466,6 +467,17 @@ struct MapRenderer::Impl {
         std::vector<ModelMaterial> groundTextureLayers;
     };
 
+    struct WaterBatch {
+        GLuint buffer = 0;
+        GLuint indexBuffer = 0;
+        std::size_t indexCount = 0;
+        int tileX = 0;
+        int tileY = 0;
+        double minZ = 0.0;
+        double maxZ = 0.0;
+        double meanZ = 0.0;
+    };
+
     struct ModelBatch {
         GLuint buffer = 0;
         GLuint indexBuffer = 0;
@@ -523,6 +535,7 @@ struct MapRenderer::Impl {
         std::unique_ptr<ScriptRuntime> runtime;
         std::shared_ptr<SceneryRuntimeDefinition> definition;
         std::map<std::pair<bool, int>, DynamicSceneryTexture> dynamicTextures;
+        std::vector<std::string> placementLabels;
         int ownerTileX = 0;
         int ownerTileY = 0;
         bool runtimeInitialized = false;
@@ -541,6 +554,7 @@ struct MapRenderer::Impl {
     GLuint texture = 0;
     GLuint baseDetailTexture = 0;
     std::vector<TileBuffer> terrainBuffers;
+    std::vector<WaterBatch> waterBatches;
     std::vector<ModelBatch> sceneryBatches;
     std::vector<std::vector<double>> sceneryLodThresholdSets;
     std::vector<std::unique_ptr<SceneryScriptState>> sceneryScriptStates;
@@ -568,6 +582,14 @@ struct MapRenderer::Impl {
             }
             if (tile.indexBuffer != 0 && pglDeleteBuffers != nullptr) {
                 pglDeleteBuffers(1, &tile.indexBuffer);
+            }
+        }
+        for (const WaterBatch& water : waterBatches) {
+            if (water.buffer != 0 && pglDeleteBuffers != nullptr) {
+                pglDeleteBuffers(1, &water.buffer);
+            }
+            if (water.indexBuffer != 0 && pglDeleteBuffers != nullptr) {
+                pglDeleteBuffers(1, &water.indexBuffer);
             }
         }
         for (const ModelBatch& batch : sceneryBatches) {
@@ -1628,10 +1650,69 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                 try {
                     const openbus::map::WaterData water =
                         openbus::map::loadWaterData(tileReference.waterPath);
-                    recordSkipped(
-                        skipped,
-                        "water surfaces parsed but not rendered (spatial ordering unresolved)",
-                        tileName + " surfaces=" + std::to_string(water.surfaces.size()));
+                    std::vector<ModelVertex> vertices;
+                    std::vector<std::uint32_t> indices;
+                    vertices.reserve(water.surfaces.size() * 4);
+                    indices.reserve(water.surfaces.size() * 6);
+                    double minimumHeight = std::numeric_limits<double>::infinity();
+                    double maximumHeight = -std::numeric_limits<double>::infinity();
+                    double heightSum = 0.0;
+                    std::size_t heightCount = 0;
+                    for (const openbus::map::WaterSurface& surface : water.surfaces) {
+                        const auto corners = openbus::map::buildMapWaterSurfaceVertices(
+                            tileX, tileY, surface);
+                        const std::uint32_t base = static_cast<std::uint32_t>(vertices.size());
+                        for (std::size_t corner = 0; corner < corners.size(); ++corner) {
+                            const openbus::map::MapWaterVertex& vertex = corners[corner];
+                            vertices.push_back({static_cast<float>(vertex.x),
+                                                static_cast<float>(vertex.y),
+                                                static_cast<float>(vertex.z),
+                                                corner == 1 || corner == 2 ? 1.0F : 0.0F,
+                                                corner >= 2 ? 1.0F : 0.0F, 0.0F,
+                                                0.0F, 0.0F, 1.0F});
+                            minimumHeight = (std::min)(minimumHeight, vertex.z);
+                            maximumHeight = (std::max)(maximumHeight, vertex.z);
+                            heightSum += vertex.z;
+                            ++heightCount;
+                        }
+                        // SW, SE, NE, NW gives upward-facing triangles in the map XY plane.
+                        indices.insert(indices.end(), {base, base + 1, base + 2,
+                                                       base, base + 2, base + 3});
+                    }
+                    if (!vertices.empty()) {
+                        Impl::WaterBatch batch;
+                        batch.indexCount = indices.size();
+                        batch.tileX = tileX;
+                        batch.tileY = tileY;
+                        batch.minZ = minimumHeight;
+                        batch.maxZ = maximumHeight;
+                        batch.meanZ = heightSum / static_cast<double>(heightCount);
+                        pglGenBuffers(1, &batch.buffer);
+                        pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+                        pglBufferData(
+                            GL_ARRAY_BUFFER,
+                            static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
+                            vertices.data(), GL_STATIC_DRAW);
+                        pglGenBuffers(1, &batch.indexBuffer);
+                        pglBindBuffer(GL_ARRAY_BUFFER, batch.indexBuffer);
+                        pglBufferData(
+                            GL_ARRAY_BUFFER,
+                            static_cast<std::ptrdiff_t>(indices.size() * sizeof(std::uint32_t)),
+                            indices.data(), GL_STATIC_DRAW);
+                        if (batch.buffer == 0 || batch.indexBuffer == 0 ||
+                            glGetError() != GL_NO_ERROR) {
+                            if (batch.buffer != 0) {
+                                pglDeleteBuffers(1, &batch.buffer);
+                            }
+                            if (batch.indexBuffer != 0) {
+                                pglDeleteBuffers(1, &batch.indexBuffer);
+                            }
+                            recordSkipped(skipped, "water surfaces rejected by OpenGL upload",
+                                          tileName);
+                        } else {
+                            impl_->waterBatches.push_back(batch);
+                        }
+                    }
                 } catch (const std::exception& error) {
                     recordSkipped(skipped, "invalid .map.water sidecars",
                                   tileName + ": " + error.what());
@@ -1655,7 +1736,8 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                                             const std::array<double, 6>& rotationDegrees,
                                             std::size_t rotationCount,
                                             const std::array<double, 9>* orientationMatrix =
-                                                nullptr) {
+                                                nullptr,
+                                            std::vector<std::string> placementLabels = {}) {
             const std::filesystem::path configPath = resolveSceneryConfigPath(assetPath);
             if (configPath.empty()) {
                 recordSkipped(skipped, "scenery placements whose .sco config was not found",
@@ -1681,6 +1763,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                 auto scriptState = std::make_unique<Impl::SceneryScriptState>();
                 scriptState->ownerTileX = tileX;
                 scriptState->ownerTileY = tileY;
+                scriptState->placementLabels = std::move(placementLabels);
                 for (const std::string& variable : sceneryModelFloatVariables[assetKey]) {
                     scriptState->variables.declare(variable);
                 }
@@ -1783,7 +1866,8 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
             const openbus::map::MapSceneryPose& pose = placement->pose;
             addSceneryInstance(placement->assetPath, objectDescription, pose.x, pose.y, pose.z, 0.0,
                                pose.rotationDegrees, pose.rotationCount,
-                               pose.hasOrientationMatrix ? &pose.orientationMatrix : nullptr);
+                               pose.hasOrientationMatrix ? &pose.orientationMatrix : nullptr,
+                               object.labels);
         }
         for (const openbus::map::MapAttachedObject& object : tile.attachedObjects) {
             const std::string description = tileName +
@@ -2010,6 +2094,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                 ", scenery variable states=" + std::to_string(impl_->sceneryScriptStates.size()) +
                 ", scenery script runtimes=" + std::to_string(impl_->sceneryScriptRuntimeCount) +
                 ", road batches=" + std::to_string(impl_->roadBatches.size()) +
+                ", water batches=" + std::to_string(impl_->waterBatches.size()) +
                 ", cached textures=" + std::to_string(textureCache.size()) + ".");
     logSkipped(skipped);
     gameLog.Log("Map loading complete in " + std::to_string(elapsedMilliseconds(mapLoadStart)) +
@@ -2046,7 +2131,8 @@ void MapRenderer::initializeActiveScripts() {
                 std::make_unique<ScriptRuntime>(scriptState.definition->configuration,
                                                 scriptState.variables, *impl_->simulationState);
             scriptState.runtime->configureScriptTextures(scriptState.definition->scriptTextures);
-            scriptState.runtime->configureTextTextures(scriptState.definition->textTextures);
+            scriptState.runtime->configureTextTextures(scriptState.definition->textTextures,
+                                                       scriptState.placementLabels);
             ++impl_->sceneryScriptRuntimeCount;
         }
         if (scriptState.runtimeInitialized) {
@@ -2118,6 +2204,15 @@ MapRenderStats MapRenderer::renderStats() const {
 
 void MapRenderer::draw(bool renderTypeFourOnly) const {
     TraceScope trace("map", "MapRenderer::draw");
+    GLint previousFrontFace = GL_CCW;
+    glGetIntegerv(GL_FRONT_FACE, &previousFrontFace);
+    glFrontFace(GL_CW);
+    struct FrontFaceRestore {
+        GLint frontFace;
+        ~FrontFaceRestore() {
+            glFrontFace(static_cast<GLenum>(frontFace));
+        }
+    } frontFaceRestore{previousFrontFace};
     const Matrix4& view = modelViewMatrix();
     const MapFrustum frustum = buildMapFrustum(projectionMatrix());
     const double cameraX = -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]);
@@ -2251,6 +2346,51 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                 glDisable(GL_BLEND);
             }
         }
+    };
+    const auto drawWater = [&]() {
+        std::vector<std::pair<const Impl::WaterBatch*, double>> visibleWater;
+        for (const Impl::WaterBatch& water : impl_->waterBatches) {
+            if (!impl_->activeTileKeys.contains(tileKey(water.tileX, water.tileY))) {
+                continue;
+            }
+            const double minX =
+                static_cast<double>(water.tileX) * openbus::map::OMSI_TILE_SIZE_METERS;
+            const double minY =
+                static_cast<double>(water.tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
+            const double maxX = minX + openbus::map::OMSI_TILE_SIZE_METERS;
+            const double maxY = minY + openbus::map::OMSI_TILE_SIZE_METERS;
+            if (outsideVisibilityBounds(minX, minY, maxX, maxY) ||
+                outsideFrustumBounds(minX, minY, water.minZ, maxX, maxY, water.maxZ)) {
+                continue;
+            }
+            const double centerX = (minX + maxX) * 0.5;
+            const double centerY = (minY + maxY) * 0.5;
+            const double viewDepth =
+                -(view[2] * centerX + view[6] * centerY + view[10] * water.meanZ + view[14]);
+            visibleWater.emplace_back(&water, viewDepth);
+        }
+        if (visibleWater.empty()) {
+            return;
+        }
+        std::stable_sort(visibleWater.begin(), visibleWater.end(),
+                         [](const auto& first, const auto& second) {
+                             return first.second > second.second;
+                         });
+        ModelMaterial material;
+        const std::array<double, 3> waterColor = {0.24, 0.48, 0.60};
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        for (const auto& [water, depth] : visibleWater) {
+            static_cast<void>(depth);
+            drawIndexedModelBatch(water->buffer, water->indexBuffer, water->indexCount, material,
+                                  waterColor, 0.62, 0);
+        }
+        glDepthMask(GL_TRUE);
+        glDepthFunc(GL_LESS);
+        glDisable(GL_BLEND);
     };
     const auto drawSplines = [&]() {
         for (const Impl::ModelBatch& road : impl_->roadBatches) {
@@ -2438,6 +2578,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
     } else {
         drawSceneryTypes([](int renderType) { return renderType == -1; });
         drawTerrain();
+        drawWater();
         drawSceneryTypes([](int renderType) { return renderType == -2; });
         drawSplines();
         drawSceneryTypes([](int renderType) { return renderType == -3; });

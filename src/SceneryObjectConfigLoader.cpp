@@ -6,6 +6,7 @@
 #include "Variables.h"
 
 #include <algorithm>
+#include <unordered_set>
 
 namespace {
 
@@ -58,6 +59,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
     }
 
     Line line;
+    bool hasInlineModel = false;
     while (reader.next(line)) {
         if (!line.isKeyword()) {
             continue;
@@ -92,6 +94,20 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             if (reader.readPayload(value, result.diagnostics, keyword)) {
                 result.modelPath = value.text;
             }
+            continue;
+        }
+        if (keyword == "mesh") {
+            hasInlineModel = true;
+            continue;
+        }
+        static const std::unordered_set<std::string> inlineModelKeywords = {
+            "mesh_ident",          "lod",              "matl",          "matl_alpha",
+            "matl_bumpmap",        "matl_change",      "matl_envmap",   "matl_item",
+            "matl_lightmap",       "matl_nightmap",    "matl_nozcheck", "matl_nozwrite",
+            "matl_transmap",       "scripttexture",    "texttexture",   "texttexture_enh",
+            "usescripttexture",    "usetexttexture",   "visible",       "fixed",
+            "isshadow",            "viewpoint",        "shadow"};
+        if (inlineModelKeywords.contains(keyword)) {
             continue;
         }
         if (keyword == "new_attachment") {
@@ -257,7 +273,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             "unknown scenery-object keyword");
     }
 
-    if (result.modelPath.empty() && result.trees.empty()) {
+    if (result.modelPath.empty() && !hasInlineModel && result.trees.empty()) {
         result.diagnostics.error(0, "model", "SceneryObject configuration has no [model] entry");
     }
     result.scriptConfiguration.sourcePath = configPath;

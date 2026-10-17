@@ -156,6 +156,28 @@ int main() {
     Variables sceneryVariables(ScriptObjectKind::SceneryObject);
     const ModelConfig sceneryResult =
         loadModelConfig(configPath, root, ModelConfigKind::SceneryObject, sceneryVariables);
+    const std::filesystem::path labelSCOPath = root / "label_sign.sco";
+    std::ofstream labelSCO(labelSCOPath);
+    labelSCO << "[mesh]\ndisplay.obj\n[texttexture]\n0\nProbeFont\n6\n4\n0\n"
+                "35\n31\n32\n[matl]\nText_Field.bmp\n0\n"
+                "[usetexttexture]\n0\n";
+    labelSCO.close();
+    const SceneryObjectConfig labelSCOConfiguration = loadSceneryObjectFile(labelSCOPath);
+    Variables labelSceneryVariables(ScriptObjectKind::SceneryObject);
+    const ModelConfig labelModelConfiguration =
+        loadModelConfig(labelSCOPath, root, ModelConfigKind::SceneryObject,
+                        labelSceneryVariables);
+    if (labelSCOConfiguration.diagnostics.hasErrors() || labelModelConfiguration.parts.size() != 1 ||
+        labelModelConfiguration.textTextures.size() != 1 ||
+        !labelModelConfiguration.textTextures[0].placementLabel ||
+        labelModelConfiguration.textTextures[0].slot != 0 ||
+        labelModelConfiguration.textTextures[0].values !=
+            std::vector<std::string>{"probefont", "6", "4", "0", "35", "31", "32"} ||
+        labelModelConfiguration.parts[0].materialStatesInOrder.empty() ||
+        labelModelConfiguration.parts[0].materialStatesInOrder[0].textTextureIndex != 0) {
+        std::cerr << "inline SCO placement-label text texture did not parse and bind correctly\n";
+        return 1;
+    }
     bool shadowMarkerWarned = false;
     for (const ConfigurationDiagnostic& diagnostic : result.diagnostics.entries) {
         shadowMarkerWarned = shadowMarkerWarned ||

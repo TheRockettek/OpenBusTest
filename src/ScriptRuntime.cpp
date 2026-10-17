@@ -390,8 +390,8 @@ struct ScriptRuntime::Impl {
                     }
                     if (lower(lines[lineIndex + 1]) == name) {
                         fontPath = entry.path();
+                        break;
                     }
-                    break;
                 }
                 if (!fontPath.empty()) {
                     break;
@@ -2287,27 +2287,45 @@ void ScriptRuntime::configureScriptTextures(const std::vector<ModelScriptTexture
     }
 }
 
-void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& definitions) {
+void ScriptRuntime::configureTextTextures(
+    const std::vector<ModelTextTexture>& definitions,
+    const std::vector<std::string>& placementLabels) {
     if (!impl_) {
         return;
     }
     for (const ModelTextTexture& definition : definitions) {
+        const std::size_t minimumValues = definition.placementLabel ? 7U : 4U;
         if (!openbus::scripting::validScriptTextureIndex(definition.slot) ||
-            definition.values.size() < 4) {
+            definition.values.size() < minimumValues) {
             continue;
         }
         ScriptRuntime::Impl::TextTextureDefinition configured;
-        configured.variable = definition.values[0];
-        configured.font = lower(definition.values[1]);
+        const std::size_t fontIndex = definition.placementLabel ? 0U : 1U;
+        const std::size_t widthIndex = definition.placementLabel ? 1U : 2U;
+        const std::size_t heightIndex = definition.placementLabel ? 2U : 3U;
+        const std::size_t colorModeIndex = definition.placementLabel ? 3U : 4U;
+        const std::size_t colorStartIndex = definition.placementLabel ? 4U : 5U;
+        configured.variable = definition.placementLabel
+                                  ? "__openbus_placement_label_" +
+                                        std::to_string(definition.slot)
+                                  : definition.values[0];
+        configured.font = lower(definition.values[fontIndex]);
         try {
-            configured.width = std::stoi(definition.values[2]);
-            configured.height = std::stoi(definition.values[3]);
+            configured.width = std::stoi(definition.values[widthIndex]);
+            configured.height = std::stoi(definition.values[heightIndex]);
         } catch (const std::exception&) {
             continue;
         }
         if (configured.variable.empty() ||
             !openbus::scripting::validScriptTextureSize(configured.width, configured.height)) {
             continue;
+        }
+        if (definition.placementLabel) {
+            impl_->localState.declareString(configured.variable);
+            const std::size_t labelIndex = static_cast<std::size_t>(definition.slot);
+            impl_->localState.setString(
+                configured.variable,
+                labelIndex < placementLabels.size() ? placementLabels[labelIndex] : std::string{});
         }
         const std::size_t pixelBytes =
             openbus::scripting::scriptTextureByteSize(configured.width, configured.height);
@@ -2317,9 +2335,9 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
         if (!impl_->canReplaceTextureBytes(oldBytes, pixelBytes)) {
             continue;
         }
-        if (definition.values.size() > 4) {
+        if (definition.values.size() > colorModeIndex) {
             try {
-                configured.useFontColor = std::stoi(definition.values[4]) != 0;
+                configured.useFontColor = std::stoi(definition.values[colorModeIndex]) != 0;
             } catch (const std::exception&) {
                 configured.useFontColor = false;
             }
@@ -2360,10 +2378,10 @@ void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& d
                 configured.gridSpacing = 0;
             }
         }
-        for (std::size_t channel = 0; channel < 3 && channel + 5 < definition.values.size();
-             ++channel) {
+        for (std::size_t channel = 0;
+             channel < 3 && channel + colorStartIndex < definition.values.size(); ++channel) {
             try {
-                const float value = std::stof(definition.values[channel + 5]);
+                const float value = std::stof(definition.values[channel + colorStartIndex]);
                 configured.color[channel] = ScriptRuntime::Impl::colorChannel(value);
             } catch (const std::exception&) {
                 continue;

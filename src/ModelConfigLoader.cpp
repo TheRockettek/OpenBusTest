@@ -1313,6 +1313,33 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 }
                 texture.values.push_back(trim(value.text));
             }
+            if (kind == ModelConfigKind::SceneryObject &&
+                lower(configPath.extension().string()) == ".sco" &&
+                texture.values.size() >= 8) {
+                int inlineSlot = -1;
+                int width = 0;
+                int height = 0;
+                int colorMode = 0;
+                if (parseInt(texture.values[0], inlineSlot) && inlineSlot >= 0 &&
+                    parseInt(texture.values[2], width) && parseInt(texture.values[3], height) &&
+                    parseInt(texture.values[4], colorMode) &&
+                    openbus::scripting::validScriptTextureSize(width, height)) {
+                    texture.slot = inlineSlot;
+                    texture.values.erase(texture.values.begin());
+                    texture.placementLabel = true;
+                }
+            }
+            if (!texture.placementLabel && kind == ModelConfigKind::SceneryObject &&
+                lower(configPath.extension().string()) == ".sco" &&
+                texture.values.size() >= 7) {
+                int width = 0;
+                int height = 0;
+                int colorMode = 0;
+                texture.placementLabel =
+                    parseInt(texture.values[1], width) && parseInt(texture.values[2], height) &&
+                    parseInt(texture.values[3], colorMode) &&
+                    openbus::scripting::validScriptTextureSize(width, height);
+            }
             if (!texture.values.empty()) {
                 texture.values[0] = lower(texture.values[0]);
             }

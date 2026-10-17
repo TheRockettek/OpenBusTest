@@ -429,7 +429,9 @@ for the explicit boundary.
   raw fields and opaque label counts. Static rendering resolves parent IDs,
   ordered SCO/model `[new_attachment]` definitions, and child rotations; missing
   parents/anchors and cycles are skipped. `[water]` markers and binary sidecars are
-  parsed/validated and summarized at load, but no water surfaces are rendered.
+  parsed/validated and rendered as provisional translucent tile quads. Their
+  inferred SW/SE/NE/NW height ordering, appearance, and multiple-surface behavior
+  still need comparison against OMSI; water remains visual-only, not collision.
   `[variable_terrain]` and `[variable_terrainlightmap]` marker presence is
   parsed and reported, but dynamic terrain/lightmap rendering is unsupported.
   `[varparent]` editor ordinals are retained separately from placement IDs and
