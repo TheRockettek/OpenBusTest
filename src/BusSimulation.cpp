@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace {
@@ -185,6 +186,7 @@ struct BusSimulation::Impl {
     std::vector<dTriMeshDataID> terrainMeshData;
     std::vector<std::vector<double>> terrainVertices;
     std::vector<std::vector<int>> terrainIndices;
+    std::unordered_set<std::uint64_t> initialTerrainTileKeys;
     std::vector<dGeomID> mapCollisionGeoms;
     std::vector<dTriMeshDataID> mapCollisionMeshData;
     std::vector<StaticCollisionMesh> mapCollisionMeshes;
@@ -691,6 +693,7 @@ struct BusSimulation::Impl {
             }
         } else {
             for (const TerrainCollisionGrid& tile : terrain) {
+                initialTerrainTileKeys.insert(mapTileKey(tile.tileX, tile.tileY));
                 addTerrainCollision(tile);
             }
         }
@@ -1287,6 +1290,32 @@ void BusSimulation::addMapTileCollision(int tileX, int tileY,
     ++impl_->collisionRevision;
 }
 
+void BusSimulation::addMapTileStaticCollision(
+    int tileX, int tileY, std::vector<StaticCollisionMesh> staticCollision) {
+    const auto tile = impl_->streamedTileCollisions.find(mapTileKey(tileX, tileY));
+    if (tile == impl_->streamedTileCollisions.end()) {
+        throw std::invalid_argument("Map tile collision must be published before static collision");
+    }
+    for (StaticCollisionMesh& mesh : staticCollision) {
+        impl_->addStaticCollision(std::move(mesh), &tile->second);
+    }
+    ++impl_->collisionRevision;
+}
+
+void BusSimulation::addMapTileTerrainCollision(int tileX, int tileY,
+                                               TerrainCollisionGrid terrain) {
+    if (terrain.tileX != tileX || terrain.tileY != tileY) {
+        throw std::invalid_argument("Map terrain collision tile coordinates do not match");
+    }
+    auto tile = impl_->streamedTileCollisions.find(mapTileKey(tileX, tileY));
+    if (tile == impl_->streamedTileCollisions.end()) {
+        addMapTileCollision(tileX, tileY, std::move(terrain), {});
+        return;
+    }
+    impl_->addTerrainCollision(terrain, &tile->second);
+    ++impl_->collisionRevision;
+}
+
 void BusSimulation::removeMapTileCollision(int tileX, int tileY) {
     const auto tile = impl_->streamedTileCollisions.find(mapTileKey(tileX, tileY));
     if (tile == impl_->streamedTileCollisions.end()) {
@@ -1311,7 +1340,14 @@ std::uint64_t BusSimulation::collisionDebugRevision() const {
 }
 
 std::size_t BusSimulation::loadedMapCollisionTileCount() const {
-    return impl_->terrainVertices.size() + impl_->streamedTileCollisions.size();
+    std::size_t count = impl_->initialTerrainTileKeys.size();
+    for (const auto& [key, tile] : impl_->streamedTileCollisions) {
+        static_cast<void>(tile);
+        if (!impl_->initialTerrainTileKeys.contains(key)) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 std::vector<StaticCollisionMesh> BusSimulation::collisionDebugMeshes() const {

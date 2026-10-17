@@ -1,7 +1,9 @@
 #include "BusSimulation.h"
 #include "MapCollisionStreamer.h"
 
+#include <bit>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -17,6 +19,24 @@ void writeTile(const std::filesystem::path& path) {
     std::ofstream output(path, std::ios::binary);
     if (!output || !(output << "[version]\n12\n[terrain]\n")) {
         throw std::runtime_error("failed to write map collision streaming fixture");
+    }
+}
+
+void writeU32(std::ofstream& output, std::uint32_t value) {
+    for (int byte = 0; byte < 4; ++byte) {
+        output.put(static_cast<char>((value >> (byte * 8)) & 0xffU));
+    }
+}
+
+void writeTerrain(const std::filesystem::path& path) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary);
+    if (!output) {
+        throw std::runtime_error("failed to write map collision terrain fixture");
+    }
+    writeU32(output, 1);
+    for (int index = 0; index < 4; ++index) {
+        writeU32(output, std::bit_cast<std::uint32_t>(0.0F));
     }
 }
 
@@ -60,6 +80,11 @@ void runProbe() {
         tile.y = 0;
         tile.textPath = mapRoot / ("tile_" + std::to_string(tileX) + ".map");
         writeTile(tile.textPath);
+        if (tileX == 0) {
+            tile.hasTerrainFile = true;
+            tile.terrainPath = mapRoot / "tile_0.terrain";
+            writeTerrain(tile.terrainPath);
+        }
         map.tiles.push_back(std::move(tile));
     }
     std::vector<openbus::map::MapTileCoordinate> mapTileCoordinates;
@@ -89,6 +114,12 @@ void runProbe() {
 
     updateUntilSettled(5.0, 5.0, {{0, 0}}, 1,
                        "collision must load only geometry-resident map tiles");
+    for (int attempt = 0; attempt < 4 && simulation.collisionDebugMeshes().empty(); ++attempt) {
+        streamer.update(5.0, 5.0, {{0, 0}});
+        streamer.waitForPendingBuilds();
+    }
+    require(!simulation.collisionDebugMeshes().empty(),
+            "terrain collision should publish independently while static collision builds");
     updateUntilSettled(
         605.0, 5.0,
         openbus::map::selectMapTilesWithinRadius(mapTileCoordinates, 605.0, 5.0, 2), 4,

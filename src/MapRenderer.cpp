@@ -476,6 +476,7 @@ struct MapRenderer::Impl {
         std::array<double, 3> color = {1.0, 1.0, 1.0};
         double alpha = 1.0;
         int alphaMode = 0;
+        int renderType = 2;
         std::string visibilityVariable;
         int visibilityValue = 0;
         bool hasVisibilityBounds = false;
@@ -942,6 +943,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     Impl::ModelBatch batch;
                     batch.vertexCount = vertices.size();
                     batch.boundingRadius = vertexBoundingRadius(vertices);
+                    batch.renderType = objectConfiguration.renderType;
                     batch.material.texture = getTexture(treeTexture);
                     batch.material.textured = true;
                     batch.material.flipTextureY = true;
@@ -1168,6 +1170,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                                       ? 1.0
                                       : std::clamp(sourceMaterial->second.alpha, 0.0, 1.0);
                     batch.alphaMode = state == nullptr ? 0 : state->alphaMode;
+                    batch.renderType = objectConfiguration.renderType;
                     batch.visibilityVariable = part.visibleVariable;
                     batch.visibilityValue = part.visibleValue;
                     if (batch.alphaMode == 0 && batch.alpha < 1.0 - 1.0e-6) {
@@ -2069,7 +2072,7 @@ MapRenderStats MapRenderer::renderStats() const {
     return impl_->renderStats;
 }
 
-void MapRenderer::draw() const {
+void MapRenderer::draw(bool renderTypeFourOnly) const {
     TraceScope trace("map", "MapRenderer::draw");
     const Matrix4& view = modelViewMatrix();
     const MapFrustum frustum = buildMapFrustum(projectionMatrix());
@@ -2163,57 +2166,111 @@ void MapRenderer::draw() const {
         return texture.texture;
     };
 
-    ModelMaterial material;
-    material.texture = impl_->texture;
-    material.textured = true;
-    for (const Impl::TileBuffer& tile : impl_->terrainBuffers) {
-        if (!impl_->activeTileKeys.contains(tileKey(tile.tileX, tile.tileY))) {
-            continue;
-        }
-        const double minX = static_cast<double>(tile.tileX) * openbus::map::OMSI_TILE_SIZE_METERS;
-        const double minY = static_cast<double>(tile.tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
-        if (outsideVisibilityBounds(minX, minY, minX + openbus::map::OMSI_TILE_SIZE_METERS,
-                                    minY + openbus::map::OMSI_TILE_SIZE_METERS)) {
-            continue;
-        }
-        if (outsideFrustumBounds(minX, minY, tile.minZ,
-                                 minX + openbus::map::OMSI_TILE_SIZE_METERS,
-                                 minY + openbus::map::OMSI_TILE_SIZE_METERS, tile.maxZ)) {
-            continue;
-        }
-        material.textureScale = tile.baseTextureScale;
-        drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, material,
-                              {1.0, 1.0, 1.0}, 1.0, 0);
-        if (!tile.groundTextureLayers.empty()) {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthFunc(GL_LEQUAL);
-            glDepthMask(GL_FALSE);
-            for (const ModelMaterial& layer : tile.groundTextureLayers) {
-                drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, layer,
-                                      {1.0, 1.0, 1.0}, 1.0, 2);
+    const auto drawTerrain = [&]() {
+        ModelMaterial material;
+        material.texture = impl_->texture;
+        material.textured = true;
+        for (const Impl::TileBuffer& tile : impl_->terrainBuffers) {
+            if (!impl_->activeTileKeys.contains(tileKey(tile.tileX, tile.tileY))) {
+                continue;
             }
-            glDepthMask(GL_TRUE);
-            glDepthFunc(GL_LESS);
-            glDisable(GL_BLEND);
+            const double minX =
+                static_cast<double>(tile.tileX) * openbus::map::OMSI_TILE_SIZE_METERS;
+            const double minY =
+                static_cast<double>(tile.tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
+            if (outsideVisibilityBounds(minX, minY, minX + openbus::map::OMSI_TILE_SIZE_METERS,
+                                        minY + openbus::map::OMSI_TILE_SIZE_METERS)) {
+                continue;
+            }
+            if (outsideFrustumBounds(minX, minY, tile.minZ,
+                                     minX + openbus::map::OMSI_TILE_SIZE_METERS,
+                                     minY + openbus::map::OMSI_TILE_SIZE_METERS, tile.maxZ)) {
+                continue;
+            }
+            material.textureScale = tile.baseTextureScale;
+            drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, material,
+                                  {1.0, 1.0, 1.0}, 1.0, 0);
+            if (!tile.groundTextureLayers.empty()) {
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glDepthFunc(GL_LEQUAL);
+                glDepthMask(GL_FALSE);
+                for (const ModelMaterial& layer : tile.groundTextureLayers) {
+                    drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, layer,
+                                          {1.0, 1.0, 1.0}, 1.0, 2);
+                }
+                glDepthMask(GL_TRUE);
+                glDepthFunc(GL_LESS);
+                glDisable(GL_BLEND);
+            }
         }
-    }
-    for (const Impl::ModelBatch& road : impl_->roadBatches) {
-        if (!impl_->activeTileKeys.contains(tileKey(road.tileX, road.tileY))) {
-            continue;
+    };
+    const auto drawSplines = [&]() {
+        for (const Impl::ModelBatch& road : impl_->roadBatches) {
+            if (!impl_->activeTileKeys.contains(tileKey(road.tileX, road.tileY))) {
+                continue;
+            }
+            if (road.hasVisibilityBounds &&
+                outsideVisibilityBounds(road.minX, road.minY, road.maxX, road.maxY)) {
+                continue;
+            }
+            if (road.hasVisibilityBounds &&
+                outsideFrustumBounds(road.minX, road.minY, road.minZ, road.maxX, road.maxY,
+                                     road.maxZ)) {
+                continue;
+            }
+            drawIndexedModelBatch(road.buffer, road.indexBuffer, road.indexCount, road.material,
+                                  road.color, 1.0, road.alphaMode);
         }
-        if (road.hasVisibilityBounds &&
-            outsideVisibilityBounds(road.minX, road.minY, road.maxX, road.maxY)) {
-            continue;
+    };
+    struct SceneryDraw {
+        const Impl::SceneryInstance* instance = nullptr;
+        const Impl::ModelBatch* batch = nullptr;
+        ModelMaterial material;
+        int alphaMode = 0;
+        int renderType = 2;
+        double viewDepth = 0.0;
+    };
+    std::vector<SceneryDraw> sceneryDraws;
+    const auto drawSceneryInstance = [&](const Impl::SceneryInstance& instance,
+                                         const Impl::ModelBatch& batch,
+                                         const ModelMaterial& sceneryMaterial, int alphaMode) {
+        pushMatrix();
+        translate(instance.x, instance.y, instance.z);
+        if (instance.hasOrientationMatrix) {
+            const std::array<double, 16> transform = {instance.orientationMatrix[0],
+                                                      instance.orientationMatrix[1],
+                                                      instance.orientationMatrix[2],
+                                                      0.0,
+                                                      instance.orientationMatrix[3],
+                                                      instance.orientationMatrix[4],
+                                                      instance.orientationMatrix[5],
+                                                      0.0,
+                                                      instance.orientationMatrix[6],
+                                                      instance.orientationMatrix[7],
+                                                      instance.orientationMatrix[8],
+                                                      0.0,
+                                                      0.0,
+                                                      0.0,
+                                                      0.0,
+                                                      1.0};
+            multiplyMatrix(transform);
+        } else {
+            std::size_t ownRotationOffset = 0;
+            if (instance.rotationCount >= 6) {
+                rotate(-instance.rotationDegrees[0], 0.0, 0.0, 1.0);
+                rotate(instance.rotationDegrees[2], 0.0, 1.0, 0.0);
+                rotate(instance.rotationDegrees[1], 1.0, 0.0, 0.0);
+                ownRotationOffset = 3;
+            }
+            rotate(-instance.rotationDegrees[ownRotationOffset], 0.0, 0.0, 1.0);
+            rotate(-instance.rotationDegrees[ownRotationOffset + 2], 0.0, 1.0, 0.0);
+            rotate(-instance.rotationDegrees[ownRotationOffset + 1], 1.0, 0.0, 0.0);
         }
-        if (road.hasVisibilityBounds &&
-            outsideFrustumBounds(road.minX, road.minY, road.minZ, road.maxX, road.maxY,
-                                 road.maxZ)) {
-            continue;
-        }
-        drawIndexedModelBatch(road.buffer, road.indexBuffer, road.indexCount, road.material,
-                              road.color, 1.0, road.alphaMode);
-    }
+        drawModelBatch(batch.buffer, batch.vertexCount, sceneryMaterial, batch.color, batch.alpha,
+                       alphaMode);
+        popMatrix();
+    };
     for (const auto& [key, chunk] : impl_->sceneryChunks) {
         static_cast<void>(key);
         if (chunk.instances.empty() ||
@@ -2234,6 +2291,9 @@ void MapRenderer::draw() const {
                 continue;
             }
             const Impl::ModelBatch& batch = impl_->sceneryBatches[instance.batchIndex];
+            if (renderTypeFourOnly ? batch.renderType != 4 : batch.renderType == 4) {
+                continue;
+            }
             const std::vector<double>* lodThresholds =
                 instance.lodThresholdSetIndex < impl_->sceneryLodThresholdSets.size()
                     ? &impl_->sceneryLodThresholdSets[instance.lodThresholdSetIndex]
@@ -2277,52 +2337,69 @@ void MapRenderer::draw() const {
                     sceneryMaterial.useFreeTexture = sceneryMaterial.freeTexture != 0;
                 }
             }
-            const bool blended = alphaMode == 2 || alphaMode == 3;
-            if (blended) {
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                glDepthMask(GL_FALSE);
+            const double viewDepth =
+                -(view[2] * instance.x + view[6] * instance.y + view[10] * instance.z +
+                  view[14]);
+            sceneryDraws.push_back(
+                {&instance, &batch, sceneryMaterial, alphaMode, batch.renderType, viewDepth});
+        }
+    }
+
+    const auto drawSceneryTypes = [&](auto matchesRenderType) {
+        std::vector<const SceneryDraw*> opaqueScenery;
+        std::vector<const SceneryDraw*> transparentScenery;
+        for (const SceneryDraw& scenery : sceneryDraws) {
+            if (!matchesRenderType(scenery.renderType)) {
+                continue;
             }
-            pushMatrix();
-            translate(instance.x, instance.y, instance.z);
-            if (instance.hasOrientationMatrix) {
-                const std::array<double, 16> transform = {instance.orientationMatrix[0],
-                                                          instance.orientationMatrix[1],
-                                                          instance.orientationMatrix[2],
-                                                          0.0,
-                                                          instance.orientationMatrix[3],
-                                                          instance.orientationMatrix[4],
-                                                          instance.orientationMatrix[5],
-                                                          0.0,
-                                                          instance.orientationMatrix[6],
-                                                          instance.orientationMatrix[7],
-                                                          instance.orientationMatrix[8],
-                                                          0.0,
-                                                          0.0,
-                                                          0.0,
-                                                          0.0,
-                                                          1.0};
-                multiplyMatrix(transform);
+            if (scenery.alphaMode == 2 || scenery.alphaMode == 3) {
+                transparentScenery.push_back(&scenery);
             } else {
-                std::size_t ownRotationOffset = 0;
-                if (instance.rotationCount >= 6) {
-                    rotate(-instance.rotationDegrees[0], 0.0, 0.0, 1.0);
-                    rotate(instance.rotationDegrees[2], 0.0, 1.0, 0.0);
-                    rotate(instance.rotationDegrees[1], 1.0, 0.0, 0.0);
-                    ownRotationOffset = 3;
-                }
-                rotate(-instance.rotationDegrees[ownRotationOffset], 0.0, 0.0, 1.0);
-                rotate(-instance.rotationDegrees[ownRotationOffset + 2], 0.0, 1.0, 0.0);
-                rotate(-instance.rotationDegrees[ownRotationOffset + 1], 1.0, 0.0, 0.0);
-            }
-            drawModelBatch(batch.buffer, batch.vertexCount, sceneryMaterial, batch.color,
-                           batch.alpha, alphaMode);
-            popMatrix();
-            if (blended) {
-                glDepthMask(GL_TRUE);
-                glDisable(GL_BLEND);
+                opaqueScenery.push_back(&scenery);
             }
         }
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+        for (const SceneryDraw* scenery : opaqueScenery) {
+            drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material,
+                                scenery->alphaMode);
+        }
+        std::stable_sort(transparentScenery.begin(), transparentScenery.end(),
+                         [](const SceneryDraw* first, const SceneryDraw* second) {
+                             return first->viewDepth > second->viewDepth;
+                         });
+        if (transparentScenery.empty()) {
+            return;
+        }
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_FALSE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        for (const SceneryDraw* scenery : transparentScenery) {
+            drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material,
+                                scenery->alphaMode);
+        }
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    };
+
+    if (renderTypeFourOnly) {
+        drawSceneryTypes([](int renderType) { return renderType == 4; });
+    } else {
+        drawSceneryTypes([](int renderType) { return renderType == -1; });
+        drawTerrain();
+        drawSceneryTypes([](int renderType) { return renderType == -2; });
+        drawSplines();
+        drawSceneryTypes([](int renderType) { return renderType == -3; });
+        drawSceneryTypes([](int renderType) { return renderType == 1; });
+        drawSceneryTypes([](int renderType) {
+            return renderType != -1 && renderType != -2 && renderType != -3 && renderType != 1 &&
+                   renderType != 3 && renderType != 4;
+        });
+        drawSceneryTypes([](int renderType) { return renderType == 3; });
     }
 }
 

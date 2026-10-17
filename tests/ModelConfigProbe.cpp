@@ -215,7 +215,7 @@ int main() {
     std::ofstream londonMetadata(londonMetadataPath);
     londonMetadata << "[groups]\n2\nLondon Crossings\nRoute Arrows\n"
                       "[friendlyname]\nLondon Route Helper Bus Stop\n"
-                      "[helparrow]\n[model]\ndisplay.cfg\n";
+                      "[helparrow]\n[rendertype]\n4\n[model]\ndisplay.cfg\n";
     londonMetadata.close();
     const SceneryObjectConfig londonMetadataConfiguration =
         loadSceneryObjectFile(londonMetadataPath);
@@ -243,8 +243,9 @@ int main() {
                               diagnostic.keyword == "helparrow";
     }
     if (londonMetadataConfiguration.diagnostics.hasErrors() || sceneryMetadataWarned ||
+        londonMetadataConfiguration.renderType != 4 ||
         londonCombinedModelConfiguration.parts.size() != 1 || modelMetadataWarned) {
-        std::cerr << "London SCO metadata caused errors or was not ignored by the model parser\n";
+        std::cerr << "London SCO render type or metadata was not retained/ignored correctly\n";
         return 1;
     }
     const std::filesystem::path attachmentConfigPath = root / "attachment.sco";

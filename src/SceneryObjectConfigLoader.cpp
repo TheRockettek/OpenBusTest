@@ -213,7 +213,19 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         }
         if (keyword == "rendertype") {
             Line value;
-            reader.readPayload(value, result.diagnostics, keyword);
+            if (reader.readPayload(value, result.diagnostics, keyword)) {
+                const std::string type = lower(value.text);
+                if (type == "presurface") {
+                    result.renderType = -1;
+                } else if (type == "surface") {
+                    result.renderType = -2;
+                } else if (type == "on_surface") {
+                    result.renderType = -3;
+                } else if (!parseInt(type, result.renderType)) {
+                    result.diagnostics.error(value.number, keyword,
+                                             "expected a render type or named render category");
+                }
+            }
             continue;
         }
         if (keyword == "script" || keyword == "varnamelist" || keyword == "stringvarnamelist" ||

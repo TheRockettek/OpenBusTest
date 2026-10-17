@@ -471,7 +471,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                                                         const std::filesystem::path& omsiRoot,
                                                         const MapTileReference* selectedTile,
                                                         const MapRoadConnectionIndex& connections,
-                                                        const MapSceneryCollisionIndex& scenery) {
+                                                        const MapSceneryCollisionIndex* scenery) {
     MapRoadCollisionResult result;
     std::unordered_map<std::string, MapSplineProfile> profiles;
     std::unordered_set<std::string> failedProfiles;
@@ -571,7 +571,10 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
             }
         }
 
-        appendSceneryCollisionForTile(tileMesh, scenery, tileReference.x, tileReference.y, result);
+        if (scenery != nullptr) {
+            appendSceneryCollisionForTile(tileMesh, *scenery, tileReference.x, tileReference.y,
+                                          result);
+        }
         if (!tileMesh.indices.empty()) {
             result.meshes.push_back(std::move(tileMesh));
         }
@@ -584,7 +587,7 @@ MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
     const std::shared_ptr<const MapSceneryCollisionIndex> scenery =
         buildMapSceneryCollisionIndex(map, omsiRoot);
     const auto connections = loadMapRoadConnections(map, omsiRoot);
-    return buildMapRoadCollisionImpl(map, omsiRoot, nullptr, connections, *scenery);
+    return buildMapRoadCollisionImpl(map, omsiRoot, nullptr, connections, scenery.get());
 }
 
 MapRoadCollisionResult buildMapRoadCollisionTile(const MapDefinition& map,
@@ -606,7 +609,26 @@ MapRoadCollisionResult buildMapRoadCollisionTile(const MapDefinition& map,
                                       : std::nullopt;
     return buildMapRoadCollisionImpl(map, omsiRoot, &*tile,
                                      connections == nullptr ? *ownedConnections : *connections,
-                                     scenery == nullptr ? *ownedScenery : *scenery);
+                                     scenery == nullptr ? ownedScenery.get() : scenery);
+}
+
+MapRoadCollisionResult buildMapSplineCollisionTile(const MapDefinition& map,
+                                                   const std::filesystem::path& omsiRoot,
+                                                   int tileX, int tileY,
+                                                   const MapRoadConnectionIndex* connections) {
+    const auto tile = std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& reference) {
+        return reference.x == tileX && reference.y == tileY;
+    });
+    if (tile == map.tiles.end()) {
+        return {};
+    }
+    const auto ownedConnections = connections == nullptr
+                                      ? std::optional<MapRoadConnectionIndex>(
+                                            loadMapRoadConnections(map, omsiRoot))
+                                      : std::nullopt;
+    return buildMapRoadCollisionImpl(map, omsiRoot, &*tile,
+                                     connections == nullptr ? *ownedConnections : *connections,
+                                     nullptr);
 }
 
 MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map,

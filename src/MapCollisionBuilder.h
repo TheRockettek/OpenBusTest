@@ -55,6 +55,11 @@ buildMapRoadCollisionTile(const MapDefinition& map, const std::filesystem::path&
                           int tileX, int tileY,
                           const MapRoadConnectionIndex* connections = nullptr,
                           const MapSceneryCollisionIndex* scenery = nullptr);
+// Builds spline-strip collision for one tile without constructing the map-wide scenery index.
+MapRoadCollisionResult
+buildMapSplineCollisionTile(const MapDefinition& map, const std::filesystem::path& omsiRoot,
+                            int tileX, int tileY,
+                            const MapRoadConnectionIndex* connections = nullptr);
 
 // Metadata only, independent of geometry residency. Streaming workers retain this once per map.
 // Resolve profile cant widths before finalizing joins; unavailable widths retain legacy cant.

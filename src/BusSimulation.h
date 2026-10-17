@@ -47,6 +47,9 @@ class BusSimulation {
     void translateVertically(double meters);
     void addMapTileCollision(int tileX, int tileY, std::optional<TerrainCollisionGrid> terrain,
                              std::vector<StaticCollisionMesh> staticCollision);
+    void addMapTileTerrainCollision(int tileX, int tileY, TerrainCollisionGrid terrain);
+    void addMapTileStaticCollision(int tileX, int tileY,
+                     std::vector<StaticCollisionMesh> staticCollision);
     void removeMapTileCollision(int tileX, int tileY);
     std::uint64_t collisionDebugRevision() const;
     std::size_t loadedMapCollisionTileCount() const;

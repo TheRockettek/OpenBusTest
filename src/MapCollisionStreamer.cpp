@@ -46,6 +46,7 @@ struct MapCollisionStreamer::WorkerState {
         std::optional<TerrainCollisionGrid> terrain;
         std::vector<StaticCollisionMesh> meshes;
         std::exception_ptr error;
+        bool terrainOnly = false;
     };
 
     WorkerState(const MapDefinition& mapDefinition, std::filesystem::path root,
@@ -54,6 +55,7 @@ struct MapCollisionStreamer::WorkerState {
         for (const auto& [tileX, tileY] : preloadedTerrainTiles) {
             preloadedTerrainKeys.insert(tileKey(tileX, tileY));
         }
+        terrainThread = std::thread([this] { runTerrain(); });
         thread = std::thread([this] { run(); });
     }
 
@@ -62,10 +64,14 @@ struct MapCollisionStreamer::WorkerState {
             std::lock_guard<std::mutex> lock(mutex);
             stopping = true;
             pending.clear();
+            terrainPending.clear();
         }
         condition.notify_all();
         if (thread.joinable()) {
             thread.join();
+        }
+        if (terrainThread.joinable()) {
+            terrainThread.join();
         }
     }
 
@@ -85,7 +91,7 @@ struct MapCollisionStreamer::WorkerState {
                     condition.notify_all();
                     continue;
                 }
-                busy = true;
+                collisionBusy = true;
             }
 
             Result result;
@@ -100,13 +106,8 @@ struct MapCollisionStreamer::WorkerState {
                 if (tile == map.tiles.end()) {
                     throw std::runtime_error("Collision request references a missing map tile");
                 }
-                    if (tile->hasTerrainFile && !preloadedTerrainKeys.contains(job.key)) {
-                    const TerrainGrid grid = loadTerrainGrid(tile->terrainPath);
-                    result.terrain = TerrainCollisionGrid{
-                        job.tileX, job.tileY, OMSI_TILE_SIZE_METERS, grid.intervals, grid.heights};
-                }
-                MapRoadCollisionResult roadCollision = buildMapRoadCollisionTile(
-                    map, omsiRoot, job.tileX, job.tileY, &roadConnections(), &sceneryCollisions());
+                MapRoadCollisionResult roadCollision = buildMapSplineCollisionTile(
+                    map, omsiRoot, job.tileX, job.tileY, &roadConnections());
                 result.meshes = std::move(roadCollision.meshes);
             } catch (...) {
                 result.error = std::current_exception();
@@ -115,7 +116,57 @@ struct MapCollisionStreamer::WorkerState {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 completed.push_back(std::move(result));
-                busy = false;
+                collisionBusy = false;
+            }
+            condition.notify_all();
+        }
+    }
+
+    void runTerrain() {
+        while (true) {
+            Job job;
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                condition.wait(lock, [this] { return stopping || !terrainPending.empty(); });
+                if (stopping) {
+                    break;
+                }
+                job = terrainPending.front();
+                terrainPending.pop_front();
+                if (!desiredKeys.contains(job.key)) {
+                    terrainScheduledKeys.erase(job.key);
+                    condition.notify_all();
+                    continue;
+                }
+                terrainBusy = true;
+            }
+
+            Result result;
+            result.key = job.key;
+            result.tileX = job.tileX;
+            result.tileY = job.tileY;
+            result.terrainOnly = true;
+            try {
+                const auto tile =
+                    std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& ref) {
+                        return ref.x == job.tileX && ref.y == job.tileY;
+                    });
+                if (tile == map.tiles.end()) {
+                    throw std::runtime_error("Terrain request references a missing map tile");
+                }
+                if (tile->hasTerrainFile && !preloadedTerrainKeys.contains(job.key)) {
+                    const TerrainGrid grid = loadTerrainGrid(tile->terrainPath);
+                    result.terrain = TerrainCollisionGrid{
+                        job.tileX, job.tileY, OMSI_TILE_SIZE_METERS, grid.intervals, grid.heights};
+                }
+            } catch (...) {
+                result.error = std::current_exception();
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                completed.push_back(std::move(result));
+                terrainBusy = false;
             }
             condition.notify_all();
         }
@@ -128,28 +179,24 @@ struct MapCollisionStreamer::WorkerState {
         return *connections;
     }
 
-    const MapSceneryCollisionIndex& sceneryCollisions() {
-        if (!sceneryCollisionIndex) {
-            sceneryCollisionIndex = buildMapSceneryCollisionIndex(map, omsiRoot);
-        }
-        return *sceneryCollisionIndex;
-    }
-
     const MapDefinition& map;
     std::filesystem::path omsiRoot;
     std::unordered_set<std::uint64_t> preloadedTerrainKeys;
     // Only accessed by this worker thread; never conditioned on published collision tiles.
     std::optional<MapRoadConnectionIndex> connections;
-    std::shared_ptr<const MapSceneryCollisionIndex> sceneryCollisionIndex;
     std::mutex mutex;
     std::condition_variable condition;
     std::deque<Job> pending;
+    std::deque<Job> terrainPending;
     std::deque<Result> completed;
     std::unordered_set<std::uint64_t> desiredKeys;
     std::unordered_set<std::uint64_t> scheduledKeys;
-    bool busy = false;
+    std::unordered_set<std::uint64_t> terrainScheduledKeys;
+    bool collisionBusy = false;
+    bool terrainBusy = false;
     bool stopping = false;
     std::thread thread;
+    std::thread terrainThread;
 };
 
 MapCollisionStreamer::MapCollisionStreamer(const MapDefinition& map,
@@ -161,6 +208,11 @@ MapCollisionStreamer::MapCollisionStreamer(const MapDefinition& map,
       unloadRadius_(unloadRadius) {
     if (loadRadius_ < 0 || unloadRadius_ < loadRadius_) {
         throw std::invalid_argument("Map collision unload radius must be at least the load radius");
+    }
+    for (const auto& [tileX, tileY] : preloadedTerrainTiles) {
+        const std::uint64_t key = tileKey(tileX, tileY);
+        preloadedTerrainKeys_.insert(key);
+        terrainLoadedKeys_.insert(key);
     }
     worker_ = std::make_unique<WorkerState>(map, omsiRoot, preloadedTerrainTiles);
 }
@@ -180,6 +232,7 @@ void MapCollisionStreamer::update(double worldX, double worldY,
     if (lastCenterTile_ != std::pair{centerX, centerY} ||
         lastLoadedGeometryTileKeys_ != loadedGeometryTileKeys) {
         failedTiles_.clear();
+        failedTerrainTiles_.clear();
     }
 
     std::unordered_set<std::uint64_t> desiredCollisionKeys;
@@ -225,10 +278,22 @@ void MapCollisionStreamer::update(double worldX, double worldY,
             worker_->scheduledKeys.erase(job->key);
             job = worker_->pending.erase(job);
         }
+        for (auto job = worker_->terrainPending.begin(); job != worker_->terrainPending.end();) {
+            if (desiredCollisionKeys.contains(job->key)) {
+                ++job;
+                continue;
+            }
+            worker_->terrainScheduledKeys.erase(job->key);
+            job = worker_->terrainPending.erase(job);
+        }
         if (!worker_->completed.empty()) {
             completed.push_back(std::move(worker_->completed.front()));
             worker_->completed.pop_front();
-            worker_->scheduledKeys.erase(completed.front().key);
+            if (completed.front().terrainOnly) {
+                worker_->terrainScheduledKeys.erase(completed.front().key);
+            } else {
+                worker_->scheduledKeys.erase(completed.front().key);
+            }
         }
     }
 
@@ -241,38 +306,71 @@ void MapCollisionStreamer::update(double worldX, double worldY,
             try {
                 std::rethrow_exception(result.error);
             } catch (const std::exception& error) {
-                std::cerr << "Map collision tile build failed at "
+                std::cerr << (result.terrainOnly ? "Map terrain collision load failed at "
+                                                 : "Map collision tile build failed at ")
                           << tileLabel(result.tileX, result.tileY) << ": " << error.what() << '\n';
             } catch (...) {
-                std::cerr << "Map collision tile build failed at "
+                std::cerr << (result.terrainOnly ? "Map terrain collision load failed at "
+                                                 : "Map collision tile build failed at ")
                           << tileLabel(result.tileX, result.tileY) << " with an unknown error\n";
             }
-            failedTiles_.insert(result.key);
+            if (result.terrainOnly) {
+                failedTerrainTiles_.insert(result.key);
+            } else {
+                failedTiles_.insert(result.key);
+            }
             continue;
         }
         try {
-            simulation_.addMapTileCollision(result.tileX, result.tileY, std::move(result.terrain),
-                                            std::move(result.meshes));
-            loadedTiles_.emplace(result.key, std::pair{result.tileX, result.tileY});
+            const auto loaded = loadedTiles_.find(result.key);
+            if (result.terrainOnly) {
+                if (result.terrain.has_value() && !terrainLoadedKeys_.contains(result.key)) {
+                    if (loaded == loadedTiles_.end()) {
+                        simulation_.addMapTileCollision(result.tileX, result.tileY,
+                                                        std::move(result.terrain), {});
+                        loadedTiles_.emplace(result.key, std::pair{result.tileX, result.tileY});
+                    } else {
+                        simulation_.addMapTileTerrainCollision(result.tileX, result.tileY,
+                                                               std::move(*result.terrain));
+                    }
+                    terrainLoadedKeys_.insert(result.key);
+                }
+            } else {
+                if (loaded != loadedTiles_.end()) {
+                    simulation_.addMapTileStaticCollision(result.tileX, result.tileY,
+                                                          std::move(result.meshes));
+                } else {
+                    simulation_.addMapTileCollision(result.tileX, result.tileY, std::nullopt,
+                                                    std::move(result.meshes));
+                    loadedTiles_.emplace(result.key, std::pair{result.tileX, result.tileY});
+                }
+                completedCollisionKeys_.insert(result.key);
+            }
         } catch (const std::exception& error) {
             std::cerr << "Map collision tile publication failed at "
                       << tileLabel(result.tileX, result.tileY) << ": " << error.what() << '\n';
-            failedTiles_.insert(result.key);
+            if (result.terrainOnly) {
+                failedTerrainTiles_.insert(result.key);
+            } else {
+                failedTiles_.insert(result.key);
+            }
         }
     }
 
     for (const MapTileReference* tile : desiredTiles) {
         const std::uint64_t key = tileKey(tile->x, tile->y);
-        if (loadedTiles_.contains(key) || failedTiles_.contains(key)) {
-            continue;
-        }
         std::lock_guard<std::mutex> lock(worker_->mutex);
-        if (!worker_->scheduledKeys.insert(key).second) {
-            continue;
+        if (!completedCollisionKeys_.contains(key) && !failedTiles_.contains(key) &&
+            worker_->scheduledKeys.insert(key).second) {
+            worker_->pending.push_back({key, tile->x, tile->y});
         }
-        worker_->pending.push_back({key, tile->x, tile->y});
+        if (tile->hasTerrainFile && !preloadedTerrainKeys_.contains(key) &&
+            !terrainLoadedKeys_.contains(key) && !failedTerrainTiles_.contains(key) &&
+            worker_->terrainScheduledKeys.insert(key).second) {
+            worker_->terrainPending.push_back({key, tile->x, tile->y});
+        }
     }
-    worker_->condition.notify_one();
+    worker_->condition.notify_all();
 
     for (auto tile = loadedTiles_.begin(); tile != loadedTiles_.end();) {
         const auto [tileX, tileY] = tile->second;
@@ -282,6 +380,8 @@ void MapCollisionStreamer::update(double worldX, double worldY,
             continue;
         }
         simulation_.removeMapTileCollision(tileX, tileY);
+        completedCollisionKeys_.erase(tile->first);
+        terrainLoadedKeys_.erase(tile->first);
         tile = loadedTiles_.erase(tile);
     }
     lastCenterTile_ = std::pair{centerX, centerY};
@@ -290,11 +390,21 @@ void MapCollisionStreamer::update(double worldX, double worldY,
 
 void MapCollisionStreamer::waitForPendingBuilds() {
     std::unique_lock<std::mutex> lock(worker_->mutex);
-    worker_->condition.wait(lock, [this] { return worker_->pending.empty() && !worker_->busy; });
+    worker_->condition.wait(lock, [this] {
+        return worker_->pending.empty() && worker_->terrainPending.empty() &&
+               !worker_->collisionBusy && !worker_->terrainBusy;
+    });
 }
 
 std::size_t MapCollisionStreamer::loadedTileCount() const {
-    return loadedTiles_.size();
+    std::size_t count = preloadedTerrainKeys_.size();
+    for (const auto& [key, coordinates] : loadedTiles_) {
+        static_cast<void>(coordinates);
+        if (!preloadedTerrainKeys_.contains(key)) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 } // namespace openbus::map

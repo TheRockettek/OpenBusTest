@@ -255,7 +255,7 @@ int main() {
         BusSimulation simulation(configuration, busPlacement, 60.0, 8, busPlacement.position[2],
                                  std::move(spawnTerrain), {}, false);
         openbus::map::MapCollisionStreamer collisionStreamer(mapDefinition, omsiRootPath(),
-                                                             simulation, 1, 2,
+                                                             simulation, 2, 2,
                                                              std::move(preloadedTerrainTiles));
 
         const bool benchmarkMode =

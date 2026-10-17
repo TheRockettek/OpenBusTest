@@ -39,8 +39,12 @@ class MapCollisionStreamer {
     int unloadRadius_;
     std::optional<std::pair<int, int>> lastCenterTile_;
     std::unordered_map<std::uint64_t, std::pair<int, int>> loadedTiles_;
+    std::unordered_set<std::uint64_t> preloadedTerrainKeys_;
+    std::unordered_set<std::uint64_t> terrainLoadedKeys_;
+    std::unordered_set<std::uint64_t> completedCollisionKeys_;
     std::unordered_set<std::uint64_t> lastLoadedGeometryTileKeys_;
     std::unordered_set<std::uint64_t> failedTiles_;
+    std::unordered_set<std::uint64_t> failedTerrainTiles_;
     std::unique_ptr<WorkerState> worker_;
 };
 

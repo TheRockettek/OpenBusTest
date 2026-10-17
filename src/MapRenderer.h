@@ -37,7 +37,7 @@ class MapRenderer {
     void updateStreaming(double worldX, double worldY);
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;
     MapRenderStats renderStats() const;
-    void draw() const;
+    void draw(bool renderTypeFourOnly = false) const;
 
   private:
     void initializeActiveScripts();

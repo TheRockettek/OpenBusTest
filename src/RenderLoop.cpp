@@ -2438,9 +2438,12 @@ struct Vehicle {
                     bool hasOpaqueBatch = false;
                     for (Batch& batch : part.batches) {
                         updateMaterialChange(batch);
-                        hasOpaqueBatch =
-                            hasOpaqueBatch || (batch.alphaMode == 0 && !batch.noZwrite);
-                        if (classifyTransparent && (batch.alphaMode != 0 || batch.noZwrite)) {
+                        const bool textTexture = batch.textTextureIndex >= 0;
+                        hasOpaqueBatch = hasOpaqueBatch ||
+                                         (batch.alphaMode == 0 && !batch.noZwrite &&
+                                          !textTexture);
+                        if (classifyTransparent &&
+                            (batch.alphaMode != 0 || batch.noZwrite || textTexture)) {
                             transparentBatches.push_back(
                                 {&batch, &part, viewDepth(part), part.renderType});
                         }
@@ -2458,10 +2461,13 @@ struct Vehicle {
                           });
                 std::stable_sort(transparentBatches.begin(), transparentBatches.end(),
                                  [](const TransparentBatch& first, const TransparentBatch& second) {
+                                     if (first.depth != second.depth) {
+                                         return first.depth > second.depth;
+                                     }
                                      if (first.renderType != second.renderType) {
                                          return first.renderType < second.renderType;
                                      }
-                                     return first.depth > second.depth;
+                                     return false;
                                  });
                 std::stable_sort(noDepthOpaqueBatches.begin(), noDepthOpaqueBatches.end(),
                                  [](const TransparentBatch& first, const TransparentBatch& second) {
@@ -2496,7 +2502,7 @@ struct Vehicle {
                     if (alpha <= 0.0) {
                         continue;
                     }
-                    if (batch.alphaMode != 0 || batch.noZwrite) {
+                    if (batch.alphaMode != 0 || batch.noZwrite || batch.textTextureIndex >= 0) {
                         continue;
                     }
                     drawBatch(batch, alpha);
@@ -2518,8 +2524,8 @@ struct Vehicle {
                 glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
                 for (const TransparentBatch& transparent : transparentBatches) {
                     Batch& batch = *transparent.batch;
-                    if (batch.alphaMode != 2 || batch.transmap.name.empty() || batch.noZwrite ||
-                        batch.noZcheck) {
+                    if (batch.textTextureIndex >= 0 || batch.alphaMode != 2 ||
+                        batch.transmap.name.empty() || batch.noZwrite || batch.noZcheck) {
                         continue;
                     }
                     pushMatrix();
@@ -2559,6 +2565,7 @@ struct Vehicle {
                 TraceScope phase("render", "Vehicle::draw.transparentPass");
                 for (const TransparentBatch& transparent : transparentBatches) {
                     Batch& batch = *transparent.batch;
+                    const int alphaMode = batch.textTextureIndex >= 0 ? 2 : batch.alphaMode;
                     pushMatrix();
                     applyDrawTransform(*transparent.part, groundShadowTransform);
                     setBackFaceCulling(transparent.part->backFaceCulling);
@@ -2567,11 +2574,11 @@ struct Vehicle {
                         popMatrix();
                         continue;
                     }
-                    if (batch.alphaMode == 1) {
+                    if (alphaMode == 1) {
                         glDisable(GL_BLEND);
                         glEnable(GL_POLYGON_OFFSET_FILL);
                         glPolygonOffset(-1.0f, -1.0f);
-                    } else if (batch.alphaMode == 2) {
+                    } else if (alphaMode == 2) {
                         glEnable(GL_BLEND);
                         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
                         glDepthFunc(GL_LEQUAL);
@@ -2585,10 +2592,13 @@ struct Vehicle {
                         glDisable(GL_BLEND);
                         glDisable(GL_POLYGON_OFFSET_FILL);
                     }
-                    if (batch.alphaMode == 2 && !batch.transmap.name.empty()) {
+                    if (alphaMode == 2 && batch.textTextureIndex < 0 &&
+                        !batch.transmap.name.empty()) {
                         sortTransparentBatch(batch);
                     }
-                    drawBatch(batch, alpha, false, nullptr, -1, transparent.part->isShadow);
+                    drawBatch(batch, alpha, false, nullptr,
+                              batch.textTextureIndex >= 0 ? 2 : -1,
+                              transparent.part->isShadow);
                     if (!reflectionPass) {
                         drawEnvironmentMap(batch, alpha);
                     }
@@ -5466,9 +5476,10 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     {
         TraceScope phase("render", "RenderLoop::draw.model");
         bool playerDrawn = false;
-        const auto drawVehicles = [&](VehicleRenderPass renderPass) {
+        const auto drawVehicles = [&](VehicleRenderPass renderPass, bool playerVehicles) {
             for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-                if (!vehicle->loaded || vehicle->displayLists.empty()) {
+                if (!vehicle->loaded || vehicle->displayLists.empty() ||
+                    (vehicle.get() == playerVehicle_) != playerVehicles) {
                     continue;
                 }
                 pushMatrix();
@@ -5500,8 +5511,26 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 popMatrix();
             }
         };
-        drawVehicles(VehicleRenderPass::Opaque);
-        drawVehicles(VehicleRenderPass::Transparent);
+        const auto drawTypeFourScenery = [&]() {
+            if (mapRenderer_ == nullptr || renderingReflection_) {
+                return;
+            }
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LESS);
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+            mapRenderer_->draw(true);
+        };
+        drawVehicles(VehicleRenderPass::Opaque, false);
+        drawVehicles(VehicleRenderPass::Transparent, false);
+        if (context == RenderViewContext::PlayerInterior) {
+            drawTypeFourScenery();
+        }
+        drawVehicles(VehicleRenderPass::Opaque, true);
+        drawVehicles(VehicleRenderPass::Transparent, true);
+        if (context == RenderViewContext::PlayerExterior) {
+            drawTypeFourScenery();
+        }
         if (!playerDrawn && collision.enabled && !collision.mesh) {
             pushMatrix();
             applyPose(chassis);

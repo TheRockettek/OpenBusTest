@@ -4,6 +4,7 @@
 
 #include <ode/ode.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -265,8 +266,22 @@ void runProbe() {
         openbus::map::buildMapRoadCollision(map, omsiRoot);
     const openbus::map::MapRoadCollisionResult selectedTile =
         openbus::map::buildMapRoadCollisionTile(map, omsiRoot, 0, -1);
+    const openbus::map::MapRoadCollisionResult selectedSplineTile =
+        openbus::map::buildMapSplineCollisionTile(map, omsiRoot, 0, -1);
     require(selectedTile.tilesVisited == 1 && selectedTile.meshes.size() == 1,
             "streaming collision builder processes only the requested tile");
+    require(selectedSplineTile.tilesVisited == 1 && selectedSplineTile.meshes.size() == 1 &&
+                selectedSplineTile.meshes[0].vertices.size() <=
+                    selectedTile.meshes[0].vertices.size() &&
+                selectedSplineTile.meshes[0].indices.size() <=
+                    selectedTile.meshes[0].indices.size() &&
+                std::equal(selectedSplineTile.meshes[0].vertices.begin(),
+                           selectedSplineTile.meshes[0].vertices.end(),
+                           selectedTile.meshes[0].vertices.begin()) &&
+                std::equal(selectedSplineTile.meshes[0].indices.begin(),
+                           selectedSplineTile.meshes[0].indices.end(),
+                           selectedTile.meshes[0].indices.begin()),
+            "spline-only streaming preserves the exact renderer-matched road collision");
     require(openbus::map::buildMapRoadCollisionTile(map, omsiRoot, 99, 99).tilesVisited == 0,
             "streaming collision builder ignores coordinates absent from the map manifest");
     require(result.tilesVisited == 3, "collision includes tiles beyond the spawn neighborhood");
