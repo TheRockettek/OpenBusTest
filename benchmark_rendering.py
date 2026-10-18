@@ -81,6 +81,8 @@ def summarize_trace(
     framebuffer_resolution: str,
     run_number: int,
     window_resolution: str = "",
+    reflection_size: int = 1024,
+    reflection_interval: int = 1,
 ) -> TraceSummary:
     with trace_path.open("r", encoding="utf-8-sig") as trace_file:
         trace = json.load(trace_file)
@@ -191,6 +193,8 @@ def summarize_trace(
                     "FramebufferScaleX": framebuffer_scale_x,
                     "FramebufferScaleY": framebuffer_scale_y,
                     "FramebufferMatchesRequested": framebuffer_matches_requested,
+                    "ReflectionSize": reflection_size,
+                    "ReflectionInterval": reflection_interval,
                     "Run": run_number,
                     "Phase": phase_name,
                     "PhaseRepeat": phase_repeat,
@@ -252,6 +256,8 @@ def summarize_trace(
                 "FramebufferScaleX": framebuffer_scale_x,
                 "FramebufferScaleY": framebuffer_scale_y,
                 "FramebufferMatchesRequested": framebuffer_matches_requested,
+                "ReflectionSize": reflection_size,
+                "ReflectionInterval": reflection_interval,
                 "Run": run_number,
                 "Phase": phase_name,
                 "PhaseRepeat": phase_repeat,
@@ -389,6 +395,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--output-directory", default="render-benchmark-results")
+    parser.add_argument(
+        "--reflection-size",
+        type=int,
+        choices=(256, 512, 1024),
+        default=1024,
+        help="maximum reflection target size in pixels",
+    )
+    parser.add_argument(
+        "--reflection-interval",
+        type=int,
+        default=1,
+        help="render reflections once every N frames",
+    )
+    parser.add_argument(
+        "--build-directory",
+        default=None,
+        help="CMake build directory containing OpenBus.exe (defaults to build-benchmark)",
+    )
     return parser
 
 
@@ -403,15 +427,23 @@ def run_benchmark(args: argparse.Namespace) -> int:
         raise ValueError("--phase-repeats must be between 1 and 100")
     if not 1 <= args.ready_timeout_seconds <= 3600:
         raise ValueError("--ready-timeout-seconds must be between 1 and 3600")
+    if args.reflection_interval < 1:
+        raise ValueError("--reflection-interval must be at least 1")
+
+    build_dir = BUILD_DIR if args.build_directory is None else Path(args.build_directory)
+    if not build_dir.is_absolute():
+        build_dir = ROOT / build_dir
+    executable = build_dir / "OpenBus.exe"
+    cache_file = build_dir / "CMakeCache.txt"
 
     parsed_resolutions = [(value, *parse_resolution(value)) for value in args.resolutions]
-    if not EXECUTABLE.is_file():
+    if not executable.is_file():
         raise RuntimeError(
-            f"Missing executable at {EXECUTABLE}. Run benchmark_rendering.bat to configure and build it."
+            f"Missing executable at {executable}. Run benchmark_rendering.bat to configure and build it."
         )
-    if not CACHE_FILE.is_file() or re.search(
+    if not cache_file.is_file() or re.search(
         r"^OPENBUS_ENABLE_PERF_TRACE:BOOL=ON$",
-        CACHE_FILE.read_text(encoding="utf-8", errors="replace"),
+        cache_file.read_text(encoding="utf-8", errors="replace"),
         re.MULTILINE,
     ) is None:
         raise RuntimeError(
@@ -469,8 +501,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "OPENBUS_VSYNC": "off",
                 "OPENBUS_SCRIPT_HZ": "60",
                 "OPENBUS_REFLECTION_TRANSPARENT": "0",
-                "OPENBUS_REFLECTION_INTERVAL": "1",
-                "OPENBUS_REFLECTION_SIZE": "1024",
+                "OPENBUS_REFLECTION_INTERVAL": str(args.reflection_interval),
+                "OPENBUS_REFLECTION_SIZE": str(args.reflection_size),
                 "OPENBUS_MATERIAL_BATCHING": "1",
             }
         )
@@ -481,8 +513,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
         with log_path.open("w", encoding="utf-8") as log_file:
             process = subprocess.run(
-                [str(EXECUTABLE)],
-                cwd=BUILD_DIR,
+                [str(executable)],
+                cwd=build_dir,
                 env=environment,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
@@ -549,6 +581,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "FramebufferScaleX": framebuffer_scale_x,
                     "FramebufferScaleY": framebuffer_scale_y,
                     "FramebufferMatchesRequested": False,
+                    "ReflectionSize": args.reflection_size,
+                    "ReflectionInterval": args.reflection_interval,
                     "RunOrder": run_order,
                     "Run": run_number,
                     "Status": "Skipped",
@@ -579,6 +613,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                     "FramebufferScaleX": framebuffer_scale_x,
                     "FramebufferScaleY": framebuffer_scale_y,
                     "FramebufferMatchesRequested": False,
+                    "ReflectionSize": args.reflection_size,
+                    "ReflectionInterval": args.reflection_interval,
                     "RunOrder": run_order,
                     "Run": run_number,
                     "Status": "Skipped",
@@ -605,7 +641,13 @@ def run_benchmark(args: argparse.Namespace) -> int:
         )
 
         trace_summary = summarize_trace(
-            trace_path, resolution, actual_resolution, run_number, window_resolution
+            trace_path,
+            resolution,
+            actual_resolution,
+            run_number,
+            window_resolution,
+            args.reflection_size,
+            args.reflection_interval,
         )
         if trace_summary.phase_repeat_count != args.phase_repeats:
             raise RuntimeError(
@@ -639,6 +681,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "FramebufferScaleX": framebuffer_scale_x,
                 "FramebufferScaleY": framebuffer_scale_y,
                 "FramebufferMatchesRequested": framebuffer_matches_requested,
+                "ReflectionSize": args.reflection_size,
+                "ReflectionInterval": args.reflection_interval,
                 "RunOrder": run_order,
                 "Run": run_number,
                 "Status": "Completed",
@@ -656,6 +700,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
                 "FramebufferScaleX": framebuffer_scale_x,
                 "FramebufferScaleY": framebuffer_scale_y,
                 "FramebufferMatchesRequested": framebuffer_matches_requested,
+                "ReflectionSize": args.reflection_size,
+                "ReflectionInterval": args.reflection_interval,
                 "RunOrder": run_order,
                 "Run": run_number,
                 "Status": "Completed",
@@ -684,6 +730,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FramebufferScaleX",
         "FramebufferScaleY",
         "FramebufferMatchesRequested",
+        "ReflectionSize",
+        "ReflectionInterval",
         "Run",
         "Phase",
         "PhaseRepeat",
@@ -702,6 +750,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FramebufferScaleX",
         "FramebufferScaleY",
         "FramebufferMatchesRequested",
+        "ReflectionSize",
+        "ReflectionInterval",
         "RunOrder",
         "Run",
         "Status",
@@ -730,6 +780,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FramebufferScaleX",
         "FramebufferScaleY",
         "FramebufferMatchesRequested",
+        "ReflectionSize",
+        "ReflectionInterval",
         "Run",
         "Phase",
         "PhaseRepeat",
@@ -747,6 +799,8 @@ def run_benchmark(args: argparse.Namespace) -> int:
         "FramebufferScaleX",
         "FramebufferScaleY",
         "FramebufferMatchesRequested",
+        "ReflectionSize",
+        "ReflectionInterval",
         "RunOrder",
         "Run",
         "Status",

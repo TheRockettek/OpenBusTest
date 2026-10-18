@@ -182,6 +182,7 @@ struct MapAttachedObject {
     std::array<std::string, 3> rotationFields;
     std::array<double, 3> rotationDegrees = {};
     std::string labelCount;
+    std::vector<std::string> labels;
     std::vector<std::string> optionalLines;
     std::optional<int> variableParentId;
     bool splineTerrainAlign = false;

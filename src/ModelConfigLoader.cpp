@@ -442,7 +442,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                                      "keyword is not valid in a " + kindName(kind) + " model");
         }
         if (keyword == "helparrow") {
-            // The containing SCO loader consumes this marker for scenery rendering.
+            // Recognized scenery metadata; face sidedness is a renderer-wide policy.
             continue;
         }
         if (keyword == "friendlyname" || keyword == "groups") {

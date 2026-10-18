@@ -107,10 +107,10 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         static const std::unordered_set<std::string> inlineModelKeywords = {
             "mesh_ident",          "lod",              "matl",          "matl_alpha",
             "matl_bumpmap",        "matl_change",      "matl_envmap",   "matl_item",
-            "matl_lightmap",       "matl_nightmap",    "matl_nozcheck", "matl_nozwrite",
-            "matl_transmap",       "scripttexture",    "texttexture",   "texttexture_enh",
-            "usescripttexture",    "usetexttexture",   "visible",       "fixed",
-            "isshadow",            "viewpoint",        "shadow"};
+            "matl_freetex",        "matl_lightmap",    "matl_nightmap", "matl_nozcheck",
+            "matl_nozwrite",        "matl_transmap",     "scripttexture",  "texttexture",
+            "texttexture_enh",      "usescripttexture",  "usetexttexture", "visible",
+            "fixed",                "isshadow",          "viewpoint",      "shadow"};
         if (inlineModelKeywords.contains(keyword)) {
             continue;
         }

@@ -90,19 +90,25 @@ void runProbe() {
     require(!mapSceneryAttachmentPointOffset(-1, 3).has_value() &&
                 !mapSceneryAttachmentPointOffset(3, 3).has_value(),
             "negative and out-of-range map attachment anchors are rejected");
-        TerrainGrid slopedTerrain;
-        slopedTerrain.intervals = 1;
-        slopedTerrain.heights = {0.0F, 30.0F, 60.0F, 90.0F};
-        const auto terrainNormal = sampleMapTerrainNormal(slopedTerrain, 150.0, 150.0);
-        const double normalScale = 1.0 / std::sqrt(1.05);
-        require(terrainNormal.has_value(), "valid terrain grid yields a normal");
-        requireNear((*terrainNormal)[0], -0.1 * normalScale, 1e-9,
-            "terrain normal includes the eastward terrain gradient");
-        requireNear((*terrainNormal)[1], -0.2 * normalScale, 1e-9,
-            "terrain normal includes the northward terrain gradient");
-        requireNear((*terrainNormal)[2], normalScale, 1e-9,
-            "terrain normal is normalized with positive up");
-        require(!sampleMapTerrainNormal(TerrainGrid{}, 0.0, 0.0).has_value(),
+    TerrainGrid slopedTerrain;
+    slopedTerrain.intervals = 1;
+    slopedTerrain.heights = {0.0F, 30.0F, 60.0F, 90.0F};
+    const auto sampledGroundHeight = sampleMapTerrainHeight(slopedTerrain, 150.0, 150.0);
+    require(sampledGroundHeight.has_value(), "valid terrain grid yields a ground height");
+    requireNear(*sampledGroundHeight, 45.0, 1e-9,
+                "terrain height sampling bilinearly follows the map surface");
+    require(!sampleMapTerrainHeight(TerrainGrid{}, 0.0, 0.0).has_value(),
+            "empty terrain grid has no ground height");
+    const auto terrainNormal = sampleMapTerrainNormal(slopedTerrain, 150.0, 150.0);
+    const double normalScale = 1.0 / std::sqrt(1.05);
+    require(terrainNormal.has_value(), "valid terrain grid yields a normal");
+    requireNear((*terrainNormal)[0], -0.1 * normalScale, 1e-9,
+                "terrain normal includes the eastward terrain gradient");
+    requireNear((*terrainNormal)[1], -0.2 * normalScale, 1e-9,
+                "terrain normal includes the northward terrain gradient");
+    requireNear((*terrainNormal)[2], normalScale, 1e-9,
+                "terrain normal is normalized with positive up");
+    require(!sampleMapTerrainNormal(TerrainGrid{}, 0.0, 0.0).has_value(),
             "empty terrain grid has no terrain normal");
     const MapSceneryPose identityParent{};
     const MapSceneryPose anchored = composeMapAttachedObjectPose(

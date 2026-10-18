@@ -90,6 +90,10 @@ class TraceSummaryTests(unittest.TestCase):
                     "1",
                     "--phase-repeats",
                     "1",
+                    "--reflection-size",
+                    "512",
+                    "--reflection-interval",
+                    "3",
                     "--output-directory",
                     str(output),
                 ]
@@ -99,6 +103,8 @@ class TraceSummaryTests(unittest.TestCase):
                 self.assertEqual(
                     kwargs["env"]["OPENBUS_BENCHMARK_REQUIRE_EXACT_RESOLUTION"], "1"
                 )
+                self.assertEqual(kwargs["env"]["OPENBUS_REFLECTION_SIZE"], "512")
+                self.assertEqual(kwargs["env"]["OPENBUS_REFLECTION_INTERVAL"], "3")
                 self.assertNotIn("OPENBUS_REFLECTION_MAX_FPS", kwargs["env"])
                 kwargs["stdout"].write(
                     "BENCHMARK_COMPLETE=1\n"
@@ -230,6 +236,8 @@ class TraceSummaryTests(unittest.TestCase):
         self.assertEqual(args.runs, 5)
         self.assertEqual(args.phase_frames, 120)
         self.assertEqual(args.phase_repeats, 2)
+        self.assertEqual(args.reflection_size, 1024)
+        self.assertEqual(args.reflection_interval, 1)
 
 
 if __name__ == "__main__":

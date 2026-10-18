@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <system_error>
 #include <unordered_set>
 #include <vector>
 
@@ -552,7 +553,8 @@ int main() {
     }
     {
         std::ofstream config(caseSensitiveSoundConfigPath);
-        config << "[sound]\nsound/ambience_fahrer.wav\n1\n[trigger]\nev_case\n";
+        config << "[sound]\nsound/ambience_fahrer.wav\n1\n[trigger]\nev_case\n"
+                  "[loopsound]\nsound/ambience_fahrer.wav\n1\nambientlevel\n1\n";
     }
     VehicleSoundBank caseSensitiveSoundBank;
     caseSensitiveSoundBank.load(caseSensitiveSoundConfigPath);
@@ -560,9 +562,26 @@ int main() {
     FakePlayback caseSensitivePlayback;
     caseSensitiveSoundBank.trigger(caseSensitivePlayback, "ev_case", {}, 0.0F,
                                    caseSensitiveSoundVariables, exterior);
+    std::error_code caseSensitivePathError;
     const bool caseInsensitiveSoundPathResolved =
         caseSensitivePlayback.started.size() == 1 &&
-        caseSensitivePlayback.started.front().path == caseSensitiveSoundPath;
+        std::filesystem::equivalent(caseSensitivePlayback.started.front().path,
+                                     caseSensitiveSoundPath, caseSensitivePathError) &&
+        !caseSensitivePathError;
+    caseSensitiveSoundVariables.set("ambientlevel", 1.0F);
+    caseSensitiveSoundBank.updateAmbient(caseSensitivePlayback, caseSensitiveSoundVariables,
+                                         exterior);
+    caseSensitivePathError.clear();
+    const bool caseInsensitiveAmbientPathResolved =
+        caseSensitivePlayback.started.size() == 2 &&
+        std::filesystem::equivalent(caseSensitivePlayback.started.back().path,
+                                     caseSensitiveSoundPath, caseSensitivePathError) &&
+        !caseSensitivePathError &&
+        caseSensitivePlayback.started.back().looped;
+    if (!expect(caseInsensitiveAmbientPathResolved,
+                "ambient configured path must retain case-insensitive asset resolution")) {
+        return 1;
+    }
 
     VehicleSoundBank firstVehicle;
     VehicleSoundBank secondVehicle;
@@ -628,7 +647,8 @@ int main() {
     if (!bothVehiclesStartedTheirOwnLoops || !triggerStopIsScopedToFirstVehicle ||
         !ambientStopIsScopedToFirstVehicle || !stopAllLeavesSecondVehicleLoopsAlone ||
         !triggerLookupIsLocal || !oneShotPlaybackWorks || !repeatedOneShotIsCoalesced ||
-        !oneShotStateIsVehicleLocal || !extendedChecksPassed || !caseInsensitiveSoundPathResolved) {
+        !oneShotStateIsVehicleLocal || !extendedChecksPassed || !caseInsensitiveSoundPathResolved ||
+        !caseInsensitiveAmbientPathResolved) {
         std::cerr << "vehicle sound source ownership, cancellation, or retrigger policy failed\n";
         return 1;
     }

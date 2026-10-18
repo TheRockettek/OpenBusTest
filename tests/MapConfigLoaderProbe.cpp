@@ -93,7 +93,7 @@ void runFixtureProbe() {
                      "Object Nr. 6\n[splineAttachement_repeater]\n0\n0\n1\n"
                      "Scenery\\lamp.sco\n8\n0\n1\n0.2\n4\n0\n0\n0\n10\n20\n0\n0\n\n"
                      "Object Nr. 7\n[attachObj]\n0\nScenery\\attached.sco\n17\n5\n0\n"
-                     "2\n30\n4\n0\n1\ncustom tail\n\n[varparent]\n41\n"
+                     "2\n30\n4\n0\n1\nCar park B\ncustom tail\n\n[varparent]\n41\n"
                      "[spline_terrain_align]\n[rule]\nattached rule 1\nattached rule 2\n"
                      "attached rule 3\nattached rule 4\n");
                 writeUtf16Le(root / "tile_1_0.map", "Second fixture tile\n[version]\n14\n[terrain]\n");
@@ -288,6 +288,7 @@ void runFixtureProbe() {
                     tile.attachedObjects[0].rotationDegrees ==
                         std::array<double, 3>{30.0, 4.0, 0.0} &&
                     tile.attachedObjects[0].labelCount == "1" &&
+                    tile.attachedObjects[0].labels == std::vector<std::string>{"Car park B"} &&
                     tile.attachedObjects[0].hasExplicitId &&
                     tile.attachedObjects[0].transformValid &&
                     tile.attachedObjects[0].variableParentId == 41 &&
@@ -295,7 +296,7 @@ void runFixtureProbe() {
                     tile.attachedObjects[0].rules.size() == 1 &&
                     tile.attachedObjects[0].optionalLines ==
                         std::vector<std::string>{"custom tail", ""},
-                "modern attachObj IDs and opaque fields parsed and preserved");
+                "modern attachObj IDs, counted labels, and trailing opaque fields parsed");
         require(tile.splines.size() == 2 && tile.splines[0].geometryValid &&
                     tile.splines[0].assetPath == "Splines\\road.sli" &&
                     tile.splines[0].localX == 10.0 && tile.splines[0].elevation == 20.0 &&

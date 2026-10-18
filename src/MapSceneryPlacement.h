@@ -30,6 +30,10 @@ std::optional<MapSceneryPose> placeMapSceneryObject(const MapSceneryPlacement& o
 // Absolute-height assets use their authored Z directly; other assets are terrain-relative.
 double mapSceneryWorldHeight(double authoredZ, double terrainHeight, bool absoluteHeight);
 
+// Bilinearly samples a decoded map-terrain grid at tile-local coordinates.
+std::optional<double> sampleMapTerrainHeight(const TerrainGrid& terrain, double localX,
+                                             double localY);
+
 // Map [attachObj] anchor numbers are zero-based offsets into the parent's ordered
 // [new_attachment] list. A parent with no configured points can still use anchor zero as origin.
 std::optional<std::size_t> mapSceneryAttachmentPointOffset(int attachmentPointNumber,

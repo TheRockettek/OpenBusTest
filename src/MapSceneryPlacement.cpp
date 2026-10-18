@@ -102,6 +102,38 @@ double mapSceneryWorldHeight(double authoredZ, double terrainHeight, bool absolu
     return authoredZ + (absoluteHeight ? 0.0 : terrainHeight);
 }
 
+std::optional<double> sampleMapTerrainHeight(const TerrainGrid& terrain, double localX,
+                                             double localY) {
+    if (terrain.intervals == 0 || !std::isfinite(localX) || !std::isfinite(localY)) {
+        return std::nullopt;
+    }
+    const std::size_t last = terrain.intervals;
+    const std::size_t side = last + 1;
+    if (terrain.heights.size() < side * side) {
+        return std::nullopt;
+    }
+    const double gridX = std::clamp(
+        localX / OMSI_TILE_SIZE_METERS * static_cast<double>(last), 0.0,
+        static_cast<double>(last));
+    const double gridY = std::clamp(
+        localY / OMSI_TILE_SIZE_METERS * static_cast<double>(last), 0.0,
+        static_cast<double>(last));
+    const std::size_t column = static_cast<std::size_t>(gridX);
+    const std::size_t row = static_cast<std::size_t>(gridY);
+    const std::size_t nextColumn = std::min(column + 1, last);
+    const std::size_t nextRow = std::min(row + 1, last);
+    const double fractionX = gridX - static_cast<double>(column);
+    const double fractionY = gridY - static_cast<double>(row);
+    const auto heightAt = [&](std::size_t sampleRow, std::size_t sampleColumn) {
+        return static_cast<double>(terrain.heights[sampleRow * side + sampleColumn]);
+    };
+    const double lower = std::lerp(heightAt(row, column), heightAt(row, nextColumn), fractionX);
+    const double upper =
+        std::lerp(heightAt(nextRow, column), heightAt(nextRow, nextColumn), fractionX);
+    const double height = std::lerp(lower, upper, fractionY);
+    return std::isfinite(height) ? std::optional<double>(height) : std::nullopt;
+}
+
 std::optional<std::size_t> mapSceneryAttachmentPointOffset(int attachmentPointNumber,
                                                            std::size_t attachmentPointCount) {
     if (attachmentPointNumber < 0 ||

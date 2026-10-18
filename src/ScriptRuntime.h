@@ -49,6 +49,10 @@ class ScriptRuntime {
                    const std::vector<std::string>& placementLabels = {});
     bool copyScriptTexture(int index, ScriptTextureSnapshot& snapshot) const;
     bool copyTextTexture(int index, ScriptTextureSnapshot& snapshot) const;
+    bool copyScriptTextureIfChanged(int index, std::uint64_t knownRevision,
+                    ScriptTextureSnapshot& snapshot) const;
+    bool copyTextTextureIfChanged(int index, std::uint64_t knownRevision,
+                    ScriptTextureSnapshot& snapshot) const;
 
   private:
     struct Impl;

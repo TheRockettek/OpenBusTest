@@ -1,7 +1,41 @@
 # Render performance review and optimization TODO
 
-**Input:** single supplied profile capture, 2026-10-07.  
-**Status:** planning only; no renderer behavior has been changed.
+**Input:** supplied profile capture, 2026-10-18; historical timings below are retained for context.
+**Status:** reflection cadence/resolution A/B measured; a conservative profile preset is selected for continued testing. No global renderer defaults changed.
+
+## 2026-10-18 trace-driven experiment
+
+The supplied trace has `RenderLoop::draw` at 4.776 ms across three calls
+(1.592 ms/call), `main` at 3.543 ms, map ground at 2.149 ms, and reflections at
+2.019 ms. Its audio update is 708µs. These inclusive values overlap: the two
+largest draw children are reflection and map work, while `drawModelBatch` and
+`classifyParts` are too small to explain the frame. The immediate <1 ms goal is
+therefore not reachable by optimizing vehicle batch submission alone.
+
+- Added `--reflection-size`, `--reflection-interval`, and `--build-directory` to
+  `benchmark_rendering.py`; reflection settings are recorded in its CSV outputs.
+  The explicit build-directory option avoids benchmarking a stale executable.
+- Five-run, exact 1280×720 benchmark on Cotterell/MAN_DL05, VSync off, with 1,200
+  measured frames per run: 1024px/every-frame baseline averaged **5.693 ms** main
+  frame time and **7.402 ms** mean-per-run p95. At 512px/every-fourth-frame the
+  corresponding values were **4.257 ms** and **6.974 ms** (about 25% lower mean,
+  about 6% lower mean p95). At 256px/every-eighth-frame they were **4.104 ms** and
+  **6.790 ms**, with more mirror staleness. These are CPU trace benchmark results,
+  not GPU timings; one five-run set is not a general performance guarantee.
+- Profile launcher now uses 512px/every-fourth-frame to retain a moderate reflection
+  quality/cadence tradeoff. Visually inspect mirrors before treating this as accepted;
+  runtime defaults stay 1024px/every frame.
+- Neither reflection preset approaches the **<1 ms** target: the most aggressive
+  measured configuration still averaged 4.104 ms per `main` frame. Map rendering
+  and other frame work remain substantial; continue with nested map scopes/counters
+  and delayed GPU timing instead of guessing at map batching.
+- The supplied 708µs `VehicleSoundBank::updateAmbient` was also inspected. Configured
+  ambient sound paths are case-insensitively resolved during bank loading; ambient
+  updates now check viewpoint/conditions before resolving and reuse the already
+  resolved absolute path. `OpenBusSoundEngineProbe` covers this path.
+- The benchmark workload had no renderer GPU timer, so draw-scope wall time must not
+  be interpreted as GPU execution. The 145-call draw batch/classification scopes
+  remain lower priority than map/reflection attribution.
 
 ## Reading the capture correctly
 

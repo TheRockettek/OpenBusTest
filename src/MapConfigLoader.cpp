@@ -923,9 +923,16 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                     object.transformValid;
             }
             object.labelCount = trim(requireField(field++));
-
-            // labelCount remains opaque and does not define the number of tail lines. Preserve
-            // object-specific text while leaving the next record's description for its parser.
+            std::size_t labelCount = 0;
+            if (parseSize(object.labelCount, labelCount) && labelCount <= 4096 &&
+                labelCount <= lines.size() - std::min(field, lines.size())) {
+                object.labels.reserve(labelCount);
+                for (std::size_t index = 0; index < labelCount; ++index) {
+                    object.labels.push_back(requireField(field++));
+                }
+            }
+            // Preserve any remaining object-specific tail while leaving the next record's
+            // description for its parser.
             while (field < lines.size()) {
                 const std::string candidate = trim(lines[field]);
                 if (candidate.size() > 2 && candidate.front() == '[' && candidate.back() == ']') {

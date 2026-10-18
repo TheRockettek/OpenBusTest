@@ -486,10 +486,16 @@ struct MapRenderer::Impl {
         ModelMaterial material;
         int scriptTextureIndex = -1;
         int textTextureIndex = -1;
+        std::string freeTextureName;
+        std::string freeTextureVariable;
+        std::filesystem::path textureObjectRoot;
+        std::filesystem::path textureModelRoot;
         std::array<double, 3> color = {1.0, 1.0, 1.0};
         double alpha = 1.0;
         int alphaMode = 0;
         int renderType = 2;
+        bool noZwrite = false;
+        bool noZcheck = false;
         std::string visibilityVariable;
         int visibilityValue = 0;
         bool hasVisibilityBounds = false;
@@ -500,6 +506,7 @@ struct MapRenderer::Impl {
         double minZ = 0.0;
         double maxZ = 0.0;
         double boundingRadius = 0.0;
+        bool cullBackFaces = false;
         int tileX = 0;
         int tileY = 0;
         std::size_t sceneryLodIndex = 0;
@@ -554,6 +561,7 @@ struct MapRenderer::Impl {
     GLuint texture = 0;
     GLuint baseDetailTexture = 0;
     std::vector<TileBuffer> terrainBuffers;
+    std::unordered_map<std::uint64_t, openbus::map::TerrainGrid> terrainByCoordinate;
     std::vector<WaterBatch> waterBatches;
     std::vector<ModelBatch> sceneryBatches;
     std::vector<std::vector<double>> sceneryLodThresholdSets;
@@ -569,6 +577,9 @@ struct MapRenderer::Impl {
     std::unordered_map<std::uint64_t, std::size_t> roadBatchesByTile;
     MapRenderStats renderStats;
     std::vector<GLuint> ownedTextures;
+    std::filesystem::path omsiRoot;
+    std::unordered_map<std::string, GLuint> dynamicSceneryTextures;
+    std::unordered_set<std::string> unavailableSceneryTextures;
     std::vector<openbus::map::MapTileCoordinate> mapTileCoordinates;
     std::vector<openbus::map::MapTileCoordinate> activeTileCoordinates;
     std::unordered_set<std::uint64_t> activeTileKeys;
@@ -622,6 +633,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     : impl_(std::make_unique<Impl>()) {
     TraceScope trace("map", "MapRenderer::MapRenderer");
     impl_->simulationState = &simulationState;
+    impl_->omsiRoot = omsiRoot;
     const auto mapLoadStart = std::chrono::steady_clock::now();
     if (map.groundTextures.empty()) {
         throw std::runtime_error("Map has no [groundtex] records");
@@ -663,7 +675,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
         impl_->texture = loadTexture(texturePath);
     }
 
-    std::unordered_map<std::uint64_t, openbus::map::TerrainGrid> terrainByCoordinate;
+    auto& terrainByCoordinate = impl_->terrainByCoordinate;
     terrainByCoordinate.reserve(map.tiles.size());
     SkipSummaries skipped;
     std::unordered_map<std::string, GLuint> textureCache;
@@ -745,8 +757,10 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     const auto bottomRight =
                         static_cast<std::uint32_t>((row + 1) * side + column + 1);
                     const auto bottomLeft = static_cast<std::uint32_t>((row + 1) * side + column);
-                    indices.insert(indices.end(), {topLeft, topRight, bottomRight, topLeft,
-                                                   bottomRight, bottomLeft});
+                    // Match MapRenderer's GL_CW front-face convention so terrain can
+                    // use the same one-sided shader rule as other model geometry.
+                    indices.insert(indices.end(), {topLeft, bottomRight, topRight, topLeft,
+                                                   bottomLeft, bottomRight});
                 }
             }
             Impl::TileBuffer buffer;
@@ -873,30 +887,10 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     const auto sampleTerrainHeight = [&](int tileX, int tileY, double localX,
                                          double localY) -> std::optional<double> {
         const auto found = terrainByCoordinate.find(tileKey(tileX, tileY));
-        if (found == terrainByCoordinate.end() || found->second.intervals == 0) {
+        if (found == terrainByCoordinate.end()) {
             return std::nullopt;
         }
-        const openbus::map::TerrainGrid& grid = found->second;
-        const std::size_t side = grid.intervals + 1;
-        const double gridX = std::clamp(localX / openbus::map::OMSI_TILE_SIZE_METERS *
-                                            static_cast<double>(grid.intervals),
-                                        0.0, static_cast<double>(grid.intervals));
-        const double gridY = std::clamp(localY / openbus::map::OMSI_TILE_SIZE_METERS *
-                                            static_cast<double>(grid.intervals),
-                                        0.0, static_cast<double>(grid.intervals));
-        const std::size_t column = static_cast<std::size_t>(gridX);
-        const std::size_t row = static_cast<std::size_t>(gridY);
-        const std::size_t nextColumn = std::min(column + 1, grid.intervals);
-        const std::size_t nextRow = std::min(row + 1, grid.intervals);
-        const double fractionX = gridX - static_cast<double>(column);
-        const double fractionY = gridY - static_cast<double>(row);
-        const auto heightAt = [&](std::size_t sampleRow, std::size_t sampleColumn) {
-            return static_cast<double>(grid.heights[sampleRow * side + sampleColumn]);
-        };
-        const double lower = std::lerp(heightAt(row, column), heightAt(row, nextColumn), fractionX);
-        const double upper =
-            std::lerp(heightAt(nextRow, column), heightAt(nextRow, nextColumn), fractionX);
-        return std::lerp(lower, upper, fractionY);
+        return openbus::map::sampleMapTerrainHeight(found->second, localX, localY);
     };
 
     const auto sampleTerrainNormal = [&](double worldX,
@@ -924,6 +918,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     std::unordered_map<std::string, std::vector<ModelTextTexture>> sceneryModelTextTextures;
     std::unordered_map<std::string, std::vector<std::string>> sceneryModelFloatVariables;
     std::unordered_map<std::string, std::vector<std::string>> sceneryModelStringVariables;
+    std::unordered_map<std::string, std::vector<std::string>> sceneryFreeTextureVariables;
     std::unordered_map<std::string, std::shared_ptr<Impl::SceneryRuntimeDefinition>>
         sceneryRuntimeDefinitions;
     std::unordered_set<std::string> sceneryAssetsNeedingVariables;
@@ -1075,6 +1070,16 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     if (state.scriptTextureIndex >= 0 || state.textTextureIndex >= 0) {
                         sceneryAssetsNeedingVariables.insert(cacheKey);
                     }
+                    if (!state.freeTextureVariable.empty()) {
+                        sceneryAssetsNeedingVariables.insert(cacheKey);
+                        auto& stringVariables = sceneryModelStringVariables[cacheKey];
+                        if (std::find(stringVariables.begin(), stringVariables.end(),
+                                      state.freeTextureVariable) == stringVariables.end()) {
+                            stringVariables.push_back(state.freeTextureVariable);
+                        }
+                        sceneryFreeTextureVariables[cacheKey].push_back(
+                            state.freeTextureVariable);
+                    }
                 }
                 if (part.objPath.empty()) {
                     recordSkipped(skipped, "scenery model parts with no resolved mesh path",
@@ -1193,10 +1198,6 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                         }
                     }
                     ModelMaterial material;
-                    // Route-arrow assets commonly contain coincident image faces
-                    // wound in opposite directions. Keep general scenery two-sided,
-                    // but use the authored front face for these route-marker meshes.
-                    material.cullBackFaces = objectConfiguration.helpArrow;
                     const std::filesystem::path materialTexture =
                         findSceneryTexture(objectRoot, modelRoot, omsiRoot, textureName);
                     if (!materialTexture.empty()) {
@@ -1221,7 +1222,21 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                             material.useTransmap = material.transmap != 0;
                         }
                     }
+                    if (state != nullptr && !state->freeTextureName.empty()) {
+                        const std::filesystem::path freeTexture = findSceneryTexture(
+                            objectRoot, modelRoot, omsiRoot, state->freeTextureName);
+                        if (freeTexture.empty()) {
+                            recordSkipped(skipped, "scenery free textures not found",
+                                          modelConfigPath.filename().string() +
+                                              " mesh=" + part.objPath.filename().string() +
+                                              " texture=" + state->freeTextureName);
+                        } else {
+                            material.freeTexture = getTexture(freeTexture);
+                            material.useFreeTexture = material.freeTexture != 0;
+                        }
+                    }
                     Impl::ModelBatch batch;
+                    batch.cullBackFaces = true;
                     batch.vertexCount = vertices.size();
                     batch.boundingRadius = vertexBoundingRadius(vertices);
                     batch.sceneryLodIndex =
@@ -1230,6 +1245,10 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     if (state != nullptr) {
                         batch.scriptTextureIndex = state->scriptTextureIndex;
                         batch.textTextureIndex = state->textTextureIndex;
+                        batch.freeTextureName = state->freeTextureName;
+                        batch.freeTextureVariable = state->freeTextureVariable;
+                        batch.textureObjectRoot = objectRoot;
+                        batch.textureModelRoot = modelRoot;
                         batch.material.textureWrapS =
                             textureAddressModeToGl(state->textureAddressS);
                         batch.material.textureWrapT =
@@ -1240,6 +1259,8 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                                       ? 1.0
                                       : std::clamp(sourceMaterial->second.alpha, 0.0, 1.0);
                     batch.alphaMode = state == nullptr ? 0 : state->alphaMode;
+                    batch.noZwrite = state != nullptr && state->noZwrite;
+                    batch.noZcheck = state != nullptr && state->noZcheck;
                     batch.renderType = objectConfiguration.renderType;
                     batch.visibilityVariable = part.visibleVariable;
                     batch.visibilityValue = part.visibleValue;
@@ -1786,10 +1807,11 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     sharedDefinition->floatVariables = sceneryModelFloatVariables[assetKey];
                     sharedDefinition->stringVariables = sceneryModelStringVariables[assetKey];
                     sharedDefinition->hasRuntime =
-                        scriptConfiguration != sceneryScriptConfigurations.end() &&
-                        (!scriptConfiguration->second.scripts.empty() ||
-                         !sharedDefinition->scriptTextures.empty() ||
-                         !sharedDefinition->textTextures.empty());
+                        (scriptConfiguration != sceneryScriptConfigurations.end() &&
+                         !scriptConfiguration->second.scripts.empty()) ||
+                        !sharedDefinition->scriptTextures.empty() ||
+                        !sharedDefinition->textTextures.empty() ||
+                        !sceneryFreeTextureVariables[assetKey].empty();
                     definition =
                         sceneryRuntimeDefinitions.emplace(assetKey, std::move(sharedDefinition))
                             .first;
@@ -1895,7 +1917,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
             addSceneryInstance(placement->assetPath, description, placement->pose.x,
                                placement->pose.y, placement->pose.z, 0.0,
                                placement->pose.rotationDegrees, placement->pose.rotationCount,
-                               &placement->pose.orientationMatrix);
+                               &placement->pose.orientationMatrix, object.labels);
         }
         for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
             const std::string description =
@@ -2052,6 +2074,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
         batch.tileX = geometry.tileX;
         batch.tileY = geometry.tileY;
         batch.alphaMode = geometry.alphaMode;
+        batch.cullBackFaces = true;
         if (geometry.textured) {
             try {
                 batch.material.texture = getTexture(geometry.texturePath);
@@ -2206,6 +2229,29 @@ MapRenderStats MapRenderer::renderStats() const {
     return impl_->renderStats;
 }
 
+std::optional<double> MapRenderer::terrainHeightAt(double worldX, double worldY) const {
+    if (!std::isfinite(worldX) || !std::isfinite(worldY)) {
+        return std::nullopt;
+    }
+    const double tileXValue = std::floor(worldX / openbus::map::OMSI_TILE_SIZE_METERS);
+    const double tileYValue = std::floor(worldY / openbus::map::OMSI_TILE_SIZE_METERS);
+    if (tileXValue < static_cast<double>(std::numeric_limits<int>::min()) ||
+        tileXValue > static_cast<double>(std::numeric_limits<int>::max()) ||
+        tileYValue < static_cast<double>(std::numeric_limits<int>::min()) ||
+        tileYValue > static_cast<double>(std::numeric_limits<int>::max())) {
+        return std::nullopt;
+    }
+    const int tileX = static_cast<int>(tileXValue);
+    const int tileY = static_cast<int>(tileYValue);
+    const auto found = impl_->terrainByCoordinate.find(tileKey(tileX, tileY));
+    if (found == impl_->terrainByCoordinate.end()) {
+        return std::nullopt;
+    }
+    const double localX = worldX - tileXValue * openbus::map::OMSI_TILE_SIZE_METERS;
+    const double localY = worldY - tileYValue * openbus::map::OMSI_TILE_SIZE_METERS;
+    return openbus::map::sampleMapTerrainHeight(found->second, localX, localY);
+}
+
 void MapRenderer::draw(bool renderTypeFourOnly) const {
     TraceScope trace("map", "MapRenderer::draw");
     GLint previousFrontFace = GL_CCW;
@@ -2241,19 +2287,19 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         if (!state.runtime || index < 0) {
             return 0;
         }
+        Impl::DynamicSceneryTexture& texture = state.dynamicTextures[{textTexture, index}];
         ScriptRuntime::ScriptTextureSnapshot snapshot;
-        const bool copied = textTexture ? state.runtime->copyTextTexture(index, snapshot)
-                                        : state.runtime->copyScriptTexture(index, snapshot);
+        const bool copied = texture.texture == 0
+                                ? (textTexture ? state.runtime->copyTextTexture(index, snapshot)
+                                               : state.runtime->copyScriptTexture(index, snapshot))
+                                : (textTexture ? state.runtime->copyTextTextureIfChanged(
+                                                     index, texture.revision, snapshot)
+                                               : state.runtime->copyScriptTextureIfChanged(
+                                                     index, texture.revision, snapshot));
         if (!copied || snapshot.width <= 0 || snapshot.height <= 0) {
             return 0;
         }
-        const std::size_t expectedBytes = static_cast<std::size_t>(snapshot.width) *
-                                          static_cast<std::size_t>(snapshot.height) * 4U;
-        if (snapshot.pixels.size() != expectedBytes) {
-            return 0;
-        }
 
-        Impl::DynamicSceneryTexture& texture = state.dynamicTextures[{textTexture, index}];
         const bool dimensionsChanged =
             texture.width != snapshot.width || texture.height != snapshot.height;
         const bool needsUpload = texture.texture == 0 || dimensionsChanged ||
@@ -2263,6 +2309,13 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             texture.wrapS != material.textureWrapS || texture.wrapT != material.textureWrapT;
         if (!needsUpload && !wrapChanged) {
             return texture.texture;
+        }
+        if (needsUpload) {
+            const std::size_t expectedBytes = static_cast<std::size_t>(snapshot.width) *
+                                              static_cast<std::size_t>(snapshot.height) * 4U;
+            if (snapshot.pixels.size() != expectedBytes) {
+                return 0;
+            }
         }
         const GLenum textureUnit = GL_TEXTURE0 + (textTexture ? 5 : 4);
         pglActiveTexture(textureUnit);
@@ -2411,7 +2464,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                 continue;
             }
             drawIndexedModelBatch(road.buffer, road.indexBuffer, road.indexCount, road.material,
-                                  road.color, 1.0, road.alphaMode);
+                                  road.color, 1.0, road.alphaMode, road.cullBackFaces);
         }
     };
     struct SceneryDraw {
@@ -2419,10 +2472,10 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         const Impl::ModelBatch* batch = nullptr;
         ModelMaterial material;
         int alphaMode = 0;
-        int renderType = 2;
         double viewDepth = 0.0;
     };
     std::vector<SceneryDraw> sceneryDraws;
+    sceneryDraws.reserve(impl_->renderStats.activeSceneryObjects);
     const auto drawSceneryInstance = [&](const Impl::SceneryInstance& instance,
                                          const Impl::ModelBatch& batch,
                                          const ModelMaterial& sceneryMaterial, int alphaMode) {
@@ -2459,7 +2512,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             rotate(-instance.rotationDegrees[ownRotationOffset + 1], 1.0, 0.0, 0.0);
         }
         drawModelBatch(batch.buffer, batch.vertexCount, sceneryMaterial, batch.color, batch.alpha,
-                       alphaMode);
+                       alphaMode, batch.cullBackFaces);
         popMatrix();
     };
     for (const auto& [key, chunk] : impl_->sceneryChunks) {
@@ -2526,13 +2579,55 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                     sceneryMaterial.freeTexture = refreshSceneryTexture(
                         scriptState, false, batch.scriptTextureIndex, sceneryMaterial);
                     sceneryMaterial.useFreeTexture = sceneryMaterial.freeTexture != 0;
+                } else if (!batch.freeTextureVariable.empty()) {
+                    const std::string selectedTexture =
+                        scriptState.variables.getString(batch.freeTextureVariable);
+                    if (!selectedTexture.empty()) {
+                        const std::filesystem::path texturePath = findSceneryTexture(
+                            batch.textureObjectRoot, batch.textureModelRoot, impl_->omsiRoot,
+                            selectedTexture);
+                        const std::string textureKey = texturePath.empty()
+                                                           ? lowercasePathComponent(
+                                                                 normalizedAssetPath(selectedTexture)
+                                                                     .lexically_normal()
+                                                                     .generic_string())
+                                                           : texturePath.lexically_normal()
+                                                                 .generic_string();
+                        if (!impl_->unavailableSceneryTextures.contains(textureKey)) {
+                            if (texturePath.empty()) {
+                                impl_->unavailableSceneryTextures.insert(textureKey);
+                                gameLog.Log("Map scenery free texture not found: " +
+                                            selectedTexture);
+                            } else {
+                                auto texture = impl_->dynamicSceneryTextures.find(textureKey);
+                                if (texture == impl_->dynamicSceneryTextures.end()) {
+                                    try {
+                                        const GLuint loadedTexture = loadTexture(texturePath);
+                                        impl_->ownedTextures.push_back(loadedTexture);
+                                        texture = impl_->dynamicSceneryTextures
+                                                      .emplace(textureKey, loadedTexture)
+                                                      .first;
+                                    } catch (const std::exception& error) {
+                                        impl_->unavailableSceneryTextures.insert(textureKey);
+                                        gameLog.Log("Could not load map scenery free texture " +
+                                                    texturePath.generic_string() + ": " +
+                                                    error.what());
+                                    }
+                                }
+                                if (texture != impl_->dynamicSceneryTextures.end()) {
+                                    sceneryMaterial.freeTexture = texture->second;
+                                    sceneryMaterial.useFreeTexture = texture->second != 0;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             const double viewDepth =
                 -(view[2] * instance.x + view[6] * instance.y + view[10] * instance.z +
                   view[14]);
             sceneryDraws.push_back(
-                {&instance, &batch, sceneryMaterial, alphaMode, batch.renderType, viewDepth});
+                {&instance, &batch, std::move(sceneryMaterial), alphaMode, viewDepth});
         }
     }
 
@@ -2540,7 +2635,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         std::vector<const SceneryDraw*> opaqueScenery;
         std::vector<const SceneryDraw*> transparentScenery;
         for (const SceneryDraw& scenery : sceneryDraws) {
-            if (!matchesRenderType(scenery.renderType)) {
+            if (!matchesRenderType(scenery.batch->renderType)) {
                 continue;
             }
             if (scenery.alphaMode == 2 || scenery.alphaMode == 3) {
@@ -2554,15 +2649,59 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
         for (const SceneryDraw* scenery : opaqueScenery) {
+            glDepthMask(scenery->batch->noZwrite ? GL_FALSE : GL_TRUE);
+            // OMSI shadow overlays commonly request both flags: they must not
+            // write depth, but still need depth testing so they cannot bleed
+            // through foreground scenery or vehicles.
+            const bool skipDepthCheck =
+                scenery->batch->noZcheck && !scenery->batch->noZwrite;
+            if (skipDepthCheck) {
+                glDisable(GL_DEPTH_TEST);
+            }
             drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material,
                                 scenery->alphaMode);
+            if (skipDepthCheck) {
+                glEnable(GL_DEPTH_TEST);
+            }
         }
         std::stable_sort(transparentScenery.begin(), transparentScenery.end(),
                          [](const SceneryDraw* first, const SceneryDraw* second) {
                              return first->viewDepth > second->viewDepth;
                          });
         if (transparentScenery.empty()) {
+            glDepthMask(GL_TRUE);
+            glDepthFunc(GL_LESS);
+            glEnable(GL_DEPTH_TEST);
             return;
+        }
+
+        const bool hasTransmapDepthPrepass = std::any_of(
+            transparentScenery.begin(), transparentScenery.end(), [](const SceneryDraw* scenery) {
+                return scenery->alphaMode == 2 && scenery->material.useTransmap &&
+                       !scenery->material.useTextTexture && !scenery->batch->noZwrite &&
+                       !scenery->batch->noZcheck;
+            });
+        if (hasTransmapDepthPrepass) {
+            GLboolean previousColorMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+            glGetBooleanv(GL_COLOR_WRITEMASK, previousColorMask);
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LESS);
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            for (const SceneryDraw* scenery : transparentScenery) {
+                if (scenery->alphaMode != 2 || !scenery->material.useTransmap ||
+                    scenery->material.useTextTexture || scenery->batch->noZwrite ||
+                    scenery->batch->noZcheck) {
+                    continue;
+                }
+                // The shader's alpha-mode-3 threshold keeps only fully opaque
+                // transmap texels. Record those surfaces in depth before the
+                // blended pass, matching the vehicle renderer's treatment.
+                drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material, 3);
+            }
+            glColorMask(previousColorMask[0], previousColorMask[1], previousColorMask[2],
+                        previousColorMask[3]);
         }
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
@@ -2573,11 +2712,27 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             // Text textures are transparent overlays: write depth only where the
             // shader retains visible glyph pixels, leaving the cleared background
             // transparent for the rest of the scene.
-            glDepthMask(scenery->material.useTextTexture ? GL_TRUE : GL_FALSE);
+            const bool hasOpaqueTransmapDepth =
+                scenery->alphaMode == 2 && scenery->material.useTransmap &&
+                !scenery->material.useTextTexture && !scenery->batch->noZwrite &&
+                !scenery->batch->noZcheck;
+            glDepthFunc(hasOpaqueTransmapDepth ? GL_LEQUAL : GL_LESS);
+            glDepthMask(scenery->material.useTextTexture && !scenery->batch->noZwrite
+                            ? GL_TRUE
+                            : GL_FALSE);
+            const bool skipDepthCheck =
+                scenery->batch->noZcheck && !scenery->batch->noZwrite;
+            if (skipDepthCheck) {
+                glDisable(GL_DEPTH_TEST);
+            }
             drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material,
                                 scenery->alphaMode);
+            if (skipDepthCheck) {
+                glEnable(GL_DEPTH_TEST);
+            }
         }
         glDepthMask(GL_TRUE);
+        glDepthFunc(GL_LESS);
         glDisable(GL_BLEND);
     };
 

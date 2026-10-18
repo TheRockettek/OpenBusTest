@@ -1,23 +1,13 @@
 taskkill.exe /F /IM OpenBus.exe
 
+call "%~dp0windows_clang_env.bat"
+if errorlevel 1 exit /b %errorlevel%
+
 set "OPENBUS_BUS_CONFIG=Vehicles/MAN_DL05/MAN_DL05.bus"
 set "OPENBUS_MODEL_CONFIG=Vehicles/MAN_DL05/Model/DL05.cfg"
 
 set "OPENBUS_MAP_PATH=Cotterell"
-@REM set "OPENBUS_MAP_PATH=Grande Porto 2022"
-
-@REM set "OPENBUS_BUS_CONFIG=Vehicles/Caetano Levante/Caetano.bus"
-@REM set "OPENBUS_MODEL_CONFIG=Vehicles/Caetano Levante/Model/model_caetano.cfg"
-
-call "%~dp0windows_clang_env.bat"
-if errorlevel 1 exit /b %errorlevel%
-
-@REM set "OPENBUS_BUS_CONFIG=Vehicles\[SP] Studio Polygon 400MMC\E400MMC_ADL_10.9m_Voith_LowHeight.bus"
-@REM set "OPENBUS_MODEL_CONFIG=Vehicles\[SP] Studio Polygon 400MMC\Model\Configuration Files\E400MMC_ADL_10.9m_Voith_LowHeight.cfg"
-
-@REM set "OPENBUS_BUS_CONFIG=Vehicles\V3D - Enviro 200 MMC\e200mmc_115.bus"
-@REM set "OPENBUS_MODEL_CONFIG=Vehicles\V3D - Enviro 200 MMC\Model\e200mmc_115.cfg"
-
+set "OPENBUS_MAP_SPAWN=0"
 
 set "OPENBUS_VSYNC=off"
 
@@ -36,6 +26,7 @@ set "OPENBUS_SCRIPT_HZ=60"
 
 set "OPENBUS_ASSET_WORKERS=4"
 set "OPENBUS_DOPPLER=1"
+
 set "OPENBUS_CAPTURE_VIEWS="
 
 cmake --preset windows-clang-ninja && cmake --build --preset windows-clang-ninja --target OpenBus && .\build-ninja\OpenBus.exe

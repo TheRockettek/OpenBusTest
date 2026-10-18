@@ -52,12 +52,17 @@ int main() {
         std::filesystem::temp_directory_path() / "openbus_map_placement_label_probe";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
+    std::filesystem::create_directories(root / "script");
+    std::ofstream stringVariables(root / "script" / "sign_variables.txt");
+    stringVariables << "sign_texture\n";
+    stringVariables.close();
     std::ofstream mesh(root / "display.o3d");
     mesh << "fixture";
     mesh.close();
     const std::filesystem::path sceneryPath = root / "label_sign.sco";
     std::ofstream scenery(sceneryPath);
-    scenery << "[mesh]\ndisplay.o3d\n[texttexture]\n0\nProbeFont\n92\n64\n0\n"
+    scenery << "[stringvarnamelist]\n1\nscript\\sign_variables.txt\n"
+               "[mesh]\ndisplay.o3d\n[texttexture]\n0\nProbeFont\n92\n64\n0\n"
                "35\n31\n32\n[matl]\nText_Field.bmp\n0\n"
                "[usetexttexture]\n0\n";
     scenery.close();
@@ -66,6 +71,8 @@ int main() {
     const ModelConfig model = loadModelConfig(sceneryPath, root, ModelConfigKind::SceneryObject,
                                               modelVariables);
     if (sceneryConfiguration.diagnostics.hasErrors() || model.parts.size() != 1 ||
+        sceneryConfiguration.scriptConfiguration.stringVariables !=
+            std::vector<std::string>{"sign_texture"} ||
         model.textTextures.size() != 1 || !model.textTextures[0].placementLabel ||
         model.parts[0].materialStatesInOrder.empty() ||
         model.parts[0].materialStatesInOrder[0].textTextureIndex != 0) {
@@ -73,8 +80,7 @@ int main() {
         return 1;
     }
 
-    VehicleConfig configuration;
-    configuration.sourcePath = sceneryPath;
+    VehicleConfig configuration = sceneryConfiguration.scriptConfiguration;
     SimulationState sharedState;
     openbus::scripting::SceneryObject firstPlacement;
     openbus::scripting::SceneryObject secondPlacement;
@@ -90,8 +96,31 @@ int main() {
     const bool copied = firstRuntime.copyTextTexture(0, firstTexture) &&
                         secondRuntime.copyTextTexture(0, secondTexture);
     if (!copied || firstTexture.width != 92 || firstTexture.height != 64 ||
-        firstTexture.pixels == secondTexture.pixels) {
+        firstTexture.pixels == secondTexture.pixels ||
+        firstPlacement.getString("sign_texture") != "90" ||
+        secondPlacement.getString("sign_texture") != "50") {
         std::cerr << "different map placement labels did not generate distinct text textures\n";
+        return 1;
+    }
+    openbus::scripting::SceneryObject logoPlacement;
+    ScriptRuntime logoRuntime(configuration, logoPlacement, sharedState);
+    logoRuntime.configureTextTextures({}, {"Campus_logos\\Cotterell.bmp"});
+    if (logoPlacement.getString("sign_texture") != "Campus_logos\\Cotterell.bmp") {
+        std::cerr << "attached map label was not assigned to the SCO string-variable slot\n";
+        return 1;
+    }
+    ScriptRuntime::ScriptTextureSnapshot unchangedTexture;
+    if (!firstRuntime.copyTextTextureIfChanged(0, firstTexture.revision, unchangedTexture) ||
+        unchangedTexture.revision != firstTexture.revision ||
+        unchangedTexture.width != firstTexture.width || !unchangedTexture.pixels.empty()) {
+        std::cerr << "unchanged placement text texture copied pixel bytes unnecessarily\n";
+        return 1;
+    }
+    ScriptRuntime::ScriptTextureSnapshot changedTexture;
+    if (!firstRuntime.copyTextTextureIfChanged(0, firstTexture.revision + 1U, changedTexture) ||
+        changedTexture.revision != firstTexture.revision ||
+        changedTexture.pixels != firstTexture.pixels) {
+        std::cerr << "placement text texture snapshot omitted pixels for a stale revision\n";
         return 1;
     }
 

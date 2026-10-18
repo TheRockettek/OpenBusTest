@@ -2254,6 +2254,42 @@ struct ScriptRuntime::Impl {
         snapshot.revision = found->second.revision;
         return true;
     }
+
+    bool copyScriptTextureIfChanged(int index, std::uint64_t knownRevision,
+                                    ScriptRuntime::ScriptTextureSnapshot& snapshot) const {
+        const auto found = scriptTextures.find(index);
+        if (found == scriptTextures.end()) {
+            return false;
+        }
+        snapshot.width = found->second.width;
+        snapshot.height = found->second.height;
+        snapshot.filtered = found->second.filtered;
+        snapshot.revision = found->second.revision;
+        if (snapshot.revision == knownRevision) {
+            std::vector<std::uint8_t>().swap(snapshot.pixels);
+        } else {
+            snapshot.pixels = found->second.pixels;
+        }
+        return true;
+    }
+
+    bool copyTextTextureIfChanged(int index, std::uint64_t knownRevision,
+                                  ScriptRuntime::ScriptTextureSnapshot& snapshot) const {
+        const auto found = textTextures.find(index);
+        if (found == textTextures.end()) {
+            return false;
+        }
+        snapshot.width = found->second.width;
+        snapshot.height = found->second.height;
+        snapshot.filtered = found->second.filtered;
+        snapshot.revision = found->second.revision;
+        if (snapshot.revision == knownRevision) {
+            std::vector<std::uint8_t>().swap(snapshot.pixels);
+        } else {
+            snapshot.pixels = found->second.pixels;
+        }
+        return true;
+    }
 };
 
 ScriptRuntime::ScriptRuntime(
@@ -2292,6 +2328,12 @@ void ScriptRuntime::configureTextTextures(
     const std::vector<std::string>& placementLabels) {
     if (!impl_) {
         return;
+    }
+    const std::size_t initializedStringCount =
+        std::min(impl_->configuration.stringVariables.size(), placementLabels.size());
+    for (std::size_t index = 0; index < initializedStringCount; ++index) {
+        impl_->localState.setString(impl_->configuration.stringVariables[index],
+                                    placementLabels[index]);
     }
     for (const ModelTextTexture& definition : definitions) {
         const std::size_t minimumValues = definition.placementLabel ? 7U : 4U;
@@ -2604,6 +2646,16 @@ bool ScriptRuntime::copyScriptTexture(int index, ScriptTextureSnapshot& snapshot
 
 bool ScriptRuntime::copyTextTexture(int index, ScriptTextureSnapshot& snapshot) const {
     return impl_ && impl_->copyTextTexture(index, snapshot);
+}
+
+bool ScriptRuntime::copyScriptTextureIfChanged(int index, std::uint64_t knownRevision,
+                                               ScriptTextureSnapshot& snapshot) const {
+    return impl_ && impl_->copyScriptTextureIfChanged(index, knownRevision, snapshot);
+}
+
+bool ScriptRuntime::copyTextTextureIfChanged(int index, std::uint64_t knownRevision,
+                                             ScriptTextureSnapshot& snapshot) const {
+    return impl_ && impl_->copyTextTextureIfChanged(index, knownRevision, snapshot);
 }
 
 void ScriptRuntime::update(bool isAiVehicle) {

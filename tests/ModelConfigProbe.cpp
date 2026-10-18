@@ -107,6 +107,29 @@ int main() {
     }
     const ModelConfig result =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
+    const std::filesystem::path freeTextureSCOPath = root / "free_texture.sco";
+    std::ofstream freeTextureSCO(freeTextureSCOPath);
+    freeTextureSCO << "[mesh]\ndisplay.obj\n[matl]\ndisplay.bmp\n0\n"
+                      "[matl_freetex]\nbase_logo.bmp\nlogo_path\n";
+    freeTextureSCO.close();
+    const SceneryObjectConfig freeTextureSCOConfig =
+        loadSceneryObjectFile(freeTextureSCOPath);
+    if (freeTextureSCOConfig.diagnostics.hasErrors() ||
+        !freeTextureSCOConfig.diagnostics.entries.empty()) {
+        std::cerr << "SCO [matl_freetex] was reported as an unknown or invalid directive\n";
+        return 1;
+    }
+    Variables freeTextureVariables(ScriptObjectKind::SceneryObject);
+    const ModelConfig freeTextureConfig =
+        loadModelConfig(freeTextureSCOPath, root, ModelConfigKind::SceneryObject,
+                        freeTextureVariables);
+    if (freeTextureConfig.parts.size() != 1 ||
+        freeTextureConfig.parts[0].materialStatesInOrder.size() != 1 ||
+        freeTextureConfig.parts[0].materialStatesInOrder[0].freeTextureName != "base_logo.bmp" ||
+        freeTextureConfig.parts[0].materialStatesInOrder[0].freeTextureVariable != "logo_path") {
+        std::cerr << "SCO [matl_freetex] path and selector were not retained by the model config\n";
+        return 1;
+    }
     const std::filesystem::path caseVariantMesh = root / "Meshes" / "Tuertaster.O3D";
     std::filesystem::create_directories(caseVariantMesh.parent_path());
     std::ofstream caseVariantMeshFile(caseVariantMesh);
@@ -123,10 +146,14 @@ int main() {
     caseVariantConfig.close();
     const ModelConfig caseVariantConfigResult =
         loadModelConfig(caseVariantConfigPath, root, ModelConfigKind::Bus, variables);
+    std::error_code caseVariantO3DEquivalenceError;
+    std::error_code caseVariantXEquivalenceError;
     if (caseVariantConfigResult.parts.size() != 2 ||
-        caseVariantConfigResult.parts[0].objPath != caseVariantMesh ||
-        caseVariantConfigResult.parts[1].objPath != caseVariantXMesh) {
-        std::cerr << "case-mismatched O3D/X model paths were not resolved on Linux\n";
+        !std::filesystem::equivalent(caseVariantConfigResult.parts[0].objPath, caseVariantMesh,
+                                     caseVariantO3DEquivalenceError) ||
+        !std::filesystem::equivalent(caseVariantConfigResult.parts[1].objPath, caseVariantXMesh,
+                                     caseVariantXEquivalenceError)) {
+        std::cerr << "case-mismatched O3D/X model paths were not resolved to the fixture files\n";
         return 1;
     }
     if (result.enhancedLights.size() != 2 ||

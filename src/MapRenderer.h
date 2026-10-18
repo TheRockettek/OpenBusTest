@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -37,6 +38,7 @@ class MapRenderer {
     void updateStreaming(double worldX, double worldY);
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;
     MapRenderStats renderStats() const;
+    std::optional<double> terrainHeightAt(double worldX, double worldY) const;
     void draw(bool renderTypeFourOnly = false) const;
 
   private:

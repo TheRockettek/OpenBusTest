@@ -1340,14 +1340,11 @@ struct Vehicle {
         return {transformed[0], transformed[1], transformed[2] + modelOffsetZ};
     }
 
-    static void setBackFaceCulling(bool enabled) {
+    static void setOneSidedFrontFaceConvention() {
         glFrontFace(GL_CW);
-        glCullFace(GL_BACK);
-        if (enabled) {
-            glEnable(GL_CULL_FACE);
-        } else {
-            glDisable(GL_CULL_FACE);
-        }
+        // Face selection is conditional in the model shader so generated and
+        // imported geometry can use different sidedness per draw.
+        glDisable(GL_CULL_FACE);
     }
 
     void updateFrameVariables(bool isAiVehicle, double timeStep) {
@@ -2150,7 +2147,9 @@ struct Vehicle {
             glDepthMask(GL_FALSE);
         } else if (alphaMode == 1) {
             glDisable(GL_BLEND);
-            glDepthMask(GL_FALSE);
+            // Alpha mode 1 is a cutout: the shader discards transparent texels,
+            // while surviving fragments are opaque and must occlude later draws.
+            glDepthMask(GL_TRUE);
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(-1.0f, -1.0f);
         } else {
@@ -2265,7 +2264,7 @@ struct Vehicle {
                               *materialTextureIds, batch.materialTextureFlips);
         } else {
             drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
-                           forceUntextured ? 0 : alphaMode);
+                           forceUntextured ? 0 : alphaMode, true);
         }
         if (noZcheck) {
             glEnable(GL_DEPTH_TEST);
@@ -2357,7 +2356,7 @@ struct Vehicle {
             glDisable(GL_BLEND);
             glDepthMask(GL_TRUE);
             glEnable(GL_DEPTH_TEST);
-            setBackFaceCulling(false);
+            setOneSidedFrontFaceConvention();
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(-1.0f, -1.0f);
         }
@@ -2496,7 +2495,6 @@ struct Vehicle {
             for (DisplayPart* part : opaqueParts) {
                 pushMatrix();
                 applyDrawTransform(*part, groundShadowTransform);
-                setBackFaceCulling(part->backFaceCulling);
                 for (Batch& batch : part->batches) {
                     const double alpha = alphaScale(batch);
                     if (alpha <= 0.0) {
@@ -2530,7 +2528,6 @@ struct Vehicle {
                     }
                     pushMatrix();
                     applyDrawTransform(*transparent.part, groundShadowTransform);
-                    setBackFaceCulling(transparent.part->backFaceCulling);
                     const double alpha = alphaScale(batch);
                     if (alpha > 0.0) {
                         drawBatch(batch, alpha, false, nullptr, 3);
@@ -2547,7 +2544,6 @@ struct Vehicle {
                     Batch& batch = *noDepthOpaque.batch;
                     pushMatrix();
                     applyDrawTransform(*noDepthOpaque.part, groundShadowTransform);
-                    setBackFaceCulling(noDepthOpaque.part->backFaceCulling);
                     const double alpha = alphaScale(batch);
                     if (alpha <= 0.0) {
                         popMatrix();
@@ -2568,7 +2564,6 @@ struct Vehicle {
                     const int alphaMode = batch.textTextureIndex >= 0 ? 2 : batch.alphaMode;
                     pushMatrix();
                     applyDrawTransform(*transparent.part, groundShadowTransform);
-                    setBackFaceCulling(transparent.part->backFaceCulling);
                     const double alpha = alphaScale(batch);
                     if (alpha <= 0.0) {
                         popMatrix();
@@ -2612,7 +2607,7 @@ struct Vehicle {
             glDepthFunc(GL_LESS);
             glDisable(GL_BLEND);
             glDisable(GL_POLYGON_OFFSET_FILL);
-            setBackFaceCulling(false);
+            setOneSidedFrontFaceConvention();
             glDepthMask(GL_TRUE);
         }
         popMatrix();
@@ -5134,8 +5129,30 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         poseMatrix(chassis),
         translationMatrix(
             {0.0, 0.0, playerVehicle_ != nullptr ? playerVehicle_->modelOffsetZ : 0.0}));
+    double playerGroundHeight =
+        mapRenderer_ != nullptr
+            ? mapRenderer_->terrainHeightAt(chassis.position[0], chassis.position[1])
+                  .value_or(playerVehicle_ != nullptr ? playerVehicle_->placement.position[2] : 0.0)
+            : (playerVehicle_ != nullptr ? playerVehicle_->placement.position[2] : 0.0);
+    double wheelGroundHeightSum = 0.0;
+    std::size_t validWheelGroundHeights = 0;
+    for (std::size_t wheelIndex = 0; wheelIndex < simulation.wheelCount(); ++wheelIndex) {
+        const double wheelBottom = simulation.wheelPose(wheelIndex).position[2] -
+                                   simulation.wheelRadius(wheelIndex);
+        if (std::isfinite(wheelBottom)) {
+            wheelGroundHeightSum += wheelBottom;
+            ++validWheelGroundHeights;
+        }
+    }
+    if (validWheelGroundHeights > 0) {
+        // Wheel bottoms follow the actual contact surface, including elevated
+        // roads and ramps that can differ from the underlying terrain grid.
+        playerGroundHeight = wheelGroundHeightSum /
+                             static_cast<double>(validWheelGroundHeights);
+    }
     const Matrix4 shadowGroundBase = multiplyMatrix4(
-        translationMatrix({chassis.position[0], chassis.position[1], GROUND_SHADOW_OFFSET_Z}),
+        translationMatrix({chassis.position[0], chassis.position[1],
+                           playerGroundHeight + GROUND_SHADOW_OFFSET_Z}),
         rotationMatrix(simulation.yaw() * radiansToDegrees, 0.0, 0.0, 1.0));
     Matrix4 inversePlayerModelBase = identityMatrix();
     const bool canGroundClampShadow = invertAffineMatrix(playerModelBase, inversePlayerModelBase);
@@ -5485,14 +5502,23 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 pushMatrix();
                 const RenderViewContext vehicleContext =
                     vehicle.get() == playerVehicle_ ? context : RenderViewContext::NonPlayer;
+                VehiclePlacement placedVehicle = vehicle->placement;
                 if (vehicle.get() == playerVehicle_) {
                     applyPose(chassis);
                     if (renderPass == VehicleRenderPass::Opaque) {
                         playerDrawn = true;
                     }
                 } else {
+                    const std::optional<double> terrainHeight =
+                        mapRenderer_ != nullptr
+                            ? mapRenderer_->terrainHeightAt(placedVehicle.position[0],
+                                                            placedVehicle.position[1])
+                            : std::nullopt;
+                    if (terrainHeight.has_value()) {
+                        placedVehicle.position[2] = *terrainHeight;
+                    }
                     applyVehiclePlacement(
-                        makeModelRootPlacement(vehicle->placement, vehicle->modelOffsetZ));
+                        makeModelRootPlacement(placedVehicle, vehicle->modelOffsetZ));
                 }
                 Matrix4 aiGroundShadowTransform = {};
                 const Matrix4* shadowTransform = nullptr;
@@ -5502,9 +5528,17 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                     }
                 } else {
                     const VehiclePlacement rootPlacement =
-                        makeModelRootPlacement(vehicle->placement, vehicle->modelOffsetZ);
+                        makeModelRootPlacement(placedVehicle, vehicle->modelOffsetZ);
+                    const double fallbackGroundHeight = placedVehicle.position[2];
+                    const double shadowGroundHeight =
+                        mapRenderer_ != nullptr
+                            ? mapRenderer_->terrainHeightAt(placedVehicle.position[0],
+                                                            placedVehicle.position[1])
+                                  .value_or(fallbackGroundHeight)
+                            : fallbackGroundHeight;
                     aiGroundShadowTransform = makeGroundShadowTransform(
-                        rootPlacement, vehicle->modelOffsetZ, GROUND_SHADOW_OFFSET_Z);
+                        rootPlacement, vehicle->modelOffsetZ,
+                        shadowGroundHeight + GROUND_SHADOW_OFFSET_Z);
                     shadowTransform = &aiGroundShadowTransform;
                 }
                 vehicle->draw(vehicleContext, renderPass, shadowTransform);

@@ -557,11 +557,15 @@ void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& v
     std::unordered_map<std::string, DesiredLoop> desired;
     desired.reserve(untriggeredLoopSounds_.size());
     for (const SoundTriggerDefinition& definition : untriggeredLoopSounds_) {
-        const std::filesystem::path file = resolvedFile(definition);
         if (!openbus::rendering::viewpointMatches(definition.viewpoint, viewpoint) ||
             !conditionsAllow(definition, variables)) {
             continue;
         }
+        // Configured ambient files are resolved during load(). Avoid probing the filesystem
+        // every simulation tick; relative config roots still use the normal resolver.
+        const std::filesystem::path file = definition.file.is_absolute()
+                                               ? definition.file
+                                               : resolvedFile(definition);
         double gain = definition.baseGain;
         if (!definition.volumeCurves.empty()) {
             for (const SoundVolumeCurve& curve : definition.volumeCurves) {

@@ -110,7 +110,6 @@ struct ModelUniformState {
     bool useBumpmap = false;
     bool useFreeTexture = false;
     bool useTextTexture = false;
-    bool cullBackFaces = false;
     bool useInteriorLight = false;
     bool flipTextureY = false;
     bool useMaterialColors = false;
@@ -246,10 +245,9 @@ uniform int uAlphaMode;
 uniform bool uCullBackFaces;
 out vec4 fragmentColor;
 void main() {
-    // Map scenery is deliberately rendered without global face culling because many
-    // assets contain two-sided geometry. Dynamic text overlays, however, belong to
-    // the authored front of a sign/display surface and must not show through its back.
-    if ((uUseTextTexture || uCullBackFaces) && !gl_FrontFacing) {
+    // Imported content meshes are one-sided; generated geometry and mirrored
+    // instances remain two-sided.
+    if (uCullBackFaces && !gl_FrontFacing) {
         discard;
     }
     vec4 color = uColor;
@@ -638,6 +636,15 @@ void uploadMatrices(const Uniforms& uniforms) {
     matrixProgram = currentProgram;
 }
 
+bool modelViewReversesWinding() {
+    const Matrix4& m = modelViewMatrix();
+    const double determinant =
+        m[0] * (m[5] * m[10] - m[9] * m[6]) -
+        m[4] * (m[1] * m[10] - m[9] * m[2]) +
+        m[8] * (m[1] * m[6] - m[5] * m[2]);
+    return determinant < 0.0;
+}
+
 void bindModelVertexBuffer(GLuint buffer, GLuint vertexArray) {
     bool vertexArrayChanged = false;
     if (currentVertexArray != vertexArray) {
@@ -716,7 +723,6 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         modelUniformState.useBumpmap != material.useBumpmap ||
         modelUniformState.useFreeTexture != material.useFreeTexture ||
         modelUniformState.useTextTexture != material.useTextTexture ||
-        modelUniformState.cullBackFaces != material.cullBackFaces ||
         modelUniformState.useInteriorLight != material.useInteriorLight ||
         modelUniformState.interiorLightCount != material.interiorLightCount;
     if (flagsChanged) {
@@ -731,7 +737,6 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         pglUniform1i(modelUniforms.useBumpmap, material.useBumpmap ? 1 : 0);
         pglUniform1i(modelUniforms.useFreeTexture, material.useFreeTexture ? 1 : 0);
         pglUniform1i(modelUniforms.useTextTexture, material.useTextTexture ? 1 : 0);
-        pglUniform1i(modelUniforms.cullBackFaces, material.cullBackFaces ? 1 : 0);
         pglUniform1i(modelUniforms.useInteriorLight, material.useInteriorLight ? 1 : 0);
         pglUniform1i(modelUniforms.interiorLightCount, material.interiorLightCount);
     }
@@ -809,7 +814,6 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.useBumpmap = material.useBumpmap;
     modelUniformState.useFreeTexture = material.useFreeTexture;
     modelUniformState.useTextTexture = material.useTextTexture;
-    modelUniformState.cullBackFaces = material.cullBackFaces;
     modelUniformState.useInteriorLight = material.useInteriorLight;
     modelUniformState.flipTextureY = material.flipTextureY;
     modelUniformState.alphaMode = alphaMode;
@@ -1001,7 +1005,8 @@ void invalidateTextureBindings() {
 }
 
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
-                    const std::array<double, 3>& color, double alpha, int alphaMode) {
+                    const std::array<double, 3>& color, double alpha, int alphaMode,
+                    bool cullBackFaces) {
     TraceScope trace("render", "CoreRenderer::drawModelBatch");
     if (modelProgram == 0 || buffer == 0 || vertexCount == 0) {
         return;
@@ -1009,6 +1014,8 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     useProgram(modelProgram);
     uploadMatrices(modelUniforms);
     uploadModelUniforms(material, color, alpha, alphaMode);
+    pglUniform1i(modelUniforms.cullBackFaces,
+                 cullBackFaces && !modelViewReversesWinding() ? 1 : 0);
     selectTextureUnit(GL_TEXTURE0);
     if (material.textureArray) {
         selectTextureUnit(GL_TEXTURE0 + 7);
@@ -1047,7 +1054,7 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
 
 void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexCount,
                            const ModelMaterial& material, const std::array<double, 3>& color,
-                           double alpha, int alphaMode) {
+                           double alpha, int alphaMode, bool cullBackFaces) {
     TraceScope trace("render", "CoreRenderer::drawIndexedModelBatch");
     if (modelProgram == 0 || buffer == 0 || indexBuffer == 0 || indexCount == 0) {
         return;
@@ -1055,6 +1062,8 @@ void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexC
     useProgram(modelProgram);
     uploadMatrices(modelUniforms);
     uploadModelUniforms(material, color, alpha, alphaMode);
+    pglUniform1i(modelUniforms.cullBackFaces,
+                 cullBackFaces && !modelViewReversesWinding() ? 1 : 0);
     selectTextureUnit(GL_TEXTURE0);
     if (material.textureArray) {
         selectTextureUnit(GL_TEXTURE0 + 7);
