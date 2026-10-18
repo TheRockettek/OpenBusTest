@@ -1,4 +1,6 @@
 #include "CoreRenderer.h"
+#include "ComputeCulling.h"
+#include "Environment.h"
 
 #include "Logger.h"
 #include "OpenGLFunctions.h"
@@ -928,6 +930,10 @@ bool initializeCoreRenderer() {
         currentTextureUnit = GL_TEXTURE0;
         boundTexture2D.fill(0);
         boundTextureArray.fill(0);
+        const char* cullingBackend = openbus::getEnvironment("OPENBUS_CULLING_BACKEND");
+        initializeComputeCulling(computeCullingRequested(
+            cullingBackend != nullptr ? std::string_view(cullingBackend) : std::string_view{}),
+            cullingBackend != nullptr && std::string_view(cullingBackend) == "compute-indirect");
         return true;
     }
     shutdownCoreRenderer();
@@ -935,6 +941,7 @@ bool initializeCoreRenderer() {
 }
 
 void shutdownCoreRenderer() {
+    shutdownComputeCulling();
     currentProgram = 0;
     currentVertexArray = 0;
     currentArrayBuffer = 0;
@@ -1049,7 +1056,7 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
     recordTriangleSubmission(vertexCount / 3);
-    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
+    if (!drawSelectedIndirect(false)) glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
 }
 
 void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexCount,
@@ -1098,7 +1105,7 @@ void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexC
     bindModelVertexBuffer(buffer, modelVertexArray);
     pglBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
     recordTriangleSubmission(indexCount / 3);
-    glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT, nullptr);
+    if (!drawSelectedIndirect(true)) glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indexCount), GL_UNSIGNED_INT, nullptr);
 }
 
 void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
@@ -1132,7 +1139,7 @@ void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
     selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
     recordTriangleSubmission(vertexCount / 3);
-    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
+    if (!drawSelectedIndirect(false)) glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
 }
 
 void drawEnvironmentBatch(GLuint buffer, std::size_t vertexCount, GLuint texture, double alpha) {
@@ -1147,7 +1154,7 @@ void drawEnvironmentBatch(GLuint buffer, std::size_t vertexCount, GLuint texture
     bindTexture(GL_TEXTURE_2D, texture);
     bindModelVertexBuffer(buffer, modelVertexArray);
     recordTriangleSubmission(vertexCount / 3);
-    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
+    if (!drawSelectedIndirect(false)) glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
 }
 
 void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primitive,

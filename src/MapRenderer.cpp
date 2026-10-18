@@ -2,6 +2,7 @@
 
 #include "AssetPath.h"
 #include "CoreRenderer.h"
+#include "ComputeCulling.h"
 #include "Environment.h"
 #include "Logger.h"
 #include "MapRoadGeometry.h"
@@ -2254,6 +2255,9 @@ std::optional<double> MapRenderer::terrainHeightAt(double worldX, double worldY)
 
 void MapRenderer::draw(bool renderTypeFourOnly) const {
     TraceScope trace("map", "MapRenderer::draw");
+    IndirectCullingBatch indirectBatch;
+    IndirectCullingScope indirectScope;
+    bool indirect = false;
     GLint previousFrontFace = GL_CCW;
     glGetIntegerv(GL_FRONT_FACE, &previousFrontFace);
     glFrontFace(GL_CW);
@@ -2268,6 +2272,103 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
     const double cameraX = -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]);
     const double cameraY = -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]);
     const double cameraZ = -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14]);
+    std::vector<CullingItem> cullingItems;
+    std::vector<float> lodBoundaries;
+    std::vector<std::uint32_t> visibility;
+    std::unordered_map<const void*, std::size_t> cullingIndices;
+    bool gpuCulling = false;
+    if (computeCullingAvailable() || indirectCullingAvailable()) {
+        TraceScope phase("map", "MapRenderer::draw.computeCulling");
+        std::vector<std::uint32_t> lodOffsets;
+        for (const auto& thresholds : impl_->sceneryLodThresholdSets) {
+            lodOffsets.push_back(appendCullingLodBoundaries(lodBoundaries, thresholds));
+        }
+        const auto addSphere = [&](const void* key, const std::array<double, 3>& center,
+                                    double radius, double minX, double minY,
+                                    double maxX, double maxY, std::size_t count) -> CullingItem& {
+            cullingIndices.emplace(key, cullingItems.size());
+            CullingItem item = makeCullingItem(view, center, radius);
+            item.draw[0] = count <= static_cast<std::size_t>(std::numeric_limits<GLsizei>::max())
+                ? static_cast<std::uint32_t>(count) : std::numeric_limits<std::uint32_t>::max();
+            item.metadata[0] |= CullMapDistance;
+            item.distanceBounds = {static_cast<float>(minX - cameraX),
+                static_cast<float>(minY - cameraY), static_cast<float>(maxX - cameraX),
+                static_cast<float>(maxY - cameraY)};
+            cullingItems.push_back(item);
+            return cullingItems.back();
+        };
+        const auto addBounds = [&](const void* key, double minX, double minY, double minZ,
+                                    double maxX, double maxY, double maxZ, std::size_t count) {
+            addSphere(key, {(minX + maxX) * 0.5, (minY + maxY) * 0.5,
+                            (minZ + maxZ) * 0.5},
+                std::hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5,
+                minX, minY, maxX, maxY, count);
+        };
+        const auto addTile = [&](const auto& tile) {
+            if (!impl_->activeTileKeys.contains(tileKey(tile.tileX, tile.tileY))) return;
+            const double x = tile.tileX * openbus::map::OMSI_TILE_SIZE_METERS;
+            const double y = tile.tileY * openbus::map::OMSI_TILE_SIZE_METERS;
+            addBounds(&tile, x, y, tile.minZ, x + openbus::map::OMSI_TILE_SIZE_METERS,
+                      y + openbus::map::OMSI_TILE_SIZE_METERS, tile.maxZ, tile.indexCount);
+        };
+        if (!renderTypeFourOnly) {
+            for (const auto& tile : impl_->terrainBuffers) addTile(tile);
+            for (const auto& water : impl_->waterBatches) addTile(water);
+            for (const auto& road : impl_->roadBatches) {
+                if (road.hasVisibilityBounds &&
+                    impl_->activeTileKeys.contains(tileKey(road.tileX, road.tileY))) {
+                    addBounds(&road, road.minX, road.minY, road.minZ,
+                              road.maxX, road.maxY, road.maxZ, road.indexCount);
+                }
+            }
+        }
+        for (const auto& [key, chunk] : impl_->sceneryChunks) {
+            static_cast<void>(key);
+            // Broad-phase chunk rejection avoids CPU material/resource work for
+            // entire distant groups; individual sphere/LOD tests remain on GPU.
+            if (indirectCullingAvailable() &&
+                (squaredDistanceToBounds(cameraX, cameraY, chunk.minX, chunk.minY, chunk.maxX, chunk.maxY) > MAP_VISIBILITY_RADIUS_SQUARED ||
+                 outsideMapFrustum(frustum, view,
+                     {(chunk.minX + chunk.maxX) * 0.5, (chunk.minY + chunk.maxY) * 0.5, (chunk.minZ + chunk.maxZ) * 0.5},
+                     std::hypot(chunk.maxX - chunk.minX, chunk.maxY - chunk.minY, chunk.maxZ - chunk.minZ) * 0.5))) continue;
+            for (const auto& instance : chunk.instances) {
+                if (!impl_->activeTileKeys.contains(tileKey(instance.sourceTileX, instance.sourceTileY)) ||
+                    instance.batchIndex >= impl_->sceneryBatches.size()) continue;
+                const auto& batch = impl_->sceneryBatches[instance.batchIndex];
+                if (renderTypeFourOnly ? batch.renderType != 4 : batch.renderType == 4) continue;
+                auto& item = addSphere(&instance, {instance.x, instance.y, instance.z},
+                    instance.boundingRadius, instance.x - instance.boundingRadius,
+                    instance.y - instance.boundingRadius, instance.x + instance.boundingRadius,
+                    instance.y + instance.boundingRadius, batch.vertexCount);
+                item.metadata[0] |= CullLod;
+                item.metadata[1] = static_cast<std::uint32_t>(batch.sceneryLodIndex);
+                if (instance.lodThresholdSetIndex < lodOffsets.size()) {
+                    item.metadata[2] = lodOffsets[instance.lodThresholdSetIndex];
+                    item.metadata[3] = static_cast<std::uint32_t>(
+                        impl_->sceneryLodThresholdSets[instance.lodThresholdSetIndex].size());
+                }
+                // Map assets without thresholds still select LOD zero.
+                if (item.metadata[3] == 0 && batch.sceneryLodIndex != 0) {
+                    item.metadata[0] |= CullReject;
+                }
+            }
+        }
+        if (indirectCullingAvailable()) {
+            indirect = indirectBatch.dispatch(cullingItems, makeCullingPlanes(projectionMatrix()), lodBoundaries);
+            gpuCulling = indirect;
+        } else {
+            gpuCulling = computeCull(cullingItems, makeCullingPlanes(projectionMatrix()), lodBoundaries, visibility);
+        }
+    }
+    const auto gpuVisible = [&](const void* key) {
+        const auto found = cullingIndices.find(key);
+        return found != cullingIndices.end() && (indirect || visibility[found->second] != 0);
+    };
+    const auto selectIndirect = [&](const void* key) {
+        if (!indirect) return;
+        const auto found = cullingIndices.find(key);
+        indirectBatch.select(found != cullingIndices.end() ? found->second : std::numeric_limits<std::size_t>::max());
+    };
     const auto outsideVisibilityBounds = [&](double minX, double minY, double maxX, double maxY) {
         return squaredDistanceToBounds(cameraX, cameraY, minX, minY, maxX, maxY) >
                MAP_VISIBILITY_RADIUS_SQUARED;
@@ -2376,17 +2477,19 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                 static_cast<double>(tile.tileX) * openbus::map::OMSI_TILE_SIZE_METERS;
             const double minY =
                 static_cast<double>(tile.tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
-            if (outsideVisibilityBounds(minX, minY, minX + openbus::map::OMSI_TILE_SIZE_METERS,
+            if (gpuCulling && !gpuVisible(&tile)) continue;
+            if (!gpuCulling && outsideVisibilityBounds(minX, minY, minX + openbus::map::OMSI_TILE_SIZE_METERS,
                                         minY + openbus::map::OMSI_TILE_SIZE_METERS)) {
                 continue;
             }
-            if (outsideFrustumBounds(minX, minY, tile.minZ,
+            if (!gpuCulling && outsideFrustumBounds(minX, minY, tile.minZ,
                                      minX + openbus::map::OMSI_TILE_SIZE_METERS,
                                      minY + openbus::map::OMSI_TILE_SIZE_METERS, tile.maxZ)) {
                 continue;
             }
             material.textureScale = tile.baseTextureScale;
             material.detailTextureScale = tile.baseDetailTextureScale;
+            selectIndirect(&tile);
             drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, material,
                                   {1.0, 1.0, 1.0}, 1.0, 0);
             if (!tile.groundTextureLayers.empty()) {
@@ -2416,8 +2519,9 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                 static_cast<double>(water.tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
             const double maxX = minX + openbus::map::OMSI_TILE_SIZE_METERS;
             const double maxY = minY + openbus::map::OMSI_TILE_SIZE_METERS;
-            if (outsideVisibilityBounds(minX, minY, maxX, maxY) ||
-                outsideFrustumBounds(minX, minY, water.minZ, maxX, maxY, water.maxZ)) {
+            if (gpuCulling ? !gpuVisible(&water) :
+                (outsideVisibilityBounds(minX, minY, maxX, maxY) ||
+                 outsideFrustumBounds(minX, minY, water.minZ, maxX, maxY, water.maxZ))) {
                 continue;
             }
             const double centerX = (minX + maxX) * 0.5;
@@ -2442,6 +2546,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         for (const auto& [water, depth] : visibleWater) {
             static_cast<void>(depth);
+            selectIndirect(water);
             drawIndexedModelBatch(water->buffer, water->indexBuffer, water->indexCount, material,
                                   waterColor, 0.62, 0);
         }
@@ -2454,15 +2559,17 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             if (!impl_->activeTileKeys.contains(tileKey(road.tileX, road.tileY))) {
                 continue;
             }
-            if (road.hasVisibilityBounds &&
+            if (gpuCulling && road.hasVisibilityBounds && !gpuVisible(&road)) continue;
+            if (!gpuCulling && road.hasVisibilityBounds &&
                 outsideVisibilityBounds(road.minX, road.minY, road.maxX, road.maxY)) {
                 continue;
             }
-            if (road.hasVisibilityBounds &&
+            if (!gpuCulling && road.hasVisibilityBounds &&
                 outsideFrustumBounds(road.minX, road.minY, road.minZ, road.maxX, road.maxY,
                                      road.maxZ)) {
                 continue;
             }
+            selectIndirect(&road);
             drawIndexedModelBatch(road.buffer, road.indexBuffer, road.indexCount, road.material,
                                   road.color, 1.0, road.alphaMode, road.cullBackFaces);
         }
@@ -2479,6 +2586,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
     const auto drawSceneryInstance = [&](const Impl::SceneryInstance& instance,
                                          const Impl::ModelBatch& batch,
                                          const ModelMaterial& sceneryMaterial, int alphaMode) {
+                        selectIndirect(&instance);
         pushMatrix();
         translate(instance.x, instance.y, instance.z);
         if (instance.hasOrientationMatrix) {
@@ -2517,21 +2625,21 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
     };
     for (const auto& [key, chunk] : impl_->sceneryChunks) {
         static_cast<void>(key);
-        if (chunk.instances.empty() ||
+        if (chunk.instances.empty() || (!gpuCulling && (
             outsideVisibilityBounds(chunk.minX, chunk.minY, chunk.maxX, chunk.maxY) ||
             outsideFrustumBounds(chunk.minX, chunk.minY, chunk.minZ, chunk.maxX, chunk.maxY,
-                                 chunk.maxZ)) {
+                                 chunk.maxZ)))) {
             continue;
         }
         for (const Impl::SceneryInstance& instance : chunk.instances) {
             if (!impl_->activeTileKeys.contains(
                     tileKey(instance.sourceTileX, instance.sourceTileY)) ||
                 instance.batchIndex >= impl_->sceneryBatches.size() ||
-                outsideVisibilityBounds(
+                (gpuCulling ? !gpuVisible(&instance) : (outsideVisibilityBounds(
                     instance.x - instance.boundingRadius, instance.y - instance.boundingRadius,
                     instance.x + instance.boundingRadius, instance.y + instance.boundingRadius) ||
                 outsideMapFrustum(frustum, view, {instance.x, instance.y, instance.z},
-                                  instance.boundingRadius)) {
+                                  instance.boundingRadius)))) {
                 continue;
             }
             const Impl::ModelBatch& batch = impl_->sceneryBatches[instance.batchIndex];
@@ -2543,10 +2651,10 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                     ? &impl_->sceneryLodThresholdSets[instance.lodThresholdSetIndex]
                     : nullptr;
             static const std::vector<double> noLodThresholds;
-            const std::size_t selectedLod = openbus::map::selectMapSceneryLod(
+            const std::size_t selectedLod = gpuCulling ? batch.sceneryLodIndex : openbus::map::selectMapSceneryLod(
                 lodThresholds != nullptr ? *lodThresholds : noLodThresholds,
                 std::hypot(instance.x - cameraX, instance.y - cameraY, instance.z - cameraZ));
-            if (batch.sceneryLodIndex != selectedLod) {
+            if (!gpuCulling && batch.sceneryLodIndex != selectedLod) {
                 continue;
             }
             if (!batch.visibilityVariable.empty()) {

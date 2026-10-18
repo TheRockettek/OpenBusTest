@@ -101,3 +101,19 @@ extern FramebufferTexture2DProc pglFramebufferTexture2D;
 extern CheckFramebufferStatusProc pglCheckFramebufferStatus;
 
 bool loadOpenGLFunctions();
+
+// Optional OpenGL 4.3 entry points; never part of the 3.3 renderer requirement.
+using DispatchComputeProc = void (APIENTRY *)(GLuint, GLuint, GLuint);
+using MemoryBarrierProc = void (APIENTRY *)(GLbitfield);
+using BindBufferBaseProc = void (APIENTRY *)(GLenum, GLuint, GLuint);
+using GetBufferSubDataProc = void (APIENTRY *)(GLenum, std::ptrdiff_t, std::ptrdiff_t, void*);
+using GetIntegeriProc = void (APIENTRY *)(GLenum, GLuint, GLint*);
+extern DispatchComputeProc pglDispatchCompute;
+extern MemoryBarrierProc pglMemoryBarrier;
+extern BindBufferBaseProc pglBindBufferBase;
+extern GetBufferSubDataProc pglGetBufferSubData;
+extern GetIntegeriProc pglGetIntegeri;
+using DrawArraysIndirectProc = void (APIENTRY *)(GLenum, const void*);
+using DrawElementsIndirectProc = void (APIENTRY *)(GLenum, GLenum, const void*);
+extern DrawArraysIndirectProc pglDrawArraysIndirect;
+extern DrawElementsIndirectProc pglDrawElementsIndirect;

@@ -176,6 +176,7 @@ add_executable(OpenBus
     src/CameraMath.cpp
     src/MapRenderer.cpp
     src/CoreRenderer.cpp
+    src/ComputeCulling.cpp
     src/RenderPrimitives.cpp
     src/RendererReflection.cpp
     src/SceneryObjectConfigLoader.cpp
@@ -477,6 +478,17 @@ add_executable(OpenBusCameraMathProbe
 )
 target_include_directories(OpenBusCameraMathProbe PRIVATE src)
 add_test(NAME OpenBusCameraMathProbe COMMAND OpenBusCameraMathProbe)
+
+add_executable(OpenBusComputeCullingProbe
+    tests/ComputeCullingProbe.cpp
+    src/ComputeCulling.cpp
+    src/OpenGLFunctions.cpp
+    src/Logger.cpp)
+target_include_directories(OpenBusComputeCullingProbe PRIVATE src)
+target_link_libraries(OpenBusComputeCullingProbe PRIVATE OpenBus::GLFW OpenGL::GL)
+add_test(NAME OpenBusComputeCullingProbe COMMAND OpenBusComputeCullingProbe)
+add_test(NAME OpenBusComputeCullingGpuProbe COMMAND OpenBusComputeCullingProbe --gpu)
+set_tests_properties(OpenBusComputeCullingGpuProbe PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(OpenBusViewpointProbe tests/ViewpointProbe.cpp)
 target_include_directories(OpenBusViewpointProbe PRIVATE src)

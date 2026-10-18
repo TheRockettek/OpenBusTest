@@ -7,6 +7,7 @@
 #include "BusSimulation.h"
 #include "CameraMath.h"
 #include "CoreRenderer.h"
+#include "ComputeCulling.h"
 #include "Environment.h"
 #include "InteriorLighting.h"
 #include "Logger.h"
@@ -1429,6 +1430,28 @@ struct Vehicle {
                                              uniqueReflectionIndices.end());
     }
 
+    std::vector<std::uint32_t> computePartVisibility(bool selectLod) const {
+        using namespace openbus::rendering;
+        std::vector<std::uint32_t> result;
+        if (!computeCullingAvailable()) return result;
+        std::vector<CullingItem> items;
+        std::vector<float> boundaries;
+        appendCullingLodBoundaries(boundaries, lodThresholds);
+        items.reserve(displayLists.size());
+        for (const DisplayPart& part : displayLists) {
+            auto item = makeCullingItem(modelViewMatrix(), animatedPartCenter(part), part.radius);
+            item.metadata[0] = frustumCulling ? CullFrustum : 0U;
+            if (selectLod && part.lodIndex >= 0 && !boundaries.empty()) {
+                item.metadata[0] |= CullLod;
+                item.metadata[1] = static_cast<std::uint32_t>(part.lodIndex);
+                item.metadata[3] = static_cast<std::uint32_t>(boundaries.size());
+            }
+            items.push_back(item);
+        }
+        computeCull(items, makeCullingPlanes(projectionMatrix()), boundaries, result);
+        return result;
+    }
+
     void prepareFrameVisibility(RenderViewContext context, int viewportWidth, int viewportHeight) {
         TraceScope trace("render", "Vehicle::prepareFrameVisibility");
         ++materialSelectionGeneration;
@@ -2323,6 +2346,10 @@ struct Vehicle {
     void draw(RenderViewContext context, VehicleRenderPass renderPass = VehicleRenderPass::All,
               const Matrix4* groundShadowTransform = nullptr) {
         TraceScope trace("render", "Vehicle::draw");
+        openbus::rendering::IndirectCullingBatch indirectBatch;
+        openbus::rendering::IndirectCullingScope indirectScope;
+        std::unordered_map<const Batch*, std::size_t> indirectSlots;
+        bool indirect = false;
         if (!loaded) {
             return;
         }
@@ -2342,6 +2369,7 @@ struct Vehicle {
         const auto& modelView = openbus::rendering::modelViewMatrix();
         const auto& projection = openbus::rendering::projectionMatrix();
         const bool reusePreparedDraw =
+            !openbus::rendering::indirectCullingAvailable() &&
             renderPass == VehicleRenderPass::Transparent && preparedDrawListsValid &&
             preparedDrawContext == context && preparedDrawReflection == reflectionPass &&
             preparedDrawTransparent == classifyTransparent &&
@@ -2368,10 +2396,44 @@ struct Vehicle {
             }
         }
 
+        if (openbus::rendering::indirectCullingAvailable()) {
+            using namespace openbus::rendering;
+            std::vector<CullingItem> items;
+            std::vector<float> boundaries;
+            appendCullingLodBoundaries(boundaries, lodThresholds);
+            for (const DisplayPart& part : displayLists) {
+                const std::size_t partIndex = static_cast<std::size_t>(&part - displayLists.data());
+                if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex] ||
+                    !openbus::rendering::viewpointMatches(part.viewpoint, context)) continue;
+                auto item = makeCullingItem(modelView, animatedPartCenter(part), part.radius);
+                item.metadata[0] = frustumCulling ? CullFrustum : 0U;
+                if (part.lodIndex >= 0 && !boundaries.empty()) {
+                    item.metadata[0] |= CullLod;
+                    item.metadata[1] = static_cast<std::uint32_t>(part.lodIndex);
+                    item.metadata[3] = static_cast<std::uint32_t>(boundaries.size());
+                }
+                for (const Batch& batch : part.batches) {
+                    item.draw[0] = batch.vertexCount <= static_cast<std::size_t>(std::numeric_limits<GLsizei>::max())
+                        ? static_cast<std::uint32_t>(batch.vertexCount) : std::numeric_limits<std::uint32_t>::max();
+                    indirectSlots.emplace(&batch, items.size());
+                    items.push_back(item);
+                }
+            }
+            indirect = indirectBatch.dispatch(items, makeCullingPlanes(projection), boundaries);
+        }
+        const auto selectIndirect = [&](const Batch& batch) {
+            if (indirect) indirectBatch.select(indirectSlots.at(&batch));
+        };
+        const auto computeVisibility = reusePreparedDraw ? std::vector<std::uint32_t>{}
+                                : computePartVisibility(true);
         const auto visible = [&](const DisplayPart& part, std::size_t partIndex) {
             // TraceScope phase("render", "Vehicle::draw.visible");
             if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex]) {
                 return false;
+            }
+            if (indirect) return true;
+            if (!computeVisibility.empty()) {
+                return computeVisibility[partIndex] != 0;
             }
             const std::array<double, 3> center = animatedPartCenter(part);
             const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
@@ -2476,7 +2538,7 @@ struct Vehicle {
                                      return first.depth > second.depth;
                                  });
             }
-            preparedDrawListsValid = renderPass == VehicleRenderPass::Opaque;
+            preparedDrawListsValid = renderPass == VehicleRenderPass::Opaque && !indirect;
             if (preparedDrawListsValid) {
                 preparedDrawContext = context;
                 preparedDrawReflection = reflectionPass;
@@ -2503,6 +2565,7 @@ struct Vehicle {
                     if (batch.alphaMode != 0 || batch.noZwrite || batch.textTextureIndex >= 0) {
                         continue;
                     }
+                    selectIndirect(batch);
                     drawBatch(batch, alpha);
                     if (!reflectionPass) {
                         drawEnvironmentMap(batch, alpha);
@@ -2530,6 +2593,7 @@ struct Vehicle {
                     applyDrawTransform(*transparent.part, groundShadowTransform);
                     const double alpha = alphaScale(batch);
                     if (alpha > 0.0) {
+                        selectIndirect(batch);
                         drawBatch(batch, alpha, false, nullptr, 3);
                     }
                     popMatrix();
@@ -2549,6 +2613,7 @@ struct Vehicle {
                         popMatrix();
                         continue;
                     }
+                    selectIndirect(batch);
                     drawBatch(batch, alpha);
                     if (!reflectionPass) {
                         drawEnvironmentMap(batch, alpha);
@@ -2591,6 +2656,7 @@ struct Vehicle {
                         !batch.transmap.name.empty()) {
                         sortTransparentBatch(batch);
                     }
+                    selectIndirect(batch);
                     drawBatch(batch, alpha, false, nullptr,
                               batch.textTextureIndex >= 0 ? 2 : -1,
                               transparent.part->isShadow);
@@ -4306,7 +4372,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         gameLog.Log("Failed to initialize GLFW");
         throw std::runtime_error("Failed to initialize GLFW");
     }
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     const bool benchmarkMode = parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
@@ -4315,6 +4381,12 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
     window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
+    if (!window_) {
+        gameLog.Log("OpenGL 4.3 context unavailable; retrying 3.3 with CPU culling");
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
+    }
     if (!window_) {
         gameLog.Log("Failed to create OpenGL window");
         glfwTerminate();

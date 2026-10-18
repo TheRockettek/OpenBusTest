@@ -28,5 +28,6 @@ set "OPENBUS_ASSET_WORKERS=4"
 set "OPENBUS_DOPPLER=1"
 
 set "OPENBUS_CAPTURE_VIEWS="
+set "OPENBUS_CULLING_BACKEND=compute-readback"
 
 cmake --preset windows-clang-ninja && cmake --build --preset windows-clang-ninja --target OpenBus && .\build-ninja\OpenBus.exe
