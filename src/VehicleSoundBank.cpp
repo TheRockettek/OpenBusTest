@@ -146,8 +146,8 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
         }
         const std::string keyword = line.keyword();
         const auto reportUnhandled = [&]() {
-            openbus::config::logUnhandledConfigurationTag(
-                "sound.cfg", configPath, line.number, keyword, "unknown sound keyword");
+            openbus::config::logUnhandledConfigurationTag("sound.cfg", configPath, line.number,
+                                                          keyword, "unknown sound keyword");
         };
         if (keyword == "sound" || keyword == "loopsound") {
             retainUntriggeredLoop();
@@ -563,9 +563,8 @@ void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& v
         }
         // Configured ambient files are resolved during load(). Avoid probing the filesystem
         // every simulation tick; relative config roots still use the normal resolver.
-        const std::filesystem::path file = definition.file.is_absolute()
-                                               ? definition.file
-                                               : resolvedFile(definition);
+        const std::filesystem::path file =
+            definition.file.is_absolute() ? definition.file : resolvedFile(definition);
         double gain = definition.baseGain;
         if (!definition.volumeCurves.empty()) {
             for (const SoundVolumeCurve& curve : definition.volumeCurves) {

@@ -237,7 +237,8 @@ int main() {
                 continue;
             }
             try {
-                const openbus::map::TerrainGrid grid = openbus::map::loadTerrainGrid(tile.terrainPath);
+                const openbus::map::TerrainGrid grid =
+                    openbus::map::loadTerrainGrid(tile.terrainPath);
                 spawnTerrain.push_back({tile.x, tile.y, openbus::map::OMSI_TILE_SIZE_METERS,
                                         grid.intervals, grid.heights});
                 preloadedTerrainTiles.emplace_back(tile.x, tile.y);
@@ -254,9 +255,8 @@ int main() {
                            std::to_string(spawnTerrain.size()) + " tiles.");
         BusSimulation simulation(configuration, busPlacement, 60.0, 8, busPlacement.position[2],
                                  std::move(spawnTerrain), {}, false);
-        openbus::map::MapCollisionStreamer collisionStreamer(mapDefinition, omsiRootPath(),
-                                                             simulation, 2, 2,
-                                                             std::move(preloadedTerrainTiles));
+        openbus::map::MapCollisionStreamer collisionStreamer(
+            mapDefinition, omsiRootPath(), simulation, 2, 2, std::move(preloadedTerrainTiles));
 
         const bool benchmarkMode =
             openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
@@ -271,10 +271,10 @@ int main() {
         collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
                                  spawnLoadedGeometryTiles);
         applicationLog.Log("Map collision streaming started asynchronously with spawn terrain "
-                   "already active: resident tiles=" +
-                   std::to_string(collisionStreamer.loadedTileCount()) +
-                   "; map manifest tiles=" +
-                   std::to_string(mapDefinition.tiles.size()) + ".");
+                           "already active: resident tiles=" +
+                           std::to_string(collisionStreamer.loadedTileCount()) +
+                           "; map manifest tiles=" + std::to_string(mapDefinition.tiles.size()) +
+                           ".");
         std::size_t reportedCollisionTileCount = collisionStreamer.loadedTileCount();
         Vehicle* playerVehicle =
             renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
@@ -392,7 +392,8 @@ int main() {
                       << (renderer.benchmarkClickTargetFound() ? "found" : "none") << '\n';
             std::cout << "BENCHMARK_COMPLETE=1\n";
         } else {
-            bool captureOnStartup = openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_CAPTURE_VIEWS"));
+            bool captureOnStartup = openbus::rendering::parseEnabledFlag(
+                openbus::getEnvironment("OPENBUS_CAPTURE_VIEWS"));
             bool pendingCaptureRequest = captureOnStartup;
             std::vector<KeyEvent> pendingKeyEvents;
 

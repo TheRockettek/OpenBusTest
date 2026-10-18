@@ -138,9 +138,9 @@ std::uint32_t readU32(std::string_view bytes, std::size_t& offset) {
 
 std::string numberToken(double value) {
     std::array<char, 64> buffer = {};
-    const auto converted = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value,
-                                         std::chars_format::general,
-                                         std::numeric_limits<double>::max_digits10);
+    const auto converted =
+        std::to_chars(buffer.data(), buffer.data() + buffer.size(), value,
+                      std::chars_format::general, std::numeric_limits<double>::max_digits10);
     if (converted.ec != std::errc{}) {
         throw std::runtime_error("unable to format binary numeric token");
     }
@@ -149,11 +149,10 @@ std::string numberToken(double value) {
 
 std::vector<std::string> tokenizeBinary(std::string_view bytes, std::size_t offset,
                                         std::size_t floatWidth) {
-    static constexpr std::array<std::string_view, 11> punctuation = {
-        "{", "}", "(", ")", "[", "]", "<", ">", ".", ",", ";"};
+    static constexpr std::array<std::string_view, 11> punctuation = {"{", "}", "(", ")", "[", "]",
+                                                                     "<", ">", ".", ",", ";"};
     static constexpr std::array<std::string_view, 13> typeTokens = {
-        "", "", "", "", "", "", "", "", "void", "lpstr", "unicode", "cstring",
-        "array"};
+        "", "", "", "", "", "", "", "", "void", "lpstr", "unicode", "cstring", "array"};
     std::vector<std::string> tokens;
     const auto append = [&](std::string token) {
         if (tokens.size() >= MAX_X_TOKENS) {
@@ -195,7 +194,7 @@ std::vector<std::string> tokenizeBinary(std::string_view bytes, std::size_t offs
             const std::size_t length = readU32(bytes, offset);
             append(readString(length));
             static_cast<void>(readU16(bytes, offset)); // Required trailing NUL word.
-        } else if (code == 3) { // INTEGER
+        } else if (code == 3) {                        // INTEGER
             append(std::to_string(static_cast<std::int32_t>(readU32(bytes, offset))));
         } else if (code == 5) { // GUID; only template declarations need this token.
             if (bytes.size() - offset < 16) {
@@ -211,9 +210,8 @@ std::vector<std::string> tokenizeBinary(std::string_view bytes, std::size_t offs
                 throw std::runtime_error("invalid or truncated binary numeric list");
             }
             for (std::uint32_t index = 0; index < count; ++index) {
-                append(code == 6
-                           ? std::to_string(static_cast<std::int32_t>(readU32(bytes, offset)))
-                           : numberToken(readFloat()));
+                append(code == 6 ? std::to_string(static_cast<std::int32_t>(readU32(bytes, offset)))
+                                 : numberToken(readFloat()));
                 if (index + 1 < count) {
                     append(",");
                 }
@@ -231,8 +229,8 @@ std::vector<std::string> tokenizeBinary(std::string_view bytes, std::size_t offs
         } else if (code == 43) { // DOUBLE
             const std::uint32_t low = readU32(bytes, offset);
             const std::uint32_t high = readU32(bytes, offset);
-            const double value = std::bit_cast<double>(
-                static_cast<std::uint64_t>(low) | (static_cast<std::uint64_t>(high) << 32));
+            const double value = std::bit_cast<double>(static_cast<std::uint64_t>(low) |
+                                                       (static_cast<std::uint64_t>(high) << 32));
             if (!std::isfinite(value)) {
                 throw std::runtime_error("non-finite binary double token");
             }
@@ -282,8 +280,7 @@ std::vector<std::uint8_t> decompressMszip(std::string_view bytes, std::size_t of
     while (bytes.size() - offset >= 4) {
         const std::uint16_t compressedSize = readU16(bytes, offset);
         if (compressedSize == 0 || compressedSize >= MSZIP_BLOCK_SIZE ||
-            bytes.size() - offset < 2 ||
-            static_cast<std::uint8_t>(bytes[offset]) != 'C' ||
+            bytes.size() - offset < 2 || static_cast<std::uint8_t>(bytes[offset]) != 'C' ||
             static_cast<std::uint8_t>(bytes[offset + 1]) != 'K') {
             throw std::runtime_error("invalid MSZIP block header");
         }
@@ -316,11 +313,10 @@ std::vector<std::uint8_t> decompressMszip(std::string_view bytes, std::size_t of
         if (inflateReset(&stream) != Z_OK) {
             throw std::runtime_error("could not reset MSZIP decompressor");
         }
-        const std::size_t dictionaryStart = produced > MSZIP_DICTIONARY_SIZE
-                            ? produced - MSZIP_DICTIONARY_SIZE
-                            : 0;
+        const std::size_t dictionaryStart =
+            produced > MSZIP_DICTIONARY_SIZE ? produced - MSZIP_DICTIONARY_SIZE : 0;
         previousBlock.assign(block.begin() + static_cast<std::ptrdiff_t>(dictionaryStart),
-                              block.begin() + static_cast<std::ptrdiff_t>(produced));
+                             block.begin() + static_cast<std::ptrdiff_t>(produced));
         if (!previousBlock.empty() &&
             inflateSetDictionary(&stream, previousBlock.data(),
                                  static_cast<uInt>(previousBlock.size())) != Z_OK) {
@@ -822,10 +818,10 @@ std::shared_ptr<ParsedObj> XLoader::parse(const std::filesystem::path& path) {
         }
         if (normalizedFormat == "tzip" || normalizedFormat == "bzip") {
             const std::vector<std::uint8_t> decompressed = decompressMszip(contents, 16);
-            const std::string_view payload(
-                reinterpret_cast<const char*>(decompressed.data()), decompressed.size());
+            const std::string_view payload(reinterpret_cast<const char*>(decompressed.data()),
+                                           decompressed.size());
             return Parser(normalizedFormat == "bzip" ? tokenizeBinary(payload, 0, floatWidth)
-                                                      : tokenize(payload))
+                                                     : tokenize(payload))
                 .parse();
         }
         if (normalizedFormat != "txt ") {

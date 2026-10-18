@@ -112,12 +112,10 @@ std::optional<double> sampleMapTerrainHeight(const TerrainGrid& terrain, double 
     if (terrain.heights.size() < side * side) {
         return std::nullopt;
     }
-    const double gridX = std::clamp(
-        localX / OMSI_TILE_SIZE_METERS * static_cast<double>(last), 0.0,
-        static_cast<double>(last));
-    const double gridY = std::clamp(
-        localY / OMSI_TILE_SIZE_METERS * static_cast<double>(last), 0.0,
-        static_cast<double>(last));
+    const double gridX = std::clamp(localX / OMSI_TILE_SIZE_METERS * static_cast<double>(last), 0.0,
+                                    static_cast<double>(last));
+    const double gridY = std::clamp(localY / OMSI_TILE_SIZE_METERS * static_cast<double>(last), 0.0,
+                                    static_cast<double>(last));
     const std::size_t column = static_cast<std::size_t>(gridX);
     const std::size_t row = static_cast<std::size_t>(gridY);
     const std::size_t nextColumn = std::min(column + 1, last);
@@ -185,9 +183,8 @@ MapSceneryPose composeMapAttachedObjectPose(const MapSceneryPose& parent,
     // London TrafficLight_Bracket.o3d extends along local map Y, and its authored CFG-Y mount
     // offset (-0.186 m) lands at that arm's endpoint. Swapping CFG X/Y here moved child lights
     // sideways off the arm and away from the pole's horizontal centerline.
-    const std::array<double, 3> mapAttachmentTranslation = {attachmentTranslation[0],
-                                                            attachmentTranslation[1],
-                                                            attachmentTranslation[2]};
+    const std::array<double, 3> mapAttachmentTranslation = {
+        attachmentTranslation[0], attachmentTranslation[1], attachmentTranslation[2]};
     const std::array<double, 3> worldOffset =
         rotateVector(parentRotation, mapAttachmentTranslation);
 
@@ -327,9 +324,9 @@ placeMapSplineAttachmentImpl(const MapSplineAttachment& attachment,
                 static_cast<double>(current.tileX) * OMSI_TILE_SIZE_METERS;
             const double segmentOriginY =
                 static_cast<double>(current.tileY) * OMSI_TILE_SIZE_METERS;
-            const auto center = sampleMapSpline(segmentOriginX + spline.localX,
-                                                segmentOriginY + spline.localY, spline.rotationDegrees,
-                                                spline.length, spline.radius, segmentDistance);
+            const auto center = sampleMapSpline(
+                segmentOriginX + spline.localX, segmentOriginY + spline.localY,
+                spline.rotationDegrees, spline.length, spline.radius, segmentDistance);
             if (!center) {
                 continue;
             }
@@ -400,8 +397,8 @@ std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& 
                                                      const std::vector<MapSplinePlacement>& splines,
                                                      int tileX, int tileY,
                                                      const MapSplineCantWidthResolver& cantWidth) {
-    const MapSplineChainResolver localResolver = [&splines, tileX, tileY](int splineId)
-        -> std::optional<MapSplinePlacementReference> {
+    const MapSplineChainResolver localResolver =
+        [&splines, tileX, tileY](int splineId) -> std::optional<MapSplinePlacementReference> {
         const auto found = std::find_if(splines.begin(), splines.end(),
                                         [splineId](const MapSplinePlacement& candidate) {
                                             return candidate.splineId == splineId;
@@ -420,29 +417,27 @@ placeMapSplineAttachment(const MapSplineAttachment& attachment,
                          const std::vector<MapSplinePlacement>& sourceTileSplines, int tileX,
                          int tileY, const MapSplineChainResolver& chainResolver,
                          const MapSplineCantWidthResolver& cantWidth) {
-    return placeMapSplineAttachmentImpl(attachment, sourceTileSplines, tileX, tileY,
-                                        chainResolver, false, cantWidth);
+    return placeMapSplineAttachmentImpl(attachment, sourceTileSplines, tileX, tileY, chainResolver,
+                                        false, cantWidth);
 }
 
 std::optional<MapSceneryPose>
 placeMapSplineAttachmentParent(const MapSplineAttachment& attachment,
                                const std::vector<MapSplinePlacement>& splines, int tileX, int tileY,
                                const MapSplineCantWidthResolver& cantWidth) {
-    const std::vector<MapSceneryPose> placements =
-        placeMapSplineAttachmentImpl(attachment, splines, tileX, tileY,
-                                     [&splines, tileX, tileY](int splineId)
-                                         -> std::optional<MapSplinePlacementReference> {
-                                         const auto found = std::find_if(
-                                             splines.begin(), splines.end(),
-                                             [splineId](const MapSplinePlacement& candidate) {
-                                                 return candidate.splineId == splineId;
-                                             });
-                                         if (found == splines.end()) {
-                                             return std::nullopt;
-                                         }
-                                         return MapSplinePlacementReference{*found, tileX, tileY};
-                                     },
-                                     true, cantWidth);
+    const std::vector<MapSceneryPose> placements = placeMapSplineAttachmentImpl(
+        attachment, splines, tileX, tileY,
+        [&splines, tileX, tileY](int splineId) -> std::optional<MapSplinePlacementReference> {
+            const auto found = std::find_if(splines.begin(), splines.end(),
+                                            [splineId](const MapSplinePlacement& candidate) {
+                                                return candidate.splineId == splineId;
+                                            });
+            if (found == splines.end()) {
+                return std::nullopt;
+            }
+            return MapSplinePlacementReference{*found, tileX, tileY};
+        },
+        true, cantWidth);
     if (placements.empty()) {
         return std::nullopt;
     }
@@ -454,9 +449,8 @@ placeMapSplineAttachmentParent(const MapSplineAttachment& attachment,
                                const std::vector<MapSplinePlacement>& sourceTileSplines, int tileX,
                                int tileY, const MapSplineChainResolver& chainResolver,
                                const MapSplineCantWidthResolver& cantWidth) {
-    const std::vector<MapSceneryPose> placements =
-        placeMapSplineAttachmentImpl(attachment, sourceTileSplines, tileX, tileY, chainResolver,
-                                     true, cantWidth);
+    const std::vector<MapSceneryPose> placements = placeMapSplineAttachmentImpl(
+        attachment, sourceTileSplines, tileX, tileY, chainResolver, true, cantWidth);
     if (placements.empty()) {
         return std::nullopt;
     }

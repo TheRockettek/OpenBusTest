@@ -2323,9 +2323,8 @@ void ScriptRuntime::configureScriptTextures(const std::vector<ModelScriptTexture
     }
 }
 
-void ScriptRuntime::configureTextTextures(
-    const std::vector<ModelTextTexture>& definitions,
-    const std::vector<std::string>& placementLabels) {
+void ScriptRuntime::configureTextTextures(const std::vector<ModelTextTexture>& definitions,
+                                          const std::vector<std::string>& placementLabels) {
     if (!impl_) {
         return;
     }
@@ -2348,8 +2347,7 @@ void ScriptRuntime::configureTextTextures(
         const std::size_t colorModeIndex = definition.placementLabel ? 3U : 4U;
         const std::size_t colorStartIndex = definition.placementLabel ? 4U : 5U;
         configured.variable = definition.placementLabel
-                                  ? "__openbus_placement_label_" +
-                                        std::to_string(definition.slot)
+                                  ? "__openbus_placement_label_" + std::to_string(definition.slot)
                                   : definition.values[0];
         configured.font = lower(definition.values[fontIndex]);
         try {
@@ -2365,9 +2363,9 @@ void ScriptRuntime::configureTextTextures(
         if (definition.placementLabel) {
             impl_->localState.declareString(configured.variable);
             const std::size_t labelIndex = static_cast<std::size_t>(definition.slot);
-            impl_->localState.setString(
-                configured.variable,
-                labelIndex < placementLabels.size() ? placementLabels[labelIndex] : std::string{});
+            impl_->localState.setString(configured.variable, labelIndex < placementLabels.size()
+                                                                 ? placementLabels[labelIndex]
+                                                                 : std::string{});
         }
         const std::size_t pixelBytes =
             openbus::scripting::scriptTextureByteSize(configured.width, configured.height);

@@ -102,8 +102,9 @@ CullingItem makeCullingItem(const std::array<double, 16>& modelView,
                             const std::array<double, 3>& center, double radius) {
     CullingItem item;
     for (std::size_t row = 0; row < 3; ++row) {
-        item.eyeSphere[row] = static_cast<float>(modelView[row] * center[0] +
-            modelView[row + 4] * center[1] + modelView[row + 8] * center[2] + modelView[row + 12]);
+        item.eyeSphere[row] =
+            static_cast<float>(modelView[row] * center[0] + modelView[row + 4] * center[1] +
+                               modelView[row + 8] * center[2] + modelView[row + 12]);
     }
     item.eyeSphere[3] = static_cast<float>(radius);
     item.metadata[0] = CullFrustum;
@@ -111,7 +112,7 @@ CullingItem makeCullingItem(const std::array<double, 16>& modelView,
 }
 
 std::uint32_t appendCullingLodBoundaries(std::vector<float>& boundaries,
-                                        std::span<const double> thresholds) {
+                                         std::span<const double> thresholds) {
     const auto offset = static_cast<std::uint32_t>(boundaries.size());
     for (const double threshold : thresholds) {
         boundaries.push_back(static_cast<float>(25.0 / std::max(threshold, 0.001)));
@@ -123,24 +124,29 @@ bool cullingItemVisible(const CullingItem& item, const CullingPlanes& planes,
                         std::span<const float> lodBoundaries) {
     if ((item.metadata[0] & CullLod) != 0 &&
         (item.metadata[2] > lodBoundaries.size() ||
-         item.metadata[3] > lodBoundaries.size() - item.metadata[2])) return false;
-    if ((item.metadata[0] & CullReject) != 0) return false;
+         item.metadata[3] > lodBoundaries.size() - item.metadata[2]))
+        return false;
+    if ((item.metadata[0] & CullReject) != 0)
+        return false;
     const auto& sphere = item.eyeSphere;
     if ((item.metadata[0] & CullFrustum) != 0) {
         for (const auto& plane : planes) {
-            const float distance = plane[0] * sphere[0] + plane[1] * sphere[1] +
-                                   plane[2] * sphere[2] + plane[3];
-            if (distance < -sphere[3] - frustumMargin) return false;
+            const float distance =
+                plane[0] * sphere[0] + plane[1] * sphere[1] + plane[2] * sphere[2] + plane[3];
+            if (distance < -sphere[3] - frustumMargin)
+                return false;
         }
     }
     if ((item.metadata[0] & CullMapDistance) != 0) {
         const auto& b = item.distanceBounds;
         const float dx = std::max({b[0], -b[2], 0.0F});
         const float dy = std::max({b[1], -b[3], 0.0F});
-        if (dx * dx + dy * dy > visibilityRadiusSquared) return false;
+        if (dx * dx + dy * dy > visibilityRadiusSquared)
+            return false;
     }
     if ((item.metadata[0] & CullLod) != 0 && item.metadata[3] != 0) {
-        const float distance = std::sqrt(sphere[0] * sphere[0] + sphere[1] * sphere[1] + sphere[2] * sphere[2]);
+        const float distance =
+            std::sqrt(sphere[0] * sphere[0] + sphere[1] * sphere[1] + sphere[2] * sphere[2]);
         std::uint32_t selected = item.metadata[3] - 1;
         for (std::uint32_t level = 0; level < item.metadata[3]; ++level) {
             if (distance <= lodBoundaries[item.metadata[2] + level]) {
@@ -148,13 +154,15 @@ bool cullingItemVisible(const CullingItem& item, const CullingPlanes& planes,
                 break;
             }
         }
-        if (selected != item.metadata[1]) return false;
+        if (selected != item.metadata[1])
+            return false;
     }
     return true;
 }
 
 void shutdownComputeCulling() {
-    if (program != 0) pglDeleteProgram(program);
+    if (program != 0)
+        pglDeleteProgram(program);
     if (buffers[0] != 0 || buffers[1] != 0 || buffers[2] != 0) {
         pglDeleteBuffers(static_cast<GLsizei>(buffers.size()), buffers.data());
     }
@@ -168,21 +176,23 @@ void shutdownComputeCulling() {
 void initializeComputeCulling(bool enableReadback, bool enableIndirect) {
     shutdownComputeCulling();
     if (!enableReadback && !enableIndirect) {
-        gameLog.Log("Visibility culling: CPU; optional GPU backend OPENBUS_CULLING_BACKEND=compute-indirect");
+        gameLog.Log("Visibility culling: CPU; optional GPU backend "
+                    "OPENBUS_CULLING_BACKEND=compute-indirect");
         return;
     }
     GLint major = 0, minor = 0;
     glGetIntegerv(0x821B /* GL_MAJOR_VERSION */, &major);
     glGetIntegerv(0x821C /* GL_MINOR_VERSION */, &minor);
-    if ((major < 4 || (major == 4 && minor < 3)) || !pglDispatchCompute ||
-        !pglMemoryBarrier || !pglBindBufferBase || !pglGetIntegeri ||
-        (enableReadback && !pglGetBufferSubData) ||
+    if ((major < 4 || (major == 4 && minor < 3)) || !pglDispatchCompute || !pglMemoryBarrier ||
+        !pglBindBufferBase || !pglGetIntegeri || (enableReadback && !pglGetBufferSubData) ||
         (enableIndirect && (!pglDrawArraysIndirect || !pglDrawElementsIndirect))) {
-        gameLog.Log("Compute culling unavailable; using CPU visibility tests (OpenGL 4.3 required)");
+        gameLog.Log(
+            "Compute culling unavailable; using CPU visibility tests (OpenGL 4.3 required)");
         return;
     }
     const GLuint shader = pglCreateShader(0x91B9 /* GL_COMPUTE_SHADER */);
-    if (shader == 0) return;
+    if (shader == 0)
+        return;
     pglShaderSource(shader, 1, &source, nullptr);
     pglCompileShader(shader);
     GLint success = GL_FALSE;
@@ -225,30 +235,43 @@ void initializeComputeCulling(bool enableReadback, bool enableIndirect) {
         return;
     }
     indirectMode = enableIndirect;
-    gameLog.Log(indirectMode ? "Compute indirect culling enabled: GPU commands, no visibility readback" :
-        "Experimental compute culling enabled: synchronous current-view readback may reduce frame rate");
+    gameLog.Log(indirectMode
+                    ? "Compute indirect culling enabled: GPU commands, no visibility readback"
+                    : "Experimental compute culling enabled: synchronous current-view readback may "
+                      "reduce frame rate");
 }
 
-bool computeCullingAvailable() { return program != 0 && !indirectMode; }
-bool indirectCullingAvailable() { return program != 0 && indirectMode; }
+bool computeCullingAvailable() {
+    return program != 0 && !indirectMode;
+}
+bool indirectCullingAvailable() {
+    return program != 0 && indirectMode;
+}
 
 static bool dispatchCulling(std::span<const CullingItem> items, const CullingPlanes& planes,
-                  std::span<const float> lodBoundaries, GLuint output,
-                  std::vector<std::uint32_t>* visibility) {
+                            std::span<const float> lodBoundaries, GLuint output,
+                            std::vector<std::uint32_t>* visibility) {
     if (program == 0 || items.size() > maxItems ||
-        lodBoundaries.size() > (128U * 1024U * 1024U) / sizeof(float)) return false;
-    if (items.empty()) return true;
-    TraceScope trace("render", visibility ? "ComputeCulling::dispatchAndReadback" : "ComputeCulling::dispatchIndirect");
+        lodBoundaries.size() > (128U * 1024U * 1024U) / sizeof(float))
+        return false;
+    if (items.empty())
+        return true;
+    TraceScope trace("render", visibility ? "ComputeCulling::dispatchAndReadback"
+                                          : "ComputeCulling::dispatchIndirect");
     for (const auto& item : items) {
         if ((item.metadata[0] & CullLod) != 0 &&
             (item.metadata[2] > lodBoundaries.size() ||
-             item.metadata[3] > lodBoundaries.size() - item.metadata[2])) return false;
-        if (!visibility && item.draw[0] > static_cast<std::uint32_t>(std::numeric_limits<GLsizei>::max())) return false;
+             item.metadata[3] > lodBoundaries.size() - item.metadata[2]))
+            return false;
+        if (!visibility &&
+            item.draw[0] > static_cast<std::uint32_t>(std::numeric_limits<GLsizei>::max()))
+            return false;
     }
     // Errors from earlier texture uploads/draws must not be attributed to this
     // dispatch and permanently disable an otherwise functioning compute path.
     bool earlierError = false;
-    while (glGetError() != GL_NO_ERROR) earlierError = true;
+    while (glGetError() != GL_NO_ERROR)
+        earlierError = true;
     static bool loggedEarlierError = false;
     if (earlierError && !loggedEarlierError) {
         gameLog.Log("OpenGL error predates compute culling; cleared before dispatch validation");
@@ -258,14 +281,20 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
     std::array<GLint, 3> previousBindings = {};
     glGetIntegerv(0x8B8D /* GL_CURRENT_PROGRAM */, &previousProgram);
     glGetIntegerv(storageBinding, &previousBuffer);
-    for (GLuint i = 0; i < 3; ++i) pglGetIntegeri(storageBinding, i, &previousBindings[i]);
+    for (GLuint i = 0; i < 3; ++i)
+        pglGetIntegeri(storageBinding, i, &previousBindings[i]);
     pglBindBuffer(storageBuffer, buffers[0]);
-    pglBufferData(storageBuffer, static_cast<std::ptrdiff_t>(items.size_bytes()), items.data(), streamDraw);
+    pglBufferData(storageBuffer, static_cast<std::ptrdiff_t>(items.size_bytes()), items.data(),
+                  streamDraw);
     pglBindBuffer(storageBuffer, output);
-    pglBufferData(storageBuffer, static_cast<std::ptrdiff_t>(items.size() * sizeof(std::uint32_t) * (visibility ? 1 : 5)), nullptr, streamDraw);
+    pglBufferData(
+        storageBuffer,
+        static_cast<std::ptrdiff_t>(items.size() * sizeof(std::uint32_t) * (visibility ? 1 : 5)),
+        nullptr, streamDraw);
     pglBindBuffer(storageBuffer, buffers[2]);
     const float dummy = 0.0F;
-    pglBufferData(storageBuffer, static_cast<std::ptrdiff_t>(std::max(lodBoundaries.size_bytes(), sizeof(float))),
+    pglBufferData(storageBuffer,
+                  static_cast<std::ptrdiff_t>(std::max(lodBoundaries.size_bytes(), sizeof(float))),
                   lodBoundaries.empty() ? &dummy : lodBoundaries.data(), streamDraw);
     pglBindBufferBase(storageBuffer, 0, buffers[0]);
     pglBindBufferBase(storageBuffer, 1, output);
@@ -283,14 +312,17 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
         pglBindBuffer(storageBuffer, output);
         TraceScope readback("render", "ComputeCulling::readback.wait");
         pglGetBufferSubData(storageBuffer, 0,
-            static_cast<std::ptrdiff_t>(visibility->size() * sizeof(std::uint32_t)), visibility->data());
+                            static_cast<std::ptrdiff_t>(visibility->size() * sizeof(std::uint32_t)),
+                            visibility->data());
     }
     const bool success = glGetError() == GL_NO_ERROR;
     pglUseProgram(static_cast<GLuint>(previousProgram));
-    for (GLuint i = 0; i < 3; ++i) pglBindBufferBase(storageBuffer, i, static_cast<GLuint>(previousBindings[i]));
+    for (GLuint i = 0; i < 3; ++i)
+        pglBindBufferBase(storageBuffer, i, static_cast<GLuint>(previousBindings[i]));
     pglBindBuffer(storageBuffer, static_cast<GLuint>(previousBuffer));
     if (!success) {
-        if (visibility) visibility->clear();
+        if (visibility)
+            visibility->clear();
         gameLog.Log("Compute culling dispatch/readback failed; disabling compute culling");
         shutdownComputeCulling();
     }
@@ -300,21 +332,28 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
 bool computeCull(std::span<const CullingItem> items, const CullingPlanes& planes,
                  std::span<const float> boundaries, std::vector<std::uint32_t>& visibility) {
     visibility.clear();
-    return computeCullingAvailable() && dispatchCulling(items, planes, boundaries, buffers[1], &visibility);
+    return computeCullingAvailable() &&
+           dispatchCulling(items, planes, boundaries, buffers[1], &visibility);
 }
 
 IndirectCullingBatch::~IndirectCullingBatch() {
-    if (selectedBuffer == buffer_) selectedBuffer = 0;
-    if (buffer_) pglDeleteBuffers(1, &buffer_);
+    if (selectedBuffer == buffer_)
+        selectedBuffer = 0;
+    if (buffer_)
+        pglDeleteBuffers(1, &buffer_);
 }
 
 bool IndirectCullingBatch::dispatch(std::span<const CullingItem> items, const CullingPlanes& planes,
-                                  std::span<const float> boundaries) {
-    if (selectedBuffer == buffer_) selectedBuffer = 0;
+                                    std::span<const float> boundaries) {
+    if (selectedBuffer == buffer_)
+        selectedBuffer = 0;
     count_ = 0;
-    if (!indirectCullingAvailable()) return false;
-    if (!buffer_) pglGenBuffers(1, &buffer_);
-    if (!buffer_ || !dispatchCulling(items, planes, boundaries, buffer_, nullptr)) return false;
+    if (!indirectCullingAvailable())
+        return false;
+    if (!buffer_)
+        pglGenBuffers(1, &buffer_);
+    if (!buffer_ || !dispatchCulling(items, planes, boundaries, buffer_, nullptr))
+        return false;
     count_ = items.size();
     return true;
 }
@@ -324,23 +363,28 @@ void IndirectCullingBatch::select(std::size_t slot) const {
     selectedSlot = slot;
 }
 
-IndirectCullingScope::IndirectCullingScope() : buffer_(selectedBuffer), slot_(selectedSlot),
-    active_(indirectCullingAvailable()) {
-    if (active_) glGetIntegerv(0x8F43 /* DRAW_INDIRECT_BUFFER_BINDING */, &binding_);
+IndirectCullingScope::IndirectCullingScope()
+    : buffer_(selectedBuffer), slot_(selectedSlot), active_(indirectCullingAvailable()) {
+    if (active_)
+        glGetIntegerv(0x8F43 /* DRAW_INDIRECT_BUFFER_BINDING */, &binding_);
     selectedBuffer = 0;
 }
 IndirectCullingScope::~IndirectCullingScope() {
     selectedBuffer = buffer_;
     selectedSlot = slot_;
-    if (active_) pglBindBuffer(drawIndirectBuffer, static_cast<GLuint>(binding_));
+    if (active_)
+        pglBindBuffer(drawIndirectBuffer, static_cast<GLuint>(binding_));
 }
 
 bool drawSelectedIndirect(bool indexed) {
-    if (!selectedBuffer || !indirectCullingAvailable()) return false;
+    if (!selectedBuffer || !indirectCullingAvailable())
+        return false;
     pglBindBuffer(drawIndirectBuffer, selectedBuffer);
     const auto offset = reinterpret_cast<const void*>(selectedSlot * 5 * sizeof(std::uint32_t));
-    if (indexed) pglDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, offset);
-    else pglDrawArraysIndirect(GL_TRIANGLES, offset);
+    if (indexed)
+        pglDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, offset);
+    else
+        pglDrawArraysIndirect(GL_TRIANGLES, offset);
     return true;
 }
 } // namespace openbus::rendering

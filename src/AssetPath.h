@@ -9,7 +9,8 @@
 
 namespace openbus::assets {
 
-inline std::filesystem::path resolveCaseInsensitivePath(const std::filesystem::path& requestedPath) {
+inline std::filesystem::path
+resolveCaseInsensitivePath(const std::filesystem::path& requestedPath) {
     const std::filesystem::path requested = requestedPath.lexically_normal();
     std::error_code error;
     if (std::filesystem::exists(requested, error) && !error) {

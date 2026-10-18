@@ -423,9 +423,9 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             definition.tiles.push_back(std::move(tile));
             tileOrdinalToUniqueIndex.push_back(definition.tiles.size() - 1);
         } else if (isSectionHeader(section)) {
-            openbus::config::logUnhandledConfigurationTag(
-                "global.cfg", globalPath, sectionLine + 1,
-                section.substr(1, section.size() - 2), "section is not implemented");
+            openbus::config::logUnhandledConfigurationTag("global.cfg", globalPath, sectionLine + 1,
+                                                          section.substr(1, section.size() - 2),
+                                                          "section is not implemented");
             definition.diagnostics.warning(sectionLine + 1, section.substr(1, section.size() - 2),
                                            "global.cfg section is not implemented");
             MapOpaqueSection opaqueSection;
@@ -480,8 +480,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
         // where forward is +Z. Rotate that forward vector, then project it into
         // the simulation's (east, north) plane. Simulation yaw zero points east
         // and positive yaw turns counter-clockwise toward north.
-        const double forwardEast =
-            2.0 * (quaternionX * quaternionZ + quaternionW * quaternionY);
+        const double forwardEast = 2.0 * (quaternionX * quaternionZ + quaternionW * quaternionY);
         const double forwardNorth =
             1.0 - 2.0 * (quaternionX * quaternionX + quaternionY * quaternionY);
         if (std::hypot(forwardEast, forwardNorth) <= std::numeric_limits<double>::epsilon()) {
@@ -571,14 +570,15 @@ std::size_t selectMapGroundTextureIndex(const MapDefinition& map, std::string_vi
     return static_cast<std::size_t>(index);
 }
 
-std::optional<std::size_t> resolveMapGroundTextureSidecarIndex(
-    std::string_view ordinalSuffix, std::size_t groundTextureCount) noexcept {
+std::optional<std::size_t>
+resolveMapGroundTextureSidecarIndex(std::string_view ordinalSuffix,
+                                    std::size_t groundTextureCount) noexcept {
     if (ordinalSuffix.empty() || groundTextureCount < 2) {
         return std::nullopt;
     }
     std::size_t index = 0;
-    const auto parsed = std::from_chars(ordinalSuffix.data(),
-                                        ordinalSuffix.data() + ordinalSuffix.size(), index);
+    const auto parsed =
+        std::from_chars(ordinalSuffix.data(), ordinalSuffix.data() + ordinalSuffix.size(), index);
     if (parsed.ec != std::errc{} || parsed.ptr != ordinalSuffix.data() + ordinalSuffix.size() ||
         index == 0 || index > groundTextureCount) {
         return std::nullopt;
@@ -1086,8 +1086,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             ++cursor;
         } else if (section == "[rule]" || section == "[kill_rule]") {
             openbus::config::logUnhandledConfigurationTag(
-                "map tile", tile.textPath, cursor + 1,
-                section.substr(1, section.size() - 2),
+                "map tile", tile.textPath, cursor + 1, section.substr(1, section.size() - 2),
                 "record is retained but placement filtering is not implemented");
             MapTileRule rule;
             rule.kill = section == "[kill_rule]";
@@ -1119,9 +1118,9 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             }
             cursor += rule.fields.size();
         } else if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
-            openbus::config::logUnhandledConfigurationTag(
-                "map tile", tile.textPath, cursor + 1,
-                section.substr(1, section.size() - 2), "section is not implemented");
+            openbus::config::logUnhandledConfigurationTag("map tile", tile.textPath, cursor + 1,
+                                                          section.substr(1, section.size() - 2),
+                                                          "section is not implemented");
             data.diagnostics.warning(cursor + 1, section.substr(1, section.size() - 2),
                                      "map tile section is not implemented");
             MapOpaqueSection opaqueSection;

@@ -28,8 +28,7 @@ inline std::string sceneryTextureBasename(const std::string& name) {
 // no source slot carries that texture name. This avoids applying (for example) a fence
 // texture/alpha mode to unrelated material slots 0 and 1 when fence surfaces are slots 4/5.
 inline std::unordered_map<int, const ModelMaterialState*>
-resolveSceneryMaterialStates(const openbus::rendering::ParsedObj& parsed,
-                             const ModelPart& part) {
+resolveSceneryMaterialStates(const openbus::rendering::ParsedObj& parsed, const ModelPart& part) {
     std::unordered_map<int, const ModelMaterialState*> statesByIndex;
     std::unordered_map<std::string, std::vector<const ModelMaterialState*>> statesByTexture;
     for (const ModelMaterialState& state : part.materialStatesInOrder) {
@@ -52,8 +51,8 @@ resolveSceneryMaterialStates(const openbus::rendering::ParsedObj& parsed,
         }
     }
     std::sort(sourceMaterials.begin(), sourceMaterials.end(),
-                  [](const openbus::rendering::ObjMaterial* left,
-                      const openbus::rendering::ObjMaterial* right) {
+              [](const openbus::rendering::ObjMaterial* left,
+                 const openbus::rendering::ObjMaterial* right) {
                   return left->materialIndex < right->materialIndex;
               });
 

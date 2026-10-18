@@ -29,8 +29,9 @@ struct MapGroundTextureTiling {
 MapGroundTextureTiling
 mapGroundTextureTiling(const GroundTextureDefinition& groundTexture) noexcept;
 
-std::optional<std::size_t> resolveMapGroundTextureSidecarIndex(
-    std::string_view ordinalSuffix, std::size_t groundTextureCount) noexcept;
+std::optional<std::size_t>
+resolveMapGroundTextureSidecarIndex(std::string_view ordinalSuffix,
+                                    std::size_t groundTextureCount) noexcept;
 
 struct MapSeasonDefinition {
     std::string label;

@@ -197,13 +197,12 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
         } else if (section == "[matl_alpha]" || section == "[profilepnt]" ||
                    section == "[scaleTexByLength]") {
             openbus::config::logUnhandledConfigurationTag(
-                "spline profile (.sli)", path, sectionLine,
-                section.substr(1, section.size() - 2),
+                "spline profile (.sli)", path, sectionLine, section.substr(1, section.size() - 2),
                 "directive has no applicable preceding texture mapping");
         } else if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
             openbus::config::logUnhandledConfigurationTag(
-                "spline profile (.sli)", path, sectionLine,
-                section.substr(1, section.size() - 2), "directive is not implemented");
+                "spline profile (.sli)", path, sectionLine, section.substr(1, section.size() - 2),
+                "directive is not implemented");
         }
     }
 

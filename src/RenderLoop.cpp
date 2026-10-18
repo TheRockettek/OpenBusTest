@@ -1433,7 +1433,8 @@ struct Vehicle {
     std::vector<std::uint32_t> computePartVisibility(bool selectLod) const {
         using namespace openbus::rendering;
         std::vector<std::uint32_t> result;
-        if (!computeCullingAvailable()) return result;
+        if (!computeCullingAvailable())
+            return result;
         std::vector<CullingItem> items;
         std::vector<float> boundaries;
         appendCullingLodBoundaries(boundaries, lodThresholds);
@@ -2404,7 +2405,8 @@ struct Vehicle {
             for (const DisplayPart& part : displayLists) {
                 const std::size_t partIndex = static_cast<std::size_t>(&part - displayLists.data());
                 if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex] ||
-                    !openbus::rendering::viewpointMatches(part.viewpoint, context)) continue;
+                    !openbus::rendering::viewpointMatches(part.viewpoint, context))
+                    continue;
                 auto item = makeCullingItem(modelView, animatedPartCenter(part), part.radius);
                 item.metadata[0] = frustumCulling ? CullFrustum : 0U;
                 if (part.lodIndex >= 0 && !boundaries.empty()) {
@@ -2413,8 +2415,10 @@ struct Vehicle {
                     item.metadata[3] = static_cast<std::uint32_t>(boundaries.size());
                 }
                 for (const Batch& batch : part.batches) {
-                    item.draw[0] = batch.vertexCount <= static_cast<std::size_t>(std::numeric_limits<GLsizei>::max())
-                        ? static_cast<std::uint32_t>(batch.vertexCount) : std::numeric_limits<std::uint32_t>::max();
+                    item.draw[0] = batch.vertexCount <= static_cast<std::size_t>(
+                                                            std::numeric_limits<GLsizei>::max())
+                                       ? static_cast<std::uint32_t>(batch.vertexCount)
+                                       : std::numeric_limits<std::uint32_t>::max();
                     indirectSlots.emplace(&batch, items.size());
                     items.push_back(item);
                 }
@@ -2422,16 +2426,18 @@ struct Vehicle {
             indirect = indirectBatch.dispatch(items, makeCullingPlanes(projection), boundaries);
         }
         const auto selectIndirect = [&](const Batch& batch) {
-            if (indirect) indirectBatch.select(indirectSlots.at(&batch));
+            if (indirect)
+                indirectBatch.select(indirectSlots.at(&batch));
         };
-        const auto computeVisibility = reusePreparedDraw ? std::vector<std::uint32_t>{}
-                                : computePartVisibility(true);
+        const auto computeVisibility =
+            reusePreparedDraw ? std::vector<std::uint32_t>{} : computePartVisibility(true);
         const auto visible = [&](const DisplayPart& part, std::size_t partIndex) {
             // TraceScope phase("render", "Vehicle::draw.visible");
             if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex]) {
                 return false;
             }
-            if (indirect) return true;
+            if (indirect)
+                return true;
             if (!computeVisibility.empty()) {
                 return computeVisibility[partIndex] != 0;
             }
@@ -2501,8 +2507,7 @@ struct Vehicle {
                         updateMaterialChange(batch);
                         const bool textTexture = batch.textTextureIndex >= 0;
                         hasOpaqueBatch = hasOpaqueBatch ||
-                                         (batch.alphaMode == 0 && !batch.noZwrite &&
-                                          !textTexture);
+                                         (batch.alphaMode == 0 && !batch.noZwrite && !textTexture);
                         if (classifyTransparent &&
                             (batch.alphaMode != 0 || batch.noZwrite || textTexture)) {
                             transparentBatches.push_back(
@@ -2657,8 +2662,7 @@ struct Vehicle {
                         sortTransparentBatch(batch);
                     }
                     selectIndirect(batch);
-                    drawBatch(batch, alpha, false, nullptr,
-                              batch.textTextureIndex >= 0 ? 2 : -1,
+                    drawBatch(batch, alpha, false, nullptr, batch.textTextureIndex >= 0 ? 2 : -1,
                               transparent.part->isShadow);
                     if (!reflectionPass) {
                         drawEnvironmentMap(batch, alpha);
@@ -4583,21 +4587,45 @@ void RenderLoop::logDrivetrainDiagnosticVariables() const {
     if (playerVehicle_ == nullptr) {
         return;
     }
-    static constexpr const char* variableNames[] = {
-        "throttle",                 "brake",                   "velocity",
-        "engine_on",                "engine_injection_on",      "engine_n",
-        "engine_internal_throttle", "engine_throttle_injection", "engine_m",
-        "engine_m_restriction",     "antrieb_getr_gangwahl",    "antrieb_getr_aktugang",
-        "antrieb_getr_ratio",       "antrieb_getr_m_an",        "antrieb_gear_engaged_timer",
-        "m_wheel",                  "n_wheel",                  "bremse_feststell",
-        "bremse_feststell_sw",      "bremse_luft",              "bremse_kompressor",
-        "bremse_p_leitung01",       "bremse_p_leitung02",       "bremse_p_tank01",
-        "bremse_p_tank02",          "bremse_p_tank03",          "bremse_ueventil_3",
-        "bremse_a_ueventil_3",      "bremse_a_ueventil_1",      "bremse_a_ueventil_2",
-        "bremse_zieldruck_fba",     "bremse_p_brzyl_fba",       "bremse_a_brventil_fba",
-        "bremse_p_brzyl_ha",        "bremse_zieldruck_ha",
-        "axle_brakeforce_0_l",      "axle_brakeforce_0_r",      "axle_brakeforce_1_l",
-        "axle_brakeforce_1_r"};
+    static constexpr const char* variableNames[] = {"throttle",
+                                                    "brake",
+                                                    "velocity",
+                                                    "engine_on",
+                                                    "engine_injection_on",
+                                                    "engine_n",
+                                                    "engine_internal_throttle",
+                                                    "engine_throttle_injection",
+                                                    "engine_m",
+                                                    "engine_m_restriction",
+                                                    "antrieb_getr_gangwahl",
+                                                    "antrieb_getr_aktugang",
+                                                    "antrieb_getr_ratio",
+                                                    "antrieb_getr_m_an",
+                                                    "antrieb_gear_engaged_timer",
+                                                    "m_wheel",
+                                                    "n_wheel",
+                                                    "bremse_feststell",
+                                                    "bremse_feststell_sw",
+                                                    "bremse_luft",
+                                                    "bremse_kompressor",
+                                                    "bremse_p_leitung01",
+                                                    "bremse_p_leitung02",
+                                                    "bremse_p_tank01",
+                                                    "bremse_p_tank02",
+                                                    "bremse_p_tank03",
+                                                    "bremse_ueventil_3",
+                                                    "bremse_a_ueventil_3",
+                                                    "bremse_a_ueventil_1",
+                                                    "bremse_a_ueventil_2",
+                                                    "bremse_zieldruck_fba",
+                                                    "bremse_p_brzyl_fba",
+                                                    "bremse_a_brventil_fba",
+                                                    "bremse_p_brzyl_ha",
+                                                    "bremse_zieldruck_ha",
+                                                    "axle_brakeforce_0_l",
+                                                    "axle_brakeforce_0_r",
+                                                    "axle_brakeforce_1_l",
+                                                    "axle_brakeforce_1_r"};
     std::ostringstream line;
     line << "Native drivetrain variables" << std::setprecision(7);
     for (const char* name : variableNames) {
@@ -4762,7 +4790,7 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
             return result;
         },
         [this, &reflectionTrianglesReset](const BusSimulation& reflectionSimulation,
-                          std::size_t cameraIndex, int width, int height) {
+                                          std::size_t cameraIndex, int width, int height) {
             if (!reflectionTrianglesReset) {
                 openbus::rendering::resetFrameReflectionTriangleCount();
                 reflectionTrianglesReset = true;
@@ -5024,9 +5052,9 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                 clickableHoverCacheHit_ = false;
             }
             previousCameraNavigationStates_.fill(false);
-            gameLog.Log(std::string("Mouse camera look ") +
-                        (mouseLookEnabled_ ? "enabled; move the mouse to look around"
-                                           : "disabled"));
+            gameLog.Log(
+                std::string("Mouse camera look ") +
+                (mouseLookEnabled_ ? "enabled; move the mouse to look around" : "disabled"));
         }
         previousMouseLookToggleState_ = mouseLookTogglePressed;
 
@@ -5209,8 +5237,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     double wheelGroundHeightSum = 0.0;
     std::size_t validWheelGroundHeights = 0;
     for (std::size_t wheelIndex = 0; wheelIndex < simulation.wheelCount(); ++wheelIndex) {
-        const double wheelBottom = simulation.wheelPose(wheelIndex).position[2] -
-                                   simulation.wheelRadius(wheelIndex);
+        const double wheelBottom =
+            simulation.wheelPose(wheelIndex).position[2] - simulation.wheelRadius(wheelIndex);
         if (std::isfinite(wheelBottom)) {
             wheelGroundHeightSum += wheelBottom;
             ++validWheelGroundHeights;
@@ -5219,13 +5247,12 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     if (validWheelGroundHeights > 0) {
         // Wheel bottoms follow the actual contact surface, including elevated
         // roads and ramps that can differ from the underlying terrain grid.
-        playerGroundHeight = wheelGroundHeightSum /
-                             static_cast<double>(validWheelGroundHeights);
+        playerGroundHeight = wheelGroundHeightSum / static_cast<double>(validWheelGroundHeights);
     }
-    const Matrix4 shadowGroundBase = multiplyMatrix4(
-        translationMatrix({chassis.position[0], chassis.position[1],
-                           playerGroundHeight + GROUND_SHADOW_OFFSET_Z}),
-        rotationMatrix(simulation.yaw() * radiansToDegrees, 0.0, 0.0, 1.0));
+    const Matrix4 shadowGroundBase =
+        multiplyMatrix4(translationMatrix({chassis.position[0], chassis.position[1],
+                                           playerGroundHeight + GROUND_SHADOW_OFFSET_Z}),
+                        rotationMatrix(simulation.yaw() * radiansToDegrees, 0.0, 0.0, 1.0));
     Matrix4 inversePlayerModelBase = identityMatrix();
     const bool canGroundClampShadow = invertAffineMatrix(playerModelBase, inversePlayerModelBase);
     const Matrix4 groundShadowTransform =
@@ -5500,8 +5527,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         }
         const bool hoveringClickable = !mouseControlEnabled_ && clickableHoverCacheHit_;
         GLFWcursor* cursor = mouseControlEnabled_ ? mouseSteeringCursor_
-                     : hoveringClickable  ? clickableCursor_
-                              : nullptr;
+                             : hoveringClickable  ? clickableCursor_
+                                                  : nullptr;
         glfwSetCursor(window_, cursor);
         const auto releaseMouse = [this](const std::string& event) {
             if (playerVehicle_->scripts) {
@@ -5603,14 +5630,14 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                         makeModelRootPlacement(placedVehicle, vehicle->modelOffsetZ);
                     const double fallbackGroundHeight = placedVehicle.position[2];
                     const double shadowGroundHeight =
-                        mapRenderer_ != nullptr
-                            ? mapRenderer_->terrainHeightAt(placedVehicle.position[0],
-                                                            placedVehicle.position[1])
-                                  .value_or(fallbackGroundHeight)
-                            : fallbackGroundHeight;
-                    aiGroundShadowTransform = makeGroundShadowTransform(
-                        rootPlacement, vehicle->modelOffsetZ,
-                        shadowGroundHeight + GROUND_SHADOW_OFFSET_Z);
+                        mapRenderer_ != nullptr ? mapRenderer_
+                                                      ->terrainHeightAt(placedVehicle.position[0],
+                                                                        placedVehicle.position[1])
+                                                      .value_or(fallbackGroundHeight)
+                                                : fallbackGroundHeight;
+                    aiGroundShadowTransform =
+                        makeGroundShadowTransform(rootPlacement, vehicle->modelOffsetZ,
+                                                  shadowGroundHeight + GROUND_SHADOW_OFFSET_Z);
                     shadowTransform = &aiGroundShadowTransform;
                 }
                 vehicle->draw(vehicleContext, renderPass, shadowTransform);
@@ -5797,10 +5824,10 @@ void RenderLoop::draw(const BusSimulation& simulation) {
               << throttlePercent << "% - Brake " << brakePercent << "% - "
               << openbus::rendering::frameTriangleCount() << " main + "
               << openbus::rendering::frameReflectionTriangleCount()
-              << " reflection triangles/refresh - "
-              << std::fixed << std::setprecision(1) << displayedFps_ << " FPS";
+              << " reflection triangles/refresh - " << std::fixed << std::setprecision(1)
+              << displayedFps_ << " FPS";
         glfwSetWindowTitle(window_, title.str().c_str());
-          lastStatsTitleTime_ = titleUpdateTime;
+        lastStatsTitleTime_ = titleUpdateTime;
     }
 }
 

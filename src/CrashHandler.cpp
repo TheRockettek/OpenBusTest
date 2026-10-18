@@ -319,21 +319,20 @@ void handlePosixSignal(int signalNumber, siginfo_t* signalInfo, void* rawContext
         writeCString(descriptor, signalName(signalNumber));
         writeCString(descriptor, "\n");
         if (signalInfo != nullptr) {
-            writeDecimal(descriptor, "Signal code: ",
-                         static_cast<unsigned long>(signalInfo->si_code));
+            writeDecimal(descriptor,
+                         "Signal code: ", static_cast<unsigned long>(signalInfo->si_code));
             if (signalNumber == SIGSEGV
 #ifdef SIGBUS
                 || signalNumber == SIGBUS
 #endif
                 || signalNumber == SIGILL || signalNumber == SIGFPE) {
-                writeHex(descriptor, "Fault address: ",
-                         reinterpret_cast<std::uintptr_t>(signalInfo->si_addr));
+                writeHex(descriptor,
+                         "Fault address: ", reinterpret_cast<std::uintptr_t>(signalInfo->si_addr));
             }
         }
         writeDecimal(descriptor, "Process ID: ", static_cast<unsigned long>(getpid()));
 #if defined(__linux__)
-        writeDecimal(descriptor, "Thread ID: ",
-                     static_cast<unsigned long>(syscall(SYS_gettid)));
+        writeDecimal(descriptor, "Thread ID: ", static_cast<unsigned long>(syscall(SYS_gettid)));
 #endif
 
         const auto* context = static_cast<const ucontext_t*>(rawContext);
@@ -342,8 +341,7 @@ void handlePosixSignal(int signalNumber, siginfo_t* signalInfo, void* rawContext
         std::uintptr_t framePointer = 0;
 #if defined(__x86_64__) && defined(REG_RIP) && defined(REG_RSP) && defined(REG_RBP)
         if (context != nullptr) {
-            instructionPointer =
-                static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RIP]);
+            instructionPointer = static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RIP]);
             stackPointer = static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RSP]);
             framePointer = static_cast<std::uintptr_t>(context->uc_mcontext.gregs[REG_RBP]);
         }

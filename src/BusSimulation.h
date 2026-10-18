@@ -49,7 +49,7 @@ class BusSimulation {
                              std::vector<StaticCollisionMesh> staticCollision);
     void addMapTileTerrainCollision(int tileX, int tileY, TerrainCollisionGrid terrain);
     void addMapTileStaticCollision(int tileX, int tileY,
-                     std::vector<StaticCollisionMesh> staticCollision);
+                                   std::vector<StaticCollisionMesh> staticCollision);
     void removeMapTileCollision(int tileX, int tileY);
     std::uint64_t collisionDebugRevision() const;
     std::size_t loadedMapCollisionTileCount() const;

@@ -344,9 +344,9 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
             }
             continue;
         }
-        openbus::config::logUnhandledConfigurationTag(
-            "paths.cfg", source.pathsConfigPath, line.number, line.keyword(),
-            "passenger-path keyword is not implemented");
+        openbus::config::logUnhandledConfigurationTag("paths.cfg", source.pathsConfigPath,
+                                                      line.number, line.keyword(),
+                                                      "passenger-path keyword is not implemented");
     }
 }
 

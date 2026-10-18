@@ -1290,8 +1290,8 @@ void BusSimulation::addMapTileCollision(int tileX, int tileY,
     ++impl_->collisionRevision;
 }
 
-void BusSimulation::addMapTileStaticCollision(
-    int tileX, int tileY, std::vector<StaticCollisionMesh> staticCollision) {
+void BusSimulation::addMapTileStaticCollision(int tileX, int tileY,
+                                              std::vector<StaticCollisionMesh> staticCollision) {
     const auto tile = impl_->streamedTileCollisions.find(mapTileKey(tileX, tileY));
     if (tile == impl_->streamedTileCollisions.end()) {
         throw std::invalid_argument("Map tile collision must be published before static collision");
@@ -1302,8 +1302,7 @@ void BusSimulation::addMapTileStaticCollision(
     ++impl_->collisionRevision;
 }
 
-void BusSimulation::addMapTileTerrainCollision(int tileX, int tileY,
-                                               TerrainCollisionGrid terrain) {
+void BusSimulation::addMapTileTerrainCollision(int tileX, int tileY, TerrainCollisionGrid terrain) {
     if (terrain.tileX != tileX || terrain.tileY != tileY) {
         throw std::invalid_argument("Map terrain collision tile coordinates do not match");
     }

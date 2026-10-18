@@ -104,13 +104,30 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             hasInlineModel = true;
             continue;
         }
-        static const std::unordered_set<std::string> inlineModelKeywords = {
-            "mesh_ident",          "lod",              "matl",          "matl_alpha",
-            "matl_bumpmap",        "matl_change",      "matl_envmap",   "matl_item",
-            "matl_freetex",        "matl_lightmap",    "matl_nightmap", "matl_nozcheck",
-            "matl_nozwrite",        "matl_transmap",     "scripttexture",  "texttexture",
-            "texttexture_enh",      "usescripttexture",  "usetexttexture", "visible",
-            "fixed",                "isshadow",          "viewpoint",      "shadow"};
+        static const std::unordered_set<std::string> inlineModelKeywords = {"mesh_ident",
+                                                                            "lod",
+                                                                            "matl",
+                                                                            "matl_alpha",
+                                                                            "matl_bumpmap",
+                                                                            "matl_change",
+                                                                            "matl_envmap",
+                                                                            "matl_item",
+                                                                            "matl_freetex",
+                                                                            "matl_lightmap",
+                                                                            "matl_nightmap",
+                                                                            "matl_nozcheck",
+                                                                            "matl_nozwrite",
+                                                                            "matl_transmap",
+                                                                            "scripttexture",
+                                                                            "texttexture",
+                                                                            "texttexture_enh",
+                                                                            "usescripttexture",
+                                                                            "usetexttexture",
+                                                                            "visible",
+                                                                            "fixed",
+                                                                            "isshadow",
+                                                                            "viewpoint",
+                                                                            "shadow"};
         if (inlineModelKeywords.contains(keyword)) {
             continue;
         }
@@ -272,9 +289,9 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             continue;
         }
         result.diagnostics.warning(line.number, line.keyword(), "unknown SceneryObject keyword");
-        openbus::config::logUnhandledConfigurationTag(
-            "scenery object (.sco)", configPath, line.number, line.keyword(),
-            "unknown scenery-object keyword");
+        openbus::config::logUnhandledConfigurationTag("scenery object (.sco)", configPath,
+                                                      line.number, line.keyword(),
+                                                      "unknown scenery-object keyword");
     }
 
     if (result.modelPath.empty() && !hasInlineModel && result.trees.empty()) {
@@ -304,8 +321,8 @@ resolveSceneryObjectModelConfigPath(const SceneryObjectConfig& configuration) {
     if (modelPath.is_absolute()) {
         return openbus::assets::resolveCaseInsensitivePath(modelPath);
     }
-    return openbus::assets::resolveCaseInsensitivePath(
-        configuration.sourcePath.parent_path() / modelPath);
+    return openbus::assets::resolveCaseInsensitivePath(configuration.sourcePath.parent_path() /
+                                                       modelPath);
 }
 
 ModelConfig loadSceneryObjectConfig(const std::filesystem::path& configPath,

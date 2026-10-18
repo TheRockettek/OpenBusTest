@@ -235,8 +235,8 @@ std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
 }
 
 bool parseNewAnimation(Reader& reader, const std::filesystem::path& configPath,
-                       const Line& keywordLine, ModelPart& part,
-                       Variables& variables, ConfigurationDiagnostics& diagnostics) {
+                       const Line& keywordLine, ModelPart& part, Variables& variables,
+                       ConfigurationDiagnostics& diagnostics) {
     // [newanim] is a variable-length block terminated by the next keyword or '--'.
     static_cast<void>(keywordLine);
     ModelAnimation animation;
@@ -363,9 +363,9 @@ bool parseNewAnimation(Reader& reader, const std::filesystem::path& configPath,
             variables.declare(variable);
             continue;
         }
-        openbus::config::logUnhandledConfigurationTag(
-            "model.cfg animation", configPath, field.number, field.text,
-            "animation operation is not implemented");
+        openbus::config::logUnhandledConfigurationTag("model.cfg animation", configPath,
+                                                      field.number, field.text,
+                                                      "animation operation is not implemented");
         break;
     }
     if (drivenAnimations.empty()) {
@@ -432,8 +432,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         const std::string keyword = lower(line.keyword());
         if (!isKnownKeyword(keyword)) {
-            openbus::config::logUnhandledConfigurationTag(
-                "model.cfg", configPath, line.number, line.keyword(), "unknown keyword");
+            openbus::config::logUnhandledConfigurationTag("model.cfg", configPath, line.number,
+                                                          line.keyword(), "unknown keyword");
             result.diagnostics.warning(line.number, line.keyword(), "unknown keyword");
             continue;
         }
@@ -1318,8 +1318,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 texture.values.push_back(trim(value.text));
             }
             if (kind == ModelConfigKind::SceneryObject &&
-                lower(configPath.extension().string()) == ".sco" &&
-                texture.values.size() >= 8) {
+                lower(configPath.extension().string()) == ".sco" && texture.values.size() >= 8) {
                 int inlineSlot = -1;
                 int width = 0;
                 int height = 0;
@@ -1334,15 +1333,14 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 }
             }
             if (!texture.placementLabel && kind == ModelConfigKind::SceneryObject &&
-                lower(configPath.extension().string()) == ".sco" &&
-                texture.values.size() >= 7) {
+                lower(configPath.extension().string()) == ".sco" && texture.values.size() >= 7) {
                 int width = 0;
                 int height = 0;
                 int colorMode = 0;
-                texture.placementLabel =
-                    parseInt(texture.values[1], width) && parseInt(texture.values[2], height) &&
-                    parseInt(texture.values[3], colorMode) &&
-                    openbus::scripting::validScriptTextureSize(width, height);
+                texture.placementLabel = parseInt(texture.values[1], width) &&
+                                         parseInt(texture.values[2], height) &&
+                                         parseInt(texture.values[3], colorMode) &&
+                                         openbus::scripting::validScriptTextureSize(width, height);
             }
             if (!texture.values.empty()) {
                 texture.values[0] = lower(texture.values[0]);

@@ -5,7 +5,7 @@
 namespace openbus::map {
 
 std::array<MapWaterVertex, 4> buildMapWaterSurfaceVertices(int tileX, int tileY,
-                                                          const WaterSurface& surface) {
+                                                           const WaterSurface& surface) {
     const double west = static_cast<double>(tileX) * OMSI_TILE_SIZE_METERS;
     const double south = static_cast<double>(tileY) * OMSI_TILE_SIZE_METERS;
     const double east = west + OMSI_TILE_SIZE_METERS;

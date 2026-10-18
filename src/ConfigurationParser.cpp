@@ -16,7 +16,7 @@ constexpr std::size_t MAX_CONFIG_RECORDS = 1'000'000;
 Logger configurationLog("Configuration");
 std::mutex unhandledTagMutex;
 std::unordered_set<std::string> loggedUnhandledTags;
-}
+} // namespace
 
 std::string trim(const std::string& value) {
     // CFG payloads are line-oriented, so whitespace is removed before parsing
@@ -98,9 +98,8 @@ bool parseFloat(const std::string& value, float& result) {
 }
 
 void logUnhandledConfigurationTag(const std::string& format,
-                                  const std::filesystem::path& sourcePath,
-                                  std::size_t line, const std::string& tag,
-                                  const std::string& disposition) {
+                                  const std::filesystem::path& sourcePath, std::size_t line,
+                                  const std::string& tag, const std::string& disposition) {
     std::error_code error;
     std::filesystem::path normalizedPath = std::filesystem::weakly_canonical(sourcePath, error);
     if (error) {
@@ -110,17 +109,16 @@ void logUnhandledConfigurationTag(const std::string& format,
         }
     }
     const std::string location = normalizedPath.generic_string();
-    const std::string key = format + "\n" + location + "\n" + std::to_string(line) + "\n" + tag +
-                            "\n" + disposition;
+    const std::string key =
+        format + "\n" + location + "\n" + std::to_string(line) + "\n" + tag + "\n" + disposition;
     {
         std::lock_guard<std::mutex> lock(unhandledTagMutex);
         if (!loggedUnhandledTags.insert(key).second) {
             return;
         }
     }
-    configurationLog.Log("Unhandled configuration tag [" + tag + "]: " + disposition +
-                         " in " + format + " file=" + location + " line=" +
-                         std::to_string(line));
+    configurationLog.Log("Unhandled configuration tag [" + tag + "]: " + disposition + " in " +
+                         format + " file=" + location + " line=" + std::to_string(line));
 }
 
 bool Line::isKeyword() const {

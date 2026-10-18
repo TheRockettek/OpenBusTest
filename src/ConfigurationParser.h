@@ -48,8 +48,8 @@ bool parseInt(const std::string& value, int& result);
 bool parseDouble(const std::string& value, double& result);
 bool parseFloat(const std::string& value, float& result);
 void logUnhandledConfigurationTag(const std::string& format,
-                                  const std::filesystem::path& sourcePath,
-                                  std::size_t line, const std::string& tag,
+                                  const std::filesystem::path& sourcePath, std::size_t line,
+                                  const std::string& tag,
                                   const std::string& disposition = "unknown");
 
 } // namespace openbus::config

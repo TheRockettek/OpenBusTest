@@ -46,13 +46,13 @@ class ScriptRuntime {
                          float cursorY);
     void configureScriptTextures(const std::vector<ModelScriptTexture>& definitions);
     void configureTextTextures(const std::vector<ModelTextTexture>& definitions,
-                   const std::vector<std::string>& placementLabels = {});
+                               const std::vector<std::string>& placementLabels = {});
     bool copyScriptTexture(int index, ScriptTextureSnapshot& snapshot) const;
     bool copyTextTexture(int index, ScriptTextureSnapshot& snapshot) const;
     bool copyScriptTextureIfChanged(int index, std::uint64_t knownRevision,
-                    ScriptTextureSnapshot& snapshot) const;
+                                    ScriptTextureSnapshot& snapshot) const;
     bool copyTextTextureIfChanged(int index, std::uint64_t knownRevision,
-                    ScriptTextureSnapshot& snapshot) const;
+                                  ScriptTextureSnapshot& snapshot) const;
 
   private:
     struct Impl;

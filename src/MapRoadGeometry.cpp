@@ -251,8 +251,7 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
     // [scaleTexByLength] scales one texture span to this authored spline segment. Keep it
     // segment-local (do not apply chainOffset) so a long segment stretches the mapping instead
     // of producing one repeat for every metre as the ordinary V slope does.
-    const double textureDistanceScale =
-        section.scaleTextureByLength ? 1.0 / spline.length : 1.0;
+    const double textureDistanceScale = section.scaleTextureByLength ? 1.0 / spline.length : 1.0;
     const auto startFrame = endpointFrame(spline, centerline.front(), false, cantHalfWidth);
     const auto endFrame = endpointFrame(spline, centerline.back(), true, cantHalfWidth);
     for (const MapSplineSample& sample : centerline) {

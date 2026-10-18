@@ -133,8 +133,8 @@ std::array<double, 3> transformSceneryVertex(const openbus::rendering::ObjPositi
             pose.y + x2 * std::sin(az) + y2 * std::cos(az), worldZ + z2};
 }
 
-std::vector<std::array<double, 3>> clipPolygonToTile(
-    std::vector<std::array<double, 3>> polygon, int tileX, int tileY) {
+std::vector<std::array<double, 3>> clipPolygonToTile(std::vector<std::array<double, 3>> polygon,
+                                                     int tileX, int tileY) {
     const double minX = static_cast<double>(tileX) * OMSI_TILE_SIZE_METERS;
     const double minY = static_cast<double>(tileY) * OMSI_TILE_SIZE_METERS;
     const double maxX = minX + OMSI_TILE_SIZE_METERS;
@@ -180,8 +180,7 @@ std::vector<std::array<double, 3>> clipPolygonToTile(
 }
 
 void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
-                                   const MapSceneryCollisionIndex& index,
-                                   int tileX, int tileY,
+                                   const MapSceneryCollisionIndex& index, int tileX, int tileY,
                                    MapRoadCollisionResult& result) {
     const auto found = index.objectsByTile.find(tileKey(tileX, tileY));
     if (found == index.objectsByTile.end()) {
@@ -204,10 +203,11 @@ void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
             std::vector<std::array<double, 3>> worldPositions;
             worldPositions.reserve(parsed->positions.size());
             for (const auto& vertex : parsed->positions) {
-                worldPositions.push_back(transformSceneryVertex(vertex, object.pose, object.worldZ));
+                worldPositions.push_back(
+                    transformSceneryVertex(vertex, object.pose, object.worldZ));
             }
-            const bool meshFitsTile = std::all_of(
-                worldPositions.begin(), worldPositions.end(), [&](const auto& point) {
+            const bool meshFitsTile =
+                std::all_of(worldPositions.begin(), worldPositions.end(), [&](const auto& point) {
                     return point[0] >= minX && point[0] <= maxX && point[1] >= minY &&
                            point[1] <= maxY;
                 });
@@ -246,7 +246,8 @@ void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
                         polygon.clear();
                         break;
                     }
-                    polygon.push_back(worldPositions[static_cast<std::size_t>(vertex.position - 1)]);
+                    polygon.push_back(
+                        worldPositions[static_cast<std::size_t>(vertex.position - 1)]);
                 }
                 polygon = clipPolygonToTile(std::move(polygon), tileX, tileY);
                 if (polygon.size() < 3) {
@@ -382,8 +383,8 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
             if (config == configCache.end()) {
                 ConfigCollision collision;
                 collision.paths = readSceneryCollisionMeshes(
-                    configPath, omsiRoot, map.rootPath, collision.noCollision,
-                    collision.onlyEditor, collision.absoluteHeight);
+                    configPath, omsiRoot, map.rootPath, collision.noCollision, collision.onlyEditor,
+                    collision.absoluteHeight);
                 config = configCache.emplace(configKey, std::move(collision)).first;
             }
             const ConfigCollision& collision = config->second;
@@ -404,8 +405,8 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
                 auto mesh = meshCache.find(meshKey);
                 if (mesh == meshCache.end()) {
                     try {
-                        mesh = meshCache.emplace(meshKey,
-                                                 openbus::rendering::O3DLoader::parse(meshPath))
+                        mesh = meshCache
+                                   .emplace(meshKey, openbus::rendering::O3DLoader::parse(meshPath))
                                    .first;
                     } catch (const std::exception&) {
                         mesh = meshCache.emplace(meshKey, nullptr).first;
@@ -417,10 +418,12 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
                 object.meshes.push_back(mesh->second);
                 auto bounds = meshLocalBoundsCache.find(meshKey);
                 if (bounds == meshLocalBoundsCache.end()) {
-                    std::array<double, 6> localBounds = {
-                        std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
-                        std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest(),
-                        std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
+                    std::array<double, 6> localBounds = {std::numeric_limits<double>::max(),
+                                                         std::numeric_limits<double>::max(),
+                                                         std::numeric_limits<double>::max(),
+                                                         std::numeric_limits<double>::lowest(),
+                                                         std::numeric_limits<double>::lowest(),
+                                                         std::numeric_limits<double>::lowest()};
                     for (const auto& vertex : mesh->second->positions) {
                         localBounds[0] = std::min(localBounds[0], vertex.x);
                         localBounds[1] = std::min(localBounds[1], vertex.y);
@@ -601,20 +604,21 @@ MapRoadCollisionResult buildMapRoadCollisionTile(const MapDefinition& map,
     if (tile == map.tiles.end()) {
         return {};
     }
-    const auto ownedScenery = scenery == nullptr ? buildMapSceneryCollisionIndex(map, omsiRoot)
-                                                 : std::shared_ptr<const MapSceneryCollisionIndex>{};
-    const auto ownedConnections = connections == nullptr
-                                      ? std::optional<MapRoadConnectionIndex>(
-                                            loadMapRoadConnections(map, omsiRoot))
-                                      : std::nullopt;
+    const auto ownedScenery = scenery == nullptr
+                                  ? buildMapSceneryCollisionIndex(map, omsiRoot)
+                                  : std::shared_ptr<const MapSceneryCollisionIndex>{};
+    const auto ownedConnections =
+        connections == nullptr
+            ? std::optional<MapRoadConnectionIndex>(loadMapRoadConnections(map, omsiRoot))
+            : std::nullopt;
     return buildMapRoadCollisionImpl(map, omsiRoot, &*tile,
                                      connections == nullptr ? *ownedConnections : *connections,
                                      scenery == nullptr ? ownedScenery.get() : scenery);
 }
 
 MapRoadCollisionResult buildMapSplineCollisionTile(const MapDefinition& map,
-                                                   const std::filesystem::path& omsiRoot,
-                                                   int tileX, int tileY,
+                                                   const std::filesystem::path& omsiRoot, int tileX,
+                                                   int tileY,
                                                    const MapRoadConnectionIndex* connections) {
     const auto tile = std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& reference) {
         return reference.x == tileX && reference.y == tileY;
@@ -622,13 +626,12 @@ MapRoadCollisionResult buildMapSplineCollisionTile(const MapDefinition& map,
     if (tile == map.tiles.end()) {
         return {};
     }
-    const auto ownedConnections = connections == nullptr
-                                      ? std::optional<MapRoadConnectionIndex>(
-                                            loadMapRoadConnections(map, omsiRoot))
-                                      : std::nullopt;
-    return buildMapRoadCollisionImpl(map, omsiRoot, &*tile,
-                                     connections == nullptr ? *ownedConnections : *connections,
-                                     nullptr);
+    const auto ownedConnections =
+        connections == nullptr
+            ? std::optional<MapRoadConnectionIndex>(loadMapRoadConnections(map, omsiRoot))
+            : std::nullopt;
+    return buildMapRoadCollisionImpl(
+        map, omsiRoot, &*tile, connections == nullptr ? *ownedConnections : *connections, nullptr);
 }
 
 MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map,

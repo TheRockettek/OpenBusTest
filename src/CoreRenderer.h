@@ -121,11 +121,11 @@ std::size_t frameReflectionTriangleCount();
 void setFrameTriangleCountReflectionPass(bool reflectionPass);
 
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
-              const std::array<double, 3>& color, double alpha, int alphaMode,
-              bool cullBackFaces = false);
+                    const std::array<double, 3>& color, double alpha, int alphaMode,
+                    bool cullBackFaces = false);
 void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexCount,
                            const ModelMaterial& material, const std::array<double, 3>& color,
-                  double alpha, int alphaMode, bool cullBackFaces = false);
+                           double alpha, int alphaMode, bool cullBackFaces = false);
 void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
                        const std::vector<std::array<float, 4>>& colors,
                        const std::vector<GLuint>& textures, const std::vector<bool>& flipTextureY);

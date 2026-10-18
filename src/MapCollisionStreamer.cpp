@@ -202,8 +202,8 @@ struct MapCollisionStreamer::WorkerState {
 MapCollisionStreamer::MapCollisionStreamer(const MapDefinition& map,
                                            const std::filesystem::path& omsiRoot,
                                            BusSimulation& simulation, int loadRadius,
-                                                                                     int unloadRadius,
-                                                                                     std::vector<std::pair<int, int>> preloadedTerrainTiles)
+                                           int unloadRadius,
+                                           std::vector<std::pair<int, int>> preloadedTerrainTiles)
     : map_(map), omsiRoot_(omsiRoot), simulation_(simulation), loadRadius_(loadRadius),
       unloadRadius_(unloadRadius) {
     if (loadRadius_ < 0 || unloadRadius_ < loadRadius_) {

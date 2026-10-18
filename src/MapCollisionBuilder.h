@@ -52,8 +52,7 @@ MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
 // Builds only the requested tile; an absent tile returns an empty result.
 MapRoadCollisionResult
 buildMapRoadCollisionTile(const MapDefinition& map, const std::filesystem::path& omsiRoot,
-                          int tileX, int tileY,
-                          const MapRoadConnectionIndex* connections = nullptr,
+                          int tileX, int tileY, const MapRoadConnectionIndex* connections = nullptr,
                           const MapSceneryCollisionIndex* scenery = nullptr);
 // Builds spline-strip collision for one tile without constructing the map-wide scenery index.
 MapRoadCollisionResult

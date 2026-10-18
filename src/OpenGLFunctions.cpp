@@ -57,12 +57,17 @@ DrawArraysIndirectProc pglDrawArraysIndirect = nullptr;
 DrawElementsIndirectProc pglDrawElementsIndirect = nullptr;
 
 bool loadOpenGLFunctions() {
-    pglDrawArraysIndirect = reinterpret_cast<DrawArraysIndirectProc>(glfwGetProcAddress("glDrawArraysIndirect"));
-    pglDrawElementsIndirect = reinterpret_cast<DrawElementsIndirectProc>(glfwGetProcAddress("glDrawElementsIndirect"));
-    pglDispatchCompute = reinterpret_cast<DispatchComputeProc>(glfwGetProcAddress("glDispatchCompute"));
+    pglDrawArraysIndirect =
+        reinterpret_cast<DrawArraysIndirectProc>(glfwGetProcAddress("glDrawArraysIndirect"));
+    pglDrawElementsIndirect =
+        reinterpret_cast<DrawElementsIndirectProc>(glfwGetProcAddress("glDrawElementsIndirect"));
+    pglDispatchCompute =
+        reinterpret_cast<DispatchComputeProc>(glfwGetProcAddress("glDispatchCompute"));
     pglMemoryBarrier = reinterpret_cast<MemoryBarrierProc>(glfwGetProcAddress("glMemoryBarrier"));
-    pglBindBufferBase = reinterpret_cast<BindBufferBaseProc>(glfwGetProcAddress("glBindBufferBase"));
-    pglGetBufferSubData = reinterpret_cast<GetBufferSubDataProc>(glfwGetProcAddress("glGetBufferSubData"));
+    pglBindBufferBase =
+        reinterpret_cast<BindBufferBaseProc>(glfwGetProcAddress("glBindBufferBase"));
+    pglGetBufferSubData =
+        reinterpret_cast<GetBufferSubDataProc>(glfwGetProcAddress("glGetBufferSubData"));
     pglGetIntegeri = reinterpret_cast<GetIntegeriProc>(glfwGetProcAddress("glGetIntegeri_v"));
     // Load extension entry points after the GLFW context exists.
     pglGenBuffers = reinterpret_cast<GenBuffersProc>(glfwGetProcAddress("glGenBuffers"));
