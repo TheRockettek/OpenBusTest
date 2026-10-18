@@ -26,7 +26,7 @@ constexpr dReal SUSP_REST = 0.35;
 constexpr dReal SUSP_MAX_TRAVEL = 0.25;
 constexpr dReal MINIMUM_CHASSIS_MASS = 1.0;
 constexpr dReal TIRE_GRIP_LONG = 24000.0;
-constexpr dReal ROLLING_RESIST = 0.012;
+constexpr dReal LEGACY_ROLLING_RESIST_COEFFICIENT = 0.012;
 constexpr dReal WHEEL_MASS = 180.0;
 constexpr dReal KNUCKLE_MASS = 40.0;
 constexpr dReal ROAD_FRICTION_COEFFICIENT = 0.85;
@@ -649,6 +649,13 @@ struct BusSimulation::Impl {
             simulationLog.Log("Bus configuration has no axles");
             throw std::invalid_argument("A bus must define at least one axle");
         }
+        if (configuration.rollingResistanceForceNewtons.has_value() &&
+            (!std::isfinite(*configuration.rollingResistanceForceNewtons) ||
+             *configuration.rollingResistanceForceNewtons < 0.0)) {
+            simulationLog.Log("Invalid rolling-resistance force");
+            throw std::invalid_argument(
+                "Rolling-resistance force must be finite and non-negative");
+        }
         if (configuration.inverseMinimumTurnRadius > 0.0) {
             const auto steeringAxle =
                 std::find_if(configuration.axles.begin(), configuration.axles.end(),
@@ -1062,7 +1069,11 @@ struct BusSimulation::Impl {
 
         const dReal drag = -0.5 * AIR_DENSITY * AERO_CD * AERO_FRONT_AREA * longitudinalSpeed *
                            std::abs(longitudinalSpeed);
-        const dReal rollingMagnitude = ROLLING_RESIST * configuration.mass * std::abs(GRAVITY);
+        const dReal rollingMagnitude = configuration.rollingResistanceForceNewtons.has_value()
+                                           ? static_cast<dReal>(
+                                                 *configuration.rollingResistanceForceNewtons)
+                                           : LEGACY_ROLLING_RESIST_COEFFICIENT *
+                                                 configuration.mass * std::abs(GRAVITY);
         const dReal rolling =
             std::abs(longitudinalSpeed) > 0.01
                 ? -std::min(rollingMagnitude,

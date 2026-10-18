@@ -1,0 +1,19 @@
+Profile with rendering but no collision
+
+[nocollision]
+
+[texture]
+road.bmp
+
+[profile]
+0
+[profilepnt]
+-2.0
+0.0
+0.0
+0.1
+[profilepnt]
+2.0
+0.0
+1.0
+0.1

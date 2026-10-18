@@ -52,6 +52,8 @@ void runProbe(const std::filesystem::path& fixture) {
                 profile.heightProfiles[3].rawFields[0] == "4.0" &&
                 profile.heightProfiles[3].rawFields[1] == "5.0",
             "truncated height-profile records remain visible as invalid records");
+    require(!profile.explicitCantHalfWidth.has_value(),
+            "profiles without [halfcantwidth] retain the height-profile fallback");
     require(profile.sections.size() == 2, "both cross-section lanes are loaded");
     require(profile.sections[0].textureIndex == 0, "first lane uses texture zero");
     require(profile.sections[1].textureIndex == 1, "second lane uses texture one");
@@ -67,6 +69,27 @@ void runProbe(const std::filesystem::path& fixture) {
                 "profile V repeat per meter");
     requireNear(profile.sections[1].points[1].lateral, 3.0,
                 "leading plus sign is accepted on OMSI profile coordinates");
+}
+
+void runExplicitCantWidthProbe(const std::filesystem::path& fixture) {
+    const openbus::map::MapSplineProfile profile = openbus::map::loadMapSplineProfile(fixture);
+    require(profile.explicitCantHalfWidth.has_value(), "explicit cant half-width is parsed");
+    requireNear(*profile.explicitCantHalfWidth, 2.5, "explicit cant half-width value");
+    require(profile.heightProfiles.size() == 1 && profile.heightProfiles.front().valid,
+            "height-profile fallback data is retained alongside the explicit width");
+    const std::optional<double> cantHalfWidth = mapSplineProfileCantHalfWidth(profile);
+    require(cantHalfWidth.has_value(), "explicit cant half-width is effective");
+    requireNear(*cantHalfWidth, 2.5,
+                "explicit [halfcantwidth] overrides the wider height-profile extent");
+}
+
+void runNoCollisionProbe(const std::filesystem::path& fixture) {
+    const openbus::map::MapSplineProfile profile = openbus::map::loadMapSplineProfile(fixture);
+    require(profile.noCollision, "[nocollision] is retained as a spline-profile flag");
+    require(profile.sections.size() == 1 && profile.sections.front().points.size() == 2,
+            "[nocollision] does not discard the profile's renderable cross-section");
+    require(profile.textures.size() == 1 && profile.textures.front() == "road.bmp",
+            "[nocollision] leaves the profile texture mapping intact");
 }
 
 void runInstalledProfileSmoke(const std::filesystem::path& path) {
@@ -93,12 +116,16 @@ void runInstalledProfileSmoke(const std::filesystem::path& path) {
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 2) {
+        if (argc == 4 && std::string(argv[1]) != "--inspect") {
             runProbe(argv[1]);
+            runExplicitCantWidthProbe(argv[2]);
+            runNoCollisionProbe(argv[3]);
         } else if (argc == 3 && std::string(argv[1]) == "--inspect") {
             runInstalledProfileSmoke(argv[2]);
         } else {
-            throw std::runtime_error("expected fixture path or --inspect <installed-profile>");
+            throw std::runtime_error(
+                "expected <fixture> <explicit-width-fixture> <no-collision-fixture> or "
+                "--inspect <installed-profile>");
         }
     } catch (const std::exception& error) {
         std::cerr << "map spline profile probe failed: " << error.what() << '\n';

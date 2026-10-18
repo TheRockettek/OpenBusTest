@@ -1264,7 +1264,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     batch.alphaMode = state == nullptr ? 0 : state->alphaMode;
                     batch.noZwrite = state != nullptr && state->noZwrite;
                     batch.noZcheck = state != nullptr && state->noZcheck;
-                    batch.renderType = objectConfiguration.renderType;
+                    batch.renderType = resolveSceneryRenderType(part, objectConfiguration.renderType);
                     batch.visibilityVariable = part.visibleVariable;
                     batch.visibilityValue = part.visibleValue;
                     if (batch.alphaMode == 0 && batch.alpha < 1.0 - 1.0e-6) {

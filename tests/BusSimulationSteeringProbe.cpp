@@ -85,6 +85,34 @@ int main() {
     }
 
     BusSimulation simulation(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    {
+        BusConfiguration zeroResistanceConfiguration = testConfiguration();
+        zeroResistanceConfiguration.rollingResistanceForceNewtons = 0.0;
+        zeroResistanceConfiguration.collisionEnabled = false;
+        BusConfiguration highResistanceConfiguration = testConfiguration();
+        highResistanceConfiguration.rollingResistanceForceNewtons = 8000.0;
+        highResistanceConfiguration.collisionEnabled = false;
+        BusSimulation zeroResistance(zeroResistanceConfiguration,
+                                    VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0},
+                                    60.0, 8, 0.0, {}, {}, false);
+        BusSimulation highResistance(highResistanceConfiguration,
+                                     VehiclePlacement{{-2000.0, 0.0, 0.0}, 0.0},
+                                     60.0, 8, 0.0, {}, {}, false);
+        for (int step = 0; step < 180; ++step) {
+            zeroResistance.stepWithWheelTorque(25000.0, 0.0, 0.0);
+            highResistance.stepWithWheelTorque(25000.0, 0.0, 0.0);
+        }
+        for (int step = 0; step < 180; ++step) {
+            zeroResistance.stepWithWheelTorque(0.0, 0.0, 0.0);
+            highResistance.stepWithWheelTorque(0.0, 0.0, 0.0);
+        }
+        if (zeroResistance.speed() <= highResistance.speed() + 0.1) {
+            std::cerr << "authored rolling resistance did not reduce coast speed: zero="
+                      << zeroResistance.speed() << " m/s, high=" << highResistance.speed()
+                      << " m/s\n";
+            return 1;
+        }
+    }
     BusConfiguration wheelContactConfiguration = testConfiguration();
     wheelContactConfiguration.collisionEnabled = false;
     BusSimulation softSuspension(wheelContactConfiguration,

@@ -630,18 +630,37 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
-        // [rendertype]: one render mode, or the literal "surface" (mode 2).
+        // [rendertype]: one numeric render mode or a named scenery render category.
         if (keyword == "rendertype") {
+            if (kind == ModelConfigKind::SceneryObject &&
+                lower(configPath.extension().string()) == ".sco") {
+                // Inline SCO files use this at object scope; loadSceneryObjectFile
+                // retains the value for all of their model parts.
+                Line value;
+                reader.readPayload(value, result.diagnostics, "rendertype");
+                continue;
+            }
             ModelPart* current = requirePart();
             Line value;
             if (current != nullptr && reader.readPayload(value, result.diagnostics, "rendertype")) {
                 int renderType = 2;
-                if (lower(value.text) == "surface") {
-                    renderType = 2;
-                } else if (!parseInt(value.text, renderType)) {
-                    result.diagnostics.error(value.number, "rendertype", "expected a render type");
+                const std::string type = lower(trim(value.text));
+                if (kind == ModelConfigKind::SceneryObject && type == "presurface") {
+                    renderType = -1;
+                } else if (type == "surface") {
+                    // Vehicle-model "surface" retains its legacy numeric mode;
+                    // scenery uses the named render pass also accepted by SCOs.
+                    renderType = kind == ModelConfigKind::SceneryObject ? -2 : 2;
+                } else if (kind == ModelConfigKind::SceneryObject && type == "on_surface") {
+                    renderType = -3;
+                } else if (!parseInt(type, renderType)) {
+                    result.diagnostics.error(
+                        value.number, "rendertype",
+                        "expected a render type or named render category");
+                    continue;
                 }
                 current->renderType = renderType;
+                current->hasRenderType = true;
             }
             continue;
         }
@@ -725,23 +744,12 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             const std::size_t count = keyword == "light_enh" ? 12 : 23;
             if (readValues(reader, line.number, keyword, count, values, result.diagnostics)) {
                 std::string optionalTextureName;
-                if (keyword == "light_enh") {
-                    Line optionalTexture;
-                    if (reader.next(optionalTexture)) {
-                        if (optionalTexture.isKeyword()) {
-                            reader.pushBack(std::move(optionalTexture));
-                        } else {
-                            optionalTextureName = trim(optionalTexture.text);
-                        }
-                    }
-                } else {
-                    Line optionalTexture;
-                    if (reader.next(optionalTexture)) {
-                        if (optionalTexture.isKeyword()) {
-                            reader.pushBack(std::move(optionalTexture));
-                        } else {
-                            values.push_back(std::move(optionalTexture.text));
-                        }
+                Line optionalTexture;
+                if (reader.next(optionalTexture)) {
+                    if (optionalTexture.isKeyword()) {
+                        reader.pushBack(std::move(optionalTexture));
+                    } else {
+                        optionalTextureName = trim(optionalTexture.text);
                     }
                 }
                 const std::size_t controllerIndex = keyword == "light_enh" ? 7 : 17;
@@ -752,8 +760,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 declareIfVariable(light.controller, variables);
                 bool valid = true;
                 for (std::size_t index = 0; index < values.size(); ++index) {
-                    if (index == controllerIndex ||
-                        (light.enhanced && index == values.size() - 1)) {
+                    if (index == controllerIndex) {
                         continue;
                     }
                     double value = 0.0;
@@ -764,9 +771,6 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     } else {
                         light.parameters.push_back(value);
                     }
-                }
-                if (light.enhanced && values.size() == count + 1) {
-                    light.textureName = trim(values.back());
                 }
                 if (valid) {
                     result.enhancedLights.push_back(std::move(light));
@@ -1152,13 +1156,11 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         // [fixed]/[absheight]: marker records with no payload consumed here.
         if (keyword == "fixed" || keyword == "absheight") {
-            requirePart();
-            if (keyword == "absheight" && kind == ModelConfigKind::SceneryObject) {
+            ModelPart* current = requirePart();
+            if (keyword == "fixed" && current != nullptr) {
+                current->fixed = true;
+            } else if (keyword == "absheight" && kind == ModelConfigKind::SceneryObject) {
                 result.absoluteHeight = true;
-            } else if (keyword == "fixed") {
-                openbus::config::logUnhandledConfigurationTag(
-                    "model.cfg", configPath, line.number, line.keyword(),
-                    "recognized marker has no runtime behavior");
             }
             continue;
         }

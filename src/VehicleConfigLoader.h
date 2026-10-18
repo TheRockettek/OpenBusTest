@@ -68,6 +68,8 @@ struct VehicleConfig {
     bool hasOutsideCameraCenter = false;
     std::vector<BusAxle> axles;
     double massTonnes = 0.0;
+    // Optional constant rolling-resistance force from BUS [rollwiderstand], in newtons.
+    std::optional<double> rollingResistanceForceNewtons;
     double centerOfGravityHeight = 0.0;
     bool hasCenterOfGravityHeight = false;
     double aiDeltaHeight = 0.0;

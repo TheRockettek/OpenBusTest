@@ -49,6 +49,7 @@ int main() {
               "[description]\nUrban service bus.\n\n Electric drivetrain. \n[end]\n"
               "[type]\n0\n"
               "[model]\nmodel.cfg\n"
+              "[rollwiderstand]\n1250\n"
               "[script]\n1\nscript/engine.osc\n"
               "[boundingbox]\n2.4\n12.0\n3.2\n0.1\n-0.2\n1.4\n"
               "[sound]\nsound/player.cfg\n"
@@ -68,12 +69,36 @@ int main() {
         result.scripts.size() == 1 && std::filesystem::exists(generatedLuaPath(scriptPath));
     VehicleConfig secondRegistration = result;
     selectRegistrationAtIndex(secondRegistration, 1);
+
+    const auto writeResistanceConfig = [&](const std::filesystem::path& path,
+                                           const std::string& directive) {
+        std::ofstream output(path);
+        output << "[model]\nmodel.cfg\n" << directive;
+    };
+    const std::filesystem::path zeroResistancePath = root / "zero_roll.bus";
+    writeResistanceConfig(zeroResistancePath, "[rollwiderstand]\n0\n");
+    const VehicleConfig zeroResistance =
+        loadVehicleConfig(zeroResistancePath, VehicleFileKind::Bus, false);
+    const std::filesystem::path absentResistancePath = root / "absent_roll.bus";
+    writeResistanceConfig(absentResistancePath, "");
+    const VehicleConfig absentResistance =
+        loadVehicleConfig(absentResistancePath, VehicleFileKind::Bus, false);
+    const std::filesystem::path negativeResistancePath = root / "negative_roll.bus";
+    writeResistanceConfig(negativeResistancePath, "[rollwiderstand]\n-1\n");
+    const VehicleConfig negativeResistance =
+        loadVehicleConfig(negativeResistancePath, VehicleFileKind::Bus, false);
     std::filesystem::remove_all(root);
 
     if (result.diagnostics.hasErrors() || !caseMismatchedScriptConverted ||
         result.friendlyManufacturer != "Mercedes-Benz" ||
         result.friendlyVehicleName != "Citaro E400" ||
         result.friendlyDefaultPaint != "Night blue" ||
+        !result.rollingResistanceForceNewtons.has_value() ||
+        *result.rollingResistanceForceNewtons != 1250.0 ||
+        !zeroResistance.rollingResistanceForceNewtons.has_value() ||
+        *zeroResistance.rollingResistanceForceNewtons != 0.0 ||
+        absentResistance.rollingResistanceForceNewtons.has_value() ||
+        !negativeResistance.diagnostics.hasErrors() ||
         result.description != "Urban service bus.\n\n Electric drivetrain. " ||
         !result.vehicleType.has_value() || *result.vehicleType != 0 ||
         !result.hasBoundingBox ||

@@ -5,12 +5,13 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
 namespace {
 
-void writeBusConfig(const std::filesystem::path& path) {
+void writeBusConfig(const std::filesystem::path& path, const std::string& extra = {}) {
     std::ofstream config(path);
     config << "[model]\nmodel.cfg\n"
               "[mass]\n12.0\n"
@@ -23,7 +24,8 @@ void writeBusConfig(const std::filesystem::path& path) {
               "achse_feder\n200\n"
               "achse_maxforce\n100\n"
               "achse_daempfer\n20\n"
-              "achse_antrieb\n0\n";
+              "achse_antrieb\n0\n"
+              << extra;
 }
 
 bool nearlyEqual(double first, double second) {
@@ -37,7 +39,7 @@ int main() {
         std::filesystem::temp_directory_path() / "openbus_bus_collision_probe";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
-    writeBusConfig(root / "bus.bus");
+    writeBusConfig(root / "bus.bus", "[rollwiderstand]\n1500\n");
 
     std::ofstream mesh(root / "body.obj");
     mesh << "v 0 0 0\n";
@@ -100,6 +102,14 @@ int main() {
     const bool wheelColliderMatchesVisualEnvelope =
         nearlyEqual(meshConfiguration.axles[0].wheelDiameter, visualWheelRadius * 2.0) &&
         nearlyEqual(meshConfiguration.wheelRadius, visualWheelRadius);
+    const bool authoredResistanceWasTransferred =
+        meshConfiguration.rollingResistanceForceNewtons.has_value() &&
+        nearlyEqual(*meshConfiguration.rollingResistanceForceNewtons, 1500.0);
+    std::ostringstream exportedConfiguration;
+    writeBusConfigurationJson(exportedConfiguration, meshConfiguration);
+    const bool authoredResistanceAppearsInExport =
+        exportedConfiguration.str().find("\"rolling_resistance_force_N\": 1500") !=
+        std::string::npos;
 
     writeModelConfig(true);
     BusConfiguration noCollisionConfiguration{};
@@ -114,6 +124,14 @@ int main() {
                                     nearlyEqual(noCollisionConfiguration.collisionWidth, 2.5) &&
                                     nearlyEqual(noCollisionConfiguration.collisionLength, 13.5) &&
                                     nearlyEqual(noCollisionConfiguration.collisionHeight, 3.66);
+
+    writeBusConfig(root / "bus.bus", "[rollwiderstand]\n-1\n");
+    bool negativeRollingResistanceRejected = false;
+    try {
+        static_cast<void>(loadBusConfiguration(root / "bus.bus"));
+    } catch (const std::runtime_error&) {
+        negativeRollingResistanceRejected = true;
+    }
 
     const std::filesystem::path nestedModelRoot = root / "Model";
     const std::filesystem::path nestedConfigDirectory =
@@ -152,7 +170,9 @@ int main() {
 
     std::filesystem::remove_all(root);
     if (!meshWasBuilt || !modelBoundsApplied || !wheelColliderMatchesVisualEnvelope ||
-        !boxFallbackApplied || !nestedModelMeshResolved) {
+        !authoredResistanceWasTransferred || !authoredResistanceAppearsInExport ||
+        !boxFallbackApplied ||
+        !negativeRollingResistanceRejected || !nestedModelMeshResolved) {
         std::cerr << "Bus collision mesh, wheel collider fit, nocollision filtering, model "
                      "bounding box, or nested model-root resolution failed\n";
         return 1;

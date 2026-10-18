@@ -171,6 +171,8 @@ struct ModelPart {
     std::array<double, 3> color = {0.65, 0.65, 0.65};
     int viewpoint = 0;
     int renderType = 2;
+    bool hasRenderType = false;
+    bool fixed = false;
     bool isShadow = false;
     bool noCollision = false;
     std::string meshIdentifier;
@@ -185,6 +187,14 @@ struct ModelPart {
     std::vector<ModelAnimation> animations;
     ModelWheelAnimation wheelAnimation;
 };
+// Explicit scenery model-part render categories override the SCO-level default.
+inline int resolveSceneryRenderType(const ModelPart& part, int objectRenderType) {
+    return part.hasRenderType ? part.renderType : objectRenderType;
+}
+
+inline bool modelPartInheritsAnimationParent(bool fixed, const std::string& animationParent) {
+    return !fixed && !animationParent.empty();
+}
 
 struct ModelConfig {
     std::vector<ModelPart> parts;

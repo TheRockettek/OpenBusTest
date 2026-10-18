@@ -43,6 +43,8 @@ int main() {
               "0.025\ndoor_light_1\n0.5\n0.1\n3\n0.01\n"
               "[light_enh]\n-0.998942\n4.05412\n2.33734\n243\n243\n243\n"
               "0.025\ndoor_light_1\n0.5\n0.1\n3\n0.01\nalpha_mask.bmp\n"
+              "[light_enh_2]\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\nEnhanced_Controller\n19\n20\n21\n22\n23\n"
+              "[light_enh_2]\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\nBitmap_Controller\n49\n50\n51\n52\n53\nlight_mask.bmp\n"
               "[texttexture]\nident\nfont\n128\n32\n"
               "[usetexttexture]\n0\n";
     config.close();
@@ -156,11 +158,25 @@ int main() {
         std::cerr << "case-mismatched O3D/X model paths were not resolved to the fixture files\n";
         return 1;
     }
-    if (result.enhancedLights.size() != 2 ||
+    if (result.enhancedLights.size() != 4 ||
         !result.enhancedLights[0].textureName.empty() ||
         result.enhancedLights[1].textureName != "alpha_mask.bmp" ||
         result.enhancedLights[0].parameters.size() != 11 ||
-        result.enhancedLights[1].parameters.size() != 11) {
+        result.enhancedLights[1].parameters.size() != 11 ||
+        !result.enhancedLights[2].enhanced ||
+        result.enhancedLights[2].controller != "enhanced_controller" ||
+        !result.enhancedLights[2].textureName.empty() ||
+        result.enhancedLights[2].parameters.size() != 22 ||
+        result.enhancedLights[2].parameters[16] != 17.0 ||
+        result.enhancedLights[2].parameters[17] != 19.0 ||
+        result.enhancedLights[2].parameters[21] != 23.0 ||
+        !result.enhancedLights[3].enhanced ||
+        result.enhancedLights[3].controller != "bitmap_controller" ||
+        result.enhancedLights[3].textureName != "light_mask.bmp" ||
+        result.enhancedLights[3].parameters.size() != 22 ||
+        result.enhancedLights[3].parameters[16] != 47.0 ||
+        result.enhancedLights[3].parameters[17] != 49.0 ||
+        result.enhancedLights[3].parameters[21] != 53.0) {
         std::cerr << "enhanced-light optional alpha was not retained correctly\n";
         return 1;
     }
@@ -168,15 +184,23 @@ int main() {
     std::ofstream duplicateIdentifiers(duplicateIdentifiersPath);
     duplicateIdentifiers << "[mesh]\ndisplay.obj\n[mesh_ident]\nEnginebaydoor\n"
                             "[mesh]\ndisplay.obj\n[mesh_ident]\nEnginebaydoor\n"
-                            "[mesh]\ndisplay.obj\n[animparent]\nEnginebaydoor\n";
+                            "[mesh]\ndisplay.obj\n[animparent]\nEnginebaydoor\n"
+                            "[mesh]\ndisplay.obj\n[animparent]\nEnginebaydoor\n[fixed]\n";
     duplicateIdentifiers.close();
     const ModelConfig duplicateIdentifierConfig =
         loadModelConfig(duplicateIdentifiersPath, root, ModelConfigKind::Bus, variables);
     if (duplicateIdentifierConfig.diagnostics.hasErrors() ||
-        duplicateIdentifierConfig.parts.size() != 3 ||
+        duplicateIdentifierConfig.parts.size() != 4 ||
         duplicateIdentifierConfig.parts[0].meshIdentifier != "Enginebaydoor" ||
         duplicateIdentifierConfig.parts[1].meshIdentifier != "Enginebaydoor" ||
-        duplicateIdentifierConfig.parts[2].animationParent != "Enginebaydoor") {
+        duplicateIdentifierConfig.parts[2].animationParent != "Enginebaydoor" ||
+        duplicateIdentifierConfig.parts[2].fixed ||
+        duplicateIdentifierConfig.parts[3].animationParent != "Enginebaydoor" ||
+        !duplicateIdentifierConfig.parts[3].fixed ||
+        !modelPartInheritsAnimationParent(duplicateIdentifierConfig.parts[2].fixed,
+                         duplicateIdentifierConfig.parts[2].animationParent) ||
+        modelPartInheritsAnimationParent(duplicateIdentifierConfig.parts[3].fixed,
+                         duplicateIdentifierConfig.parts[3].animationParent)) {
         std::cerr << "reused mesh identifiers were not accepted for variant meshes\n";
         return 1;
     }
@@ -421,6 +445,61 @@ int main() {
         xModelConfiguration.attachmentPoints[0].rotationDegrees !=
             std::array<double, 3>{0.0, 15.0, 0.0}) {
         std::cerr << "scenery model resolver did not retain the authored X mesh path\n";
+        return 1;
+    }
+    const std::filesystem::path renderTypeConfigPath = root / "render_types.cfg";
+    std::ofstream renderTypeConfig(renderTypeConfigPath);
+    renderTypeConfig << "[mesh]\ndisplay.obj\n[rendertype]\npresurface\n"
+                        "[mesh]\ndisplay.obj\n[rendertype]\nsurface\n"
+                        "[mesh]\ndisplay.obj\n[rendertype]\non_surface\n"
+                        "[mesh]\ndisplay.obj\n[rendertype]\n3\n"
+                        "[mesh]\ndisplay.obj\n[rendertype]\ninvalid\n"
+                        "[mesh]\ndisplay.obj\n";
+    renderTypeConfig.close();
+    Variables renderTypeVariables(ScriptObjectKind::SceneryObject);
+    const ModelConfig renderTypeConfiguration =
+        loadModelConfig(renderTypeConfigPath, root, ModelConfigKind::SceneryObject,
+                        renderTypeVariables);
+    if (!renderTypeConfiguration.diagnostics.hasErrors() ||
+        renderTypeConfiguration.parts.size() != 6 ||
+        !renderTypeConfiguration.parts[0].hasRenderType ||
+        renderTypeConfiguration.parts[0].renderType != -1 ||
+        !renderTypeConfiguration.parts[1].hasRenderType ||
+        renderTypeConfiguration.parts[1].renderType != -2 ||
+        !renderTypeConfiguration.parts[2].hasRenderType ||
+        renderTypeConfiguration.parts[2].renderType != -3 ||
+        !renderTypeConfiguration.parts[3].hasRenderType ||
+        renderTypeConfiguration.parts[3].renderType != 3 ||
+        renderTypeConfiguration.parts[4].hasRenderType ||
+        renderTypeConfiguration.parts[4].renderType != 2 ||
+        renderTypeConfiguration.parts[5].hasRenderType ||
+        renderTypeConfiguration.parts[5].renderType != 2 ||
+        resolveSceneryRenderType(renderTypeConfiguration.parts[0], -3) != -1 ||
+        resolveSceneryRenderType(renderTypeConfiguration.parts[5], -3) != -3) {
+        std::cerr << "scenery model render types did not parse or preserve absent/invalid values\n";
+        return 1;
+    }
+    const std::filesystem::path renderTypeSCOPath = root / "render_type.sco";
+    std::ofstream renderTypeSCO(renderTypeSCOPath);
+    renderTypeSCO << "[rendertype]\non_surface\n[mesh]\ndisplay.obj\n";
+    renderTypeSCO.close();
+    const SceneryObjectConfig renderTypeSCOConfiguration =
+        loadSceneryObjectFile(renderTypeSCOPath);
+    if (renderTypeSCOConfiguration.diagnostics.hasErrors() ||
+        renderTypeSCOConfiguration.renderType != -3) {
+        std::cerr << "SCO named render category did not parse consistently\n";
+        return 1;
+    }
+    Variables inlineRenderTypeVariables(ScriptObjectKind::SceneryObject);
+    const ModelConfig inlineRenderTypeConfiguration =
+        loadModelConfig(renderTypeSCOPath, root, ModelConfigKind::SceneryObject,
+                        inlineRenderTypeVariables);
+    if (inlineRenderTypeConfiguration.diagnostics.hasErrors() ||
+        inlineRenderTypeConfiguration.parts.size() != 1 ||
+        inlineRenderTypeConfiguration.parts[0].hasRenderType ||
+        resolveSceneryRenderType(inlineRenderTypeConfiguration.parts[0],
+                                 renderTypeSCOConfiguration.renderType) != -3) {
+        std::cerr << "inline SCO render type was not retained as the object-level fallback\n";
         return 1;
     }
     const auto& base = conditional.parts[0].materialStatesInOrder[0];

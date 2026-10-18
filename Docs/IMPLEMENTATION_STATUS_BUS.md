@@ -9,7 +9,8 @@ Scope: the vehicle `.bus` file, its model CFG, and the passenger-cabin/path file
 | `[fixed]`, `[scriptshare]` | Not implemented | BUS-level fixed/static selection and shared-script semantics are not applied. |
 | `[view_schedule]`, `[view_ticketselling]` | Parsed only | The loader recognizes the records, but does not retain/use the full view labels and selection behavior. |
 | `[cog]` | Partial | Not consistently reconciled with `[schwerpunkt]`; use of the two CG forms together is not established. |
-| `[rollwiderstand]`, `[rot_pnt_long]` | Parsed only | Values are consumed but do not currently affect the physics model. |
+| `[rollwiderstand]` | Active subset | A non-negative authored force in newtons opposes longitudinal motion; negative values are rejected, and when absent the previous mass-scaled OpenBus fallback is retained. Native OMSI physics parity remains unverified. |
+| `[rot_pnt_long]` | Parsed only | The longitudinal rotation point is consumed but does not currently affect vehicle physics. |
 | `[ai_deltaheight]` | Parsed only | No AI vehicle height correction is applied. |
 | `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`, `[ai_veh_type]`, `[sinus]` | Not implemented | Family-specific AI/drivetrain behavior is absent. |
 | `[coupling_front]`, `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, `[couple_front_open_for_sound]` | Not implemented | Coupling and multi-vehicle behavior are absent; articulated multi-body physics is not implemented. |
@@ -29,9 +30,10 @@ Other BUS gaps include the complete configurable input map and vehicle-family-sp
 | `[matl_item]` | Parsed/no-op | It does not yet define a complete, independently applied material-item scope. |
 | `[CTC]`, `[CTCTexture]` | Partial | Mappings are retained, but complete runtime paint-scheme selection/substitution is absent. |
 | `[texchanges]`, `[newtexchangemaster]`, `[entries]` | Not implemented | Texture-change tables and replacement selection are not loaded/applied. |
-| `[rendertype]` | Partial | `surface` and numeric values are recognized; documented `presurface` and `on_surface` modes are not. |
-| `[fixed]`, `[absheight]` | Partial | Some data is retained, but full model transform/pass semantics are not implemented. |
-| `[light_enh]`, `[light_enh_2]`, `[spotlight]` | Partial | Records are parsed/stored, but full geometry, falloff, and render-order behavior is missing. `[light_enh_2]` also has an optional-bitmap parsing gap. Basic `[illumination_interior]` / `[interiorlight]` emission is active but does not establish full lighting parity. |
+| `[rendertype]` | Not supported for BUS models | The loader currently restricts this keyword to scenery-object configuration; BUS/vehicle model contexts are diagnosed as invalid. Scenery support is tracked in [scenery status](IMPLEMENTATION_STATUS_SCENERY.md). |
+| `[fixed]` | Active subset | Suppresses inheritance of an `[animparent]` transform while retaining the part's own animations. OMSI parity for other `[fixed]` effects remains unverified. |
+| `[absheight]` | Partial | Scenery height placement is active; broader model-family transform semantics are not implemented. |
+| `[light_enh]`, `[light_enh_2]`, `[spotlight]` | Partial | Records are parsed/stored, including `[light_enh_2]`'s complete numeric payload with or without its optional bitmap, but full geometry, falloff, and render-order behavior is missing. Basic `[illumination_interior]` / `[interiorlight]` emission is active but does not establish full lighting parity. |
 | `[smoke]` | Parsed only | Fields are consumed for alignment; no exhaust/particle system is created. |
 | `[VFDmaxmin]`, `[tex_detail_factor]` | Parsed only | Display bounds and detail scaling do not currently alter rendering. |
 | `[origin_from_mesh]` | Partial | The origin operation is retained, but becomes identity when mesh transformation metadata is unavailable. |

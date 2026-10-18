@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,8 @@ struct BusAxle {
 
 struct BusConfiguration {
     double mass;
+    // When absent, physics retains the historical mass-scaled resistance fallback.
+    std::optional<double> rollingResistanceForceNewtons;
     double length;
     double width;
     double bodyHalfLength;

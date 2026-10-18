@@ -937,6 +937,7 @@ struct Vehicle {
         std::vector<Batch> batches;
         int viewpoint;
         int renderType = 2;
+        bool fixed = false;
         bool isShadow = false;
         bool transparent;
         int lodIndex;
@@ -1284,7 +1285,7 @@ struct Vehicle {
                                       : value * animation.scale + animation.offset;
             local = multiplyMatrix4(animationTransform(animation, amount), local);
         }
-        if (part.animationParent.empty() ||
+        if (!modelPartInheritsAnimationParent(part.fixed, part.animationParent) ||
             std::find(active.begin(), active.end(), &part) != active.end()) {
             if (std::find(active.begin(), active.end(), &part) != active.end()) {
                 return local;
@@ -4067,6 +4068,7 @@ struct Vehicle {
         DisplayPart displayPart;
         displayPart.viewpoint = part.viewpoint;
         displayPart.renderType = part.renderType;
+        displayPart.fixed = part.fixed;
         displayPart.isShadow = part.isShadow;
         displayPart.transparent = hasTransparentMaterial;
         displayPart.lodIndex = part.lodIndex;

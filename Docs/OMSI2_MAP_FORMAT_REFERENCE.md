@@ -229,17 +229,17 @@ OpenBus evaluates ordinary spline elevation from its endpoint gradients and
 gradients and `delta_h`. Serialized cant values are percentage points as entered
 in the map editor (for example, `-50` means `-50%`). They are applied as a
 linearly interpolated crossfall in both rendered and collision geometry using
-rise/run = percent / 100. When valid `[heightprofile]` records provide lateral
-extents, OpenBus clamps the profile lateral coordinate to the maximum absolute
-extent before applying cant. Profiles without a valid extent retain the prior
-unbounded behavior. Thus `-100%` changes height by one profile width only for
-unbounded profiles; for example, Cotterell's `±0.060 m` half-width limits
-`-120%` cant to approximately `±0.072 m` at the outer profile edges. This
-height-profile clamp is reverse-engineered behavior; visual parity against OMSI
-remains to be confirmed. The literal `mirror` marker reflects `.sli`
-cross-section lateral offsets across the spline centerline in shared
-render/collision geometry, while preserving authored texture coordinates and
-correcting triangle winding.
+rise/run = percent / 100. A valid `.sli` `[halfcantwidth]` sets the cant-clamp
+half-width; when it is absent or invalid, valid `[heightprofile]` records
+provide the fallback maximum absolute lateral extent. Profiles without either
+usable width retain the prior unbounded behavior. Thus `-100%` changes height
+by one profile width only for unbounded profiles. For example, an effective
+`0.060 m` half-width limits `-120%` cant to approximately `±0.072 m` at the
+outer profile edges. This cant clamp is reverse-engineered behavior; visual
+parity against OMSI remains to be confirmed. The literal `mirror` marker
+reflects `.sli` cross-section lateral offsets across the spline centerline in
+shared render/collision geometry, while preserving authored texture
+coordinates and correcting triangle winding.
 
 The start-to-end cant transition is evaluated per spline record with
 `t = clamp(segmentDistance / spline.length, 0, 1)`, using the authored segment
@@ -294,8 +294,17 @@ index once per map; live editing/Chrono replacement would require index invalida
 The regression probes validate this model's internal geometry and render/collision
 agreement, **not visual parity with OMSI**.
 
-The `.sli` reader supports `[texture]`, `[profile]`, `[profilepnt]`, and the
-per-texture `[scaleTexByLength]` marker for textured cross-section strips.
+The `.sli` reader supports `[texture]`, `[profile]`, `[profilepnt]`, the
+per-texture `[scaleTexByLength]` marker for textured cross-section strips,
+`[halfcantwidth]` as the preferred cant-clamp half-width, and `[nocollision]`.
+The latter is treated as a profile-level marker: it retains rendered spline
+sections but omits their road collision geometry. Installed profiles use this
+marker, but its exact native OMSI spline semantics have not been independently
+verified.
+Invalid or duplicate width directives are ignored; the first valid
+non-negative value wins, then valid `[heightprofile]` lateral extents are used
+as fallback. This precedence is based on installed profile data and remains to
+be checked against native OMSI behavior.
 For a marked texture, the longitudinal UV span is normalized to the literal
 physical length of each map spline segment and restarts at that segment's start;
 it does not repeat the ordinary per-metre V slope along a long segment. Unmarked

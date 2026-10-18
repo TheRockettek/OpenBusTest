@@ -127,10 +127,12 @@ void runLinkedProbe() {
         const std::string crossSection =
           "[texture]\nroad.bmp\n[profile]\n0\n"
           "[profilepnt]\n-2\n0.25\n0\n0.2\n[profilepnt]\n2\n0.25\n1\n0.2\n";
-        writeText(omsiRoot / "Splines" / "Test.sli",
-              "[heightprofile]\n-0.06\n0.06\n0\n0\n" + crossSection);
-        writeText(omsiRoot / "Splines" / "Wide.sli",
-              "[heightprofile]\n-0.12\n0.12\n0\n0\n" + crossSection);
+                writeText(omsiRoot / "Splines" / "Test.sli",
+              "[halfcantwidth]\n0.06\n[heightprofile]\n-0.2\n0.2\n0\n0\n" +
+                                    crossSection);
+                writeText(omsiRoot / "Splines" / "Wide.sli",
+              "[halfcantwidth]\n0.12\n[heightprofile]\n-0.3\n0.3\n0\n0\n" +
+                                    crossSection);
     MapDefinition map;
         map.rootPath = mapRoot;
     MapTileReference aTile;
@@ -219,6 +221,41 @@ void runLinkedProbe() {
     map.tiles.push_back(missing);
     require(buildMapRoadCollisionTile(map, omsiRoot, 0, 0).meshes[0].vertices == firstVertices,
         "missing unrelated tile cannot break selected-tile seam metadata loading");
+    std::filesystem::remove_all(root);
+}
+
+void runNoCollisionProbe() {
+    using namespace openbus::map;
+    const auto root = std::filesystem::temp_directory_path() / "OpenBusMapNoCollisionProbe";
+    std::filesystem::remove_all(root);
+    const auto mapRoot = root / "map";
+    const auto omsiRoot = root / "omsi";
+    writeText(omsiRoot / "Splines" / "NoCollision.sli",
+              "[nocollision]\n[texture]\nroad.bmp\n[profile]\n0\n"
+              "[profilepnt]\n-2\n0\n0\n0\n"
+              "[profilepnt]\n2\n0\n1\n0\n");
+
+    MapDefinition map;
+    map.rootPath = mapRoot;
+    MapTileReference tile;
+    tile.textPath = mapRoot / "tile_0_0.map";
+    std::string tileText = splineMapText();
+    const std::string oldAsset = "Splines/Test.sli";
+    const std::size_t assetOffset = tileText.find(oldAsset);
+    require(assetOffset != std::string::npos, "collision fixture contains its spline asset path");
+    tileText.replace(assetOffset, oldAsset.size(), "Splines/NoCollision.sli");
+    writeText(tile.textPath, tileText);
+    map.tiles.push_back(tile);
+
+    const MapSplineProfile profile = loadMapSplineProfile(omsiRoot / "Splines" / "NoCollision.sli");
+    require(profile.noCollision && profile.sections.size() == 1 &&
+                profile.sections.front().points.size() == 2,
+            "[nocollision] profile remains parsed with its visible cross-section");
+    const MapRoadCollisionResult result = buildMapSplineCollisionTile(map, omsiRoot, 0, 0);
+    require(result.tilesVisited == 1 && result.skippedProfiles == 0 &&
+                result.skippedSplines == 0 && result.splineSectionsAdded == 0 &&
+                result.meshes.empty(),
+            "[nocollision] spline profile contributes no road collision geometry");
     std::filesystem::remove_all(root);
 }
 
@@ -423,6 +460,7 @@ int main() {
     try {
         runProbe();
         runLinkedProbe();
+        runNoCollisionProbe();
     } catch (const std::exception& error) {
         std::cerr << "map collision builder probe failed: " << error.what() << '\n';
         return 1;

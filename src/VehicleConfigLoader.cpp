@@ -778,8 +778,20 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             }
             continue;
         }
-        if (keyword == "rollwiderstand" || keyword == "rot_pnt_long" ||
-            keyword == "inv_min_turnradius" || keyword == "ai_deltaheight") {
+        if (keyword == "rollwiderstand") {
+            std::vector<double> values;
+            if (readDoubleRecord(reader, keyword, 1, values, result.diagnostics)) {
+                if (values[0] < 0.0) {
+                    result.diagnostics.error(line.number, keyword,
+                                             "rolling resistance must be non-negative");
+                } else {
+                    result.rollingResistanceForceNewtons = values[0];
+                }
+            }
+            continue;
+        }
+        if (keyword == "rot_pnt_long" || keyword == "inv_min_turnradius" ||
+            keyword == "ai_deltaheight") {
             std::vector<double> values;
             if (readDoubleRecord(reader, keyword, 1, values, result.diagnostics)) {
                 if (keyword == "inv_min_turnradius") {

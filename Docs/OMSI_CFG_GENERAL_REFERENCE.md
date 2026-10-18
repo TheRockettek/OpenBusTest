@@ -42,13 +42,20 @@ model detail levels.
 
 ### `[rendertype]`
 
-One render classification such as `surface`. It determines how the following
-model/object data is rendered.
+One render classification. For scenery-object files and scenery model CFGs,
+OpenBus recognizes numeric values and the named categories `presurface`,
+`surface`, and `on_surface`, routing them through corresponding render passes.
+An explicit scenery model-part value takes precedence over the SCO-level value;
+otherwise the SCO value is used. This precedence and complete native OMSI
+render-order behavior remain unverified. BUS/vehicle model CFG contexts are
+currently diagnosed as invalid by the loader.
 
 ### `[fixed]`
 
-Marks geometry or an object as fixed/static rather than moving with an
-animation transform.
+On bus-model meshes, marks following geometry as fixed relative to its
+`[animparent]`. OpenBus retains the marker and does not inherit that parent's
+animation transform for the part; its own animations remain active. Other OMSI
+effects of this marker have not been verified.
 
 ### `[absheight]`
 

@@ -167,6 +167,9 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
                << ",\n"
                   "      \"render_type\": "
                << part.renderType
+                    << ",\n      \"has_render_type\": "
+                    << (part.hasRenderType ? "true" : "false")
+               << ",\n      \"fixed\": " << (part.fixed ? "true" : "false")
                << ",\n      \"is_shadow\": " << (part.isShadow ? "true" : "false")
                << ",\n      \"no_collision\": " << (part.noCollision ? "true" : "false")
                << ",\n      \"mesh_identifier\": ";

@@ -255,7 +255,12 @@ The box is a coarse collision volume, not the visual mesh.
 ### `[rollwiderstand]`
 
 One rolling-resistance force in newtons. The examples describe it as a
-constant force.
+constant force. OpenBus applies a non-negative value opposite longitudinal
+motion, with the existing low-speed stop cap. If this keyword is absent,
+OpenBus keeps its previous mass-scaled fallback; explicit zero disables the
+rolling-resistance force. Negative values are rejected. This is an
+implementation interpretation and has not been validated for native OMSI
+physics parity.
 
 ### `[rot_pnt_long]`
 

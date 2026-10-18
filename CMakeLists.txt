@@ -456,7 +456,9 @@ add_executable(OpenBusMapSplineProfileProbe
 target_include_directories(OpenBusMapSplineProfileProbe PRIVATE src)
 add_test(NAME OpenBusMapSplineProfileProbe
          COMMAND OpenBusMapSplineProfileProbe
-                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/map_spline_profile.sli)
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/map_spline_profile.sli
+         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/map_spline_profile_explicit_cant_width.sli
+         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/map_spline_profile_no_collision.sli)
 
 add_executable(OpenBusTextureLoaderProbe
     tests/TextureLoaderProbe.cpp

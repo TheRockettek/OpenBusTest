@@ -516,7 +516,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                 }
             }
             const MapSplineProfile& profile = profileIt->second;
-            if (profile.editorOnly) {
+            if (profile.editorOnly || profile.noCollision) {
                 continue;
             }
 

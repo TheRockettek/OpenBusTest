@@ -28,7 +28,7 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
 | `[collision_mesh]`, `[nocollision]` | Partial | Supported O3D collision meshes from SCOs and external model CFGs are split across overlapped streamed tiles; unsupported formats, attached/repeater collision, complete collision semantics, and broad contact validation remain. `[boundingbox]` is not used as a map scenery collision fallback. |
 | `[surface]` | Parsed only | The SCO flag is retained, but no full surface-type/friction behavior is derived from it. |
 | `[maplight]`, `[nightmapmode]` | Parsed/consumed only | These records do not generate map lighting/lightmaps. |
-| `[rendertype]` | Partial | The value is consumed in the SCO header path; the full scenery render-category contract is not implemented. |
+| `[rendertype]` | Partial | SCO and scenery-model CFGs accept numeric values plus `presurface`, `surface`, and `on_surface`. An explicit model-part value takes precedence over the SCO value; otherwise the SCO value is used. Render passes route these categories, but precedence and native OMSI parity remain unverified. |
 | Dynamic sound and interaction fields | Not implemented | Scenery sound playback/callbacks and scenery-object mouse-event dispatch are not connected. |
 
 Scenery model CFGs share material and display limitations with bus model CFGs: incomplete CTC/texture replacement, lighting, alpha-depth parity, terrain mapping, and text-format details. See [BUS model CFG status](IMPLEMENTATION_STATUS_BUS.md#bus-model-cfg) for those shared model keywords; their presence in an SCO does not imply better scenery support.

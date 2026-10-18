@@ -33,16 +33,18 @@ struct MapSplineProfile {
     std::vector<int> textureAlphaModes;
     std::vector<MapSplineProfileSection> sections;
     std::vector<MapSplineHeightProfile> heightProfiles;
+    std::optional<double> explicitCantHalfWidth;
     bool editorOnly = false;
+    bool noCollision = false;
 };
 
-// Reads the text-based StreetCreator/OMSI .sli sections used to define the
-// spline cross-section, per-point UV coordinates, height-profile records, texture references,
-// and [scaleTexByLength] metadata.
+// Reads text-based StreetCreator/OMSI .sli cross-sections, UVs, height profiles,
+// texture references, [scaleTexByLength], [halfcantwidth], and [nocollision].
 MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path);
 
-// Returns the maximum absolute x extent across valid [heightprofile] records.
-// A missing result means no usable lateral width was authored.
+// Returns [halfcantwidth] when valid, otherwise the maximum absolute x extent
+// across valid [heightprofile] records. A missing result means no usable width
+// was authored.
 std::optional<double> mapSplineProfileCantHalfWidth(const MapSplineProfile& profile) noexcept;
 
 } // namespace openbus::map

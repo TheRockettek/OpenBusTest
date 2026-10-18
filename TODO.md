@@ -243,8 +243,11 @@ for alignment is not mistaken for supporting it.
   `[view_schedule]` and `[view_ticketselling]`; current parsing only records
   that the keyword occurred and validates that a driver camera exists.
 - [ ] Parse and use `[cog]` in a consistent way with `[schwerpunkt]`.
-- [ ] Store and apply `[rollwiderstand]` and `[rot_pnt_long]`; both are
-  currently consumed without physics semantics.
+- [x] Apply `[rollwiderstand]` as an authored non-negative longitudinal force;
+  absent values retain the legacy mass-scaled fallback, and explicit zero is
+  preserved. Native OMSI physics parity remains unverified.
+- [ ] Store and apply `[rot_pnt_long]`; it is currently consumed without
+  physics semantics.
 - [x] Apply the parsed `[inv_min_turnradius]` steering constraint to the live
   physics steering limit.
 - [ ] Apply the parsed `[ai_deltaheight]` correction to the AI vehicle path.
@@ -274,10 +277,11 @@ for alignment is not mistaken for supporting it.
   interaction with blended depth behavior still needs regression coverage.
 - [ ] Define the behavior of `[matl_item]` instead of treating it as a
   no-op material marker.
-- [ ] Apply full `[rendertype]`, `[fixed]`, and `[absheight]` semantics to
-  geometry transforms and passes. `[rendertype]` currently recognizes
-  `surface` and numeric values, but not the documented `presurface` and
-  `on_surface` names; the scenery-object loader also discards the value.
+- [~] Apply complete `[rendertype]`, `[fixed]`, and `[absheight]` semantics.
+  Scenery `[rendertype]` now routes recognized named/numeric categories, and
+  model `[fixed]` suppresses animation-parent inheritance while preserving
+  local animation. Native pass/transform parity and broader `[absheight]`
+  semantics remain unverified.
 - [~] `[isshadow]` meshes now render with their authored transparent material
   and a ground-plane projection; model collision meshes/bounds and
   `[nocollision]` now affect the bus ODE collider. Scenery-object collision
@@ -286,9 +290,9 @@ for alignment is not mistaken for supporting it.
 - [~] Implement basic `[illumination_interior]`/`[interiorlight]` emission,
   controller variables, and mesh assignments. `[light_enh]`, `[light_enh_2]`,
   and `[spotlight]` geometry, falloff, and render ordering remain pending.
-  `[light_enh]` now accepts its optional alpha bitmap and defaults to no bitmap
-  when omitted. `[light_enh_2]` still drops the time constant when its optional
-  bitmap field is absent.
+  `[light_enh]` and `[light_enh_2]` preserve all required numeric fields and
+  accept their optional bitmap when present; enhanced-light runtime behavior is
+  still pending.
 - [x] Correct `[viewpoint]` filtering: player exterior, player interior, and
   non-player vehicles now use their individual documented bits (`1`, `2`, and
   `4`). Model visibility and sound playback share zero-means-all,
@@ -468,10 +472,11 @@ for the explicit boundary.
   `[trafficdensity_road]`, and `[trafficdensity_passenger]`.
 - [~] Spline `skewStart`/`skewEnd` fields now drive a provisional longitudinal
   shear in rendered/collision road geometry. Verify the assumed units and
-  formula against OMSI before treating it as compatible. Valid `.sli`
-  `[heightprofile]` lateral extents currently bound cant width; full authored
-  height-profile behavior remains unresolved. The Cotterell log reports 951
-  profile strips with fewer than two points (including `pavement_a.sli`);
+  formula against OMSI before treating it as compatible. `.sli`
+  `[halfcantwidth]` now overrides the fallback width derived from valid
+  `[heightprofile]` lateral extents for cant clamping; native visual parity and
+  full authored height-profile behavior remain unresolved. The Cotterell log
+  reports 951 profile strips with fewer than two points (including `pavement_a.sli`);
   verify whether these are intentional degenerate/editor strips or a
   profile-reader/geometry omission.
 - [ ] Complete remaining map-section semantics: render `[water]`, implement
@@ -523,12 +528,16 @@ for the explicit boundary.
   previews still use crossed textured planes rather than their editor/helper
   mesh.
 - [~] Read road cross-sections from `.sli` files (`[texture]`, `[profile]`,
-  `[profilepnt]`) and retain the four raw/numeric fields of `[heightprofile]`
-  records without assuming they change the surface. Spline cant is provisionally
-  interpolated as percentage crossfall in shared render/collision geometry;
-  sign/unit parity needs OMSI visual confirmation. Texture/material semantics,
-  marking behavior, and representative visual evidence remain incomplete. Road
-  UV V includes a valid parsed v11+ spline chain offset; continuity and OMSI
+  `[profilepnt]`), retain the four raw/numeric fields of `[heightprofile]`, and
+  retain `[nocollision]` to exclude marked profiles from road collision while
+  preserving their render geometry; native OMSI profile semantics are still
+  unverified. Apply explicit `[halfcantwidth]` to cant clamping as well. Spline
+  cant is provisionally interpolated as percentage crossfall in shared
+  render/collision geometry;
+  precedence and sign/unit parity need OMSI visual confirmation. Full authored
+  height-profile, texture/material, and marking behavior and representative
+  visual evidence remain incomplete. Road UV V includes a valid parsed v11+
+  spline chain offset; continuity and OMSI
   parity still need validation against installed linked spline assets.
 - [x] Decode `[object]`, `[spline]`, and `[spline_h]` field layouts by tile
   version, including legacy spline links and v11+ chain offsets; version 5/7/11

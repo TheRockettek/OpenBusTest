@@ -39,6 +39,7 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
         part.textureName = source.textureName;
         part.viewpoint = source.viewpoint;
         part.renderType = source.renderType;
+        part.fixed = source.fixed;
         std::string meshStem = source.objPath.stem().string();
         std::transform(
             meshStem.begin(), meshStem.end(), meshStem.begin(),

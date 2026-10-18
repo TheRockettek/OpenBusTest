@@ -130,6 +130,22 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
         const std::string& section = lines[cursor++];
         if (section == "[onlyeditor]") {
             profile.editorOnly = true;
+        } else if (section == "[nocollision]") {
+            profile.noCollision = true;
+        } else if (section == "[halfcantwidth]") {
+            std::string widthText;
+            double width = 0.0;
+            if (!readPayload(lines, cursor, widthText) || !parseReal(widthText, width) || width < 0.0) {
+                openbus::config::logUnhandledConfigurationTag(
+                    "spline profile (.sli)", path, sectionLine, "halfcantwidth",
+                    "invalid or missing non-negative width; height-profile fallback retained");
+            } else if (profile.explicitCantHalfWidth.has_value()) {
+                openbus::config::logUnhandledConfigurationTag(
+                    "spline profile (.sli)", path, sectionLine, "halfcantwidth",
+                    "duplicate width ignored; first valid directive retained");
+            } else {
+                profile.explicitCantHalfWidth = width;
+            }
         } else if (section == "[heightprofile]") {
             MapSplineHeightProfile heightProfile;
             bool complete = true;
@@ -210,6 +226,10 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
 }
 
 std::optional<double> mapSplineProfileCantHalfWidth(const MapSplineProfile& profile) noexcept {
+    if (profile.explicitCantHalfWidth.has_value() &&
+        std::isfinite(*profile.explicitCantHalfWidth) && *profile.explicitCantHalfWidth >= 0.0) {
+        return profile.explicitCantHalfWidth;
+    }
     std::optional<double> halfWidth;
     for (const MapSplineHeightProfile& heightProfile : profile.heightProfiles) {
         if (!heightProfile.valid || !std::isfinite(heightProfile.values[0]) ||

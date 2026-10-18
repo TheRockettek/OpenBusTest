@@ -36,6 +36,7 @@ struct BusModelPart {
     std::array<double, 3> color = {0.65, 0.65, 0.65};
     int viewpoint = 0;
     int renderType = 2;
+    bool fixed = false;
     bool isShadow = false;
     bool noCollision = false;
     std::string visibleVariable;
