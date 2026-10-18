@@ -23,6 +23,8 @@ struct VehicleCamera {
     double fieldOfView = 0.0;
     double pan = 0.0;
     double tilt = 0.0;
+    // Reflection cameras re-aim as the player's eye moves unless authored with a *_static keyword.
+    bool followsViewer = true;
 };
 
 struct ConstantCurvePoint {

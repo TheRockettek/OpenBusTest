@@ -100,6 +100,7 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
     }
     basePath_ = configPath.parent_path();
     triggers_.clear();
+    warnedUnknownTriggers_.clear();
     untriggeredLoopSounds_.clear();
     activeTriggeredLoops_.clear();
     activeAmbientLoops_.clear();
@@ -400,9 +401,12 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
                                openbus::rendering::ViewpointContext viewpoint,
                                SoundRetriggerPolicy retriggerPolicy) {
     openbus::rendering::TraceScope trace("sound", "VehicleSoundBank::trigger");
-    const auto found = triggers_.find(lower(name));
+    const std::string triggerName = lower(name);
+    const auto found = triggers_.find(triggerName);
     if (found == triggers_.end()) {
-        soundLog.Log("Skipping unknown sound trigger: " + name);
+        if (warnedUnknownTriggers_.insert(triggerName).second) {
+            soundLog.Log("Skipping unknown sound trigger: " + name);
+        }
         return;
     }
     std::vector<SoundTriggerDefinition> definitions = found->second;

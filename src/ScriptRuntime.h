@@ -40,6 +40,7 @@ class ScriptRuntime {
     void invokeInputEvent(const std::string& keyName, bool pressed);
     void invokeKeyBinding(const std::string& bindingName, bool pressed, bool logEvent = true);
     void invokeMouseEvent(const std::string& eventName);
+    // Accepts authored names using the same normalization as trigger dispatch.
     bool hasScriptEntryPoint(const std::string& functionName) const;
     void invokeMouseRelease(const std::string& eventName);
     void invokeMouseDrag(const std::string& eventName, float deltaX, float deltaY, float cursorX,

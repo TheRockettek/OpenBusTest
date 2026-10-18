@@ -374,7 +374,7 @@ class Emitter {
         }
     }
 
-    // Pop the top pending float expression (used by store-fold and if-fold).
+    // Pop the top pending float expression (used by store-fold).
     std::string take_pending_float() {
         std::string e = std::move(pf.back());
         pf.pop_back();
@@ -1171,22 +1171,10 @@ class Emitter {
     // --------------------------------------------------------------- if/else/endif
     void emit_if(std::string& out, int depth) {
         consume(); // consume {if}
-        if (!pf.empty()) {
-            bool negated = pending_negated;
-            std::string expr = take_pending_float();
-            const std::string condition = "_osc_condition";
-            out += ind(depth) + "local " + condition + "=" + expr + "\n";
-            if (negated) {
-                out += ind(depth) + "if not compare(" + condition + ",1) then\n";
-            } else {
-                out += ind(depth) + "if compare(" + condition + ",1) then\n";
-            }
-        } else {
-            flush_pending(out, depth);
-            const std::string expr = pop_float_expr();
-            out += ind(depth) + "local _osc_condition=" + expr + "\n";
-            out += ind(depth) + "if compare(_osc_condition,1) then\n";
-        }
+        // OMSI conditions inspect the stack without consuming it; called macros
+        // may reuse that value, including conditions other than exactly one.
+        flush_pending(out, depth);
+        out += ind(depth) + "if " + peek_float_expr() + " ~= 0 then\n";
         emit_body(out, depth + 1, true);
 
         if (is_kw("else")) {

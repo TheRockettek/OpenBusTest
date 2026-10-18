@@ -35,6 +35,7 @@ struct MapSplineProfile {
     std::vector<MapSplineHeightProfile> heightProfiles;
     std::optional<double> explicitCantHalfWidth;
     bool editorOnly = false;
+    // Preserve the spline for rendering; omit its profile strips from map collision.
     bool noCollision = false;
 };
 

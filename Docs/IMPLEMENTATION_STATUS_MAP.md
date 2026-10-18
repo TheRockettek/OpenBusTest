@@ -33,7 +33,7 @@ Scope: `global.cfg`, tile `tile_<x>_<y>.map` records, terrain/ground-texture adj
 
 `[texture]`, `[profile]`, and `[profilepnt]` support a subset of static road-strip rendering, including straight and signed-radius centerlines. `.sli` `[nocollision]` is retained and suppresses spline collision geometry without removing its renderable sections. This matches the apparent intent of installed decorative profiles, but native OMSI spline-profile behavior remains unverified. Known gaps include:
 
-- Spline `skewStart` / `skewEnd` fields are applied by a provisional best-guess model (longitudinal shear per lateral distance) in rendered/collision road geometry; OMSI unit and visual parity are unverified.
+- Spline `skewStart` / `skewEnd` fields are applied as longitudinal shear per lateral distance in rendered/collision road geometry. At linked corners, when the authored endpoint axes already align (as in Cotterell splines 518/519 with approximately `+1`/`-1` skew), the seam now preserves that shared parallelogram axis instead of adding a second automatic miter. The exact native unit convention and broader OMSI visual parity remain unverified.
 - `.sli` `[halfcantwidth]` explicitly sets cant clamping width; absent or invalid values fall back to valid `[heightprofile]` lateral extents. The four `[heightprofile]` fields are retained, but a complete authored height-profile surface is not implemented. Native visual parity remains unverified.
 - Road markings, texture/material variations, chain continuity, curved cross-section seams, and full banking/cant parity still need validation.
 - Editor-only profiles are intentionally omitted; profiles with missing texture files can render untextured.

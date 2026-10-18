@@ -191,8 +191,10 @@ struct BusSimulation::Impl {
     std::vector<dTriMeshDataID> mapCollisionMeshData;
     std::vector<StaticCollisionMesh> mapCollisionMeshes;
     std::unordered_map<std::uint64_t, StreamedTileCollision> streamedTileCollisions;
+    std::unordered_set<dGeomID> wheelGeometries;
     std::uint64_t collisionRevision = 0;
     dGeomID chassisGeom = nullptr;
+    WheelStaticContactSettings wheelStaticContact;
     BusConfiguration configuration;
     VehiclePlacement placement;
     std::vector<Corner> corners;
@@ -408,13 +410,19 @@ struct BusSimulation::Impl {
         if (firstHasBody == secondHasBody) {
             return;
         }
+        const bool firstIsWheel = simulation->wheelGeometries.contains(first);
+        const bool secondIsWheel = simulation->wheelGeometries.contains(second);
+        const bool isWheelStaticContact =
+            (firstIsWheel && !secondHasBody) || (secondIsWheel && !firstHasBody);
         dContact contacts[4] = {};
         const int count = dCollide(first, second, 4, &contacts[0].geom, sizeof(dContact));
         for (int index = 0; index < count; ++index) {
             contacts[index].surface.mode = dContactSoftERP | dContactSoftCFM | dContactApprox1;
             contacts[index].surface.mu = ROAD_FRICTION_COEFFICIENT;
-            contacts[index].surface.soft_erp = 0.8;
-            contacts[index].surface.soft_cfm = 1e-6;
+            contacts[index].surface.soft_erp =
+                isWheelStaticContact ? simulation->wheelStaticContact.erp : 0.8;
+            contacts[index].surface.soft_cfm =
+                isWheelStaticContact ? simulation->wheelStaticContact.cfm : 1e-6;
             dJointID contact = dJointCreateContact(simulation->ode.world, simulation->ode.contacts,
                                                    &contacts[index]);
             dJointAttach(contact, dGeomGetBody(first), dGeomGetBody(second));
@@ -630,8 +638,10 @@ struct BusSimulation::Impl {
 
     Impl(BusConfiguration vehicle, VehiclePlacement vehiclePlacement, double physicsHz,
          int catchUpSteps, double groundPlaneZ, std::vector<TerrainCollisionGrid> terrain,
-         std::vector<StaticCollisionMesh> staticCollision, bool createDefaultGround)
-        : configuration(std::move(vehicle)), placement(vehiclePlacement),
+                 std::vector<StaticCollisionMesh> staticCollision, bool createDefaultGround,
+                 WheelStaticContactSettings wheelContact)
+                : wheelStaticContact(wheelContact), configuration(std::move(vehicle)),
+                    placement(vehiclePlacement),
           maxCatchUpSteps(catchUpSteps) {
         if (!std::isfinite(physicsHz) || physicsHz <= 0.0 || catchUpSteps <= 0) {
             simulationLog.Log("Invalid physics timing configuration");
@@ -645,6 +655,11 @@ struct BusSimulation::Impl {
                 "Physics rate is outside the representable fixed-step range");
         }
         fixedStep = candidateFixedStep;
+        if (!std::isfinite(wheelStaticContact.erp) || wheelStaticContact.erp < 0.0 ||
+            wheelStaticContact.erp > 1.0 || !std::isfinite(wheelStaticContact.cfm) ||
+            wheelStaticContact.cfm < 0.0) {
+            throw std::invalid_argument("Wheel-to-static contact settings are invalid");
+        }
         if (configuration.axles.empty()) {
             simulationLog.Log("Bus configuration has no axles");
             throw std::invalid_argument("A bus must define at least one axle");
@@ -817,6 +832,7 @@ struct BusSimulation::Impl {
             corner.wheelGeom =
                 dCreateCylinder(ode.space, corner.wheelRadius, configuration.wheelHalfWidth * 2.0);
             dGeomSetBody(corner.wheelGeom, corner.wheelBody);
+            wheelGeometries.insert(corner.wheelGeom);
 
             corner.suspensionJoint = dJointCreateSlider(ode.world, nullptr);
             dJointAttach(corner.suspensionJoint, chassis, corner.suspensionBody);
@@ -1150,10 +1166,11 @@ BusSimulation::BusSimulation(BusConfiguration configuration, VehiclePlacement pl
                              double physicsHz, int maxCatchUpSteps, double groundPlaneZ,
                              std::vector<TerrainCollisionGrid> terrain,
                              std::vector<StaticCollisionMesh> staticCollision,
-                             bool createDefaultGround)
+                     bool createDefaultGround,
+                     WheelStaticContactSettings wheelStaticContact)
     : impl_(std::make_unique<Impl>(std::move(configuration), placement, physicsHz, maxCatchUpSteps,
                                    groundPlaneZ, std::move(terrain), std::move(staticCollision),
-                                   createDefaultGround)) {
+                         createDefaultGround, wheelStaticContact)) {
     openbus::rendering::TraceScope trace("startup", "BusSimulation::BusSimulation");
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }

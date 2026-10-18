@@ -21,7 +21,14 @@ Scope: the vehicle `.bus` file, its model CFG, and the passenger-cabin/path file
 
 Other BUS gaps include the complete configurable input map and vehicle-family-specific view systems. The player runtime currently dispatches physical W/A/S/D transitions to scripts rather than implementing every OMSI input-context record.
 
+Both script backends preserve the float-stack condition across `{if}` / `{else}` branches and macro calls. This is required by the DL05 front-door interlock: the door macro combines the caller's retained condition with the ramp interlock. The `bus_20h-switch` control enables the stop brake, not the separate parking brake; normal electrical, speed, and ramp interlocks still apply.
+
 ## Bus model CFG
+
+DirectX `.x` meshes (including the DL05 Atron AFR4) provide vehicle-axis bounds for
+frustum culling and picking after their frame transforms are applied. Their UVs use
+the same internal V convention as OBJ/O3D, avoiding an inverted texture in the
+vehicle renderer while preserving scenery texture orientation.
 
 | Keyword / family | Status | Current boundary |
 | --- | --- | --- |
@@ -39,7 +46,7 @@ Other BUS gaps include the complete configurable input map and vehicle-family-sp
 | `[origin_from_mesh]` | Partial | The origin operation is retained, but becomes identity when mesh transformation metadata is unavailable. |
 | `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces and horizontal alignment/grid spacing are active; fallback font rasterization and remaining enhanced-format flags/layout/alpha details differ from OMSI. |
 | `[illumination_interior]`, `[interiorlight]` | Partial | Controller-driven emissive color and mesh assignments are active; positional falloff and full OMSI behavior are not. |
-| `[mouseevent]` | Partial | Transformed-triangle picking and player W/A/S/D event transitions are active; configurable key maps and scenery-object mouse dispatch are not. |
+| `[mouseevent]` | Partial | Transformed-triangle picking, captured press/held-drag/release, and player W/A/S/D event transitions are active. Handler lookup and dispatch normalize authored punctuation consistently (including DL05 `bus_20h-switch`); drag/release handlers are optional. Configurable key maps and scenery-object mouse dispatch are not complete. |
 
 ## Passenger-cabin and path CFGs
 

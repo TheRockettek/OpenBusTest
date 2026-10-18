@@ -219,6 +219,15 @@ The orbit distance should normally be zero.
 Adds a reflection camera with an additional culling value. The culling value
 controls when rendering stops as the mirror leaves the view.
 
+Both forms re-aim as the player's camera moves, using the authored pan and tilt
+as the view from the standard driver camera. See
+[the BUS reference](OMSI_BUS_FORMAT_REFERENCE.md) for details.
+
+### `[add_camera_reflexion_static]` and `[add_camera_reflexion_2_static]`
+
+OpenBus extension: identical records to the non-static forms, but the camera
+keeps its authored pan and tilt regardless of the player's camera position.
+
 ### `[set_camera_std]`
 
 Sets the zero-based default driver-camera index.

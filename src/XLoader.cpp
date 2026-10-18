@@ -352,6 +352,31 @@ class Parser {
         if (result->positions.empty() || result->triangles.empty()) {
             throw std::runtime_error("file contains no static mesh triangles");
         }
+        std::array<double, 3> minimum = {std::numeric_limits<double>::max(),
+                                         std::numeric_limits<double>::max(),
+                                         std::numeric_limits<double>::max()};
+        std::array<double, 3> maximum = {std::numeric_limits<double>::lowest(),
+                                         std::numeric_limits<double>::lowest(),
+                                         std::numeric_limits<double>::lowest()};
+        // Bounds use vehicle axes, just like OBJ/O3D, after all X frame transforms.
+        for (const ObjPosition& position : result->positions) {
+            const std::array<double, 3> converted = {position.y, -position.x, position.z};
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                minimum[axis] = std::min(minimum[axis], converted[axis]);
+                maximum[axis] = std::max(maximum[axis], converted[axis]);
+            }
+        }
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            result->boundsCenter[axis] = (minimum[axis] + maximum[axis]) * 0.5;
+            result->boundsSize[axis] = maximum[axis] - minimum[axis];
+        }
+        for (const ObjPosition& position : result->positions) {
+            const double x = position.y - result->boundsCenter[0];
+            const double y = -position.x - result->boundsCenter[1];
+            const double z = position.z - result->boundsCenter[2];
+            result->boundsRadius =
+                std::max(result->boundsRadius, std::sqrt(x * x + y * y + z * z));
+        }
         return result;
     }
 
@@ -692,7 +717,8 @@ class Parser {
             output.positions.push_back(transformedPositions.back());
         }
         for (const ObjTexCoord& texCoord : mesh.texCoords) {
-            output.texCoords.push_back(texCoord);
+            // Normalize DirectX's top-origin V to the shared OBJ/O3D convention.
+            output.texCoords.push_back({texCoord.u, 1.0 - texCoord.v});
         }
         for (const ObjNormal& normal : mesh.normals) {
             output.normals.push_back(transformNormal(transform, normal));

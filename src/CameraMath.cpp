@@ -212,6 +212,49 @@ std::array<double, 3> transformLocalPoint(const BodyPose& pose,
                 pose.rotation[8] * local[2]};
 }
 
+std::array<double, 3> mirrorReflectionDirection(const std::array<double, 3>& mirror,
+                                                const std::array<double, 3>& authoredDirection,
+                                                const std::array<double, 3>& referenceEye,
+                                                const std::array<double, 3>& viewerEye) {
+    constexpr double EPSILON = 1.0e-6;
+    const auto normalized = [](const std::array<double, 3>& value, bool& valid) {
+        const double length = std::sqrt(value[0] * value[0] + value[1] * value[1] +
+                                        value[2] * value[2]);
+        valid = length > EPSILON && std::isfinite(length);
+        return valid ? std::array<double, 3>{value[0] / length, value[1] / length,
+                                             value[2] / length}
+                     : std::array<double, 3>{};
+    };
+    bool valid = false;
+    const std::array<double, 3> authored = normalized(authoredDirection, valid);
+    if (!valid) {
+        return authoredDirection;
+    }
+    const std::array<double, 3> referenceIncident = normalized(
+        {mirror[0] - referenceEye[0], mirror[1] - referenceEye[1], mirror[2] - referenceEye[2]},
+        valid);
+    if (!valid) {
+        return authored;
+    }
+    // A mirror maps incident ray i to i - 2(i.n)n, so its normal is parallel to i - d.
+    const std::array<double, 3> normal =
+        normalized({referenceIncident[0] - authored[0], referenceIncident[1] - authored[1],
+                    referenceIncident[2] - authored[2]},
+                   valid);
+    if (!valid) {
+        return authored;
+    }
+    const std::array<double, 3> incident = normalized(
+        {mirror[0] - viewerEye[0], mirror[1] - viewerEye[1], mirror[2] - viewerEye[2]}, valid);
+    const double incidence =
+        incident[0] * normal[0] + incident[1] * normal[1] + incident[2] * normal[2];
+    if (!valid || incidence <= EPSILON) {
+        return authored;
+    }
+    return {incident[0] - 2.0 * incidence * normal[0], incident[1] - 2.0 * incidence * normal[1],
+            incident[2] - 2.0 * incidence * normal[2]};
+}
+
 std::array<double, 3> freeCameraForward(double yawRadians, double pitchRadians) {
     if (!std::isfinite(yawRadians) || !std::isfinite(pitchRadians)) {
         return {1.0, 0.0, 0.0};

@@ -66,7 +66,9 @@ bool allowsBusOnly(const std::string& keyword, VehicleFileKind kind) {
         return true;
     }
     return keyword != "add_camera_reflexion" && keyword != "add_camera_reflexion_2" &&
-           keyword != "view_schedule" && keyword != "view_ticketselling";
+           keyword != "add_camera_reflexion_static" &&
+           keyword != "add_camera_reflexion_2_static" && keyword != "view_schedule" &&
+           keyword != "view_ticketselling";
 }
 
 std::filesystem::path resolveReferencedPath(const std::filesystem::path& configPath,
@@ -659,17 +661,23 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             continue;
         }
         if (keyword == "add_camera_driver" || keyword == "add_camera_pax" ||
-            keyword == "add_camera_reflexion" || keyword == "add_camera_reflexion_2") {
+            keyword == "add_camera_reflexion" || keyword == "add_camera_reflexion_2" ||
+            keyword == "add_camera_reflexion_static" ||
+            keyword == "add_camera_reflexion_2_static") {
             if (!allowsBusOnly(keyword, kind)) {
                 result.diagnostics.error(line.number, keyword,
                                          "keyword is only valid in a Bus configuration");
             }
             VehicleCamera camera;
+            const bool staticReflection = keyword == "add_camera_reflexion_static" ||
+                                          keyword == "add_camera_reflexion_2_static";
             const VehicleCameraKind cameraKind =
-                keyword == "add_camera_driver"      ? VehicleCameraKind::Driver
-                : keyword == "add_camera_pax"       ? VehicleCameraKind::Passenger
-                : keyword == "add_camera_reflexion" ? VehicleCameraKind::Reflexion
-                                                    : VehicleCameraKind::Reflexion2;
+                keyword == "add_camera_driver" ? VehicleCameraKind::Driver
+                : keyword == "add_camera_pax"  ? VehicleCameraKind::Passenger
+                : keyword == "add_camera_reflexion" || keyword == "add_camera_reflexion_static"
+                    ? VehicleCameraKind::Reflexion
+                    : VehicleCameraKind::Reflexion2;
+            camera.followsViewer = !staticReflection;
             if (parseCamera(reader, keyword, cameraKind, camera, result.diagnostics)) {
                 result.cameras.push_back(camera);
             }

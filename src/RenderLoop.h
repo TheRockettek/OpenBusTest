@@ -136,6 +136,11 @@ class RenderLoop {
     bool freeCameraEnabled_ = false;
     bool mouseLookEnabled_ = false;
     bool lastMainCameraPoseValid_ = false;
+    // Main-view eye in vehicle-local space, used to aim viewer-following reflection cameras.
+    std::array<double, 3> reflectionViewerEyeLocal_ = {};
+    bool reflectionViewerEyeLocalValid_ = false;
+    // Driver camera whose eye position the authored reflection directions are designed for.
+    int reflectionReferenceCamera_ = -1;
     bool previousFreeCameraToggleState_ = false;
     bool previousMouseLookToggleState_ = false;
     bool mouseControlEnabled_ = false;
@@ -184,6 +189,7 @@ class RenderLoop {
     bool pendingMouseClick_ = false;
     double pendingMouseClickX_ = 0.0;
     double pendingMouseClickY_ = 0.0;
+    bool mouseDragDiagnosticLogged_ = false;
     openbus::input::MouseInteraction mouseInteraction_;
     double frameTimeStep_ = 0.0;
     double lastDrivetrainDiagnosticTime_ = -1.0;
@@ -198,6 +204,7 @@ class RenderLoop {
     double scriptRateHz_ = 0.0;
     double scriptAccumulator_ = 0.0;
     double steeringSmoothingRate_ = 0.0;
+    bool steeringSmoothingOverride_ = false;
     double smoothedSteering_ = 0.0;
     std::vector<KeyEvent> keyEvents_;
     std::vector<VehicleCamera> vehicleCameras_;

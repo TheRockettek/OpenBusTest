@@ -150,7 +150,13 @@ positive up.
 
 Define reflection cameras. Reflection textures use zero-based names such as
 `reflexion0.bmp`. The second form adds a culling value that stops rendering
-when the mirror leaves the view.
+when the mirror leaves the view. Their direction follows the player's camera
+position like a planar mirror.
+
+### `[add_camera_reflexion_static]` and `[add_camera_reflexion_2_static]`
+
+OpenBus extension: fixed-direction variants of the reflection cameras above
+that ignore the player's camera position.
 
 ### `[set_camera_std]`
 

@@ -191,6 +191,21 @@ Adds one passenger camera using the same seven-value record.
 Adds a reflection/mirror camera. The record uses the same seven camera values,
 with the two keywords allowing separate reflection-camera groups.
 
+The authored pan and tilt are the view the mirror shows from the standard
+driver camera (`[set_camera_std]`). The camera position acts as a planar
+mirror: when the player's camera moves, the reflection direction changes so
+that the angle of incidence equals the angle of reflection. If the player's
+camera is behind the mirror plane, the authored direction is used.
+
+### `[add_camera_reflexion_static]` and `[add_camera_reflexion_2_static]`
+
+OpenBus extension. Same records as `[add_camera_reflexion]` and
+`[add_camera_reflexion_2]` (including the extra culling value of the `_2`
+form), and they share the same zero-based `reflexionN.bmp` numbering in order
+of appearance. The camera always uses its authored pan and tilt, ignoring the
+player's camera position. Use these for fixed reflection cameras such as
+camera monitors.
+
 ### `[set_camera_std]`
 
 One integer selecting the default driver-camera index.

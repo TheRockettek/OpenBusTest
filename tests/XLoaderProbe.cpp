@@ -16,6 +16,43 @@
 
 using namespace openbus::rendering;
 
+static bool checkBounds(const ParsedObj& mesh) {
+    if (!(mesh.boundsRadius > 0.0)) {
+        std::cerr << "X mesh has no culling radius\n";
+        return false;
+    }
+    std::array<double, 3> minimum = {
+        std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::max()};
+    std::array<double, 3> maximum = {
+        std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest(),
+        std::numeric_limits<double>::lowest()};
+    double radius = 0.0;
+    for (const ObjPosition& position : mesh.positions) {
+        const std::array<double, 3> vehiclePosition = {position.y, -position.x, position.z};
+        double distanceSquared = 0.0;
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            minimum[axis] = std::min(minimum[axis], vehiclePosition[axis]);
+            maximum[axis] = std::max(maximum[axis], vehiclePosition[axis]);
+            const double delta = vehiclePosition[axis] - mesh.boundsCenter[axis];
+            distanceSquared += delta * delta;
+        }
+        radius = std::max(radius, std::sqrt(distanceSquared));
+    }
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        if (std::abs(mesh.boundsCenter[axis] - (minimum[axis] + maximum[axis]) * 0.5) > 1.0e-8 ||
+            std::abs(mesh.boundsSize[axis] - (maximum[axis] - minimum[axis])) > 1.0e-8) {
+            std::cerr << "X bounds must enclose transformed vertices in vehicle axes\n";
+            return false;
+        }
+    }
+    if (std::abs(mesh.boundsRadius - radius) > 1.0e-8) {
+        std::cerr << "X culling sphere does not enclose its transformed vertices\n";
+        return false;
+    }
+    return true;
+}
+
 namespace {
 
 void appendU16(std::vector<std::uint8_t>& bytes, std::uint16_t value) {
@@ -120,6 +157,9 @@ int main(int argc, char** argv) {
         std::cerr << "text X mesh did not yield static geometry\n";
         return 1;
     }
+    if (!checkBounds(*parsed)) {
+        return 1;
+    }
     for (const ObjTriangle& triangle : parsed->triangles) {
         if (parsed->materials.find(triangle.material) == parsed->materials.end()) {
             std::cerr << "X triangle refers to a missing material\n";
@@ -154,8 +194,9 @@ int main(int argc, char** argv) {
             parsed->triangles[1].indices[2].position != 4 ||
             parsed->triangles[0].indices[0].texCoord != 1 ||
             std::abs(parsed->texCoords[0].u + 0.25) > 1.0e-8 ||
-            std::abs(parsed->texCoords[0].v - 1.5) > 1.0e-8) {
-            std::cerr << "X triangulation, material indices, or repeat UVs were not preserved\n";
+            std::abs(parsed->texCoords[0].v + 0.5) > 1.0e-8 ||
+            std::abs(parsed->texCoords[2].v - 1.5) > 1.0e-8) {
+            std::cerr << "X triangulation, material indices, or normalized repeat UVs are incorrect\n";
             return 1;
         }
         const ObjMaterial& material = parsed->materials.at("matl_0");
@@ -214,7 +255,8 @@ int main(int argc, char** argv) {
     std::filesystem::remove(binaryMesh);
     if (!parsedBinary || parsedBinary->positions.size() != 3 ||
         parsedBinary->triangles.size() != 1 ||
-        parsedBinary->triangles.front().indices[2].position != 3) {
+        parsedBinary->triangles.front().indices[2].position != 3 ||
+        !checkBounds(*parsedBinary)) {
         std::cerr << "binary X token stream did not produce the expected triangle\n";
         return 1;
     }
@@ -231,7 +273,8 @@ int main(int argc, char** argv) {
     }
     const std::shared_ptr<ParsedObj> parsedCompressedText = XLoader::parse(compressedTextMesh);
     std::filesystem::remove(compressedTextMesh);
-    if (!parsedCompressedText || parsedCompressedText->triangles.size() != 1) {
+    if (!parsedCompressedText || parsedCompressedText->triangles.size() != 1 ||
+        !checkBounds(*parsedCompressedText)) {
         std::cerr << "MSZIP-compressed text X mesh did not parse\n";
         return 1;
     }
@@ -248,7 +291,8 @@ int main(int argc, char** argv) {
     }
     const std::shared_ptr<ParsedObj> parsedCompressedBinary = XLoader::parse(compressedBinaryMesh);
     std::filesystem::remove(compressedBinaryMesh);
-    if (!parsedCompressedBinary || parsedCompressedBinary->triangles.size() != 1) {
+    if (!parsedCompressedBinary || parsedCompressedBinary->triangles.size() != 1 ||
+        !checkBounds(*parsedCompressedBinary)) {
         std::cerr << "MSZIP-compressed binary X mesh did not parse\n";
         return 1;
     }

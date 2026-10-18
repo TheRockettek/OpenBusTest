@@ -53,13 +53,65 @@ bool check(const VehicleConfig& configuration, const char* backend) {
     }
 
     openbus::input::MouseInteraction mouse;
-    const auto press = [&runtime](const std::string& event) { runtime.invokeMouseEvent(event); };
+    const auto press = [&runtime](const std::string& event) {
+        if (runtime.hasScriptEntryPoint("trigger_" + event)) {
+            runtime.invokeMouseEvent(event);
+        }
+    };
     const auto release = [&runtime](const std::string& event) {
         runtime.invokeMouseRelease(event);
     };
     const auto drag = [&runtime](const std::string& event, double dx, double dy, double x, double y) {
         runtime.invokeMouseDrag(event, dx, dy, x, y);
     };
+    runtime.invokeMouseEvent("conditional");
+    if (local.get("condition_true") != 5 || local.get("condition_false") != 0 ||
+        local.get("condition_folded") != 3 || local.get("condition_negated") != 0 ||
+        local.get("condition_macro") != 7) {
+        std::cerr << backend << ": conditionals must inspect, not consume, the float stack\n";
+        return false;
+    }
+    mouse.press("bus_doorfront0", 40, 60, press, release);
+    mouse.cancel(release);
+    if (local.get("front_door_request") != 0) {
+        std::cerr << backend << ": front door must remain interlocked before brake activation\n";
+        return false;
+    }
+    const auto errorsBeforeBrake = runtime.errors().size();
+    mouse.press("bus_20h-switch", 40, 60, press, release);
+    mouse.update(true, true, 40, 60, drag, release);
+    mouse.cancel(release);
+    if (local.get("door_20h_sw") != 1 || local.get("brake_press_count") != 1 ||
+        runtime.errors().size() != errorsBeforeBrake) {
+        std::cerr << backend << ": hyphenated brake click must toggle once without optional handlers\n";
+        return false;
+    }
+    if (!runtime.hasScriptEntryPoint("trigger_bus_20h-switch") ||
+        !runtime.hasScriptEntryPoint("TRIGGER_BUS_20H-SWITCH") ||
+        !runtime.hasScriptEntryPoint("trigger_bus_20h_switch") ||
+        runtime.hasScriptEntryPoint("trigger_missing-switch")) {
+        std::cerr << backend << ": authored and normalized entry-point lookups disagree\n";
+        return false;
+    }
+    mouse.press("bus_doorfront0", 40, 60, press, release);
+    if (local.get("front_door_request") != 1) {
+        std::cerr << backend << ": brake activation must allow the front-door request\n";
+        return false;
+    }
+    mouse.cancel(release);
+    mouse.press("bus_20h-switch", 40, 60, press, release);
+    mouse.cancel(release);
+    if (local.get("door_20h_sw") != 0 || local.get("brake_press_count") != 2) {
+        std::cerr << backend << ": second brake click must toggle off\n";
+        return false;
+    }
+    mouse.press("dragonly", 40, 60, press, release);
+    mouse.update(true, true, 40, 55, drag, release);
+    if (local.get("dragonly_count") != 1 || local.get("dragonly_y") != -5) {
+        std::cerr << backend << ": captured drag-only mouse event must dispatch _drag without a base trigger\n";
+        return false;
+    }
+    mouse.cancel(release);
     mouse.press("control", 100, 200, press, release);
     mouse.update(true, true, 100, 200, drag, release);
     mouse.update(true, true, 100, 200, drag, release);
@@ -131,10 +183,28 @@ int main() {
                   "{trigger:held}\n(L.L.held_press) 1 + (S.L.held_press)\n"
                   "(L.S.Timegap) (S.L.key_time)\n(L.S.mouse_x) (S.L.key_mouse)\n{end}\n"
                   "{trigger:held_off}\n(L.L.held_release) 1 + (S.L.held_release)\n{end}\n"
+                  "{trigger:bus_20h-switch}\n"
+                  "(L.L.door_20h_sw) ! (S.L.door_20h_sw)\n"
+                  "(L.L.brake_press_count) 1 + (S.L.brake_press_count)\n{end}\n"
+                  "{trigger:bus_doorfront0}\n"
+                  "(L.L.door_20h_sw)\n{if}\n(M.L.request_front)\n{endif}\n{end}\n"
+                  "{macro:request_front}\n1 &&\n{if}\n"
+                  "1 (S.L.front_door_request)\n{endif}\n{end}\n"
+                  "{trigger:bus_doorfront0_off}\n0 (S.L.front_door_request)\n{end}\n"
+                  "{trigger:conditional}\n"
+                  "5 {if} (S.L.condition_true) {endif}\n"
+                  "0 {if} 99 {else} (S.L.condition_false) {endif}\n"
+                  "1 2 + {if} (S.L.condition_folded) {endif}\n"
+                  "1 ! {if} 99 {else} (S.L.condition_negated) {endif}\n"
+                  "1 {if} (M.L.conditional_gate) {endif}\n{end}\n"
+                  "{macro:conditional_gate}\n"
+                  "1 && {if} 7 (S.L.condition_macro) {endif}\n{end}\n"
                   "{trigger:control}\n(L.L.press_count) 1 + (S.L.press_count)\n{end}\n"
                   "{trigger:control_drag}\n(L.L.drag_count) 1 + (S.L.drag_count)\n"
                   "(L.S.mouse_x) (S.L.drag_dx)\n(L.S.mouse_y) (S.L.drag_dy)\n"
                   "(L.S.Timegap) (S.L.drag_time)\n{end}\n"
+                  "{trigger:dragonly_drag}\n(L.L.dragonly_count) 1 + (S.L.dragonly_count)\n"
+                  "(L.S.mouse_y) (S.L.dragonly_y)\n{end}\n"
                   "{trigger:control_off}\n(L.L.release_count) 1 + (S.L.release_count)\n"
                   "(L.S.mouse_y) (S.L.release_mouse)\n{end}\n";
     }

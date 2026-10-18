@@ -71,6 +71,16 @@ int main() {
     const auto invalidMouse = openbus::input::mouseControlInputs(400.0, 300.0, 0.0, 600.0);
     const double smoothedSteering = openbus::input::smoothSteeringInput(0.0, 1.0, 0.1, 6.0);
     const double unsmoothedSteering = openbus::input::smoothSteeringInput(0.0, 1.0, 0.1, 0.0);
+    const double mouseSteeringFirstFrame = openbus::input::smoothSteeringInput(
+        0.0, 1.0, 1.0 / 60.0, openbus::input::DEFAULT_MOUSE_STEERING_SMOOTHING_RATE);
+    double mouseSteeringAfterQuarterSecond = 0.0;
+    for (int frame = 0; frame < 15; ++frame) {
+        mouseSteeringAfterQuarterSecond = openbus::input::smoothSteeringInput(
+            mouseSteeringAfterQuarterSecond, 1.0, 1.0 / 60.0,
+            openbus::input::DEFAULT_MOUSE_STEERING_SMOOTHING_RATE);
+    }
+    const double mouseSteeringReversal = openbus::input::smoothSteeringInput(
+        1.0, -1.0, 1.0 / 60.0, openbus::input::DEFAULT_MOUSE_STEERING_SMOOTHING_RATE);
     if (centerMouse.throttle != 0.0 || centerMouse.steering != 0.0 ||
         centerMouse.brake != 0.0 || topMouse.throttle != 1.0 || topMouse.brake != 0.0 ||
         bottomMouse.throttle != 0.0 || bottomMouse.brake != 1.0 || leftMouse.steering != -1.0 ||
@@ -79,7 +89,10 @@ int main() {
         invalidMouse.steering != 0.0 || invalidMouse.brake != 0.0 ||
         std::abs(slightlyLeftOfCenter.steering + 0.01) > 1.0e-9 ||
         std::abs(slightlyRightOfCenter.steering - 0.01) > 1.0e-9 ||
-        std::abs(smoothedSteering - 0.6) > 1.0e-9 || unsmoothedSteering != 1.0) {
+        std::abs(smoothedSteering - 0.6) > 1.0e-9 || unsmoothedSteering != 1.0 ||
+        std::abs(mouseSteeringFirstFrame - 8.0 / 60.0) > 1.0e-9 ||
+        std::abs(mouseSteeringAfterQuarterSecond - 1.0) > 1.0e-9 ||
+        std::abs(mouseSteeringReversal - (1.0 - 8.0 / 60.0)) > 1.0e-9) {
         std::cerr << "mouse mapping or steering smoothing produced an unexpected value\n";
         return 1;
     }

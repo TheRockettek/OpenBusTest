@@ -322,6 +322,19 @@ openbus_configure_perf_trace(OpenBusPhysicsStressProbe)
 target_include_directories(OpenBusPhysicsStressProbe PRIVATE src)
 target_link_libraries(OpenBusPhysicsStressProbe PRIVATE ${OPENBUS_ODE_TARGET})
 
+add_executable(OpenBusPhysicsContactProbe
+    tests/BusSimulationContactProbe.cpp
+    src/BusSimulation.cpp
+    src/Logger.cpp
+    src/PerfTrace.cpp
+    src/RoadFeatures.cpp
+    src/Variables.cpp
+)
+
+openbus_configure_perf_trace(OpenBusPhysicsContactProbe)
+target_include_directories(OpenBusPhysicsContactProbe PRIVATE src)
+target_link_libraries(OpenBusPhysicsContactProbe PRIVATE ${OPENBUS_ODE_TARGET})
+
 add_executable(OpenBusVariablesProbe
     tests/VariablesProbe.cpp
     src/Variables.cpp
@@ -473,6 +486,7 @@ add_test(NAME OpenBusTextureLoaderProbe COMMAND OpenBusTextureLoaderProbe)
 add_test(NAME OpenBusPhysicsProbe COMMAND OpenBusPhysicsProbe)
 add_test(NAME OpenBusStabilityProbe COMMAND OpenBusStabilityProbe)
 add_test(NAME OpenBusPhysicsStressProbe COMMAND OpenBusPhysicsStressProbe)
+add_test(NAME OpenBusPhysicsContactProbe COMMAND OpenBusPhysicsContactProbe)
 
 add_executable(OpenBusCameraMathProbe
     tests/CameraMathProbe.cpp

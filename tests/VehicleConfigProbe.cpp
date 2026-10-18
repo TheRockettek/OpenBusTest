@@ -87,8 +87,28 @@ int main() {
     writeResistanceConfig(negativeResistancePath, "[rollwiderstand]\n-1\n");
     const VehicleConfig negativeResistance =
         loadVehicleConfig(negativeResistancePath, VehicleFileKind::Bus, false);
+    const std::filesystem::path reflectionCameraPath = root / "reflection_cameras.bus";
+    writeResistanceConfig(reflectionCameraPath,
+                          "[add_camera_reflexion]\n1\n2\n3\n0\n40\n10\n-5\n"
+                          "[add_camera_reflexion_static]\n1\n2\n3\n0\n40\n10\n-5\n"
+                          "[add_camera_reflexion_2]\n1\n2\n3\n0\n40\n10\n-5\n12\n"
+                          "[add_camera_reflexion_2_static]\n1\n2\n3\n0\n40\n10\n-5\n12\n");
+    const VehicleConfig reflectionCameras =
+        loadVehicleConfig(reflectionCameraPath, VehicleFileKind::Bus, false);
+    const auto& reflections = reflectionCameras.cameras;
+    const bool reflectionCameraKeywordsParsed =
+        !reflectionCameras.diagnostics.hasErrors() && reflections.size() == 4 &&
+        reflections[0].kind == VehicleCameraKind::Reflexion && reflections[0].followsViewer &&
+        reflections[1].kind == VehicleCameraKind::Reflexion && !reflections[1].followsViewer &&
+        reflections[2].kind == VehicleCameraKind::Reflexion2 && reflections[2].followsViewer &&
+        reflections[3].kind == VehicleCameraKind::Reflexion2 && !reflections[3].followsViewer &&
+        reflections[3].pan == 10.0 && reflections[3].tilt == -5.0;
     std::filesystem::remove_all(root);
 
+    if (!reflectionCameraKeywordsParsed) {
+        std::cerr << "Reflection camera keywords or their viewer-following flags were not parsed\n";
+        return 1;
+    }
     if (result.diagnostics.hasErrors() || !caseMismatchedScriptConverted ||
         result.friendlyManufacturer != "Mercedes-Benz" ||
         result.friendlyVehicleName != "Citaro E400" ||

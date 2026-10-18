@@ -1846,14 +1846,21 @@ struct Vehicle {
             character = std::isalnum(byte) ? static_cast<char>(std::tolower(byte)) : '_';
         }
         const std::string handler = "trigger_" + scriptEvent;
-        const bool handlerFound = scripts != nullptr && scripts->hasScriptEntryPoint(handler);
+        const bool pressHandlerFound =
+            scripts != nullptr && scripts->hasScriptEntryPoint(handler);
+        const bool dragHandlerFound =
+            scripts != nullptr && scripts->hasScriptEntryPoint(handler + "_drag");
+        const bool releaseHandlerFound =
+            scripts != nullptr && scripts->hasScriptEntryPoint(handler + "_off");
         std::ostringstream description;
         description << "Clickable part[" << partIndex << "] mesh=\"" << part.meshName << "\"";
         if (!part.meshIdentifier.empty()) {
             description << " id=\"" << part.meshIdentifier << "\"";
         }
         description << " mouseevent=\"" << part.mouseEvent << "\" maps_to=" << handler
-                    << " handler=" << (handlerFound ? "found" : "missing") << " visible="
+                    << " press=" << (pressHandlerFound ? "found" : "missing")
+                    << " drag=" << (dragHandlerFound ? "found" : "missing")
+                    << " release=" << (releaseHandlerFound ? "found" : "missing") << " visible="
                     << (clickablePartVisible(part, partIndex, context) ? "yes" : "no")
                     << " bounds_size_xyz=(" << part.size[0] << ',' << part.size[1] << ','
                     << part.size[2] << ") [model units]";
@@ -4365,15 +4372,14 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
             steeringSmoothingRate_ = 0.0;
         }
     }
+    gameLog.Log("Mouse steering smoothing: " +
+            std::to_string(openbus::input::DEFAULT_MOUSE_STEERING_SMOOTHING_RATE) +
+            " input units/s; keyboard steering remains unsmoothed");
     if (scriptRateHz_ > 0.0) {
         gameLog.Log("Script rate limited to " + std::to_string(scriptRateHz_) + " Hz");
     } else {
         gameLog.Log("Scripts follow the render rate");
     }
-    gameLog.Log(steeringSmoothingRate_ > 0.0
-                    ? "Steering smoothing limited to " + std::to_string(steeringSmoothingRate_) +
-                          " input units/s"
-                    : "Steering smoothing disabled");
     if (!glfwInit()) {
         gameLog.Log("Failed to initialize GLFW");
         throw std::runtime_error("Failed to initialize GLFW");
@@ -4526,6 +4532,13 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& busConfigPath,
                 ++driverIndex;
             }
             cameraView_ = selectedCamera >= 0 ? selectedCamera + 1 : 1;
+            reflectionReferenceCamera_ = selectedCamera;
+            for (std::size_t index = 0;
+                 reflectionReferenceCamera_ < 0 && index < vehicleCameras_.size(); ++index) {
+                if (vehicleCameras_[index].kind == VehicleCameraKind::Driver) {
+                    reflectionReferenceCamera_ = static_cast<int>(index);
+                }
+            }
         }
         reflectionRenderer_->initialize(vehicleCameras_);
     }
@@ -4641,8 +4654,10 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
     TraceScope trace("frame", "RenderLoop::updatePlayerVariables");
     soundViewpoint_ =
         isExteriorView() ? RenderViewContext::PlayerExterior : RenderViewContext::PlayerInterior;
+    const double steeringSmoothingRate = (mouseControlEnabled_ ? steeringSmoothingRate_ : 0.0);
     smoothedSteering_ = openbus::input::smoothSteeringInput(
-        smoothedSteering_, steering, std::clamp(frameTimeStep_, 0.0, 0.25), steeringSmoothingRate_);
+        smoothedSteering_, steering, std::clamp(frameTimeStep_, 0.0, 0.25),
+        steeringSmoothingRate);
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(simulation, throttle, smoothedSteering_, brake);
     }
@@ -5286,12 +5301,35 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             const bool reflectionCamera = camera->kind == VehicleCameraKind::Reflexion ||
                                           camera->kind == VehicleCameraKind::Reflexion2;
             const double panSign = reflectionCamera ? 1.0 : -1.0;
-            const double pan = panSign * camera->pan * DEGREES_TO_RADIANS + viewLookYaw_;
-            const double tilt = camera->tilt * DEGREES_TO_RADIANS + viewLookPitch_;
+            double pan = panSign * camera->pan * DEGREES_TO_RADIANS + viewLookYaw_;
+            double tilt = camera->tilt * DEGREES_TO_RADIANS + viewLookPitch_;
             const double modelOffsetZ =
                 playerVehicle_ != nullptr ? playerVehicle_->modelOffsetZ : 0.0;
             const std::array<double, 3> centerLocal = {camera->position[1], -camera->position[0],
                                                        camera->position[2] + modelOffsetZ};
+            if (reflectionCamera && camera->followsViewer && renderingReflection_ &&
+                reflectionViewerEyeLocalValid_ && reflectionReferenceCamera_ >= 0 &&
+                static_cast<std::size_t>(reflectionReferenceCamera_) < vehicleCameras_.size()) {
+                const VehicleCamera& reference =
+                    vehicleCameras_[static_cast<std::size_t>(reflectionReferenceCamera_)];
+                const double referencePan = -reference.pan * DEGREES_TO_RADIANS;
+                const double referenceTilt = reference.tilt * DEGREES_TO_RADIANS;
+                const std::array<double, 3> referenceEye = {
+                    reference.position[1] - std::cos(referenceTilt) * std::cos(referencePan) *
+                                                reference.orbitDistance,
+                    -reference.position[0] - std::cos(referenceTilt) * std::sin(referencePan) *
+                                                 reference.orbitDistance,
+                    reference.position[2] + modelOffsetZ -
+                        std::sin(referenceTilt) * reference.orbitDistance};
+                const std::array<double, 3> reflected =
+                    openbus::rendering::mirrorReflectionDirection(
+                        centerLocal,
+                        {std::cos(tilt) * std::cos(pan), std::cos(tilt) * std::sin(pan),
+                         std::sin(tilt)},
+                        referenceEye, reflectionViewerEyeLocal_);
+                pan = std::atan2(reflected[1], reflected[0]);
+                tilt = std::asin(std::clamp(reflected[2], -1.0, 1.0));
+            }
             const std::array<double, 3> direction = {
                 std::cos(tilt) * std::cos(pan), std::cos(tilt) * std::sin(pan), std::sin(tilt)};
             const std::array<double, 3> upLocal = {-std::sin(tilt) * std::cos(pan),
@@ -5404,6 +5442,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             };
             soundEngine_.setListenerPose(toLocalPoint(eyeWorld), toLocalDirection(forwardWorld),
                                          toLocalDirection(upWorld));
+            reflectionViewerEyeLocal_ = toLocalPoint(eyeWorld);
+            reflectionViewerEyeLocalValid_ = true;
         }
     }
     {
@@ -5544,6 +5584,11 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             std::string event = playerVehicle_->mouseEventAt(
                 pendingMouseClickX_ * framebufferScaleX, pendingMouseClickY_ * framebufferScaleY,
                 framebufferWidth_, framebufferHeight_, interactionContext);
+            if (clickableDebugOverlay_) {
+                gameLog.Log("Mouse press picked event=" +
+                            (event.empty() ? std::string("none") : event));
+            }
+            mouseDragDiagnosticLogged_ = false;
             mouseInteraction_.press(
                 std::move(event), pendingMouseClickX_, pendingMouseClickY_,
                 [this](const std::string& pressedEvent) {
@@ -5556,6 +5601,35 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 true, leftMousePressed_, cursorX, cursorY,
                 [this](const std::string& event, double deltaX, double deltaY, double x, double y) {
                     if (playerVehicle_->scripts) {
+                        if (clickableDebugOverlay_ && !mouseDragDiagnosticLogged_ &&
+                            (deltaX != 0.0 || deltaY != 0.0)) {
+                            std::string normalizedEvent = event;
+                            std::transform(normalizedEvent.begin(), normalizedEvent.end(),
+                                           normalizedEvent.begin(), [](unsigned char character) {
+                                               return std::isalnum(character)
+                                                          ? static_cast<char>(std::tolower(character))
+                                                          : '_';
+                                           });
+                            const std::string functionName =
+                                "trigger_" + normalizedEvent + "_drag";
+                            const bool dragHandlerFound =
+                                playerVehicle_->scripts->hasScriptEntryPoint(functionName);
+                            mouseDragDiagnosticLogged_ = true;
+                            playerVehicle_->scripts->invokeMouseDrag(event, deltaX, deltaY, x, y);
+                            std::ostringstream description;
+                            description << "Mouse drag event=" << event << " dx=" << deltaX
+                                        << " dy=" << deltaY << " drag_handler="
+                                        << (dragHandlerFound ? "found" : "missing");
+                            if (normalizedEvent == "cp_rollo") {
+                                description << " cp_rollo_pos="
+                                            << playerVehicle_->variables.get("cp_rollo_pos");
+                            } else if (normalizedEvent == "cp_rollof") {
+                                description << " cp_rollof_pos="
+                                            << playerVehicle_->variables.get("cp_rollof_pos");
+                            }
+                            gameLog.Log(description.str());
+                            return;
+                        }
                         playerVehicle_->scripts->invokeMouseDrag(event, deltaX, deltaY, x, y);
                     }
                 },

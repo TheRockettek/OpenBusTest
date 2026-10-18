@@ -368,9 +368,14 @@ bool checkFailuresAndUnknownTriggers(const std::filesystem::path& configPath) {
                      variables, exterior);
     }
     bank.trigger(playback, "unknown", {}, 1.0F, variables, exterior);
+    bank.trigger(playback, "UNKNOWN", {}, 1.0F, variables, exterior);
+    for (int repeat = 0; repeat < 32; ++repeat) {
+        bank.trigger(playback, "unknown", {}, 1.0F, variables, exterior);
+        bank.trigger(playback, "UNKNOWN", {}, 1.0F, variables, exterior);
+    }
     bool passed = expect(playback.playAttempts == 0 && playback.active.empty() &&
                              playback.queried.empty(),
-                         "unknown triggers must be skipped even with a supplied file");
+                         "unknown triggers must remain silent with repeated case-insensitive lookups");
 
     playback.failuresRemaining = 2;
     bank.trigger(playback, "ev_shared_a", {}, 0.0F, variables, exterior);

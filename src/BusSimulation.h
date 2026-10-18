@@ -11,6 +11,12 @@ namespace openbus::scripting {
 class Vehicle;
 }
 
+struct WheelStaticContactSettings {
+  // A lower ERP and higher CFM make wheel contact with static map surfaces more compliant.
+  double erp = 0.65;
+  double cfm = 1.0e-5;
+};
+
 class BusSimulation {
   public:
     explicit BusSimulation(BusConfiguration configuration, VehiclePlacement placement,
@@ -18,7 +24,8 @@ class BusSimulation {
                            double groundPlaneZ = 0.0,
                            std::vector<TerrainCollisionGrid> terrain = {},
                            std::vector<StaticCollisionMesh> staticCollision = {},
-                           bool createDefaultGround = true);
+                           bool createDefaultGround = true,
+                           WheelStaticContactSettings wheelStaticContact = {});
     ~BusSimulation();
 
     BusSimulation(const BusSimulation&) = delete;

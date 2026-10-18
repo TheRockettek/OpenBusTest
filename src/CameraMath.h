@@ -37,6 +37,13 @@ const Matrix4& modelViewMatrix();
 const Matrix4& projectionMatrix();
 void setModelViewMatrix(const Matrix4& matrix);
 std::array<double, 3> transformLocalPoint(const BodyPose& pose, const std::array<double, 3>& local);
+// Treats a reflection camera as a planar mirror at `mirror` that shows `authoredDirection` to
+// `referenceEye`, and returns the direction it shows to `viewerEye`. Returns the normalized
+// authored direction when the mirror plane is undefined or the viewer is behind it.
+std::array<double, 3> mirrorReflectionDirection(const std::array<double, 3>& mirror,
+                                                const std::array<double, 3>& authoredDirection,
+                                                const std::array<double, 3>& referenceEye,
+                                                const std::array<double, 3>& viewerEye);
 std::array<double, 3> freeCameraForward(double yawRadians, double pitchRadians);
 FreeCameraPose moveFreeCamera(const FreeCameraPose& pose, double forwardInput, double rightInput,
                               double verticalInput, double deltaSeconds,

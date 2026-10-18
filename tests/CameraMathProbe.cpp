@@ -122,5 +122,39 @@ int main() {
         std::cerr << "Free camera movement did not cap long frame-time steps\n";
         return 1;
     }
+    {
+        using openbus::rendering::mirrorReflectionDirection;
+        const auto near = [](const std::array<double, 3>& left,
+                             const std::array<double, 3>& right) {
+            return std::abs(left[0] - right[0]) < 1.0e-9 && std::abs(left[1] - right[1]) < 1.0e-9 &&
+                   std::abs(left[2] - right[2]) < 1.0e-9;
+        };
+        // Mirror at the origin seen head-on from -X, so it shows straight back toward -X.
+        const std::array<double, 3> mirror = {0.0, 0.0, 0.0};
+        const std::array<double, 3> authored = {-1.0, 0.0, 0.0};
+        const std::array<double, 3> referenceEye = {-1.0, 0.0, 0.0};
+        if (!near(mirrorReflectionDirection(mirror, authored, referenceEye, referenceEye),
+                  authored)) {
+            std::cerr << "Mirror direction changed for the reference viewer\n";
+            return 1;
+        }
+        // Moving the viewer to +Y swings the reflected view to -Y (angle of incidence equals
+        // angle of reflection).
+        const std::array<double, 3> shifted =
+            mirrorReflectionDirection(mirror, authored, referenceEye, {-1.0, 1.0, 0.0});
+        const double inverseRoot2 = 1.0 / std::sqrt(2.0);
+        if (!near(shifted, {-inverseRoot2, -inverseRoot2, 0.0})) {
+            std::cerr << "Mirror direction did not follow the viewer position\n";
+            return 1;
+        }
+        // A viewer behind the mirror plane keeps the authored direction.
+        if (!near(mirrorReflectionDirection(mirror, authored, referenceEye, {1.0, 0.5, 0.0}),
+                  authored) ||
+            !near(mirrorReflectionDirection(mirror, authored, mirror, {-1.0, 1.0, 0.0}),
+                  authored)) {
+            std::cerr << "Degenerate mirror inputs did not fall back to the authored direction\n";
+            return 1;
+        }
+    }
     return 0;
 }

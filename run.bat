@@ -29,5 +29,6 @@ set "OPENBUS_DOPPLER=1"
 
 set "OPENBUS_CAPTURE_VIEWS="
 set "OPENBUS_CULLING_BACKEND=cpu"
+set "OPENBUS_STEERING_SMOOTHING=1"
 
 cmake --preset windows-clang-ninja && cmake --build --preset windows-clang-ninja --target OpenBus && .\build-ninja\OpenBus.exe

@@ -339,6 +339,75 @@ void runJoinProbe() {
             "ambiguous short loops cannot weld two endpoints onto one neighbor endpoint");
 }
 
+void runAuthoredSkewJoinProbe() {
+    using namespace openbus::map;
+    MapSplinePlacement first;
+    first.geometryValid = true;
+    first.splineId = 518;
+    first.previousSplineId = 517;
+    first.nextSplineId = 519;
+    first.localX = 72.2001113607307;
+    first.elevation = -0.00999999228392505;
+    first.localY = 105.651410888032;
+    first.rotationDegrees = 139.684998029509;
+    first.length = 3.999999937227;
+    first.skewEnd = 1.02286673378804;
+
+    MapSplinePlacement second;
+    second.geometryValid = true;
+    second.splineId = 519;
+    second.previousSplineId = 518;
+    second.nextSplineId = 520;
+    second.localX = 74.7880662387655;
+    second.elevation = -0.00999999159673029;
+    second.localY = 102.601408582255;
+    second.rotationDegrees = 48.3896957169828;
+    second.length = 3.50000011687231;
+    second.skewStart = -1.02286673378804;
+
+    MapRoadConnectionIndex connections;
+    connections.addSpline(first, 0, 0);
+    connections.addSpline(second, 0, 0);
+    connections.finalize();
+    const MapRoadSplineJoins firstJoins = connections.joinsFor(first, 0, 0);
+    const MapRoadSplineJoins secondJoins = connections.joinsFor(second, 0, 0);
+    require(firstJoins.end.has_value() && secondJoins.start.has_value(),
+            "Cotterell's reciprocal skewed right-angle splines are joined");
+
+    MapSplineProfileSection section;
+    section.points = {{0.0, 0.0, 0.0, 0.0}, {3.0, 0.0, 1.0, 0.0}};
+    const auto firstSamples = tessellateMapSpline(first.localX, first.localY,
+                                                  first.rotationDegrees, first.length, 0.0);
+    const auto secondSamples = tessellateMapSpline(second.localX, second.localY,
+                                                   second.rotationDegrees, second.length, 0.0);
+    const auto firstGeometry =
+        buildMapRoadSectionGeometry(first, firstSamples, section, firstJoins);
+    const auto secondGeometry =
+        buildMapRoadSectionGeometry(second, secondSamples, section, secondJoins);
+    requireSamePosition(firstGeometry.vertices.back(), secondGeometry.vertices[1]);
+
+    const MapSplineSample& firstEndpoint = firstSamples.back();
+    const MapSplineSample& secondEndpoint = secondSamples.front();
+    const auto firstRight = mapSplineRightOffset(firstEndpoint.headingRadians, 1.0);
+    const auto secondRight = mapSplineRightOffset(secondEndpoint.headingRadians, 1.0);
+    const std::array<double, 2> firstAxis = {
+        firstRight[0] + first.skewEnd * std::sin(firstEndpoint.headingRadians),
+        firstRight[1] + first.skewEnd * std::cos(firstEndpoint.headingRadians)};
+    const std::array<double, 2> secondAxis = {
+        secondRight[0] + second.skewStart * std::sin(secondEndpoint.headingRadians),
+        secondRight[1] + second.skewStart * std::cos(secondEndpoint.headingRadians)};
+    requireNear(firstJoins.end->lateralAxis[0], 0.5 * (firstAxis[0] + secondAxis[0]),
+                "aligned skew seam uses the mean authored parallelogram axis (x)");
+    requireNear(firstJoins.end->lateralAxis[1], 0.5 * (firstAxis[1] + secondAxis[1]),
+                "aligned skew seam uses the mean authored parallelogram axis (y)");
+    requireNear(firstGeometry.vertices.back().x,
+                firstJoins.end->center[0] + 3.0 * firstJoins.end->lateralAxis[0],
+                "first skewed strip ends on its shared cross-section (x)");
+    requireNear(firstGeometry.vertices.back().y,
+                firstJoins.end->center[1] + 3.0 * firstJoins.end->lateralAxis[1],
+                "first skewed strip ends on its shared cross-section (y)");
+}
+
 void runProbe() {
     openbus::map::MapSplinePlacement spline;
     spline.geometryValid = true;
@@ -731,6 +800,7 @@ int main() {
         runProbe();
         runSkewProbe();
         runJoinProbe();
+        runAuthoredSkewJoinProbe();
         runHeightProfileCantProbe();
         runMixedWidthJoinProbe();
     } catch (const std::exception& error) {

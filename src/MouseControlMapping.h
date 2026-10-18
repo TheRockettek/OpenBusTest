@@ -5,6 +5,9 @@
 
 namespace openbus::input {
 
+// A full sweep from center to lock takes 125 ms; a lock-to-lock reversal takes 250 ms.
+inline constexpr double DEFAULT_MOUSE_STEERING_SMOOTHING_RATE = 8.0;
+
 struct MouseControlInputs {
     double throttle = 0.0;
     double steering = 0.0;

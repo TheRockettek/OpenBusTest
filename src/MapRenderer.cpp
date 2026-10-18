@@ -1151,12 +1151,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                             const ObjTexCoord& coordinate =
                                 parsed->texCoords[static_cast<std::size_t>(index.texCoord - 1)];
                             u = static_cast<float>(coordinate.u);
-                            // Text .x foliage assets may author a negative V range that already
-                            // establishes the intended orientation. O3D's stored coordinate has
-                            // already been converted by O3DLoader, so retain the map renderer's
-                            // existing second conversion only for that format.
-                            v = static_cast<float>(meshExtension == ".x" ? coordinate.v
-                                                                         : 1.0 - coordinate.v);
+                            v = static_cast<float>(1.0 - coordinate.v);
                         }
                         verticesByMaterial[materialIndex].push_back(
                             {static_cast<float>(sourcePosition.x),

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class Variables;
@@ -80,6 +81,7 @@ class VehicleSoundBank {
     void stopAmbientLoopFile(SoundPlayback& playback, const std::filesystem::path& path);
 
     std::unordered_map<std::string, std::vector<SoundTriggerDefinition>> triggers_;
+    std::unordered_set<std::string> warnedUnknownTriggers_;
     std::vector<SoundTriggerDefinition> untriggeredLoopSounds_;
     std::filesystem::path basePath_;
     std::unordered_map<SoundDefinitionId, ActiveSound> activeTriggeredLoops_;

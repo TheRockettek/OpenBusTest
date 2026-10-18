@@ -1029,7 +1029,7 @@ struct ScriptRuntime::Impl {
                 case OscOpcode::StackDump:
                     break;
                 case OscOpcode::JumpIfFalse:
-                    if (nativePopFloat() == 0.0) {
+                    if (nativePeekFloat() == 0.0F) {
                         instructionPointer = static_cast<std::size_t>(instruction.index);
                     }
                     break;
@@ -2557,9 +2557,10 @@ bool ScriptRuntime::hasScriptEntryPoint(const std::string& functionName) const {
     if (!impl_ || functionName.empty()) {
         return false;
     }
+    const std::string normalized = scriptName(functionName);
     if (impl_->nativeBackend) {
         for (const std::shared_ptr<const OscProgram>& program : impl_->nativePrograms) {
-            if (program->functions.find(functionName) != program->functions.end()) {
+            if (program->functions.find(normalized) != program->functions.end()) {
                 return true;
             }
         }
@@ -2569,7 +2570,7 @@ bool ScriptRuntime::hasScriptEntryPoint(const std::string& functionName) const {
         return false;
     }
     lua_rawgeti(impl_->state, LUA_REGISTRYINDEX, impl_->scriptEnvironment.reference);
-    lua_getfield(impl_->state, -1, functionName.c_str());
+    lua_getfield(impl_->state, -1, normalized.c_str());
     const bool found = lua_isfunction(impl_->state, -1) != 0;
     lua_pop(impl_->state, 2);
     return found;
@@ -2585,6 +2586,10 @@ void ScriptRuntime::invokeMouseRelease(const std::string& eventName) {
         impl_->floatStack.clear();
         impl_->stringStack.clear();
         const std::string functionName = "trigger_" + scriptName(normalized) + "_off";
+        // Toggle controls need not define a release handler.
+        if (!hasScriptEntryPoint(functionName)) {
+            return;
+        }
         const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                                   : impl_->invoke(functionName.c_str());
         if (!invoked) {

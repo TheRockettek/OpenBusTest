@@ -174,22 +174,44 @@ void MapRoadConnectionIndex::finalize() {
                 seam.center[axis] =
                     std::midpoint(ownFrame.center[axis], neighborFrame.center[axis]);
             }
-            // Automatic miter plus the mean authored shear in the common traversal frame.
-            for (std::size_t axis = 0; axis < 2; ++axis) {
-                seam.lateralAxis[axis] =
-                    (right[axis] + otherRight[axis]) / denominator +
-                    0.5 * (ownFrame.lateralAxis[axis] - right[axis] +
-                           sign * neighborFrame.lateralAxis[axis] - otherRight[axis]);
+            std::array<double, 3> orientedNeighborAxis = neighborFrame.lateralAxis;
+            for (double& component : orientedNeighborAxis) {
+                component *= sign;
             }
-            const double along = seam.lateralAxis[0] * std::sin(sample->headingRadians) +
-                                 seam.lateralAxis[1] * std::cos(sample->headingRadians);
-            const double otherAlong =
-                seam.lateralAxis[0] * std::sin(neighborSample->headingRadians) +
-                seam.lateralAxis[1] * std::cos(neighborSample->headingRadians);
-            seam.lateralAxis[2] =
-                0.5 * (along * (end ? spline.gradientEnd : spline.gradientStart) / 100.0 +
-                       otherAlong * (*neighborEnd ? neighbor.gradientEnd : neighbor.gradientStart) /
-                           100.0);
+            const double authoredAxisDifference =
+                std::hypot(ownFrame.lateralAxis[0] - orientedNeighborAxis[0],
+                           ownFrame.lateralAxis[1] - orientedNeighborAxis[1]);
+            const double authoredAxisScale =
+                std::max({1.0, std::hypot(ownFrame.lateralAxis[0], ownFrame.lateralAxis[1]),
+                          std::hypot(orientedNeighborAxis[0], orientedNeighborAxis[1])});
+            if (authoredAxisDifference <= 0.025 * authoredAxisScale) {
+                // Skew is already included in each endpoint axis. When the authored
+                // parallelogram cuts align across a corner, use that shared axis rather
+                // than adding the automatic miter a second time.
+                for (std::size_t axis = 0; axis < 3; ++axis) {
+                    seam.lateralAxis[axis] =
+                        std::midpoint(ownFrame.lateralAxis[axis], orientedNeighborAxis[axis]);
+                }
+            } else {
+                // Otherwise use an automatic miter plus the mean authored shear in the
+                // common traversal frame to reconcile the two endpoint cross-sections.
+                for (std::size_t axis = 0; axis < 2; ++axis) {
+                    seam.lateralAxis[axis] =
+                        (right[axis] + otherRight[axis]) / denominator +
+                        0.5 * (ownFrame.lateralAxis[axis] - right[axis] +
+                               orientedNeighborAxis[axis] - otherRight[axis]);
+                }
+                const double along = seam.lateralAxis[0] * std::sin(sample->headingRadians) +
+                                     seam.lateralAxis[1] * std::cos(sample->headingRadians);
+                const double otherAlong =
+                    seam.lateralAxis[0] * std::sin(neighborSample->headingRadians) +
+                    seam.lateralAxis[1] * std::cos(neighborSample->headingRadians);
+                seam.lateralAxis[2] =
+                    0.5 * (along * (end ? spline.gradientEnd : spline.gradientStart) / 100.0 +
+                           otherAlong * (*neighborEnd ? neighbor.gradientEnd
+                                                     : neighbor.gradientStart) /
+                               100.0);
+            }
             seam.cantContributions[0] = ownFrame.cantContributions[0];
             seam.cantContributions[0].cantPercent *= 0.5;
             seam.cantContributions[1] = neighborFrame.cantContributions[0];
