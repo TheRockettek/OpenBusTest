@@ -283,6 +283,21 @@ if(OPENBUS_ENABLE_IPO)
     endif()
 endif()
 
+add_executable(OpenBusPerfTraceProbe tests/PerfTraceProbe.cpp src/PerfTrace.cpp)
+target_include_directories(OpenBusPerfTraceProbe PRIVATE src)
+target_compile_definitions(OpenBusPerfTraceProbe PRIVATE OPENBUS_ENABLE_PERF_TRACE=1)
+find_package(Threads REQUIRED)
+target_link_libraries(OpenBusPerfTraceProbe PRIVATE Threads::Threads)
+foreach(mode toggle autostart cap failure)
+    add_test(NAME OpenBusPerfTraceProbe.${mode} COMMAND OpenBusPerfTraceProbe ${mode})
+endforeach()
+
+add_executable(OpenBusPerfTraceDisabledProbe tests/PerfTraceProbe.cpp src/PerfTrace.cpp)
+target_include_directories(OpenBusPerfTraceDisabledProbe PRIVATE src)
+target_compile_definitions(OpenBusPerfTraceDisabledProbe PRIVATE OPENBUS_ENABLE_PERF_TRACE=0)
+target_link_libraries(OpenBusPerfTraceDisabledProbe PRIVATE Threads::Threads)
+add_test(NAME OpenBusPerfTraceDisabledProbe COMMAND OpenBusPerfTraceDisabledProbe)
+
 add_executable(OpenBusPhysicsProbe
     tests/BusSimulationSteeringProbe.cpp
     src/BusSimulation.cpp

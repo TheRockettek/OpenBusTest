@@ -93,7 +93,8 @@ int main() {
         applicationLog.Log(
             "Performance tracing instrumentation is compiled in; runtime=" +
             (traceEnabled.empty() ? std::string("disabled") : traceEnabled) + ", output=" +
-            (tracePath.empty() ? std::string("openbus_trace.json") : tracePath) + ".");
+            (tracePath.empty() ? std::string("openbus_trace.json") : tracePath) +
+            ". Press F10 to toggle recording.");
 #else
         applicationLog.Log("Performance tracing instrumentation is not compiled in.");
 #endif

@@ -40,28 +40,59 @@ struct TraceEvent {
 class PerfTraceState {
   public:
     PerfTraceState()
-        : traceEnabled(parseEnabledFlag(openbus::getEnvironment("OPENBUS_TRACE"))),
-          enabled(traceEnabled),
-          maxEvents(parseMaxEvents(openbus::getEnvironment("OPENBUS_TRACE_MAX_EVENTS"))),
+        : maxEvents(parseMaxEvents(openbus::getEnvironment("OPENBUS_TRACE_MAX_EVENTS"))),
           minDurationUs(parseMinDuration(openbus::getEnvironment("OPENBUS_TRACE_MIN_US"))),
           start(std::chrono::steady_clock::now()) {
         events.reserve(std::min<std::size_t>(maxEvents, 8192));
-        if (traceEnabled) {
+        if (parseEnabledFlag(openbus::getEnvironment("OPENBUS_TRACE"))) {
+            setRecording(true);
+        }
+    }
+
+    std::uint64_t recordingId() const {
+        return activeRecordingId.load(std::memory_order_acquire);
+    }
+
+    bool setRecording(bool recording) {
+        std::lock_guard<std::mutex> controlLock(controlMutex);
+        if (flushed) {
+            return false;
+        }
+        if (recording == (recordingId() != 0)) {
+            return recording;
+        }
+        if (!recording) {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                activeRecordingId.store(0, std::memory_order_release);
+            }
+            stopTraceWriter();
+            return false;
+        }
+        if (!traceOutput.is_open()) {
             traceOutputPath = configuredTracePath();
             traceOutput.open(traceOutputPath, std::ios::trunc);
             if (traceOutput) {
                 traceOutput << "{\n  \"traceEvents\": [\n";
-                traceWriter = std::thread(&PerfTraceState::traceWriterLoop, this);
+                writeTraceFooter();
             } else {
                 std::cerr << "Failed to open performance trace output: " << traceOutputPath.string()
                           << '\n';
-                enabled = false;
+                return false;
             }
         }
-    }
-
-    bool isEnabled() const {
-        return enabled;
+        if (!traceOutput) {
+            std::cerr << "Performance trace output is not writable: " << traceOutputPath.string()
+                      << '\n';
+            return false;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            writerStopRequested = false;
+        }
+        traceWriter = std::thread(&PerfTraceState::traceWriterLoop, this);
+        activeRecordingId.store(++nextRecordingId, std::memory_order_release);
+        return true;
     }
 
     std::int64_t nowUs() const {
@@ -70,18 +101,15 @@ class PerfTraceState {
             .count();
     }
 
-    void pushDuration(const char* category, const char* name, std::int64_t startTimestampUs) {
-        if (!enabled) {
+    void pushDuration(const char* category, const char* name, std::int64_t startTimestampUs,
+                      std::uint64_t scopeRecordingId) {
+        if (recordingId() != scopeRecordingId) {
             return;
         }
         const std::int64_t endTimestampUs = nowUs();
         const std::int64_t durationUs =
             std::max<std::int64_t>(0, endTimestampUs - startTimestampUs);
         if (durationUs < minDurationUs) {
-            return;
-        }
-        const std::size_t eventSlot = acceptedEvents.fetch_add(1, std::memory_order_relaxed);
-        if (eventSlot >= maxEvents) {
             return;
         }
         TraceEvent event;
@@ -93,6 +121,11 @@ class PerfTraceState {
             std::hash<std::thread::id>{}(std::this_thread::get_id()) & 0xFFFFFFFFU);
         event.threadId = threadId;
         std::lock_guard<std::mutex> lock(mutex);
+        // Scopes crossing a pause/resume boundary must not include time spent navigating.
+        if (recordingId() != scopeRecordingId || acceptedEvents >= maxEvents) {
+            return;
+        }
+        ++acceptedEvents;
         event.sequence = nextSequence++;
         events.push_back(std::move(event));
     }
@@ -102,16 +135,18 @@ class PerfTraceState {
     }
 
     void flush() {
-        stopTraceWriter();
-        std::lock_guard<std::mutex> flushLock(flushMutex);
-        if (flushed || !enabled) {
+        std::lock_guard<std::mutex> controlLock(controlMutex);
+        if (flushed) {
             return;
         }
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            activeRecordingId.store(0, std::memory_order_release);
+        }
+        stopTraceWriter();
         flushed = true;
 
-        if (traceEnabled && traceOutput) {
-            traceOutput << "\n  ],\n  \"displayTimeUnit\": \"ms\"\n}\n";
-            traceOutput.flush();
+        if (traceOutput.is_open()) {
             traceOutput.close();
         }
     }
@@ -148,6 +183,10 @@ class PerfTraceState {
         if (!traceOutput) {
             return;
         }
+        if (chunk.empty()) {
+            return;
+        }
+        traceOutput.seekp(traceFooterPosition);
         for (const TraceEvent& event : chunk) {
             if (!traceFirstEvent) {
                 traceOutput << ",\n";
@@ -158,7 +197,18 @@ class PerfTraceState {
                         << ",\"dur\":" << event.durationUs
                         << ",\"pid\":1,\"tid\":" << event.threadId << "}";
         }
+        writeTraceFooter();
+    }
+
+    void writeTraceFooter() {
+        // Overwrite this footer with the next chunk so paused captures remain valid JSON.
+        traceFooterPosition = traceOutput.tellp();
+        traceOutput << "\n  ],\n  \"displayTimeUnit\": \"ms\"\n}\n";
         traceOutput.flush();
+        if (!traceOutput) {
+            std::cerr << "Failed to write performance trace output: " << traceOutputPath.string()
+                      << '\n';
+        }
     }
 
     void stopTraceWriter() {
@@ -197,19 +247,20 @@ class PerfTraceState {
         return std::max<std::int64_t>(1, parsed);
     }
 
-    bool traceEnabled = false;
-    bool enabled = false;
+    std::atomic<std::uint64_t> activeRecordingId = 0;
+    std::uint64_t nextRecordingId = 0;
     std::size_t maxEvents = 1000000;
     std::int64_t minDurationUs = 1;
     std::chrono::steady_clock::time_point start;
     std::mutex mutex;
-    std::mutex flushMutex;
+    std::mutex controlMutex;
     std::condition_variable eventCondition;
     std::mutex traceOutputMutex;
     std::vector<TraceEvent> events;
-    std::atomic<std::size_t> acceptedEvents = 0;
+    std::size_t acceptedEvents = 0;
     std::filesystem::path traceOutputPath;
     std::ofstream traceOutput;
+    std::streampos traceFooterPosition = 0;
     std::thread traceWriter;
     bool traceFirstEvent = true;
     bool writerStopRequested = false;
@@ -241,16 +292,24 @@ void Flush() {
     perfTrace().flush();
 }
 
+bool IsRecording() {
+    return perfTrace().recordingId() != 0;
+}
+
+bool SetRecording(bool recording) {
+    return perfTrace().setRecording(recording);
+}
+
 TraceScope::TraceScope(const char* category, const char* name)
-    : category_(category), name_(name), active_(perfTrace().isEnabled()) {
-    if (active_) {
+    : category_(category), name_(name), recordingId_(perfTrace().recordingId()) {
+    if (recordingId_ != 0) {
         startTimestampUs_ = perfTrace().nowUs();
     }
 }
 
 TraceScope::~TraceScope() {
-    if (active_) {
-        perfTrace().pushDuration(category_, name_, startTimestampUs_);
+    if (recordingId_ != 0) {
+        perfTrace().pushDuration(category_, name_, startTimestampUs_, recordingId_);
     }
 }
 #endif

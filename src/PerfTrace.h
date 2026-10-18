@@ -11,6 +11,8 @@ namespace openbus::rendering {
 bool parseEnabledFlag(const char* value);
 #if OPENBUS_ENABLE_PERF_TRACE
 void Flush();
+bool IsRecording();
+bool SetRecording(bool recording);
 
 class TraceScope {
   public:
@@ -21,10 +23,12 @@ class TraceScope {
     const char* category_;
     const char* name_;
     std::int64_t startTimestampUs_ = 0;
-    bool active_;
+    std::uint64_t recordingId_ = 0;
 };
 #else
 inline void Flush() noexcept {}
+inline bool IsRecording() noexcept { return false; }
+inline bool SetRecording(bool) noexcept { return false; }
 
 class TraceScope {
   public:

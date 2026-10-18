@@ -5021,6 +5021,19 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             setFreeCameraEnabled(!freeCameraEnabled_);
         }
         previousFreeCameraToggleState_ = freeCameraTogglePressed;
+        const bool profileTogglePressed = glfwGetKey(window_, GLFW_KEY_F10) == GLFW_PRESS;
+        if (profileTogglePressed && !previousProfileToggleState_) {
+#if OPENBUS_ENABLE_PERF_TRACE
+            const bool wasRecording = openbus::rendering::IsRecording();
+            const bool recording = openbus::rendering::SetRecording(!wasRecording);
+            gameLog.Log(recording ? "Performance recording started (F10 to pause)"
+                                 : wasRecording ? "Performance recording paused and saved (F10 to resume)"
+                                                : "Performance recording could not start; check trace output errors");
+#else
+            gameLog.Log("Performance recording is unavailable; launch with profile.bat or profile.sh");
+#endif
+        }
+        previousProfileToggleState_ = profileTogglePressed;
     }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.viewInput");

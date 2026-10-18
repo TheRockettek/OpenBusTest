@@ -532,27 +532,26 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 
 The ground uses a world-space grid with highlighted ten-metre lines.
 
-## CPU flame graphs
+## CPU profiling
 
-Set `OPENBUS_TRACE=1` to write both the existing Chrome trace
-(`openbus_trace.json`) and Brendan Gregg collapsed stacks
-(`openbus_trace.collapsed`). Set `OPENBUS_TRACE_COLLAPSED=1` to write only the
-collapsed stacks. `OPENBUS_TRACE_FILE` and `OPENBUS_TRACE_COLLAPSED_FILE`
-override the respective output paths.
+Use `profile.bat` (Windows) or `profile.sh` (Linux) to launch a Release build
+with tracing instrumentation. **Recording starts off.** Navigate to the place
+you want to profile, then press **F10** to start recording. Press **F10** again
+to pause and save; further presses resume/pause the same capture. Holding the
+key does not repeatedly toggle it. Recording state changes are logged.
 
-Use `profile.bat` for the standard Release profiled launch.
+The Chrome trace is written to `openbus_trace.json`; `OPENBUS_TRACE_FILE`
+overrides its path. Pausing drains pending events and leaves a valid JSON file
+that can be opened in Perfetto or a Chrome trace viewer without exiting.
+Resuming adds to that file; paused time and scopes spanning a pause are not
+recorded. Timestamps retain the real gaps between recording intervals. The
+event limit applies across all intervals in the run. The first recording in
+a new run overwrites the output file; starting paused does not touch it.
 
-Collapsed values are elapsed microseconds. Each stack is prefixed with its
-thread ID and includes frame, physics, renderer, OBJ, and texture scopes. With
-the [FlameGraph](https://github.com/brendangregg/FlameGraph) scripts available:
-
-```powershell
-perl .\FlameGraph\flamegraph.pl .\openbus_trace.collapsed > .\openbus_trace.svg
-```
-
-The main frame path begins with `frame:main`; expand it to compare
-`Renderer::beginFrame`, `BusSimulation::update`, `Renderer::draw`, and
-`Renderer::endFrame` work.
+For automatic startup/loading captures, launch an instrumented executable
+directly with `OPENBUS_TRACE=1`. This opt-in preserves automated benchmark
+capture behaviour. Normal builds with `OPENBUS_ENABLE_PERF_TRACE=OFF` do not
+record; F10 logs that a profiling build is needed.
 
 ## Repeatable render benchmark
 

@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run wheel contact comparison probe",
+			"type": "shell",
+			"command": "build-ode\\OpenBusPhysicsContactProbe.exe",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Run wheel contact marking and curb probe",
+			"type": "shell",
+			"command": "build-ode\\OpenBusPhysicsContactProbe.exe",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}

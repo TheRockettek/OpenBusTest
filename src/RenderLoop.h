@@ -142,6 +142,7 @@ class RenderLoop {
     // Driver camera whose eye position the authored reflection directions are designed for.
     int reflectionReferenceCamera_ = -1;
     bool previousFreeCameraToggleState_ = false;
+    bool previousProfileToggleState_ = false;
     bool previousMouseLookToggleState_ = false;
     bool mouseControlEnabled_ = false;
     double mouseThrottle_ = 0.0;
