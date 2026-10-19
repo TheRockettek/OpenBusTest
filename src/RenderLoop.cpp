@@ -5259,11 +5259,14 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         poseMatrix(chassis),
         translationMatrix(
             {0.0, 0.0, playerVehicle_ != nullptr ? playerVehicle_->modelOffsetZ : 0.0}));
-    double playerGroundHeight =
-        mapRenderer_ != nullptr
-            ? mapRenderer_->terrainHeightAt(chassis.position[0], chassis.position[1])
-                  .value_or(playerVehicle_ != nullptr ? playerVehicle_->placement.position[2] : 0.0)
-            : (playerVehicle_ != nullptr ? playerVehicle_->placement.position[2] : 0.0);
+    double playerGroundHeight = [&]() {
+        TraceScope phase("render", "RenderLoop::draw.groundHeight");
+        return mapRenderer_ != nullptr
+                   ? mapRenderer_->terrainHeightAt(chassis.position[0], chassis.position[1])
+                         .value_or(playerVehicle_ != nullptr ? playerVehicle_->placement.position[2]
+                                                             : 0.0)
+                   : (playerVehicle_ != nullptr ? playerVehicle_->placement.position[2] : 0.0);
+    }();
     double wheelGroundHeightSum = 0.0;
     std::size_t validWheelGroundHeights = 0;
     for (std::size_t wheelIndex = 0; wheelIndex < simulation.wheelCount(); ++wheelIndex) {
@@ -5769,8 +5772,10 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         }
     }
     if (!renderingReflection_ && collisionDebugOverlay_) {
+        TraceScope phase("render", "RenderLoop::draw.collisionDebug");
         const std::uint64_t collisionRevision = simulation.collisionDebugRevision();
         if (!collisionWireframeBuilt_ || collisionWireframeRevision_ != collisionRevision) {
+            TraceScope phase("render", "RenderLoop::draw.collisionDebug.build");
             collisionWireframeVertices_.clear();
             const std::vector<StaticCollisionMesh> meshes = simulation.collisionDebugMeshes();
             std::size_t triangleCount = 0;
@@ -5808,9 +5813,13 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                         " active terrain/road/scenery meshes");
         }
 
-        const GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+        GLboolean depthWasEnabled = GL_FALSE;
         GLboolean depthWriteWasEnabled = GL_TRUE;
-        glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+        {
+            TraceScope phase("render", "RenderLoop::draw.collisionDebug.queryState");
+            depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+            glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+        }
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
         openbus::rendering::drawStaticPrimitives(collisionWireframeBuffer_,
@@ -5830,93 +5839,103 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         }
     }
     if (!renderingReflection_ && statusHudTexture_ != 0) {
-        const openbus::rendering::MapRenderStats mapStats =
-            mapRenderer_ != nullptr ? mapRenderer_->renderStats()
-                                    : openbus::rendering::MapRenderStats{};
-        std::ostringstream statusText;
-        statusText << "X " << std::fixed << std::setprecision(1) << simulation.positionX() << " Y "
-                   << simulation.positionY() << " Z " << simulation.positionZ() << '\n'
-                   << "CHUNKS " << mapStats.activeTiles << '/' << mapStats.totalTiles << " TERRAIN "
-                   << mapStats.activeTerrainTiles << '/' << mapStats.totalTerrainTiles
-                   << " OBJECTS " << mapStats.activeSceneryObjects << '/'
-                   << mapStats.totalSceneryObjects << '\n'
-                   << "ROADS " << mapStats.activeRoadBatches << '/' << mapStats.totalRoadBatches
-                   << " COLLISION TILES " << simulation.loadedMapCollisionTileCount()
-                   << " VEHICLES " << vehicles_.size();
-        const std::string currentStatus = statusText.str();
-        if (currentStatus != statusHudText_) {
-            const std::vector<std::uint8_t> pixels = makeStatusHudPixels(currentStatus);
-            pglActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, statusHudTexture_);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, STATUS_HUD_TEXTURE_WIDTH,
-                            STATUS_HUD_TEXTURE_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-            openbus::rendering::invalidateTextureBindings();
-            statusHudText_ = currentStatus;
+        TraceScope phase("render", "RenderLoop::draw.statusHud");
+        {
+            TraceScope phase("render", "RenderLoop::draw.statusHud.update");
+            const openbus::rendering::MapRenderStats mapStats =
+                mapRenderer_ != nullptr ? mapRenderer_->renderStats()
+                                        : openbus::rendering::MapRenderStats{};
+            std::ostringstream statusText;
+            statusText << "X " << std::fixed << std::setprecision(1) << simulation.positionX()
+                       << " Y " << simulation.positionY() << " Z " << simulation.positionZ() << '\n'
+                       << "CHUNKS " << mapStats.activeTiles << '/' << mapStats.totalTiles
+                       << " TERRAIN " << mapStats.activeTerrainTiles << '/'
+                       << mapStats.totalTerrainTiles << " OBJECTS " << mapStats.activeSceneryObjects
+                       << '/' << mapStats.totalSceneryObjects << '\n'
+                       << "ROADS " << mapStats.activeRoadBatches << '/' << mapStats.totalRoadBatches
+                       << " COLLISION TILES " << simulation.loadedMapCollisionTileCount()
+                       << " VEHICLES " << vehicles_.size();
+            const std::string currentStatus = statusText.str();
+            if (currentStatus != statusHudText_) {
+                const std::vector<std::uint8_t> pixels = [&]() {
+                    TraceScope phase("render", "RenderLoop::draw.statusHud.rasterize");
+                    return makeStatusHudPixels(currentStatus);
+                }();
+                TraceScope phase("render", "RenderLoop::draw.statusHud.upload");
+                pglActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, statusHudTexture_);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, STATUS_HUD_TEXTURE_WIDTH,
+                                STATUS_HUD_TEXTURE_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE,
+                                pixels.data());
+                openbus::rendering::invalidateTextureBindings();
+                statusHudText_ = currentStatus;
+            }
         }
 
-        const GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
-        const GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
-        const GLboolean cullWasEnabled = glIsEnabled(GL_CULL_FACE);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        const float scale = std::min(
-            {1.5F,
-             static_cast<float>(std::max(framebufferWidth_ - 24, 1)) / STATUS_HUD_TEXTURE_WIDTH,
-             static_cast<float>(std::max(framebufferHeight_ - 24, 1)) / STATUS_HUD_TEXTURE_HEIGHT});
-        const float hudWidth = STATUS_HUD_TEXTURE_WIDTH * scale;
-        const float hudHeight = STATUS_HUD_TEXTURE_HEIGHT * scale;
-        const float leftPixels = 12.0F;
-        const float bottomPixels = framebufferHeight_ - 12.0F - hudHeight;
-        openbus::rendering::drawTextureQuad(
-            statusHudTexture_, -1.0F + 2.0F * leftPixels / framebufferWidth_,
-            -1.0F + 2.0F * bottomPixels / framebufferHeight_, 2.0F * hudWidth / framebufferWidth_,
-            2.0F * hudHeight / framebufferHeight_);
-        if (depthWasEnabled) {
-            glEnable(GL_DEPTH_TEST);
-        }
-        if (blendWasEnabled) {
+        {
+            TraceScope phase("render", "RenderLoop::draw.statusHud.submit");
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
             glEnable(GL_BLEND);
-        } else {
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            const float scale = std::min(
+                {1.5F,
+                 static_cast<float>(std::max(framebufferWidth_ - 24, 1)) / STATUS_HUD_TEXTURE_WIDTH,
+                 static_cast<float>(std::max(framebufferHeight_ - 24, 1)) /
+                     STATUS_HUD_TEXTURE_HEIGHT});
+            const float hudWidth = STATUS_HUD_TEXTURE_WIDTH * scale;
+            const float hudHeight = STATUS_HUD_TEXTURE_HEIGHT * scale;
+            const float leftPixels = 12.0F;
+            const float bottomPixels = framebufferHeight_ - 12.0F - hudHeight;
+            openbus::rendering::drawTextureQuad(
+                statusHudTexture_, -1.0F + 2.0F * leftPixels / framebufferWidth_,
+                -1.0F + 2.0F * bottomPixels / framebufferHeight_,
+                2.0F * hudWidth / framebufferWidth_, 2.0F * hudHeight / framebufferHeight_);
+            // The final overlay restores the scene pass's depth/blend state.
+            // Face culling stays disabled; scene shaders handle sidedness.
+            glEnable(GL_DEPTH_TEST);
             glDisable(GL_BLEND);
         }
-        if (cullWasEnabled) {
-            glEnable(GL_CULL_FACE);
-        }
     }
-    const double titleUpdateTime = glfwGetTime();
-    if (!renderingReflection_ && !captureMode_) {
-        if (!fpsSampleInitialized_) {
-            fpsSampleStartTime_ = titleUpdateTime;
-            fpsSampleFrameCount_ = 0;
-            fpsSampleInitialized_ = true;
+    {
+        TraceScope phase("render", "RenderLoop::draw.windowTitle");
+        const double titleUpdateTime = glfwGetTime();
+        if (!renderingReflection_ && !captureMode_) {
+            if (!fpsSampleInitialized_) {
+                fpsSampleStartTime_ = titleUpdateTime;
+                fpsSampleFrameCount_ = 0;
+                fpsSampleInitialized_ = true;
+            }
+            ++fpsSampleFrameCount_;
+            const double sampleDuration = titleUpdateTime - fpsSampleStartTime_;
+            if (sampleDuration >= 1.0) {
+                displayedFps_ = static_cast<double>(fpsSampleFrameCount_) / sampleDuration;
+                fpsSampleFrameCount_ = 0;
+                fpsSampleStartTime_ = titleUpdateTime;
+            }
         }
-        ++fpsSampleFrameCount_;
-        const double sampleDuration = titleUpdateTime - fpsSampleStartTime_;
-        if (sampleDuration >= 1.0) {
-            displayedFps_ = static_cast<double>(fpsSampleFrameCount_) / sampleDuration;
-            fpsSampleFrameCount_ = 0;
-            fpsSampleStartTime_ = titleUpdateTime;
+        if (!renderingReflection_ && playerVehicle_ &&
+            titleUpdateTime - lastStatsTitleTime_ > 0.25) {
+            const double speedMetresPerSecond = simulation.speed();
+            const long speedMph = std::lround(speedMetresPerSecond * 2.2369362921);
+            const long speedKmh = std::lround(speedMetresPerSecond * 3.6);
+            const long throttlePercent = std::lround(
+                std::clamp(playerVehicle_->variables.get("throttle"), 0.0F, 1.0F) * 100.0F);
+            const long brakePercent = std::lround(
+                std::clamp(playerVehicle_->variables.get("brake"), 0.0F, 1.0F) * 100.0F);
+            std::ostringstream title;
+            title << "OpenBus - " << speedMph << " mph / " << speedKmh << " km/h - Throttle "
+                  << throttlePercent << "% - Brake " << brakePercent << "% - "
+                  << openbus::rendering::frameTriangleCount() << " main + "
+                  << openbus::rendering::frameReflectionTriangleCount()
+                  << " reflection triangles/refresh - " << std::fixed << std::setprecision(1)
+                  << displayedFps_ << " FPS";
+            {
+                TraceScope phase("render", "RenderLoop::draw.windowTitle.set");
+                glfwSetWindowTitle(window_, title.str().c_str());
+            }
+            lastStatsTitleTime_ = titleUpdateTime;
         }
-    }
-    if (!renderingReflection_ && playerVehicle_ && titleUpdateTime - lastStatsTitleTime_ > 0.25) {
-        const double speedMetresPerSecond = simulation.speed();
-        const long speedMph = std::lround(speedMetresPerSecond * 2.2369362921);
-        const long speedKmh = std::lround(speedMetresPerSecond * 3.6);
-        const long throttlePercent =
-            std::lround(std::clamp(playerVehicle_->variables.get("throttle"), 0.0F, 1.0F) * 100.0F);
-        const long brakePercent =
-            std::lround(std::clamp(playerVehicle_->variables.get("brake"), 0.0F, 1.0F) * 100.0F);
-        std::ostringstream title;
-        title << "OpenBus - " << speedMph << " mph / " << speedKmh << " km/h - Throttle "
-              << throttlePercent << "% - Brake " << brakePercent << "% - "
-              << openbus::rendering::frameTriangleCount() << " main + "
-              << openbus::rendering::frameReflectionTriangleCount()
-              << " reflection triangles/refresh - " << std::fixed << std::setprecision(1)
-              << displayedFps_ << " FPS";
-        glfwSetWindowTitle(window_, title.str().c_str());
-        lastStatsTitleTime_ = titleUpdateTime;
     }
 }
 

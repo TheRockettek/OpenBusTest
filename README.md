@@ -553,6 +553,14 @@ directly with `OPENBUS_TRACE=1`. This opt-in preserves automated benchmark
 capture behaviour. Normal builds with `OPENBUS_ENABLE_PERF_TRACE=OFF` do not
 record; F10 logs that a profiling build is needed.
 
+`RenderLoop::draw` includes separate scopes for ground-height sampling, collision
+debug rendering, the status HUD (text update, rasterization, upload, and submission),
+and window-title updates. The HUD is the final overlay and restores the scene's
+depth-enabled, blend-disabled, culling-disabled state without querying the driver.
+Trace durations are CPU wall times, not GPU execution times: driver backpressure
+can appear in a GL call or in `RenderLoop::endFrame.swapBuffers`. Compare whole
+`main` frame times rather than treating a shorter draw scope as an equal FPS gain.
+
 ## Repeatable render benchmark
 
 Run `benchmark_rendering.bat` to build an isolated Release executable

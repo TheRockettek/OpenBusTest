@@ -448,6 +448,37 @@ void appendRoadProfile(RoadMeshGeometry& road, const openbus::map::MapSplinePlac
     }
 }
 
+Matrix4 makeSceneryInstanceTransform(double x, double y, double z,
+                                     const std::array<double, 6>& rotationDegrees,
+                                     std::size_t rotationCount,
+                                     const std::array<double, 9>* orientationMatrix) {
+    // Uses the shared matrix-stack operations so the result matches the
+    // per-draw translate/rotate sequence this replaces.
+    pushMatrix();
+    setModelViewMatrix(
+        {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0});
+    translate(x, y, z);
+    if (orientationMatrix != nullptr) {
+        const std::array<double, 9>& m = *orientationMatrix;
+        multiplyMatrix({m[0], m[1], m[2], 0.0, m[3], m[4], m[5], 0.0, m[6], m[7], m[8], 0.0, 0.0,
+                        0.0, 0.0, 1.0});
+    } else {
+        std::size_t ownRotationOffset = 0;
+        if (rotationCount >= 6) {
+            rotate(-rotationDegrees[0], 0.0, 0.0, 1.0);
+            rotate(rotationDegrees[2], 0.0, 1.0, 0.0);
+            rotate(rotationDegrees[1], 1.0, 0.0, 0.0);
+            ownRotationOffset = 3;
+        }
+        rotate(-rotationDegrees[ownRotationOffset], 0.0, 0.0, 1.0);
+        rotate(-rotationDegrees[ownRotationOffset + 2], 0.0, 1.0, 0.0);
+        rotate(-rotationDegrees[ownRotationOffset + 1], 1.0, 0.0, 0.0);
+    }
+    const Matrix4 transform = modelViewMatrix();
+    popMatrix();
+    return transform;
+}
+
 } // namespace
 
 struct MapRenderer::Impl {
@@ -525,10 +556,8 @@ struct MapRenderer::Impl {
         double y = 0.0;
         double z = 0.0;
         double boundingRadius = 0.0;
-        std::array<double, 6> rotationDegrees = {};
-        std::size_t rotationCount = 3;
-        std::array<double, 9> orientationMatrix = {};
-        bool hasOrientationMatrix = false;
+        // Static world transform (translation and rotation), precomputed at load.
+        Matrix4 transform = {};
         std::size_t scriptStateIndex = std::numeric_limits<std::size_t>::max();
         std::size_t lodThresholdSetIndex = 0;
         int sourceTileX = 0;
@@ -565,6 +594,23 @@ struct MapRenderer::Impl {
         double maxZ = -std::numeric_limits<double>::infinity();
     };
 
+    // Instances of one chunk that belong to active tiles, split by whether the
+    // batch is render type 4 so each draw pass only visits its own candidates.
+    struct ActiveSceneryChunk {
+        const SceneryChunk* chunk = nullptr;
+        std::vector<const SceneryInstance*> instances;
+    };
+
+    struct SceneryDraw {
+        const SceneryInstance* instance = nullptr;
+        const ModelBatch* batch = nullptr;
+        ModelMaterial material;
+        int alphaMode = 0;
+        double viewDepth = 0.0;
+    };
+
+    static constexpr std::size_t SCENERY_DRAW_GROUP_COUNT = 7;
+
     GLuint texture = 0;
     GLuint baseDetailTexture = 0;
     std::vector<TileBuffer> terrainBuffers;
@@ -587,6 +633,14 @@ struct MapRenderer::Impl {
     std::filesystem::path omsiRoot;
     std::unordered_map<std::string, GLuint> dynamicSceneryTextures;
     std::unordered_set<std::string> unavailableSceneryTextures;
+    // Per scenery batch: selected free-texture name -> texture to apply (nullopt
+    // leaves the batch material unchanged), so steady-state frames never touch
+    // the filesystem.
+    std::vector<std::unordered_map<std::string, std::optional<GLuint>>> resolvedFreeTexturesByBatch;
+    std::array<std::vector<ActiveSceneryChunk>, 2> activeSceneryChunks;
+    std::vector<SceneryDraw> sceneryDrawScratch;
+    std::array<std::vector<const SceneryDraw*>, SCENERY_DRAW_GROUP_COUNT> opaqueSceneryScratch;
+    std::array<std::vector<const SceneryDraw*>, SCENERY_DRAW_GROUP_COUNT> transparentSceneryScratch;
     std::vector<openbus::map::MapTileCoordinate> mapTileCoordinates;
     std::vector<openbus::map::MapTileCoordinate> activeTileCoordinates;
     std::unordered_set<std::uint64_t> activeTileKeys;
@@ -1259,7 +1313,8 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                     batch.alphaMode = state == nullptr ? 0 : state->alphaMode;
                     batch.noZwrite = state != nullptr && state->noZwrite;
                     batch.noZcheck = state != nullptr && state->noZcheck;
-                    batch.renderType = resolveSceneryRenderType(part, objectConfiguration.renderType);
+                    batch.renderType =
+                        resolveSceneryRenderType(part, objectConfiguration.renderType);
                     batch.visibilityVariable = part.visibleVariable;
                     batch.visibilityValue = part.visibleValue;
                     if (batch.alphaMode == 0 && batch.alpha < 1.0 - 1.0e-6) {
@@ -1837,16 +1892,12 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
                 instance.y = worldY;
                 instance.z = worldZ;
                 instance.boundingRadius = radius;
-                instance.rotationDegrees = rotationDegrees;
-                instance.rotationCount = rotationCount;
+                instance.transform = makeSceneryInstanceTransform(
+                    worldX, worldY, worldZ, rotationDegrees, rotationCount, orientationMatrix);
                 instance.scriptStateIndex = scriptStateIndex;
                 instance.lodThresholdSetIndex = lodThresholdSetIndex;
                 instance.sourceTileX = tileX;
                 instance.sourceTileY = tileY;
-                if (orientationMatrix != nullptr) {
-                    instance.orientationMatrix = *orientationMatrix;
-                    instance.hasOrientationMatrix = true;
-                }
                 const int chunkX =
                     static_cast<int>(std::floor(worldX / openbus::map::OMSI_TILE_SIZE_METERS));
                 const int chunkY =
@@ -2202,6 +2253,28 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
         stats.activeRoadBatches += countForTile(impl_->roadBatchesByTile, key);
     }
     impl_->renderStats = stats;
+    for (auto& activeChunks : impl_->activeSceneryChunks) {
+        activeChunks.clear();
+    }
+    for (const auto& [key, chunk] : impl_->sceneryChunks) {
+        static_cast<void>(key);
+        std::array<Impl::ActiveSceneryChunk, 2> active = {Impl::ActiveSceneryChunk{&chunk, {}},
+                                                          Impl::ActiveSceneryChunk{&chunk, {}}};
+        for (const Impl::SceneryInstance& instance : chunk.instances) {
+            if (instance.batchIndex >= impl_->sceneryBatches.size() ||
+                !impl_->activeTileKeys.contains(
+                    tileKey(instance.sourceTileX, instance.sourceTileY))) {
+                continue;
+            }
+            const bool typeFour = impl_->sceneryBatches[instance.batchIndex].renderType == 4;
+            active[typeFour ? 1 : 0].instances.push_back(&instance);
+        }
+        for (std::size_t pass = 0; pass < active.size(); ++pass) {
+            if (!active[pass].instances.empty()) {
+                impl_->activeSceneryChunks[pass].push_back(std::move(active[pass]));
+            }
+        }
+    }
     impl_->activeSceneryScriptStateIndices.clear();
     impl_->activeSceneryScriptStateIndices.reserve(impl_->sceneryScriptStates.size());
     for (std::size_t stateIndex = 0; stateIndex < impl_->sceneryScriptStates.size(); ++stateIndex) {
@@ -2253,20 +2326,16 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
     IndirectCullingBatch indirectBatch;
     IndirectCullingScope indirectScope;
     bool indirect = false;
-    GLint previousFrontFace = GL_CCW;
-    glGetIntegerv(GL_FRONT_FACE, &previousFrontFace);
+    // Map and vehicle passes share the clockwise convention; querying the
+    // previous state forced a driver sync each call.
     glFrontFace(GL_CW);
-    struct FrontFaceRestore {
-        GLint frontFace;
-        ~FrontFaceRestore() {
-            glFrontFace(static_cast<GLenum>(frontFace));
-        }
-    } frontFaceRestore{previousFrontFace};
     const Matrix4& view = modelViewMatrix();
     const MapFrustum frustum = buildMapFrustum(projectionMatrix());
     const double cameraX = -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]);
     const double cameraY = -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]);
     const double cameraZ = -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14]);
+    const std::vector<Impl::ActiveSceneryChunk>& activeSceneryChunks =
+        impl_->activeSceneryChunks[renderTypeFourOnly ? 1 : 0];
     std::vector<CullingItem> cullingItems;
     std::vector<float> lodBoundaries;
     std::vector<std::uint32_t> visibility;
@@ -2320,8 +2389,8 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                 }
             }
         }
-        for (const auto& [key, chunk] : impl_->sceneryChunks) {
-            static_cast<void>(key);
+        for (const Impl::ActiveSceneryChunk& active : activeSceneryChunks) {
+            const Impl::SceneryChunk& chunk = *active.chunk;
             // Broad-phase chunk rejection avoids CPU material/resource work for
             // entire distant groups; individual sphere/LOD tests remain on GPU.
             if (indirectCullingAvailable() &&
@@ -2335,14 +2404,9 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                                               chunk.maxZ - chunk.minZ) *
                                        0.5)))
                 continue;
-            for (const auto& instance : chunk.instances) {
-                if (!impl_->activeTileKeys.contains(
-                        tileKey(instance.sourceTileX, instance.sourceTileY)) ||
-                    instance.batchIndex >= impl_->sceneryBatches.size())
-                    continue;
+            for (const Impl::SceneryInstance* instancePointer : active.instances) {
+                const Impl::SceneryInstance& instance = *instancePointer;
                 const auto& batch = impl_->sceneryBatches[instance.batchIndex];
-                if (renderTypeFourOnly ? batch.renderType != 4 : batch.renderType == 4)
-                    continue;
                 auto& item = addSphere(
                     &instance, {instance.x, instance.y, instance.z}, instance.boundingRadius,
                     instance.x - instance.boundingRadius, instance.y - instance.boundingRadius,
@@ -2478,6 +2542,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
     };
 
     const auto drawTerrain = [&]() {
+        TraceScope phase("map", "MapRenderer::draw.terrain");
         ModelMaterial material;
         material.texture = impl_->texture;
         material.textured = true;
@@ -2525,6 +2590,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         }
     };
     const auto drawWater = [&]() {
+        TraceScope phase("map", "MapRenderer::draw.water");
         std::vector<std::pair<const Impl::WaterBatch*, double>> visibleWater;
         for (const Impl::WaterBatch& water : impl_->waterBatches) {
             if (!impl_->activeTileKeys.contains(tileKey(water.tileX, water.tileY))) {
@@ -2572,6 +2638,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         glDisable(GL_BLEND);
     };
     const auto drawSplines = [&]() {
+        TraceScope phase("map", "MapRenderer::draw.splines");
         for (const Impl::ModelBatch& road : impl_->roadBatches) {
             if (!impl_->activeTileKeys.contains(tileKey(road.tileX, road.tileY))) {
                 continue;
@@ -2592,189 +2659,187 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                                   road.color, 1.0, road.alphaMode, road.cullBackFaces);
         }
     };
-    struct SceneryDraw {
-        const Impl::SceneryInstance* instance = nullptr;
-        const Impl::ModelBatch* batch = nullptr;
-        ModelMaterial material;
-        int alphaMode = 0;
-        double viewDepth = 0.0;
-    };
-    std::vector<SceneryDraw> sceneryDraws;
-    sceneryDraws.reserve(impl_->renderStats.activeSceneryObjects);
+    std::vector<Impl::SceneryDraw>& sceneryDraws = impl_->sceneryDrawScratch;
+    sceneryDraws.clear();
+    if (impl_->resolvedFreeTexturesByBatch.size() < impl_->sceneryBatches.size()) {
+        impl_->resolvedFreeTexturesByBatch.resize(impl_->sceneryBatches.size());
+    }
     const auto drawSceneryInstance = [&](const Impl::SceneryInstance& instance,
                                          const Impl::ModelBatch& batch,
                                          const ModelMaterial& sceneryMaterial, int alphaMode) {
         selectIndirect(&instance);
         pushMatrix();
-        translate(instance.x, instance.y, instance.z);
-        if (instance.hasOrientationMatrix) {
-            const std::array<double, 16> transform = {instance.orientationMatrix[0],
-                                                      instance.orientationMatrix[1],
-                                                      instance.orientationMatrix[2],
-                                                      0.0,
-                                                      instance.orientationMatrix[3],
-                                                      instance.orientationMatrix[4],
-                                                      instance.orientationMatrix[5],
-                                                      0.0,
-                                                      instance.orientationMatrix[6],
-                                                      instance.orientationMatrix[7],
-                                                      instance.orientationMatrix[8],
-                                                      0.0,
-                                                      0.0,
-                                                      0.0,
-                                                      0.0,
-                                                      1.0};
-            multiplyMatrix(transform);
-        } else {
-            std::size_t ownRotationOffset = 0;
-            if (instance.rotationCount >= 6) {
-                rotate(-instance.rotationDegrees[0], 0.0, 0.0, 1.0);
-                rotate(instance.rotationDegrees[2], 0.0, 1.0, 0.0);
-                rotate(instance.rotationDegrees[1], 1.0, 0.0, 0.0);
-                ownRotationOffset = 3;
-            }
-            rotate(-instance.rotationDegrees[ownRotationOffset], 0.0, 0.0, 1.0);
-            rotate(-instance.rotationDegrees[ownRotationOffset + 2], 0.0, 1.0, 0.0);
-            rotate(-instance.rotationDegrees[ownRotationOffset + 1], 1.0, 0.0, 0.0);
-        }
+        multiplyMatrix(instance.transform);
         drawModelBatch(batch.buffer, batch.vertexCount, sceneryMaterial, batch.color, batch.alpha,
                        alphaMode, batch.cullBackFaces);
         popMatrix();
     };
-    for (const auto& [key, chunk] : impl_->sceneryChunks) {
-        static_cast<void>(key);
-        if (chunk.instances.empty() ||
-            (!gpuCulling &&
-             (outsideVisibilityBounds(chunk.minX, chunk.minY, chunk.maxX, chunk.maxY) ||
-              outsideFrustumBounds(chunk.minX, chunk.minY, chunk.minZ, chunk.maxX, chunk.maxY,
-                                   chunk.maxZ)))) {
-            continue;
+    // Returns the texture to apply, or nullopt when the batch material is left unchanged.
+    const auto resolveFreeTexture =
+        [&](const Impl::ModelBatch& batch,
+            const std::string& selectedTexture) -> std::optional<GLuint> {
+        const std::filesystem::path texturePath = findSceneryTexture(
+            batch.textureObjectRoot, batch.textureModelRoot, impl_->omsiRoot, selectedTexture);
+        const std::string textureKey =
+            texturePath.empty()
+                ? lowercasePathComponent(
+                      normalizedAssetPath(selectedTexture).lexically_normal().generic_string())
+                : texturePath.lexically_normal().generic_string();
+        if (impl_->unavailableSceneryTextures.contains(textureKey)) {
+            return std::nullopt;
         }
-        for (const Impl::SceneryInstance& instance : chunk.instances) {
-            if (!impl_->activeTileKeys.contains(
-                    tileKey(instance.sourceTileX, instance.sourceTileY)) ||
-                instance.batchIndex >= impl_->sceneryBatches.size() ||
-                (gpuCulling
-                     ? !gpuVisible(&instance)
-                     : (outsideVisibilityBounds(instance.x - instance.boundingRadius,
-                                                instance.y - instance.boundingRadius,
-                                                instance.x + instance.boundingRadius,
-                                                instance.y + instance.boundingRadius) ||
-                        outsideMapFrustum(frustum, view, {instance.x, instance.y, instance.z},
-                                          instance.boundingRadius)))) {
+        if (texturePath.empty()) {
+            impl_->unavailableSceneryTextures.insert(textureKey);
+            gameLog.Log("Map scenery free texture not found: " + selectedTexture);
+            return std::nullopt;
+        }
+        auto texture = impl_->dynamicSceneryTextures.find(textureKey);
+        if (texture == impl_->dynamicSceneryTextures.end()) {
+            try {
+                const GLuint loadedTexture = loadTexture(texturePath);
+                impl_->ownedTextures.push_back(loadedTexture);
+                texture = impl_->dynamicSceneryTextures.emplace(textureKey, loadedTexture).first;
+            } catch (const std::exception& error) {
+                impl_->unavailableSceneryTextures.insert(textureKey);
+                gameLog.Log("Could not load map scenery free texture " +
+                            texturePath.generic_string() + ": " + error.what());
+                return std::nullopt;
+            }
+        }
+        return texture->second;
+    };
+    {
+        TraceScope prepareTrace("map", "MapRenderer::draw.prepareScenery");
+        for (const Impl::ActiveSceneryChunk& active : activeSceneryChunks) {
+            const Impl::SceneryChunk& chunk = *active.chunk;
+            if (!gpuCulling &&
+                (outsideVisibilityBounds(chunk.minX, chunk.minY, chunk.maxX, chunk.maxY) ||
+                 outsideFrustumBounds(chunk.minX, chunk.minY, chunk.minZ, chunk.maxX, chunk.maxY,
+                                      chunk.maxZ))) {
                 continue;
             }
-            const Impl::ModelBatch& batch = impl_->sceneryBatches[instance.batchIndex];
-            if (renderTypeFourOnly ? batch.renderType != 4 : batch.renderType == 4) {
-                continue;
-            }
-            const std::vector<double>* lodThresholds =
-                instance.lodThresholdSetIndex < impl_->sceneryLodThresholdSets.size()
-                    ? &impl_->sceneryLodThresholdSets[instance.lodThresholdSetIndex]
-                    : nullptr;
-            static const std::vector<double> noLodThresholds;
-            const std::size_t selectedLod =
-                gpuCulling ? batch.sceneryLodIndex
-                           : openbus::map::selectMapSceneryLod(
-                                 lodThresholds != nullptr ? *lodThresholds : noLodThresholds,
-                                 std::hypot(instance.x - cameraX, instance.y - cameraY,
-                                            instance.z - cameraZ));
-            if (!gpuCulling && batch.sceneryLodIndex != selectedLod) {
-                continue;
-            }
-            if (!batch.visibilityVariable.empty()) {
-                const bool hasScriptState =
-                    instance.scriptStateIndex < impl_->sceneryScriptStates.size();
-                const float value =
-                    hasScriptState
-                        ? impl_->sceneryScriptStates[instance.scriptStateIndex]->variables.get(
-                              batch.visibilityVariable)
-                        : 0.0F;
-                if (value != static_cast<float>(batch.visibilityValue)) {
+            for (const Impl::SceneryInstance* instancePointer : active.instances) {
+                const Impl::SceneryInstance& instance = *instancePointer;
+                if (gpuCulling
+                        ? !gpuVisible(&instance)
+                        : (outsideVisibilityBounds(instance.x - instance.boundingRadius,
+                                                   instance.y - instance.boundingRadius,
+                                                   instance.x + instance.boundingRadius,
+                                                   instance.y + instance.boundingRadius) ||
+                           outsideMapFrustum(frustum, view, {instance.x, instance.y, instance.z},
+                                             instance.boundingRadius))) {
                     continue;
                 }
-            }
-            ModelMaterial sceneryMaterial = batch.material;
-            int alphaMode = batch.alphaMode;
-            if (instance.scriptStateIndex < impl_->sceneryScriptStates.size()) {
-                Impl::SceneryScriptState& scriptState =
-                    *impl_->sceneryScriptStates[instance.scriptStateIndex];
-                if (batch.textTextureIndex >= 0) {
-                    sceneryMaterial.textTexture = refreshSceneryTexture(
-                        scriptState, true, batch.textTextureIndex, sceneryMaterial);
-                    sceneryMaterial.useTextTexture = sceneryMaterial.textTexture != 0;
-                    if (sceneryMaterial.useTextTexture) {
-                        // Text glyphs include partial alpha for antialiasing and a
-                        // transparent background, so draw them as a blended overlay.
-                        alphaMode = 2;
+                const Impl::ModelBatch& batch = impl_->sceneryBatches[instance.batchIndex];
+                const std::vector<double>* lodThresholds =
+                    instance.lodThresholdSetIndex < impl_->sceneryLodThresholdSets.size()
+                        ? &impl_->sceneryLodThresholdSets[instance.lodThresholdSetIndex]
+                        : nullptr;
+                static const std::vector<double> noLodThresholds;
+                const std::size_t selectedLod =
+                    gpuCulling ? batch.sceneryLodIndex
+                               : openbus::map::selectMapSceneryLod(
+                                     lodThresholds != nullptr ? *lodThresholds : noLodThresholds,
+                                     std::hypot(instance.x - cameraX, instance.y - cameraY,
+                                                instance.z - cameraZ));
+                if (!gpuCulling && batch.sceneryLodIndex != selectedLod) {
+                    continue;
+                }
+                if (!batch.visibilityVariable.empty()) {
+                    const bool hasScriptState =
+                        instance.scriptStateIndex < impl_->sceneryScriptStates.size();
+                    const float value =
+                        hasScriptState
+                            ? impl_->sceneryScriptStates[instance.scriptStateIndex]->variables.get(
+                                  batch.visibilityVariable)
+                            : 0.0F;
+                    if (value != static_cast<float>(batch.visibilityValue)) {
+                        continue;
                     }
-                } else if (batch.scriptTextureIndex >= 0) {
-                    sceneryMaterial.freeTexture = refreshSceneryTexture(
-                        scriptState, false, batch.scriptTextureIndex, sceneryMaterial);
-                    sceneryMaterial.useFreeTexture = sceneryMaterial.freeTexture != 0;
-                } else if (!batch.freeTextureVariable.empty()) {
-                    const std::string selectedTexture =
-                        scriptState.variables.getString(batch.freeTextureVariable);
-                    if (!selectedTexture.empty()) {
-                        const std::filesystem::path texturePath =
-                            findSceneryTexture(batch.textureObjectRoot, batch.textureModelRoot,
-                                               impl_->omsiRoot, selectedTexture);
-                        const std::string textureKey =
-                            texturePath.empty()
-                                ? lowercasePathComponent(normalizedAssetPath(selectedTexture)
-                                                             .lexically_normal()
-                                                             .generic_string())
-                                : texturePath.lexically_normal().generic_string();
-                        if (!impl_->unavailableSceneryTextures.contains(textureKey)) {
-                            if (texturePath.empty()) {
-                                impl_->unavailableSceneryTextures.insert(textureKey);
-                                gameLog.Log("Map scenery free texture not found: " +
-                                            selectedTexture);
-                            } else {
-                                auto texture = impl_->dynamicSceneryTextures.find(textureKey);
-                                if (texture == impl_->dynamicSceneryTextures.end()) {
-                                    try {
-                                        const GLuint loadedTexture = loadTexture(texturePath);
-                                        impl_->ownedTextures.push_back(loadedTexture);
-                                        texture = impl_->dynamicSceneryTextures
-                                                      .emplace(textureKey, loadedTexture)
-                                                      .first;
-                                    } catch (const std::exception& error) {
-                                        impl_->unavailableSceneryTextures.insert(textureKey);
-                                        gameLog.Log("Could not load map scenery free texture " +
-                                                    texturePath.generic_string() + ": " +
-                                                    error.what());
-                                    }
-                                }
-                                if (texture != impl_->dynamicSceneryTextures.end()) {
-                                    sceneryMaterial.freeTexture = texture->second;
-                                    sceneryMaterial.useFreeTexture = texture->second != 0;
-                                }
+                }
+                ModelMaterial sceneryMaterial = batch.material;
+                int alphaMode = batch.alphaMode;
+                if (instance.scriptStateIndex < impl_->sceneryScriptStates.size()) {
+                    Impl::SceneryScriptState& scriptState =
+                        *impl_->sceneryScriptStates[instance.scriptStateIndex];
+                    if (batch.textTextureIndex >= 0) {
+                        sceneryMaterial.textTexture = refreshSceneryTexture(
+                            scriptState, true, batch.textTextureIndex, sceneryMaterial);
+                        sceneryMaterial.useTextTexture = sceneryMaterial.textTexture != 0;
+                        if (sceneryMaterial.useTextTexture) {
+                            // Text glyphs include partial alpha for antialiasing and a
+                            // transparent background, so draw them as a blended overlay.
+                            alphaMode = 2;
+                        }
+                    } else if (batch.scriptTextureIndex >= 0) {
+                        sceneryMaterial.freeTexture = refreshSceneryTexture(
+                            scriptState, false, batch.scriptTextureIndex, sceneryMaterial);
+                        sceneryMaterial.useFreeTexture = sceneryMaterial.freeTexture != 0;
+                    } else if (!batch.freeTextureVariable.empty()) {
+                        const std::string selectedTexture =
+                            scriptState.variables.getString(batch.freeTextureVariable);
+                        if (!selectedTexture.empty()) {
+                            auto& resolvedTextures =
+                                impl_->resolvedFreeTexturesByBatch[instance.batchIndex];
+                            auto resolved = resolvedTextures.find(selectedTexture);
+                            if (resolved == resolvedTextures.end()) {
+                                resolved = resolvedTextures
+                                               .emplace(selectedTexture,
+                                                        resolveFreeTexture(batch, selectedTexture))
+                                               .first;
+                            }
+                            if (resolved->second.has_value()) {
+                                sceneryMaterial.freeTexture = *resolved->second;
+                                sceneryMaterial.useFreeTexture = *resolved->second != 0;
                             }
                         }
                     }
                 }
+                const double viewDepth = -(view[2] * instance.x + view[6] * instance.y +
+                                           view[10] * instance.z + view[14]);
+                sceneryDraws.push_back(
+                    {&instance, &batch, std::move(sceneryMaterial), alphaMode, viewDepth});
             }
-            const double viewDepth =
-                -(view[2] * instance.x + view[6] * instance.y + view[10] * instance.z + view[14]);
-            sceneryDraws.push_back(
-                {&instance, &batch, std::move(sceneryMaterial), alphaMode, viewDepth});
         }
     }
 
-    const auto drawSceneryTypes = [&](auto matchesRenderType) {
-        std::vector<const SceneryDraw*> opaqueScenery;
-        std::vector<const SceneryDraw*> transparentScenery;
-        for (const SceneryDraw& scenery : sceneryDraws) {
-            if (!matchesRenderType(scenery.batch->renderType)) {
-                continue;
-            }
-            if (scenery.alphaMode == 2 || scenery.alphaMode == 3) {
-                transparentScenery.push_back(&scenery);
-            } else {
-                opaqueScenery.push_back(&scenery);
-            }
+    const auto sceneryDrawGroup = [](int renderType) -> std::size_t {
+        switch (renderType) {
+        case -1:
+            return 0;
+        case -2:
+            return 1;
+        case -3:
+            return 2;
+        case 1:
+            return 3;
+        case 3:
+            return 5;
+        case 4:
+            return 6;
+        default:
+            return 4;
         }
+    };
+    for (std::size_t group = 0; group < Impl::SCENERY_DRAW_GROUP_COUNT; ++group) {
+        impl_->opaqueSceneryScratch[group].clear();
+        impl_->transparentSceneryScratch[group].clear();
+    }
+    for (const Impl::SceneryDraw& scenery : sceneryDraws) {
+        const std::size_t group = sceneryDrawGroup(scenery.batch->renderType);
+        if (scenery.alphaMode == 2 || scenery.alphaMode == 3) {
+            impl_->transparentSceneryScratch[group].push_back(&scenery);
+        } else {
+            impl_->opaqueSceneryScratch[group].push_back(&scenery);
+        }
+    }
+
+    using SceneryDraw = Impl::SceneryDraw;
+    const auto drawSceneryTypes = [&](std::size_t group) {
+        TraceScope phase("map", "MapRenderer::draw.submitScenery");
+        const std::vector<const SceneryDraw*>& opaqueScenery = impl_->opaqueSceneryScratch[group];
+        std::vector<const SceneryDraw*>& transparentScenery =
+            impl_->transparentSceneryScratch[group];
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
         glDepthMask(GL_TRUE);
@@ -2865,20 +2930,17 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
     };
 
     if (renderTypeFourOnly) {
-        drawSceneryTypes([](int renderType) { return renderType == 4; });
+        drawSceneryTypes(6);
     } else {
-        drawSceneryTypes([](int renderType) { return renderType == -1; });
+        drawSceneryTypes(0);
         drawTerrain();
         drawWater();
-        drawSceneryTypes([](int renderType) { return renderType == -2; });
+        drawSceneryTypes(1);
         drawSplines();
-        drawSceneryTypes([](int renderType) { return renderType == -3; });
-        drawSceneryTypes([](int renderType) { return renderType == 1; });
-        drawSceneryTypes([](int renderType) {
-            return renderType != -1 && renderType != -2 && renderType != -3 && renderType != 1 &&
-                   renderType != 3 && renderType != 4;
-        });
-        drawSceneryTypes([](int renderType) { return renderType == 3; });
+        drawSceneryTypes(2);
+        drawSceneryTypes(3);
+        drawSceneryTypes(4);
+        drawSceneryTypes(5);
     }
 }
 
