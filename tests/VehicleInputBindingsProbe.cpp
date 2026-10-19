@@ -1,4 +1,4 @@
-#include "VehicleInputBindings.h"
+#include "input/VehicleInputBindings.h"
 
 #ifndef GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_NONE

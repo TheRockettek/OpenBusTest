@@ -1,8 +1,9 @@
-#include "Logger.h"
-#include "MouseInteraction.h"
-#include "ScriptRuntime.h"
-#include "VehicleInputBindings.h"
+#include "core/Logger.h"
+#include "input/MouseInteraction.h"
+#include "scripting/ScriptRuntime.h"
+#include "input/VehicleInputBindings.h"
 #include "osc/OscConverter.h"
+#include "ProbeTempDirectory.h"
 
 #include <array>
 #include <cstdlib>
@@ -11,7 +12,6 @@
 #include <iostream>
 #include <string>
 
-Logger gameLog = Logger("Game");
 
 namespace {
 
@@ -172,8 +172,7 @@ bool check(const VehicleConfig& configuration, const char* backend) {
 } // namespace
 
 int main() {
-    const auto root = std::filesystem::temp_directory_path() / "openbus_script_input_probe";
-    std::filesystem::remove_all(root);
+    const auto root = openbus::probe::makeProbeDirectory("openbus_script_input_probe");
     std::filesystem::create_directories(root);
     const auto script = root / "input.osc";
     {
@@ -222,6 +221,6 @@ int main() {
     configuration.scripts = {script.filename().string()};
     const bool nativePassed = check(configuration, "native");
     const bool luaPassed = check(configuration, "lua");
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
     return nativePassed && luaPassed ? 0 : 1;
 }

@@ -1,5 +1,6 @@
-#include "BusSimulation.h"
-#include "MapCollisionStreamer.h"
+#include "physics/BusSimulation.h"
+#include "map/MapCollisionStreamer.h"
+#include "ProbeTempDirectory.h"
 
 #include <bit>
 #include <chrono>
@@ -69,8 +70,7 @@ void require(bool condition, const char* message) {
 
 void runProbe() {
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "OpenBusMapCollisionStreamerProbe";
-    std::filesystem::remove_all(root);
+        openbus::probe::makeProbeDirectory("OpenBusMapCollisionStreamerProbe");
     const std::filesystem::path mapRoot = root / "map";
     openbus::map::MapDefinition map;
     map.rootPath = mapRoot;
@@ -134,7 +134,7 @@ void runProbe() {
         "negative world positions should use floor-based tile selection");
     updateUntilSettled(-0.01, 5.0, {{-1, 0}}, 1,
                        "collision residency must follow geometry changes without center movement");
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
 }
 
 } // namespace

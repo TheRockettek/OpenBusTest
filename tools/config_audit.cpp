@@ -1,6 +1,6 @@
-#include "ModelConfigLoader.h"
-#include "VehicleConfigLoader.h"
-#include "Variables.h"
+#include "config/ModelConfigLoader.h"
+#include "config/VehicleConfigLoader.h"
+#include "core/Variables.h"
 #include "osc/OscConverter.h"
 
 #include <algorithm>

@@ -1,8 +1,9 @@
-#include "Logger.h"
-#include "ModelConfigLoader.h"
-#include "SceneryObjectConfigLoader.h"
-#include "ScriptRuntime.h"
-#include "Variables.h"
+#include "core/Logger.h"
+#include "config/ModelConfigLoader.h"
+#include "config/SceneryObjectConfigLoader.h"
+#include "scripting/ScriptRuntime.h"
+#include "core/Variables.h"
+#include "ProbeTempDirectory.h"
 
 #include <array>
 #include <cstdint>
@@ -12,7 +13,6 @@
 #include <string>
 #include <vector>
 
-Logger gameLog = Logger("Game");
 
 namespace {
 
@@ -49,8 +49,7 @@ void writeWhiteFontBitmap(const std::filesystem::path& path) {
 
 int main() {
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "openbus_map_placement_label_probe";
-    std::filesystem::remove_all(root);
+        openbus::probe::makeProbeDirectory("openbus_map_placement_label_probe");
     std::filesystem::create_directories(root);
     std::filesystem::create_directories(root / "script");
     std::ofstream stringVariables(root / "script" / "sign_variables.txt");
@@ -150,7 +149,7 @@ int main() {
     for (std::size_t alpha = 3; alpha < fontTexture.pixels.size(); alpha += 4) {
         opaquePixels += fontTexture.pixels[alpha] != 0 ? 1U : 0U;
     }
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
     if (opaquePixels != 6) {
         std::cerr << "font lookup stopped at the documentation [newfont] block; expected six "
                      "pixels from the custom 1x2 and 2x2 digit glyphs, got "

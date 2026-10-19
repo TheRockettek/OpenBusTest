@@ -1,5 +1,6 @@
-#include "BusConfiguration.h"
-#include "ModelConfigTypes.h"
+#include "physics/BusConfiguration.h"
+#include "config/ModelConfigTypes.h"
+#include "ProbeTempDirectory.h"
 
 #include <cmath>
 #include <filesystem>
@@ -36,8 +37,7 @@ bool nearlyEqual(double first, double second) {
 
 int main() {
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "openbus_bus_collision_probe";
-    std::filesystem::remove_all(root);
+        openbus::probe::makeProbeDirectory("openbus_bus_collision_probe");
     std::filesystem::create_directories(root);
     writeBusConfig(root / "bus.bus", "[rollwiderstand]\n1500\n");
 
@@ -168,7 +168,7 @@ int main() {
         nestedModelConfiguration.parts.size() == 1 &&
         nestedModelConfiguration.parts.front().objPath == nestedMeshPath;
 
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
     if (!meshWasBuilt || !modelBoundsApplied || !wheelColliderMatchesVisualEnvelope ||
         !authoredResistanceWasTransferred || !authoredResistanceAppearsInExport ||
         !boxFallbackApplied ||

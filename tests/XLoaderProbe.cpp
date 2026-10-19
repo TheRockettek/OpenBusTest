@@ -1,4 +1,5 @@
-#include "XLoader.h"
+#include "assets/XLoader.h"
+#include "ProbeTempDirectory.h"
 
 #include <algorithm>
 #include <bit>
@@ -215,7 +216,7 @@ int main(int argc, char** argv) {
         output << "xof 0303txt 0032\nMesh { 3; 0;0;0;, 1;0;0;, 0;1;0;; 1; 3; 0,1,3;; }\n";
     }
     const bool malformedRejected = !XLoader::parse(malformed);
-    std::filesystem::remove(malformed);
+    openbus::probe::removeProbeFile(malformed);
     if (!malformedRejected) {
         std::cerr << "out-of-range X face index was accepted\n";
         return 1;
@@ -252,7 +253,7 @@ int main(int argc, char** argv) {
                      static_cast<std::streamsize>(binary.size()));
     }
     const std::shared_ptr<ParsedObj> parsedBinary = XLoader::parse(binaryMesh);
-    std::filesystem::remove(binaryMesh);
+    openbus::probe::removeProbeFile(binaryMesh);
     if (!parsedBinary || parsedBinary->positions.size() != 3 ||
         parsedBinary->triangles.size() != 1 ||
         parsedBinary->triangles.front().indices[2].position != 3 ||
@@ -272,7 +273,7 @@ int main(int argc, char** argv) {
                      static_cast<std::streamsize>(compressedText.size()));
     }
     const std::shared_ptr<ParsedObj> parsedCompressedText = XLoader::parse(compressedTextMesh);
-    std::filesystem::remove(compressedTextMesh);
+    openbus::probe::removeProbeFile(compressedTextMesh);
     if (!parsedCompressedText || parsedCompressedText->triangles.size() != 1 ||
         !checkBounds(*parsedCompressedText)) {
         std::cerr << "MSZIP-compressed text X mesh did not parse\n";
@@ -290,7 +291,7 @@ int main(int argc, char** argv) {
                      static_cast<std::streamsize>(compressedBinary.size()));
     }
     const std::shared_ptr<ParsedObj> parsedCompressedBinary = XLoader::parse(compressedBinaryMesh);
-    std::filesystem::remove(compressedBinaryMesh);
+    openbus::probe::removeProbeFile(compressedBinaryMesh);
     if (!parsedCompressedBinary || parsedCompressedBinary->triangles.size() != 1 ||
         !checkBounds(*parsedCompressedBinary)) {
         std::cerr << "MSZIP-compressed binary X mesh did not parse\n";

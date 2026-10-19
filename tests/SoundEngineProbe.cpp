@@ -1,5 +1,6 @@
-#include "VehicleSoundBank.h"
-#include "Variables.h"
+#include "audio/VehicleSoundBank.h"
+#include "core/Variables.h"
+#include "ProbeTempDirectory.h"
 
 #include <algorithm>
 #include <array>
@@ -506,8 +507,7 @@ bool checkFilenameHeuristics(const std::filesystem::path& configPath) {
 
 int main() {
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "openbus_vehicle_sound_probe";
-    std::filesystem::remove_all(root);
+        openbus::probe::makeProbeDirectory("openbus_vehicle_sound_probe");
     std::filesystem::create_directories(root);
     const std::filesystem::path configPath = root / "sound.cfg";
     {
@@ -648,7 +648,7 @@ int main() {
     secondVehicle.stopAll(playback);
     caseSensitiveSoundBank.stopAll(caseSensitivePlayback);
 
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
     if (!bothVehiclesStartedTheirOwnLoops || !triggerStopIsScopedToFirstVehicle ||
         !ambientStopIsScopedToFirstVehicle || !stopAllLeavesSecondVehicleLoopsAlone ||
         !triggerLookupIsLocal || !oneShotPlaybackWorks || !repeatedOneShotIsCoalesced ||

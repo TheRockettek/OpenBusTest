@@ -1,5 +1,6 @@
-#include "VehicleConfigLoader.h"
+#include "config/VehicleConfigLoader.h"
 #include "osc/OscConverter.h"
+#include "ProbeTempDirectory.h"
 
 #include <array>
 #include <filesystem>
@@ -8,8 +9,7 @@
 
 int main() {
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "openbus_vehicle_config_probe";
-    std::filesystem::remove_all(root);
+        openbus::probe::makeProbeDirectory("openbus_vehicle_config_probe");
     std::filesystem::create_directories(root);
     std::filesystem::create_directories(root / "model");
     std::filesystem::create_directories(root / "Script");
@@ -103,7 +103,7 @@ int main() {
         reflections[2].kind == VehicleCameraKind::Reflexion2 && reflections[2].followsViewer &&
         reflections[3].kind == VehicleCameraKind::Reflexion2 && !reflections[3].followsViewer &&
         reflections[3].pan == 10.0 && reflections[3].tilt == -5.0;
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
 
     if (!reflectionCameraKeywordsParsed) {
         std::cerr << "Reflection camera keywords or their viewer-following flags were not parsed\n";

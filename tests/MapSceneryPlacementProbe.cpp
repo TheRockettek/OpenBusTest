@@ -1,4 +1,4 @@
-#include "MapSceneryPlacement.h"
+#include "map/MapSceneryPlacement.h"
 
 #include <algorithm>
 #include <cmath>

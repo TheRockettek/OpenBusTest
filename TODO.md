@@ -623,7 +623,7 @@ for the explicit boundary.
 - [x] Audit the renderer for OpenGL compatibility-profile API use; see
   `Docs/OPENGL_API_AUDIT.md` (no active compatibility API calls found).
 - [ ] Remove the unused compatibility-era texture-environment enum fallback
-  definitions in `src/RenderLoop.cpp` after confirming no platform header or
+  definitions in `src/app/RenderLoop.cpp` after confirming no platform header or
   generated source relies on them; retain constants that have active core-GL
   uses.
 - [ ] Validate Windows and Linux helper scripts from clean build directories.

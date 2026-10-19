@@ -1,9 +1,10 @@
-#include "ModelConfigLoader.h"
-#include "SceneryMaterialBinding.h"
-#include "InteriorLighting.h"
-#include "SceneryObjectConfigLoader.h"
-#include "Variables.h"
+#include "config/ModelConfigLoader.h"
+#include "render/SceneryMaterialBinding.h"
+#include "render/InteriorLighting.h"
+#include "config/SceneryObjectConfigLoader.h"
+#include "core/Variables.h"
 #include "osc/OscConverter.h"
+#include "ProbeTempDirectory.h"
 
 #include <filesystem>
 #include <fstream>
@@ -11,8 +12,7 @@
 
 int main() {
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "openbus_model_config_probe";
-    std::filesystem::remove_all(root);
+        openbus::probe::makeProbeDirectory("openbus_model_config_probe");
     std::filesystem::create_directories(root);
     const std::filesystem::path configPath = root / "display.cfg";
     std::ofstream mesh(root / "display.obj");
@@ -548,7 +548,7 @@ int main() {
         std::cerr << "lax material or animation records were not recovered\n";
         return 1;
     }
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
 
     if (result.diagnostics.hasErrors() || shadowMarkerWarned || result.parts.size() != 1 ||
         !result.parts[0].isShadow || !result.parts[0].noCollision ||

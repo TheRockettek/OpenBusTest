@@ -30,4 +30,4 @@ The current backend decodes RIFF/WAVE PCM (8-, 16-, 24-, or 32-bit) and 32-bit I
 
 ## Evidence and related pages
 
-Implementation references: [VehicleSoundBank.cpp](../src/VehicleSoundBank.cpp), [VehicleSoundBank.h](../src/VehicleSoundBank.h), [SoundEngine.cpp](../src/SoundEngine.cpp), and [VehicleConfigLoader.cpp](../src/VehicleConfigLoader.cpp). Regression coverage is in [SoundEngineProbe.cpp](../tests/SoundEngineProbe.cpp). BUS/model limitations are documented in [BUS status](IMPLEMENTATION_STATUS_BUS.md); see the [configuration status index](CONFIGURATION_IMPLEMENTATION_STATUS.md) for all file families.
+Implementation references: [VehicleSoundBank.cpp](../src/audio/VehicleSoundBank.cpp), [VehicleSoundBank.h](../src/audio/VehicleSoundBank.h), [SoundEngine.cpp](../src/audio/SoundEngine.cpp), and [VehicleConfigLoader.cpp](../src/config/VehicleConfigLoader.cpp). Regression coverage is in [SoundEngineProbe.cpp](../tests/SoundEngineProbe.cpp). BUS/model limitations are documented in [BUS status](IMPLEMENTATION_STATUS_BUS.md); see the [configuration status index](CONFIGURATION_IMPLEMENTATION_STATUS.md) for all file families.

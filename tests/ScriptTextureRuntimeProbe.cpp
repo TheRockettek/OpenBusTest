@@ -1,6 +1,7 @@
-#include "ScriptRuntime.h"
-#include "Logger.h"
+#include "scripting/ScriptRuntime.h"
+#include "core/Logger.h"
 #include "osc/OscConverter.h"
+#include "ProbeTempDirectory.h"
 
 #include <algorithm>
 #include <array>
@@ -14,9 +15,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <string>
 #include <vector>
-
-Logger gameLog = Logger("Game");
 
 bool setScriptBackend(const char* backend) {
 #ifdef _WIN32
@@ -25,6 +26,11 @@ bool setScriptBackend(const char* backend) {
     return backend == nullptr ? unsetenv("OPENBUS_SCRIPT_BACKEND") == 0
                               : setenv("OPENBUS_SCRIPT_BACKEND", backend, 1) == 0;
 #endif
+}
+
+std::string readTextFile(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
 void writeTestBmp(const std::filesystem::path& path, int width, int height,
@@ -65,35 +71,32 @@ void writeTestBmp(const std::filesystem::path& path, int width, int height,
 
 int main() {
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "openbus_script_texture_probe";
-    std::filesystem::remove_all(root);
+        openbus::probe::makeProbeDirectory("openbus_script_texture_probe");
     std::filesystem::create_directories(root);
-        const std::filesystem::path fonts = root / "Fonts";
-        std::filesystem::create_directories(fonts);
-        writeTestBmp(fonts / "probe.bmp", 4, 2, {255, 255, 80, 80, 255, 255, 80, 80});
-        writeTestBmp(fonts / "probe_alpha.bmp", 4, 2,
-             {255, 255, 128, 128, 255, 255, 128, 128});
-           writeTestBmp(fonts / "unit.bmp", 4, 2, {255, 255, 255, 255, 255, 255, 255, 255});
-           writeTestBmp(fonts / "unit_alpha.bmp", 4, 2,
-                     {255, 255, 255, 255, 255, 255, 255, 255});
-        std::ofstream font(fonts / "probe.oft");
-        font << "[newfont]\nProbeFont\nprobe.bmp\nprobe_alpha.bmp\n2\n0\n"
+    const std::filesystem::path fonts = root / "Fonts";
+    std::filesystem::create_directories(fonts);
+    writeTestBmp(fonts / "probe.bmp", 4, 2, {255, 255, 80, 80, 255, 255, 80, 80});
+    writeTestBmp(fonts / "probe_alpha.bmp", 4, 2, {255, 255, 128, 128, 255, 255, 128, 128});
+    writeTestBmp(fonts / "unit.bmp", 4, 2, {255, 255, 255, 255, 255, 255, 255, 255});
+    writeTestBmp(fonts / "unit_alpha.bmp", 4, 2, {255, 255, 255, 255, 255, 255, 255, 255});
+    std::ofstream font(fonts / "probe.oft");
+    font << "[newfont]\nProbeFont\nprobe.bmp\nprobe_alpha.bmp\n2\n0\n"
             "[char]\nA\n0\n2\n0\n"
             "[char]\nB\n2\n4\n0\n";
-            font << "[char]\n0\n0\n2\n0\n"
-                "[char]\n1\n2\n4\n0\n";
-        font.close();
-            std::ofstream unitFont(fonts / "unit.oft");
-            unitFont << "[newfont]\nUnitFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
-                    "[char]\nA\n0\n1\n0\n"
-                    "[char]\nc\n1\n2\n0\n"
-                    "[char]\n176\n2\n4\n0\n";
-            unitFont.close();
-            std::ofstream legacyFont(fonts / "legacy.oft");
-            legacyFont << "[newfont]\nLegacyFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
-                      "[char]\nA\n0\n1\n0\n"
-                      "[char]\nc\n1\n2\n0\n";
-            legacyFont.close();
+    font << "[char]\n0\n0\n2\n0\n"
+            "[char]\n1\n2\n4\n0\n";
+    font.close();
+    std::ofstream unitFont(fonts / "unit.oft");
+    unitFont << "[newfont]\nUnitFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
+                "[char]\nA\n0\n1\n0\n"
+                "[char]\nc\n1\n2\n0\n"
+                "[char]\n176\n2\n4\n0\n";
+    unitFont.close();
+    std::ofstream legacyFont(fonts / "legacy.oft");
+    legacyFont << "[newfont]\nLegacyFont\nunit.bmp\nunit_alpha.bmp\n2\n0\n"
+                  "[char]\nA\n0\n1\n0\n"
+                  "[char]\nc\n1\n2\n0\n";
+    legacyFont.close();
     const std::filesystem::path scriptPath = root / "probe.osc";
     std::ofstream source(scriptPath);
     source << "{InIt}\n"
@@ -173,9 +176,7 @@ int main() {
         std::cerr << "legacy extra {endif} failed Lua conversion: " << strayEndifLuaError << "\n";
         return 1;
     }
-    std::ifstream strayEndifLua(generatedLuaPath(strayEndifScript));
-    const std::string strayEndifLuaSource((std::istreambuf_iterator<char>(strayEndifLua)),
-                                          std::istreambuf_iterator<char>());
+    const std::string strayEndifLuaSource = readTextFile(generatedLuaPath(strayEndifScript));
     if (strayEndifLuaSource.find("after_stray_endif") == std::string::npos) {
         std::cerr << "Lua conversion truncated a macro at an unmatched {endif}\n";
         return 1;
@@ -205,9 +206,7 @@ int main() {
                   << "\n";
         return 1;
     }
-    std::ifstream generatedCompareLua(generatedLuaPath(stringCompareScript));
-    const std::string generatedCompareSource((std::istreambuf_iterator<char>(generatedCompareLua)),
-                                             std::istreambuf_iterator<char>());
+    const std::string generatedCompareSource = readTextFile(generatedLuaPath(stringCompareScript));
     if (generatedCompareSource.find("a>=b and 1 or 0") == std::string::npos) {
         std::cerr << "Lua converter did not emit string >= comparison for $=>\n";
         return 1;
@@ -322,8 +321,7 @@ int main() {
     {
         Variables fallbackVariables(ScriptObjectKind::Vehicle);
         SimulationState fallbackSimulation;
-        ScriptRuntime fallbackRuntime(fallbackConfiguration, fallbackVariables,
-                                      fallbackSimulation);
+        ScriptRuntime fallbackRuntime(fallbackConfiguration, fallbackVariables, fallbackSimulation);
         fallbackRuntime.initialize();
         if (fallbackVariables.get("lua_fallback_seen") != 1.0) {
             std::cerr << "native compilation failure did not fall back to Lua\n";
@@ -478,9 +476,8 @@ int main() {
         secondObject.declareString("sign_text");
         firstObject.setString("sign_text", "A");
         secondObject.setString("sign_text", "B");
-        const std::vector<ModelTextTexture> signText = {
-            ModelTextTexture{0, false,
-                             {"sign_text", "ProbeFont", "6", "4", "0", "255", "255", "255"}}};
+        const std::vector<ModelTextTexture> signText = {ModelTextTexture{
+            0, false, {"sign_text", "ProbeFont", "6", "4", "0", "255", "255", "255"}}};
         firstRuntime.configureTextTextures(signText);
         secondRuntime.configureTextTextures(signText);
         firstRuntime.initialize();
@@ -494,19 +491,15 @@ int main() {
             return 1;
         }
         firstRuntime.update(false);
-        if (firstObject.get("frame_count") != 1.0 ||
-            secondObject.get("frame_count") != 0.0 ||
-            firstObject.get("lamp_visible") != 1.0 ||
-            secondObject.get("lamp_visible") != 0.0) {
+        if (firstObject.get("frame_count") != 1.0 || secondObject.get("frame_count") != 0.0 ||
+            firstObject.get("lamp_visible") != 1.0 || secondObject.get("lamp_visible") != 0.0) {
             std::cerr << "scenery script state was not isolated per placed object\n";
             return 1;
         }
         secondRuntime.update(false);
         firstRuntime.update(false);
-        if (firstObject.get("frame_count") != 2.0 ||
-            secondObject.get("frame_count") != 1.0 ||
-            firstObject.get("lamp_visible") != 2.0 ||
-            secondObject.get("lamp_visible") != 1.0) {
+        if (firstObject.get("frame_count") != 2.0 || secondObject.get("frame_count") != 1.0 ||
+            firstObject.get("lamp_visible") != 2.0 || secondObject.get("lamp_visible") != 1.0) {
             std::cerr << "scenery frame scripts did not tick independently\n";
             return 1;
         }
@@ -540,19 +533,18 @@ int main() {
     runtime.invokeMouseRelease("RouteDisplay");
     if (variables.getString("mouse_event") != "routedisplay" ||
         variables.get("mouse_click_seen") != 1.0 || variables.get("mouse_drag_seen") != 1.0 ||
-        variables.get("mouse_release_seen") != 1.0 ||
-        variables.get("key_binding_seen") != 1.0 ||
-        variables.get("key_binding_release_seen") != 1.0 ||
-        variables.get("mouse_drag_x") != 3.0 || variables.get("mouse_drag_y") != -2.0 ||
-        variables.get("mouse_cursor_x") != 120.0 || variables.get("mouse_cursor_y") != 80.0 ||
+        variables.get("mouse_release_seen") != 1.0 || variables.get("key_binding_seen") != 1.0 ||
+        variables.get("key_binding_release_seen") != 1.0 || variables.get("mouse_drag_x") != 3.0 ||
+        variables.get("mouse_drag_y") != -2.0 || variables.get("mouse_cursor_x") != 120.0 ||
+        variables.get("mouse_cursor_y") != 80.0 ||
         simulation.sharedVariables().get("mouse_x") != 0.0 ||
         simulation.sharedVariables().get("mouse_y") != 0.0) {
         std::cerr << "input events were not exposed to the script state\n";
         return 1;
     }
     runtime.invokeMouseDrag("TicketerGimble", 3.0, -2.0, 120.0, 80.0);
-    if (variables.get("ticketer_drag_seen") != 1.0 ||
-        variables.get("mouse_drag_x") != 3.0 || variables.get("mouse_drag_y") != -2.0 ||
+    if (variables.get("ticketer_drag_seen") != 1.0 || variables.get("mouse_drag_x") != 3.0 ||
+        variables.get("mouse_drag_y") != -2.0 ||
         simulation.sharedVariables().get("mouse_x") != 0.0 ||
         simulation.sharedVariables().get("mouse_y") != 0.0) {
         std::cerr << "ticketer vertical drag did not use the expected Y direction\n";
@@ -570,22 +562,35 @@ int main() {
         return 1;
     }
 
-    runtime.configureScriptTextures({ModelScriptTexture{3, 4, 5, {"4", "5"}},
-                                     ModelScriptTexture{4, 4097, 1, {"4097", "1"}}});
-    runtime.configureTextTextures({
-        ModelTextTexture{0, false, {"display", "probe-font", "32", "16", "0", "255", "0", "0"}},
-        ModelTextTexture{1, true, {"bitmapdisplay", "ProbeFont", "6", "4", "0", "10", "20", "30", "2"}},
-        ModelTextTexture{2, true, {"centerdisplay", "ProbeFont", "6", "8", "1", "10", "20", "30", "0"}},
-        ModelTextTexture{3, true, {"blockcolordisplay", "ProbeFont", "6", "6", "0", "1", "1", "1", "0"}},
-        ModelTextTexture{4, true, {"leftdisplay", "ProbeFont", "8", "4", "1", "10", "20", "30", "1"}},
-        ModelTextTexture{5, false, {"ident", "probe-font", "32", "16", "0", "255", "255", "255"}},
-        ModelTextTexture{6, true, {"gridcenterdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "3", "1"}},
-        ModelTextTexture{7, true, {"gridleftdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "4", "1"}},
-        ModelTextTexture{8, true, {"gridrightdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "5", "0"}},
-        ModelTextTexture{9, true, {"unitdisplay", "UnitFont", "12", "4", "0", "10", "20", "30", "0"}},
-        ModelTextTexture{10, true, {"legacyunitdisplay", "LegacyFont", "12", "4", "0", "10", "20", "30", "0"}},
-        ModelTextTexture{11, true, {"unitreference", "UnitFont", "12", "4", "0", "10", "20", "30", "0"}},
-        ModelTextTexture{12, true, {"legacyreference", "LegacyFont", "12", "4", "0", "10", "20", "30", "0"}}});
+    runtime.configureScriptTextures(
+        {ModelScriptTexture{3, 4, 5, {"4", "5"}}, ModelScriptTexture{4, 4097, 1, {"4097", "1"}}});
+    runtime.configureTextTextures(
+        {ModelTextTexture{0, false, {"display", "probe-font", "32", "16", "0", "255", "0", "0"}},
+         ModelTextTexture{
+             1, true, {"bitmapdisplay", "ProbeFont", "6", "4", "0", "10", "20", "30", "2"}},
+         ModelTextTexture{
+             2, true, {"centerdisplay", "ProbeFont", "6", "8", "1", "10", "20", "30", "0"}},
+         ModelTextTexture{
+             3, true, {"blockcolordisplay", "ProbeFont", "6", "6", "0", "1", "1", "1", "0"}},
+         ModelTextTexture{
+             4, true, {"leftdisplay", "ProbeFont", "8", "4", "1", "10", "20", "30", "1"}},
+         ModelTextTexture{5, false, {"ident", "probe-font", "32", "16", "0", "255", "255", "255"}},
+         ModelTextTexture{
+             6,
+             true,
+             {"gridcenterdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "3", "1"}},
+         ModelTextTexture{
+             7, true, {"gridleftdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "4", "1"}},
+         ModelTextTexture{
+             8, true, {"gridrightdisplay", "ProbeFont", "8", "4", "0", "10", "20", "30", "5", "0"}},
+         ModelTextTexture{
+             9, true, {"unitdisplay", "UnitFont", "12", "4", "0", "10", "20", "30", "0"}},
+         ModelTextTexture{
+             10, true, {"legacyunitdisplay", "LegacyFont", "12", "4", "0", "10", "20", "30", "0"}},
+         ModelTextTexture{
+             11, true, {"unitreference", "UnitFont", "12", "4", "0", "10", "20", "30", "0"}},
+         ModelTextTexture{
+             12, true, {"legacyreference", "LegacyFont", "12", "4", "0", "10", "20", "30", "0"}}});
     variables.setString("display", "HELLO\n123");
     variables.setString("bitmapdisplay", "A@AB");
     variables.setString("centerdisplay", "A");
@@ -594,9 +599,15 @@ int main() {
     variables.setString("gridcenterdisplay", "AB");
     variables.setString("gridleftdisplay", "AB");
     variables.setString("gridrightdisplay", "AB");
-    variables.setString("unitdisplay", std::string("\xef\xbf\xbd" "c", 4));
-    variables.setString("legacyunitdisplay", std::string("\xef\xbf\xbd" "c", 4));
-    variables.setString("unitreference", std::string("\xc2\xb0" "c", 3));
+    variables.setString("unitdisplay", std::string("\xef\xbf\xbd"
+                                                   "c",
+                                                   4));
+    variables.setString("legacyunitdisplay", std::string("\xef\xbf\xbd"
+                                                         "c",
+                                                         4));
+    variables.setString("unitreference", std::string("\xc2\xb0"
+                                                     "c",
+                                                     3));
     variables.setString("legacyreference", "AAAc");
     runtime.initialize();
     ScriptRuntime::ScriptTextureSnapshot initialText;
@@ -609,15 +620,14 @@ int main() {
          offset += 4) {
         hasInitialText = hasInitialText || initialText.pixels[offset] != 0;
     }
-    for (std::size_t offset = 3;
-         copiedInitialPlateText && offset < initialPlateText.pixels.size(); offset += 4) {
+    for (std::size_t offset = 3; copiedInitialPlateText && offset < initialPlateText.pixels.size();
+         offset += 4) {
         hasInitialPlateText = hasInitialPlateText || initialPlateText.pixels[offset] != 0;
     }
-    if (!copiedInitialText || !hasInitialText ||
-        initialText.pixels.size() != 32U * 16U * 4U || !copiedInitialPlateText ||
-        !hasInitialPlateText || initialPlateText.pixels.size() != 32U * 16U * 4U ||
-        variables.getString("ident") != "AB12 CDE" ||
-        variables.getString("number") != "Fleet 01") {
+    if (!copiedInitialText || !hasInitialText || initialText.pixels.size() != 32U * 16U * 4U ||
+        !copiedInitialPlateText || !hasInitialPlateText ||
+        initialPlateText.pixels.size() != 32U * 16U * 4U ||
+        variables.getString("ident") != "AB12 CDE" || variables.getString("number") != "Fleet 01") {
         std::cerr << "initial registration text was not bound and rasterized from vehicle data\n";
         return 1;
     }
@@ -754,7 +764,8 @@ int main() {
         centerTextTexture.pixels[centeredFontPixel + 1] != 255 ||
         centerTextTexture.pixels[centeredFontPixel + 2] != 255 ||
         centerTextTexture.pixels[centeredFontPixel + 3] != 255 ||
-        centerTextTexture.pixels[3] != 0 || blockColorTextTexture.pixels[centeredBlockColorPixel] != 1 ||
+        centerTextTexture.pixels[3] != 0 ||
+        blockColorTextTexture.pixels[centeredBlockColorPixel] != 1 ||
         blockColorTextTexture.pixels[centeredBlockColorPixel + 1] != 1 ||
         blockColorTextTexture.pixels[centeredBlockColorPixel + 2] != 1 ||
         blockColorTextTexture.pixels[centeredBlockColorPixel + 3] != 255 ||
@@ -774,15 +785,14 @@ int main() {
                   << static_cast<int>(centerTextTexture.pixels[centeredFontPixel + 2]) << ','
                   << static_cast<int>(centerTextTexture.pixels[centeredFontPixel + 3])
                   << ", block-color RGBA="
-                  << static_cast<int>(blockColorTextTexture.pixels[centeredBlockColorPixel])
-                  << ','
+                  << static_cast<int>(blockColorTextTexture.pixels[centeredBlockColorPixel]) << ','
                   << static_cast<int>(blockColorTextTexture.pixels[centeredBlockColorPixel + 1])
                   << ','
                   << static_cast<int>(blockColorTextTexture.pixels[centeredBlockColorPixel + 2])
                   << ','
                   << static_cast<int>(blockColorTextTexture.pixels[centeredBlockColorPixel + 3])
-                  << ", block bounds=" << blockMinX << ',' << blockMinY << "-" << blockMaxX
-                  << ',' << blockMaxY << ", revision=" << blockColorTextTexture.revision << '\n';
+                  << ", block bounds=" << blockMinX << ',' << blockMinY << "-" << blockMaxX << ','
+                  << blockMaxY << ", revision=" << blockColorTextTexture.revision << '\n';
         return 1;
     }
     const std::uint64_t firstTextRevision = textTexture.revision;
@@ -807,10 +817,8 @@ int main() {
     variables.set("refresh_strings", 1.0);
     runtime.update(false);
     ScriptRuntime::ScriptTextureSnapshot digits;
-    if (!runtime.copyTextTexture(1, digits) ||
-        digits.pixels[(1U * 6U + 2U) * 4U + 3U] != 255 ||
-        digits.pixels[(1U * 6U + 4U) * 4U + 3U] != 128 ||
-        digits.revision == firstBitmapRevision) {
+    if (!runtime.copyTextTexture(1, digits) || digits.pixels[(1U * 6U + 2U) * 4U + 3U] != 255 ||
+        digits.pixels[(1U * 6U + 4U) * 4U + 3U] != 128 || digits.revision == firstBitmapRevision) {
         std::cerr << "OFT digit glyphs, right alignment, or refresh gating failed\n";
         return 1;
     }
@@ -829,6 +837,6 @@ int main() {
         std::cerr << "changed text texture was not regenerated\n";
         return 1;
     }
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
     return 0;
 }

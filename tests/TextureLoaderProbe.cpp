@@ -1,6 +1,7 @@
-#include "TextureLoader.h"
+#include "assets/TextureLoader.h"
 
-#include "Logger.h"
+#include "core/Logger.h"
+#include "ProbeTempDirectory.h"
 
 #include <array>
 #include <cstdint>
@@ -10,7 +11,6 @@
 #include <limits>
 #include <vector>
 
-Logger gameLog("TextureLoaderProbe");
 
 namespace {
 
@@ -63,7 +63,7 @@ int main() {
     openbus::rendering::Image image;
     valid &= require(!openbus::rendering::TextureLoader::readImage(path, image),
                      "DDS dimensions outside Image range");
-    std::filesystem::remove(path);
+    openbus::probe::removeProbeFile(path);
 
     const std::filesystem::path alphaMaskPath =
         std::filesystem::temp_directory_path() / "openbus_alpha_mask.dds";
@@ -91,7 +91,7 @@ int main() {
                          image.rgba[0] == 255 && image.rgba[1] == 255 &&
                          image.rgba[2] == 255 && image.rgba[3] == 255 && image.rgba[7] == 0,
                      "DDS alpha-only mask preserves coverage values");
-    std::filesystem::remove(alphaMaskPath);
+    openbus::probe::removeProbeFile(alphaMaskPath);
 
     const std::filesystem::path dxt1Path =
         std::filesystem::temp_directory_path() / "openbus_dxt1_implicit_alpha.dds";
@@ -121,7 +121,7 @@ int main() {
     valid &= require(image.rgba.size() == 4 * 4 * 4 && image.rgba[3] == 0 &&
                          image.rgba[image.rgba.size() - 1] == 0,
                      "DXT1 three-colour selector preserves implicit transparency");
-    std::filesystem::remove(dxt1Path);
+    openbus::probe::removeProbeFile(dxt1Path);
 
     const std::filesystem::path dxt4Path =
         std::filesystem::temp_directory_path() / "openbus_dxt4_alpha.dds";
@@ -150,7 +150,7 @@ int main() {
                      "DXT4 interpolated-alpha DDS loads");
     valid &= require(image.rgba.size() == 4 * 4 * 4 && image.rgba[3] == 255,
                      "DXT4 interpolated alpha is decoded");
-    std::filesystem::remove(dxt4Path);
+    openbus::probe::removeProbeFile(dxt4Path);
 
     const std::filesystem::path mislabeledBmpPath =
         std::filesystem::temp_directory_path() / "openbus_palettized_bmp_payload.dds";
@@ -190,7 +190,7 @@ int main() {
                          image.rgba[0] == 30 && image.rgba[1] == 20 && image.rgba[2] == 10 &&
                          image.rgba[3] == 255,
                      "palettized BMP palette is expanded to opaque RGBA");
-    std::filesystem::remove(mislabeledBmpPath);
+    openbus::probe::removeProbeFile(mislabeledBmpPath);
 
     const std::filesystem::path tgaPath =
         std::filesystem::temp_directory_path() / "openbus_tga_alpha_without_descriptor.tga";
@@ -211,6 +211,6 @@ int main() {
                      "32-bit TGA with zero descriptor attribute bits loads");
     valid &= require(image.rgba.size() == 4 && image.rgba[1] == 255 && image.rgba[3] == 0,
                      "32-bit TGA alpha channel is preserved when descriptor bits are unset");
-    std::filesystem::remove(tgaPath);
+    openbus::probe::removeProbeFile(tgaPath);
     return valid ? 0 : 1;
 }

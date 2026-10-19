@@ -1,4 +1,5 @@
-#include "MapConfigLoader.h"
+#include "map/MapConfigLoader.h"
+#include "ProbeTempDirectory.h"
 
 #include <filesystem>
 #include <fstream>
@@ -30,8 +31,7 @@ void writeUtf16Le(const std::filesystem::path& path, const std::string& text) {
 
 void runProbe() {
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "openbus-map-chrono-tile-probe";
-    std::filesystem::remove_all(root);
+        openbus::probe::makeProbeDirectory("openbus-map-chrono-tile-probe");
     std::filesystem::create_directories(root);
     try {
         const std::string chronoText =
@@ -94,10 +94,10 @@ void runProbe() {
                         "selector ID is missing; source lines retained",
                 "truncated selector ID is reported without rejecting the raw tile");
     } catch (...) {
-        std::filesystem::remove_all(root);
+        openbus::probe::removeProbeDirectory(root);
         throw;
     }
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
 }
 
 } // namespace

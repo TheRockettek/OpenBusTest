@@ -1,4 +1,4 @@
-#include "Viewpoint.h"
+#include "core/Viewpoint.h"
 
 #include <iostream>
 

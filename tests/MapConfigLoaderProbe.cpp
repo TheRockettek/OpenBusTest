@@ -1,4 +1,5 @@
-#include "MapConfigLoader.h"
+#include "map/MapConfigLoader.h"
+#include "ProbeTempDirectory.h"
 
 #include <array>
 #include <bit>
@@ -40,8 +41,7 @@ void writeU32(std::ofstream& output, std::uint32_t value) {
 
 void runFixtureProbe() {
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "openbus-map-config-probe";
-    std::filesystem::remove_all(root);
+        openbus::probe::makeProbeDirectory("openbus-map-config-probe");
     std::filesystem::create_directories(root);
     try {
         const std::filesystem::path groundTextureDirectory = root / "texture" / "map";
@@ -507,10 +507,10 @@ void runFixtureProbe() {
         }
         require(malformedWaterRejected, "truncated water sidecar is rejected");
     } catch (...) {
-        std::filesystem::remove_all(root);
+        openbus::probe::removeProbeDirectory(root);
         throw;
     }
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
 }
 
 void runInstalledMapProbe(const std::filesystem::path& root) {

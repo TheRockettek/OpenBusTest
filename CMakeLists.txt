@@ -47,11 +47,6 @@ else()
     set(OPENBUS_PERF_TRACE_DEFINE 0)
 endif()
 
-function(openbus_configure_perf_trace target)
-    target_compile_definitions(${target} PRIVATE
-        OPENBUS_ENABLE_PERF_TRACE=${OPENBUS_PERF_TRACE_DEFINE})
-endfunction()
-
 if(OPENBUS_ENABLE_CLANG_TIDY)
     find_program(OPENBUS_CLANG_TIDY_EXECUTABLE NAMES clang-tidy REQUIRED)
     set(CMAKE_CXX_CLANG_TIDY "${OPENBUS_CLANG_TIDY_EXECUTABLE}")
@@ -151,571 +146,74 @@ else()
     set(OPENBUS_ODE_TARGET OpenBus::ODE)
 endif()
 
-add_executable(OpenBus
-    src/main.cpp
-    src/BusConfiguration.cpp
-    src/CrashHandler.cpp
-    src/RoadFeatures.cpp
-    src/BusSimulation.cpp
-    src/Variables.cpp
-    src/ConfigurationParser.cpp
-        src/Logger.cpp
-    src/MapConfigLoader.cpp
-    src/MapSceneryPlacement.cpp
-    src/MapCollisionBuilder.cpp
-    src/MapCollisionStreamer.cpp
-    src/MapRoadGeometry.cpp
-    src/MapSplineGeometry.cpp
-    src/MapSplineProfile.cpp
-    src/MapWaterGeometry.cpp
-    src/VehicleConfigLoader.cpp
-    src/ModelConfigLoader.cpp
-    src/ModelConfigJson.cpp
-    src/BusConfigLoader.cpp
-    src/BusModelLoader.cpp
-    src/CameraMath.cpp
-    src/MapRenderer.cpp
-    src/CoreRenderer.cpp
-    src/ComputeCulling.cpp
-    src/RenderPrimitives.cpp
-    src/RendererReflection.cpp
-    src/SceneryObjectConfigLoader.cpp
-    src/PerfTrace.cpp
-    src/RenderLoop.cpp
-    src/VehicleInputBindings.cpp
-    src/AssetRequestManager.cpp
-    src/ScreenshotWriter.cpp
-    src/TextureAssetLoader.cpp
-    src/TextureLoader.cpp
-    src/ObjLoader.cpp
-    src/O3DLoader.cpp
-    src/XLoader.cpp
-    src/OpenGLFunctions.cpp
-    src/ScriptRuntime.cpp
-    src/SoundEngine.cpp
-    src/VehicleSoundBank.cpp
-    src/osc/osc.cpp
-)
+find_package(Threads REQUIRED)
 
-openbus_configure_perf_trace(OpenBus)
-target_include_directories(OpenBus PRIVATE src)
-target_include_directories(OpenBus PRIVATE src/osc)
+# Keep every executable beside the copied runtime DLLs so the game, probes and
+# helper scripts can all be run straight from the build directory.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+
+# Module includes are rooted here, e.g. #include "core/Logger.h".
+set(OPENBUS_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+# Header-only third-party code used by the asset and render modules.
+add_library(openbus_third_party_headers INTERFACE)
+target_include_directories(openbus_third_party_headers SYSTEM INTERFACE
+    ${gli_SOURCE_DIR}
+    ${gli_SOURCE_DIR}/external/glm
+    ${stb_SOURCE_DIR})
+
+# Vendored Lua 5.1 (LuaJIT-compatible) headers and Windows import library.
+set(OPENBUS_LUA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lua51")
 if(WIN32)
     add_library(OpenBusLua SHARED IMPORTED)
     set_target_properties(OpenBusLua PROPERTIES
-        IMPORTED_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.lib"
-        IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.dll")
-    add_custom_command(TARGET OpenBus POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/osc/lua51.dll"
-            "$<TARGET_FILE_DIR:OpenBus>/lua51.dll")
+        IMPORTED_IMPLIB "${OPENBUS_LUA_ROOT}/lib/lua51.lib"
+        IMPORTED_LOCATION "${OPENBUS_LUA_ROOT}/lib/lua51.dll"
+        INTERFACE_INCLUDE_DIRECTORIES "${OPENBUS_LUA_ROOT}/include")
 else()
     find_library(OPENBUS_LUA_LIBRARY NAMES lua5.1 lua51 REQUIRED)
     add_library(OpenBusLua INTERFACE)
     target_link_libraries(OpenBusLua INTERFACE ${OPENBUS_LUA_LIBRARY})
-endif()
-target_include_directories(OpenBus SYSTEM PRIVATE
-    ${gli_SOURCE_DIR}
-    ${gli_SOURCE_DIR}/external/glm
-    ${stb_SOURCE_DIR})
-target_link_libraries(OpenBus PRIVATE ${OPENBUS_ODE_TARGET} OpenBus::GLFW OpenGL::GL OpenBusLua
-                                      OpenAL::OpenAL ZLIB::ZLIB)
-
-if(OPENBUS_BUILD_BGFX_LIGHTING_PROBE)
-    set(OPENBUS_BGFX_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders/bgfx")
-    set(OPENBUS_BGFX_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/bgfx-shaders")
-    file(MAKE_DIRECTORY "${OPENBUS_BGFX_SHADER_OUTPUT_DIR}")
-
-    foreach(shader IN ITEMS vs_lit_cube fs_lit_cube)
-        if(shader STREQUAL "vs_lit_cube")
-            set(shader_type vertex)
-        else()
-            set(shader_type fragment)
-        endif()
-        add_custom_command(
-            OUTPUT "${OPENBUS_BGFX_SHADER_OUTPUT_DIR}/${shader}.bin"
-            COMMAND $<TARGET_FILE:bgfx::shaderc>
-                -f "${OPENBUS_BGFX_SHADER_SOURCE_DIR}/${shader}.sc"
-                -o "${OPENBUS_BGFX_SHADER_OUTPUT_DIR}/${shader}.bin"
-                --type ${shader_type}
-                --platform windows
-                --profile 150
-                --varyingdef "${OPENBUS_BGFX_SHADER_SOURCE_DIR}/varying.def.sc"
-                -i "${BGFX_SHADER_INCLUDE_PATH}"
-            DEPENDS
-                "${OPENBUS_BGFX_SHADER_SOURCE_DIR}/${shader}.sc"
-                "${OPENBUS_BGFX_SHADER_SOURCE_DIR}/varying.def.sc"
-                bgfx::shaderc
-            COMMENT "Compiling bgfx GLSL 1.50 shader ${shader}"
-            VERBATIM
-        )
-        list(APPEND OPENBUS_BGFX_SHADER_BINARIES
-             "${OPENBUS_BGFX_SHADER_OUTPUT_DIR}/${shader}.bin")
-    endforeach()
-
-    add_custom_target(OpenBusBgfxShaders DEPENDS ${OPENBUS_BGFX_SHADER_BINARIES})
-    add_executable(OpenBusBgfxLightingProbe src/BgfxLightingProbe.cpp)
-    add_dependencies(OpenBusBgfxLightingProbe OpenBusBgfxShaders)
-    target_link_libraries(OpenBusBgfxLightingProbe PRIVATE bgfx::bgfx OpenBus::GLFW)
-    target_compile_features(OpenBusBgfxLightingProbe PRIVATE cxx_std_23)
-    add_custom_command(TARGET OpenBusBgfxLightingProbe POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${OPENBUS_BGFX_SHADER_OUTPUT_DIR}"
-            "$<TARGET_FILE_DIR:OpenBusBgfxLightingProbe>/bgfx-shaders"
-        VERBATIM)
+    target_include_directories(OpenBusLua SYSTEM INTERFACE "${OPENBUS_LUA_ROOT}/include")
 endif()
 
-if(WIN32)
-    add_custom_command(TARGET OpenBus POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy -t "$<TARGET_FILE_DIR:OpenBus>"
-            "$<TARGET_FILE:OpenAL::OpenAL>"
-        COMMAND_EXPAND_LISTS)
-endif()
+function(openbus_copy_lua_runtime target)
+    if(WIN32)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${OPENBUS_LUA_ROOT}/lib/lua51.dll"
+                "$<TARGET_FILE_DIR:${target}>/lua51.dll")
+    endif()
+endfunction()
 
 if(OPENBUS_ENABLE_IPO)
     include(CheckIPOSupported)
     check_ipo_supported(RESULT OPENBUS_IPO_SUPPORTED OUTPUT OPENBUS_IPO_ERROR LANGUAGES CXX)
-    if(OPENBUS_IPO_SUPPORTED)
-        set_property(TARGET OpenBus PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-        set_property(TARGET OpenBus PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
-    else()
+    if(NOT OPENBUS_IPO_SUPPORTED)
         message(WARNING "IPO/LTO is unavailable; continuing without it: ${OPENBUS_IPO_ERROR}")
     endif()
 endif()
 
-add_executable(OpenBusPerfTraceProbe tests/PerfTraceProbe.cpp src/PerfTrace.cpp)
-target_include_directories(OpenBusPerfTraceProbe PRIVATE src)
-target_compile_definitions(OpenBusPerfTraceProbe PRIVATE OPENBUS_ENABLE_PERF_TRACE=1)
-find_package(Threads REQUIRED)
-target_link_libraries(OpenBusPerfTraceProbe PRIVATE Threads::Threads)
-foreach(mode toggle autostart cap failure)
-    add_test(NAME OpenBusPerfTraceProbe.${mode} COMMAND OpenBusPerfTraceProbe ${mode})
-endforeach()
-
-add_executable(OpenBusPerfTraceDisabledProbe tests/PerfTraceProbe.cpp src/PerfTrace.cpp)
-target_include_directories(OpenBusPerfTraceDisabledProbe PRIVATE src)
-target_compile_definitions(OpenBusPerfTraceDisabledProbe PRIVATE OPENBUS_ENABLE_PERF_TRACE=0)
-target_link_libraries(OpenBusPerfTraceDisabledProbe PRIVATE Threads::Threads)
-add_test(NAME OpenBusPerfTraceDisabledProbe COMMAND OpenBusPerfTraceDisabledProbe)
-
-add_executable(OpenBusPhysicsProbe
-    tests/BusSimulationSteeringProbe.cpp
-    src/BusSimulation.cpp
-    src/Logger.cpp
-    src/PerfTrace.cpp
-    src/RoadFeatures.cpp
-    src/Variables.cpp
-)
-
-openbus_configure_perf_trace(OpenBusPhysicsProbe)
-target_include_directories(OpenBusPhysicsProbe PRIVATE src)
-target_link_libraries(OpenBusPhysicsProbe PRIVATE ${OPENBUS_ODE_TARGET})
-
-add_executable(OpenBusStabilityProbe
-    tests/BusSimulationStabilityProbe.cpp
-    src/BusSimulation.cpp
-    src/Logger.cpp
-    src/PerfTrace.cpp
-    src/RoadFeatures.cpp
-    src/Variables.cpp
-)
-
-openbus_configure_perf_trace(OpenBusStabilityProbe)
-target_include_directories(OpenBusStabilityProbe PRIVATE src)
-target_link_libraries(OpenBusStabilityProbe PRIVATE ${OPENBUS_ODE_TARGET})
-
-add_executable(OpenBusPhysicsStressProbe
-    tests/BusSimulationStressProbe.cpp
-    src/BusSimulation.cpp
-    src/Logger.cpp
-    src/PerfTrace.cpp
-    src/RoadFeatures.cpp
-    src/Variables.cpp
-)
-
-openbus_configure_perf_trace(OpenBusPhysicsStressProbe)
-target_include_directories(OpenBusPhysicsStressProbe PRIVATE src)
-target_link_libraries(OpenBusPhysicsStressProbe PRIVATE ${OPENBUS_ODE_TARGET})
-
-add_executable(OpenBusPhysicsContactProbe
-    tests/BusSimulationContactProbe.cpp
-    src/BusSimulation.cpp
-    src/Logger.cpp
-    src/PerfTrace.cpp
-    src/RoadFeatures.cpp
-    src/Variables.cpp
-)
-
-openbus_configure_perf_trace(OpenBusPhysicsContactProbe)
-target_include_directories(OpenBusPhysicsContactProbe PRIVATE src)
-target_link_libraries(OpenBusPhysicsContactProbe PRIVATE ${OPENBUS_ODE_TARGET})
-
-add_executable(OpenBusVariablesProbe
-    tests/VariablesProbe.cpp
-    src/Variables.cpp
-)
-target_include_directories(OpenBusVariablesProbe PRIVATE src)
-add_test(NAME OpenBusVariablesProbe COMMAND OpenBusVariablesProbe)
-
-add_executable(OpenBusVehicleInputBindingsProbe
-    tests/VehicleInputBindingsProbe.cpp
-    src/VehicleInputBindings.cpp
-)
-target_include_directories(OpenBusVehicleInputBindingsProbe PRIVATE src)
-target_link_libraries(OpenBusVehicleInputBindingsProbe PRIVATE OpenBus::GLFW)
-add_test(NAME OpenBusVehicleInputBindingsProbe COMMAND OpenBusVehicleInputBindingsProbe)
-
-add_executable(OpenBusConfigurationParserProbe
-    tests/ConfigurationParserProbe.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-)
-target_include_directories(OpenBusConfigurationParserProbe PRIVATE src)
-add_test(NAME OpenBusConfigurationParserProbe COMMAND OpenBusConfigurationParserProbe)
-
-add_executable(OpenBusMapConfigProbe
-    tests/MapConfigLoaderProbe.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/MapConfigLoader.cpp
-)
-target_include_directories(OpenBusMapConfigProbe PRIVATE src)
-add_test(NAME OpenBusMapConfigProbe COMMAND OpenBusMapConfigProbe)
-
-add_executable(OpenBusMapChronoTileProbe
-    tests/MapChronoTileProbe.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/MapConfigLoader.cpp
-)
-target_include_directories(OpenBusMapChronoTileProbe PRIVATE src)
-add_test(NAME OpenBusMapChronoTileProbe COMMAND OpenBusMapChronoTileProbe)
-
-add_executable(OpenBusMapSplineGeometryProbe
-    tests/MapSplineGeometryProbe.cpp
-    src/MapSplineGeometry.cpp
-)
-target_include_directories(OpenBusMapSplineGeometryProbe PRIVATE src)
-add_test(NAME OpenBusMapSplineGeometryProbe COMMAND OpenBusMapSplineGeometryProbe)
-
-add_executable(OpenBusMapRoadGeometryProbe
-    tests/MapRoadGeometryProbe.cpp
-    src/MapRoadGeometry.cpp
-    src/MapSplineGeometry.cpp
-)
-target_include_directories(OpenBusMapRoadGeometryProbe PRIVATE src)
-add_test(NAME OpenBusMapRoadGeometryProbe COMMAND OpenBusMapRoadGeometryProbe)
-
-add_executable(OpenBusMapWaterGeometryProbe
-    tests/MapWaterGeometryProbe.cpp
-    src/MapWaterGeometry.cpp
-)
-target_include_directories(OpenBusMapWaterGeometryProbe PRIVATE src)
-add_test(NAME OpenBusMapWaterGeometryProbe COMMAND OpenBusMapWaterGeometryProbe)
-
-add_executable(OpenBusStaticPrimitiveBufferProbe tests/StaticPrimitiveBufferProbe.cpp)
-target_include_directories(OpenBusStaticPrimitiveBufferProbe PRIVATE src)
-add_test(NAME OpenBusStaticPrimitiveBufferProbe COMMAND OpenBusStaticPrimitiveBufferProbe)
-
-add_executable(OpenBusMapCollisionBuilderProbe
-    tests/MapCollisionBuilderProbe.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/MapCollisionBuilder.cpp
-    src/MapConfigLoader.cpp
-    src/MapSceneryPlacement.cpp
-    src/MapRoadGeometry.cpp
-    src/MapSplineGeometry.cpp
-    src/MapSplineProfile.cpp
-    src/ModelConfigLoader.cpp
-    src/O3DLoader.cpp
-    src/PerfTrace.cpp
-    src/SceneryObjectConfigLoader.cpp
-    src/Variables.cpp
-    src/VehicleConfigLoader.cpp
-    src/XLoader.cpp
-    src/osc/osc.cpp
-)
-openbus_configure_perf_trace(OpenBusMapCollisionBuilderProbe)
-target_include_directories(OpenBusMapCollisionBuilderProbe PRIVATE src)
-target_link_libraries(OpenBusMapCollisionBuilderProbe PRIVATE ${OPENBUS_ODE_TARGET} ZLIB::ZLIB)
-add_test(NAME OpenBusMapCollisionBuilderProbe COMMAND OpenBusMapCollisionBuilderProbe)
-
-add_executable(OpenBusMapCollisionStreamerProbe
-    tests/MapCollisionStreamerProbe.cpp
-    src/BusSimulation.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/MapCollisionBuilder.cpp
-    src/MapCollisionStreamer.cpp
-    src/MapConfigLoader.cpp
-    src/MapSceneryPlacement.cpp
-    src/MapRoadGeometry.cpp
-    src/MapSplineGeometry.cpp
-    src/MapSplineProfile.cpp
-    src/ModelConfigLoader.cpp
-    src/O3DLoader.cpp
-    src/PerfTrace.cpp
-    src/RoadFeatures.cpp
-    src/SceneryObjectConfigLoader.cpp
-    src/Variables.cpp
-    src/VehicleConfigLoader.cpp
-    src/osc/osc.cpp
-)
-openbus_configure_perf_trace(OpenBusMapCollisionStreamerProbe)
-target_include_directories(OpenBusMapCollisionStreamerProbe PRIVATE src src/osc)
-target_link_libraries(OpenBusMapCollisionStreamerProbe PRIVATE ${OPENBUS_ODE_TARGET})
-add_test(NAME OpenBusMapCollisionStreamerProbe COMMAND OpenBusMapCollisionStreamerProbe)
-
-add_executable(OpenBusMapSceneryPlacementProbe
-    tests/MapSceneryPlacementProbe.cpp
-    src/MapSceneryPlacement.cpp
-    src/MapSplineGeometry.cpp
-)
-target_include_directories(OpenBusMapSceneryPlacementProbe PRIVATE src)
-add_test(NAME OpenBusMapSceneryPlacementProbe COMMAND OpenBusMapSceneryPlacementProbe)
-
-add_executable(OpenBusMapSplineProfileProbe
-    tests/MapSplineProfileProbe.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/MapSplineProfile.cpp
-)
-target_include_directories(OpenBusMapSplineProfileProbe PRIVATE src)
-add_test(NAME OpenBusMapSplineProfileProbe
-         COMMAND OpenBusMapSplineProfileProbe
-                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/map_spline_profile.sli
-         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/map_spline_profile_explicit_cant_width.sli
-         ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/map_spline_profile_no_collision.sli)
-
-add_executable(OpenBusTextureLoaderProbe
-    tests/TextureLoaderProbe.cpp
-    src/Logger.cpp
-    src/PerfTrace.cpp
-    src/TextureLoader.cpp
-)
-target_include_directories(OpenBusTextureLoaderProbe PRIVATE src)
-target_include_directories(OpenBusTextureLoaderProbe SYSTEM PRIVATE ${stb_SOURCE_DIR})
-add_test(NAME OpenBusTextureLoaderProbe COMMAND OpenBusTextureLoaderProbe)
-
-add_test(NAME OpenBusPhysicsProbe COMMAND OpenBusPhysicsProbe)
-add_test(NAME OpenBusStabilityProbe COMMAND OpenBusStabilityProbe)
-add_test(NAME OpenBusPhysicsStressProbe COMMAND OpenBusPhysicsStressProbe)
-add_test(NAME OpenBusPhysicsContactProbe COMMAND OpenBusPhysicsContactProbe)
-
-add_executable(OpenBusCameraMathProbe
-    tests/CameraMathProbe.cpp
-    src/CameraMath.cpp
-)
-target_include_directories(OpenBusCameraMathProbe PRIVATE src)
-add_test(NAME OpenBusCameraMathProbe COMMAND OpenBusCameraMathProbe)
-
-add_executable(OpenBusComputeCullingProbe
-    tests/ComputeCullingProbe.cpp
-    src/ComputeCulling.cpp
-    src/OpenGLFunctions.cpp
-    src/Logger.cpp)
-target_include_directories(OpenBusComputeCullingProbe PRIVATE src)
-target_link_libraries(OpenBusComputeCullingProbe PRIVATE OpenBus::GLFW OpenGL::GL)
-add_test(NAME OpenBusComputeCullingProbe COMMAND OpenBusComputeCullingProbe)
-add_test(NAME OpenBusComputeCullingGpuProbe COMMAND OpenBusComputeCullingProbe --gpu)
-set_tests_properties(OpenBusComputeCullingGpuProbe PROPERTIES SKIP_RETURN_CODE 77)
-
-add_executable(OpenBusViewpointProbe tests/ViewpointProbe.cpp)
-target_include_directories(OpenBusViewpointProbe PRIVATE src)
-add_test(NAME OpenBusViewpointProbe COMMAND OpenBusViewpointProbe)
-
-add_executable(OpenBusRoadFeaturesProbe
-    tests/RoadFeaturesProbe.cpp
-    src/RoadFeatures.cpp
-)
-target_include_directories(OpenBusRoadFeaturesProbe PRIVATE src)
-add_test(NAME OpenBusRoadFeaturesProbe COMMAND OpenBusRoadFeaturesProbe)
-
-add_executable(OpenBusO3DLoaderProbe
-    tests/O3DLoaderProbe.cpp
-    src/O3DLoader.cpp
-    src/PerfTrace.cpp
-)
-openbus_configure_perf_trace(OpenBusO3DLoaderProbe)
-target_include_directories(OpenBusO3DLoaderProbe PRIVATE src)
-add_test(NAME OpenBusO3DLoaderProbe
-         COMMAND OpenBusO3DLoaderProbe ${CMAKE_CURRENT_SOURCE_DIR}/uno3d/SitzeU.o3d)
-
-# Exercise text-X geometry parsing without requiring an OpenGL context.
-add_executable(OpenBusXLoaderProbe
-    tests/XLoaderProbe.cpp
-    src/XLoader.cpp
-)
-openbus_configure_perf_trace(OpenBusXLoaderProbe)
-target_include_directories(OpenBusXLoaderProbe PRIVATE src)
-target_link_libraries(OpenBusXLoaderProbe PRIVATE ZLIB::ZLIB)
-add_test(NAME OpenBusXLoaderProbe
-         COMMAND OpenBusXLoaderProbe
-                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scenery_text_mesh.x)
-
-add_executable(OpenBusModelConfigProbe
-    tests/ModelConfigProbe.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/ModelConfigLoader.cpp
-    src/SceneryObjectConfigLoader.cpp
-    src/PerfTrace.cpp
-    src/Variables.cpp
-    src/VehicleConfigLoader.cpp
-    src/osc/osc.cpp
-)
-target_include_directories(OpenBusModelConfigProbe PRIVATE src src/osc)
-add_test(NAME OpenBusModelConfigProbe COMMAND OpenBusModelConfigProbe)
-
-add_executable(OpenBusVehicleConfigProbe
-    tests/VehicleConfigProbe.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/ModelConfigLoader.cpp
-    src/PerfTrace.cpp
-    src/Variables.cpp
-    src/VehicleConfigLoader.cpp
-    src/osc/osc.cpp
-)
-target_include_directories(OpenBusVehicleConfigProbe PRIVATE src src/osc)
-add_test(NAME OpenBusVehicleConfigProbe COMMAND OpenBusVehicleConfigProbe)
-
-add_executable(OpenBusConfigAudit
-    tools/config_audit.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/ModelConfigLoader.cpp
-    src/PerfTrace.cpp
-    src/Variables.cpp
-    src/VehicleConfigLoader.cpp
-    src/osc/osc.cpp
-)
-target_include_directories(OpenBusConfigAudit PRIVATE src src/osc)
-
-add_executable(OpenBusBusConfigurationCollisionProbe
-    tests/BusConfigurationCollisionProbe.cpp
-    src/BusConfiguration.cpp
-    src/BusConfigLoader.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/ModelConfigLoader.cpp
-    src/O3DLoader.cpp
-    src/ObjLoader.cpp
-    src/PerfTrace.cpp
-    src/Variables.cpp
-    src/VehicleConfigLoader.cpp
-    src/XLoader.cpp
-    src/osc/osc.cpp
-)
-openbus_configure_perf_trace(OpenBusBusConfigurationCollisionProbe)
-target_include_directories(OpenBusBusConfigurationCollisionProbe PRIVATE src src/osc)
-target_link_libraries(OpenBusBusConfigurationCollisionProbe PRIVATE ZLIB::ZLIB)
-add_test(NAME OpenBusBusConfigurationCollisionProbe
-         COMMAND OpenBusBusConfigurationCollisionProbe)
-
-add_executable(OpenBusSoundEngineProbe
-    tests/SoundEngineProbe.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/PerfTrace.cpp
-    src/VehicleSoundBank.cpp
-    src/Variables.cpp
-)
-target_include_directories(OpenBusSoundEngineProbe PRIVATE src)
-add_test(NAME OpenBusSoundEngineProbe COMMAND OpenBusSoundEngineProbe)
-
-add_executable(OpenBusScriptTextureRuntimeProbe
-    tests/ScriptTextureRuntimeProbe.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/PerfTrace.cpp
-    src/ScriptRuntime.cpp
-    src/TextureLoader.cpp
-    src/Variables.cpp
-    src/osc/osc.cpp
-)
-target_include_directories(OpenBusScriptTextureRuntimeProbe PRIVATE src src/osc)
-target_include_directories(OpenBusScriptTextureRuntimeProbe SYSTEM PRIVATE
-    ${gli_SOURCE_DIR}
-    ${gli_SOURCE_DIR}/external/glm
-    ${stb_SOURCE_DIR})
-target_link_libraries(OpenBusScriptTextureRuntimeProbe PRIVATE OpenBusLua)
-add_test(NAME OpenBusScriptTextureRuntimeProbe COMMAND OpenBusScriptTextureRuntimeProbe)
-
-add_executable(OpenBusMapPlacementLabelProbe
-    tests/MapPlacementLabelProbe.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/ModelConfigLoader.cpp
-    src/PerfTrace.cpp
-    src/SceneryObjectConfigLoader.cpp
-    src/ScriptRuntime.cpp
-    src/TextureLoader.cpp
-    src/Variables.cpp
-    src/VehicleConfigLoader.cpp
-    src/osc/osc.cpp
-)
-target_include_directories(OpenBusMapPlacementLabelProbe PRIVATE src src/osc)
-target_include_directories(OpenBusMapPlacementLabelProbe SYSTEM PRIVATE
-    ${gli_SOURCE_DIR}
-    ${gli_SOURCE_DIR}/external/glm
-    ${stb_SOURCE_DIR})
-target_link_libraries(OpenBusMapPlacementLabelProbe PRIVATE OpenBusLua)
-add_test(NAME OpenBusMapPlacementLabelProbe COMMAND OpenBusMapPlacementLabelProbe)
-
-add_executable(OpenBusScriptInputRuntimeProbe
-    tests/ScriptInputRuntimeProbe.cpp
-    src/ConfigurationParser.cpp
-    src/Logger.cpp
-    src/PerfTrace.cpp
-    src/ScriptRuntime.cpp
-    src/TextureLoader.cpp
-    src/Variables.cpp
-    src/osc/osc.cpp
-)
-target_include_directories(OpenBusScriptInputRuntimeProbe PRIVATE src src/osc)
-target_include_directories(OpenBusScriptInputRuntimeProbe SYSTEM PRIVATE ${stb_SOURCE_DIR})
-target_link_libraries(OpenBusScriptInputRuntimeProbe PRIVATE OpenBusLua)
-add_test(NAME OpenBusScriptInputRuntimeProbe COMMAND OpenBusScriptInputRuntimeProbe)
-
-add_executable(uno3d_converter
-    uno3d/o3d_to_obj.cpp
-    src/PerfTrace.cpp
-)
-openbus_configure_perf_trace(uno3d_converter)
-
-target_include_directories(uno3d_converter SYSTEM PRIVATE ${stb_SOURCE_DIR})
-target_include_directories(uno3d_converter PRIVATE src)
-
-add_executable(obj_bundle
-    tools/obj_bundle.cpp
-    src/ObjLoader.cpp
-    src/PerfTrace.cpp
-)
-openbus_configure_perf_trace(obj_bundle)
-target_include_directories(obj_bundle PRIVATE src)
-
-if(MSVC)
-    target_compile_options(OpenBus PRIVATE /W4 /permissive-)
-    target_compile_options(OpenBus PRIVATE
-        $<$<CONFIG:Release>:/Gy>
-        $<$<CONFIG:Release>:/Gw>
-        $<$<CONFIG:RelWithDebInfo>:/Gy>
-        $<$<CONFIG:RelWithDebInfo>:/Gw>)
-    target_compile_options(OpenBus PRIVATE $<$<CONFIG:Release>:/Zi>)
-    target_link_options(OpenBus PRIVATE
-        $<$<CONFIG:Release>:/DEBUG>
-        $<$<CONFIG:Release>:/OPT:REF>
-        $<$<CONFIG:Release>:/OPT:ICF>
-        $<$<CONFIG:RelWithDebInfo>:/OPT:REF>
-        $<$<CONFIG:RelWithDebInfo>:/OPT:ICF>)
-    target_compile_definitions(OpenBus PRIVATE _CRT_SECURE_NO_WARNINGS GLFW_INCLUDE_NONE)
-    target_link_libraries(OpenBus PRIVATE windowscodecs dbghelp)
-    target_link_libraries(OpenBus PRIVATE winmm)
-else()
-    target_compile_options(OpenBus PRIVATE -Wall -Wextra -Wpedantic)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        target_link_options(OpenBus PRIVATE -rdynamic)
+# Warning level, platform defines and optimisation settings shared by all
+# first-party targets (module libraries and the game executable).
+function(openbus_apply_project_settings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive-
+            $<$<CONFIG:Release>:/Gy>
+            $<$<CONFIG:Release>:/Gw>
+            $<$<CONFIG:Release>:/Zi>
+            $<$<CONFIG:RelWithDebInfo>:/Gy>
+            $<$<CONFIG:RelWithDebInfo>:/Gw>)
+        target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS GLFW_INCLUDE_NONE)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
     endif()
-endif()
+    if(OPENBUS_IPO_SUPPORTED)
+        set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+        set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+    endif()
+endfunction()
+
+add_subdirectory(src)
+add_subdirectory(tests)
+add_subdirectory(tools)

@@ -48,7 +48,7 @@ both pointers. The second lookup overwrites the string, so the bus-config pointe
 to the model-config value. Supplying the paired AI environment variables can therefore send
 the wrong path to bus-config loading.
 
-**Locations:** `src/Environment.h` (`getEnvironment`); `src/main.cpp` (AI environment lookups
+**Locations:** `src/core/Environment.h` (`getEnvironment`); `src/app/main.cpp` (AI environment lookups
 and path resolution).
 
 **Resolution:** `main.cpp` now snapshots each optional path through `environmentValue()` into
@@ -70,11 +70,11 @@ arguments and slot indexes. Pixel growth is bounded; rectangle inputs are clippe
 is rejected when its work area exceeds the pixel limit. Rectangle resizing occurs once before
 an efficient bounded fill rather than expanding once per pixel.
 
-**Locations:** `src/ModelConfigLoader.cpp` (`[scripttexture]` parser); `src/ScriptRuntime.cpp`
+**Locations:** `src/config/ModelConfigLoader.cpp` (`[scripttexture]` parser); `src/scripting/ScriptRuntime.cpp`
 (`configuredScriptTexture`, `resizeScriptTexture`, `setPixel`, `safeScriptTexturePixel`, and
 `safeScriptTextureRect`).
 
-**Resolution:** Shared checked limits live in `src/ScriptTextureLimits.h`; the model parser,
+**Resolution:** Shared checked limits live in `src/config/ScriptTextureLimits.h`; the model parser,
 runtime allocations, file-loaded surfaces, and text textures consume them. Regression probes
 cover oversized configuration, non-representable native/Lua coordinates and indexes, and an
 oversized rectangle.
@@ -85,8 +85,8 @@ oversized rectangle.
 camera computes identical eye and target positions. `lookAt()` divides the forward vector by
 its length without handling a zero length, creating non-finite view-matrix values.
 
-**Locations:** `src/RenderLoop.cpp` (right-mouse camera-distance clamp and exterior-camera
-eye/target calculation); `src/CameraMath.cpp` (`lookAt`).
+**Locations:** `src/app/RenderLoop.cpp` (right-mouse camera-distance clamp and exterior-camera
+eye/target calculation); `src/render/CameraMath.cpp` (`lookAt`).
 
 **Resolution:** Right-mouse exterior zoom now clamps distance to at least 0.1, and `lookAt()`
 uses a finite fallback forward direction when eye and target coincide. `OpenBusCameraMathProbe`
@@ -100,7 +100,7 @@ checks that a coincident eye/target produces a finite matrix.
 then verifies that the resulting fixed step is finite and positive. This also rejects positive
 subnormal rates whose reciprocal overflows.
 
-**Location:** `src/BusSimulation.cpp` (`BusSimulation::Impl` constructor).
+**Location:** `src/physics/BusSimulation.cpp` (`BusSimulation::Impl` constructor).
 
 **Resolution:** Constructor validation and `OpenBusPhysicsProbe` cover zero, negative, NaN,
 positive infinity, and a denormal rate. No arbitrary maximum frequency is imposed; callers
@@ -124,7 +124,7 @@ and runtime-copy step platform-specific; verify the Linux configure, build, and 
 
 #### 2. One-tick script cap discards elapsed script time
 
-**Location:** `src/RenderLoop.cpp:142` and `4605–4634`
+**Location:** `src/app/RenderLoop.cpp:142` and `4605–4634`
 (`MAX_SCRIPT_CATCH_UP_TICKS` and `RenderLoop::updateScripts`);
 the stated fixed-rate behavior is in `README.md` under `OPENBUS_SCRIPT_HZ`.
 
@@ -146,8 +146,8 @@ a hitch, and input-event ordering for both backends. Expose executed ticks and d
 
 #### 3. Raw renderer binds leave the VAO/buffer state cache stale
 
-**Locations:** `src/CoreRenderer.cpp:598–615` (`bindModelVertexBuffer`) and `1142–1170`
-(`drawTextureQuad`); `src/RenderLoop.cpp:5524` (coordinate HUD), plus raw buffer binds in
+**Locations:** `src/render/CoreRenderer.cpp:598–615` (`bindModelVertexBuffer`) and `1142–1170`
+(`drawTextureQuad`); `src/app/RenderLoop.cpp:5524` (coordinate HUD), plus raw buffer binds in
 `Vehicle::sortTransparentBatch` and `Vehicle::updateMaterialChange`.
 
 `drawTextureQuad` changes the actual VAO and array-buffer bindings but neither updates nor
@@ -165,7 +165,7 @@ then confirm with a core-profile smoke test.
 
 #### 4. Model-config JSON does not escape every control character
 
-**Location:** `src/ModelConfigJson.cpp` (`writeJsonString`).
+**Location:** `src/config/ModelConfigJson.cpp` (`writeJsonString`).
 
 Quotes, backslashes, newline, carriage return, and tab are escaped, but other bytes below
 `0x20` are written raw. A configuration string containing one of those bytes produces invalid
@@ -187,7 +187,7 @@ to close an existing instance gracefully.
 #### 6. Loading benchmark is out of sync with the runtime and can misreport results
 
 **Locations:** `benchmark_loading.ps1` (executable path, per-run log removal, environment setup
-and cleanup, `Get-MedianMs`); `CMakePresets.json` (NMake generator); `src/RenderLoop.cpp`
+and cleanup, `Get-MedianMs`); `CMakePresets.json` (NMake generator); `src/app/RenderLoop.cpp`
 (current load-completion logging).
 
 The benchmark expects `build-ode\Release\OpenBus.exe`, but the documented Windows preset uses
@@ -306,7 +306,7 @@ empty helper.
 passenger, ticket, depot, arrival-board, and ground-height queries. They return safe numeric,
 index, or string defaults rather than consulting route, timetable, passenger, or world data.
 
-**Locations:** `src/ScriptRuntime.cpp` (`safeNumericLookup`, `safeMissingIndex`,
+**Locations:** `src/scripting/ScriptRuntime.cpp` (`safeNumericLookup`, `safeMissingIndex`,
 `safeStringLookup`, `safeGetHeightAbovePoint`, `safeTicketName`, `safeArrivalString`, and
 `safeArrivalTime`; system-macro registrations).
 
@@ -320,7 +320,7 @@ Script texture drawing and text-texture generation are present, but `getfontinde
 constant and `textlength` uses a fixed-width byte-based estimate rather than font metrics.
 These are compatibility limitations, not renderer safety defects.
 
-**Location:** `src/ScriptRuntime.cpp` (`safeFontIndex`, `safeTextLength`).
+**Location:** `src/scripting/ScriptRuntime.cpp` (`safeFontIndex`, `safeTextLength`).
 
 ## Architectural constraint
 
@@ -336,8 +336,8 @@ message-passing design.
 
 ### P1. High: Collision preparation is asynchronous, but ODE publication remains synchronous
 
-**Locations:** `src/MapCollisionStreamer.cpp:51–89`; `src/MapCollisionBuilder.cpp`
-(`buildMapRoadCollisionImpl`, `readSceneryCollisionMeshes`); `src/main.cpp`
+**Locations:** `src/map/MapCollisionStreamer.cpp:51–89`; `src/map/MapCollisionBuilder.cpp`
+(`buildMapRoadCollisionImpl`, `readSceneryCollisionMeshes`); `src/app/main.cpp`
 (streamer updates between physics and drawing in both loops).
 
 `MapCollisionStreamer` now schedules terrain reads, tile/config parsing, and road/scenery mesh
@@ -364,7 +364,7 @@ still costly.
 
 ### P2. Medium: Full-window background rebuilds still limit larger-map scalability
 
-**Locations:** `src/MapRenderer.cpp` (`MapRenderer` constructor, `updateStreaming`, `draw`,
+**Locations:** `src/render/map/MapRenderer.cpp` (`MapRenderer` constructor, `updateStreaming`, `draw`,
 `updateScripts`); `MapRenderer::Impl` resource vectors.
 
 At startup the constructor synchronously builds/uploads terrain, scenery, and roads for the
@@ -394,9 +394,9 @@ changing cadence or timer semantics.
 
 ### P3. Medium: Dynamic texture revisions are checked after full pixel copies
 
-**Locations:** `src/ScriptRuntime.cpp:2216–2241` (`copyScriptTexture` / `copyTextTexture`);
-`src/RenderLoop.cpp:3296–3369` (`Vehicle::updateFreeTexture`);
-`src/MapRenderer.cpp:1828–1899` (`refreshSceneryTexture`).
+**Locations:** `src/scripting/ScriptRuntime.cpp:2216–2241` (`copyScriptTexture` / `copyTextTexture`);
+`src/app/RenderLoop.cpp:3296–3369` (`Vehicle::updateFreeTexture`);
+`src/render/map/MapRenderer.cpp:1828–1899` (`refreshSceneryTexture`).
 
 Both snapshot APIs copy the entire pixel vector. Their callers create a fresh snapshot and
 only then compare the cached revision/dimensions. Thus an unchanged texture avoids a GPU
@@ -414,9 +414,9 @@ content refresh after a revision change, including multi-batch/reflection and re
 
 ### P4. Medium: Asset caches have no explicit byte budget or reload generation
 
-**Locations:** `src/AssetRequestManager.cpp` (`requestObj`, `loadTextureRequest`, tracking,
-destructor); `src/RenderLoop.cpp` (`SharedVehicleDefinition`, cached display lists,
-`findTexture`, `uploadTexture`); `src/ScriptRuntime.cpp` (`cachedNativeProgram`).
+**Locations:** `src/render/AssetRequestManager.cpp` (`requestObj`, `loadTextureRequest`, tracking,
+destructor); `src/app/RenderLoop.cpp` (`SharedVehicleDefinition`, cached display lists,
+`findTexture`, `uploadTexture`); `src/scripting/ScriptRuntime.cpp` (`cachedNativeProgram`).
 
 `parsedObjCache_` retains completed futures and their source mesh data for the manager's
 lifetime. Texture requests and `decodedTextureCache_` strongly retain decoded/compressed
@@ -443,8 +443,8 @@ is unnecessary; test load/unload/reload and shared-resource lifetimes under a sm
 
 ### P5. Medium: DXT5 capability detection is invalid in the requested GL core profile
 
-**Locations:** `src/RenderLoop.cpp:3007–3048` (`uploadCompressedDds`), context creation
-(`GLFW_OPENGL_CORE_PROFILE`); `src/TextureAssetLoader.cpp` (DXT5 selection);
+**Locations:** `src/app/RenderLoop.cpp:3007–3048` (`uploadCompressedDds`), context creation
+(`GLFW_OPENGL_CORE_PROFILE`); `src/assets/TextureAssetLoader.cpp` (DXT5 selection);
 `Vehicle::ensureTexture`, `ensureMaterialTexture`, and `ensureAuxiliaryTexture`.
 
 The custom DXT5 upload path calls `glGetString(GL_EXTENSIONS)`. That legacy extension-list
@@ -463,8 +463,8 @@ GL errors, and verify every material role rather than only base textures.
 
 ### P6. Resolved (2026-10-07): Collision-debug GPU data ignored same-sized geometry changes
 
-**Locations:** `src/RenderLoop.cpp:5432–5484` (collision revision / wireframe rebuild);
-`src/CoreRenderer.cpp:1078–1140` (`drawStaticPrimitives`).
+**Locations:** `src/app/RenderLoop.cpp:5432–5484` (collision revision / wireframe rebuild);
+`src/render/CoreRenderer.cpp:1078–1140` (`drawStaticPrimitives`).
 
 The CPU wireframe rebuilds when `collisionDebugRevision()` changes. The GPU cache now receives
 that revision and reuploads when either the vertex count or revision changes, so replacing a
@@ -478,8 +478,8 @@ removed independently of renderer shutdown.
 
 ### P7. Medium: Rendered scenery and collision use different placement semantics
 
-**Locations:** `src/MapCollisionBuilder.cpp` (`tile.sceneryObjects` loop,
-`transformSceneryVertex`); `src/MapRenderer.cpp` (`resolveMapSceneryPlacement`,
+**Locations:** `src/map/MapCollisionBuilder.cpp` (`tile.sceneryObjects` loop,
+`transformSceneryVertex`); `src/render/map/MapRenderer.cpp` (`resolveMapSceneryPlacement`,
 `applyTerrainAlignment`, attached-object and spline-attachment loops).
 
 Rendering composes ordinary/attached/spline-attached placements and can apply a terrain-normal
@@ -500,7 +500,7 @@ and collision world vertices, plus contact tests where support is promised.
 
 ### M1. Medium: Runtime orchestration is too tightly coupled for safe feature growth
 
-**Locations:** `src/RenderLoop.cpp` (`Vehicle` plus `RenderLoop`), `src/MapRenderer.cpp`
+**Locations:** `src/app/RenderLoop.cpp` (`Vehicle` plus `RenderLoop`), `src/render/map/MapRenderer.cpp`
 (construction, placement resolution, scripts, GPU upload, and drawing).
 
 `RenderLoop.cpp` combines input/picking, vehicle resource conversion, material selection,
@@ -540,8 +540,8 @@ the number of source-list duplicates alone.
 
 ### M3. Low: The interactive loop accumulates an unused input history
 
-**Location:** `src/main.cpp:359–378` (`pendingKeyEvents`);
-`src/RenderLoop.cpp` (`beginFrame`, `consumeKeyEvents`).
+**Location:** `src/app/main.cpp:359–378` (`pendingKeyEvents`);
+`src/app/RenderLoop.cpp` (`beginFrame`, `consumeKeyEvents`).
 
 Every frame's consumed key events are appended to `pendingKeyEvents`, but that vector has
 no consumer, drain, or size bound. Symbol references confirm only its declaration and insert
@@ -581,7 +581,7 @@ the queue for a new scheduler; test a long stream of press/release events.
 - **Failed probe:** `OpenBusMapCollisionStreamerProbe` reports
   `No [terrain] section found in ...\OpenBusMapCollisionStreamerProbe\map\tile_-1.map`.
   `tests/MapCollisionStreamerProbe.cpp:13–17` writes only a `[version]` record, while
-  `src/MapConfigLoader.cpp:1059–1060` requires a `[terrain]` marker for a normal tile even
+  `src/map/MapConfigLoader.cpp:1059–1060` requires a `[terrain]` marker for a normal tile even
   without a binary sidecar. The test exits during its first load, before neighborhood and
   hysteresis assertions. **Medium-priority test defect:** make the fixture valid rather
   than weakening the parser, rerun it, and extend the count-only fixture with actual terrain/
@@ -639,7 +639,7 @@ rendered/collision parity or acceptable frame latency.
 
 ## Verified fixes and stale findings
 
-- `src/ConfigurationParser.cpp` strips a UTF-8 BOM from the first input line. The regression
+- `src/config/ConfigurationParser.cpp` strips a UTF-8 BOM from the first input line. The regression
   in `tests/VehicleConfigProbe.cpp` verifies that the first constant in a BOM-prefixed
   constant file is retained; this prevents the installed bus's first blink-timer constant
   from being silently skipped.

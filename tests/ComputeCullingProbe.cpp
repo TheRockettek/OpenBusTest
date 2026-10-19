@@ -1,6 +1,6 @@
-#include "ComputeCulling.h"
-#include "Logger.h"
-#include "OpenGLFunctions.h"
+#include "render/ComputeCulling.h"
+#include "core/Logger.h"
+#include "render/OpenGLFunctions.h"
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -11,7 +11,6 @@
 #include <random>
 #include <string_view>
 
-Logger gameLog("ComputeCullingProbe");
 using namespace openbus::rendering;
 
 static_assert(!computeCullingRequested(""));

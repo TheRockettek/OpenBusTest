@@ -1,0 +1,313 @@
+#include "render/CameraMath.h"
+
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+namespace openbus::rendering {
+
+namespace {
+
+constexpr double CAMERA_FAR_PLANE = 10000.0;
+
+Matrix4 cachedModelViewMatrix = {};
+Matrix4 cachedProjectionMatrix = {};
+std::vector<Matrix4> modelViewStack;
+
+Matrix4 multiply(const Matrix4& left, const Matrix4& right) {
+    Matrix4 result = {};
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            for (int inner = 0; inner < 4; ++inner) {
+                result[row + column * 4] += left[row + inner * 4] * right[inner + column * 4];
+            }
+        }
+    }
+    return result;
+}
+
+} // namespace
+
+const Matrix4& modelViewMatrix() {
+    return cachedModelViewMatrix;
+}
+
+const Matrix4& projectionMatrix() {
+    return cachedProjectionMatrix;
+}
+
+void setModelViewMatrix(const Matrix4& matrix) {
+    cachedModelViewMatrix = matrix;
+}
+
+void setPerspective(double width, double height, double fieldOfView) {
+    const double aspect = width / height;
+    const double nearPlane = 0.1;
+    const double farPlane = CAMERA_FAR_PLANE;
+    const double fov = fieldOfView * 3.141592653589793 / 180.0;
+    const double top = nearPlane * std::tan(fov * 0.5);
+    const double right = top * aspect;
+    cachedProjectionMatrix = {nearPlane / right,
+                              0.0,
+                              0.0,
+                              0.0,
+                              0.0,
+                              nearPlane / top,
+                              0.0,
+                              0.0,
+                              0.0,
+                              0.0,
+                              -(farPlane + nearPlane) / (farPlane - nearPlane),
+                              -1.0,
+                              0.0,
+                              0.0,
+                              -(2.0 * farPlane * nearPlane) / (farPlane - nearPlane),
+                              0.0};
+}
+
+void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ) {
+    lookAt(eyeX, eyeY, eyeZ, targetX, targetY, targetZ, 0.0, 0.0, 1.0);
+}
+
+void lookAt(double eyeX, double eyeY, double eyeZ, double targetX, double targetY, double targetZ,
+            double upX, double upY, double upZ) {
+    double forwardX = targetX - eyeX;
+    double forwardY = targetY - eyeY;
+    double forwardZ = targetZ - eyeZ;
+    const double forwardLength =
+        std::sqrt(forwardX * forwardX + forwardY * forwardY + forwardZ * forwardZ);
+    if (!std::isfinite(forwardLength) || forwardLength <= 1.0e-12) {
+        forwardX = 0.0;
+        forwardY = 1.0;
+        forwardZ = 0.0;
+    } else {
+        forwardX /= forwardLength;
+        forwardY /= forwardLength;
+        forwardZ /= forwardLength;
+    }
+
+    const double upProjection = upX * forwardX + upY * forwardY + upZ * forwardZ;
+    upX -= upProjection * forwardX;
+    upY -= upProjection * forwardY;
+    upZ -= upProjection * forwardZ;
+    double upLength = std::sqrt(upX * upX + upY * upY + upZ * upZ);
+    if (upLength <= 1.0e-12) {
+        if (std::abs(forwardZ) < 0.9) {
+            upX = 0.0;
+            upY = 0.0;
+            upZ = 1.0;
+        } else {
+            upX = 1.0;
+            upY = 0.0;
+            upZ = 0.0;
+        }
+        const double fallbackProjection = upX * forwardX + upY * forwardY + upZ * forwardZ;
+        upX -= fallbackProjection * forwardX;
+        upY -= fallbackProjection * forwardY;
+        upZ -= fallbackProjection * forwardZ;
+        upLength = std::sqrt(upX * upX + upY * upY + upZ * upZ);
+    }
+
+    double sideX = forwardY * upZ - forwardZ * upY;
+    double sideY = forwardZ * upX - forwardX * upZ;
+    double sideZ = forwardX * upY - forwardY * upX;
+    const double sideLength = std::sqrt(sideX * sideX + sideY * sideY + sideZ * sideZ);
+    sideX /= sideLength;
+    sideY /= sideLength;
+    sideZ /= sideLength;
+    const double correctedUpX = sideY * forwardZ - sideZ * forwardY;
+    const double correctedUpY = sideZ * forwardX - sideX * forwardZ;
+    const double correctedUpZ = sideX * forwardY - sideY * forwardX;
+
+    const Matrix4 rotation = {
+        sideX, correctedUpX, -forwardX, 0.0, sideY, correctedUpY, -forwardY, 0.0,
+        sideZ, correctedUpZ, -forwardZ, 0.0, 0.0,   0.0,          0.0,       1.0};
+    const Matrix4 translation = {1.0, 0.0, 0.0, 0.0, 0.0,   1.0,   0.0,   0.0,
+                                 0.0, 0.0, 1.0, 0.0, -eyeX, -eyeY, -eyeZ, 1.0};
+    cachedModelViewMatrix = multiply(rotation, translation);
+}
+
+void applyPose(const BodyPose& pose) {
+    const Matrix4 matrix = {pose.rotation[0], pose.rotation[3], pose.rotation[6], 0.0,
+                            pose.rotation[1], pose.rotation[4], pose.rotation[7], 0.0,
+                            pose.rotation[2], pose.rotation[5], pose.rotation[8], 0.0,
+                            pose.position[0], pose.position[1], pose.position[2], 1.0};
+    cachedModelViewMatrix = multiply(cachedModelViewMatrix, matrix);
+}
+
+VehiclePlacement makeModelRootPlacement(const VehiclePlacement& groundPlacement,
+                                        double modelOffsetZ) {
+    VehiclePlacement result = groundPlacement;
+    result.position[2] -= modelOffsetZ;
+    return result;
+}
+
+Matrix4 makeGroundShadowTransform(const VehiclePlacement& modelRootPlacement, double modelOffsetZ,
+                                  double groundPlaneZ) {
+    // Static vehicles only rotate around world Z, so a local Z translation is
+    // unchanged by the placement yaw. Vehicle::draw applies modelOffsetZ
+    // before this matrix; cancel that offset and align the shadow origin with
+    // the ground plane without changing its authored footprint or yaw.
+    Matrix4 transform = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                         0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+    transform[14] = groundPlaneZ - modelRootPlacement.position[2] - modelOffsetZ;
+    return transform;
+}
+
+void pushMatrix() {
+    modelViewStack.push_back(cachedModelViewMatrix);
+}
+
+void popMatrix() {
+    if (modelViewStack.empty()) {
+        return;
+    }
+    cachedModelViewMatrix = modelViewStack.back();
+    modelViewStack.pop_back();
+}
+
+void translate(double x, double y, double z) {
+    cachedModelViewMatrix =
+        multiply(cachedModelViewMatrix,
+                 Matrix4{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, x, y, z, 1.0});
+}
+
+void rotate(double angleDegrees, double x, double y, double z) {
+    const double length = std::sqrt(x * x + y * y + z * z);
+    if (length <= 1.0e-12) {
+        return;
+    }
+    x /= length;
+    y /= length;
+    z /= length;
+    const double angle = angleDegrees * 3.141592653589793 / 180.0;
+    const double cosine = std::cos(angle);
+    const double sine = std::sin(angle);
+    const double inverseCosine = 1.0 - cosine;
+    cachedModelViewMatrix =
+        multiply(cachedModelViewMatrix,
+                 Matrix4{cosine + x * x * inverseCosine, y * x * inverseCosine + z * sine,
+                         z * x * inverseCosine - y * sine, 0.0, x * y * inverseCosine - z * sine,
+                         cosine + y * y * inverseCosine, z * y * inverseCosine + x * sine, 0.0,
+                         x * z * inverseCosine + y * sine, y * z * inverseCosine - x * sine,
+                         cosine + z * z * inverseCosine, 0.0, 0.0, 0.0, 0.0, 1.0});
+}
+
+void multiplyMatrix(const Matrix4& matrix) {
+    cachedModelViewMatrix = multiply(cachedModelViewMatrix, matrix);
+}
+
+void scale(double x, double y, double z) {
+    cachedModelViewMatrix =
+        multiply(cachedModelViewMatrix,
+                 Matrix4{x, 0.0, 0.0, 0.0, 0.0, y, 0.0, 0.0, 0.0, 0.0, z, 0.0, 0.0, 0.0, 0.0, 1.0});
+}
+std::array<double, 3> transformLocalPoint(const BodyPose& pose,
+                                          const std::array<double, 3>& local) {
+    return {pose.position[0] + pose.rotation[0] * local[0] + pose.rotation[1] * local[1] +
+                pose.rotation[2] * local[2],
+            pose.position[1] + pose.rotation[3] * local[0] + pose.rotation[4] * local[1] +
+                pose.rotation[5] * local[2],
+            pose.position[2] + pose.rotation[6] * local[0] + pose.rotation[7] * local[1] +
+                pose.rotation[8] * local[2]};
+}
+
+std::array<double, 3> mirrorReflectionDirection(const std::array<double, 3>& mirror,
+                                                const std::array<double, 3>& authoredDirection,
+                                                const std::array<double, 3>& referenceEye,
+                                                const std::array<double, 3>& viewerEye) {
+    constexpr double EPSILON = 1.0e-6;
+    const auto normalized = [](const std::array<double, 3>& value, bool& valid) {
+        const double length = std::sqrt(value[0] * value[0] + value[1] * value[1] +
+                                        value[2] * value[2]);
+        valid = length > EPSILON && std::isfinite(length);
+        return valid ? std::array<double, 3>{value[0] / length, value[1] / length,
+                                             value[2] / length}
+                     : std::array<double, 3>{};
+    };
+    bool valid = false;
+    const std::array<double, 3> authored = normalized(authoredDirection, valid);
+    if (!valid) {
+        return authoredDirection;
+    }
+    const std::array<double, 3> referenceIncident = normalized(
+        {mirror[0] - referenceEye[0], mirror[1] - referenceEye[1], mirror[2] - referenceEye[2]},
+        valid);
+    if (!valid) {
+        return authored;
+    }
+    // A mirror maps incident ray i to i - 2(i.n)n, so its normal is parallel to i - d.
+    const std::array<double, 3> normal =
+        normalized({referenceIncident[0] - authored[0], referenceIncident[1] - authored[1],
+                    referenceIncident[2] - authored[2]},
+                   valid);
+    if (!valid) {
+        return authored;
+    }
+    const std::array<double, 3> incident = normalized(
+        {mirror[0] - viewerEye[0], mirror[1] - viewerEye[1], mirror[2] - viewerEye[2]}, valid);
+    const double incidence =
+        incident[0] * normal[0] + incident[1] * normal[1] + incident[2] * normal[2];
+    if (!valid || incidence <= EPSILON) {
+        return authored;
+    }
+    return {incident[0] - 2.0 * incidence * normal[0], incident[1] - 2.0 * incidence * normal[1],
+            incident[2] - 2.0 * incidence * normal[2]};
+}
+
+std::array<double, 3> freeCameraForward(double yawRadians, double pitchRadians) {
+    if (!std::isfinite(yawRadians) || !std::isfinite(pitchRadians)) {
+        return {1.0, 0.0, 0.0};
+    }
+    constexpr double maxPitch = 1.5533430342749532;
+    const double pitch = std::clamp(pitchRadians, -maxPitch, maxPitch);
+    const double horizontal = std::cos(pitch);
+    return {horizontal * std::cos(yawRadians), horizontal * std::sin(yawRadians), std::sin(pitch)};
+}
+
+FreeCameraPose moveFreeCamera(const FreeCameraPose& pose, double forwardInput, double rightInput,
+                              double verticalInput, double deltaSeconds,
+                              double speedMetersPerSecond) {
+    FreeCameraPose result = pose;
+    if (!std::all_of(pose.position.begin(), pose.position.end(),
+                     [](double value) { return std::isfinite(value); })) {
+        result.position = {};
+    }
+    if (!std::isfinite(result.yawRadians)) {
+        result.yawRadians = 0.0;
+    }
+    if (!std::isfinite(result.pitchRadians)) {
+        result.pitchRadians = 0.0;
+    }
+    result.pitchRadians = std::clamp(result.pitchRadians, -1.5533430342749532, 1.5533430342749532);
+    if (!std::isfinite(deltaSeconds) || !std::isfinite(speedMetersPerSecond) ||
+        deltaSeconds <= 0.0 || speedMetersPerSecond <= 0.0) {
+        return result;
+    }
+    const double forward = std::isfinite(forwardInput) ? std::clamp(forwardInput, -1.0, 1.0) : 0.0;
+    const double right = std::isfinite(rightInput) ? std::clamp(rightInput, -1.0, 1.0) : 0.0;
+    const double vertical =
+        std::isfinite(verticalInput) ? std::clamp(verticalInput, -1.0, 1.0) : 0.0;
+    const std::array<double, 3> forwardDirection =
+        freeCameraForward(result.yawRadians, result.pitchRadians);
+    const std::array<double, 3> rightDirection = {std::sin(result.yawRadians),
+                                                  -std::cos(result.yawRadians), 0.0};
+    std::array<double, 3> movement = {};
+    for (std::size_t axis = 0; axis < result.position.size(); ++axis) {
+        movement[axis] = forward * forwardDirection[axis] + right * rightDirection[axis] +
+                         (axis == 2 ? vertical : 0.0);
+    }
+    const double movementLength = std::sqrt(movement[0] * movement[0] + movement[1] * movement[1] +
+                                            movement[2] * movement[2]);
+    if (movementLength <= 1.0e-12) {
+        return result;
+    }
+    const double distance = speedMetersPerSecond * std::min(deltaSeconds, 0.25);
+    for (std::size_t axis = 0; axis < result.position.size(); ++axis) {
+        result.position[axis] += movement[axis] / movementLength * distance;
+    }
+    result.yawRadians = std::remainder(result.yawRadians, 2.0 * 3.14159265358979323846);
+    return result;
+}
+
+} // namespace openbus::rendering

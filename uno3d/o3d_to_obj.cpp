@@ -23,8 +23,8 @@
 #include <utility>
 #include <vector>
 
-#include "PerfTrace.h"
-#include "Environment.h"
+#include "core/PerfTrace.h"
+#include "core/Environment.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>

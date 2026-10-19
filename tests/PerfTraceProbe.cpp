@@ -1,4 +1,5 @@
-#include "PerfTrace.h"
+#include "core/PerfTrace.h"
+#include "ProbeTempDirectory.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -118,7 +119,7 @@ int main(int argc, char** argv) {
     Flush();
     passed = !IsRecording() && !SetRecording(true) && passed;
     if (argc <= 2) {
-        std::filesystem::remove(path);
+        openbus::probe::removeProbeFile(path);
     }
     if (!passed) {
         std::cerr << "Performance trace probe failed: " << mode << '\n';

@@ -13,13 +13,13 @@ prove end-to-end rendering or runtime semantics.
 
 | Feature | Current status | Implementation | Regression evidence |
 | --- | --- | --- | --- |
-| Physics and wheel simulation | Fixed-step ODE and per-wheel simulation are active; the deterministic bump/steering/braking stress probe covers two- and three-axle fixtures. Broader tuning remains incomplete. | [`BusSimulation.cpp`](src/BusSimulation.cpp) | [`BusSimulationSteeringProbe.cpp`](tests/BusSimulationSteeringProbe.cpp), [`BusSimulationStabilityProbe.cpp`](tests/BusSimulationStabilityProbe.cpp), [`BusSimulationStressProbe.cpp`](tests/BusSimulationStressProbe.cpp) |
-| Vehicle/model loading | Core MAN DL05 and E400 configuration paths are implemented; broad OMSI configuration coverage remains partial. | [`VehicleConfigLoader.cpp`](src/VehicleConfigLoader.cpp), [`ModelConfigLoader.cpp`](src/ModelConfigLoader.cpp), [`RenderLoop.cpp`](src/RenderLoop.cpp) | [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); visual procedure: [screenshot plan](Docs/SCREENSHOT_VALIDATION_PLAN.md) |
-| Texture decoding and materials | Texture decoding has a probe; several material semantics and visual parity checks remain incomplete, including alpha mode 2 and environment maps. | [`TextureLoader.cpp`](src/TextureLoader.cpp), [`CoreRenderer.cpp`](src/CoreRenderer.cpp) | [`TextureLoaderProbe.cpp`](tests/TextureLoaderProbe.cpp); GL/material checks: [incomplete visual checks](Docs/SCREENSHOT_VALIDATION_PLAN.md#incomplete-feature-visual-checks) |
-| Map, terrain, scenery, and roads | Partial: only active-window terrain, scenery meshes, and road geometry are built/uploaded; on tile changes a shared-context worker builds the replacement window while the previous one remains drawable. Collision mesh preparation runs in a CPU worker and ODE publication stays on the simulation thread, limited to one tile per update. Startup window creation and initial collision warm-up remain synchronous; if a shared GL context cannot be created, renderer loading falls back to synchronous work. Startup still parses map tile text once to build the global attachment index. Static text/binary/MSZIP `.x` meshes and distance-selected scenery LODs now have runtime paths; full OMSI attachment/profile semantics and end-to-end visual/contact validation remain incomplete. | [`MapConfigLoader.cpp`](src/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/MapSplineGeometry.cpp), [`MapRoadGeometry.cpp`](src/MapRoadGeometry.cpp), [`MapCollisionBuilder.cpp`](src/MapCollisionBuilder.cpp), [`MapCollisionStreamer.cpp`](src/MapCollisionStreamer.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapCollisionBuilderProbe.cpp`](tests/MapCollisionBuilderProbe.cpp), [`MapCollisionStreamerProbe.cpp`](tests/MapCollisionStreamerProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`MapRoadGeometryProbe.cpp`](tests/MapRoadGeometryProbe.cpp); in-context visual validation remains |
-| Scripts and dynamic displays | Vehicle script/text textures and scenery per-placement script/text texture surfaces, `init`/`frame`, and `[visible]` control are active; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/ScriptRuntime.cpp), [`MapRenderer.cpp`](src/MapRenderer.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
-| Sound | Player sound runtime is active; full OMSI sound and AI sound selection remain incomplete. | [`SoundEngine.cpp`](src/SoundEngine.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp) |
-| AI, passengers, routes, and articulated vehicles | Runtime support is incomplete; parsed configuration is not evidence of these behaviors. | [vehicle configuration](src/VehicleConfigLoader.cpp), [map configuration](src/MapConfigLoader.cpp) | No end-to-end regression probe; see the [completion TODO](TODO.md) |
+| Physics and wheel simulation | Fixed-step ODE and per-wheel simulation are active; the deterministic bump/steering/braking stress probe covers two- and three-axle fixtures. Broader tuning remains incomplete. | [`BusSimulation.cpp`](src/physics/BusSimulation.cpp) | [`BusSimulationSteeringProbe.cpp`](tests/BusSimulationSteeringProbe.cpp), [`BusSimulationStabilityProbe.cpp`](tests/BusSimulationStabilityProbe.cpp), [`BusSimulationStressProbe.cpp`](tests/BusSimulationStressProbe.cpp) |
+| Vehicle/model loading | Core MAN DL05 and E400 configuration paths are implemented; broad OMSI configuration coverage remains partial. | [`VehicleConfigLoader.cpp`](src/config/VehicleConfigLoader.cpp), [`ModelConfigLoader.cpp`](src/config/ModelConfigLoader.cpp), [`RenderLoop.cpp`](src/app/RenderLoop.cpp) | [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); visual procedure: [screenshot plan](Docs/SCREENSHOT_VALIDATION_PLAN.md) |
+| Texture decoding and materials | Texture decoding has a probe; several material semantics and visual parity checks remain incomplete, including alpha mode 2 and environment maps. | [`TextureLoader.cpp`](src/assets/TextureLoader.cpp), [`CoreRenderer.cpp`](src/render/CoreRenderer.cpp) | [`TextureLoaderProbe.cpp`](tests/TextureLoaderProbe.cpp); GL/material checks: [incomplete visual checks](Docs/SCREENSHOT_VALIDATION_PLAN.md#incomplete-feature-visual-checks) |
+| Map, terrain, scenery, and roads | Partial: only active-window terrain, scenery meshes, and road geometry are built/uploaded; on tile changes a shared-context worker builds the replacement window while the previous one remains drawable. Collision mesh preparation runs in a CPU worker and ODE publication stays on the simulation thread, limited to one tile per update. Startup window creation and initial collision warm-up remain synchronous; if a shared GL context cannot be created, renderer loading falls back to synchronous work. Startup still parses map tile text once to build the global attachment index. Static text/binary/MSZIP `.x` meshes and distance-selected scenery LODs now have runtime paths; full OMSI attachment/profile semantics and end-to-end visual/contact validation remain incomplete. | [`MapConfigLoader.cpp`](src/map/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/map/MapSplineGeometry.cpp), [`MapRoadGeometry.cpp`](src/map/MapRoadGeometry.cpp), [`MapCollisionBuilder.cpp`](src/map/MapCollisionBuilder.cpp), [`MapCollisionStreamer.cpp`](src/map/MapCollisionStreamer.cpp), [`MapRenderer.cpp`](src/render/map/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/config/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapCollisionBuilderProbe.cpp`](tests/MapCollisionBuilderProbe.cpp), [`MapCollisionStreamerProbe.cpp`](tests/MapCollisionStreamerProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`MapRoadGeometryProbe.cpp`](tests/MapRoadGeometryProbe.cpp); in-context visual validation remains |
+| Scripts and dynamic displays | Vehicle script/text textures and scenery per-placement script/text texture surfaces, `init`/`frame`, and `[visible]` control are active; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/scripting/ScriptRuntime.cpp), [`MapRenderer.cpp`](src/render/map/MapRenderer.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
+| Sound | Player sound runtime is active; full OMSI sound and AI sound selection remain incomplete. | [`SoundEngine.cpp`](src/audio/SoundEngine.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp) |
+| AI, passengers, routes, and articulated vehicles | Runtime support is incomplete; parsed configuration is not evidence of these behaviors. | [vehicle configuration](src/config/VehicleConfigLoader.cpp), [map configuration](src/map/MapConfigLoader.cpp) | No end-to-end regression probe; see the [completion TODO](TODO.md) |
 
 ### Map runtime scope
 
@@ -143,6 +143,36 @@ The existing centerline probe validates linked endpoints and signed curve
 directions, but does not validate cross-section profile placement, sidewalks,
 markings, or visual seams. The [map TODOs](TODO.md#grande-porto-map-support)
 track the missing runtime paths and visual evidence.
+
+## Source layout
+
+The engine is split into one static library per module (see `src/CMakeLists.txt`).
+Headers are included by module-qualified paths, e.g. `#include "render/CoreRenderer.h"`.
+
+| Folder | CMake target | Responsibility | Depends on |
+| --- | --- | --- | --- |
+| `src/core` | `openbus_core` | Logging, perf tracing, script variables, OMSI root discovery, shared value types | (none) |
+| `src/osc` | `openbus_osc` | OMSI script (`.osc`) parser, bytecode compiler and Lua converter | (none) |
+| `src/config` | `openbus_config` | OMSI configuration parsers (bus, model `.cfg`, scenery objects, vehicles) | core, osc (private) |
+| `src/assets` | `openbus_assets` | Mesh (`.o3d`, `.x`, `.obj`) and texture loading, screenshot writing | core |
+| `src/physics` | `openbus_physics` | ODE bus simulation and bus configuration | config, assets |
+| `src/map` | `openbus_map` | Map loading, road/spline/water geometry, scenery placement, collision streaming | config, assets, physics |
+| `src/scripting` | `openbus_scripting` | Script runtime (native bytecode and Lua backends), script textures | config, assets, osc/Lua (private) |
+| `src/audio` | `openbus_audio` | OpenAL sound engine and vehicle sound banks | config |
+| `src/input` | `openbus_input` | Keyboard/vehicle key bindings | core, GLFW |
+| `src/render` | `openbus_render` | OpenGL renderer, asset requests, camera/matrix math, reflections; `render/map` builds and draws the map scene | assets, config, map, physics, scripting |
+| `src/app` | `OpenBus` executable | Entry point, render loop (`RenderLoop*.cpp`), HUD and per-vehicle rendering in `app/vehicle` | all modules |
+
+Large subsystems keep their public header small and place implementation details in an
+internal header (`*Internal.h` / `*Impl.h`) shared by focused translation units:
+
+- `app/RenderLoop*.cpp`: lifecycle, input/camera, simulation/scripts, drawing.
+- `render/map/MapSceneLoader.*`: map scene construction (terrain, scenery assets, tile content);
+  `MapRendererDraw.cpp`: per-frame map drawing.
+- `scripting/Script{RuntimeImpl,Textures,NativeBackend,LuaBindings}.cpp`: runtime core,
+  script textures, native OSC backend and Lua bindings.
+
+Vendored code lives in `third_party/` (Lua 5.1, sol2) and is built separately from engine modules.
 
 ## Prerequisites
 

@@ -1,6 +1,7 @@
-#include "MapCollisionBuilder.h"
-#include "MapRoadGeometry.h"
-#include "MapSplineProfile.h"
+#include "map/MapCollisionBuilder.h"
+#include "map/MapRoadGeometry.h"
+#include "map/MapSplineProfile.h"
+#include "ProbeTempDirectory.h"
 
 #include <ode/ode.h>
 
@@ -120,8 +121,7 @@ std::string splineMapText() {
 
 void runLinkedProbe() {
     using namespace openbus::map;
-    const auto root = std::filesystem::temp_directory_path() / "OpenBusMapLinkedCollisionProbe";
-    std::filesystem::remove_all(root);
+    const auto root = openbus::probe::makeProbeDirectory("OpenBusMapLinkedCollisionProbe");
         const auto mapRoot = root / "map";
         const auto omsiRoot = root / "omsi";
         const std::string crossSection =
@@ -221,13 +221,12 @@ void runLinkedProbe() {
     map.tiles.push_back(missing);
     require(buildMapRoadCollisionTile(map, omsiRoot, 0, 0).meshes[0].vertices == firstVertices,
         "missing unrelated tile cannot break selected-tile seam metadata loading");
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
 }
 
 void runNoCollisionProbe() {
     using namespace openbus::map;
-    const auto root = std::filesystem::temp_directory_path() / "OpenBusMapNoCollisionProbe";
-    std::filesystem::remove_all(root);
+    const auto root = openbus::probe::makeProbeDirectory("OpenBusMapNoCollisionProbe");
     const auto mapRoot = root / "map";
     const auto omsiRoot = root / "omsi";
     writeText(omsiRoot / "Splines" / "NoCollision.sli",
@@ -256,13 +255,12 @@ void runNoCollisionProbe() {
                 result.skippedSplines == 0 && result.splineSectionsAdded == 0 &&
                 result.meshes.empty(),
             "[nocollision] spline profile contributes no road collision geometry");
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
 }
 
 void runProbe() {
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "OpenBusMapCollisionBuilderProbe";
-    std::filesystem::remove_all(root);
+        openbus::probe::makeProbeDirectory("OpenBusMapCollisionBuilderProbe");
     const std::filesystem::path mapRoot = root / "map";
     const std::filesystem::path omsiRoot = root / "omsi";
     writeText(omsiRoot / "Splines" / "Test.sli",
@@ -451,7 +449,7 @@ void runProbe() {
                     "streamed bridge collision triangles are clipped to their owning tile");
         }
 
-    std::filesystem::remove_all(root);
+    openbus::probe::removeProbeDirectory(root);
 }
 
 } // namespace

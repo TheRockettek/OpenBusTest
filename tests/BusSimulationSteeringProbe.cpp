@@ -1,6 +1,6 @@
-#include "BusSimulation.h"
-#include "MouseControlMapping.h"
-#include "Variables.h"
+#include "physics/BusSimulation.h"
+#include "input/MouseControlMapping.h"
+#include "core/Variables.h"
 
 #include <algorithm>
 #include <cmath>

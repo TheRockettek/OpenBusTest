@@ -1,5 +1,5 @@
-#include "O3DLoader.h"
-#include "Environment.h"
+#include "assets/O3DLoader.h"
+#include "core/Environment.h"
 
 #include <algorithm>
 #include <array>

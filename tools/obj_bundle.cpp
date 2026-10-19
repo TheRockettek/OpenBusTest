@@ -1,4 +1,4 @@
-#include "ObjLoader.h"
+#include "assets/ObjLoader.h"
 
 #include <algorithm>
 #include <cctype>
