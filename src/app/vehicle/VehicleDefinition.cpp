@@ -1,6 +1,7 @@
 #include "app/vehicle/VehicleDefinition.h"
 
 #include "config/BusConfigLoader.h"
+#include "core/Environment.h"
 #include "core/Logger.h"
 #include "core/Variables.h"
 #include "render/CameraMath.h"
@@ -8,7 +9,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
-#include <cstdlib>
 #include <iomanip>
 #include <mutex>
 #include <sstream>
@@ -89,7 +89,7 @@ void applyVehiclePlacement(const VehiclePlacement& placement) {
 }
 
 void selectRuntimeRegistration(VehicleConfig& configuration, const VehiclePlacement& placement) {
-    if (const char* overrideValue = std::getenv("OPENBUS_REGISTRATION");
+    if (const char* overrideValue = openbus::getEnvironment("OPENBUS_REGISTRATION");
         overrideValue != nullptr && *overrideValue != '\0') {
         configuration.selectedRegistration = overrideValue;
         return;
@@ -98,7 +98,7 @@ void selectRuntimeRegistration(VehicleConfig& configuration, const VehiclePlacem
     const std::size_t registrationCount = registrationOptionCount(configuration);
     if (configuration.registrationFree && registrationCount > 0) {
         std::size_t selectedIndex = 0;
-        if (const char* indexValue = std::getenv("OPENBUS_REGISTRATION_INDEX");
+        if (const char* indexValue = openbus::getEnvironment("OPENBUS_REGISTRATION_INDEX");
             indexValue != nullptr && *indexValue != '\0') {
             try {
                 selectedIndex = std::stoull(indexValue);

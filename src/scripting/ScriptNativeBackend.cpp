@@ -50,11 +50,6 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
             floatStack.pop_back();
         }
     };
-    const auto popStrings = [this](std::size_t count) {
-        while (count-- > 0 && !stringStack.empty()) {
-            stringStack.pop_back();
-        }
-    };
     const auto pushNumber = [this](float value) { floatStack.push_back(value); };
     const auto pushString = [this] { stringStack.emplace_back(); };
 
@@ -104,7 +99,7 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
             texture.locked = false;
         if (name == "stfilter" && !texture.locked && !texture.filtered) {
             texture.filtered = true;
-            ++texture.revision;
+            texture.revision = ++revisionCounter;
         }
     } else if (name == "stsetcolor") {
         const auto channel = [this] { return colorChannel(nativePopFloat()); };
@@ -143,8 +138,9 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
     } else if (name == "sttextout") {
         int letterSpacing = 0;
         const bool validSpacing = floatToInt(nativePopFloat(), letterSpacing);
-        const std::uint32_t colorValue = packedColor(nativePopFloat());
-        nativePopFloat();
+        const bool fullColor = nativePopFloat() != 0.0F;
+        int fontIndex = -1;
+        const bool validFont = floatToInt(nativePopFloat(), fontIndex);
         int y = 0;
         int x = 0;
         int index = -1;
@@ -152,17 +148,12 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
         const bool validX = floatToInt(nativePopFloat(), x);
         const bool validIndex = floatToInt(nativePopFloat(), index);
         const std::string value = nativePopString();
-        const std::array<std::uint8_t, 4> color = {
-            static_cast<std::uint8_t>((colorValue >> 16) & 0xffU),
-            static_cast<std::uint8_t>((colorValue >> 8) & 0xffU),
-            static_cast<std::uint8_t>(colorValue & 0xffU),
-            static_cast<std::uint8_t>((colorValue >> 24) & 0xffU)};
-        if (validSpacing && validY && validX && validIndex && validTextureIndex(index) &&
-            validDrawingOrigin(x) && validDrawingOrigin(y) &&
+        if (validFont && validSpacing && validY && validX && validIndex &&
+            validTextureIndex(index) && validDrawingOrigin(x) && validDrawingOrigin(y) &&
             letterSpacing >= -openbus::scripting::maxScriptTextureDimension &&
             letterSpacing <= openbus::scripting::maxScriptTextureDimension &&
             value.size() <= openbus::scripting::maxScriptTextLength) {
-            drawText(scriptTextures[index], value, x, y, color, letterSpacing);
+            drawScriptText(index, x, y, fontIndex, fullColor, letterSpacing, value);
         }
     } else if (name == "streadpixel") {
         int y = 0;
@@ -205,12 +196,13 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
         pushNumber(validIndex && validTextureIndex(index) ? scriptTextures[index].color[channel]
                                                           : 0.0F);
     } else if (name == "getfontindex") {
-        popStrings(1);
-        pushNumber(0.0);
+        const std::string fontName = nativePopString();
+        pushNumber(static_cast<float>(scriptFontIndex(fontName)));
     } else if (name == "textlength") {
-        nativePopFloat();
+        int fontIndex = -1;
+        const bool validFont = floatToInt(nativePopFloat(), fontIndex);
         const std::string value = nativePopString();
-        pushNumber(static_cast<float>(value.size() * 6));
+        pushNumber(validFont ? scriptTextLength(fontIndex, value) : 0.0F);
     }
 }
 

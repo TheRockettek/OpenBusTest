@@ -6,7 +6,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     : window_(nullptr), assetRequestManager_(std::make_unique<AssetRequestManager>()),
       reflectionRenderer_(std::make_unique<openbus::rendering::ReflectionRenderer>()) {
     TraceScope trace("startup", "RenderLoop::RenderLoop");
-    if (const char* diagnostics = std::getenv("OPENBUS_SCRIPT_DIAGNOSTICS")) {
+    if (const char* diagnostics = openbus::getEnvironment("OPENBUS_SCRIPT_DIAGNOSTICS")) {
         drivetrainDiagnosticsEnabled_ = std::string(diagnostics) == "1";
     }
     if (drivetrainDiagnosticsEnabled_) {
@@ -16,14 +16,35 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     if (mouseLookEnabled_) {
         gameLog.Log("Mouse camera look enabled (F4 toggles; move the mouse to look around)");
     }
-    if (const char* scriptRate = std::getenv("OPENBUS_SCRIPT_HZ")) {
+    if (const char* scriptRate = openbus::getEnvironment("OPENBUS_SCRIPT_HZ")) {
         try {
             scriptRateHz_ = std::clamp(std::stod(scriptRate), 0.0, 1000.0);
         } catch (const std::exception&) {
             scriptRateHz_ = 0.0;
         }
     }
-    if (const char* steeringSmoothing = std::getenv("OPENBUS_STEERING_SMOOTHING")) {
+    if (const char* hoverRate = openbus::getEnvironment("OPENBUS_HOVER_HZ")) {
+        try {
+            std::size_t parsed = 0;
+            const double rate = std::stod(hoverRate, &parsed);
+            if (!std::isfinite(rate) || hoverRate[parsed] != '\0') {
+                throw std::invalid_argument("Invalid hover rate");
+            }
+            const double rateHz = std::clamp(rate, 0.0, 1000.0);
+            clickableHoverRefreshInterval_ = rateHz > 0.0 ? 1.0 / rateHz : 0.0;
+        } catch (const std::invalid_argument&) {
+            gameLog.Log("Invalid OPENBUS_HOVER_HZ; using the default 75 ms hover interval");
+        } catch (const std::out_of_range&) {
+            gameLog.Log("OPENBUS_HOVER_HZ out of range; using the default 75 ms hover interval");
+        }
+    }
+    if (clickableHoverRefreshInterval_ > 0.0) {
+        gameLog.Log("Stationary-pointer hover refresh limited to " +
+                    std::to_string(1.0 / clickableHoverRefreshInterval_) + " Hz");
+    } else {
+        gameLog.Log("Hover refresh follows the render rate");
+    }
+    if (const char* steeringSmoothing = openbus::getEnvironment("OPENBUS_STEERING_SMOOTHING")) {
         try {
             steeringSmoothingRate_ = std::clamp(std::stod(steeringSmoothing), 0.0, 1000.0);
         } catch (const std::exception&) {
@@ -77,7 +98,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         glfwGetCursorPos(window_, &previousCursorX_, &previousCursorY_);
     }
     glfwSetScrollCallback(window_, &RenderLoop::scrollCallback);
-    const char* vsyncSetting = std::getenv("OPENBUS_VSYNC");
+    const char* vsyncSetting = openbus::getEnvironment("OPENBUS_VSYNC");
     const bool vsyncEnabled = vsyncSetting == nullptr || (std::string(vsyncSetting) != "0" &&
                                                           std::string(vsyncSetting) != "off" &&
                                                           std::string(vsyncSetting) != "false");

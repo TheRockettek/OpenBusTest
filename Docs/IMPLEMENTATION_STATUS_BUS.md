@@ -30,6 +30,27 @@ frustum culling and picking after their frame transforms are applied. Their UVs 
 the same internal V convention as OBJ/O3D, avoiding an inverted texture in the
 vehicle renderer while preserving scenery texture orientation.
 
+Auxiliary material maps can reference live script textures with `\S:<slot>`
+(including the DL05 VDV and Atron transparency masks), rather than treating
+those references as disk filenames. Both script backends allow drawing between
+`STLock` and `STUnlock`, retain RGBA channel order for rectangles, and implement
+`GetFontIndex`, `TextLength`, and `STTextOut` using the installed OFT bitmap fonts.
+`STTextOut`'s Full Colour argument selects font colours; zero uses `STSetColor`,
+not a transparent packed colour. Font/layout parity beyond this subset remains
+unverified.
+
+Vehicle `[matl_nightmap]` layers normally fade in with darkness (`nightlighta` /
+`envir_brightness`). Nightmaps on script-selected material items, and on meshes gated
+by `[visible]`, are drawn at full strength in daylight, because their visibility
+variable is the switch. This lets the DL05 `LM_*` warning lamps (`panel_LM` nightmap)
+light up when their variables become active.
+
+The DL05 window panes are authored double-sided, and OpenBus draws the same glass
+layers OMSI does. Measured from the driver seat, the glass reduces scene brightness
+by only about 12–21%. From outside, the windows look dark mainly because the interior
+behind them uses a fixed ambient level, not because of the glass. No glass-specific
+override is applied.
+
 | Keyword / family | Status | Current boundary |
 | --- | --- | --- |
 | `[matl_bumpmap]`, `[matl_envmap]`, `[matl_freetex]`, `[matl_lightmap]`, `[matl_nightmap]` | Partial | Loading/shader/material paths exist, but controller, blending, binding, or visual-parity details remain incomplete. Environment-map behavior still needs representative visual validation. |

@@ -135,7 +135,8 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
         } else if (section == "[halfcantwidth]") {
             std::string widthText;
             double width = 0.0;
-            if (!readPayload(lines, cursor, widthText) || !parseReal(widthText, width) || width < 0.0) {
+            if (!readPayload(lines, cursor, widthText) || !parseReal(widthText, width) ||
+                width < 0.0) {
                 openbus::config::logUnhandledConfigurationTag(
                     "spline profile (.sli)", path, sectionLine, "halfcantwidth",
                     "invalid or missing non-negative width; height-profile fallback retained");

@@ -288,8 +288,11 @@ int reflectionTextureIndex(const std::string& textureName) {
 }
 
 bool reflectionTransparentEnabled() {
-    const char* value = openbus::getEnvironment("OPENBUS_REFLECTION_TRANSPARENT");
-    return value == nullptr || parseEnabledFlag(value);
+    static const bool enabled = [] {
+        const char* value = openbus::getEnvironment("OPENBUS_REFLECTION_TRANSPARENT");
+        return value == nullptr || parseEnabledFlag(value);
+    }();
+    return enabled;
 }
 
 } // namespace openbus::rendering

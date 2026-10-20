@@ -92,6 +92,19 @@ float evaluateCurve(const std::vector<SoundCurvePoint>& points, float value) {
     return points.back().y;
 }
 
+double viewpointGain(const SoundTriggerDefinition& definition, const Variables& variables,
+                     openbus::rendering::ViewpointContext viewpoint) {
+    if (openbus::rendering::viewpointMatches(definition.viewpoint, viewpoint)) {
+        return 1.0;
+    }
+    if (viewpoint == openbus::rendering::ViewpointContext::PlayerInterior &&
+        openbus::rendering::viewpointMatches(
+            definition.viewpoint, openbus::rendering::ViewpointContext::PlayerExterior)) {
+        return std::clamp(variables.get("snd_outsidevol"), 0.0F, 1.0F);
+    }
+    return 0.0;
+}
+
 } // namespace
 
 void VehicleSoundBank::load(const std::filesystem::path& configPath) {
@@ -441,8 +454,8 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
     }
     definitions.erase(std::remove_if(definitions.begin(), definitions.end(),
                                      [viewpoint, &variables](const auto& definition) {
-                                         return !openbus::rendering::viewpointMatches(
-                                                    definition.viewpoint, viewpoint) ||
+                                         return viewpointGain(definition, variables, viewpoint) <=
+                                                    0.0 ||
                                                 (!definition.conditions.empty() &&
                                                  !conditionsAllow(definition, variables));
                                      }),
@@ -472,7 +485,7 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
     }
     for (const SoundTriggerDefinition& definition : definitions) {
         const std::filesystem::path file = resolvedFile(definition);
-        double gain = definition.baseGain;
+        double gain = definition.baseGain * viewpointGain(definition, variables, viewpoint);
         if (!definition.volumeCurve.empty()) {
             gain *= evaluateCurve(definition.volumeCurve, controlValue);
         }
@@ -561,15 +574,15 @@ void VehicleSoundBank::updateAmbient(SoundPlayback& playback, const Variables& v
     std::unordered_map<std::string, DesiredLoop> desired;
     desired.reserve(untriggeredLoopSounds_.size());
     for (const SoundTriggerDefinition& definition : untriggeredLoopSounds_) {
-        if (!openbus::rendering::viewpointMatches(definition.viewpoint, viewpoint) ||
-            !conditionsAllow(definition, variables)) {
+        const double viewGain = viewpointGain(definition, variables, viewpoint);
+        if (viewGain <= 0.0 || !conditionsAllow(definition, variables)) {
             continue;
         }
         // Configured ambient files are resolved during load(). Avoid probing the filesystem
         // every simulation tick; relative config roots still use the normal resolver.
         const std::filesystem::path file =
             definition.file.is_absolute() ? definition.file : resolvedFile(definition);
-        double gain = definition.baseGain;
+        double gain = definition.baseGain * viewGain;
         if (!definition.volumeCurves.empty()) {
             for (const SoundVolumeCurve& curve : definition.volumeCurves) {
                 gain *= evaluateCurve(curve.points, variables.get(curve.variable));

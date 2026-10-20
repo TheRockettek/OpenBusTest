@@ -196,7 +196,8 @@ Count-prefixed entries associated with the preceding texture-change master:
 
 Defines a dynamic script-driven texture surface. Common leading values are
 width and height in pixels, followed by script texture options. Repeated
-blocks define displays such as LED/VFD signs.
+blocks define displays such as LED/VFD signs. Drawing is clipped to the fixed
+surface dimensions; out-of-bounds pixels do not resize or shift the canvas.
 
 ### `[texttexture]`
 

@@ -654,9 +654,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 } else if (kind == ModelConfigKind::SceneryObject && type == "on_surface") {
                     renderType = -3;
                 } else if (!parseInt(type, renderType)) {
-                    result.diagnostics.error(
-                        value.number, "rendertype",
-                        "expected a render type or named render category");
+                    result.diagnostics.error(value.number, "rendertype",
+                                             "expected a render type or named render category");
                     continue;
                 }
                 current->renderType = renderType;

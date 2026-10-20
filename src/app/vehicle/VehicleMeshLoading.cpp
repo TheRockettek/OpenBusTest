@@ -1,6 +1,7 @@
 // Mesh parsing, display-list construction and the shared display cache.
 
 #include "app/vehicle/Vehicle.h"
+#include "config/ScriptTextureLimits.h"
 
 bool Vehicle::areObjectsLoaded() const {
     return loaded && pendingParts.empty();
@@ -38,6 +39,15 @@ bool Vehicle::loadSharedDisplayLists() {
             batch.freeTextureHeight = 0;
             batch.freeTextureRevision = 0;
             batch.freeTextureAsset = {};
+            for (AuxiliaryTexture* auxiliary :
+                 {&batch.lightmap, &batch.nightmap, &batch.transmap, &batch.bumpmap}) {
+                if (openbus::scripting::scriptTextureReferenceIndex(auxiliary->name) >= 0) {
+                    auxiliary->texture = 0;
+                    auxiliary->width = 0;
+                    auxiliary->height = 0;
+                    auxiliary->revision = 0;
+                }
+            }
             batch.selectedMaterialItem = false;
             batch.materialSelectionGeneration = 0;
         }
@@ -79,9 +89,9 @@ Vehicle::parsedObjFuture(const std::filesystem::path& path, const std::string& b
 void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed) {
     TraceScope trace("obj", "loadObj");
     static const bool verboseObjLoadLogs =
-        parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_OBJ_LOAD"));
+        parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_OBJ_LOAD"));
     static const bool materialBatchingEnabled =
-        parseEnabledFlag(std::getenv("OPENBUS_MATERIAL_BATCHING"));
+        parseEnabledFlag(openbus::getEnvironment("OPENBUS_MATERIAL_BATCHING"));
     if (verboseObjLoadLogs) {
         gameLog.Log("Loading OBJ model from path: " + part.objPath.generic_string());
     }
@@ -600,6 +610,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     }
     consolidateMaterialBatches(destination->back().batches);
     for (Batch& batch : destination->back().batches) {
+        batch.visibilitySwitched = !destination->back().visibleVariable.empty();
         if (batch.buffer != 0 && !batch.bufferTracked) {
             assets->trackBuffer(batch.buffer);
             batch.bufferTracked = true;
@@ -627,7 +638,7 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance) {
     const auto loadStart = std::chrono::steady_clock::now();
     constexpr auto loadBudget = std::chrono::milliseconds(4);
     static const std::size_t maxObjWorkers = [] {
-        if (const char* value = std::getenv("OPENBUS_OBJ_WORKERS")) {
+        if (const char* value = openbus::getEnvironment("OPENBUS_OBJ_WORKERS")) {
             try {
                 return static_cast<std::size_t>(std::clamp(std::stoi(value), 1, 64));
             } catch (const std::exception&) {
@@ -640,7 +651,7 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance) {
         return static_cast<std::size_t>(std::clamp(static_cast<int>(concurrency), 4, 32));
     }();
     static const std::size_t maxObjLoadsPerFrame = [] {
-        if (const char* value = std::getenv("OPENBUS_OBJ_LOADS_PER_FRAME")) {
+        if (const char* value = openbus::getEnvironment("OPENBUS_OBJ_LOADS_PER_FRAME")) {
             try {
                 return static_cast<std::size_t>(std::clamp(std::stoi(value), 1, 128));
             } catch (const std::exception&) {

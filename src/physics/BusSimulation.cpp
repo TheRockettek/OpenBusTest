@@ -638,11 +638,10 @@ struct BusSimulation::Impl {
 
     Impl(BusConfiguration vehicle, VehiclePlacement vehiclePlacement, double physicsHz,
          int catchUpSteps, double groundPlaneZ, std::vector<TerrainCollisionGrid> terrain,
-                 std::vector<StaticCollisionMesh> staticCollision, bool createDefaultGround,
-                 WheelStaticContactSettings wheelContact)
-                : wheelStaticContact(wheelContact), configuration(std::move(vehicle)),
-                    placement(vehiclePlacement),
-          maxCatchUpSteps(catchUpSteps) {
+         std::vector<StaticCollisionMesh> staticCollision, bool createDefaultGround,
+         WheelStaticContactSettings wheelContact)
+        : wheelStaticContact(wheelContact), configuration(std::move(vehicle)),
+          placement(vehiclePlacement), maxCatchUpSteps(catchUpSteps) {
         if (!std::isfinite(physicsHz) || physicsHz <= 0.0 || catchUpSteps <= 0) {
             simulationLog.Log("Invalid physics timing configuration");
             throw std::invalid_argument(
@@ -668,8 +667,7 @@ struct BusSimulation::Impl {
             (!std::isfinite(*configuration.rollingResistanceForceNewtons) ||
              *configuration.rollingResistanceForceNewtons < 0.0)) {
             simulationLog.Log("Invalid rolling-resistance force");
-            throw std::invalid_argument(
-                "Rolling-resistance force must be finite and non-negative");
+            throw std::invalid_argument("Rolling-resistance force must be finite and non-negative");
         }
         if (configuration.inverseMinimumTurnRadius > 0.0) {
             const auto steeringAxle =
@@ -1085,11 +1083,10 @@ struct BusSimulation::Impl {
 
         const dReal drag = -0.5 * AIR_DENSITY * AERO_CD * AERO_FRONT_AREA * longitudinalSpeed *
                            std::abs(longitudinalSpeed);
-        const dReal rollingMagnitude = configuration.rollingResistanceForceNewtons.has_value()
-                                           ? static_cast<dReal>(
-                                                 *configuration.rollingResistanceForceNewtons)
-                                           : LEGACY_ROLLING_RESIST_COEFFICIENT *
-                                                 configuration.mass * std::abs(GRAVITY);
+        const dReal rollingMagnitude =
+            configuration.rollingResistanceForceNewtons.has_value()
+                ? static_cast<dReal>(*configuration.rollingResistanceForceNewtons)
+                : LEGACY_ROLLING_RESIST_COEFFICIENT * configuration.mass * std::abs(GRAVITY);
         const dReal rolling =
             std::abs(longitudinalSpeed) > 0.01
                 ? -std::min(rollingMagnitude,
@@ -1166,11 +1163,11 @@ BusSimulation::BusSimulation(BusConfiguration configuration, VehiclePlacement pl
                              double physicsHz, int maxCatchUpSteps, double groundPlaneZ,
                              std::vector<TerrainCollisionGrid> terrain,
                              std::vector<StaticCollisionMesh> staticCollision,
-                     bool createDefaultGround,
-                     WheelStaticContactSettings wheelStaticContact)
+                             bool createDefaultGround,
+                             WheelStaticContactSettings wheelStaticContact)
     : impl_(std::make_unique<Impl>(std::move(configuration), placement, physicsHz, maxCatchUpSteps,
                                    groundPlaneZ, std::move(terrain), std::move(staticCollision),
-                         createDefaultGround, wheelStaticContact)) {
+                                   createDefaultGround, wheelStaticContact)) {
     openbus::rendering::TraceScope trace("startup", "BusSimulation::BusSimulation");
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }

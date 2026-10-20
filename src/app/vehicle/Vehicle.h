@@ -147,6 +147,9 @@ struct Vehicle {
         GLuint texture = 0;
         bool loadAttempted = false;
         std::shared_ptr<TextureCacheEntry> cacheEntry;
+        int width = 0;
+        int height = 0;
+        std::uint64_t revision = 0;
     };
 
     struct MaterialTextureSource {
@@ -274,8 +277,20 @@ struct Vehicle {
         std::vector<MaterialState::TextureChange> textureChanges;
         MaterialState baseMaterial;
         bool selectedMaterialItem = false;
+        // Owning mesh has a [visible] gate; that gate switches its nightmap (e.g. warning lamps).
+        bool visibilitySwitched = false;
         std::uint64_t materialSelectionGeneration = 0;
         std::size_t vertexCount = 0;
+        // Lazily built local bounds of consecutive triangle groups; lets mouse picking
+        // skip most triangles. Keyed by the vertex storage and its size.
+        struct PickChunkBounds {
+            std::array<float, 3> minimum;
+            std::array<float, 3> maximum;
+        };
+        mutable std::vector<PickChunkBounds> pickChunkBounds;
+        mutable std::vector<PickChunkBounds> pickChunkGroupBounds;
+        mutable std::weak_ptr<std::vector<Vertex>> pickChunkSource;
+        mutable std::size_t pickChunkVertexCount = 0;
     };
 
     struct DisplayPart {
@@ -375,7 +390,6 @@ struct Vehicle {
     bool hasSharedGeometry = false;
     bool hasLoadedInitialView = false;
     bool loggedAllObjectsLoaded = false;
-    bool logPlayerStartupState = false;
     int activeLod = -1;
     double animationTimeStep = 0.0;
     std::uint64_t animationGeneration = 1;
@@ -473,15 +487,15 @@ struct Vehicle {
         : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
           modelCacheKey(definition->cacheKey), assets(&manager), placement(configuredPlacement),
           modelOffsetZ(configuredModelOffsetZ),
-          wheelsFromOde(parseEnabledFlag(std::getenv("OPENBUS_WHEELS_FROM_ODE"))) {
-        if (const char* scale = std::getenv("OPENBUS_TEXTURE_SCALE")) {
+          wheelsFromOde(parseEnabledFlag(openbus::getEnvironment("OPENBUS_WHEELS_FROM_ODE"))) {
+        if (const char* scale = openbus::getEnvironment("OPENBUS_TEXTURE_SCALE")) {
             try {
                 textureScale = std::clamp(std::stod(scale), 0.25, 1.0);
             } catch (const std::exception&) {
                 textureScale = 1.0;
             }
         }
-        if (const char* culling = std::getenv("OPENBUS_FRUSTUM_CULLING")) {
+        if (const char* culling = openbus::getEnvironment("OPENBUS_FRUSTUM_CULLING")) {
             frustumCulling = std::string(culling) == "1";
         }
 #ifdef _WIN32
@@ -589,6 +603,10 @@ struct Vehicle {
     void ensureAuxiliaryTexture(Batch& batch, AuxiliaryTexture& auxiliary);
 
     void updateFreeTexture(Batch& batch);
+
+    void uploadDynamicTexture(const ScriptRuntime::ScriptTextureSnapshot& snapshot, GLuint& texture,
+                              int& width, int& height, std::uint64_t& revision, GLenum wrapS,
+                              GLenum wrapT);
 
     void startTextureRequest(const std::shared_ptr<TextureCacheEntry>& entry);
 

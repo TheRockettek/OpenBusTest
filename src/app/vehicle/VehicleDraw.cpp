@@ -107,10 +107,10 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
         batch.lightmapStrengthVariable.empty()
             ? 1.0F
             : std::clamp(variables.get(batch.lightmapStrengthVariable), 0.0F, 1.0F));
-    // Script-selected emissive items illuminate even in daytime. Ordinary
-    // base nightmaps still follow the host's environmental lighting.
+    // Script-selected emissive items and [visible]-switched lamp meshes illuminate
+    // even in daytime. Ordinary base nightmaps still follow environmental lighting.
     const float nightlight =
-        batch.selectedMaterialItem
+        batch.selectedMaterialItem || batch.visibilitySwitched
             ? 1.0F
             : std::max(variables.get("nightlighta"), 1.0F - variables.get("envir_brightness"));
     material.nightmapStrength = std::clamp(nightlight, 0.0F, 1.0F);

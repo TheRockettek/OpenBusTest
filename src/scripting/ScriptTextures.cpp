@@ -340,40 +340,12 @@ bool ScriptRuntime::Impl::popSystemTextureIndex(Impl* runtime, int& index) {
     return popSystemInt(runtime, index) && validTextureIndex(index);
 }
 
-bool ScriptRuntime::Impl::resizeScriptTexture(ScriptTexture& texture, int requiredWidth,
-                                              int requiredHeight) {
-    if (requiredWidth <= texture.width && requiredHeight <= texture.height) {
-        return true;
-    }
-    const int width = std::max(texture.width, requiredWidth);
-    const int height = std::max(texture.height, requiredHeight);
-    const std::size_t byteSize = openbus::scripting::scriptTextureByteSize(width, height);
-    if (byteSize == 0 || !canReplaceTextureBytes(texture.pixels.size(), byteSize)) {
-        return false;
-    }
-    std::vector<std::uint8_t> pixels(byteSize, 0);
-    for (int y = 0; y < texture.height; ++y) {
-        const auto sourceOffset =
-            static_cast<std::size_t>(y) * static_cast<std::size_t>(texture.width) * 4U;
-        const auto targetOffset =
-            static_cast<std::size_t>(y) * static_cast<std::size_t>(width) * 4U;
-        const std::size_t rowBytes = static_cast<std::size_t>(texture.width) * 4U;
-        std::copy_n(texture.pixels.begin() + sourceOffset, rowBytes, pixels.begin() + targetOffset);
-    }
-    texture.width = width;
-    texture.height = height;
-    texture.pixels = std::move(pixels);
-    return true;
-}
-
 std::size_t ScriptRuntime::Impl::pixelOffset(const ScriptTexture& texture, int x, int y) {
     return (static_cast<std::size_t>(y) * texture.width + x) * 4;
 }
 
 void ScriptRuntime::Impl::setPixel(ScriptTexture& texture, int x, int y) {
-    if (texture.locked || x < 0 || y < 0 || x >= openbus::scripting::maxScriptTextureDimension ||
-        y >= openbus::scripting::maxScriptTextureDimension ||
-        !resizeScriptTexture(texture, x + 1, y + 1)) {
+    if (x < 0 || y < 0 || x >= texture.width || y >= texture.height) {
         return;
     }
     const std::size_t offset = pixelOffset(texture, x, y);
@@ -381,18 +353,14 @@ void ScriptRuntime::Impl::setPixel(ScriptTexture& texture, int x, int y) {
     texture.pixels[offset + 1] = texture.color[2];
     texture.pixels[offset + 2] = texture.color[3];
     texture.pixels[offset + 3] = texture.color[0];
-    ++texture.revision;
+    texture.revision = ++revisionCounter;
 }
 
 void ScriptRuntime::Impl::fillRect(ScriptTexture& texture, int x1, int y1, int x2, int y2) {
-    if (texture.locked) {
-        return;
-    }
     const int left = std::max(0, std::min(x1, x2));
     const int top = std::max(0, std::min(y1, y2));
-    const int right = std::min(openbus::scripting::maxScriptTextureDimension - 1, std::max(x1, x2));
-    const int bottom =
-        std::min(openbus::scripting::maxScriptTextureDimension - 1, std::max(y1, y2));
+    const int right = std::min(texture.width - 1, std::max(x1, x2));
+    const int bottom = std::min(texture.height - 1, std::max(y1, y2));
     if (left > right || top > bottom) {
         return;
     }
@@ -400,17 +368,19 @@ void ScriptRuntime::Impl::fillRect(ScriptTexture& texture, int x1, int y1, int x
     const int height = bottom - top + 1;
     const std::size_t pixelCount =
         static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
-    if (pixelCount > openbus::scripting::maxScriptTexturePixels ||
-        !resizeScriptTexture(texture, right + 1, bottom + 1)) {
+    if (pixelCount > openbus::scripting::maxScriptTexturePixels) {
         return;
     }
     for (int y = top; y <= bottom; ++y) {
         for (int x = left; x <= right; ++x) {
             const std::size_t offset = pixelOffset(texture, x, y);
-            std::copy(texture.color.begin(), texture.color.end(), texture.pixels.begin() + offset);
+            texture.pixels[offset] = texture.color[1];
+            texture.pixels[offset + 1] = texture.color[2];
+            texture.pixels[offset + 2] = texture.color[3];
+            texture.pixels[offset + 3] = texture.color[0];
         }
     }
-    ++texture.revision;
+    texture.revision = ++revisionCounter;
 }
 
 void ScriptRuntime::Impl::clearTexture(ScriptTexture& texture) {
@@ -422,7 +392,7 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
                                    std::array<std::uint8_t, 4> color, int letterSpacing,
                                    int maximumScale, TextAlignment alignment,
                                    bool centerVertically) {
-    if (texture.locked || value.empty() || value.size() > openbus::scripting::maxScriptTextLength ||
+    if (value.empty() || value.size() > openbus::scripting::maxScriptTextLength ||
         !openbus::scripting::validScriptTextureSize(texture.width, texture.height)) {
         return;
     }
@@ -498,12 +468,12 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
         }
         ++columnIndex;
     }
-    ++texture.revision;
+    texture.revision = ++revisionCounter;
 }
 
 bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::string& value,
                                              int x, int y, const TextTextureDefinition& definition,
-                                             const FontAsset& font) {
+                                             const FontAsset& font, bool centerVertically) {
     if (value.size() > openbus::scripting::maxScriptTextLength ||
         !openbus::scripting::validScriptTextureSize(texture.width, texture.height)) {
         return false;
@@ -553,7 +523,8 @@ bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::
 
     const int textBlockHeight = static_cast<int>(lines.size()) * font.height;
     const int horizontalGap = font.horizontalGap + definition.gridSpacing;
-    const int verticalOffset = std::max(0, (texture.height - textBlockHeight) / 2);
+    const int verticalOffset =
+        centerVertically ? std::max(0, (texture.height - textBlockHeight) / 2) : 0;
     for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
         const std::vector<const FontGlyph*>& line = lines[lineIndex];
         int lineWidth = 0;
@@ -606,13 +577,14 @@ bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::
                         texture.pixels[destinationOffset + 2] =
                             font.colorImage.rgba[colorOffset + 2];
                     }
-                    texture.pixels[destinationOffset + 3] = font.alphaImage.rgba[sourceOffset];
+                    texture.pixels[destinationOffset + 3] = static_cast<std::uint8_t>(
+                        font.alphaImage.rgba[sourceOffset] * definition.color[3] / 255U);
                 }
             }
             cursorX += glyphWidth + horizontalGap;
         }
     }
-    ++texture.revision;
+    texture.revision = ++revisionCounter;
     return true;
 }
 
@@ -652,7 +624,7 @@ void ScriptRuntime::Impl::updateTextTextures(bool force) {
             drawText(texture, value, 0, 0, definition.color, definition.gridSpacing, maximumScale,
                      definition.alignment, true);
         } else if (!bitmapFontRendered) {
-            ++texture.revision;
+            texture.revision = ++revisionCounter;
         }
     }
     // Refresh_Strings is a one-shot request, consumed after the script pass
@@ -738,7 +710,7 @@ int ScriptRuntime::Impl::safeScriptTextureFilter(lua_State* lua) {
     if (!texture.locked) {
         if (!texture.filtered) {
             texture.filtered = true;
-            ++texture.revision;
+            texture.revision = ++runtime->revisionCounter;
         }
     }
     return 0;
@@ -813,8 +785,9 @@ int ScriptRuntime::Impl::safeScriptTextureText(lua_State* lua) {
     Impl* runtime = runtimeFor(lua);
     int letterSpacing = 0;
     const bool validSpacing = popSystemInt(runtime, letterSpacing);
-    const std::uint32_t colorValue = packedColor(popSystemFloat(runtime));
-    popSystemFloat(runtime);
+    const bool fullColor = popSystemFloat(runtime) != 0.0F;
+    int fontIndex = -1;
+    const bool validFont = popSystemInt(runtime, fontIndex);
     int y = 0;
     int x = 0;
     int index = -1;
@@ -822,16 +795,11 @@ int ScriptRuntime::Impl::safeScriptTextureText(lua_State* lua) {
     const bool validX = popSystemInt(runtime, x);
     const bool validIndex = popSystemTextureIndex(runtime, index);
     const std::string value = popSystemString(runtime);
-    const std::array<std::uint8_t, 4> color = {
-        static_cast<std::uint8_t>((colorValue >> 16) & 0xffU),
-        static_cast<std::uint8_t>((colorValue >> 8) & 0xffU),
-        static_cast<std::uint8_t>(colorValue & 0xffU),
-        static_cast<std::uint8_t>((colorValue >> 24) & 0xffU)};
-    if (validSpacing && validY && validX && validIndex && validDrawingOrigin(x) &&
+    if (validFont && validSpacing && validY && validX && validIndex && validDrawingOrigin(x) &&
         validDrawingOrigin(y) && letterSpacing >= -openbus::scripting::maxScriptTextureDimension &&
         letterSpacing <= openbus::scripting::maxScriptTextureDimension &&
         value.size() <= openbus::scripting::maxScriptTextLength) {
-        drawText(scriptTexture(runtime, index), value, x, y, color, letterSpacing);
+        runtime->drawScriptText(index, x, y, fontIndex, fullColor, letterSpacing, value);
     }
     return 0;
 }
@@ -886,15 +854,65 @@ int ScriptRuntime::Impl::safeScriptTextureAlpha(lua_State* lua) {
 }
 
 int ScriptRuntime::Impl::safeFontIndex(lua_State* lua) {
-    discardSystemStrings(runtimeFor(lua), 1);
-    return returnSystemFloat(lua, 0.0);
+    Impl* runtime = runtimeFor(lua);
+    const std::string name = popSystemString(runtime);
+    return returnSystemFloat(lua, static_cast<float>(runtime->scriptFontIndex(name)));
 }
 
 int ScriptRuntime::Impl::safeTextLength(lua_State* lua) {
     Impl* runtime = runtimeFor(lua);
-    discardSystemFloats(runtime, 1);
+    int fontIndex = -1;
+    const bool validFont = popSystemInt(runtime, fontIndex);
     const std::string value = popSystemString(runtime);
-    return returnSystemFloat(lua, static_cast<float>(value.size() * 6));
+    return returnSystemFloat(lua, validFont ? runtime->scriptTextLength(fontIndex, value) : 0.0F);
+}
+
+int ScriptRuntime::Impl::scriptFontIndex(const std::string& name) {
+    const bool attempted = fonts.contains(lower(name));
+    const auto font = loadFont(name);
+    if (!font) {
+        if (!attempted) {
+            log("Script font not found: " + name);
+        }
+        return -1;
+    }
+    const auto found = std::find(scriptFonts.begin(), scriptFonts.end(), font);
+    if (found != scriptFonts.end()) {
+        return static_cast<int>(found - scriptFonts.begin());
+    }
+    scriptFonts.push_back(font);
+    return static_cast<int>(scriptFonts.size() - 1);
+}
+
+void ScriptRuntime::Impl::drawScriptText(int index, int x, int y, int fontIndex, bool fullColor,
+                                         int letterSpacing, const std::string& value) {
+    if (fontIndex < 0 || static_cast<std::size_t>(fontIndex) >= scriptFonts.size()) {
+        log("Invalid script font index: " + std::to_string(fontIndex));
+        return;
+    }
+    ScriptTexture& texture = scriptTextures[index];
+    TextTextureDefinition definition;
+    definition.alignment = TextAlignment::Left;
+    definition.gridSpacing = letterSpacing;
+    definition.useFontColor = fullColor;
+    definition.color = {texture.color[1], texture.color[2], texture.color[3], texture.color[0]};
+    drawBitmapFontText(texture, value, x, y, definition, *scriptFonts[fontIndex], false);
+}
+
+float ScriptRuntime::Impl::scriptTextLength(int fontIndex, const std::string& value) const {
+    if (fontIndex < 0 || static_cast<std::size_t>(fontIndex) >= scriptFonts.size()) {
+        log("Invalid script font index for TextLength: " + std::to_string(fontIndex));
+        return 0.0F;
+    }
+    const FontAsset& font = *scriptFonts[fontIndex];
+    int width = 0;
+    for (const unsigned char character : value) {
+        const FontGlyph& glyph = font.glyphs[character];
+        if (glyph.defined) {
+            width += glyph.right - glyph.left + font.horizontalGap;
+        }
+    }
+    return static_cast<float>(std::max(0, width - (value.empty() ? 0 : font.horizontalGap)));
 }
 
 bool ScriptRuntime::Impl::copyScriptTexture(int index,

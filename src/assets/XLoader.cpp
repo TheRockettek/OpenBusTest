@@ -374,8 +374,7 @@ class Parser {
             const double x = position.y - result->boundsCenter[0];
             const double y = -position.x - result->boundsCenter[1];
             const double z = position.z - result->boundsCenter[2];
-            result->boundsRadius =
-                std::max(result->boundsRadius, std::sqrt(x * x + y * y + z * z));
+            result->boundsRadius = std::max(result->boundsRadius, std::sqrt(x * x + y * y + z * z));
         }
         return result;
     }

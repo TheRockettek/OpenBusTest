@@ -351,9 +351,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         if (!mouseControlEnabled_) {
             const int interactionContextValue = static_cast<int>(interactionContext);
             const std::uint64_t clickableRevision = playerVehicle_->clickableRevision();
-            // Pose changes every simulation step; while the pointer is stationary, refresh
-            // animated/moving hit targets at 13 Hz instead of scanning all triangles per frame.
-            constexpr double clickableHoverRefreshInterval = 0.075;
+            // Pose changes every simulation step; throttle stationary-pointer hover checks.
             const double currentTime = glfwGetTime();
             const bool hoverCacheMatches =
                 clickableHoverCacheValid_ && clickableHoverCacheX_ == framebufferCursorX &&
@@ -367,7 +365,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 clickableHoverCacheLookYaw_ == viewLookYaw_ &&
                 clickableHoverCacheLookPitch_ == viewLookPitch_ &&
                 clickableHoverCacheRevision_ == clickableRevision &&
-                currentTime - clickableHoverCacheTimestamp_ < clickableHoverRefreshInterval;
+                currentTime - clickableHoverCacheTimestamp_ < clickableHoverRefreshInterval_;
             if (!hoverCacheMatches) {
                 clickableHoverCacheValid_ = true;
                 clickableHoverCacheX_ = framebufferCursorX;

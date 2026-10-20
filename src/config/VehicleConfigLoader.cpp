@@ -66,9 +66,8 @@ bool allowsBusOnly(const std::string& keyword, VehicleFileKind kind) {
         return true;
     }
     return keyword != "add_camera_reflexion" && keyword != "add_camera_reflexion_2" &&
-           keyword != "add_camera_reflexion_static" &&
-           keyword != "add_camera_reflexion_2_static" && keyword != "view_schedule" &&
-           keyword != "view_ticketselling";
+           keyword != "add_camera_reflexion_static" && keyword != "add_camera_reflexion_2_static" &&
+           keyword != "view_schedule" && keyword != "view_ticketselling";
 }
 
 std::filesystem::path resolveReferencedPath(const std::filesystem::path& configPath,

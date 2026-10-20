@@ -91,9 +91,17 @@ endforeach()
 
 # Render (header-only probes need only the include root)
 openbus_add_probe(OpenBusCameraMathProbe CameraMathProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusReflectionSettingsProbe ReflectionSettingsProbe.cpp
+    LIBS openbus_render NO_TEST)
+foreach(mode IN ITEMS default enabled disabled)
+    add_test(NAME OpenBusReflectionSettingsProbe.${mode}
+        COMMAND OpenBusReflectionSettingsProbe ${mode})
+endforeach()
 openbus_add_probe(OpenBusComputeCullingProbe ComputeCullingProbe.cpp LIBS openbus_render)
 add_test(NAME OpenBusComputeCullingGpuProbe COMMAND OpenBusComputeCullingProbe --gpu)
 set_tests_properties(OpenBusComputeCullingGpuProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusViewpointProbe ViewpointProbe.cpp LIBS openbus_core)
+openbus_add_probe(OpenBusMaterialRenderingProbe MaterialRenderingProbe.cpp LIBS openbus_render)
+set_tests_properties(OpenBusMaterialRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusStaticPrimitiveBufferProbe StaticPrimitiveBufferProbe.cpp)
 target_include_directories(OpenBusStaticPrimitiveBufferProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")

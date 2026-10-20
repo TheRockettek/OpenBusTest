@@ -19,42 +19,12 @@ void Vehicle::updateScripts(bool isAiVehicle) {
             gameLog.Log("Lua frame error: " + scripts->errors()[index]);
         }
     }
-    if (!isAiVehicle && logPlayerStartupState) {
-        gameLog.Log("Player startup states: battery=" +
-                    std::to_string(variables.get("batterymasterswitchstate")) +
-                    " busbar=" + std::to_string(variables.get("elec_busbar_main")) +
-                    " busbar_sw=" + std::to_string(variables.get("elec_busbar_main_sw")) +
-                    " ignition=" + std::to_string(variables.get("mmc_ignitionswitchstate")) +
-                    " test_lights=" + std::to_string(variables.get("mmc_startupdashtestlights")) +
-                    " test_run=" + std::to_string(variables.get("mmc_startupdashtestrun")) +
-                    " screen=" + std::to_string(variables.get("dashscreenisinitialised")) +
-                    " marker=" + std::to_string(variables.get("markerlightstate")) +
-                    " dash_mode=" + std::to_string(variables.get("mmc_dashlightswitch_rot_mode")) +
-                    " dash_rot=" + std::to_string(variables.get("mmc_dashlightswitch_rot")) +
-                    " driver_light=" + std::to_string(variables.get("lights_fahrerlicht")) +
-                    " battery_v=" + std::to_string(variables.get("elec_v_battery")) +
-                    " battery_load=" + std::to_string(variables.get("elec_battery_load")) +
-                    " battery_avail=" + std::to_string(variables.get("elec_busbar_avail")) +
-                    " battery_failure=" + std::to_string(variables.get("elec_failure_general")));
-        logPlayerStartupState = false;
-    }
 }
 
 void Vehicle::initializePlayerSystems() {
     if (!scripts) {
         return;
     }
-    // if (variables.get("batterymasterswitchstate") == 0.0 &&
-    //     scripts->hasScriptEntryPoint("trigger_batterymasterswitch")) {
-    //     scripts->invokeKeyBinding("batteryMasterSwitch", true);
-    // }
-    // // The authored ignition trigger advances StartMode and starts the
-    // // dashboard test/electrical busbar sequence after the master switch.
-    // if (variables.get("mmc_ignitionswitchstate") == 0.0 &&
-    //     scripts->hasScriptEntryPoint("trigger_mmc_ignitionswitch")) {
-    //     scripts->invokeKeyBinding("MMC_ignitionSwitch", true);
-    // }
-    logPlayerStartupState = true;
 }
 
 void Vehicle::updateSimulationVariables(const BusSimulation& simulation, double throttle,

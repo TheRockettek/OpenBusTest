@@ -118,6 +118,7 @@ struct ScriptRuntime::Impl {
         openbus::rendering::Image alphaImage;
     };
     std::unordered_map<std::string, std::shared_ptr<FontAsset>> fonts;
+    std::vector<std::shared_ptr<FontAsset>> scriptFonts;
     std::uint64_t revisionCounter = 0;
     std::vector<std::unique_ptr<LuaFunctionBinding>> luaFunctionBindings;
     std::vector<std::shared_ptr<const OscProgram>> nativePrograms;
@@ -143,6 +144,10 @@ struct ScriptRuntime::Impl {
     static std::array<std::uint8_t, 7> glyph(char character);
 
     std::shared_ptr<FontAsset> loadFont(const std::string& requestedName);
+    int scriptFontIndex(const std::string& name);
+    void drawScriptText(int index, int x, int y, int fontIndex, bool fullColor, int letterSpacing,
+                        const std::string& value);
+    float scriptTextLength(int fontIndex, const std::string& value) const;
 
     float nativePopFloat();
 
@@ -302,8 +307,6 @@ struct ScriptRuntime::Impl {
 
     static bool popSystemTextureIndex(Impl* runtime, int& index);
 
-    bool resizeScriptTexture(ScriptTexture& texture, int requiredWidth, int requiredHeight);
-
     static std::size_t pixelOffset(const ScriptTexture& texture, int x, int y);
 
     void setPixel(ScriptTexture& texture, int x, int y);
@@ -312,13 +315,13 @@ struct ScriptRuntime::Impl {
 
     static void clearTexture(ScriptTexture& texture);
 
-    static void drawText(ScriptTexture& texture, const std::string& value, int x, int y,
-                         std::array<std::uint8_t, 4> color, int letterSpacing = 0,
-                         int maximumScale = 8, TextAlignment alignment = TextAlignment::Left,
-                         bool centerVertically = false);
+    void drawText(ScriptTexture& texture, const std::string& value, int x, int y,
+                  std::array<std::uint8_t, 4> color, int letterSpacing = 0, int maximumScale = 8,
+                  TextAlignment alignment = TextAlignment::Left, bool centerVertically = false);
 
-    static bool drawBitmapFontText(ScriptTexture& texture, const std::string& value, int x, int y,
-                                   const TextTextureDefinition& definition, const FontAsset& font);
+    bool drawBitmapFontText(ScriptTexture& texture, const std::string& value, int x, int y,
+                            const TextTextureDefinition& definition, const FontAsset& font,
+                            bool centerVertically = true);
 
     void updateTextTextures(bool force = false);
 

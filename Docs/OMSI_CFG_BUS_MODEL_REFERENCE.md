@@ -167,7 +167,8 @@ texture-change master.
 ### `[scripttexture]`
 
 Creates a dynamic texture surface. The common leading values are width and
-height in pixels, followed by display/alpha options.
+height in pixels, followed by display/alpha options. Drawing is clipped to
+that fixed surface; out-of-bounds pixels do not resize or shift its canvas.
 
 ### `[texttexture]`
 

@@ -27,8 +27,12 @@ class TraceScope {
 };
 #else
 inline void Flush() noexcept {}
-inline bool IsRecording() noexcept { return false; }
-inline bool SetRecording(bool) noexcept { return false; }
+inline bool IsRecording() noexcept {
+    return false;
+}
+inline bool SetRecording(bool) noexcept {
+    return false;
+}
 
 class TraceScope {
   public:

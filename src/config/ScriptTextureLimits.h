@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <charconv>
+#include <string_view>
 
 namespace openbus::scripting {
 
@@ -26,6 +28,19 @@ constexpr std::size_t scriptTextureByteSize(int width, int height) {
 
 constexpr bool validScriptTextureIndex(int index) {
     return index >= 0 && index < maxScriptTextureCount;
+}
+
+inline int scriptTextureReferenceIndex(std::string_view name) {
+    if (name.size() <= 3 || name[0] != '\\' || (name[1] != 'S' && name[1] != 's') ||
+        name[2] != ':') {
+        return -1;
+    }
+    int index = -1;
+    const auto parsed = std::from_chars(name.data() + 3, name.data() + name.size(), index);
+    return parsed.ec == std::errc{} && parsed.ptr == name.data() + name.size() &&
+                   validScriptTextureIndex(index)
+               ? index
+               : -1;
 }
 
 } // namespace openbus::scripting

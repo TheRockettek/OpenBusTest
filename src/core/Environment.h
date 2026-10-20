@@ -8,6 +8,8 @@ namespace openbus {
 // Returns a thread-local snapshot that remains valid until the next call on
 // the same thread. This avoids the deprecated CRT getenv API on Windows while
 // preserving the existing const char* call-site contract.
+// Values are read on every call; cache parsed settings at hot call sites, not
+// the returned pointer, which a subsequent call can invalidate.
 inline const char* getEnvironment(const char* name) {
 #ifdef _WIN32
     char* rawValue = nullptr;

@@ -14,6 +14,21 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
 - `[script]`, `[varnamelist]`, `[stringvarnamelist]`, and `[constfile]` resources initialize per-placement scenery scripts. Basic `init`/`frame`, `[visible]`, and per-placement `[usescripttexture]` / `[usetexttexture]` surfaces are active. Counted map `[object]` labels feed recognized label-oriented inline SCO `[texttexture]` slots by slot index; this format/ordering is inferred from installed assets and still needs native OMSI visual comparison.
 - `[collision_mesh]` O3D geometry from SCOs and external model CFGs is spatially indexed and clipped into each overlapped streamed tile, including long bridges and custom junction meshes. `[nocollision]` filters the relevant collision; attached/scenery repeater collision and non-O3D formats remain unsupported.
 - `[groups]`, `[friendlyname]`, and `[helparrow]` are accepted as SCO metadata/editor fields and ignored by static rendering.
+- Text-texture glyphs (`[texttexture]`, `[texttexture_enh]`) are multiplied by the mesh's diffuse colour and receive the same ambient/sun, lightmap and interior lighting as ordinary textures; nightmap, transmap and bumpmap layers are not applied to them. `[matl_freetex]` surfaces are lit the same way.
+
+### Cotterell sign investigation
+
+The "One Way" marking beside spawn 0 is object 18 in `maps\Cotterell\tile_7_1.map`
+(label `ONE@WAY`), using `Sceneryobjects\UKDT\Cotterell\Road-hog123\Lane_Destination_2lane.sco`.
+Its `[texttexture]` uses colour mode 1, so the glyphs come from the light-grey paint
+bitmap of `Lane_Destination.oft`. No SCO keyword marks it as self-lit or as a blend
+override; it rendered bright white because text textures were previously drawn unlit.
+They now follow scene lighting, so the paint matches the surrounding road markings.
+
+The campus direction signs use `[texttexture_enh]` with RGB `65, 85, 112` and alpha
+mode `2`; the logo sign uses `[matl_freetex]`. Their O3D materials have diffuse 1.0
+and no emissive, so the off-shade blue and grey were the same unlit-rendering cause;
+no sign-specific colour correction is applied.
 
 ## Partial or unimplemented records
 

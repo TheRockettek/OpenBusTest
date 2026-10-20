@@ -2,6 +2,7 @@
 #include "core/Logger.h"
 #include "osc/OscConverter.h"
 #include "ProbeTempDirectory.h"
+#include "config/ScriptTextureLimits.h"
 
 #include <algorithm>
 #include <array>
@@ -69,6 +70,94 @@ void writeTestBmp(const std::filesystem::path& path, int width, int height,
     }
 }
 
+bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
+    using openbus::scripting::scriptTextureReferenceIndex;
+    if (scriptTextureReferenceIndex("\\S:1") != 1 ||
+        scriptTextureReferenceIndex("\\s:255") != 255 ||
+        scriptTextureReferenceIndex("\\S:256") != -1 ||
+        scriptTextureReferenceIndex("\\S:-1") != -1 ||
+        scriptTextureReferenceIndex("\\S:1.bmp") != -1 ||
+        scriptTextureReferenceIndex("mask.bmp") != -1) {
+        std::cerr << "script texture reference parsing failed\n";
+        return false;
+    }
+    const auto path = root / "authored_drawing.osc";
+    std::ofstream source(path);
+    source << "{init}\n"
+              "\"ProbeFont\" (M.V.GetFontIndex) (S.L.font_index)\n"
+              "\"UnitFont\" (M.V.GetFontIndex) (S.L.other_font_index)\n"
+              "\"ProbeFont\" (M.V.GetFontIndex) (S.L.repeated_font_index)\n"
+              "(L.L.font_index) \"AB\" (M.V.TextLength) (S.L.text_width)\n"
+              "1 (M.V.STNewTex)\n"
+              "1 (M.V.STLock)\n"
+              "1 128 10 20 30 (M.V.STSetColor)\n"
+              "1 0 0 7 7 (M.V.STDrawRect)\n"
+              "1 255 40 50 60 (M.V.STSetColor)\n"
+              "1 6 6 10 10 (M.V.STDrawRect)\n"
+              "1 255 0 0 0 (M.V.STSetColor)\n"
+              "1 0 0 (L.L.font_index) 0 0 \"A\" (M.V.STTextOut)\n"
+              "1 3 0 (L.L.font_index) 1 0 \"B\" (M.V.STTextOut)\n"
+              "1 6 6 (M.V.STDrawPixel)\n"
+              "1 (M.V.STUnlock)\n"
+              "{end}\n"
+              "{trigger:reset_surface}\n"
+              "1 (M.V.STNewTex)\n"
+              "{end}\n";
+    source.close();
+    std::string error;
+    if (!convertOscToLua(path, generatedLuaPath(path), error)) {
+        std::cerr << error << '\n';
+        return false;
+    }
+    for (const char* backend : {"native", "lua"}) {
+        if (!setScriptBackend(backend)) {
+            return false;
+        }
+        VehicleConfig config;
+        config.sourcePath = root / "drawing.bus";
+        config.scripts.push_back(path.filename().string());
+        Variables variables(ScriptObjectKind::Vehicle);
+        SimulationState simulation;
+        ScriptRuntime runtime(config, variables, simulation);
+        runtime.configureScriptTextures({ModelScriptTexture{1, 8, 8, {}}});
+        runtime.initialize();
+        ScriptRuntime::ScriptTextureSnapshot snapshot;
+        if (!runtime.valid() || !runtime.errors().empty() ||
+            !runtime.copyScriptTexture(1, snapshot) || snapshot.width != 8 ||
+            variables.get("font_index") == variables.get("other_font_index") ||
+            variables.get("font_index") != variables.get("repeated_font_index") ||
+            variables.get("text_width") != 4.0F) {
+            std::cerr << backend << ": authored font selection/drawing failed\n";
+            return false;
+        }
+        const auto pixel = [&](int x, int y) {
+            const auto offset = static_cast<std::size_t>(y * snapshot.width + x) * 4;
+            return std::array<std::uint8_t, 4>{
+                snapshot.pixels[offset], snapshot.pixels[offset + 1],
+                snapshot.pixels[offset + 2], snapshot.pixels[offset + 3]};
+        };
+        if (pixel(7, 7) != std::array<std::uint8_t, 4>{40, 50, 60, 255} ||
+            pixel(0, 0) != std::array<std::uint8_t, 4>{0, 0, 0, 255} ||
+            pixel(3, 0) != std::array<std::uint8_t, 4>{80, 80, 80, 128} ||
+            pixel(6, 6) != std::array<std::uint8_t, 4>{0, 0, 0, 255}) {
+            std::cerr << backend << ": clipped drawing, RGBA order or full-colour flag failed\n";
+            return false;
+        }
+        for (int reset = 0; reset < 6; ++reset) {
+            const auto previousRevision = snapshot.revision;
+            runtime.invokeMouseEvent("reset_surface");
+            if (!runtime.copyScriptTextureIfChanged(1, previousRevision, snapshot) ||
+                snapshot.revision <= previousRevision ||
+                std::any_of(snapshot.pixels.begin(), snapshot.pixels.end(),
+                            [](std::uint8_t value) { return value != 0; })) {
+                std::cerr << backend << ": reset script surface retained a stale GPU revision\n";
+                return false;
+            }
+        }
+    }
+    return setScriptBackend(nullptr);
+}
+
 int main() {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_script_texture_probe");
@@ -97,6 +186,10 @@ int main() {
                   "[char]\nA\n0\n1\n0\n"
                   "[char]\nc\n1\n2\n0\n";
     legacyFont.close();
+    if (!checkAuthoredScriptDrawing(root)) {
+        openbus::probe::removeProbeDirectory(root);
+        return 1;
+    }
     const std::filesystem::path scriptPath = root / "probe.osc";
     std::ofstream source(scriptPath);
     source << "{InIt}\n"

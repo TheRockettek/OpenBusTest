@@ -196,10 +196,9 @@ void MapRoadConnectionIndex::finalize() {
                 // Otherwise use an automatic miter plus the mean authored shear in the
                 // common traversal frame to reconcile the two endpoint cross-sections.
                 for (std::size_t axis = 0; axis < 2; ++axis) {
-                    seam.lateralAxis[axis] =
-                        (right[axis] + otherRight[axis]) / denominator +
-                        0.5 * (ownFrame.lateralAxis[axis] - right[axis] +
-                               orientedNeighborAxis[axis] - otherRight[axis]);
+                    seam.lateralAxis[axis] = (right[axis] + otherRight[axis]) / denominator +
+                                             0.5 * (ownFrame.lateralAxis[axis] - right[axis] +
+                                                    orientedNeighborAxis[axis] - otherRight[axis]);
                 }
                 const double along = seam.lateralAxis[0] * std::sin(sample->headingRadians) +
                                      seam.lateralAxis[1] * std::cos(sample->headingRadians);
@@ -207,10 +206,10 @@ void MapRoadConnectionIndex::finalize() {
                     seam.lateralAxis[0] * std::sin(neighborSample->headingRadians) +
                     seam.lateralAxis[1] * std::cos(neighborSample->headingRadians);
                 seam.lateralAxis[2] =
-                    0.5 * (along * (end ? spline.gradientEnd : spline.gradientStart) / 100.0 +
-                           otherAlong * (*neighborEnd ? neighbor.gradientEnd
-                                                     : neighbor.gradientStart) /
-                               100.0);
+                    0.5 *
+                    (along * (end ? spline.gradientEnd : spline.gradientStart) / 100.0 +
+                     otherAlong * (*neighborEnd ? neighbor.gradientEnd : neighbor.gradientStart) /
+                         100.0);
             }
             seam.cantContributions[0] = ownFrame.cantContributions[0];
             seam.cantContributions[0].cantPercent *= 0.5;

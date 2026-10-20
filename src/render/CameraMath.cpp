@@ -218,12 +218,12 @@ std::array<double, 3> mirrorReflectionDirection(const std::array<double, 3>& mir
                                                 const std::array<double, 3>& viewerEye) {
     constexpr double EPSILON = 1.0e-6;
     const auto normalized = [](const std::array<double, 3>& value, bool& valid) {
-        const double length = std::sqrt(value[0] * value[0] + value[1] * value[1] +
-                                        value[2] * value[2]);
+        const double length =
+            std::sqrt(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
         valid = length > EPSILON && std::isfinite(length);
-        return valid ? std::array<double, 3>{value[0] / length, value[1] / length,
-                                             value[2] / length}
-                     : std::array<double, 3>{};
+        return valid
+                   ? std::array<double, 3>{value[0] / length, value[1] / length, value[2] / length}
+                   : std::array<double, 3>{};
     };
     bool valid = false;
     const std::array<double, 3> authored = normalized(authoredDirection, valid);

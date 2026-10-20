@@ -1,6 +1,7 @@
 // Texture lookup, asynchronous loading and GPU upload.
 
 #include "app/vehicle/Vehicle.h"
+#include "config/ScriptTextureLimits.h"
 
 bool Vehicle::areTexturesLoaded() const {
     if (!areObjectsLoaded()) {
@@ -37,7 +38,8 @@ bool Vehicle::areTexturesLoaded() const {
                 }
                 for (const AuxiliaryTexture* auxiliary :
                      {&batch.lightmap, &batch.nightmap, &batch.transmap, &batch.bumpmap}) {
-                    if (auxiliary->name.empty()) {
+                    if (auxiliary->name.empty() ||
+                        openbus::scripting::scriptTextureReferenceIndex(auxiliary->name) >= 0) {
                         continue;
                     }
                     if (!auxiliary->cacheEntry) {
@@ -65,7 +67,7 @@ bool Vehicle::areTexturesLoaded() const {
 GLuint Vehicle::uploadTexture(const std::filesystem::path& path, Image image) {
     TraceScope trace("texture", "uploadTexture");
     static const bool verboseTextureUploadLogs =
-        parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
+        parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
     if (verboseTextureUploadLogs) {
         gameLog.Log("Uploading texture from path: " + path.generic_string());
     }
@@ -153,7 +155,7 @@ GLuint Vehicle::uploadCompressedTexture(const std::filesystem::path& path,
     openbus::rendering::invalidateTextureBindings();
     assets->trackTexture(texture);
     static const bool verboseTextureUploadLogs =
-        parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
+        parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
     if (verboseTextureUploadLogs) {
         gameLog.Log("Uploaded compressed texture from path: " + path.generic_string());
     }
@@ -197,7 +199,7 @@ GLuint Vehicle::uploadCompressedDds(const std::filesystem::path& path, const Com
     openbus::rendering::invalidateTextureBindings();
     assets->trackTexture(texture);
     static const bool verboseTextureUploadLogs =
-        parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
+        parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
     if (verboseTextureUploadLogs) {
         gameLog.Log("Uploaded DXT5 texture from path: " + path.generic_string());
     }
@@ -213,7 +215,7 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
     }
 
     static const bool verboseTextureLookupLogs =
-        parseEnabledFlag(std::getenv("OPENBUS_VERBOSE_TEXTURE_LOOKUP"));
+        parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_LOOKUP"));
 
     const auto isImageExtension = [](const std::string& extension) {
         static const std::array<std::string, 6> imageExtensions = {".tga", ".bmp", ".png",
@@ -400,6 +402,20 @@ std::shared_ptr<Vehicle::TextureCacheEntry> Vehicle::textureEntry(Batch& batch) 
 }
 
 void Vehicle::ensureAuxiliaryTexture(Batch& batch, AuxiliaryTexture& auxiliary) {
+    const int scriptIndex = openbus::scripting::scriptTextureReferenceIndex(auxiliary.name);
+    if (scriptIndex >= 0) {
+        ScriptRuntime::ScriptTextureSnapshot snapshot;
+        // An unchanged revision returns an empty pixel buffer; never upload from it.
+        if (scripts &&
+            scripts->copyScriptTextureIfChanged(scriptIndex, auxiliary.revision, snapshot) &&
+            snapshot.width > 0 && snapshot.height > 0 &&
+            snapshot.pixels.size() >= static_cast<std::size_t>(snapshot.width) *
+                                          static_cast<std::size_t>(snapshot.height) * 4U) {
+            uploadDynamicTexture(snapshot, auxiliary.texture, auxiliary.width, auxiliary.height,
+                                 auxiliary.revision, batch.textureWrapS, batch.textureWrapT);
+        }
+        return;
+    }
     if (auxiliary.name.empty() || auxiliary.loadAttempted) {
         return;
     }
@@ -477,21 +493,27 @@ void Vehicle::updateFreeTexture(Batch& batch) {
         snapshot.pixels.empty()) {
         return;
     }
-    const bool dimensionsChanged =
-        batch.freeTextureWidth != snapshot.width || batch.freeTextureHeight != snapshot.height;
-    const bool textureChanged = batch.freeTexture == 0 || dimensionsChanged ||
-                                batch.freeTextureIndex != index ||
-                                batch.freeTextureRevision != snapshot.revision;
-    if (!textureChanged) {
+    if (batch.freeTexture != 0 && batch.freeTextureIndex == index &&
+        batch.freeTextureRevision == snapshot.revision) {
         return;
     }
-    const bool textureCreated = batch.dynamicTexture == 0;
-    if (textureCreated) {
-        glGenTextures(1, &batch.dynamicTexture);
-        assets->trackTexture(batch.dynamicTexture);
-    }
+    uploadDynamicTexture(snapshot, batch.dynamicTexture, batch.freeTextureWidth,
+                         batch.freeTextureHeight, batch.freeTextureRevision, batch.textureWrapS,
+                         batch.textureWrapT);
     batch.freeTexture = batch.dynamicTexture;
-    glBindTexture(GL_TEXTURE_2D, batch.freeTexture);
+    batch.freeTextureIndex = index;
+}
+
+void Vehicle::uploadDynamicTexture(const ScriptRuntime::ScriptTextureSnapshot& snapshot,
+                                   GLuint& texture, int& width, int& height,
+                                   std::uint64_t& revision, GLenum wrapS, GLenum wrapT) {
+    const bool dimensionsChanged = width != snapshot.width || height != snapshot.height;
+    const bool textureCreated = texture == 0;
+    if (textureCreated) {
+        glGenTextures(1, &texture);
+        assets->trackTexture(texture);
+    }
+    glBindTexture(GL_TEXTURE_2D, texture);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     const GLint filter = snapshot.filtered ? GL_LINEAR : GL_NEAREST;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
@@ -499,20 +521,19 @@ void Vehicle::updateFreeTexture(Batch& batch) {
     // Dynamic script/text textures replace the material texture but must
     // keep its address mode. OMSI O3D UVs commonly span 1..2; clamping
     // those out-of-range coordinates collapses glyph sampling to an edge.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, batch.textureWrapS);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, batch.textureWrapT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapS);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapT);
     if (textureCreated || dimensionsChanged) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, snapshot.width, snapshot.height, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, snapshot.pixels.data());
-        batch.freeTextureWidth = snapshot.width;
-        batch.freeTextureHeight = snapshot.height;
+        width = snapshot.width;
+        height = snapshot.height;
     } else {
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, snapshot.width, snapshot.height, GL_RGBA,
                         GL_UNSIGNED_BYTE, snapshot.pixels.data());
     }
     openbus::rendering::invalidateTextureBindings();
-    batch.freeTextureIndex = index;
-    batch.freeTextureRevision = snapshot.revision;
+    revision = snapshot.revision;
 }
 
 void Vehicle::startTextureRequest(const std::shared_ptr<TextureCacheEntry>& entry) {

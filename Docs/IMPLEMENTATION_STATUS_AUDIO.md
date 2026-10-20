@@ -8,7 +8,7 @@ Scope: player/AI sound references in `.bus` files, sound CFG records, playback/t
 | --- | --- | --- |
 | `[sound]`, `[trigger]` | Active subset | Files, base gain, trigger aliases, and one-shot/loop playback are supported. An unknown trigger is logged and does not play. This does not mean every trigger name used by OMSI scripts exists in the loaded bank. |
 | `[loop]`, `[looped]`, `[noloop]` | Active subset | These markers change the configured sound's loop state. Full native trigger/channel ownership parity is not established. |
-| `[viewpoint]` | Active | Sound playback is filtered using the exterior/interior/non-player viewpoint mask. |
+| `[viewpoint]` | Active subset | Sound playback uses the exterior/interior/non-player mask. Exterior sounds can also reach the player interior at the script's `Snd_OutsideVol` gain; zero keeps them excluded. |
 | `[3d]` | Partial | Source position and maximum distance are loaded into the OpenAL source. Full OMSI spatialization, attenuation, orientation, and per-record field semantics are not verified. |
 | `[volcurve]`, `[pnt]` | Partial | Curves affect triggered sounds and untriggered ambient loops. Ambient curves use script variables; complete curve/control semantics and OMSI parity remain unverified. |
 | `[conditionSingle]` | Active subset | A single variable comparison can gate a sound; comparison codes 0–5 are supported. More complex condition/group logic is not provided. |
@@ -17,6 +17,12 @@ Scope: player/AI sound references in `.bus` files, sound CFG records, playback/t
 | Same-file retrigger | Partial | OpenBus defaults to a `KeepPlaying` policy and updates a live source; exact native OMSI retrigger behavior has not been validated. |
 
 Unknown authored triggers remain a content gap rather than a missing CFG keyword. For example, the supplied London run logs `ev_bremse_hup` as an unknown trigger, while a configured `ev_schluessel_steck` playback request succeeds in that run.
+
+The DL05's sound-volume script derives `Snd_OutsideVol` from its doors and driver
+window. Ambient exterior loops update their gain as those openings move and stop
+when it returns to zero; newly triggered exterior sounds use the same multiplier.
+Interior sounds and the exterior camera retain their configured gain. This is a
+volume mix, not acoustic occlusion or low-pass filtering.
 
 ## BUS audio references
 

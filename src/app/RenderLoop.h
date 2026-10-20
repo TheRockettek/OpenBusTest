@@ -162,6 +162,7 @@ class RenderLoop {
     bool collisionDebugOverlay_ = false;
     bool collisionWireframeBuilt_ = false;
     std::uint64_t collisionWireframeRevision_ = 0;
+    double clickableHoverRefreshInterval_ = 0.075;
     bool clickableHoverCacheValid_ = false;
     bool clickableHoverCacheHit_ = false;
     double clickableHoverCacheX_ = 0.0;

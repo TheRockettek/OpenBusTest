@@ -505,6 +505,55 @@ bool checkFilenameHeuristics(const std::filesystem::path& configPath) {
 
 } // namespace
 
+bool checkOpenWindowSound(const std::filesystem::path& root) {
+    const auto path = root / "open_window.cfg";
+    std::ofstream config(path);
+    config << "[sound]\nexterior_engine.wav\n0.8\n[viewpoint]\n5\n[loop]\n"
+              "[volcurve]\nengine_on\n[pnt]\n0\n0\n[pnt]\n1\n1\n"
+              "[sound]\nexterior_horn.wav\n0.8\n[viewpoint]\n5\n[trigger]\nwindow_horn\n"
+              "[sound]\ninterior_bell.wav\n1\n[viewpoint]\n2\n[trigger]\ncabin_bell\n";
+    config.close();
+    VehicleSoundBank bank;
+    bank.load(path);
+    Variables variables;
+    variables.set("engine_on", 1.0);
+    FakePlayback playback;
+    bank.updateAmbient(playback, variables, interior);
+    bank.trigger(playback, "window_horn", {}, 1.0F, variables, interior);
+    if (!expect(playback.started.empty(), "closed window admitted exterior audio")) {
+        return false;
+    }
+    variables.set("snd_outsidevol", 0.5);
+    bank.updateAmbient(playback, variables, interior);
+    bank.trigger(playback, "window_horn", {}, 1.0F, variables, interior);
+    bank.trigger(playback, "cabin_bell", {}, 1.0F, variables, interior);
+    if (!expect(playback.started.size() == 3 &&
+                    std::abs(playback.started[0].parameters.gain - 0.4F) < 0.001F &&
+                    std::abs(playback.started[1].parameters.gain - 0.4F) < 0.001F &&
+                    playback.started[2].parameters.gain == 1.0F,
+                "open window did not mix exterior audio without attenuating cabin sounds")) {
+        return false;
+    }
+    const auto loop = playback.started[0].handle;
+    variables.set("snd_outsidevol", 0.25);
+    bank.updateAmbient(playback, variables, interior);
+    if (!expect(playback.started[0].handle == loop &&
+                    std::abs(playback.started[0].parameters.gain - 0.2F) < 0.001F,
+                "moving window restarted the engine loop or failed to update gain")) {
+        return false;
+    }
+    variables.set("snd_outsidevol", 0.0);
+    bank.updateAmbient(playback, variables, interior);
+    if (!expect(!playback.active.contains(loop), "closing window retained exterior engine loop")) {
+        return false;
+    }
+    bank.updateAmbient(playback, variables, exterior);
+    const bool result = expect(playback.started.back().parameters.gain == 0.8F,
+                               "closed window attenuated the exterior camera");
+    bank.stopAll(playback);
+    return result;
+}
+
 int main() {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_vehicle_sound_probe");
@@ -638,6 +687,7 @@ int main() {
     const bool oneShotStateIsVehicleLocal = playback.started.size() == 6;
 
     bool extendedChecksPassed = checkOneShotLifecycle(configPath);
+    extendedChecksPassed &= checkOpenWindowSound(root);
     extendedChecksPassed &= checkDefinitionOwnership(ownershipConfigPath);
     extendedChecksPassed &= checkFileOverrides(ownershipConfigPath);
     extendedChecksPassed &= checkTriggeredLoops(ownershipConfigPath);

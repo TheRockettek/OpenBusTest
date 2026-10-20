@@ -470,7 +470,8 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   controls are configured, the interval and time-based cap both apply.
 - Mirror transparency is rendered by default. Set
   `OPENBUS_REFLECTION_TRANSPARENT=0` to render opaque geometry only and reduce
-  mirror workload when transparent details are not needed.
+  mirror workload when transparent details are not needed. This setting is
+  read once on the first mirror draw and retained for the process lifetime.
 - Set `OPENBUS_MATERIAL_BATCHING=1` to use the experimental material-table
   shader path. It combines compatible opaque geometry and supports up to 8
   ordinary 2D base textures per group; transparent, animated-material, and
@@ -487,6 +488,12 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   vehicle and scenery scripts at 30 Hz while rendering continues at the display rate;
   fixed-rate script ticks receive `Timegap=1/30` and catch up for short frame
   hitches with a bounded tick budget.
+- Stationary-pointer hover checks refresh every 75 ms (about 13.33 Hz) by default.
+  Set `OPENBUS_HOVER_HZ=30` to refresh at 30 Hz, or `OPENBUS_HOVER_HZ=0` to
+  check every rendered input frame. Rates are clamped to 0–1000 Hz; invalid or
+  non-finite values are logged and retain the default. Cursor movement, camera
+  changes and clickable-state changes still invalidate the cache immediately;
+  clicks are not throttled by this setting.
 - Profiling retains at most `1,000,000` events by default. Set
   `OPENBUS_TRACE_MAX_EVENTS=250000` or another positive value to lower the
   memory ceiling. Trace events are flushed incrementally to the JSON file while

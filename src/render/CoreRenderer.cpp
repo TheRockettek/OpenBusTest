@@ -275,15 +275,14 @@ void main() {
     }
     vec3 diffuseReflectance = color.rgb;
     vec3 unlitColor = color.rgb;
-    if (!uUseTextTexture && !uUseFreeTexture) {
+    // OMSI text textures replace the material texture and are shaded like any
+    // other surface; leaving them unlit makes road markings and signs glow.
+    {
         vec3 surfaceNormal = normalize(vNormal);
         float diffuse = max(dot(surfaceNormal, normalize(uLightDirection)), 0.0);
         color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
     }
-    // Text textures already contain their final glyph colour and alpha.  Some
-    // dashboard materials attach a white lightmap for the surrounding display;
-    // applying it to the transparent text background turns the whole quad white.
-    if (!uUseTextTexture && uUseLightmap) {
+    if (uUseLightmap) {
         vec4 lightmap = texture(uLightmap, vTexCoord.xy);
         // A lightmap masks self-illumination of the authored surface. White
         // restores its unlit colour, not a white rectangle; black leaves the
@@ -306,7 +305,7 @@ void main() {
         if (uFlipTransmapY) {
             transmapCoordinate.y = 1.0 - transmapCoordinate.y;
         }
-        color.a = texture(uTransmap, transmapCoordinate).a;
+        color.a = uColor.a * texture(uTransmap, transmapCoordinate).a;
     }
     if (!uUseTextTexture && uUseBumpmap) {
         vec3 surfaceNormal = normalize(vNormal);
@@ -338,7 +337,7 @@ void main() {
             }
         }
     }
-    if (!uUseTextTexture && uUseInteriorLight) {
+    if (uUseInteriorLight) {
         vec3 surfaceNormal = normalize(vNormal);
         for (int index = 0; index < 4; ++index) {
             if (index >= uInteriorLightCount) {
