@@ -39,6 +39,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     TraceScope trace("map", "MapRenderer::MapRenderer");
     impl_->simulationState = &simulationState;
     impl_->omsiRoot = omsiRoot;
+    impl_->leftHandTraffic = map.metadata.hasLeftHandTraffic;
     MapSceneLoader loader(map, centerTileIndex, groundTextureIndex, omsiRoot, *impl_);
     loader.load();
     updateStreaming(spawnWorldX, spawnWorldY);
@@ -166,6 +167,57 @@ const std::vector<std::pair<int, int>>& MapRenderer::activeTileCoordinates() con
 
 MapRenderStats MapRenderer::renderStats() const {
     return impl_->renderStats;
+}
+
+std::optional<openbus::map::MapTrafficRoute> MapRenderer::buildTrafficRoute(int splineId) const {
+    return impl_->trafficRouteNetwork.buildRoute(splineId);
+}
+
+std::vector<int> MapRenderer::trafficSplineIds(int pathTypeCode) const {
+    if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
+        return impl_->roadTrafficRouteNetwork.splineIds();
+    }
+    if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
+        return impl_->humanTrafficRouteNetwork.splineIds();
+    }
+    return {};
+}
+
+std::optional<openbus::map::MapTrafficActor>
+MapRenderer::createTrafficActor(int splineId, std::string modelPath, double speedMetersPerSecond,
+                                double laneOffsetMagnitudeMeters,
+                                std::optional<std::string> driverModelPath,
+                                std::optional<int> pathTypeCode) const {
+    std::optional<openbus::map::MapTrafficRoute> route;
+    if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
+        route = impl_->roadTrafficRouteNetwork.buildRoute(splineId);
+    } else if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
+        route = impl_->humanTrafficRouteNetwork.buildRoute(splineId);
+    } else {
+        route = impl_->trafficRouteNetwork.buildRoute(splineId);
+    }
+    if (!route.has_value()) {
+        return std::nullopt;
+    }
+    return openbus::map::makeMapTrafficActor(std::move(*route), std::move(modelPath),
+                                             speedMetersPerSecond, laneOffsetMagnitudeMeters,
+                                             impl_->leftHandTraffic, std::move(driverModelPath));
+}
+
+bool MapRenderer::addTrafficActor(openbus::map::MapTrafficActor actor) {
+    if (!openbus::map::advanceMapTrafficActor(actor, 0.0)) {
+        return false;
+    }
+    impl_->trafficActors.push_back(std::move(actor));
+    return true;
+}
+
+std::size_t MapRenderer::updateTrafficActors(double elapsedSeconds) {
+    return openbus::map::advanceMapTrafficActors(impl_->trafficActors, elapsedSeconds);
+}
+
+const std::vector<openbus::map::MapTrafficActor>& MapRenderer::trafficActors() const {
+    return impl_->trafficActors;
 }
 
 std::optional<double> MapRenderer::terrainHeightAt(double worldX, double worldY) const {

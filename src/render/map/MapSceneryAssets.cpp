@@ -196,8 +196,12 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                                       part.objPath.filename().string());
                         continue;
                     }
-                    const ObjPosition& sourcePosition =
-                        parsed->positions[static_cast<std::size_t>(index.position - 1)];
+                    const std::size_t positionIndex = static_cast<std::size_t>(index.position - 1);
+                    const ObjPosition& sourcePosition = parsed->positions[positionIndex];
+                    const std::array<double, 4> vertexColor =
+                        positionIndex < parsed->vertexColors.size()
+                            ? parsed->vertexColors[positionIndex]
+                            : std::array<double, 4>{1.0, 1.0, 1.0, 1.0};
                     std::array<double, 3> normal = {0.0, 0.0, 1.0};
                     if (validIndex(index.normal, parsed->normals.size())) {
                         const ObjNormal& sourceNormal =
@@ -226,7 +230,9 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                         {static_cast<float>(sourcePosition.x), static_cast<float>(sourcePosition.y),
                          static_cast<float>(sourcePosition.z), u, v, 0.0F,
                          static_cast<float>(normal[0]), static_cast<float>(normal[1]),
-                         static_cast<float>(normal[2])});
+                         static_cast<float>(normal[2]), static_cast<float>(vertexColor[0]),
+                         static_cast<float>(vertexColor[1]), static_cast<float>(vertexColor[2]),
+                         static_cast<float>(vertexColor[3])});
                 }
             }
 
@@ -263,6 +269,16 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                     }
                 }
                 ModelMaterial material;
+                if (sourceMaterial != parsed->materials.end()) {
+                    for (std::size_t index = 0; index < 3; ++index) {
+                        material.specularColor[index] =
+                            static_cast<float>(sourceMaterial->second.specular[index]);
+                        material.emissionColor[index] =
+                            static_cast<float>(sourceMaterial->second.emission[index]);
+                    }
+                    material.specularPower =
+                        static_cast<float>(sourceMaterial->second.specularPower);
+                }
                 const std::filesystem::path materialTexture =
                     findSceneryTexture(objectRoot, modelRoot, omsiRoot, textureName);
                 if (!materialTexture.empty()) {

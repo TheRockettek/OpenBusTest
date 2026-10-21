@@ -18,6 +18,7 @@
 #include "map/MapSceneryPlacement.h"
 #include "map/MapSplineGeometry.h"
 #include "map/MapSplineProfile.h"
+#include "map/MapTrafficRuntime.h"
 #include "map/MapTileWindow.h"
 #include "map/MapWaterGeometry.h"
 #include "render/ComputeCulling.h"
@@ -88,9 +89,13 @@ struct ModelVertex {
     float nx;
     float ny;
     float nz;
+    float r = 1.0F;
+    float g = 1.0F;
+    float b = 1.0F;
+    float a = 1.0F;
 };
 
-static_assert(sizeof(ModelVertex) == 9 * sizeof(float));
+static_assert(sizeof(ModelVertex) == 13 * sizeof(float));
 
 struct TerrainVertex {
     float x;
@@ -102,9 +107,13 @@ struct TerrainVertex {
     float nx;
     float ny;
     float nz;
+    float r = 1.0F;
+    float g = 1.0F;
+    float b = 1.0F;
+    float a = 1.0F;
 };
 
-static_assert(sizeof(TerrainVertex) == 9 * sizeof(float));
+static_assert(sizeof(TerrainVertex) == 13 * sizeof(float));
 
 struct RoadMeshGeometry {
     std::vector<ModelVertex> vertices;
@@ -316,6 +325,10 @@ struct MapRenderer::Impl {
     std::size_t sceneryInstanceCount = 0;
     std::size_t sceneryObjectCount = 0;
     std::vector<ModelBatch> roadBatches;
+    openbus::map::MapTrafficRouteNetwork trafficRouteNetwork;
+    openbus::map::MapTrafficRouteNetwork roadTrafficRouteNetwork;
+    openbus::map::MapTrafficRouteNetwork humanTrafficRouteNetwork;
+    std::vector<openbus::map::MapTrafficActor> trafficActors;
     std::unordered_map<std::uint64_t, std::size_t> terrainTilesByTile;
     std::unordered_map<std::uint64_t, std::size_t> sceneryObjectsByTile;
     std::unordered_map<std::uint64_t, std::size_t> roadBatchesByTile;
@@ -336,6 +349,7 @@ struct MapRenderer::Impl {
     std::vector<openbus::map::MapTileCoordinate> activeTileCoordinates;
     std::unordered_set<std::uint64_t> activeTileKeys;
     std::optional<openbus::map::MapTileCoordinate> activeCenterTile;
+    bool leftHandTraffic = false;
     SimulationState* simulationState = nullptr;
 
     ~Impl();

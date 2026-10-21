@@ -181,6 +181,7 @@ int main(int argc, char** argv) {
     if (std::filesystem::path(argv[1]).filename() == "scenery_text_mesh.x") {
         if (parsed->positions.size() != 4 || parsed->triangles.size() != 2 ||
             parsed->texCoords.size() != 4 || parsed->normals.empty() ||
+            parsed->vertexColors.size() != 4 ||
             parsed->materials.size() != 1 ||
             std::abs(parsed->positions[0].x - 5.0) > 1.0e-8 ||
             std::abs(parsed->positions[0].y) > 1.0e-8 ||
@@ -189,6 +190,11 @@ int main(int argc, char** argv) {
             std::abs(parsed->positions[2].y - 1.0) > 1.0e-8 ||
             std::abs(parsed->normals[0].z + 1.0) > 1.0e-8) {
             std::cerr << "frame and map-axis transforms were not applied to X vertices/normals\n";
+            return 1;
+        }
+        if (parsed->vertexColors[0] != ObjColor{1.0, 0.25, 0.5, 1.0} ||
+            parsed->vertexColors[2] != ObjColor{0.25, 0.5, 1.0, 0.5}) {
+            std::cerr << "X per-vertex colors were not retained by position index\n";
             return 1;
         }
         if (parsed->triangles[0].material != "matl_0" ||
@@ -219,6 +225,102 @@ int main(int argc, char** argv) {
     openbus::probe::removeProbeFile(malformed);
     if (!malformedRejected) {
         std::cerr << "out-of-range X face index was accepted\n";
+        return 1;
+    }
+
+    const std::filesystem::path invalidMaterialIndexMesh =
+        std::filesystem::temp_directory_path() / "openbus_invalid_material_index_x_mesh.x";
+    {
+        std::ofstream output(invalidMaterialIndexMesh);
+        output << "xof 0303txt 0032\n"
+                  "Mesh { 3; 0;0;0;, 1;0;0;, 0;1;0;; 1; 3; 0,1,2;; "
+                  "MeshMaterialList { 0; 1; 1;; } }\n";
+    }
+    const bool invalidMaterialIndexRejected = !XLoader::parse(invalidMaterialIndexMesh);
+    openbus::probe::removeProbeFile(invalidMaterialIndexMesh);
+    if (!invalidMaterialIndexRejected) {
+        std::cerr << "X face material index without a material was accepted\n";
+        return 1;
+    }
+
+    const std::filesystem::path zeroMaterialIndexMesh =
+        std::filesystem::temp_directory_path() / "openbus_zero_material_index_x_mesh.x";
+    {
+        std::ofstream output(zeroMaterialIndexMesh);
+        output << "xof 0303txt 0032\n"
+                  "Mesh { 3; 0;0;0;, 1;0;0;, 0;1;0;; 1; 3; 0,1,2;; "
+                  "MeshMaterialList { 0; 1; 0;; } }\n";
+    }
+    const std::shared_ptr<ParsedObj> parsedZeroMaterialIndex = XLoader::parse(zeroMaterialIndexMesh);
+    openbus::probe::removeProbeFile(zeroMaterialIndexMesh);
+    if (!parsedZeroMaterialIndex || parsedZeroMaterialIndex->triangles.size() != 1 ||
+        !parsedZeroMaterialIndex->materials.contains("matl_0") ||
+        parsedZeroMaterialIndex->triangles.front().material != "matl_0") {
+        std::cerr << "zero material count did not use the default X material\n";
+        return 1;
+    }
+
+    const std::filesystem::path namedMaterialMesh =
+        std::filesystem::temp_directory_path() / "openbus_named_material_x_mesh.x";
+    {
+        std::ofstream output(namedMaterialMesh);
+        output << "xof 0303txt 0032\n"
+                  "Material SharedSurface { 0.2; 0.4; 0.6; 1.0;; 8.0; "
+                  "0.1; 0.2; 0.3;; 0.4; 0.5; 0.6;; "
+                  "TextureFilename { \"shared.png\"; } }\n"
+                  "Mesh { 3; 0;0;0;, 1;0;0;, 0;1;0;; 1; 3; 0,1,2;; "
+                  "MeshMaterialList { 1; 1; 0;; { SharedSurface } } }\n";
+    }
+    const std::shared_ptr<ParsedObj> parsedNamedMaterial = XLoader::parse(namedMaterialMesh);
+    openbus::probe::removeProbeFile(namedMaterialMesh);
+    if (!parsedNamedMaterial || parsedNamedMaterial->triangles.size() != 1 ||
+        parsedNamedMaterial->triangles.front().material != "matl_0" ||
+        parsedNamedMaterial->materials.at("matl_0").textureName != "shared.png" ||
+        parsedNamedMaterial->materials.at("matl_0").color !=
+            std::array<double, 3>{0.2, 0.4, 0.6} ||
+        parsedNamedMaterial->materials.at("matl_0").specular !=
+            std::array<double, 3>{0.1, 0.2, 0.3} ||
+        parsedNamedMaterial->materials.at("matl_0").emission !=
+            std::array<double, 3>{0.4, 0.5, 0.6} ||
+        parsedNamedMaterial->materials.at("matl_0").specularPower != 8.0) {
+        std::cerr << "named X material reference did not resolve to its declaration\n";
+        return 1;
+    }
+
+    const std::filesystem::path forwardNamedMaterialMesh =
+        std::filesystem::temp_directory_path() / "openbus_forward_named_material_x_mesh.x";
+    {
+        std::ofstream output(forwardNamedMaterialMesh);
+        output << "xof 0303txt 0032\n"
+                  "Mesh { 3; 0;0;0;, 1;0;0;, 0;1;0;; 1; 3; 0,1,2;; "
+                  "MeshMaterialList { 1; 1; 0;; { LaterSurface } } }\n"
+                  "Material LaterSurface { 0.3; 0.5; 0.7; 1.0;; 8.0; "
+                  "0.0; 0.0; 0.0;; 0.0; 0.0; 0.0;; "
+                  "TextureFilename { \"later.png\"; } }\n";
+    }
+    const std::shared_ptr<ParsedObj> parsedForwardNamedMaterial =
+        XLoader::parse(forwardNamedMaterialMesh);
+    openbus::probe::removeProbeFile(forwardNamedMaterialMesh);
+    if (!parsedForwardNamedMaterial ||
+        parsedForwardNamedMaterial->materials.at("matl_0").textureName != "later.png" ||
+        parsedForwardNamedMaterial->materials.at("matl_0").color !=
+            std::array<double, 3>{0.3, 0.5, 0.7}) {
+        std::cerr << "forward X material reference did not resolve to its later declaration\n";
+        return 1;
+    }
+
+    const std::filesystem::path missingNamedMaterialMesh =
+        std::filesystem::temp_directory_path() / "openbus_missing_named_material_x_mesh.x";
+    {
+        std::ofstream output(missingNamedMaterialMesh);
+        output << "xof 0303txt 0032\n"
+                  "Mesh { 3; 0;0;0;, 1;0;0;, 0;1;0;; 1; 3; 0,1,2;; "
+                  "MeshMaterialList { 1; 1; 0;; { MissingSurface } } }\n";
+    }
+    const bool missingNamedMaterialRejected = !XLoader::parse(missingNamedMaterialMesh);
+    openbus::probe::removeProbeFile(missingNamedMaterialMesh);
+    if (!missingNamedMaterialRejected) {
+        std::cerr << "undefined named X material reference was accepted\n";
         return 1;
     }
 
@@ -257,6 +359,8 @@ int main(int argc, char** argv) {
     if (!parsedBinary || parsedBinary->positions.size() != 3 ||
         parsedBinary->triangles.size() != 1 ||
         parsedBinary->triangles.front().indices[2].position != 3 ||
+        parsedBinary->vertexColors.size() != 3 ||
+        parsedBinary->vertexColors.front() != ObjColor{1.0, 1.0, 1.0, 1.0} ||
         !checkBounds(*parsedBinary)) {
         std::cerr << "binary X token stream did not produce the expected triangle\n";
         return 1;

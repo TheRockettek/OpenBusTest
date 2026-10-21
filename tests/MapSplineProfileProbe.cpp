@@ -69,6 +69,22 @@ void runProbe(const std::filesystem::path& fixture) {
                 "profile V repeat per meter");
     requireNear(profile.sections[1].points[1].lateral, 3.0,
                 "leading plus sign is accepted on OMSI profile coordinates");
+    require(profile.paths.size() == 2 &&
+                profile.paths[0].rawFields ==
+                    std::vector<std::string>{"1", "0", "-2", "0", "2"} &&
+                profile.paths[0].numericFieldsValid &&
+                profile.paths[0].pathTypeCode == 1 &&
+                profile.paths[0].numericFields == std::vector<double>{1.0, 0.0, -2.0, 0.0, 2.0},
+            "[path] payload fields and leading type code are retained");
+    require(!profile.paths[1].numericFieldsValid &&
+                profile.paths[1].rawFields ==
+                    std::vector<std::string>{"0", "human", "2"} &&
+                profile.paths[1].pathTypeCode == 0,
+            "the leading path type remains available when trailing fields are nonnumeric");
+    require(mapSplineProfileHasPathType(profile, 0) &&
+                mapSplineProfileHasPathType(profile, 1) &&
+                !mapSplineProfileHasPathType(profile, 2),
+            "path-type lookup checks all records without interpreting other path fields");
 }
 
 void runExplicitCantWidthProbe(const std::filesystem::path& fixture) {

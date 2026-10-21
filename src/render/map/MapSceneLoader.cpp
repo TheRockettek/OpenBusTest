@@ -289,7 +289,22 @@ void MapSceneLoader::indexMapContent() {
         const openbus::map::MapTileReference& tileReference = map.tiles[tileReferenceIndex];
         const openbus::map::MapTileData tile = openbus::map::loadMapTile(tileReference);
         const std::uint64_t currentTileKey = tileKey(tileReference.x, tileReference.y);
+        impl_->trafficRouteNetwork.addTileSplines(tile.splines, tileReference.x, tileReference.y);
+        std::vector<openbus::map::MapSplinePlacement> roadTrafficSplines;
+        std::vector<openbus::map::MapSplinePlacement> humanTrafficSplines;
         for (const auto& spline : tile.splines) {
+            const auto* profile =
+                cachedSplineProfile(resolveSplineProfile(map, omsiRoot, spline.assetPath));
+            if (profile != nullptr) {
+                if (openbus::map::mapSplineProfileHasPathType(
+                        *profile, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD)) {
+                    roadTrafficSplines.push_back(spline);
+                }
+                if (openbus::map::mapSplineProfileHasPathType(
+                        *profile, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN)) {
+                    humanTrafficSplines.push_back(spline);
+                }
+            }
             roadConnections.addSpline(spline, tileReference.x, tileReference.y,
                                       spline.geometryValid ? splineCantWidth(spline)
                                                            : std::nullopt);
@@ -303,6 +318,10 @@ void MapSceneLoader::indexMapContent() {
                 }
             }
         }
+        impl_->roadTrafficRouteNetwork.addTileSplines(roadTrafficSplines, tileReference.x,
+                                                      tileReference.y);
+        impl_->humanTrafficRouteNetwork.addTileSplines(humanTrafficSplines, tileReference.x,
+                                                       tileReference.y);
         for (const openbus::map::MapSceneryPlacement& object : tile.sceneryObjects) {
             IndexedSceneryObject indexed;
             indexed.assetPath = object.assetPath;
@@ -350,6 +369,9 @@ void MapSceneLoader::indexMapContent() {
         }
     }
     roadConnections.finalize();
+    impl_->trafficRouteNetwork.finalize();
+    impl_->roadTrafficRouteNetwork.finalize();
+    impl_->humanTrafficRouteNetwork.finalize();
 }
 
 void MapSceneLoader::uploadRoadBatches() {

@@ -153,14 +153,14 @@ and [`global_config.py`](https://github.com/barteg77/omsi_map_merger/blob/00c2ce
 | `[description]` | Free-form lines through `[end]` | Terminator is structural; do not stop at arbitrary blank lines. |
 | `[version]` | One optional line | String in the merger model. Grande Porto contains `14`. |
 | `[NextIDCode]` | One value | Converted to integer; the merger uses this value when offsetting IDs during a map merge. Exact engine semantics beyond that use are not specified here. |
-| `[worldcoordinates]`, `[dynhelperactive]`, `[realrail]` | Marker sections | Presence is represented as a flag. `[worldcoordinates]` has a known merger limitation. |
+| `[worldcoordinates]`, `[dynhelperactive]`, `[realrail]`, `[LHT]` | Marker sections | Presence is represented as a flag. `MapRenderer::createTrafficActor` maps `[LHT]` to a signed lane offset relative to actor travel direction. Native traffic behavior has not been validated. `[worldcoordinates]` has a known merger limitation. |
 | `[backgroundimage]` | 6 ordered lines | Stored as generic `num1`…`num6`; meanings are not established by the parser model. |
 | `[mapcam]` | 8 ordered lines | Stored as generic values; meanings are not established here. |
 | `[moneysystem]`, `[ticketpack]`, `[repair_time_min]`, `[realyearoffset]`, `[standarddepot]` | One line each in the grammar (some optional) | Preserve values as text unless a consumer-specific meaning has been verified. |
 | `[years]` | 2 ordered lines | Generic values in the merger model. |
 | `[groundtex]` | 5 lines per occurrence | Two texture/path strings and three generic values; repeatable. Grande Porto has 10 entries. Do not infer all numeric meanings from position alone. |
 | `[addseason]` | A preceding line ending in `:`, then 3 lines | Repeatable. The preceding label and three values are represented separately by the merger. Grande Porto has five such blocks. |
-| `[trafficdensity_road]`, `[trafficdensity_passenger]` | 2 lines per occurrence | Repeatable; numeric-looking values are kept as generic values. |
+| `[trafficdensity_road]`, `[trafficdensity_passenger]` | 2 lines per occurrence | Repeatable; numeric-looking values are kept as generic values. OpenBus exposes a provisional linear hourly sampler with endpoint clamping; native interpolation behavior and density units remain unverified, so the sampled scalar is not itself treated as a probability or spawn rate. |
 | `[entrypoints]` | One count followed by that many 12-line records | The parser names fields `object_on_tile_index`, `id`, `line3`…`line10`, `tile_index`, and `name`. It converts ID and tile index to integers; preserve opaque positions. |
 | `[map]` | Repeated: integer x, integer y, filename | Filename is expected to be `tile_<x>_<y>.map` in the merger model. Record order also supplies the tile ordinal used by merger-maintained tile-index references. |
 
@@ -539,8 +539,9 @@ The modern syntax represented by OMSI Map Merger is:
 - `[aigroup_depot_typgroup_2]`: vehicle type/config path, variable vehicle
   assignment/repaint lines, then `[end]`.
 
-The parser preserves vehicle and repaint records mostly as line collections;
-it does not prove the meaning of each field within a line. The sample contains
+The parser extracts `.bus`/`.ovh` asset references while preserving complete
+group and depot-type payload lines; it does not prove the meaning of each field
+within a line. The sample contains
 `Vehicles\...` references, group names such as `NormalCars` and `Trucks`, and a
 depot named `STCP VN` associated with `GrandePorto2022`.
 

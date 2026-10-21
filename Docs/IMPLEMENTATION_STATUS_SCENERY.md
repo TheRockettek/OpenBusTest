@@ -35,7 +35,7 @@ no sign-specific colour correction is applied.
 | Keyword / family | Status | Current boundary |
 | --- | --- | --- |
 | `[LOD]` scenery model parts | Partial | Nonzero LODs now render based on camera distance and the existing vehicle threshold mapping. The mapping and transitions have unit coverage, but installed-scene visual parity and unusual/malformed threshold layouts remain unverified. |
-| DirectX `.x` meshes | Partial | Text, binary, and MSZIP-compressed `tzip`/`bzip` static meshes can load. Skinning/animation, named external materials, and animated X content remain unsupported. |
+| DirectX `.x` meshes | Partial | Text, binary, and MSZIP-compressed `tzip`/`bzip` static meshes can load. Inline and same-file named material references (including forward references), per-vertex `MeshVertexColors`, and static material diffuse/alpha/texture/specular/emission values flow into vehicle/scenery rendering. Exact native lighting parity is unverified; skinning/animation and cross-file external materials remain unsupported. |
 | `[tree]` | Partial | Preview cards are crossed textured planes rather than full OMSI vegetation/helper-mesh behavior. |
 | `[varparent]` | Parsed/validated only | Editor `Object Nr.` references are kept distinct from placement IDs and checked, but scenery script-variable inheritance is not evaluated. |
 | `[script]` and model animation/material directives | Partial | Script `init`/`frame` and visibility/text/script texture paths are active. Script-driven mesh animation, full dynamic material/texture changes, sound callbacks, and scenery mouse events are not. |

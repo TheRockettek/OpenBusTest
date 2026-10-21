@@ -56,7 +56,7 @@ void runFixtureProbe() {
                      "[name]\nFixture map\n[friendlyname]\nFriendly fixture\n"
                      "[description]\nFirst line\n\nSecond line\n[end]\n"
                      "[version]\n14\n[NextIDCode]\n81\n[worldcoordinates]\n"
-                     "[dynhelperactive]\n[realrail]\n[backgroundimage]\n1\n2\n3\n4\n5\n6\n"
+                     "[dynhelperactive]\n[realrail]\n[LHT]\n[backgroundimage]\n1\n2\n3\n4\n5\n6\n"
                      "[mapcam]\n0\n1\n2\n3\n4\n5\n6\n7\n[moneysystem]\nMoney.cfg\n"
                      "[ticketpack]\nTickets.otp\n[repair_time_min]\n10\n[years]\n2022\n2023\n"
                      "[realyearoffset]\n0\n[standarddepot]\nDepot\n"
@@ -97,8 +97,17 @@ void runFixtureProbe() {
                      "[spline_terrain_align]\n[rule]\nattached rule 1\nattached rule 2\n"
                      "attached rule 3\nattached rule 4\n");
                 writeUtf16Le(root / "tile_1_0.map", "Second fixture tile\n[version]\n14\n[terrain]\n");
-        {
-            std::ofstream terrain(root / "tile_0_0.map.terrain", std::ios::binary);
+                writeUtf16Le(root / "ailists.cfg",
+                             "[aigroup_2]\nNormalCars\nvehicles\\sedan.bus\t7\n"
+                             "vehicles\\delivery van.ovh\n[end]\n"
+                             "[aigroup_depot]\nCentral Depot\nFixture HOF\n"
+                             "[aigroup_depot_typgroup_2]\nvehicles\\city_bus.bus\n"
+                             "1234\tBlue livery\n[end]\n");
+                writeUtf16Le(root / "drivers.txt",
+                             "humans\\drivers\\driver_one.hum\n"
+                             "humans\\custom map\\driver_two.hum\n");
+                {
+                    std::ofstream terrain(root / "tile_0_0.map.terrain", std::ios::binary);
             writeU32(terrain, 2);
             for (std::uint32_t value = 1; value <= 9; ++value) {
                 writeU32(terrain, std::bit_cast<std::uint32_t>(static_cast<float>(value)));
@@ -119,7 +128,8 @@ void runFixtureProbe() {
                     definition.metadata.version == "14" &&
                     definition.metadata.nextIdCode == "81" &&
                     definition.metadata.hasWorldCoordinates &&
-                    definition.metadata.hasDynamicHelperActive && definition.metadata.hasRealRail,
+                    definition.metadata.hasDynamicHelperActive && definition.metadata.hasRealRail &&
+                    definition.metadata.hasLeftHandTraffic,
                 "global map identity, description, version, and marker metadata captured");
         require(definition.metadata.backgroundImage ==
                     std::array<std::string, 6>{"1", "2", "3", "4", "5", "6"} &&
@@ -143,8 +153,71 @@ void runFixtureProbe() {
                         std::array<std::string, 2>{"12", "1"} &&
                     definition.metadata.passengerTrafficDensity.size() == 1 &&
                     definition.metadata.passengerTrafficDensity[0] ==
-                        std::array<std::string, 2>{"0", "0.2"},
+                        std::array<std::string, 2>{"0", "0.2"} &&
+                    definition.aiTraffic.roadDensity.size() == 1 &&
+                    definition.aiTraffic.roadDensity[0].hour == 12.0 &&
+                    definition.aiTraffic.roadDensity[0].density == 1.0 &&
+                    definition.aiTraffic.passengerDensity.size() == 1 &&
+                    definition.aiTraffic.passengerDensity[0].hour == 0.0 &&
+                    definition.aiTraffic.passengerDensity[0].density == 0.2,
                 "repeated global season and traffic-density records captured");
+        const std::vector<openbus::map::MapTrafficDensityPoint> densitySchedule{
+            {0.0, 0.1}, {4.0, 0.0}, {6.0, 1.0}};
+        require(std::abs(openbus::map::mapTrafficDensityAtHour(densitySchedule, 2.0).value() -
+                         0.05) < 1.0e-9 &&
+                    std::abs(openbus::map::mapTrafficDensityAtHour(densitySchedule, 5.0).value() -
+                             0.5) < 1.0e-9 &&
+                    openbus::map::mapTrafficDensityAtHour(densitySchedule, 23.0) == 1.0,
+                "density lookup interpolates schedule points and clamps outside their range");
+        require(!openbus::map::mapTrafficDensityAtHour({}, 12.0).has_value() &&
+                    !openbus::map::mapTrafficDensityAtHour(
+                         {{4.0, 0.5}, {4.0, 0.8}}, 4.0)
+                         .has_value(),
+                "empty and ambiguous density schedules do not return a value");
+        require(openbus::map::mapTrafficPopulationForDensity(8, 0.25, 200) == 2 &&
+                    openbus::map::mapTrafficPopulationForDensity(8, 0.0, 200) == 0 &&
+                    openbus::map::mapTrafficPopulationForDensity(8, 2.0, 10) == 10 &&
+                    openbus::map::mapTrafficPopulationForDensity(8, std::nullopt, 200) == 8 &&
+                    openbus::map::mapTrafficPopulationForDensity(8, 1.0, 0) == 0,
+                "road density scales a base population, uses fallback density, and respects cap");
+        bool invalidDensityHourRejected = false;
+        try {
+            static_cast<void>(openbus::map::mapTrafficDensityAtHour(densitySchedule, 24.1));
+        } catch (const std::invalid_argument&) {
+            invalidDensityHourRejected = true;
+        }
+        require(invalidDensityHourRejected, "density lookup rejects hours outside [0, 24]");
+        require(definition.aiTraffic.vehicleGroups.size() == 1 &&
+                    definition.aiTraffic.vehicleGroups[0].name == "NormalCars" &&
+                    definition.aiTraffic.vehicleGroups[0].vehicles.size() == 2 &&
+                    definition.aiTraffic.vehicleGroups[0].vehicles[0].assetPath ==
+                        "vehicles\\sedan.bus" &&
+                    definition.aiTraffic.vehicleGroups[0].vehicles[0].rawLine ==
+                        "vehicles\\sedan.bus\t7" &&
+                    definition.aiTraffic.vehicleGroups[0].vehicles[1].assetPath ==
+                        "vehicles\\delivery van.ovh" &&
+                    definition.aiTraffic.vehicleGroups[0].vehicles[1].rawLine ==
+                        "vehicles\\delivery van.ovh" &&
+                    definition.aiTraffic.vehicleGroups[0].rawLines ==
+                        std::vector<std::string>{"NormalCars", "vehicles\\sedan.bus\t7",
+                                                 "vehicles\\delivery van.ovh"},
+                "road vehicle references are extracted while full group lines are preserved");
+        require(definition.aiTraffic.busTypes.size() == 1 &&
+                    definition.aiTraffic.busTypes[0].type == 2 &&
+                    definition.aiTraffic.busTypes[0].assetPath == "vehicles\\city_bus.bus" &&
+                    definition.aiTraffic.busTypes[0].rawLines ==
+                        std::vector<std::string>{"vehicles\\city_bus.bus",
+                                                 "1234\tBlue livery"} &&
+                    definition.aiTraffic.busTypes[0].depotIndex == 0 &&
+                    definition.aiTraffic.depots.size() == 1 &&
+                    definition.aiTraffic.depots[0].name == "Central Depot" &&
+                    definition.aiTraffic.depots[0].hofName == "Fixture HOF" &&
+                    definition.aiTraffic.depots[0].busTypeDefinitionIndices ==
+                        std::vector<std::size_t>{0} &&
+                    definition.aiTraffic.driverModelPaths ==
+                        std::vector<std::string>{"humans\\drivers\\driver_one.hum",
+                                                 "humans\\custom map\\driver_two.hum"},
+                "depot/HOF association, bus models, raw assignments, and drivers are parsed");
         require(definition.diagnostics.entries.size() == 2 &&
                 definition.diagnostics.entries[0].keyword == "unknown_global" &&
                 definition.diagnostics.entries[0].line > 0 &&

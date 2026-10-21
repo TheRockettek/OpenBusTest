@@ -60,6 +60,53 @@ struct MapGlobalMetadata {
     bool hasWorldCoordinates = false;
     bool hasDynamicHelperActive = false;
     bool hasRealRail = false;
+    bool hasLeftHandTraffic = false;
+};
+
+struct MapTrafficDensityPoint {
+    double hour = 0.0;
+    double density = 0.0;
+};
+
+std::optional<double> mapTrafficDensityAtHour(const std::vector<MapTrafficDensityPoint>& schedule,
+                                              double hour);
+std::size_t mapTrafficPopulationForDensity(std::size_t basePopulation,
+                                           std::optional<double> density,
+                                           std::size_t populationCap);
+
+struct MapAiVehicleEntry {
+    std::string assetPath;
+    std::string rawLine;
+};
+
+struct MapAiVehicleGroup {
+    std::string name;
+    std::vector<std::string> rawLines;
+    std::vector<MapAiVehicleEntry> vehicles;
+};
+
+struct MapAiBusTypeDefinition {
+    int type = 0;
+    std::string assetPath;
+    std::vector<std::string> rawLines;
+    std::optional<std::size_t> depotIndex;
+};
+
+struct MapAiDepotDefinition {
+    std::string name;
+    std::string hofName;
+    std::vector<std::string> rawLines;
+    std::vector<std::size_t> busTypeDefinitionIndices;
+};
+
+struct MapAiTrafficData {
+    std::vector<MapTrafficDensityPoint> roadDensity;
+    std::vector<MapTrafficDensityPoint> passengerDensity;
+    std::vector<MapAiVehicleGroup> vehicleGroups;
+    std::vector<MapAiBusTypeDefinition> busTypes;
+    std::vector<MapAiDepotDefinition> depots;
+    // These paths are relative to the OMSI installation root.
+    std::vector<std::string> driverModelPaths;
 };
 
 struct MapGroundTextureSidecar {
@@ -195,6 +242,7 @@ struct MapAttachedObject {
 struct MapDefinition {
     std::filesystem::path rootPath;
     MapGlobalMetadata metadata;
+    MapAiTrafficData aiTraffic;
     std::vector<GroundTextureDefinition> groundTextures;
     std::vector<MapEntryPoint> entryPoints;
     std::vector<MapTileReference> tiles;

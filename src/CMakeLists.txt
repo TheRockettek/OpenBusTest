@@ -47,6 +47,7 @@ openbus_add_module(openbus_config
     SOURCES
         config/BusConfigLoader.cpp
         config/ConfigurationParser.cpp
+        config/HumanConfigLoader.cpp
         config/ModelConfigJson.cpp
         config/ModelConfigLoader.cpp
         config/SceneryObjectConfigLoader.cpp
@@ -92,6 +93,7 @@ openbus_add_module(openbus_map
         map/MapSceneryPlacement.cpp
         map/MapSplineGeometry.cpp
         map/MapSplineProfile.cpp
+        map/MapTrafficRuntime.cpp
         map/MapWaterGeometry.cpp
     DEPENDS
         openbus_config

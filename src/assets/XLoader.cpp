@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -39,8 +40,10 @@ struct MeshData {
     std::vector<ObjNormal> normals;
     std::vector<std::vector<int>> normalFaces;
     std::vector<ObjTexCoord> texCoords;
+    std::vector<ObjColor> vertexColors;
     std::vector<int> faceMaterials;
     std::vector<ObjMaterial> materials;
+    std::vector<std::optional<std::string>> materialReferences;
 };
 
 std::vector<std::string> tokenize(std::string_view source) {
@@ -341,6 +344,8 @@ class Parser {
                 parseFrame(identityMatrix, *result);
             } else if (token == "Mesh") {
                 parseAndAppendMesh(identityMatrix, *result);
+            } else if (token == "Material") {
+                parseNamedMaterial();
             } else if (token == "template") {
                 skipTemplate();
             } else if (token == "}") {
@@ -348,6 +353,13 @@ class Parser {
             } else {
                 skipUnknownBlockIfPresent();
             }
+        }
+        for (const auto& [materialKey, materialName] : pendingNamedMaterialReferences_) {
+            const auto namedMaterial = namedMaterials_.find(materialName);
+            if (namedMaterial == namedMaterials_.end()) {
+                throw std::runtime_error("X material reference is not defined: " + materialName);
+            }
+            result->materials.at(materialKey) = namedMaterial->second;
         }
         if (result->positions.empty() || result->triangles.empty()) {
             throw std::runtime_error("file contains no static mesh triangles");
@@ -549,6 +561,8 @@ class Parser {
                 parseFrame(multiply(frameTransform, parentTransform), output);
             } else if (token == "Mesh") {
                 parseAndAppendMesh(multiply(frameTransform, parentTransform), output);
+            } else if (token == "Material") {
+                parseNamedMaterial();
             } else {
                 skipUnknownBlockIfPresent();
             }
@@ -591,6 +605,8 @@ class Parser {
                 parseNormals(mesh);
             } else if (token == "MeshTextureCoords") {
                 parseTextureCoordinates(mesh);
+            } else if (token == "MeshVertexColors") {
+                parseVertexColors(mesh);
             } else if (token == "MeshMaterialList") {
                 parseMaterials(mesh);
             } else {
@@ -642,9 +658,34 @@ class Parser {
         expect("}");
     }
 
-    ObjMaterial parseMaterial() {
+    void parseVertexColors(MeshData& mesh) {
+        expect("{");
+        const std::size_t count = readCount();
+        if (count > mesh.positions.size()) {
+            throw std::runtime_error("vertex color count exceeds mesh vertex count");
+        }
+        mesh.vertexColors.assign(mesh.positions.size(), {1.0, 1.0, 1.0, 1.0});
+        std::vector<bool> assigned(mesh.positions.size(), false);
+        for (std::size_t entry = 0; entry < count; ++entry) {
+            const std::size_t vertexIndex = readCount();
+            if (vertexIndex >= mesh.positions.size() || assigned[vertexIndex]) {
+                throw std::runtime_error("invalid or duplicate mesh vertex color index");
+            }
+            mesh.vertexColors[vertexIndex] = {readNumber(), readNumber(), readNumber(),
+                                              readNumber()};
+            assigned[vertexIndex] = true;
+        }
+        expect("}");
+    }
+
+    ObjMaterial parseMaterial(std::string* materialName = nullptr) {
         if (!atEnd() && peek() != "{") {
-            take(); // Optional material name.
+            const std::string name = take();
+            if (materialName != nullptr) {
+                *materialName = name;
+            }
+        } else if (materialName != nullptr) {
+            materialName->clear();
         }
         expect("{");
         ObjMaterial material;
@@ -672,6 +713,14 @@ class Parser {
         return material;
     }
 
+    void parseNamedMaterial() {
+        std::string name;
+        ObjMaterial material = parseMaterial(&name);
+        if (!name.empty()) {
+            namedMaterials_.insert_or_assign(std::move(name), std::move(material));
+        }
+    }
+
     void parseMaterials(MeshData& mesh) {
         expect("{");
         const std::size_t materialCount = readCount();
@@ -683,22 +732,42 @@ class Parser {
         mesh.faceMaterials.reserve(faceCount);
         for (std::size_t face = 0; face < faceCount; ++face) {
             const std::size_t index = readCount();
-            if (index >= materialCount && materialCount != 0) {
+            if ((materialCount == 0 && index != 0) ||
+                (materialCount != 0 && index >= materialCount)) {
                 throw std::runtime_error("mesh material index is out of range");
             }
             mesh.faceMaterials.push_back(static_cast<int>(index));
         }
         mesh.materials.clear();
         mesh.materials.reserve(std::max<std::size_t>(materialCount, 1));
+        mesh.materialReferences.clear();
+        mesh.materialReferences.reserve(std::max<std::size_t>(materialCount, 1));
         for (std::size_t index = 0; index < materialCount; ++index) {
-            if (atEnd() || peek() != "Material") {
-                throw std::runtime_error("named/external X materials are unsupported");
+            skipSeparators();
+            if (accept("Material")) {
+                mesh.materials.push_back(parseMaterial());
+                mesh.materialReferences.emplace_back(std::nullopt);
+                continue;
             }
-            take();
-            mesh.materials.push_back(parseMaterial());
+            if (accept("{")) {
+                const std::string name = take();
+                expect("}");
+                const auto namedMaterial = namedMaterials_.find(name);
+                if (namedMaterial != namedMaterials_.end()) {
+                    mesh.materials.push_back(namedMaterial->second);
+                    mesh.materialReferences.emplace_back(std::nullopt);
+                } else {
+                    mesh.materials.emplace_back();
+                    mesh.materialReferences.emplace_back(name);
+                }
+                skipSeparators();
+                continue;
+            }
+            throw std::runtime_error("expected inline or named X material");
         }
         if (materialCount == 0) {
             mesh.materials.emplace_back();
+            mesh.materialReferences.emplace_back(std::nullopt);
         }
         expect("}");
     }
@@ -719,14 +788,26 @@ class Parser {
             // Normalize DirectX's top-origin V to the shared OBJ/O3D convention.
             output.texCoords.push_back({texCoord.u, 1.0 - texCoord.v});
         }
+        if (mesh.vertexColors.empty()) {
+            output.vertexColors.insert(output.vertexColors.end(), mesh.positions.size(),
+                                       ObjColor{1.0, 1.0, 1.0, 1.0});
+        } else {
+            output.vertexColors.insert(output.vertexColors.end(), mesh.vertexColors.begin(),
+                                       mesh.vertexColors.end());
+        }
         for (const ObjNormal& normal : mesh.normals) {
             output.normals.push_back(transformNormal(transform, normal));
         }
         const auto appendMaterial = [&](const ObjMaterial& sourceMaterial, std::size_t index) {
             ObjMaterial material = sourceMaterial;
             material.materialIndex = materialBase + static_cast<int>(index);
-            output.materials.emplace("matl_" + std::to_string(material.materialIndex),
-                                     std::move(material));
+            const std::string materialKey = "matl_" + std::to_string(material.materialIndex);
+            output.materials.emplace(materialKey, std::move(material));
+            if (index < mesh.materialReferences.size() &&
+                mesh.materialReferences[index].has_value()) {
+                pendingNamedMaterialReferences_.emplace_back(materialKey,
+                                                             *mesh.materialReferences[index]);
+            }
         };
         if (mesh.materials.empty()) {
             appendMaterial(ObjMaterial{}, 0);
@@ -795,6 +876,8 @@ class Parser {
 
     std::vector<std::string> tokens_;
     std::size_t cursor_ = 0;
+    std::unordered_map<std::string, ObjMaterial> namedMaterials_;
+    std::vector<std::pair<std::string, std::string>> pendingNamedMaterialReferences_;
 };
 
 } // namespace

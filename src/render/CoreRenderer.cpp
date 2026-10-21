@@ -14,7 +14,7 @@
 namespace openbus::rendering {
 namespace {
 
-constexpr GLsizei MODEL_VERTEX_STRIDE = static_cast<GLsizei>(9 * sizeof(float));
+constexpr GLsizei MODEL_VERTEX_STRIDE = static_cast<GLsizei>(13 * sizeof(float));
 constexpr std::size_t MAX_MATERIAL_TEXTURES = 8;
 constexpr std::size_t MAX_TEXTURE_UNITS = 16;
 std::size_t submittedFrameTriangleCount = 0;
@@ -65,6 +65,9 @@ struct Uniforms {
     GLint transmap = -1;
     GLint transmapScale = -1;
     GLint flipTransmapY = -1;
+    GLint specularColor = -1;
+    GLint emissionColor = -1;
+    GLint specularPower = -1;
     GLint bumpmap = -1;
     GLint freeTexture = -1;
     GLint textTexture = -1;
@@ -125,6 +128,9 @@ struct ModelUniformState {
     std::array<float, 2> textureScale = {1.0F, 1.0F};
     std::array<float, 2> detailTextureScale = {1.0F, 1.0F};
     std::array<float, 2> transmapScale = {1.0F, 1.0F};
+    std::array<float, 3> specularColor = {};
+    std::array<float, 3> emissionColor = {};
+    float specularPower = 8.0F;
     int interiorLightCount = 0;
     std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightViewPositions = {};
     std::array<std::array<float, 3>, MAX_INTERIOR_LIGHTS> interiorLightColors = {};
@@ -218,6 +224,9 @@ uniform sampler2D uNightmap;
 uniform sampler2D uTransmap;
 uniform vec2 uTransmapScale;
 uniform bool uFlipTransmapY;
+uniform vec3 uSpecularColor;
+uniform vec3 uEmissionColor;
+uniform float uSpecularPower;
 uniform sampler2D uBumpmap;
 uniform sampler2D uFreeTexture;
 uniform sampler2D uTextTexture;
@@ -279,7 +288,8 @@ void main() {
     // other surface; leaving them unlit makes road markings and signs glow.
     {
         vec3 surfaceNormal = normalize(vNormal);
-        float diffuse = max(dot(surfaceNormal, normalize(uLightDirection)), 0.0);
+        vec3 lightDirection = normalize(uLightDirection);
+        float diffuse = max(dot(surfaceNormal, lightDirection), 0.0);
         color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
     }
     if (uUseLightmap) {
@@ -290,6 +300,14 @@ void main() {
         color.rgb = mix(color.rgb, unlitColor,
                 clamp(lightmap.rgb * uLightmapStrength, 0.0, 1.0));
     }
+    vec3 surfaceNormal = normalize(vNormal);
+    vec3 lightDirection = normalize(uLightDirection);
+    vec3 viewDirection = normalize(-vViewPosition);
+    vec3 halfDirection = normalize(lightDirection + viewDirection);
+    float specular = max(dot(surfaceNormal, lightDirection), 0.0) > 0.0
+        ? pow(max(dot(surfaceNormal, halfDirection), 0.0), max(uSpecularPower, 1.0))
+        : 0.0;
+    color.rgb += uEmissionColor + uSpecularColor * specular;
     if (!uUseTextTexture && uUseNightmap) {
         vec4 nightmap = texture(uNightmap, vTexCoord.xy);
         // OMSI nightmaps are authored as self-lit overlays: black texels mean
@@ -550,6 +568,9 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.transmap = pglGetUniformLocation(program, "uTransmap");
         uniforms.transmapScale = pglGetUniformLocation(program, "uTransmapScale");
         uniforms.flipTransmapY = pglGetUniformLocation(program, "uFlipTransmapY");
+        uniforms.specularColor = pglGetUniformLocation(program, "uSpecularColor");
+        uniforms.emissionColor = pglGetUniformLocation(program, "uEmissionColor");
+        uniforms.specularPower = pglGetUniformLocation(program, "uSpecularPower");
         uniforms.bumpmap = pglGetUniformLocation(program, "uBumpmap");
         uniforms.freeTexture = pglGetUniformLocation(program, "uFreeTexture");
         uniforms.textTexture = pglGetUniformLocation(program, "uTextTexture");
@@ -765,6 +786,17 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         pglUniform2f(modelUniforms.transmapScale, material.transmapScale[0],
                      material.transmapScale[1]);
     }
+    if (!modelUniformState.valid || modelUniformState.specularColor != material.specularColor) {
+        pglUniform3f(modelUniforms.specularColor, material.specularColor[0],
+                     material.specularColor[1], material.specularColor[2]);
+    }
+    if (!modelUniformState.valid || modelUniformState.emissionColor != material.emissionColor) {
+        pglUniform3f(modelUniforms.emissionColor, material.emissionColor[0],
+                     material.emissionColor[1], material.emissionColor[2]);
+    }
+    if (!modelUniformState.valid || modelUniformState.specularPower != material.specularPower) {
+        pglUniform1f(modelUniforms.specularPower, material.specularPower);
+    }
     if (!modelUniformState.valid ||
         modelUniformState.interiorLightViewPositions != material.interiorLightViewPositions) {
         for (std::size_t index = 0; index < MAX_INTERIOR_LIGHTS; ++index) {
@@ -821,6 +853,9 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     modelUniformState.textureScale = material.textureScale;
     modelUniformState.detailTextureScale = material.detailTextureScale;
     modelUniformState.transmapScale = material.transmapScale;
+    modelUniformState.specularColor = material.specularColor;
+    modelUniformState.emissionColor = material.emissionColor;
+    modelUniformState.specularPower = material.specularPower;
     modelUniformState.interiorLightCount = material.interiorLightCount;
     modelUniformState.interiorLightViewPositions = material.interiorLightViewPositions;
     modelUniformState.interiorLightColors = material.interiorLightColors;

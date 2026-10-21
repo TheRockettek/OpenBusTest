@@ -510,7 +510,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                     }
                 } else {
                     const std::optional<double> terrainHeight =
-                        mapRenderer_ != nullptr
+                        mapRenderer_ != nullptr && !vehicle->followsMapTrafficRoute
                             ? mapRenderer_->terrainHeightAt(placedVehicle.position[0],
                                                             placedVehicle.position[1])
                             : std::nullopt;

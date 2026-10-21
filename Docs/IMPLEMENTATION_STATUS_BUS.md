@@ -29,6 +29,9 @@ DirectX `.x` meshes (including the DL05 Atron AFR4) provide vehicle-axis bounds 
 frustum culling and picking after their frame transforms are applied. Their UVs use
 the same internal V convention as OBJ/O3D, avoiding an inverted texture in the
 vehicle renderer while preserving scenery texture orientation.
+Static `.x` material diffuse colour, alpha, texture, specular highlight, and emissive
+colour are carried into vehicle and scenery shading. Exact native lighting parity is
+not verified.
 
 Auxiliary material maps can reference live script textures with `\S:<slot>`
 (including the DL05 VDV and Atron transparency masks), rather than treating

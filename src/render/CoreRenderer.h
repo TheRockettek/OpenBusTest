@@ -48,6 +48,9 @@ struct ModelMaterial {
     GLuint nightmap = 0;
     GLuint transmap = 0;
     std::array<float, 2> transmapScale = {1.0F, 1.0F};
+    std::array<float, 3> specularColor = {};
+    std::array<float, 3> emissionColor = {};
+    float specularPower = 8.0F;
     bool flipTransmapY = false;
     GLuint bumpmap = 0;
     GLuint freeTexture = 0;

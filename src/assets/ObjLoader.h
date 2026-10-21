@@ -22,6 +22,8 @@ struct ObjTexCoord {
     double v;
 };
 
+using ObjColor = std::array<double, 4>;
+
 struct ObjIndex {
     int position = 0;
     int texCoord = 0;
@@ -48,6 +50,7 @@ struct ParsedObj {
     std::vector<ObjPosition> positions;
     std::vector<ObjNormal> normals;
     std::vector<ObjTexCoord> texCoords;
+    std::vector<ObjColor> vertexColors;
     std::vector<ObjTriangle> triangles;
     std::unordered_map<std::string, ObjMaterial> materials;
     std::array<double, 16> transform = {1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,

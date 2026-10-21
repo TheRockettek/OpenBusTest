@@ -166,6 +166,182 @@ bool parseReal(const std::string& value, double& result) {
     return parsed.ec == std::errc{} && parsed.ptr == end && std::isfinite(result);
 }
 
+std::string lowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return value;
+}
+
+bool isSectionHeaderLine(const std::string& value) {
+    return value.size() > 2 && value.front() == '[' && value.back() == ']';
+}
+
+bool isIgnoredAiListLine(const std::string& value) {
+    return value.empty() || value.starts_with("#") || value.starts_with(";") ||
+           value.starts_with("//");
+}
+
+bool hasExtension(const std::string& assetPath, std::string_view extension) {
+    const std::string normalizedPath = lowerAscii(assetPath);
+    const std::string normalizedExtension = lowerAscii(std::string(extension));
+    return normalizedPath.size() >= normalizedExtension.size() &&
+           normalizedPath.compare(normalizedPath.size() - normalizedExtension.size(),
+                                  normalizedExtension.size(), normalizedExtension) == 0;
+}
+
+std::optional<std::string> parseAiVehicleAssetPath(const std::string& sourceLine,
+                                                   bool allowOvh = true) {
+    const std::string line = trim(sourceLine);
+    if (isIgnoredAiListLine(line)) {
+        return std::nullopt;
+    }
+    const std::string normalizedLine = lowerAscii(line);
+    std::size_t extensionPosition = normalizedLine.find(".bus");
+    std::size_t extensionLength = 4;
+    const std::size_t ovhPosition = allowOvh ? normalizedLine.find(".ovh") : std::string::npos;
+    if (ovhPosition != std::string::npos &&
+        (extensionPosition == std::string::npos || ovhPosition < extensionPosition)) {
+        extensionPosition = ovhPosition;
+        extensionLength = 4;
+    }
+    if (extensionPosition == std::string::npos) {
+        return std::nullopt;
+    }
+    const std::size_t assetEnd = extensionPosition + extensionLength;
+    if (assetEnd < line.size() && line[assetEnd] != ' ' && line[assetEnd] != '\t') {
+        return std::nullopt;
+    }
+    return trim(line.substr(0, assetEnd));
+}
+
+std::optional<int> parseAiBusTypeSection(const std::string& section) {
+    constexpr std::string_view prefix = "[aigroup_depot_typgroup_";
+    const std::string normalized = lowerAscii(section);
+    if (!normalized.starts_with(prefix) || !normalized.ends_with(']')) {
+        return std::nullopt;
+    }
+    const std::string typeText =
+        normalized.substr(prefix.size(), normalized.size() - prefix.size() - 1);
+    int type = 0;
+    if (!parseInteger(typeText, type)) {
+        return std::nullopt;
+    }
+    return type;
+}
+
+void parseAiListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraffic) {
+    const std::vector<std::string> lines = splitLines(decodeText(path));
+    std::optional<std::size_t> currentDepotIndex;
+    for (std::size_t cursor = 0; cursor < lines.size();) {
+        const std::string section = lowerAscii(trim(lines[cursor]));
+        ++cursor;
+        if (section == "[aigroup_2]") {
+            currentDepotIndex.reset();
+            MapAiVehicleGroup group;
+            while (cursor < lines.size()) {
+                const std::string& sourceLine = lines[cursor];
+                const std::string line = trim(sourceLine);
+                if (isSectionHeaderLine(line)) {
+                    if (lowerAscii(line) == "[end]") {
+                        ++cursor;
+                    }
+                    break;
+                }
+                ++cursor;
+                group.rawLines.push_back(sourceLine);
+                if (isIgnoredAiListLine(line)) {
+                    continue;
+                }
+                const std::optional<std::string> assetPath = parseAiVehicleAssetPath(sourceLine);
+                if (assetPath) {
+                    group.vehicles.push_back({*assetPath, sourceLine});
+                } else if (group.name.empty()) {
+                    group.name = line;
+                }
+            }
+            if (!group.vehicles.empty()) {
+                aiTraffic.vehicleGroups.push_back(std::move(group));
+            }
+            continue;
+        }
+
+        if (section == "[aigroup_depot]") {
+            MapAiDepotDefinition depot;
+            while (cursor < lines.size()) {
+                const std::string& sourceLine = lines[cursor];
+                const std::string line = trim(sourceLine);
+                if (isSectionHeaderLine(line)) {
+                    break;
+                }
+                ++cursor;
+                depot.rawLines.push_back(sourceLine);
+                if (isIgnoredAiListLine(line)) {
+                    continue;
+                }
+                if (depot.name.empty()) {
+                    depot.name = line;
+                } else if (depot.hofName.empty()) {
+                    depot.hofName = line;
+                }
+            }
+            if (!depot.name.empty() || !depot.hofName.empty()) {
+                aiTraffic.depots.push_back(std::move(depot));
+                currentDepotIndex = aiTraffic.depots.size() - 1;
+            } else {
+                currentDepotIndex.reset();
+            }
+            continue;
+        }
+
+        const std::optional<int> busType = parseAiBusTypeSection(section);
+        if (!busType) {
+            currentDepotIndex.reset();
+            continue;
+        }
+        MapAiBusTypeDefinition definition;
+        definition.type = *busType;
+        definition.depotIndex = currentDepotIndex;
+        while (cursor < lines.size()) {
+            const std::string& sourceLine = lines[cursor];
+            const std::string line = trim(sourceLine);
+            if (isSectionHeaderLine(line)) {
+                if (lowerAscii(line) == "[end]") {
+                    ++cursor;
+                }
+                break;
+            }
+            ++cursor;
+            definition.rawLines.push_back(sourceLine);
+            if (!isIgnoredAiListLine(line)) {
+                const std::optional<std::string> assetPath =
+                    parseAiVehicleAssetPath(sourceLine, false);
+                if (assetPath && definition.assetPath.empty()) {
+                    definition.assetPath = *assetPath;
+                }
+            }
+        }
+        if (!definition.assetPath.empty()) {
+            const std::size_t definitionIndex = aiTraffic.busTypes.size();
+            aiTraffic.busTypes.push_back(std::move(definition));
+            if (currentDepotIndex.has_value()) {
+                aiTraffic.depots[*currentDepotIndex].busTypeDefinitionIndices.push_back(
+                    definitionIndex);
+            }
+        }
+    }
+}
+
+void parseDriverListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraffic) {
+    const std::vector<std::string> lines = splitLines(decodeText(path));
+    for (const std::string& sourceLine : lines) {
+        const std::string line = trim(sourceLine);
+        if (!isIgnoredAiListLine(line) && hasExtension(line, ".hum")) {
+            aiTraffic.driverModelPaths.push_back(line);
+        }
+    }
+}
+
 std::uint32_t readU32(const std::vector<unsigned char>& bytes, std::size_t offset) {
     return static_cast<std::uint32_t>(bytes[offset]) |
            (static_cast<std::uint32_t>(bytes[offset + 1]) << 8U) |
@@ -302,6 +478,8 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             definition.metadata.hasDynamicHelperActive = true;
         } else if (section == "[realrail]") {
             definition.metadata.hasRealRail = true;
+        } else if (section == "[LHT]") {
+            definition.metadata.hasLeftHandTraffic = true;
         } else if (section == "[backgroundimage]") {
             readMetadataFields(definition.metadata.backgroundImage, "backgroundimage");
             definition.metadata.hasBackgroundImage = true;
@@ -334,10 +512,26 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
         } else if (section == "[trafficdensity_road]") {
             std::array<std::string, 2> values;
             readMetadataFields(values, "trafficdensity_road");
+            MapTrafficDensityPoint point;
+            if (parseReal(values[0], point.hour) && point.hour >= 0.0 && point.hour <= 24.0 &&
+                parseReal(values[1], point.density) && point.density >= 0.0) {
+                definition.aiTraffic.roadDensity.push_back(point);
+            } else {
+                definition.diagnostics.warning(sectionLine + 1, "trafficdensity_road",
+                                               "invalid time or density value");
+            }
             definition.metadata.roadTrafficDensity.push_back(std::move(values));
         } else if (section == "[trafficdensity_passenger]") {
             std::array<std::string, 2> values;
             readMetadataFields(values, "trafficdensity_passenger");
+            MapTrafficDensityPoint point;
+            if (parseReal(values[0], point.hour) && point.hour >= 0.0 && point.hour <= 24.0 &&
+                parseReal(values[1], point.density) && point.density >= 0.0) {
+                definition.aiTraffic.passengerDensity.push_back(point);
+            } else {
+                definition.diagnostics.warning(sectionLine + 1, "trafficdensity_passenger",
+                                               "invalid time or density value");
+            }
             definition.metadata.passengerTrafficDensity.push_back(std::move(values));
         } else if (section == "[groundtex]") {
             GroundTextureDefinition groundTexture;
@@ -493,6 +687,14 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
              static_cast<double>(tile.y) * OMSI_TILE_SIZE_METERS + localY, elevation},
             std::atan2(forwardNorth, forwardEast) * 180.0 / 3.14159265358979323846};
     }
+    const std::filesystem::path aiListPath = mapDirectory / "ailists.cfg";
+    if (std::filesystem::is_regular_file(aiListPath)) {
+        parseAiListFile(aiListPath, definition.aiTraffic);
+    }
+    const std::filesystem::path driverListPath = mapDirectory / "drivers.txt";
+    if (std::filesystem::is_regular_file(driverListPath)) {
+        parseDriverListFile(driverListPath, definition.aiTraffic);
+    }
     return definition;
 }
 
@@ -586,6 +788,59 @@ resolveMapGroundTextureSidecarIndex(std::string_view ordinalSuffix,
     // Existing maps use the suffix directly for non-base records (1..N-1).
     // Some maps also emit the terminal suffix N for their final record N-1.
     return index == groundTextureCount ? groundTextureCount - 1 : index;
+}
+
+std::optional<double> mapTrafficDensityAtHour(const std::vector<MapTrafficDensityPoint>& schedule,
+                                              double hour) {
+    if (!std::isfinite(hour) || hour < 0.0 || hour > 24.0) {
+        throw std::invalid_argument("Map traffic density lookup hour must be in [0, 24]");
+    }
+
+    if (schedule.empty()) {
+        return std::nullopt;
+    }
+    for (std::size_t index = 0; index < schedule.size(); ++index) {
+        const MapTrafficDensityPoint& point = schedule[index];
+        if (!std::isfinite(point.hour) || point.hour < 0.0 || point.hour > 24.0 ||
+            !std::isfinite(point.density) || point.density < 0.0 ||
+            (index > 0 && point.hour <= schedule[index - 1].hour)) {
+            return std::nullopt;
+        }
+    }
+    if (hour <= schedule.front().hour) {
+        return schedule.front().density;
+    }
+    if (hour >= schedule.back().hour) {
+        return schedule.back().density;
+    }
+    const auto right = std::upper_bound(schedule.begin(), schedule.end(), hour,
+                                        [](double targetHour, const MapTrafficDensityPoint& point) {
+                                            return targetHour < point.hour;
+                                        });
+    const MapTrafficDensityPoint& leftPoint = *(right - 1);
+    const MapTrafficDensityPoint& rightPoint = *right;
+    const double fraction = (hour - leftPoint.hour) / (rightPoint.hour - leftPoint.hour);
+    return leftPoint.density + (rightPoint.density - leftPoint.density) * fraction;
+}
+
+std::size_t mapTrafficPopulationForDensity(std::size_t basePopulation,
+                                           std::optional<double> density,
+                                           std::size_t populationCap) {
+    if (populationCap == 0 || basePopulation == 0) {
+        return 0;
+    }
+    if (!density.has_value()) {
+        return std::min(basePopulation, populationCap);
+    }
+    if (!std::isfinite(*density) || *density < 0.0) {
+        throw std::invalid_argument("Map traffic density must be finite and non-negative");
+    }
+    const long double scaled =
+        static_cast<long double>(basePopulation) * static_cast<long double>(*density);
+    if (scaled >= static_cast<long double>(populationCap)) {
+        return populationCap;
+    }
+    return static_cast<std::size_t>(std::floor(scaled + 0.5L));
 }
 
 MapGroundTextureTiling

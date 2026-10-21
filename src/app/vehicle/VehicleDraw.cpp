@@ -78,6 +78,11 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
     const std::array<double, 3>& color = overrideColor == nullptr ? batch.color : *overrideColor;
     TraceScope phase("render", "Vehicle::drawBatch.prepareAndSubmit");
     openbus::rendering::ModelMaterial material;
+    for (std::size_t index = 0; index < 3; ++index) {
+        material.specularColor[index] = static_cast<float>(batch.specularColor[index]);
+        material.emissionColor[index] = static_cast<float>(batch.emissionColor[index]);
+    }
+    material.specularPower = static_cast<float>(batch.specularPower);
     material.texture = materialBatch ? 0 : batch.texture;
     material.textureArray = materialBatch ? false : batch.textureArray;
     material.textured = materialBatch ? false : batch.textured && !forceUntextured;

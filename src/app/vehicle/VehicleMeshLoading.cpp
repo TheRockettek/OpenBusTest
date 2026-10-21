@@ -101,6 +101,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     const auto& positions = parsed->positions;
     const auto& normals = parsed->normals;
     const auto& texCoords = parsed->texCoords;
+    const auto& vertexColors = parsed->vertexColors;
     const auto& triangles = parsed->triangles;
     const auto& materials = parsed->materials;
     const auto& boundsCenter = parsed->boundsCenter;
@@ -151,6 +152,8 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     auto makeBatch = [&](const std::vector<const ObjTriangle*>& source,
                          const std::filesystem::path& texturePath, const std::string& textureName,
                          const std::array<double, 3>& color,
+                         const std::array<double, 3>& specularColor,
+                         const std::array<double, 3>& emissionColor, double specularPower,
                          const std::string& environmentTextureName, double environmentStrength,
                          int alphaMode, bool noZwrite, bool noZcheck,
                          const std::string& alphaScaleVariable,
@@ -204,8 +207,12 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
                     if (!validIndex(index.position, positions.size())) {
                         continue;
                     }
-                    const ObjPosition& position =
-                        positions[static_cast<std::size_t>(index.position - 1)];
+                    const std::size_t positionIndex = static_cast<std::size_t>(index.position - 1);
+                    const ObjPosition& position = positions[positionIndex];
+                    const std::array<double, 4> vertexColor =
+                        positionIndex < vertexColors.size()
+                            ? vertexColors[positionIndex]
+                            : std::array<double, 4>{1.0, 1.0, 1.0, 1.0};
                     std::array<double, 3> normal = fallbackNormal;
                     if (validIndex(index.normal, normals.size())) {
                         const ObjNormal& sourceNormal =
@@ -222,7 +229,9 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
                          texCoord ? static_cast<float>(texCoord->u) : 0.0f,
                          texCoord ? static_cast<float>(1.0 - texCoord->v) : 0.0f, 0.0f,
                          static_cast<float>(normal[0]), static_cast<float>(normal[1]),
-                         static_cast<float>(normal[2])});
+                         static_cast<float>(normal[2]), static_cast<float>(vertexColor[0]),
+                         static_cast<float>(vertexColor[1]), static_cast<float>(vertexColor[2]),
+                         static_cast<float>(vertexColor[3])});
                 }
             }
         }
@@ -251,6 +260,9 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
         batch.texcoordTransXVariable = lower(materialState.texcoordTransXVariable);
         batch.texcoordTransYVariable = lower(materialState.texcoordTransYVariable);
         batch.color = color;
+        batch.specularColor = specularColor;
+        batch.emissionColor = emissionColor;
+        batch.specularPower = specularPower;
         batch.hasNormals = true;
         batch.textureWrapS = textureAddressModeToGl(materialState.textureAddressS);
         batch.textureWrapT = textureAddressModeToGl(materialState.textureAddressT);
@@ -273,8 +285,10 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
                    first.textureName == second.textureName &&
                    first.environmentTextureName == second.environmentTextureName &&
                    first.environmentStrength == second.environmentStrength &&
-                   first.color == second.color && first.textured == second.textured &&
-                   first.hasNormals == second.hasNormals &&
+                   first.color == second.color && first.specularColor == second.specularColor &&
+                   first.emissionColor == second.emissionColor &&
+                   first.specularPower == second.specularPower &&
+                   first.textured == second.textured && first.hasNormals == second.hasNormals &&
                    first.textureWrapS == second.textureWrapS &&
                    first.textureWrapT == second.textureWrapT &&
                    first.lightmap.name == second.lightmap.name &&
@@ -333,7 +347,9 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
                            [](int index) { return index < 0; }) &&
                batch.freeTextureName.empty() && batch.scriptTextureIndex < 0 &&
                batch.textTextureIndex < 0 && batch.texcoordTransXVariable.empty() &&
-               batch.texcoordTransYVariable.empty() && batch.alphaScaleVariable.empty();
+               batch.texcoordTransYVariable.empty() && batch.alphaScaleVariable.empty() &&
+               batch.specularColor == std::array<double, 3>{} &&
+               batch.emissionColor == std::array<double, 3>{} && batch.specularPower == 8.0;
     };
     const auto makeMaterialTexture = [](const Batch& source) {
         MaterialTextureSource result;
@@ -419,6 +435,9 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     std::unordered_map<std::string, std::string> groupEnvironmentNames;
     std::unordered_map<std::string, double> groupEnvironmentStrengths;
     std::unordered_map<std::string, std::array<double, 3>> groupColors;
+    std::unordered_map<std::string, std::array<double, 3>> groupSpecularColors;
+    std::unordered_map<std::string, std::array<double, 3>> groupEmissionColors;
+    std::unordered_map<std::string, double> groupSpecularPowers;
     std::unordered_map<std::string, MaterialState> groupStates;
     std::vector<std::string> groupOrder;
     std::unordered_map<std::string, const MaterialState*> materialStatesByFilename;
@@ -493,6 +512,12 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
                     : fallbackTextureName;
             std::array<double, 3> color =
                 material != materials.end() ? material->second.color : part.color;
+            const std::array<double, 3> specularColor =
+                material != materials.end() ? material->second.specular : std::array<double, 3>{};
+            const std::array<double, 3> emissionColor =
+                material != materials.end() ? material->second.emission : std::array<double, 3>{};
+            const double specularPower =
+                material != materials.end() ? material->second.specularPower : 8.0;
             const std::string key = triangle.material.empty() ? "__fallback__" : triangle.material;
             if (groups.find(key) == groups.end()) {
                 groupOrder.push_back(key);
@@ -558,6 +583,9 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
             groupEnvironmentNames[key] = state.environmentTextureName;
             groupEnvironmentStrengths[key] = state.environmentStrength;
             groupColors[key] = color;
+            groupSpecularColors[key] = specularColor;
+            groupEmissionColors[key] = emissionColor;
+            groupSpecularPowers[key] = specularPower;
             groupStates[key] = state;
             hasTransparentMaterial =
                 hasTransparentMaterial || state.alphaMode != 0 || state.noZwrite || state.noZcheck;
@@ -604,6 +632,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     for (const std::string& key : groupOrder) {
         const MaterialState& state = groupStates[key];
         makeBatch(groups[key], groupTextures[key], groupTextureNames[key], groupColors[key],
+                  groupSpecularColors[key], groupEmissionColors[key], groupSpecularPowers[key],
                   groupEnvironmentNames[key], groupEnvironmentStrengths[key], state.alphaMode,
                   state.noZwrite, state.noZcheck, state.alphaScaleVariable, state.textureChanges,
                   state);

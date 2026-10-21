@@ -37,10 +37,10 @@ int main() {
     glDisable(GL_BLEND);
     glDisable(GL_DITHER);
 
-    constexpr std::array<float, 27> vertices = {
-        -2, -2, -1, 0, 0, 0, 0, 0, -1,
-         2, -2, -1, 1, 0, 0, 0, 0, -1,
-         0,  2, -1, 0, 1, 0, 0, 0, -1};
+    constexpr std::array<float, 39> vertices = {
+        -2, -2, -1, 0, 0, 0, 0, 0, -1, 1, 1, 1, 1,
+         2, -2, -1, 1, 0, 0, 0, 0, -1, 1, 1, 1, 1,
+         0,  2, -1, 0, 1, 0, 0, 0, -1, 1, 1, 1, 1};
     GLuint buffer = 0;
     pglGenBuffers(1, &buffer);
     pglBindBuffer(GL_ARRAY_BUFFER, buffer);
@@ -126,6 +126,92 @@ int main() {
     glDisable(GL_BLEND);
     if (!close(pixel[0], 106) || !close(pixel[1], 106) || !close(pixel[2], 106)) {
         std::cerr << "white road marking ignored its alpha or surface lighting\n";
+        passed = false;
+    }
+
+    material = {};
+    material.texture = white;
+    material.textured = true;
+    const auto whitePixel = draw(material, {1, 1, 1}, 1.0);
+    material.emissionColor = {0.2F, 0.1F, 0.0F};
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    if (pixel[0] < whitePixel[0] + 45 || pixel[1] < whitePixel[1] + 20 ||
+        pixel[2] != whitePixel[2]) {
+        std::cerr << "material emissive color was not added after surface lighting\n";
+        passed = false;
+    }
+    constexpr std::array<float, 39> specularVertices = {
+        -2, -2, -1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+         2, -2, -1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+         0,  2, -1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1};
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(specularVertices), specularVertices.data(),
+                  GL_STATIC_DRAW);
+    material = {};
+    material.texture = white;
+    material.textured = true;
+    const auto diffuseOnlyPixel = draw(material, {0.15, 0.15, 0.15}, 1.0);
+    material.specularColor = {0.8F, 0.8F, 0.8F};
+    material.specularPower = 8.0F;
+    pixel = draw(material, {0.15, 0.15, 0.15}, 1.0);
+    if (pixel[0] < diffuseOnlyPixel[0] + 40 || pixel[1] < diffuseOnlyPixel[1] + 40 ||
+        pixel[2] < diffuseOnlyPixel[2] + 40) {
+        std::cerr << "material specular highlight was not rendered\n";
+        passed = false;
+    }
+    constexpr std::array<float, 39> coloredVertices = {
+        -2, -2, -1, 0, 0, 0, 0, 0, -1, 0.5F, 0.25F, 1.0F, 0.5F,
+         2, -2, -1, 1, 0, 0, 0, 0, -1, 0.5F, 0.25F, 1.0F, 0.5F,
+         0,  2, -1, 0, 1, 0, 0, 0, -1, 0.5F, 0.25F, 1.0F, 0.5F};
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(coloredVertices), coloredVertices.data(),
+                  GL_STATIC_DRAW);
+    material = {};
+    material.texture = white;
+    material.textured = true;
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    if (pixel != whitePixel) {
+        std::cerr << "legacy textured materials were unexpectedly tinted by vertex colors\n";
+        passed = false;
+    }
+    material = {};
+    material.textTexture = blue;
+    material.useTextTexture = true;
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    if (pixel != texturedPixel) {
+        std::cerr << "text texture RGB was not preserved\n";
+        passed = false;
+    }
+    material = {};
+    material.freeTexture = blue;
+    material.useFreeTexture = true;
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    if (pixel != texturedPixel) {
+        std::cerr << "free texture RGB was not preserved\n";
+        passed = false;
+    }
+    constexpr std::array<float, 39> grayscaleVertices = {
+        -2, -2, -1, 0, 0, 0, 0, 0, -1, 0.25F, 0.25F, 0.25F, 0.5F,
+         2, -2, -1, 1, 0, 0, 0, 0, -1, 0.25F, 0.25F, 0.25F, 0.5F,
+         0,  2, -1, 0, 1, 0, 0, 0, -1, 0.25F, 0.25F, 0.25F, 0.5F};
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(grayscaleVertices), grayscaleVertices.data(),
+                  GL_STATIC_DRAW);
+    material = {};
+    material.texture = white;
+    material.textured = true;
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    if (pixel != whitePixel) {
+        std::cerr << "neutral vertex colors changed a textured material\n";
+        passed = false;
+    }
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(coloredVertices), coloredVertices.data(),
+                  GL_STATIC_DRAW);
+    material = {};
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    if (pixel != whitePixel) {
+        std::cerr << "legacy untextured materials were unexpectedly tinted by vertex colors\n";
         passed = false;
     }
     if (glGetError() != GL_NO_ERROR) {

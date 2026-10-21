@@ -41,6 +41,9 @@ openbus_add_probe(OpenBusConfigurationParserProbe ConfigurationParserProbe.cpp
 openbus_add_probe(OpenBusModelConfigProbe ModelConfigProbe.cpp LIBS openbus_config openbus_osc)
 openbus_add_probe(OpenBusVehicleConfigProbe VehicleConfigProbe.cpp
     LIBS openbus_config openbus_osc)
+openbus_add_probe(OpenBusHumanConfigProbe HumanConfigLoaderProbe.cpp
+    LIBS openbus_config
+    ARGS "${OPENBUS_FIXTURES}/human_driver.hum")
 
 # Input
 openbus_add_probe(OpenBusVehicleInputBindingsProbe VehicleInputBindingsProbe.cpp
@@ -79,6 +82,7 @@ openbus_add_probe(OpenBusMapSplineProfileProbe MapSplineProfileProbe.cpp LIBS op
         "${OPENBUS_FIXTURES}/map_spline_profile.sli"
         "${OPENBUS_FIXTURES}/map_spline_profile_explicit_cant_width.sli"
         "${OPENBUS_FIXTURES}/map_spline_profile_no_collision.sli")
+openbus_add_probe(OpenBusMapTrafficRuntimeProbe MapTrafficRuntimeProbe.cpp LIBS openbus_map)
 
 # Audio
 openbus_add_probe(OpenBusSoundEngineProbe SoundEngineProbe.cpp LIBS openbus_audio)

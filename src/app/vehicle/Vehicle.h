@@ -140,6 +140,7 @@ struct Vehicle {
 
     struct Vertex {
         float x, y, z, u, v, layer, nx, ny, nz;
+        float r = 1.0F, g = 1.0F, b = 1.0F, a = 1.0F;
     };
 
     struct AuxiliaryTexture {
@@ -224,6 +225,9 @@ struct Vehicle {
         GLuint texture = 0;
         bool textureArray = false;
         std::size_t textureArrayLayers = 1;
+        std::array<double, 3> specularColor = {};
+        std::array<double, 3> emissionColor = {};
+        double specularPower = 8.0;
         std::filesystem::path baseTexturePath;
         std::string baseTextureName;
         std::filesystem::path texturePath;
@@ -365,6 +369,7 @@ struct Vehicle {
     std::string modelCacheKey;
     AssetRequestManager* assets;
     VehiclePlacement placement;
+    bool followsMapTrafficRoute = false;
     double modelOffsetZ = 0.0;
     double textureScale = 1;
     double odometerMetres = 0.0;

@@ -3,6 +3,7 @@
 #include "core/BusTypes.h"
 #include "render/CameraMath.h"
 #include "map/MapConfigLoader.h"
+#include "map/MapTrafficRuntime.h"
 #include "input/MouseInteraction.h"
 #include "render/CoreRenderer.h"
 #include "audio/SoundEngine.h"
@@ -71,6 +72,13 @@ class RenderLoop {
     Vehicle* AddVehicle(const std::filesystem::path& busConfigPath,
                         const std::filesystem::path& modelConfigPath,
                         const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy = {});
+    bool AddTrafficVehicle(int splineId, int pathTypeCode,
+                           const std::filesystem::path& busConfigPath,
+                           std::optional<std::string> driverModelPath, double speedMetersPerSecond,
+                           double startDistanceMeters, double centerX, double centerY,
+                           double maximumDistanceMeters, ModelLoadingPolicy loadingPolicy = {});
+    std::vector<int> trafficSplineIds(int pathTypeCode) const;
+    std::size_t trafficVehicleCount() const;
 
     void SetPlayerVehicle(Vehicle* vehicle);
     void SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
@@ -218,6 +226,11 @@ class RenderLoop {
     openbus::rendering::ViewpointContext soundViewpoint_ =
         openbus::rendering::ViewpointContext::PlayerExterior;
     std::vector<std::unique_ptr<Vehicle>> vehicles_;
+    struct TrafficVehicleState {
+        Vehicle* vehicle = nullptr;
+        openbus::map::MapTrafficActor actor;
+    };
+    std::vector<TrafficVehicleState> trafficVehicles_;
     Vehicle* playerVehicle_ = nullptr;
     GLFWcursor* clickableCursor_ = nullptr;
     GLFWcursor* mouseSteeringCursor_ = nullptr;

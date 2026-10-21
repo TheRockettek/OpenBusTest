@@ -161,6 +161,40 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
             }
             heightProfile.valid = complete && numeric;
             profile.heightProfiles.push_back(std::move(heightProfile));
+        } else if (section == "[path]") {
+            MapSplinePathDefinition pathDefinition;
+            bool numeric = true;
+            while (cursor < lines.size()) {
+                const std::string& field = lines[cursor];
+                if (field.size() > 2 && field.front() == '[' && field.back() == ']') {
+                    break;
+                }
+                ++cursor;
+                if (field.empty()) {
+                    continue;
+                }
+                pathDefinition.rawFields.push_back(field);
+                double value = 0.0;
+                if (parseReal(field, value)) {
+                    pathDefinition.numericFields.push_back(value);
+                } else {
+                    numeric = false;
+                }
+            }
+            pathDefinition.numericFieldsValid =
+                numeric && !pathDefinition.rawFields.empty() &&
+                pathDefinition.numericFields.size() == pathDefinition.rawFields.size();
+            if (!pathDefinition.rawFields.empty()) {
+                const std::string& firstField = pathDefinition.rawFields.front();
+                int pathTypeCode = 0;
+                const auto parsed = std::from_chars(
+                    firstField.data(), firstField.data() + firstField.size(), pathTypeCode);
+                if (parsed.ec == std::errc{} &&
+                    parsed.ptr == firstField.data() + firstField.size()) {
+                    pathDefinition.pathTypeCode = pathTypeCode;
+                }
+            }
+            profile.paths.push_back(std::move(pathDefinition));
         } else if (section == "[texture]") {
             std::string texture;
             if (readPayload(lines, cursor, texture)) {
@@ -244,6 +278,13 @@ std::optional<double> mapSplineProfileCantHalfWidth(const MapSplineProfile& prof
         }
     }
     return halfWidth;
+}
+
+bool mapSplineProfileHasPathType(const MapSplineProfile& profile, int pathTypeCode) noexcept {
+    return std::any_of(profile.paths.begin(), profile.paths.end(),
+                       [pathTypeCode](const MapSplinePathDefinition& path) {
+                           return path.pathTypeCode == pathTypeCode;
+                       });
 }
 
 } // namespace openbus::map

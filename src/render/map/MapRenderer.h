@@ -1,6 +1,7 @@
 #pragma once
 
 #include "map/MapConfigLoader.h"
+#include "map/MapTrafficRuntime.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -40,6 +41,16 @@ class MapRenderer {
     void updateStreaming(double worldX, double worldY);
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;
     MapRenderStats renderStats() const;
+    std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId) const;
+    std::vector<int> trafficSplineIds(int pathTypeCode) const;
+    std::optional<openbus::map::MapTrafficActor>
+    createTrafficActor(int splineId, std::string modelPath, double speedMetersPerSecond,
+                       double laneOffsetMagnitudeMeters,
+                       std::optional<std::string> driverModelPath = std::nullopt,
+                       std::optional<int> pathTypeCode = std::nullopt) const;
+    bool addTrafficActor(openbus::map::MapTrafficActor actor);
+    std::size_t updateTrafficActors(double elapsedSeconds);
+    const std::vector<openbus::map::MapTrafficActor>& trafficActors() const;
     std::optional<double> terrainHeightAt(double worldX, double worldY) const;
     void draw(bool renderTypeFourOnly = false) const;
 

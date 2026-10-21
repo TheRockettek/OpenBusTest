@@ -1,6 +1,10 @@
 // Window lifecycle, vehicle/map registration and simple accessors.
 
 #include "app/RenderLoopInternal.h"
+#include "render/map/MapRenderer.h"
+
+#include <algorithm>
+#include <cmath>
 
 RenderLoop::RenderLoop(int width, int height, const char* title)
     : window_(nullptr), assetRequestManager_(std::make_unique<AssetRequestManager>()),
@@ -184,7 +188,9 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& busConfigPath,
                                 ModelLoadingPolicy loadingPolicy) {
     const std::filesystem::path resolvedBusConfigPath = busConfigurationPathFor(busConfigPath);
     const std::filesystem::path resolvedModelConfigPath =
-        modelConfigurationPathForBus(resolvedBusConfigPath, modelConfigPath);
+        modelConfigPath.empty()
+            ? modelConfigurationPathForBus(resolvedBusConfigPath)
+            : modelConfigurationPathForBus(resolvedBusConfigPath, modelConfigPath);
     const std::shared_ptr<const SharedVehicleDefinition> definition =
         sharedVehicleDefinition(resolvedBusConfigPath, resolvedModelConfigPath);
     const VehicleConfig& vehicleConfiguration = definition->vehicleConfiguration;
@@ -228,6 +234,60 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& busConfigPath,
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
     return result;
+}
+
+bool RenderLoop::AddTrafficVehicle(int splineId, int pathTypeCode,
+                                   const std::filesystem::path& busConfigPath,
+                                   std::optional<std::string> driverModelPath,
+                                   double speedMetersPerSecond, double startDistanceMeters,
+                                   double centerX, double centerY, double maximumDistanceMeters,
+                                   ModelLoadingPolicy loadingPolicy) {
+    if (mapRenderer_ == nullptr) {
+        throw std::logic_error("Cannot add map traffic before loading a map");
+    }
+    if (!std::isfinite(startDistanceMeters) || startDistanceMeters < 0.0 ||
+        !std::isfinite(centerX) || !std::isfinite(centerY) ||
+        !std::isfinite(maximumDistanceMeters) || maximumDistanceMeters < 0.0) {
+        throw std::invalid_argument("Map traffic spawn position or distance is invalid");
+    }
+
+    std::optional<openbus::map::MapTrafficActor> actor =
+        mapRenderer_->createTrafficActor(splineId, busConfigPath.string(), speedMetersPerSecond,
+                                         0.0, std::move(driverModelPath), pathTypeCode);
+    if (!actor) {
+        return false;
+    }
+    actor->distanceMeters =
+        actor->route.closed
+            ? std::fmod(startDistanceMeters, actor->route.totalLength)
+            : std::min(startDistanceMeters, std::max(0.0, actor->route.totalLength - 1.0));
+    const std::optional<openbus::map::MapTrafficPose> pose = openbus::map::sampleMapTrafficRoute(
+        actor->route, actor->distanceMeters, actor->lateralOffsetMeters);
+    if (!pose) {
+        throw std::runtime_error("Could not sample the initial map traffic route pose");
+    }
+    const double dx = pose->position[0] - centerX;
+    const double dy = pose->position[1] - centerY;
+    if (dx * dx + dy * dy > maximumDistanceMeters * maximumDistanceMeters) {
+        return false;
+    }
+
+    VehiclePlacement placement;
+    placement.position = pose->position;
+    placement.yawDegrees = openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians);
+    Vehicle* vehicle = AddVehicle(busConfigPath, {}, placement, loadingPolicy);
+    vehicle->followsMapTrafficRoute = true;
+    trafficVehicles_.push_back({vehicle, std::move(*actor)});
+    return true;
+}
+
+std::vector<int> RenderLoop::trafficSplineIds(int pathTypeCode) const {
+    return mapRenderer_ == nullptr ? std::vector<int>{}
+                                   : mapRenderer_->trafficSplineIds(pathTypeCode);
+}
+
+std::size_t RenderLoop::trafficVehicleCount() const {
+    return trafficVehicles_.size();
 }
 
 void RenderLoop::SetPlayerVehicle(Vehicle* model) {
