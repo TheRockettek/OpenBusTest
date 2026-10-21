@@ -307,7 +307,10 @@ void main() {
     float specular = max(dot(surfaceNormal, lightDirection), 0.0) > 0.0
         ? pow(max(dot(surfaceNormal, halfDirection), 0.0), max(uSpecularPower, 1.0))
         : 0.0;
-    color.rgb += uEmissionColor + uSpecularColor * specular;
+    // OMSI emissive materials illuminate their texture, not an additive solid
+    // color. White emission must preserve red glyphs and black display pixels.
+    color.rgb = mix(color.rgb, unlitColor, clamp(uEmissionColor, 0.0, 1.0));
+    color.rgb += uSpecularColor * specular;
     if (!uUseTextTexture && uUseNightmap) {
         vec4 nightmap = texture(uNightmap, vTexCoord.xy);
         // OMSI nightmaps are authored as self-lit overlays: black texels mean

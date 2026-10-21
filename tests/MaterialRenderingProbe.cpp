@@ -135,10 +135,39 @@ int main() {
     const auto whitePixel = draw(material, {1, 1, 1}, 1.0);
     material.emissionColor = {0.2F, 0.1F, 0.0F};
     pixel = draw(material, {1, 1, 1}, 1.0);
-    if (pixel[0] < whitePixel[0] + 45 || pixel[1] < whitePixel[1] + 20 ||
+    if (!close(pixel[0], static_cast<int>(whitePixel[0] + (255 - whitePixel[0]) * 0.2)) ||
+        !close(pixel[1], static_cast<int>(whitePixel[1] + (255 - whitePixel[1]) * 0.1)) ||
         pixel[2] != whitePixel[2]) {
-        std::cerr << "material emissive color was not added after surface lighting\n";
+        std::cerr << "material emission did not illuminate the authored surface\n";
         passed = false;
+    }
+    const GLuint red = texture({220, 0, 0, 255});
+    const GLuint black = texture({0, 0, 0, 255});
+    for (const GLuint albedo : {red, black, blue}) {
+        for (int source = 0; source < 3; ++source) {
+            material = {};
+            material.emissionColor = {1, 1, 1};
+            material.texture = albedo;
+            material.textured = true;
+            if (source == 1) {
+                material.textTexture = albedo;
+                material.useTextTexture = true;
+            } else if (source == 2) {
+                material.freeTexture = albedo;
+                material.useFreeTexture = true;
+            }
+            pixel = draw(material, {1, 1, 1}, 1.0);
+            const std::array<int, 3> expected =
+                albedo == red ? std::array<int, 3>{220, 0, 0}
+                : albedo == black ? std::array<int, 3>{0, 0, 0}
+                                  : std::array<int, 3>{65, 85, 112};
+            if (!close(pixel[0], expected[0]) || !close(pixel[1], expected[1]) ||
+                !close(pixel[2], expected[2]) || pixel[3] != 255) {
+                std::cerr << "white emission washed out route/display texture RGB; source="
+                          << source << '\n';
+                passed = false;
+            }
+        }
     }
     constexpr std::array<float, 39> specularVertices = {
         -2, -2, -1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
@@ -218,8 +247,8 @@ int main() {
         std::cerr << "OpenGL material probe failed\n";
         passed = false;
     }
-    const GLuint textures[] = {blue, white, mask};
-    glDeleteTextures(3, textures);
+    const GLuint textures[] = {blue, white, mask, red, black};
+    glDeleteTextures(5, textures);
     pglDeleteBuffers(1, &buffer);
     shutdownCoreRenderer();
     glfwDestroyWindow(window);

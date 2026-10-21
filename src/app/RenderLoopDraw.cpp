@@ -782,7 +782,8 @@ void RenderLoop::captureViews(const BusSimulation& simulation,
         double pitch;
         double distance;
     };
-    const std::array<CaptureView, 5> views = {{{"dashboard", 1, 0.0, 0.0, 0.0},
+    const int driverCameraView = reflectionReferenceCamera_ >= 0 ? reflectionReferenceCamera_ + 1 : 1;
+    const std::array<CaptureView, 5> views = {{{"dashboard", driverCameraView, 0.0, 0.0, 0.0},
                                                {"three-quarter", 0, 0.55, 0.45, 11.0},
                                                {"front", 0, 0.0, 0.45, 10.5},
                                                {"left", 0, 1.5707963267948966, 0.45, 10.5},

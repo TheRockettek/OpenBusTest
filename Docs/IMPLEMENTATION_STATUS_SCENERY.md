@@ -15,6 +15,7 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
 - `[collision_mesh]` O3D geometry from SCOs and external model CFGs is spatially indexed and clipped into each overlapped streamed tile, including long bridges and custom junction meshes. `[nocollision]` filters the relevant collision; attached/scenery repeater collision and non-O3D formats remain unsupported.
 - `[groups]`, `[friendlyname]`, and `[helparrow]` are accepted as SCO metadata/editor fields and ignored by static rendering.
 - Text-texture glyphs (`[texttexture]`, `[texttexture_enh]`) are multiplied by the mesh's diffuse colour and receive the same ambient/sun, lightmap and interior lighting as ordinary textures; nightmap, transmap and bumpmap layers are not applied to them. `[matl_freetex]` surfaces are lit the same way.
+- Material emission blends the shaded surface toward its sampled, unlit colour. White emission in route-arrow, route-text and DL05 display O3D materials therefore preserves texture RGB and black pixels instead of adding white and saturating the surface.
 
 ### Cotterell sign investigation
 
