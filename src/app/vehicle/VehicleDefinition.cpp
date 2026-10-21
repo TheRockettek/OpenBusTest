@@ -1,6 +1,5 @@
 #include "app/vehicle/VehicleDefinition.h"
 
-#include "config/BusConfigLoader.h"
 #include "core/Environment.h"
 #include "core/Logger.h"
 #include "core/Variables.h"
@@ -40,11 +39,13 @@ std::filesystem::path modelRootFor(const std::filesystem::path& modelConfigPath)
 
 std::shared_ptr<const SharedVehicleDefinition>
 sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
-                        const std::filesystem::path& modelConfigPath) {
+                        const std::filesystem::path& modelConfigPath,
+                        VehicleFileKind configKind) {
     static std::mutex cacheMutex;
     static std::unordered_map<std::string, std::shared_ptr<const SharedVehicleDefinition>> cache;
-    const std::string key =
-        normalizedConfigPath(busConfigPath) + "|" + normalizedConfigPath(modelConfigPath);
+    const std::string key = normalizedConfigPath(busConfigPath) + "|" +
+                            normalizedConfigPath(modelConfigPath) + "|" +
+                            std::to_string(static_cast<int>(configKind));
     std::lock_guard<std::mutex> lock(cacheMutex);
     const auto existing = cache.find(key);
     if (existing != cache.end()) {
@@ -55,13 +56,18 @@ sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
     definition->cacheKey = key;
     definition->modelConfigPath = modelConfigPath;
     definition->modelRoot = modelRootFor(modelConfigPath);
-    gameLog.Log("Loading bus model with config: " + modelConfigPath.string() +
+    gameLog.Log("Loading vehicle model with config: " + modelConfigPath.string() +
                 " and model root: " + definition->modelRoot.string());
-    definition->vehicleConfiguration = loadBusConfig(busConfigPath);
+    definition->vehicleConfiguration = loadVehicleConfig(busConfigPath, configKind);
 
     openbus::scripting::Vehicle modelVariables;
-    definition->modelConfiguration =
-        openbus::rendering::loadBusModel(modelConfigPath, definition->modelRoot, modelVariables);
+    definition->modelConfiguration = configKind == VehicleFileKind::Bus
+                                         ? openbus::rendering::loadBusModel(
+                                               modelConfigPath, definition->modelRoot,
+                                               modelVariables)
+                                         : openbus::rendering::loadVehicleModel(
+                                               modelConfigPath, definition->modelRoot,
+                                               modelVariables);
     for (const auto& [name, value] : modelVariables.numericValues()) {
         (void)value;
         definition->modelNumericVariables.push_back(name);

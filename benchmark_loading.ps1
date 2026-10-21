@@ -6,6 +6,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$runningOpenBus = @(Get-Process -Name "OpenBus" -ErrorAction SilentlyContinue)
+if ($runningOpenBus.Count -gt 0) {
+    $processIds = ($runningOpenBus | ForEach-Object { $_.Id }) -join ", "
+    throw "OpenBus is already running (PID(s): $processIds). Close it before benchmarking. No existing process was stopped."
+}
+
 function Get-MedianMs {
     param([double[]]$Values)
     if (-not $Values -or $Values.Count -eq 0) {
@@ -31,8 +37,6 @@ for ($run = 1; $run -le $Runs; $run++) {
     if (Test-Path (Join-Path $PSScriptRoot "game.log")) {
         Remove-Item (Join-Path $PSScriptRoot "game.log") -Force
     }
-
-    cmd /c "taskkill /F /IM OpenBus.exe >nul 2>&1" | Out-Null
 
     $env:OPENBUS_VEHICLE = $Vehicle
     $env:OPENBUS_VSYNC = "off"

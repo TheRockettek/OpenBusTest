@@ -99,15 +99,27 @@ struct MapAiDepotDefinition {
     std::vector<std::size_t> busTypeDefinitionIndices;
 };
 
+struct MapAiTimetableRoute {
+    std::string tripName;
+    std::string destinationName;
+    std::string lineName;
+    std::size_t stationCount = 0;
+    std::vector<int> splineIds;
+};
+
 struct MapAiTrafficData {
     std::vector<MapTrafficDensityPoint> roadDensity;
     std::vector<MapTrafficDensityPoint> passengerDensity;
     std::vector<MapAiVehicleGroup> vehicleGroups;
     std::vector<MapAiBusTypeDefinition> busTypes;
     std::vector<MapAiDepotDefinition> depots;
+    std::vector<MapAiTimetableRoute> timetableRoutes;
     // These paths are relative to the OMSI installation root.
     std::vector<std::string> driverModelPaths;
 };
+
+std::vector<std::string> mapAiRoadVehicleAssetPaths(const MapAiTrafficData& traffic);
+std::vector<std::string> mapAiBusAssetPaths(const MapAiTrafficData& traffic);
 
 struct MapGroundTextureSidecar {
     std::string ordinalSuffix;

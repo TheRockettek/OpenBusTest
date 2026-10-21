@@ -287,4 +287,18 @@ bool mapSplineProfileHasPathType(const MapSplineProfile& profile, int pathTypeCo
                        });
 }
 
+std::vector<MapSplinePathOffset> mapSplineProfilePathOffsets(const MapSplineProfile& profile,
+                                                             int pathTypeCode) {
+    std::vector<MapSplinePathOffset> offsets;
+    for (const MapSplinePathDefinition& path : profile.paths) {
+        if (path.pathTypeCode == pathTypeCode && path.numericFieldsValid &&
+            path.numericFields.size() >= 3) {
+            offsets.push_back({path.numericFields[1], path.numericFields[2],
+                               path.numericFields.size() >= 5 && path.numericFields[4] == 1.0,
+                               path.numericFields.size() >= 5 && path.numericFields[4] == 2.0});
+        }
+    }
+    return offsets;
+}
+
 } // namespace openbus::map

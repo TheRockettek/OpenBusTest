@@ -40,6 +40,10 @@ void setModelViewMatrix(const Matrix4& matrix) {
     cachedModelViewMatrix = matrix;
 }
 
+void setProjectionMatrix(const Matrix4& matrix) {
+    cachedProjectionMatrix = matrix;
+}
+
 void setPerspective(double width, double height, double fieldOfView) {
     const double aspect = width / height;
     const double nearPlane = 0.1;

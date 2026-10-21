@@ -96,6 +96,13 @@ bool checkOneShotLifecycle(const std::filesystem::path& configPath) {
     second.load(configPath);
     Variables variables;
     FakePlayback playback;
+    first.trigger(playback, "ev_not_configured", {}, 0.0F, variables, exterior);
+    first.trigger(playback, "ev_not_configured", {}, 0.0F, variables, exterior);
+    if (!expect(!first.hasTrigger("ev_not_configured") && playback.playAttempts == 0 &&
+                    playback.started.empty(),
+                "unknown sound triggers must not start playback")) {
+        return false;
+    }
     first.trigger(playback, "ev_one_shot", {}, 0.0F, variables, exterior);
     for (int repeat = 0; repeat < 32; ++repeat) {
         first.trigger(playback, "ev_one_shot", {}, 0.0F, variables, exterior);

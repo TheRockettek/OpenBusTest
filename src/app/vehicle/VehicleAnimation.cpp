@@ -106,37 +106,8 @@ Matrix4 Vehicle::animationTransformForPart(const DisplayPart& part,
         const BodyPose chassis = odeSimulation->chassisPose();
         const BodyPose wheel =
             odeSimulation->wheelPose(static_cast<std::size_t>(part.odeWheelIndex));
-        Matrix4 relative = identityMatrix();
-        const std::array<double, 3> delta = {wheel.position[0] - chassis.position[0],
-                                             wheel.position[1] - chassis.position[1],
-                                             wheel.position[2] - chassis.position[2]};
-        for (int row = 0; row < 3; ++row) {
-            const double odeLocalPosition = chassis.rotation[row] * delta[0] +
-                                            chassis.rotation[3 + row] * delta[1] +
-                                            chassis.rotation[6 + row] * delta[2];
-            const double modelLocalPosition = part.center[row] + (row == 2 ? modelOffsetZ : 0.0);
-            relative[12 + row] = odeLocalPosition - modelLocalPosition;
-            for (int column = 0; column < 3; ++column) {
-                relative[column * 4 + row] =
-                    chassis.rotation[row] * wheel.rotation[column] +
-                    chassis.rotation[3 + row] * wheel.rotation[3 + column] +
-                    chassis.rotation[6 + row] * wheel.rotation[6 + column];
-            }
-        }
-        Matrix4 base = identityMatrix();
-        base[5] = 0.0;
-        base[6] = -1.0;
-        base[9] = 1.0;
-        base[10] = 0.0;
-        Matrix4 inverseBase = identityMatrix();
-        static_cast<void>(invertAffineMatrix(base, inverseBase));
-        relative = multiplyMatrix4(relative, inverseBase);
-        const Matrix4 toOrigin =
-            translationMatrix({-part.center[0], -part.center[1], -part.center[2]});
-        const Matrix4 fromOrigin =
-            translationMatrix({part.center[0], part.center[1], part.center[2]});
-        part.cachedAnimationTransform =
-            multiplyMatrix4(fromOrigin, multiplyMatrix4(relative, toOrigin));
+        part.cachedAnimationTransform = openbus::rendering::makeOdeWheelAnimationTransform(
+            chassis, wheel, part.center, modelOffsetZ);
         part.animationCacheGeneration = animationGeneration;
         return part.cachedAnimationTransform;
     }

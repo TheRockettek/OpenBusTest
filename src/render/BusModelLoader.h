@@ -71,5 +71,8 @@ struct BusModelLoadResult {
 BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
                                 const std::filesystem::path& modelRoot,
                                 openbus::scripting::Vehicle& variables);
+BusModelLoadResult loadVehicleModel(const std::filesystem::path& configPath,
+                                    const std::filesystem::path& modelRoot,
+                                    openbus::scripting::Vehicle& variables);
 
 } // namespace openbus::rendering

@@ -371,6 +371,7 @@ struct Vehicle {
     AssetRequestManager* assets;
     VehiclePlacement placement;
     bool followsMapTrafficRoute = false;
+    bool mapTrafficRouteFinished = false;
     double modelOffsetZ = 0.0;
     double aiDeltaHeight = 0.0;
     double textureScale = 1;

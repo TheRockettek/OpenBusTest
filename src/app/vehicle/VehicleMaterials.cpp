@@ -1,10 +1,10 @@
 // Material state updates: CTC textures, material changes, interior lights.
 
 #include "app/vehicle/Vehicle.h"
+#include "app/vehicle/VehicleMaterialSelection.h"
 
 std::string Vehicle::resolveCtcTextureName(const std::string& textureName) const {
-    const auto found = ctcTextureReplacements.find(lower(textureName));
-    return found == ctcTextureReplacements.end() ? textureName : found->second;
+    return openbus::app::vehicle::resolveCtcTextureName(textureName, ctcTextureReplacements);
 }
 
 void Vehicle::updateMaterialChange(Batch& batch) {
@@ -67,10 +67,8 @@ void Vehicle::updateMaterialChange(Batch& batch) {
     const std::filesystem::path texturePath = batch.baseTexturePath;
     const std::string textureName = batch.baseTextureName;
     const int requestedLayer = batch.baseTextureLayer;
-    const int layer =
-        batch.textureArray
-            ? std::clamp(requestedLayer, 0, static_cast<int>(batch.textureArrayLayers) - 1)
-            : 0;
+    const int layer = openbus::app::vehicle::resolveTextureArrayLayer(
+        batch.textureArray, requestedLayer, batch.textureArrayLayers);
     const bool sameRequestedTexture =
         textureName == batch.textureName &&
         (texturePath == batch.texturePath || batch.textureLoadAttempted);

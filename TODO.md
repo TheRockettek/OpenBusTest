@@ -10,6 +10,7 @@ configuration behavior, and regression evidence all exist.
 - `[~]` Runtime or parser work exists, but validation or edge-case coverage is
   still incomplete.
 - `[ ]` Not implemented, or currently only parsed/consumed for compatibility.
+- `[o]` Explicitly outside the currently supported scope.
 
 ## 0. Establish the completion baseline
 
@@ -49,10 +50,9 @@ against one unambiguous support matrix.
   tuning is blocked on a validated vehicle/reference envelope; the probe alone
   does not establish native OMSI parity. Do not accept visual smoothness alone
   as proof of stability.
-- [~] Articulated configuration is parsed and exposed, but articulated
-  multi-body physics is not complete.
-- [ ] Implement articulated body sections, joints, collision, and rendering,
-  or explicitly remove articulated vehicles from the supported scope.
+- [o] Articulated configuration remains parseable for inspection, but
+  articulated vehicles are outside the currently supported scope; runtime
+  physics, collision, and rendering treat vehicles as single-body.
 
 Done when the physics probe is repeatable and reports numerical bounds, and
 both supported vehicles pass it without wheel shake or explosive motion.
@@ -62,15 +62,19 @@ both supported vehicles pass it without wheel shake or explosive motion.
 - [x] Wheel bindings, axle mapping, steering, suspension, and rotation are
   connected to the live ODE wheel bodies.
 - [x] Optional `OPENBUS_WHEELS_FROM_ODE=1` mode is documented and runnable.
-- [~] ODE wheel translation and orientation were corrected and smoke-tested,
-  but there is no dedicated renderer assertion for wheel-to-arch alignment.
+- [~] ODE wheel translation and orientation were corrected and smoke-tested.
+  Static default/ODE app captures of MAN DL05 and Studio Polygon 400MMC show no
+  obvious wheel-to-arch mismatch. `OpenBusCameraMathProbe` now asserts that the
+  ODE wheel-render transform places each mesh center on its wheel mount under
+  four chassis orientations; authored tire-to-arch clearance remains
+  asset-specific and unverified.
 - [x] Extend the deterministic two-/three-axle stress probe with authored
   wheel-pivot alignment bounds throughout steering, pitch, roll, and suspension
   motion; stationary alignment is checked separately.
 - [~] Deterministic two-/three-axle pose bounds cover dynamic wheel placement,
-  but side-by-side visual validation of the default and ODE animation paths
-  remains blocked on external vehicle assets and a safe capture destination;
-  the current capture routine writes into the existing screenshots directory.
+  and static default/ODE captures now run from isolated working directories.
+  Model-specific steering, bump, and motion comparisons remain unverified; the
+  current capture routine writes screenshots relative to its working directory.
 
 Done when MAN DL05 and E400 wheel poses pass stationary, steering, bump, and
 motion checks in both supported rendering modes.
@@ -81,25 +85,35 @@ motion checks in both supported rendering modes.
   lightmaps, nightmaps, transmaps, free/script textures, UV translation,
   material changes, and environment-map shader plumbing have runtime paths.
 - [~] Environment maps are wired through texture loading and a reflection
-  shader, but need representative assets and repeatable visual validation.
-- [~] Transparent and no-depth batches are sorted by render type and depth;
-  validate difficult overlapping glass/decal cases and reflection passes.
+  shader; a GPU probe now verifies directional sampling and blend opacity with
+  a generated map. Representative assets and in-game visual parity remain.
+- [~] Transparent batches sort back-to-front with render type as a tie-breaker,
+  and transmap triangles sort back-to-front within each batch. Probes cover
+  overlapping alpha/no-Z-write behavior, both ordering rules, and separate
+  reflection triangle accounting; asset-level glass/decal overlaps and actual
+  mirror-framebuffer parity remain to validate.
 - [x] Match `[matl_alpha]` mode-2 depth writes unless `[matl_noZwrite]` is
   authored; the OpenGL overlap probe verifies that a blended surface occludes
   later geometry and that the explicit no-depth-write override still works.
-- [~] Bump-map rendering now applies derivative-based normal-map shading from
-  the configured texture and strength. Representative OMSI visual parity and
-  parallax semantics still need validation.
-- [~] Runtime verification of `matl_change`, CTC, and texture-array layer
-  selection is blocked because the representative MAN DL05/E400 model assets
-  are not present in this checkout; the focused tests use parser fixtures only.
+- [~] Bump-map rendering now has GPU regression coverage for generated-map
+  directional shading, zero strength, and strength clamping. Representative
+  OMSI visual parity and parallax semantics still need validation.
+- [~] Parser-built material states verify `matl_change` item selection, and a
+  focused runtime-helper probe covers case-insensitive CTC replacement and
+  texture-array layer clamping. Representative MAN DL05/E400 asset parity and
+  end-to-end texture reload behavior remain unverified without those assets.
 - [~] A GPU regression verifies that a missing auxiliary transmap binds
-  texture zero after a prior material used a transmap; asynchronous delayed and
-  failed-load/recovery behavior still lacks an injected vehicle-runtime test.
+  texture zero after a prior material used a transmap. An asset-request probe
+  covers delayed decode completion, terminal decode failure, and a later valid
+  request; vehicle-side GL upload and same-entry retry/recovery still lack an
+  injected runtime test.
 - [~] Automated probes cover PNG RGBA, 32-bit alpha TGA, indexed/RLE TGA,
-  DXT1/DXT4 DDS, transmap alpha, lightmap, and free-texture rendering. JPEG,
-  DXT5, texture address modes, nightmaps, and environment maps still need
-  focused evidence.
+  DXT1/DXT4/DXT5 DDS, transmap alpha, lightmap, and free-texture rendering.
+  JPEG decoding is covered by a compact grayscale fixture, and all five
+  texture address modes are checked from CFG parsing through GL enum mapping.
+  A GPU material probe verifies nightmap overlays, black-texel neutrality, and
+  zero-strength behavior, plus directional environment-map sampling and blend
+  opacity with a generated map.
 
 Done when every supported material keyword has a documented runtime semantic,
 representative assets exercise it, and screenshots/logs or focused tests prove
@@ -127,9 +141,10 @@ it.
   transparent backgrounds. Runtime probes cover isolated text data, but visual
   validation against installed directional-sign assets remains.
 - [~] Implemented the basic `[illumination_interior]`/`[interiorlight]`
-  runtime path: assigned mesh groups now receive bounded controller-driven
-  emissive colour. Positional falloff and `[light_enh]`, `[light_enh_2]`, and
-  `[spotlight]` runtime semantics remain incomplete.
+  runtime path: assigned mesh groups receive controller-driven point-light
+  shading. A GPU probe verifies light color isolation, zero strength, and
+  distance attenuation. OMSI intensity parity and `[light_enh]`, `[light_enh_2]`,
+  and `[spotlight]` runtime semantics remain incomplete.
 - [~] A focused E400 display/light regression remains blocked on the external
   E400 model CFG/assets, which are not included in this checkout; parser and
   runtime probes do not replace the requested visual comparison.
@@ -184,8 +199,9 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   illumination groups, and entry/exit path points. The `[paths]` CFG is now
   loaded for indexed path points/links, step-sound packs, and room-height
   transitions. `[number]` and `[registration_list]` files are now loaded
-  separately in order and paired by entry index; AI sound selection remains
-  incomplete.
+  separately in order and paired by entry index. AI vehicles select
+  `[sound_ai]` when configured and fall back to `[sound]`; broader AI sound
+  playback coverage remains incomplete.
 - [~] `[registration_automatic]`, `[registration_free]`, and
   `[kmcounter_init]` now seed runtime registration and split odometer state.
   Explicit registration/index overrides and deterministic automatic numbers
@@ -201,12 +217,13 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
 - [ ] Complete registration persistence and full selection UI; implement or
   explicitly scope out AI/network sections, route/timetable/HOF data, and
   vehicle-specific view systems.
-- [ ] Implement sound configuration coverage beyond the current player sound
-  runtime path, including selecting `sound_ai` for AI vehicles.
-- [ ] Investigate the 1,007 unknown sound-trigger skips in the Cotterell run,
-  especially `ev_bremse_hup` (376), ABS wheel-state triggers (610 total),
-  `ev_bremszischen`, `ev_kompressor_ein`, and `ev_schluessel_steck`; determine
-  which should map to existing sound events versus remain explicitly unsupported.
+- [~] AI vehicles select the configured `sound_ai` bank with a player-bank
+  fallback when it is absent; `VehicleConfigProbe` verifies both cases. Broader
+  AI sound-event playback and sound-bank compatibility remain incomplete.
+- [~] Unknown sound triggers are ignored rather than played; `SoundEngineProbe`
+  verifies the unknown-event no-op. The listed Cotterell names and counts are
+  absent from this checkout and its retained captures, so mapping them to
+  configured events remains blocked on the source sound CFGs or an event trace.
 - [ ] Add diagnostics that distinguish "recognized and active" from
   "recognized but ignored" for every parsed configuration record.
 
@@ -226,8 +243,9 @@ by parser alignment and should not be described as supported:
   strings, initial plate-text rendering, and live odometer publication are
   active; parser coverage remains in
   `OpenBusVehicleConfigProbe`.
-- AI/network vehicle sections, coupling/cable behavior, and articulated
-  multi-body physics despite the articulated flag being parsed.
+- AI/network vehicle sections and coupling/cable behavior remain absent.
+  Articulated multi-body vehicles are explicitly outside the currently
+  supported scope; the parsed flag does not enable articulated runtime behavior.
 - Non-OMSI font edge cases such as Windows-1252 glyph validation and remaining
   text format semantics remain. `[texttexture_enh]` alignments 0–5 and grid
   spacing are handled by the text runtime. `[interiorlight]`, `[light_enh]`,
@@ -292,8 +310,9 @@ for alignment is not mistaken for supporting it.
   one or more shader, blending, controller, or texture-binding stages remain
   incomplete. `[matl_transmap]` alpha sampling is implemented, but its
   interaction with blended depth behavior still needs regression coverage.
-- [ ] Define the behavior of `[matl_item]` instead of treating it as a
-  no-op material marker.
+- [~] Vehicle runtime selects controller-driven `[matl_item]` states and
+  applies supported auxiliary material properties. Independent item texture
+  replacement and complete native item scope remain unimplemented.
 - [~] Apply complete `[rendertype]`, `[fixed]`, and `[absheight]` semantics.
   Scenery `[rendertype]` now routes recognized named/numeric categories, and
   model `[fixed]` suppresses animation-parent inheritance while preserving
@@ -304,9 +323,11 @@ for alignment is not mistaken for supporting it.
   `[nocollision]` now affect the bus ODE collider. Scenery-object collision
   construction and shadow grounding against elevated road surfaces remain
   incomplete.
-- [~] Implement basic `[illumination_interior]`/`[interiorlight]` emission,
-  controller variables, and mesh assignments. `[light_enh]`, `[light_enh_2]`,
-  and `[spotlight]` geometry, falloff, and render ordering remain pending.
+- [~] Basic `[illumination_interior]`/`[interiorlight]` controller-driven
+  point-light shading, mesh assignments, and distance attenuation are active;
+  a GPU probe covers color, zero strength, and near/far attenuation. OMSI
+  intensity parity remains unverified. `[light_enh]`, `[light_enh_2]`, and
+  `[spotlight]` geometry and render ordering remain pending.
   `[light_enh]` and `[light_enh_2]` preserve all required numeric fields and
   accept their optional bitmap when present; enhanced-light runtime behavior is
   still pending.
@@ -324,8 +345,9 @@ for alignment is not mistaken for supporting it.
   nineteen fields for parser alignment.
 - [ ] Apply `[VFDmaxmin]` display bounds and `[tex_detail_factor]` to display
   and texture rendering.
-- [ ] Implement runtime selection/substitution for `[CTC]` and `[CTCTexture]`
-  beyond retaining their parsed mappings.
+- [~] `[CTCTexture]` replacements are applied case-insensitively to base mesh
+  texture names and the resolver is unit-tested. `[CTC]` template/paint-scheme
+  selection and representative-asset substitution remain unsupported.
 - [ ] Add the documented texture-change records `[texchanges]`,
   `[newtexchangemaster]`, and `[entries]`, including count validation and
   runtime replacement behavior.
@@ -486,18 +508,24 @@ for the explicit boundary.
 - [x] Use `[sound_ai]` for AI vehicles and apply `[ai_deltaheight]` to their
   placement. Focused vehicle configuration coverage verifies AI/player
   selection and preserves fallback to `[sound]`.
-- [~] Spawn configured `.bus` entries from modern `ailists.cfg` groups on
-  `[path]` type-0 road splines. `.ovh`/legacy vehicle-list formats, complete
+- [~] Spawn random road traffic from configured `.ovh` entries in modern
+  `ailists.cfg` road groups on `[path]` type-0 road splines; `.bus` vehicles
+  are reserved for the separate timetable-route AI bus pool. Legacy
+  vehicle-list formats, actual timetable departure-time dispatch, complete
   group/depot selection, native density semantics, and population maintenance
-  remain incomplete. Startup now retries a bounded number of candidates over
-  the available routes to approach the requested population; looping actors
-  wrap spawn distances before open-route endpoints rather than stacking at the
-  end. The traffic runtime probe verifies repeated road-route placement and
-  movement across linked splines.
-- [~] AI vehicles advance at provisional fixed speed on open car-spline routes
-  extended with a reverse traversal, so they turn around on the same splines
-  rather than teleporting to the start. Validated driving decisions, traffic
-  interactions, and native population lifecycle behavior remain incomplete.
+  remain incomplete. Startup retries a bounded number of candidates over
+  available routes; looping actors wrap spawn distances before open-route
+  endpoints rather than stacking at the end. The traffic runtime probe verifies
+  repeated road-route placement and movement across linked splines.
+- [~] AI vehicles advance at provisional fixed speed along directed authored
+  lane paths, including scenery junction paths, matching the cyan F2 geometry.
+  Matching endpoints connect within 0.5 m horizontally and vertically; the
+  straightest compatible branch is selected. Actors retire at unconnected ends
+  instead of bouncing back; genuine loops retain forward travel. Spawns rotate
+  across each spline's authored lanes. On Cotterell, 62 of 915 lanes end
+  unconnected, and 3 of those ends lie within 3 m of an aligned start (logged at
+  map load). Validated driving decisions, traffic interactions, and native
+  population lifecycle behavior remain incomplete.
 - [x] Parse `drivers.txt` model paths and `.hum` fields, and distinguish
   type-1 human paths from type-0 road paths.
 - [~] Spawn and move human actors on nearby type-1 spline routes using

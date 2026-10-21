@@ -109,6 +109,18 @@ int main() {
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
 
+    resetFrameTriangleCount();
+    resetFrameReflectionTriangleCount();
+    const ModelMaterial counterMaterial;
+    drawModelBatch(buffer, 3, counterMaterial, {1, 1, 1}, 1.0, 0);
+    setFrameTriangleCountReflectionPass(true);
+    drawModelBatch(buffer, 3, counterMaterial, {1, 1, 1}, 1.0, 0);
+    setFrameTriangleCountReflectionPass(false);
+    if (frameTriangleCount() != 1 || frameReflectionTriangleCount() != 1) {
+        std::cerr << "reflection-pass triangles were not counted separately\n";
+        passed = false;
+    }
+
     material.texture = blue;
     material.textured = true;
     const auto texturedPixel = draw(material, {1, 1, 1}, 1.0);
@@ -178,6 +190,45 @@ int main() {
         passed = false;
     }
 
+    auto environmentVertices = vertices;
+    constexpr float normalX = 0.258819F;
+    constexpr float normalZ = 0.965926F;
+    for (std::size_t index = 0; index < environmentVertices.size(); index += 13) {
+        environmentVertices[index + 6] = normalX;
+        environmentVertices[index + 7] = 0.0F;
+        environmentVertices[index + 8] = normalZ;
+    }
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(environmentVertices), environmentVertices.data(),
+                  GL_STATIC_DRAW);
+    GLuint environment = 0;
+    glGenTextures(1, &environment);
+    glBindTexture(GL_TEXTURE_2D, environment);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    constexpr std::array<std::uint8_t, 8> environmentPixels = {
+        0, 255, 0, 255, 255, 0, 0, 255};
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 environmentPixels.data());
+    invalidateTextureBindings();
+    setModelViewMatrix(identityMatrix());
+    glClearColor(0, 0, 64.0F / 255.0F, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    drawEnvironmentBatch(buffer, 3, environment, 0.5);
+    glDisable(GL_BLEND);
+    glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+    if (!close(pixel[0], 128) || !close(pixel[1], 0) || !close(pixel[2], 32) ||
+        !close(pixel[3], 191)) {
+        std::cerr << "environment reflection did not sample the expected direction and opacity: "
+                  << static_cast<int>(pixel[0]) << ',' << static_cast<int>(pixel[1]) << ','
+                  << static_cast<int>(pixel[2]) << ',' << static_cast<int>(pixel[3]) << '\n';
+        passed = false;
+    }
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
+
     material = {};
     material.texture = white;
     material.textured = true;
@@ -192,6 +243,32 @@ int main() {
     }
     const GLuint red = texture({220, 0, 0, 255});
     const GLuint black = texture({0, 0, 0, 255});
+    material = {};
+    material.texture = blue;
+    material.textured = true;
+    const auto nightmapBasePixel = draw(material, {1, 1, 1}, 1.0);
+    material.nightmap = black;
+    material.useNightmap = true;
+    material.nightmapStrength = 1.0F;
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    if (pixel != nightmapBasePixel) {
+        std::cerr << "black nightmap texels changed the base material\n";
+        passed = false;
+    }
+    material.nightmap = red;
+    material.nightmapStrength = 0.0F;
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    if (pixel != nightmapBasePixel) {
+        std::cerr << "zero nightmap strength changed the base material\n";
+        passed = false;
+    }
+    material.nightmapStrength = 1.0F;
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    if (pixel[0] <= nightmapBasePixel[0] + 60 || pixel[1] >= nightmapBasePixel[1] ||
+        pixel[2] >= nightmapBasePixel[2]) {
+        std::cerr << "nightmap emission did not brighten the authored red overlay\n";
+        passed = false;
+    }
     for (const GLuint albedo : {red, black, blue}) {
         for (int source = 0; source < 3; ++source) {
             material = {};
@@ -337,6 +414,36 @@ int main() {
             std::cerr << "camera lighting probe did not exercise directional lighting\n";
             passed = false;
         }
+        if (source == 1) {
+            const ModelMaterial bumpedMaterial = material;
+            material.useBumpmap = false;
+            material.bumpmap = 0;
+            const auto unperturbed = drawLighting();
+            material = bumpedMaterial;
+            material.bumpmapStrength = 0.0F;
+            const auto zeroStrength = drawLighting();
+            if (zeroStrength != unperturbed) {
+                std::cerr << "zero bump-map strength changed directional shading\n";
+                passed = false;
+            }
+            material.bumpmapStrength = 1.0F;
+            const auto fullStrength = drawLighting();
+            if (fullStrength == unperturbed) {
+                std::cerr << "bump-map normal did not affect directional shading\n";
+                passed = false;
+            }
+            material.bumpmapStrength = 1.5F;
+            if (drawLighting() != fullStrength) {
+                std::cerr << "bump-map strength above one was not clamped\n";
+                passed = false;
+            }
+            material.bumpmapStrength = -0.5F;
+            if (drawLighting() != zeroStrength) {
+                std::cerr << "negative bump-map strength was not clamped to zero\n";
+                passed = false;
+            }
+            material = bumpedMaterial;
+        }
         for (int frame = 0; frame < 3; ++frame) {
             drawTextureQuad(blue, -1, -1, 2, 2);
             const auto afterHud = drawLighting();
@@ -377,12 +484,38 @@ int main() {
     }
     setModelViewMatrix(identityMatrix());
     setLightingViewMatrix(identityMatrix());
+    ModelMaterial interiorLightMaterial;
+    interiorLightMaterial.texture = white;
+    interiorLightMaterial.textured = true;
+    const std::array<double, 3> interiorSurfaceColor = {0.3, 0.3, 0.3};
+    const auto unlitInteriorPixel = draw(interiorLightMaterial, interiorSurfaceColor, 1.0);
+    interiorLightMaterial.useInteriorLight = true;
+    interiorLightMaterial.interiorLightCount = 1;
+    interiorLightMaterial.interiorLightViewPositions[0] = {0.0F, 0.0F, 0.0F};
+    interiorLightMaterial.interiorLightColors[0] = {1.0F, 0.0F, 0.0F};
+    interiorLightMaterial.interiorLightStrengths[0] = 8.0F;
+    const auto nearInteriorPixel = draw(interiorLightMaterial, interiorSurfaceColor, 1.0);
+    interiorLightMaterial.interiorLightViewPositions[0] = {0.0F, 0.0F, 9.0F};
+    const auto farInteriorPixel = draw(interiorLightMaterial, interiorSurfaceColor, 1.0);
+    if (nearInteriorPixel[0] <= unlitInteriorPixel[0] + 10 ||
+        nearInteriorPixel[1] != unlitInteriorPixel[1] ||
+        nearInteriorPixel[2] != unlitInteriorPixel[2] ||
+        farInteriorPixel[0] <= unlitInteriorPixel[0] ||
+        farInteriorPixel[0] >= nearInteriorPixel[0]) {
+        std::cerr << "interior point-light color or distance attenuation was incorrect\n";
+        passed = false;
+    }
+    interiorLightMaterial.interiorLightStrengths[0] = 0.0F;
+    if (draw(interiorLightMaterial, interiorSurfaceColor, 1.0) != unlitInteriorPixel) {
+        std::cerr << "zero interior-light strength changed the surface\n";
+        passed = false;
+    }
     if (glGetError() != GL_NO_ERROR) {
         std::cerr << "OpenGL material probe failed\n";
         passed = false;
     }
-    const GLuint textures[] = {blue, white, mask, red, black, normalMap};
-    glDeleteTextures(6, textures);
+    const GLuint textures[] = {blue, white, mask, red, black, normalMap, environment};
+    glDeleteTextures(7, textures);
     pglDeleteBuffers(1, &indexBuffer);
     pglDeleteBuffers(1, &buffer);
     shutdownCoreRenderer();

@@ -113,7 +113,21 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
     }
     const double trafficTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
     for (TrafficVehicleState& trafficVehicle : trafficVehicles_) {
-        openbus::map::advanceMapTrafficActorLooping(trafficVehicle.actor, trafficTimeStep);
+        if (trafficVehicle.vehicle->mapTrafficRouteFinished) {
+            continue;
+        }
+        if (!openbus::map::advanceMapTrafficActor(trafficVehicle.actor, trafficTimeStep)) {
+            trafficVehicle.vehicle->mapTrafficRouteFinished = true;
+            trafficVehicle.routeCompleted = true;
+            const int finalSplineId =
+                trafficVehicle.actor.route.segments.back().spline.placement.splineId;
+            gameLog.Log(std::string("Map ") +
+                        (trafficVehicle.isBus ? "AI bus" : "road AI vehicle") +
+                        " unloaded at unconnected lane end: " +
+                        trafficVehicle.actor.modelPath +
+                        ", final spline=" + std::to_string(finalSplineId));
+            continue;
+        }
         const std::optional<openbus::map::MapTrafficPose> pose =
             openbus::map::sampleMapTrafficRoute(trafficVehicle.actor.route,
                                                 trafficVehicle.actor.distanceMeters,
@@ -128,7 +142,9 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
             openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians);
     }
     for (HumanTrafficState& human : humanTrafficActors_) {
-        openbus::map::advanceMapTrafficActorLooping(human.actor, trafficTimeStep);
+        if (human.populationEnabled) {
+            openbus::map::advanceMapTrafficActorLooping(human.actor, trafficTimeStep);
+        }
     }
     updateScripts();
     if (drivetrainDiagnosticsEnabled_) {
@@ -154,30 +170,48 @@ void RenderLoop::updateScripts() {
     TraceScope trace("script", "RenderLoop::updateScripts");
     const auto updateAllScripts = [&] {
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-            vehicle->updateScripts(vehicle.get() != playerVehicle_);
+            if (!vehicle->mapTrafficRouteFinished) {
+                vehicle->updateScripts(vehicle.get() != playerVehicle_);
+            }
         }
         if (mapRenderer_ != nullptr) {
             mapRenderer_->updateScripts();
         }
     };
-    const double renderTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
     if (scriptRateHz_ <= 0.0) {
-        simulationState_.sharedVariables().set("timegap", renderTimeStep);
+        simulationState_.sharedVariables().set(
+            "timegap", std::clamp(frameTimeStep_, 0.0, MAX_SCRIPT_FRAME_DELTA_SECONDS));
         updateAllScripts();
         return;
     }
 
     const double scriptTimeStep = 1.0 / scriptRateHz_;
-    scriptAccumulator_ += renderTimeStep;
-    int ticks = 0;
-    while (scriptAccumulator_ >= scriptTimeStep && ticks < MAX_SCRIPT_CATCH_UP_TICKS) {
-        scriptAccumulator_ -= scriptTimeStep;
+    const ScriptTickSchedule schedule =
+        scheduleScriptTicks(scriptAccumulator_, frameTimeStep_, scriptTimeStep);
+    scriptAccumulator_ = schedule.remainderSeconds;
+    scriptTicksSinceDiagnostic_ += schedule.ticks;
+    droppedScriptTicksSinceDiagnostic_ += schedule.droppedTicks;
+    droppedScriptTimeSinceDiagnostic_ += schedule.droppedSeconds;
+    for (int tick = 0; tick < schedule.ticks; ++tick) {
         simulationState_.sharedVariables().set("timegap", scriptTimeStep);
         updateAllScripts();
-        ++ticks;
     }
-    if (ticks == MAX_SCRIPT_CATCH_UP_TICKS && scriptAccumulator_ >= scriptTimeStep) {
-        scriptAccumulator_ = std::fmod(scriptAccumulator_, scriptTimeStep);
+
+    const double diagnosticTime = glfwGetTime();
+    if (lastScriptDiagnosticTime_ < 0.0) {
+        lastScriptDiagnosticTime_ = diagnosticTime;
+    } else if (diagnosticTime - lastScriptDiagnosticTime_ >= 1.0) {
+        if (droppedScriptTicksSinceDiagnostic_ > 0) {
+            gameLog.Log("Script scheduler executed " +
+                        std::to_string(scriptTicksSinceDiagnostic_) + " ticks and dropped " +
+                        std::to_string(droppedScriptTicksSinceDiagnostic_) + " ticks (" +
+                        std::to_string(droppedScriptTimeSinceDiagnostic_) +
+                        " s) during the last second");
+        }
+        lastScriptDiagnosticTime_ = diagnosticTime;
+        scriptTicksSinceDiagnostic_ = 0;
+        droppedScriptTicksSinceDiagnostic_ = 0;
+        droppedScriptTimeSinceDiagnostic_ = 0.0;
     }
     // Fixed script ticks must not leak their timestep into later mouse handlers.
     simulationState_.sharedVariables().set("timegap", frameTimeStep_);

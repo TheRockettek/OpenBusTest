@@ -257,8 +257,9 @@ still required.
 
 ### Environment-map materials
 
-`[matl_envmap]` has a runtime loading and shader path, but representative visual
-validation and shader/draw regression coverage are still incomplete.
+`[matl_envmap]` has a runtime loading and shader path. A generated-map GPU
+probe verifies directional sampling and blend opacity, but representative
+visual parity remains unverified.
 
 **Steps:**
 
@@ -280,6 +281,59 @@ These captures are visual evidence only, not proof that the reflection equation
 matches OMSI. `[matl_alpha]` mode-2 depth writes are covered by the automated
 OpenGL overlap regression; screenshots remain useful for representative
 vehicle-specific visual validation.
+
+### Bump-map materials
+
+`[matl_bumpmap]` uses derivative-based normal-map shading. The material GPU
+probe checks directional shading with a generated map, zero strength, and
+strength clamping; representative visual parity and parallax semantics remain
+unverified.
+
+**Steps:**
+
+1. Select a model surface with a known bump texture and capture a close-up with
+   directional lighting.
+2. Compare the surface against the same material with bump strength set to
+   zero, keeping view and lighting fixed.
+3. Capture a second angle to check for unstable tangent orientation or seams.
+
+**Expected screenshots:**
+
+- The bump map changes diffuse shading without replacing the base texture.
+- Zero strength matches the unperturbed material.
+- No obvious discontinuities appear across adjacent triangles or UV seams.
+
+**Evidence:**
+
+- `bumpmap-enabled.png`
+- `bumpmap-zero-strength.png`
+- `bumpmap-second-angle.png`
+
+### Interior point lights
+
+`[illumination_interior]` assignments and `[interiorlight]` controller-driven
+point-light shading include distance attenuation. The material GPU probe checks
+light color, zero strength, and near/far attenuation, but does not exercise a
+vehicle's live controller against representative assets.
+
+**Steps:**
+
+1. Capture an interior mesh assigned to a known light with its controller off.
+2. Enable that controller and capture the same framing and exposure.
+3. Compare a nearby surface with a farther surface in the same light group.
+
+**Expected screenshots:**
+
+- Enabling the controller changes the assigned mesh without lighting unrelated
+  colors or surfaces.
+- The nearby surface receives more light than the farther surface.
+- The light contribution returns to baseline when its controller is disabled.
+
+**Evidence:**
+
+- `interior-light-off.png`
+- `interior-light-on.png`
+- `interior-light-distance.png`
 
 ## Review checklist
 

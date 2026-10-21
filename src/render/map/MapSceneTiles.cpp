@@ -315,12 +315,67 @@ void MapSceneLoader::buildTileContent() {
                 return;
             }
             const std::vector<std::size_t>& batchIndexes = loadSceneryAsset(configPath);
+            const std::string assetKey = configPath.lexically_normal().generic_string();
+            const bool absoluteHeight = absoluteHeightSceneryAssets.contains(assetKey);
+            const double worldZ =
+                openbus::map::mapSceneryWorldHeight(localZ, terrainHeightOffset, absoluteHeight);
+            const auto trafficPaths = sceneryTrafficPaths.find(assetKey);
+            if (trafficPaths != sceneryTrafficPaths.end() && !trafficPaths->second.empty()) {
+                openbus::map::MapSceneryPose pathPose;
+                pathPose.x = worldX;
+                pathPose.y = worldY;
+                pathPose.z = worldZ;
+                pathPose.rotationDegrees = rotationDegrees;
+                pathPose.rotationCount = rotationCount;
+                if (orientationMatrix != nullptr) {
+                    std::copy(orientationMatrix->begin(), orientationMatrix->end(),
+                              pathPose.orientationMatrix.begin());
+                    pathPose.hasOrientationMatrix = true;
+                }
+                const auto toWorldPosition = [&](const std::array<double, 3>& localPosition) {
+                    std::array<double, 3> position =
+                        openbus::map::transformMapSceneryVector(pathPose, localPosition);
+                    position[0] += worldX;
+                    position[1] += worldY;
+                    position[2] += worldZ;
+                    return position;
+                };
+                for (const SceneryObjectTrafficPath& path : trafficPaths->second) {
+                    const std::vector<openbus::map::MapSplineSample> samples =
+                        openbus::map::tessellateMapSpline(path.startPosition[0],
+                                                          path.startPosition[1],
+                                                          path.headingDegrees, path.length,
+                                                          path.radius);
+                    if (samples.size() < 2) {
+                        recordSkipped(skipped, "scenery traffic paths with invalid geometry",
+                                      description + " config=" +
+                                          configPath.filename().string());
+                        continue;
+                    }
+                    TrafficPathDebugSegment segment;
+                    segment.points.reserve(samples.size());
+                    for (const openbus::map::MapSplineSample& sample : samples) {
+                        const double localZ = openbus::map::mapSplineElevation(
+                            path.startPosition[2], path.length, path.gradientStartPercent,
+                            path.gradientEndPercent, std::nullopt, sample.distance);
+                        segment.points.push_back(toWorldPosition({sample.x, sample.y, localZ}));
+                    }
+                    segment.pathTypeCode = path.pathTypeCode;
+                    segment.tileX = tileX;
+                    segment.tileY = tileY;
+                    if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
+                        openbus::map::MapTrafficRouteSegment lane;
+                        lane.points = segment.points;
+                        impl_->roadTrafficLaneNetwork.addSegment(std::move(lane));
+                    }
+                    impl_->sceneryTrafficPathSegments.push_back(segment);
+                }
+            }
             if (editorOnlySceneryAssets.contains(configPath.lexically_normal().generic_string())) {
                 recordSkipped(skipped, "map scenery placements marked [onlyeditor]",
                               description + " config=" + configPath.filename().string());
                 return;
             }
-            const std::string assetKey = configPath.lexically_normal().generic_string();
             auto lodSet = sceneryLodThresholdSetByAsset.find(assetKey);
             if (lodSet == sceneryLodThresholdSetByAsset.end()) {
                 const std::size_t index = impl_->sceneryLodThresholdSets.size();
@@ -365,9 +420,6 @@ void MapSceneLoader::buildTileContent() {
                 scriptStateIndex = impl_->sceneryScriptStates.size();
                 impl_->sceneryScriptStates.push_back(std::move(scriptState));
             }
-            const bool absoluteHeight = absoluteHeightSceneryAssets.contains(assetKey);
-            const double worldZ =
-                openbus::map::mapSceneryWorldHeight(localZ, terrainHeightOffset, absoluteHeight);
             if (batchIndexes.empty()) {
                 recordSkipped(skipped, "scenery placements with no renderable asset batches",
                               description + " config=" + configPath.filename().string());

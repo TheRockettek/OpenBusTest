@@ -1,8 +1,10 @@
 #pragma once
 
 #include "map/MapConfigLoader.h"
+#include "map/MapSplineProfile.h"
 #include "map/MapTrafficRuntime.h"
 
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -27,6 +29,13 @@ struct MapRenderStats {
     std::size_t totalRoadBatches = 0;
 };
 
+struct TrafficPathDebugSegment {
+    std::vector<std::array<double, 3>> points;
+    double pathTypeCode = 0.0;
+    int tileX = 0;
+    int tileY = 0;
+};
+
 class MapRenderer {
   public:
     MapRenderer(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
@@ -44,12 +53,21 @@ class MapRenderer {
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId) const;
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId,
                                                                    int pathTypeCode) const;
+    std::optional<openbus::map::MapTrafficRoute> buildDrivingRoute(
+        int splineId, std::size_t laneSelector = 0) const;
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
+    std::vector<int> trafficRouteStartSplineIds(int pathTypeCode) const;
+    std::optional<openbus::map::MapTrafficSplineEndpointStatus> trafficSplineEndpointStatus(
+        int splineId, int pathTypeCode) const;
+    std::vector<openbus::map::MapSplinePathOffset> trafficSplinePathOffsets(
+        int splineId, int pathTypeCode) const;
+    const std::vector<TrafficPathDebugSegment>& sceneryTrafficPathSegments() const;
     std::optional<openbus::map::MapTrafficActor>
     createTrafficActor(int splineId, std::string modelPath, double speedMetersPerSecond,
                        double laneOffsetMagnitudeMeters,
                        std::optional<std::string> driverModelPath = std::nullopt,
-                       std::optional<int> pathTypeCode = std::nullopt) const;
+                       std::optional<int> pathTypeCode = std::nullopt,
+                       std::size_t laneSelector = 0) const;
     bool addTrafficActor(openbus::map::MapTrafficActor actor);
     std::size_t updateTrafficActors(double elapsedSeconds);
     const std::vector<openbus::map::MapTrafficActor>& trafficActors() const;

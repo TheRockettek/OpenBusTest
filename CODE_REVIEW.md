@@ -1,37 +1,42 @@
 # OpenBus Code Review
 
-**Review date:** 2026-10-07
+**Review date:** 2026-10-21
 **Scope:** First-party C++ architecture and hot paths: application timing/input, physics,
 map parsing/placement/collision/rendering, vehicle and texture loading, script runtime,
 renderer state/resource ownership, CMake/presets, regression probes, helper scripts, and
-support documentation. The current working-tree changes were included. Third-party internals
-and generated source were excluded; local build/test output was used for validation. This is
-not an exhaustive audit of every asset format or a certification of OMSI compatibility.
+support documentation. The current working-tree changes were included; the source inventory
+contains 142 first-party C++ source/header files. Third-party internals and generated source
+were excluded. This is not an exhaustive audit of every asset format or a certification of
+OMSI compatibility.
 
 ## Executive summary
 
-The four previously documented correctness/resource-handling findings have been fixed and
-regression-tested: optional AI configuration on Windows, script-texture bounds, the exterior
-camera's zero-distance singularity, and invalid physics rates. The current Windows Release
-build succeeds and all **27 of 27 CTest probes pass**, including the repaired collision-streaming
-probe.
+The previously documented correctness/resource-handling fixes remain covered: optional AI
+configuration on Windows, script-texture bounds, the exterior camera's zero-distance
+singularity, and invalid physics rates. The current Windows Release build succeeds and all
+**50 of 50 CTest probes pass**. Recent CMake module-library refactoring and focused material,
+sorting, and texture-selection probes are included in this baseline.
 
-The most important follow-ups are not just draw-call optimizations:
+The previously highest-priority process-safety defect is fixed: the launch helpers and loading
+benchmark no longer terminate processes by image name, and they refuse to proceed while
+OpenBus is already running. `run.bat` now performs its documented build-and-launch flow. Script
+catch-up overflow is now explicitly bounded, accounted for, diagnosed, and regression-tested.
+
+The most important remaining follow-ups are not just draw-call optimizations:
 
 | Priority | Area | Main risk / next action |
 | --- | --- | --- |
-| High | Script timing | The eight-tick catch-up cap drops excess accumulated time after a hitch; extract and test the scheduler. |
-| High | Collision-streaming latency | Terrain/road/scenery mesh preparation is asynchronous, but ODE insertion/removal remains on the simulation thread and may still stall; measure publication and contact readiness. |
-| High | Advertised Linux support | The shared CMake project unconditionally links Windows Lua binaries. |
-| Medium | Renderer correctness | Raw VAO/buffer binds bypass the state cache; DXT5 capability detection uses a query invalid in the requested core profile. |
-| Medium | Memory / hot-path copies | Dynamic texture revisions are checked after copying pixels; asset caches retain CPU payloads and GPU resources without a byte-based residency policy. |
+| Medium | Collision-streaming latency | Terrain/road/scenery mesh preparation is asynchronous, but ODE insertion/removal remains on the simulation thread and may still stall; measure publication and contact readiness. |
+| Medium | Renderer correctness | Core-profile DXT5 capability detection still uses an invalid extension query. |
+| Medium | Memory / hot-path copies | Vehicle dynamic textures still copy unchanged snapshots before revision checks; asset caches retain CPU payloads and GPU resources without a byte-based residency policy. |
 | Medium | Map scalability | A shared-context worker rebuilds the full replacement geometry window on tile crossings; startup is synchronous, overlapping tiles are rebuilt, and global parsed map/placement data remains CPU-resident. |
-| Medium | Maintainability / verification | Large orchestration units and duplicated CMake source lists impede isolated tests; add scheduler/GL integration coverage. |
+| Medium | Build/docs verification | The production sources now use module libraries, but scheduler/serializer tests and clean Linux validation remain absent; several helper/setup instructions are still stale. |
 
-Findings below distinguish confirmed defects from architectural scaling risks. No fresh
-render benchmark, GPU timing, memory profile, Linux build, sanitizer run, or full
-OpenGL-context streaming test was performed. No speedup percentages or measured hitch durations
-are claimed. Active-window geometry residency, background renderer preparation, and
+Findings below distinguish confirmed defects from architectural scaling risks. The full
+configured CTest suite includes material-rendering and compute-culling GPU probes, but no
+full application/map-streaming context test, Linux build, sanitizer run, fresh benchmark,
+GPU timing study, or memory profile was performed. No speedup percentages or measured hitch
+durations are claimed. Active-window geometry residency, background renderer preparation, and
 geometry-constrained background collision preparation are implemented, but no in-game
 visual/performance/contact comparison has yet been run.
 
@@ -110,58 +115,51 @@ remain responsible for selecting a practical rate.
 
 ### High priority
 
-#### 1. The advertised Linux build links Windows-only Lua binaries
+#### 1. Platform-specific Lua linkage — Linux linkage is now conditional; Linux is unverified
 
 **Location:** `CMakeLists.txt` (`OpenBusLua` imported target and post-build copy).
 
-The target unconditionally imports `src/osc/lua51.lib` and `src/osc/lua51.dll`, links that
-target into OpenBus and the script-runtime probe, and copies the DLL. These are Windows
-artifacts, while the README documents Linux builds using the same CMake project. A clean Linux
-build therefore cannot link the advertised targets.
+The earlier unconditional Windows import has been corrected. Windows uses the bundled
+`lua51.lib`/`lua51.dll`; non-Windows builds now locate a system `lua5.1` or `lua51` library,
+and the runtime-copy step is Windows-only. This removes the confirmed Windows-artifact link
+failure, but no Linux configure/build/test was run in this review, so advertised Linux support
+is not certified.
 
-**Suggested fix:** Build or discover a platform-native Lua library and make the imported target
-and runtime-copy step platform-specific; verify the Linux configure, build, and CTest path.
+**Follow-up:** Validate the native Lua headers/library pairing with a clean Linux configure,
+build, and CTest run.
 
-#### 2. One-tick script cap discards elapsed script time
+#### 2. Resolved (2026-10-21): Script catch-up behavior is bounded and observable
 
-**Location:** `src/app/RenderLoop.cpp:142` and `4605–4634`
-(`MAX_SCRIPT_CATCH_UP_TICKS` and `RenderLoop::updateScripts`);
-the stated fixed-rate behavior is in `README.md` under `OPENBUS_SCRIPT_HZ`.
+**Locations:** `src/app/ScriptTickScheduler.h`, `src/app/RenderLoopSimulation.cpp`,
+`tests/ScriptSchedulerProbe.cpp`, and `README.md` under `OPENBUS_SCRIPT_HZ`.
 
-The current cap is one tick per rendered frame. If scripts are configured at 60 Hz
-while rendering at 30 FPS, each frame can accumulate about two ticks, but the loop runs one and
-the `std::fmod` branch discards the other. Scripts then advance at about half the configured
-rate while receiving `Timegap=1/60`; hitches drop still more time. This contradicts the documented
-bounded catch-up behavior and affects vehicle and scenery script state. Both launch/profile
-helpers currently set `OPENBUS_SCRIPT_HZ=60`, so this is relevant to normal launches, not just
-an unusual API configuration.
+The scheduler now lives in a context-free helper. It clamps elapsed frame time to 250 ms,
+executes at most eight fixed ticks per update, retains the fractional remainder, and reports
+whole excess ticks and dropped seconds. `RenderLoop` aggregates and logs executed/dropped tick
+counts once per second when drops occur. Invalid or non-finite `OPENBUS_SCRIPT_HZ` values are
+logged and fall back to render-rate scripts. The README documents the deliberate drop policy,
+so overload cannot silently masquerade as full fixed-rate catch-up.
 
-**Suggested fix:** Retain bounded multi-tick catch-up for expected frame intervals, or explicitly
-define dropped-time semantics and the relationship between script, physics, and wall time.
-Do not substitute a variable timestep without considering script integration behavior.
-Extract a context-free scheduler and test 30 FPS/60 Hz, 120 FPS/60 Hz, zero elapsed time,
-a hitch, and input-event ordering for both backends. Expose executed ticks and dropped time.
+**Validation:** `OpenBusScriptSchedulerProbe` covers 30 FPS/60 Hz, 120 FPS/60 Hz, zero elapsed
+time, a 250 ms hitch, a high script rate, elapsed-time clamping, and invalid tick durations.
+Input-event ordering and behavior of both script backends remain outside this scheduler probe.
 
 ### Medium priority
 
-#### 3. Raw renderer binds leave the VAO/buffer state cache stale
+#### 3. Renderer cache finding — the reported texture-quad path is fixed
 
-**Locations:** `src/render/CoreRenderer.cpp:598–615` (`bindModelVertexBuffer`) and `1142–1170`
-(`drawTextureQuad`); `src/app/RenderLoop.cpp:5524` (coordinate HUD), plus raw buffer binds in
-`Vehicle::sortTransparentBatch` and `Vehicle::updateMaterialChange`.
+**Locations:** `src/render/CoreRenderer.cpp` (`drawTextureQuad` and renderer binding cache);
+raw uploads remain in `src/app/vehicle/VehicleDraw.cpp` and
+`src/app/vehicle/VehicleMaterials.cpp`.
 
-`drawTextureQuad` changes the actual VAO and array-buffer bindings but neither updates nor
-invalidates `currentVertexArray` / `currentArrayBuffer`. The next cached draw can skip a
-required bind. For example, model A → HUD → model A leaves the quad VAO active while the
-cache still reports the model VAO/buffer. Raw array-buffer uploads elsewhere create the same
-invariant violation; texture invalidation does not repair vertex bindings. Which visual
-symptoms appear depends on intervening draws; no visual reproduction was run in this review.
+The previous report that `drawTextureQuad` left the cached VAO and array-buffer IDs stale is
+withdrawn: the current implementation updates both cache values after binding its quad VAO
+and buffer. Vehicle raw buffer uploads remain, but `GL_ARRAY_BUFFER` is not VAO state and
+vertex attribute pointers retain their captured buffer; no equivalent draw regression was
+identified in the current paths. A GL call-recorder regression was not run.
 
-**Suggested fix:** Route draws and uploads through one coherent binding interface, or
-explicitly invalidate all affected cached state after external binds. Make the cache
-context-owned before adding additional windows/backends. Add a GL-call recorder regression
-for model → HUD → same model, primitive → HUD → same primitive, and upload → cached draw,
-then confirm with a core-profile smoke test.
+**Status:** No active finding from the previously identified HUD/texture-quad sequence. Keep
+state-cache ownership in view when adding additional contexts or render backends.
 
 #### 4. Model-config JSON does not escape every control character
 
@@ -174,15 +172,19 @@ JSON.
 **Suggested fix:** Encode every remaining control byte as `\u00XX` and add serializer tests
 covering the full control-byte range.
 
-#### 5. Launch helpers forcibly terminate every `OpenBus.exe`
+#### 5. Resolved (2026-10-21): Launch helpers no longer terminate every `OpenBus.exe`
 
-**Locations:** `run.bat`, `profile.bat`, `screenshot.bat`, and `benchmark_loading.ps1`.
+**Locations:** `run.bat`, `screenshot.bat`, and `benchmark_loading.ps1`.
 
-The helpers run `taskkill /F /IM OpenBus.exe` before starting their work. This can forcibly stop
-an unrelated or actively-debugged process, not just an instance launched by the helper.
+The image-wide `taskkill` commands have been removed. `run.bat` and `screenshot.bat` now check
+for an existing `OpenBus.exe` and stop with a message rather than terminating it;
+`benchmark_loading.ps1` checks for existing processes and throws with their PIDs before
+removing logs or starting a run. `run.bat` now changes to its own directory and performs the
+documented Ninja configure/build/launch.
 
-**Suggested fix:** Track and stop only the child process started by the helper, or ask the user
-to close an existing instance gracefully.
+**Validation:** Static inspection confirmed that none of these three helpers contains a
+process-termination command. The launch paths were not executed because they configure/build
+and open the interactive application.
 
 #### 6. Loading benchmark is out of sync with the runtime and can misreport results
 
@@ -193,8 +195,8 @@ and cleanup, `Get-MedianMs`); `CMakePresets.json` (NMake generator); `src/app/Re
 The benchmark expects `build-ode\Release\OpenBus.exe`, but the documented Windows preset uses
 single-configuration NMake, which writes `build-ode\OpenBus.exe`; the current workspace has the
 latter and not the former. Fixing that path alone is insufficient: the script requires an
-`All textures loaded.` log marker that the current source does not emit, and sets the legacy
-`OPENBUS_VEHICLE` selector rather than the current bus/model configuration variables.
+`All textures loaded.` log marker that the current source does not emit, and sets
+`OPENBUS_VEHICLE`, which the current application no longer reads.
 
 `Get-MedianMs` casts `Count / 2` to `[int]`, which rounds rather than floors in PowerShell.
 The isolated calculation for `[1, 2, 3]` selects index 2 and returns 3 instead of the median 2.
@@ -211,16 +213,17 @@ metrics. Floor the median index and test empty, one-, three-, five-, and even-si
 Write each run to an isolated working/output directory, check exit/readiness status, and
 snapshot/restore environment variables in `try/finally`.
 
-#### 7. Clean setup instructions omit required OpenAL development files
+#### 7. Windows setup instructions omit the required OpenAL vcpkg port
 
 **Locations:** `CMakeLists.txt` (`find_package(OpenAL CONFIG REQUIRED)`);
 `README.md` (Windows vcpkg and Debian/Ubuntu prerequisites).
 
-The README's dependency commands install ODE and GLFW but omit OpenAL, which configure requires.
-A fresh environment following those commands can fail before building.
+The Debian/Ubuntu package list includes `libopenal-dev`, but the Windows vcpkg command installs
+ODE, GLFW, and zlib without OpenAL. Since configure requires `OpenAL::OpenAL`, a clean Windows
+vcpkg setup following the README may fail before building.
 
-**Suggested fix:** Add the appropriate OpenAL development package/port to the setup instructions
-and verify them from a clean configure.
+**Suggested fix:** Add the OpenAL vcpkg port to the Windows setup instructions and verify from
+a clean configure.
 
 #### 8. Windows build helpers and presets are tied to one machine's paths
 
@@ -236,13 +239,13 @@ version 3 requires CMake 3.21 or newer.
 versions. Honor the lint script's custom toolchain argument, and align the CMake minimum with
 the preset schema or lower the schema version.
 
-#### 9. `run.bat` assumes it is invoked from the repository root
+#### 9. Some build helpers assume the caller's working directory is the repository root
 
-**Location:** `run.bat` (relative `cmake -S .`, build, and executable paths).
+**Location:** `profile.bat` (`cmake -S .` and relative build paths).
 
-Unlike the other project-relative helper patterns, this script does not switch to its own
-directory. Invoking it by absolute path from another current directory makes CMake configure
-the wrong source tree or fail.
+`profile.bat` calls `cmake -S .` without first switching to `%~dp0`. Invoking it by absolute
+path from another current directory makes CMake configure the wrong source tree or fail.
+`run.bat` and `screenshot.bat` now switch to their own directory.
 
 **Suggested fix:** `pushd` to `%~dp0` before project-relative commands and `popd` on all exit
 paths.
@@ -258,23 +261,20 @@ time, reducing build reproducibility.
 
 **Suggested fix:** Pin a reviewed release or immutable commit hash and update it deliberately.
 
-#### 11. README and reference docs contradict current support
+#### 11. README examples and runtime instructions are stale
 
 **Locations:** `README.md`, `Docs/OMSI_CFG_GENERAL_REFERENCE.md`,
 `Docs/OMSI2_MAP_FORMAT_REFERENCE.md`, and the current helper scripts.
 
-Some statements still describe per-tile ground-mask decoding/mapping or authored map-scenery
-collision as unimplemented despite current implementation and probes. Other examples describe
-old `run.bat` vehicle/map/AI settings, refer to a missing `convert_textures.ps1`, or use
-machine-specific absolute documentation paths. The active profile helper also enables material
-batching while the README says it is disabled there. Text-X scenery support and provisional
-terrain alignment also contradict older support descriptions. The CPU flame-graph section
-advertises collapsed-stack output absent from the current trace implementation, and the
-benchmark description says its window is hidden while the constructor requests `GLFW_TRUE`.
+The README's `run.bat` description now matches its configure/build/launch behavior and MAN DL05
+configuration. It still documents a missing `convert_textures.ps1` and claims the
+render-benchmark window is hidden even though `RenderLoop` requests `GLFW_VISIBLE=GLFW_TRUE`.
+The recent status-documentation updates correct several earlier feature-status contradictions;
+these remaining tool instructions are directly reproducible.
 
-**Suggested fix:** Reconcile feature status and examples against current code and scripts, remove
-or implement missing commands, and use repository-relative documentation links. Keep supported,
-parsed-only, and visually/contact-validated features distinct.
+**Suggested fix:** Remove or implement the missing conversion command and report benchmark
+window visibility accurately. Keep supported, parsed-only, and visually/contact-validated
+features distinct.
 
 #### 12. Generated trace artifact is not covered by the ignore rule
 
@@ -394,29 +394,30 @@ changing cadence or timer semantics.
 
 ### P3. Medium: Dynamic texture revisions are checked after full pixel copies
 
-**Locations:** `src/scripting/ScriptRuntime.cpp:2216–2241` (`copyScriptTexture` / `copyTextTexture`);
-`src/app/RenderLoop.cpp:3296–3369` (`Vehicle::updateFreeTexture`);
-`src/render/map/MapRenderer.cpp:1828–1899` (`refreshSceneryTexture`).
+**Locations:** `src/scripting/ScriptTextures.cpp` (`copy*TextureIfChanged`);
+`src/app/vehicle/VehicleTextures.cpp` (`Vehicle::updateFreeTexture`);
+`src/render/map/MapRendererDraw.cpp` (`refreshSceneryTexture`).
 
-Both snapshot APIs copy the entire pixel vector. Their callers create a fresh snapshot and
-only then compare the cached revision/dimensions. Thus an unchanged texture avoids a GPU
-upload but still allocates and copies CPU pixels. Vehicle refresh runs per consuming batch
-and can recur in depth, transparent, and reflection passes; scenery refresh repeats for
-instances/batches even when the per-slot GPU texture is current. A permitted surface can
-contain 16 MiB, so revision caching does not by itself bound this avoidable bandwidth.
+Revision-aware copy APIs now avoid copying pixels for unchanged snapshots, and scenery drawing
+uses them after its first upload; script auxiliary textures do as well. The vehicle
+`updateFreeTexture()` path still calls the unconditional copy APIs for text/script textures,
+then compares the copied revision with its GPU cache. Since that refresh can occur per batch
+and recur in depth, transparent, and reflection passes, unchanged vehicle snapshots can still
+allocate and copy a full pixel vector before skipping the upload. A permitted surface can
+contain 16 MiB, so this remaining path can produce avoidable CPU bandwidth.
 
-**Recommendation:** Expose metadata/revision first, a copy-if-changed API, or a stable immutable
-snapshot with an explicit lifetime. Resolve changed slots once per runtime/frame and reuse
-them across views/batches. Preserve filtering and per-material address modes (potentially
-with separate sampler state), and keep GL updates on its owner thread. Add byte-copy/upload
-counters and a regression proving zero pixel copies/uploads for unchanged slots and one
-content refresh after a revision change, including multi-batch/reflection and resize cases.
+**Recommendation:** Use the existing copy-if-changed APIs in the vehicle refresh path and
+resolve changed slots once per runtime/frame for reuse across views/batches. Preserve filtering
+and per-material address modes (potentially with separate sampler state), and keep GL updates
+on its owner thread. Add byte-copy/upload counters and a regression proving zero pixel copies/
+uploads for unchanged slots and one content refresh after a revision change, including
+multi-batch/reflection and resize cases.
 
 ### P4. Medium: Asset caches have no explicit byte budget or reload generation
 
 **Locations:** `src/render/AssetRequestManager.cpp` (`requestObj`, `loadTextureRequest`, tracking,
-destructor); `src/app/RenderLoop.cpp` (`SharedVehicleDefinition`, cached display lists,
-`findTexture`, `uploadTexture`); `src/scripting/ScriptRuntime.cpp` (`cachedNativeProgram`).
+destructor); `src/app/vehicle/VehicleDefinition.cpp`, `src/app/vehicle/VehicleTextures.cpp`;
+`src/scripting/ScriptRuntimeImpl.cpp` (`cachedNativeProgram`).
 
 `parsedObjCache_` retains completed futures and their source mesh data for the manager's
 lifetime. Texture requests and `decodedTextureCache_` strongly retain decoded/compressed
@@ -443,9 +444,9 @@ is unnecessary; test load/unload/reload and shared-resource lifetimes under a sm
 
 ### P5. Medium: DXT5 capability detection is invalid in the requested GL core profile
 
-**Locations:** `src/app/RenderLoop.cpp:3007–3048` (`uploadCompressedDds`), context creation
+**Locations:** `src/app/vehicle/VehicleTextures.cpp` (`uploadCompressedDds`); context creation
 (`GLFW_OPENGL_CORE_PROFILE`); `src/assets/TextureAssetLoader.cpp` (DXT5 selection);
-`Vehicle::ensureTexture`, `ensureMaterialTexture`, and `ensureAuxiliaryTexture`.
+vehicle base/material/auxiliary texture upload paths.
 
 The custom DXT5 upload path calls `glGetString(GL_EXTENSIONS)`. That legacy extension-list
 query is invalid in an OpenGL 3.3 core context; extensions must be enumerated with
@@ -461,10 +462,10 @@ publication, and apply a consistent worker-side fallback to base and auxiliary t
 Add a real core-context DXT5 fixture test with supported/unsupported capability cases, inspect
 GL errors, and verify every material role rather than only base textures.
 
-### P6. Resolved (2026-10-07): Collision-debug GPU data ignored same-sized geometry changes
+### P6. Resolved: Collision-debug GPU data ignored same-sized geometry changes
 
-**Locations:** `src/app/RenderLoop.cpp:5432–5484` (collision revision / wireframe rebuild);
-`src/render/CoreRenderer.cpp:1078–1140` (`drawStaticPrimitives`).
+**Locations:** `src/app/RenderLoopDraw.cpp` (collision revision / wireframe rebuild);
+`src/render/CoreRenderer.cpp` (`drawStaticPrimitives`).
 
 The CPU wireframe rebuilds when `collisionDebugRevision()` changes. The GPU cache now receives
 that revision and reuploads when either the vertex count or revision changes, so replacing a
@@ -479,8 +480,9 @@ removed independently of renderer shutdown.
 ### P7. Medium: Rendered scenery and collision use different placement semantics
 
 **Locations:** `src/map/MapCollisionBuilder.cpp` (`tile.sceneryObjects` loop,
-`transformSceneryVertex`); `src/render/map/MapRenderer.cpp` (`resolveMapSceneryPlacement`,
-`applyTerrainAlignment`, attached-object and spline-attachment loops).
+`transformSceneryVertex`); `src/render/map/MapSceneTiles.cpp`
+(`resolveMapSceneryPlacement`, `applyTerrainAlignment`, attached-object and spline-attachment
+loops).
 
 Rendering composes ordinary/attached/spline-attached placements and can apply a terrain-normal
 orientation matrix. Collision construction considers ordinary `sceneryObjects` only and
@@ -498,55 +500,45 @@ and collision world vertices, plus contact tests where support is promised.
 
 ## Maintainability findings
 
-### M1. Medium: Runtime orchestration is too tightly coupled for safe feature growth
+### M1. Medium: Runtime orchestration still lacks isolated scheduler and scene seams
 
-**Locations:** `src/app/RenderLoop.cpp` (`Vehicle` plus `RenderLoop`), `src/render/map/MapRenderer.cpp`
-(construction, placement resolution, scripts, GPU upload, and drawing).
+**Locations:** `src/app/RenderLoop*.cpp`, `src/app/vehicle/Vehicle*.cpp`,
+`src/render/map/MapRenderer*.cpp`, and `src/render/map/MapScene*.cpp`.
 
-`RenderLoop.cpp` combines input/picking, vehicle resource conversion, material selection,
-script scheduling, sound dispatch, animation, reflections, camera, benchmarking, capture,
-and HUD work. The map constructor likewise mixes filesystem/config parsing, global attachment
-resolution, script initialization, and GL lifetime management. Behavior such as the scheduler
-and dynamic snapshot policy cannot be tested in isolation through the current renderer path
-without pulling in platform/context dependencies.
+The former monolithic translation units have been split across render-loop, vehicle, and map
+files, reducing file-level coupling. The application still owns cross-cutting input, script
+scheduling, simulation, rendering, sound, capture, and lifecycle coordination, while map
+scene preparation, placement resolution, script setup, and GL publication cross several
+components. In particular, `updateScripts()` remains a `RenderLoop` member and has no pure
+scheduler test; dynamic snapshot policies are also not isolated behind a context-free seam.
 
-**Recommendation:** Extract behavior-preserving seams incrementally: a pure scheduler,
-CPU placed-scene/asset preparation, a vehicle runtime independent of draw submission, and a
-context-owned renderer/resource interface. Give each an explicit owner/thread contract and
-small fixture tests before moving responsibilities. Share material/texture-address and
-coordinate-conversion policies where appropriate, but keep vehicle/map source conventions
-explicit; a broad rewrite or premature ECS/backend migration is not required.
+**Recommendation:** Continue extracting behavior-preserving seams incrementally: a pure
+scheduler, CPU placed-scene/asset preparation, and context-owned renderer/resource interfaces.
+Give each an explicit owner/thread contract and small fixture tests. Keep vehicle/map source
+conventions explicit; a broad rewrite or premature ECS/backend migration is not required.
 
-### M2. Medium: CMake recompiles shared implementation and duplicates target policy
+### M2. Resolved: Production CMake targets now share module libraries and compile policy
 
-**Location:** `CMakeLists.txt` (application/probe source lists, compiler options, trace setup).
+**Location:** `src/CMakeLists.txt` (`openbus_add_module` and production target dependencies).
 
-Production `.cpp` files are listed independently in many executable targets. The baseline
-build compiled `MapRoadGeometry.cpp` separately for OpenBus, the road probe, collision-builder
-probe, and collision-streamer probe; `BusSimulation.cpp`, parsers, and trace support have
-similar duplication. A common edit repeats compilation across consumers, and adding a source
-or changing options requires maintaining several lists. Warning options are applied to the
-application only. Some probes compiling `PerfTrace.cpp` do not use
-`openbus_configure_perf_trace`, so they use the header's default disabled instrumentation
-even in this trace-enabled build. Not every probe needs tracing, but the policy is implicit.
+Production implementation is now grouped into static module libraries (core, config, assets,
+physics, map, scripting, audio, input, and render), and `OpenBus` links those modules rather
+than recompiling every implementation source in its own source list. The shared module helper
+applies compiler policy consistently. The former finding about duplicated production source
+lists and app-only warnings is therefore stale.
 
-**Recommendation:** Introduce small STATIC/OBJECT libraries along existing CPU parser/map,
-scripting, physics, and renderer boundaries, with shared INTERFACE compile policy. Keep
-headless probes free of GL/audio dependencies rather than linking one monolithic application
-library. Make intentional trace-on/off variants explicit, gate probes with `BUILD_TESTING`,
-and compare clean/incremental build times and compile commands after the refactor. Add
-Debug/sanitizer and trace-disabled coverage; do not infer a specific build-time speedup from
-the number of source-list duplicates alone.
+**Remaining verification:** No before/after clean or incremental build-time comparison was
+performed, and no sanitizer configuration was tested. Keep headless probes independent of
+unneeded GL/audio dependencies.
 
 ### M3. Low: The interactive loop accumulates an unused input history
 
-**Location:** `src/app/main.cpp:359–378` (`pendingKeyEvents`);
-`src/app/RenderLoop.cpp` (`beginFrame`, `consumeKeyEvents`).
+**Location:** `src/app/main.cpp` (`pendingKeyEvents` and frame-key event collection).
 
-Every frame's consumed key events are appended to `pendingKeyEvents`, but that vector has
-no consumer, drain, or size bound. Symbol references confirm only its declaration and insert
-statement. Script key dispatch already occurs in `beginFrame`, so this retains an increasing
-event history for the lifetime of an interactive run without changing gameplay.
+Every frame's consumed key events are appended to `pendingKeyEvents`, but current symbol
+references show no consumer, drain, or size bound. Script key dispatch already occurs through
+the frame input path, so this retains an increasing event history for the lifetime of an
+interactive run without changing gameplay.
 
 **Recommendation:** Remove the dead backlog, or give replay/telemetry a deliberate bounded
 or persisted event sink. Specify exactly-once dispatch and tick association before reusing
@@ -574,68 +566,34 @@ the queue for a new scheduler; test a long stream of press/release events.
 ### Current local baseline
 
 - **Build:** Successful full Windows Release build in `build-ode`, using `clang-cl` / NMake
-  with `OPENBUS_ENABLE_PERF_TRACE=ON`. This validates the current source/configuration, not a
-  fresh-machine dependency installation or another platform.
-- **CTest:** **23 passed, 1 failed** out of 24 registered probes. The current map-config
-  duplicate-tile/entrypoint-remapping and mirrored-road geometry probe changes passed.
-- **Failed probe:** `OpenBusMapCollisionStreamerProbe` reports
-  `No [terrain] section found in ...\OpenBusMapCollisionStreamerProbe\map\tile_-1.map`.
-  `tests/MapCollisionStreamerProbe.cpp:13–17` writes only a `[version]` record, while
-  `src/map/MapConfigLoader.cpp:1059–1060` requires a `[terrain]` marker for a normal tile even
-  without a binary sidecar. The test exits during its first load, before neighborhood and
-  hysteresis assertions. **Medium-priority test defect:** make the fixture valid rather
-  than weakening the parser, rerun it, and extend the count-only fixture with actual terrain/
-  road/scenery colliders, revision checks, and tile-transition contact coverage. The fixture
-  and production code were deliberately not changed during this review.
-- CTest emitted missing `DartConfiguration.tcl` messages on passing probes too; those are
-  separate integration warnings, not the cause of the streaming-probe failure.
-- No editor diagnostics were reported during source review. No full renderer/context,
-  Linux, sanitizer, new performance, or memory validation was run.
+  with `OPENBUS_ENABLE_PERF_TRACE=ON`. The NMake environment was initialized through
+  `windows_clang_env.bat`. This validates the current source/configuration, not a fresh-machine
+  dependency installation or another platform.
+- **CTest:** **50 of 50 passed** using `ctest --test-dir build-ode --output-on-failure -j 8`.
+  This includes `OpenBusMapCollisionStreamerProbe`; the previously documented invalid fixture
+  is no longer a current failure.
+- GPU-backed `OpenBusMaterialRenderingProbe` and `OpenBusComputeCullingGpuProbe` passed, so the
+  old assertion that no OpenGL context tests existed is stale. These focused probes do not
+  constitute a full application/map-streaming context test or live in-game contact/render
+  parity validation.
+- No Linux build, sanitizer run, fresh dependency setup, loading/render benchmark, or memory
+  profile was performed. No performance improvement or measured hitch duration is claimed.
 
-CMake currently registers 24 CTest probes:
+The 50 registered tests cover perf-trace behavior, variables and configuration parsing,
+scenery/vehicle/human configuration, input bindings, texture and model decoding, physics and
+contact/stability/stress, map configuration/geometry/collision/traffic/placement, sound and
+script runtimes, camera/viewpoint/reflection settings, asset requests, compute culling, GPU
+material rendering, vehicle draw/material selection, weather, texture address modes, and
+static primitive buffer revisions. Recent additions include
+`OpenBusAssetRequestManagerProbe`, `OpenBusMaterialRenderingProbe`,
+`OpenBusVehicleDrawSortingProbe`, `OpenBusVehicleMaterialSelectionProbe`,
+`OpenBusWeatherEffectsProbe`, `OpenBusTextureAddressModeProbe`, and
+`OpenBusScriptSchedulerProbe`.
 
-- `OpenBusVariablesProbe`
-- `OpenBusConfigurationParserProbe`
-- `OpenBusMapConfigProbe`
-- `OpenBusMapChronoTileProbe`
-- `OpenBusMapSplineGeometryProbe`
-- `OpenBusMapRoadGeometryProbe`
-- `OpenBusMapCollisionBuilderProbe`
-- `OpenBusMapCollisionStreamerProbe`
-- `OpenBusMapSceneryPlacementProbe`
-- `OpenBusMapSplineProfileProbe`
-- `OpenBusTextureLoaderProbe`
-- `OpenBusPhysicsProbe`
-- `OpenBusStabilityProbe`
-- `OpenBusPhysicsStressProbe`
-- `OpenBusCameraMathProbe`
-- `OpenBusViewpointProbe`
-- `OpenBusRoadFeaturesProbe`
-- `OpenBusO3DLoaderProbe`
-- `OpenBusXLoaderProbe`
-- `OpenBusModelConfigProbe`
-- `OpenBusVehicleConfigProbe`
-- `OpenBusBusConfigurationCollisionProbe`
-- `OpenBusSoundEngineProbe`
-- `OpenBusScriptTextureRuntimeProbe`
-
-The probes cover parsing, variables, texture decoding, physics (including invalid-rate
-rejection and deterministic two-/three-axle bump, steering, and braking stress), map
-configuration and signed-radius spline endpoint geometry, camera math/viewpoints
-(including coincident look-at), road features,
-O3D/model/vehicle configuration (including oversized script-texture rejection), sound, and
-script-texture/runtime behavior (including bounded native and Lua macro inputs). They do
-not exercise a full OpenGL context, shader compilation, material binding, transparent depth
-prepasses, environment-map sampling, or end-to-end clickable mesh rendering. Add headless or
-fixture-based renderer tests where practical and retain manual screenshot validation for
-context-dependent behavior.
-
-The registered suite also lacks an isolated script-scheduler regression and model-JSON
-serialization coverage (`ModelConfigJson.cpp` is not compiled into the model-config probe).
-No checked-in `.github` CI configuration was found. Automate the current probes with valid
-fixtures, then add a clean-build matrix for the advertised platforms/configurations and
-context smoke tests where available. Parser success alone must not be used as evidence of
-rendered/collision parity or acceptable frame latency.
+No isolated script-scheduler regression or model-JSON serialization test is registered.
+`ModelConfigJson.cpp` is now compiled into `openbus_config`, but its serializer has no direct
+regression coverage. Parser and focused GPU probe success must not be used as evidence of full
+OMSI parity, streamed-map contact continuity, or acceptable frame latency.
 
 ## Verified fixes and stale findings
 
@@ -655,6 +613,12 @@ rendered/collision parity or acceptable frame latency.
   independent. Native OSC programs are already cached by source path.
 - Scenery drawing rejects whole chunk bounds before scanning their instances. `CoreRenderer`
   caches texture bindings; walking texture units does not imply unconditional texture binds.
+  `drawTextureQuad` now also updates the VAO/array-buffer cache, correcting the previously
+  reported model → HUD → model cache mismatch.
+- Production CMake sources are grouped into static module libraries with shared project
+  compile settings; the previous duplicated-source-list finding is stale.
+- CMake now selects bundled Lua artifacts only on Windows and locates a native Lua 5.1 library
+  elsewhere; Linux behavior still requires independent validation.
 - Vehicle sound callbacks reference owner objects that remain alive while the vehicles are
   destroyed in the current `RenderLoop` teardown. There is no evidence of the previously
   suggested sound callback race/use-after-free on this path.
@@ -680,17 +644,17 @@ reintroduced without new evidence from the current implementation.
 
 ## Follow-up opportunities
 
-1. Restore a green baseline by correcting the collision-streamer fixture; isolate and test
-  script time accounting. Address VAO/buffer cache coherence and core-profile DXT5 detection
-  before trusting visual/performance comparisons. Repair or narrow advertised Linux support.
-2. Add per-frame/tile-boundary timings, tick/drop counters, snapshot-copy/upload bytes, and
-  unique CPU/GPU residency accounting. Repair the loading benchmark before using its results.
-3. Implement revision-aware dynamic snapshots and explicit resource lifetimes/budgets. Extract
-  CPU scene/asset preparation and shared placement semantics, then introduce bounded async
+1. Add model-JSON serialization tests.
+2. Correct the loading benchmark's executable/readiness assumptions and ensure it preserves
+  caller-owned logs and environment variables.
+3. Validate the native Linux Lua/build path and add clean-build platform coverage. Keep the
+  core-profile DXT5 extension query on the renderer correctness list.
+4. Add per-frame/tile-boundary timings, tick/drop counters, snapshot-copy/upload bytes, and
+  unique CPU/GPU residency accounting.
+5. Implement revision-aware dynamic snapshots and explicit resource lifetimes/budgets. Extract
+  CPU scene/asset preparation and shared placement semantics, then measure asynchronous
   collision preparation and GPU tile residency with owner-thread publication.
-4. Refactor CMake/common compile policy and orchestration seams incrementally; add isolated
-  scheduler/serializer/resource tests and a platform/configuration validation matrix.
-5. Only then benchmark reflection quality and chunk-local static opaque batching/instancing
-  against repeatable workloads, with screenshot/contact checks to prevent semantic regressions.
-6. Extend safe OMSI macro implementations only as their route, timetable, passenger, ticket,
+6. Benchmark reflection quality and chunk-local static opaque batching/instancing against
+  repeatable workloads, with screenshot/contact checks to prevent semantic regressions.
+7. Extend safe OMSI macro implementations only as their route, timetable, passenger, ticket,
   depot, arrival-board, and world-height backing data models become available.

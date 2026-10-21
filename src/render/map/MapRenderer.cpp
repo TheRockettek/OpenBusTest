@@ -194,14 +194,57 @@ std::vector<int> MapRenderer::trafficSplineIds(int pathTypeCode) const {
     return {};
 }
 
+std::vector<int> MapRenderer::trafficRouteStartSplineIds(int pathTypeCode) const {
+    if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
+        // Lane connections also cross scenery junctions and need not follow spline ID links.
+        return impl_->roadTrafficRouteNetwork.splineIds();
+    }
+    if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
+        return impl_->humanTrafficRouteNetwork.routeStartSplineIds();
+    }
+    return {};
+}
+
+std::optional<openbus::map::MapTrafficSplineEndpointStatus>
+MapRenderer::trafficSplineEndpointStatus(int splineId, int pathTypeCode) const {
+    if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
+        return impl_->roadTrafficRouteNetwork.endpointStatus(splineId);
+    }
+    if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
+        return impl_->humanTrafficRouteNetwork.endpointStatus(splineId);
+    }
+    return std::nullopt;
+}
+
+std::vector<openbus::map::MapSplinePathOffset> MapRenderer::trafficSplinePathOffsets(
+    int splineId, int pathTypeCode) const {
+    const auto* pathOffsets =
+        pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD
+            ? &impl_->roadTrafficSplinePathOffsets
+            : pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN
+                  ? &impl_->humanTrafficSplinePathOffsets
+                  : nullptr;
+    if (pathOffsets == nullptr) {
+        return {};
+    }
+    const auto found = pathOffsets->find(splineId);
+    return found == pathOffsets->end() ? std::vector<openbus::map::MapSplinePathOffset>{}
+                                       : found->second;
+}
+
+const std::vector<TrafficPathDebugSegment>& MapRenderer::sceneryTrafficPathSegments() const {
+    return impl_->sceneryTrafficPathSegments;
+}
+
 std::optional<openbus::map::MapTrafficActor>
 MapRenderer::createTrafficActor(int splineId, std::string modelPath, double speedMetersPerSecond,
                                 double laneOffsetMagnitudeMeters,
                                 std::optional<std::string> driverModelPath,
-                                std::optional<int> pathTypeCode) const {
+                                std::optional<int> pathTypeCode,
+                                std::size_t laneSelector) const {
     std::optional<openbus::map::MapTrafficRoute> route;
     if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
-        route = impl_->roadTrafficRouteNetwork.buildRoute(splineId);
+        route = buildDrivingRoute(splineId, laneSelector);
     } else if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
         route = impl_->humanTrafficRouteNetwork.buildRoute(splineId);
     } else {
@@ -213,6 +256,11 @@ MapRenderer::createTrafficActor(int splineId, std::string modelPath, double spee
     return openbus::map::makeMapTrafficActor(std::move(*route), std::move(modelPath),
                                              speedMetersPerSecond, laneOffsetMagnitudeMeters,
                                              impl_->leftHandTraffic, std::move(driverModelPath));
+}
+
+std::optional<openbus::map::MapTrafficRoute>
+MapRenderer::buildDrivingRoute(int splineId, std::size_t laneSelector) const {
+    return impl_->roadTrafficLaneNetwork.buildRoute(splineId, laneSelector);
 }
 
 bool MapRenderer::addTrafficActor(openbus::map::MapTrafficActor actor) {

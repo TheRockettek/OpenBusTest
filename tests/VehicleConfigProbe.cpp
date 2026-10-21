@@ -1,5 +1,7 @@
 #include "config/VehicleConfigLoader.h"
+#include "core/Variables.h"
 #include "osc/OscConverter.h"
+#include "physics/BusConfiguration.h"
 #include "ProbeTempDirectory.h"
 
 #include <array>
@@ -99,6 +101,27 @@ int main() {
                           "[add_camera_reflexion_2_static]\n1\n2\n3\n0\n40\n10\n-5\n12\n");
     const VehicleConfig reflectionCameras =
         loadVehicleConfig(reflectionCameraPath, VehicleFileKind::Bus, false);
+    const std::filesystem::path ovhConfigPath = root / "ai_car.ovh";
+    std::ofstream ovhConfig(ovhConfigPath);
+    ovhConfig << "[friendlyname]\nTest\nAI car\nDefault\n"
+                 "[model]\nmodel/model.cfg\n";
+    ovhConfig.close();
+    std::ofstream vehicleModelConfig(root / "model/model.cfg");
+    vehicleModelConfig << "[mesh]\ncar.o3d\n";
+    vehicleModelConfig.close();
+    std::ofstream vehicleMesh(root / "model/car.o3d", std::ios::binary);
+    vehicleMesh.close();
+    const VehicleConfig ovhVehicle =
+        loadVehicleConfig(ovhConfigPath, VehicleFileKind::Vehicle, false);
+    const std::filesystem::path ovhModelConfigPath =
+        modelConfigurationPathForVehicle(ovhConfigPath);
+    openbus::scripting::Vehicle ovhModelVariables;
+    const ModelConfig ovhModel = loadVehicleModelConfig(
+        ovhModelConfigPath, root / "model", ovhModelVariables);
+    const bool ovhModelLoaded =
+        !ovhVehicle.diagnostics.hasErrors() && !ovhModel.diagnostics.hasErrors() &&
+        ovhModelConfigPath == root / "model/model.cfg" &&
+        ovhModel.parts.size() == 1 && ovhModel.parts[0].objPath == root / "model/car.o3d";
     const auto& reflections = reflectionCameras.cameras;
     const bool reflectionCameraKeywordsParsed =
         !reflectionCameras.diagnostics.hasErrors() && reflections.size() == 4 &&
@@ -109,8 +132,8 @@ int main() {
         reflections[3].pan == 10.0 && reflections[3].tilt == -5.0;
     openbus::probe::removeProbeDirectory(root);
 
-    if (!reflectionCameraKeywordsParsed) {
-        std::cerr << "Reflection camera keywords or their viewer-following flags were not parsed\n";
+    if (!reflectionCameraKeywordsParsed || !ovhModelLoaded) {
+        std::cerr << "Reflection camera parsing or OVH vehicle model loading failed\n";
         return 1;
     }
     if (result.diagnostics.hasErrors() || !caseMismatchedScriptConverted ||

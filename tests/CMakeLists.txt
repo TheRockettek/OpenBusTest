@@ -38,9 +38,17 @@ add_test(NAME OpenBusPerfTraceDisabledProbe COMMAND OpenBusPerfTraceDisabledProb
 openbus_add_probe(OpenBusVariablesProbe VariablesProbe.cpp LIBS openbus_core)
 openbus_add_probe(OpenBusConfigurationParserProbe ConfigurationParserProbe.cpp
     LIBS openbus_config)
+openbus_add_probe(OpenBusSceneryObjectConfigProbe SceneryObjectConfigProbe.cpp
+    LIBS openbus_config openbus_map)
 openbus_add_probe(OpenBusModelConfigProbe ModelConfigProbe.cpp LIBS openbus_config openbus_osc)
 openbus_add_probe(OpenBusVehicleConfigProbe VehicleConfigProbe.cpp
-    LIBS openbus_config openbus_osc)
+    LIBS openbus_config openbus_osc openbus_physics)
+add_executable(OpenBusVehicleDefinitionProbe VehicleDefinitionProbe.cpp
+    "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleDefinition.cpp")
+target_include_directories(OpenBusVehicleDefinitionProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
+target_link_libraries(OpenBusVehicleDefinitionProbe PRIVATE openbus_config openbus_core
+    openbus_render)
+add_test(NAME OpenBusVehicleDefinitionProbe COMMAND OpenBusVehicleDefinitionProbe)
 openbus_add_probe(OpenBusHumanConfigProbe HumanConfigLoaderProbe.cpp
     LIBS openbus_config
     ARGS "${OPENBUS_FIXTURES}/human_driver.hum")
@@ -88,6 +96,7 @@ openbus_add_probe(OpenBusMapTrafficRuntimeProbe MapTrafficRuntimeProbe.cpp LIBS 
 openbus_add_probe(OpenBusSoundEngineProbe SoundEngineProbe.cpp LIBS openbus_audio)
 
 # Scripting
+openbus_add_probe(OpenBusScriptSchedulerProbe ScriptSchedulerProbe.cpp LIBS openbus_core)
 foreach(probe IN ITEMS ScriptTextureRuntimeProbe MapPlacementLabelProbe ScriptInputRuntimeProbe)
     openbus_add_probe(OpenBus${probe} ${probe}.cpp LIBS openbus_scripting openbus_osc)
     openbus_copy_lua_runtime(OpenBus${probe})
@@ -95,6 +104,7 @@ endforeach()
 
 # Render (header-only probes need only the include root)
 openbus_add_probe(OpenBusCameraMathProbe CameraMathProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusAssetRequestManagerProbe AssetRequestManagerProbe.cpp LIBS openbus_render)
 openbus_add_probe(OpenBusReflectionSettingsProbe ReflectionSettingsProbe.cpp
     LIBS openbus_render NO_TEST)
 foreach(mode IN ITEMS default enabled disabled)
@@ -107,5 +117,12 @@ set_tests_properties(OpenBusComputeCullingGpuProbe PROPERTIES SKIP_RETURN_CODE 7
 openbus_add_probe(OpenBusViewpointProbe ViewpointProbe.cpp LIBS openbus_core)
 openbus_add_probe(OpenBusMaterialRenderingProbe MaterialRenderingProbe.cpp LIBS openbus_render)
 set_tests_properties(OpenBusMaterialRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
+openbus_add_probe(OpenBusVehicleDrawSortingProbe VehicleDrawSortingProbe.cpp
+    LIBS openbus_render)
+openbus_add_probe(OpenBusVehicleMaterialSelectionProbe VehicleMaterialSelectionProbe.cpp
+    LIBS openbus_render)
+openbus_add_probe(OpenBusWeatherEffectsProbe WeatherEffectsProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusTextureAddressModeProbe TextureAddressModeProbe.cpp
+    LIBS openbus_render)
 openbus_add_probe(OpenBusStaticPrimitiveBufferProbe StaticPrimitiveBufferProbe.cpp)
 target_include_directories(OpenBusStaticPrimitiveBufferProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")

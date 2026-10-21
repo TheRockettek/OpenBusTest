@@ -100,6 +100,41 @@ Matrix4 poseMatrix(const BodyPose& pose) {
             pose.position[0], pose.position[1], pose.position[2], 1.0};
 }
 
+Matrix4 makeOdeWheelAnimationTransform(const BodyPose& chassis, const BodyPose& wheel,
+                                       const std::array<double, 3>& modelCenter,
+                                       double modelOffsetZ) {
+    Matrix4 relative = identityMatrix();
+    const std::array<double, 3> delta = {wheel.position[0] - chassis.position[0],
+                                         wheel.position[1] - chassis.position[1],
+                                         wheel.position[2] - chassis.position[2]};
+    for (int row = 0; row < 3; ++row) {
+        const double odeLocalPosition = chassis.rotation[row] * delta[0] +
+                                        chassis.rotation[3 + row] * delta[1] +
+                                        chassis.rotation[6 + row] * delta[2];
+        const double modelLocalPosition = modelCenter[row] + (row == 2 ? modelOffsetZ : 0.0);
+        relative[12 + row] = odeLocalPosition - modelLocalPosition;
+        for (int column = 0; column < 3; ++column) {
+            relative[column * 4 + row] =
+                chassis.rotation[row] * wheel.rotation[column] +
+                chassis.rotation[3 + row] * wheel.rotation[3 + column] +
+                chassis.rotation[6 + row] * wheel.rotation[6 + column];
+        }
+    }
+    Matrix4 base = identityMatrix();
+    base[5] = 0.0;
+    base[6] = -1.0;
+    base[9] = 1.0;
+    base[10] = 0.0;
+    Matrix4 inverseBase = identityMatrix();
+    static_cast<void>(invertAffineMatrix(base, inverseBase));
+    relative = multiplyMatrix4(relative, inverseBase);
+    const Matrix4 toOrigin =
+        translationMatrix({-modelCenter[0], -modelCenter[1], -modelCenter[2]});
+    const Matrix4 fromOrigin =
+        translationMatrix({modelCenter[0], modelCenter[1], modelCenter[2]});
+    return multiplyMatrix4(fromOrigin, multiplyMatrix4(relative, toOrigin));
+}
+
 Matrix4 rotationMatrix(double angleDegrees, double x, double y, double z) {
     const double length = std::sqrt(x * x + y * y + z * z);
     if (length <= 1.0e-12) {

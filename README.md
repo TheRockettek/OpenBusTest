@@ -15,11 +15,12 @@ prove end-to-end rendering or runtime semantics.
 | --- | --- | --- | --- |
 | Physics and wheel simulation | Fixed-step ODE and per-wheel simulation are active; the deterministic bump/steering/braking stress probe covers two- and three-axle fixtures. Broader tuning remains incomplete. | [`BusSimulation.cpp`](src/physics/BusSimulation.cpp) | [`BusSimulationSteeringProbe.cpp`](tests/BusSimulationSteeringProbe.cpp), [`BusSimulationStabilityProbe.cpp`](tests/BusSimulationStabilityProbe.cpp), [`BusSimulationStressProbe.cpp`](tests/BusSimulationStressProbe.cpp) |
 | Vehicle/model loading | Core MAN DL05 and E400 configuration paths are implemented; broad OMSI configuration coverage remains partial. | [`VehicleConfigLoader.cpp`](src/config/VehicleConfigLoader.cpp), [`ModelConfigLoader.cpp`](src/config/ModelConfigLoader.cpp), [`RenderLoop.cpp`](src/app/RenderLoop.cpp) | [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp), [`ModelConfigProbe.cpp`](tests/ModelConfigProbe.cpp); visual procedure: [screenshot plan](Docs/SCREENSHOT_VALIDATION_PLAN.md) |
-| Texture decoding and materials | Texture decoding has a probe; several material semantics and visual parity checks remain incomplete, including alpha mode 2 and environment maps. | [`TextureLoader.cpp`](src/assets/TextureLoader.cpp), [`CoreRenderer.cpp`](src/render/CoreRenderer.cpp) | [`TextureLoaderProbe.cpp`](tests/TextureLoaderProbe.cpp); GL/material checks: [incomplete visual checks](Docs/SCREENSHOT_VALIDATION_PLAN.md#incomplete-feature-visual-checks) |
+| Texture decoding and materials | Texture formats and selected material behaviors have focused parser/GPU probes, including alpha mode 2, bump maps, environment-map sampling, transparent sorting, CTC texture replacement, and array-layer bounds. Representative-asset parity and difficult overlap cases remain incomplete. | [`TextureLoader.cpp`](src/assets/TextureLoader.cpp), [`CoreRenderer.cpp`](src/render/CoreRenderer.cpp) | [`TextureLoaderProbe.cpp`](tests/TextureLoaderProbe.cpp), [`TextureAddressModeProbe.cpp`](tests/TextureAddressModeProbe.cpp), [`MaterialRenderingProbe.cpp`](tests/MaterialRenderingProbe.cpp), [`VehicleDrawSortingProbe.cpp`](tests/VehicleDrawSortingProbe.cpp), [`VehicleMaterialSelectionProbe.cpp`](tests/VehicleMaterialSelectionProbe.cpp), [`AssetRequestManagerProbe.cpp`](tests/AssetRequestManagerProbe.cpp); visual gaps: [incomplete visual checks](Docs/SCREENSHOT_VALIDATION_PLAN.md#incomplete-feature-visual-checks) |
 | Map, terrain, scenery, and roads | Partial: only active-window terrain, scenery meshes, and road geometry are built/uploaded; on tile changes a shared-context worker builds the replacement window while the previous one remains drawable. Collision mesh preparation runs in a CPU worker and ODE publication stays on the simulation thread, limited to one tile per update. Startup window creation and initial collision warm-up remain synchronous; if a shared GL context cannot be created, renderer loading falls back to synchronous work. Startup still parses map tile text once to build the global attachment index. Static text/binary/MSZIP `.x` meshes and distance-selected scenery LODs now have runtime paths; full OMSI attachment/profile semantics and end-to-end visual/contact validation remain incomplete. | [`MapConfigLoader.cpp`](src/map/MapConfigLoader.cpp), [`MapSplineGeometry.cpp`](src/map/MapSplineGeometry.cpp), [`MapRoadGeometry.cpp`](src/map/MapRoadGeometry.cpp), [`MapCollisionBuilder.cpp`](src/map/MapCollisionBuilder.cpp), [`MapCollisionStreamer.cpp`](src/map/MapCollisionStreamer.cpp), [`MapRenderer.cpp`](src/render/map/MapRenderer.cpp), [`SceneryObjectConfigLoader.cpp`](src/config/SceneryObjectConfigLoader.cpp) | [`MapConfigLoaderProbe.cpp`](tests/MapConfigLoaderProbe.cpp), [`MapCollisionBuilderProbe.cpp`](tests/MapCollisionBuilderProbe.cpp), [`MapCollisionStreamerProbe.cpp`](tests/MapCollisionStreamerProbe.cpp), [`MapSplineGeometryProbe.cpp`](tests/MapSplineGeometryProbe.cpp), [`MapRoadGeometryProbe.cpp`](tests/MapRoadGeometryProbe.cpp); in-context visual validation remains |
 | Scripts and dynamic displays | Vehicle script/text textures and scenery per-placement script/text texture surfaces, `init`/`frame`, and `[visible]` control are active; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/scripting/ScriptRuntime.cpp), [`MapRenderer.cpp`](src/render/map/MapRenderer.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
-| Sound | Player sound runtime is active; full OMSI sound and AI sound selection remain incomplete. | [`SoundEngine.cpp`](src/audio/SoundEngine.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp) |
-| AI, passengers, routes, and articulated vehicles | Runtime support is incomplete; parsed configuration is not evidence of these behaviors. | [vehicle configuration](src/config/VehicleConfigLoader.cpp), [map configuration](src/map/MapConfigLoader.cpp) | No end-to-end regression probe; see the [completion TODO](TODO.md) |
+| Weather | Partial first slice: configurable exterior rain/snow particles use the shared `PrecipType` and `PrecipRate` system variables; map weather schedules, fog, windshield effects, and accumulation are not implemented. | [`WeatherEffects.cpp`](src/render/WeatherEffects.cpp), [`RenderLoopDraw.cpp`](src/app/RenderLoopDraw.cpp) | [`WeatherEffectsProbe.cpp`](tests/WeatherEffectsProbe.cpp); rain and snow visually validated in app captures |
+| Sound | Player sound runtime is active; AI vehicles select `[sound_ai]` when configured and otherwise fall back to `[sound]`. Full OMSI sound and AI event coverage remain incomplete. | [`VehicleSoundBank.cpp`](src/audio/VehicleSoundBank.cpp), [`VehicleConfigLoader.cpp`](src/config/VehicleConfigLoader.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp), [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp) |
+| AI, passengers, and routes | Runtime support is incomplete; parsed configuration is not evidence of these behaviors. | [vehicle configuration](src/config/VehicleConfigLoader.cpp), [map configuration](src/map/MapConfigLoader.cpp) | No end-to-end regression probe; see the [completion TODO](TODO.md) |
 
 ### Map runtime scope
 
@@ -68,6 +69,40 @@ The initial collision neighborhood is warmed synchronously before gameplay;
 runtime collision preparation is asynchronous, but ODE setup can still cost time
 on publication. If preparation falls behind the player, temporary contact gaps
 are possible. Physics residency follows loaded map tiles, not camera visibility.
+
+Random map road traffic uses only `.ovh` entries from the `NormalCars`,
+`Trucks`, and `Commercial`/`Commercials` `[aigroup_2]` groups. `.bus` vehicles
+are excluded from this pool and spawned separately as scheduled AI buses using
+bus-type configurations and timetable routes. Other groups and legacy
+vehicle-list formats are not supported by this runtime. `OPENBUS_MAP_AI_COUNT` sets the
+density-scaled road-vehicle base population (default `8`, maximum `200`).
+`OPENBUS_MAP_AI_HOUR` sets the starting hour (default `12`); the in-game traffic
+clock advances from it using elapsed simulation time and wraps at midnight.
+Road and pedestrian populations follow their map density schedules as the
+clock advances. A pool sized for each schedule's maximum is created at
+startup; actors are enabled or disabled as the scheduled population changes.
+Vehicles follow the authored lane offsets, heights, and travel directions shown
+by the cyan F2 overlay, including scenery junction paths. Matching lane endpoints
+join within 0.5 m horizontally and vertically; opposite-direction lanes are not
+used as a forced return route. At a branch, the straightest compatible continuation
+is selected. Vehicles retire at unconnected lane ends; genuine connected loops
+continue without reversing. Startup rotates spawns across each spline's authored
+lanes, so both travel directions are populated. Spawn and population
+unload/reactivation events, route-end retirement, and a lane-network summary
+(lane count, unconnected ends, and near-miss gaps within 3 m) are logged.
+AI buses are
+selected separately from depot bus definitions and follow only timetable
+routes whose `.ttp` trip names a destination and at least one station, and
+whose `.ttr` spline chain contains the entire selected road route. Set
+`OPENBUS_MAP_BUS_COUNT` to control their population (default `2`, maximum
+`200`; `0` disables map AI buses). The current bus pool is created at startup;
+timetable data selects eligible routes, but individual departure times are not
+yet used to dispatch buses.
+
+Road and timetable route networks are indexed from every tile listed in
+`global.cfg` at map startup. AI vehicles retain those predefined lane routes while
+rendering tiles stream in and out around the player; crossing a tile boundary
+does not truncate or rebuild an actor's route.
 
 Ordinary scenery gets a bilinearly sampled terrain height plus its authored
 vertical placement value, unless its SCO/model declares `[absheight]`, in which
@@ -206,8 +241,10 @@ internet access at configure time.
 
 ## Configure and build
 
-Use a new build directory so old artifacts from previous experiments are not
-reused:
+The Windows helper uses the `build-ninja` directory, creating it if needed and
+reusing it for subsequent incremental builds. It refuses to launch if an
+`OpenBus.exe` process is already running; close that process yourself before
+using the helper.
 
 ```powershell
 .\run.bat
@@ -345,8 +382,10 @@ $env:OPENBUS_OMSI_ROOT = "D:\SteamLibrary\steamapps\common\OMSI 2"
 ```
 
 Vehicle values are not duplicated in C++.
-Articulated vehicles can set the `articulated` flag in the file; articulated
-multi-body sections will be added as a separate ODE body/joint layer.
+Articulated vehicles are outside the currently supported scope. The
+`openbus_articulated` configuration flag is retained for inspection only; it
+does not create additional ODE bodies, joints, collision shapes, or rendered
+sections, so articulated models must not be treated as supported vehicles.
 The parsed configuration is written to `OpenBus_configuration.json` at startup.
 Parsed model parts, materials, visibility variables, animation variables, and
 wheel bindings are written to `OpenBus_model_configuration.json` as well. For
@@ -360,7 +399,16 @@ the current date, and `DayOfYear` is the zero-based day index. Defaults include
 `Weather_Temperature=20`, `Weather_AbsHum=10`, `Envir_Brightness=1`,
 `AutoClutch=0`, and `SunAlt=60`.
 `Timegap`, `GetTime`, `mouse_x`, and `mouse_y` are updated from the renderer
-each frame.
+each frame. Precipitation values are persistent shared system variables, so
+configured weather and script overrides survive frame updates.
+
+The initial weather slice renders rain or snow particles in exterior and free
+camera views. Set `OPENBUS_WEATHER=rain` or `snow`; `clear` (the default)
+disables precipitation. `OPENBUS_WEATHER_RATE` accepts `0`–`1` and defaults to
+`0.5` for rain/snow. Weather settings populate the shared `PrecipType` and
+`PrecipRate` system variables before scripts run, so scripts can override
+them. This does not yet load OMSI map weather schedules or render fog,
+windshield effects, wet roads, or snow accumulation.
 
 `OPENBUS_BUS_CONFIG` accepts either an absolute path or a path relative to
 `OPENBUS_OMSI_ROOT`. Set the optional `OPENBUS_MODEL_CONFIG` to select a `.cfg`
@@ -380,8 +428,8 @@ The first vehicle is connected to the shared bus simulation; additional
 vehicles are scripted AI models rendered at their declared placements. Set
 `OPENBUS_AI_BUS_CONFIG` and `OPENBUS_AI_MODEL_CONFIG` together to add AI
 vehicles. `OPENBUS_AI_COUNT` selects the number to spawn (defaults to 1 and is
-limited to 200); multiple instances are arranged in a grid. `run.bat` uses the
-VW Golf test vehicle and sets the count to 200 for stress testing.
+limited to 200); multiple instances are arranged in a grid. `run.bat` selects
+the MAN DL05 on Cotterell at spawn 0.
 
 The loader uses `[mass]`, `[boundingbox]`, `[schwerpunkt]`, and `[newachse]`
 records, including axle spring, damper, load, and driven flags. The
@@ -455,8 +503,19 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   as an orange wireframe, plus the bus fallback collision box. Static map
   collision streams around the bus (one-tile load radius, two-tile unload
   radius); the debug wireframe refreshes as tiles enter and leave that set.
-- Press `F2` to show traffic spline centerlines in the active map tiles; road/AI
-  paths are cyan and human paths are magenta.
+- Press `F2` to show traffic paths in the active map tiles, including authored
+  lane offsets and scenery-object junction paths. SCO `[path]` records are
+  tessellated as local spline segments from their position, heading, radius,
+  and length fields. Road/AI paths are cyan and human paths are magenta. Orange
+  Xs show map-spline endpoints without reciprocal links or a matching map or
+  scenery path endpoint within 0.5 m horizontally and vertically. Matching
+  endpoints are joined in the overlay with a short colored connector when a
+  visible gap remains; this does not change AI route connectivity.
+- Map-driven road vehicles use deterministic starts on authored road routes
+  containing at least two linked splines. AI buses are further restricted to
+  linked spline chains present in timetable trips with station data. Vehicles
+  follow authored link order; closed routes cycle as authored and open routes
+  retire at their endpoint rather than reversing back along the path.
 - Press `U` to raise the player bus and its physics bodies 5 m at the current
   X/Y location; it then falls naturally under gravity.
 - VSync is enabled by default; set `OPENBUS_VSYNC=0`, `off`, or `false` before
@@ -488,8 +547,10 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   value as true; logical and comparison results are canonical `0` or `1`.
 - Scripts normally follow the render rate. Set `OPENBUS_SCRIPT_HZ=30` to run
   vehicle and scenery scripts at 30 Hz while rendering continues at the display rate;
-  fixed-rate script ticks receive `Timegap=1/30` and catch up for short frame
-  hitches with a bounded tick budget.
+  fixed-rate script ticks receive `Timegap=1/30`. Each update runs at most eight catch-up
+  ticks and clamps elapsed time to 250 ms. If more whole ticks remain, they are dropped to
+  keep script work bounded; the fractional remainder is retained and dropped time is logged
+  periodically. Invalid or non-finite rates are logged and scripts follow the render rate.
 - Stationary-pointer hover checks refresh every 75 ms (about 13.33 Hz) by default.
   Set `OPENBUS_HOVER_HZ=30` to refresh at 30 Hz, or `OPENBUS_HOVER_HZ=0` to
   check every rendered input frame. Rates are clamped to 0–1000 Hz; invalid or

@@ -31,7 +31,12 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
         const std::filesystem::path objectRoot = configPath.parent_path();
         const SceneryObjectConfig objectConfiguration = loadSceneryObjectFile(configPath);
         sceneryAttachmentPoints[cacheKey] = objectConfiguration.attachmentPoints;
+        sceneryTrafficPaths[cacheKey] = objectConfiguration.trafficPaths;
         sceneryScriptConfigurations[cacheKey] = objectConfiguration.scriptConfiguration;
+        // Editor-only assets can still contribute path debug geometry.
+        if (objectConfiguration.absoluteHeight) {
+            absoluteHeightSceneryAssets.insert(cacheKey);
+        }
         if (!objectConfiguration.scriptConfiguration.scripts.empty()) {
             sceneryAssetsNeedingVariables.insert(cacheKey);
         }
@@ -53,9 +58,6 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
         }
         const std::filesystem::path modelRoot =
             usesExternalModelConfig ? modelConfigPath.parent_path() : objectRoot / "model";
-        if (objectConfiguration.absoluteHeight) {
-            absoluteHeightSceneryAssets.insert(cacheKey);
-        }
         for (const ConfigurationDiagnostic& diagnostic : objectConfiguration.diagnostics.entries) {
             const std::string severity =
                 diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error"

@@ -58,18 +58,18 @@ override is applied.
 | --- | --- | --- |
 | `[matl_bumpmap]`, `[matl_envmap]`, `[matl_freetex]`, `[matl_lightmap]`, `[matl_nightmap]` | Partial | Loading/shader/material paths exist, but controller, blending, binding, or visual-parity details remain incomplete. Environment-map behavior still needs representative visual validation. |
 | `[matl_transmap]` with `[matl_alpha]` mode `2` | Active subset | Transmap alpha sampling and mode-2 depth writes are active; `[matl_noZwrite]` suppresses writes. An OpenGL overlap probe covers both modes, but representative OMSI visual parity remains unverified. |
-| `[matl_item]` | Parsed/no-op | It does not yet define a complete, independently applied material-item scope. |
-| `[CTC]`, `[CTCTexture]` | Partial | Mappings are retained, but complete runtime paint-scheme selection/substitution is absent. |
+| `[matl_item]` | Partial | Item material states are selected from their controller through the vehicle runtime, including supported auxiliary material properties. Independent texture replacement and full native item scope are not implemented. |
+| `[CTC]`, `[CTCTexture]` | Partial | `[CTCTexture]` substitutions are applied case-insensitively to base mesh texture names. `[CTC]` template/paint-scheme selection and full runtime substitution remain incomplete. |
 | `[texchanges]`, `[newtexchangemaster]`, `[entries]` | Not implemented | Texture-change tables and replacement selection are not loaded/applied. |
 | `[rendertype]` | Not supported for BUS models | The loader currently restricts this keyword to scenery-object configuration; BUS/vehicle model contexts are diagnosed as invalid. Scenery support is tracked in [scenery status](IMPLEMENTATION_STATUS_SCENERY.md). |
 | `[fixed]` | Active subset | Suppresses inheritance of an `[animparent]` transform while retaining the part's own animations. OMSI parity for other `[fixed]` effects remains unverified. |
 | `[absheight]` | Partial | Scenery height placement is active; broader model-family transform semantics are not implemented. |
-| `[light_enh]`, `[light_enh_2]`, `[spotlight]` | Partial | Records are parsed/stored, including `[light_enh_2]`'s complete numeric payload with or without its optional bitmap, but full geometry, falloff, and render-order behavior is missing. Basic `[illumination_interior]` / `[interiorlight]` emission is active but does not establish full lighting parity. |
+| `[light_enh]`, `[light_enh_2]`, `[spotlight]` | Partial | Records are parsed/stored, including `[light_enh_2]`'s complete numeric payload with or without its optional bitmap, but full geometry and render-order behavior are missing. Basic `[illumination_interior]` / `[interiorlight]` point-light shading includes distance attenuation; a GPU probe covers color isolation, zero strength, and near/far attenuation, but OMSI intensity parity is unverified. |
 | `[smoke]` | Parsed only | Fields are consumed for alignment; no exhaust/particle system is created. |
 | `[VFDmaxmin]`, `[tex_detail_factor]` | Parsed only | Display bounds and detail scaling do not currently alter rendering. |
 | `[origin_from_mesh]` | Partial | The origin operation is retained, but becomes identity when mesh transformation metadata is unavailable. |
 | `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces and horizontal alignment/grid spacing are active; fallback font rasterization and remaining enhanced-format flags/layout/alpha details differ from OMSI. |
-| `[illumination_interior]`, `[interiorlight]` | Partial | Controller-driven emissive color and mesh assignments are active; positional falloff and full OMSI behavior are not. |
+| `[illumination_interior]`, `[interiorlight]` | Partial | Controller-driven point-light shading, mesh assignments, and distance attenuation are active. GPU coverage exercises color, zero strength, and attenuation; controller integration with representative assets and OMSI intensity parity remain unverified. |
 | `[mouseevent]` | Partial | Transformed-triangle picking, captured press/held-drag/release, and player W/A/S/D event transitions are active. Handler lookup and dispatch normalize authored punctuation consistently (including DL05 `bus_20h-switch`); drag/release handlers are optional. Configurable key maps and scenery-object mouse dispatch are not complete. |
 
 ## Passenger-cabin and path CFGs

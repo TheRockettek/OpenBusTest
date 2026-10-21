@@ -69,7 +69,7 @@ class RenderLoop {
     RenderBenchmarkInput setBenchmarkFrame(RenderBenchmarkPhase phase, int frameInPhase,
                                            int phaseFrameCount);
     bool benchmarkClickTargetFound() const;
-    Vehicle* AddVehicle(const std::filesystem::path& busConfigPath,
+    Vehicle* AddVehicle(const std::filesystem::path& vehicleConfigPath,
                         const std::filesystem::path& modelConfigPath,
                         const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy = {},
                         bool isAiVehicle = false);
@@ -77,13 +77,19 @@ class RenderLoop {
                            const std::filesystem::path& busConfigPath,
                            std::optional<std::string> driverModelPath, double speedMetersPerSecond,
                            double startDistanceMeters, double centerX, double centerY,
-                           double maximumDistanceMeters, ModelLoadingPolicy loadingPolicy = {});
+                           double maximumDistanceMeters, ModelLoadingPolicy loadingPolicy = {},
+                           bool isBus = false, std::size_t laneSelector = 0);
     bool AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,
                               double widthMeters, double heightMeters, double speedMetersPerSecond,
                               double startDistanceMeters, double centerX, double centerY,
                               double maximumDistanceMeters);
+    void SetMapTrafficPopulation(std::size_t roadVehicleCount, std::size_t busCount);
+    void SetHumanTrafficPopulation(std::size_t count);
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
+    std::vector<int> trafficRouteStartSplineIds(int pathTypeCode) const;
+    std::vector<int> trafficRouteSplineIds(int splineId, int pathTypeCode) const;
     std::size_t trafficVehicleCount() const;
+    void SetWeather(int precipitationType, double precipitationRate);
 
     void SetPlayerVehicle(Vehicle* vehicle);
     void SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
@@ -214,6 +220,10 @@ class RenderLoop {
     double frameTimeStep_ = 0.0;
     double lastDrivetrainDiagnosticTime_ = -1.0;
     bool drivetrainDiagnosticsEnabled_ = false;
+    double lastScriptDiagnosticTime_ = -1.0;
+    int scriptTicksSinceDiagnostic_ = 0;
+    int droppedScriptTicksSinceDiagnostic_ = 0;
+    double droppedScriptTimeSinceDiagnostic_ = 0.0;
     int framebufferWidth_ = 1;
     int framebufferHeight_ = 1;
     unsigned int statusHudTexture_ = 0;
@@ -241,12 +251,18 @@ class RenderLoop {
     struct TrafficVehicleState {
         Vehicle* vehicle = nullptr;
         openbus::map::MapTrafficActor actor;
+        double initialDistanceMeters = 0.0;
+        bool isBus = false;
+        bool populationEnabled = true;
+        bool routeCompleted = false;
     };
     std::vector<TrafficVehicleState> trafficVehicles_;
     struct HumanTrafficState {
         openbus::map::MapTrafficActor actor;
         double widthMeters = 0.2;
         double heightMeters = 1.7;
+        double initialDistanceMeters = 0.0;
+        bool populationEnabled = true;
     };
     std::vector<HumanTrafficState> humanTrafficActors_;
     Vehicle* playerVehicle_ = nullptr;

@@ -169,8 +169,6 @@ void SystemVariables::updateFrame(float timegap, float getTime, float cursorX, f
         {"mouse_y", 0.0},
         {"mouse_cursor_x", cursorX},
         {"mouse_cursor_y", cursorY},
-        {"preciprate", 0.0},
-        {"preciptype", 0.0},
     });
 }
 

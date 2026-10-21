@@ -109,6 +109,32 @@ int main() {
     }
     const ModelConfig result =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
+    const std::filesystem::path addressConfigPath = root / "texture_address.cfg";
+    std::ofstream addressConfig(addressConfigPath);
+    addressConfig << "[mesh]\ndisplay.obj\n"
+                     "[matl]\nrepeat.bmp\n0\n"
+                     "[matl]\nclamp.bmp\n1\n[matl_texadress_clamp]\n"
+                     "[matl]\nborder.bmp\n2\n[matl_texadress_border]\n"
+                     "[matl]\nmirror.bmp\n3\n[matl_texadress_mirror]\n"
+                     "[matl]\nmirroronce.bmp\n4\n[matl_texadress_mirroronce]\n";
+    addressConfig.close();
+    const ModelConfig addressResult =
+        loadModelConfig(addressConfigPath, root, ModelConfigKind::Bus, variables);
+    if (addressResult.diagnostics.hasErrors() || addressResult.parts.size() != 1 ||
+        addressResult.parts[0].materialStatesInOrder.size() != 5 ||
+        addressResult.parts[0].materialStatesInOrder[0].textureAddressS !=
+            TextureAddressMode::Repeat ||
+        addressResult.parts[0].materialStatesInOrder[1].textureAddressS !=
+            TextureAddressMode::Clamp ||
+        addressResult.parts[0].materialStatesInOrder[2].textureAddressS !=
+            TextureAddressMode::Border ||
+        addressResult.parts[0].materialStatesInOrder[3].textureAddressS !=
+            TextureAddressMode::Mirror ||
+        addressResult.parts[0].materialStatesInOrder[4].textureAddressS !=
+            TextureAddressMode::MirrorOnce) {
+        std::cerr << "model texture address directives did not select their authored modes\n";
+        return 1;
+    }
     const std::filesystem::path freeTextureSCOPath = root / "free_texture.sco";
     std::ofstream freeTextureSCO(freeTextureSCOPath);
     freeTextureSCO << "[mesh]\ndisplay.obj\n[matl]\ndisplay.bmp\n0\n"

@@ -43,6 +43,13 @@ void MapSceneLoader::load() {
     TraceScope sceneBuildPhase("map", "MapRenderer.buildSceneGeometryAndBatches");
     indexMapContent();
     buildTileContent();
+    impl_->roadTrafficLaneNetwork.finalize();
+    const openbus::map::MapTrafficLaneNetworkStats laneStats =
+        impl_->roadTrafficLaneNetwork.stats();
+    gameLog.Log("Map road lane network: lanes=" + std::to_string(laneStats.lanes) +
+                ", unconnected lane ends=" + std::to_string(laneStats.deadEnds) +
+                ", unconnected ends within 3 m of an aligned lane start=" +
+                std::to_string(laneStats.nearMissDeadEnds) + ".");
     uploadRoadBatches();
 }
 
@@ -299,10 +306,32 @@ void MapSceneLoader::indexMapContent() {
                 if (openbus::map::mapSplineProfileHasPathType(
                         *profile, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD)) {
                     roadTrafficSplines.push_back(spline);
+                    impl_->roadTrafficSplinePathOffsets[spline.splineId] =
+                        openbus::map::mapSplineProfilePathOffsets(
+                            *profile, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD);
+                    if (spline.geometryValid && std::isfinite(spline.length) &&
+                        spline.length > 0.0) {
+                        for (const auto& lane :
+                             impl_->roadTrafficSplinePathOffsets[spline.splineId]) {
+                            openbus::map::MapTrafficRouteSegment segment;
+                            segment.spline = {spline, tileReference.x, tileReference.y};
+                            segment.reversed = lane.reversed;
+                            segment.pathLateralMeters = lane.lateralMeters;
+                            segment.pathHeightMeters = lane.heightMeters;
+                            if (lane.bidirectional) {
+                                impl_->roadTrafficLaneNetwork.addSegment(segment);
+                                segment.reversed = true;
+                            }
+                            impl_->roadTrafficLaneNetwork.addSegment(std::move(segment));
+                        }
+                    }
                 }
                 if (openbus::map::mapSplineProfileHasPathType(
                         *profile, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN)) {
                     humanTrafficSplines.push_back(spline);
+                    impl_->humanTrafficSplinePathOffsets[spline.splineId] =
+                        openbus::map::mapSplineProfilePathOffsets(
+                            *profile, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN);
                 }
             }
             roadConnections.addSpline(spline, tileReference.x, tileReference.y,

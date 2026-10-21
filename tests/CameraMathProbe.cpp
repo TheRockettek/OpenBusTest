@@ -1,4 +1,5 @@
 #include "render/CameraMath.h"
+#include "render/MatrixMath.h"
 
 #include <algorithm>
 #include <array>
@@ -16,6 +17,13 @@ std::array<double, 3> rotateZ(const std::array<double, 3>& value, double angle) 
 
 double dot(const std::array<double, 3>& left, const std::array<double, 3>& right) {
     return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+}
+
+std::array<double, 3> rotatePoint(const std::array<double, 9>& rotation,
+                                  const std::array<double, 3>& point) {
+    return {rotation[0] * point[0] + rotation[1] * point[1] + rotation[2] * point[2],
+            rotation[3] * point[0] + rotation[4] * point[1] + rotation[5] * point[2],
+            rotation[6] * point[0] + rotation[7] * point[1] + rotation[8] * point[2]};
 }
 
 } // namespace
@@ -45,6 +53,50 @@ int main() {
         shadowTransform[12] != 0.0 || shadowTransform[13] != 0.0) {
         std::cerr << "Static vehicle root or shadow was not aligned with its ground plane\n";
         return 1;
+    }
+
+    const std::array<std::array<double, 9>, 4> chassisRotations = {{
+        {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0},
+        {0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0},
+        {0.0, 0.0, 1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0},
+        {0.0, -1.0, 0.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0},
+    }};
+    const std::array<std::array<double, 3>, 4> wheelCenters = {{
+        {3.2, 1.05, 0.48},
+        {3.2, -1.05, 0.48},
+        {-2.9, 1.1, 0.46},
+        {-2.9, -1.1, 0.46},
+    }};
+    for (std::size_t index = 0; index < wheelCenters.size(); ++index) {
+        BodyPose chassis;
+        chassis.position = {12.0, -7.0, 4.0};
+        chassis.rotation = chassisRotations[index];
+        BodyPose wheel;
+        const std::array<double, 3> wheelOffset =
+            rotatePoint(chassis.rotation, wheelCenters[index]);
+        for (std::size_t axis = 0; axis < wheel.position.size(); ++axis) {
+            wheel.position[axis] = chassis.position[axis] + wheelOffset[axis];
+        }
+        wheel.rotation = chassis.rotation;
+        const std::array<double, 3> modelCenter = {
+            wheelCenters[index][0] + 0.07, wheelCenters[index][1] - 0.03,
+            wheelCenters[index][2] + 0.02};
+        constexpr double modelOffset = -0.35;
+        const openbus::rendering::Matrix4 transform =
+            openbus::rendering::makeOdeWheelAnimationTransform(chassis, wheel, modelCenter,
+                                                                modelOffset);
+        const std::array<double, 4> renderedCenter = openbus::rendering::transformPoint(
+            transform, {modelCenter[0], modelCenter[1], modelCenter[2], 1.0});
+        const std::array<double, 3> expectedCenter = {
+            wheelCenters[index][0], wheelCenters[index][1],
+            wheelCenters[index][2] - modelOffset};
+        for (std::size_t axis = 0; axis < expectedCenter.size(); ++axis) {
+            if (std::abs(renderedCenter[axis] - expectedCenter[axis]) > 1.0e-9) {
+                std::cerr << "ODE wheel render transform moved the wheel center off its chassis "
+                             "mount\n";
+                return 1;
+            }
+        }
     }
 
     const double pan = 180.0 * pi / 180.0;

@@ -36,6 +36,7 @@ void scale(double x, double y, double z);
 const Matrix4& modelViewMatrix();
 const Matrix4& projectionMatrix();
 void setModelViewMatrix(const Matrix4& matrix);
+void setProjectionMatrix(const Matrix4& matrix);
 std::array<double, 3> transformLocalPoint(const BodyPose& pose, const std::array<double, 3>& local);
 // Treats a reflection camera as a planar mirror at `mirror` that shows `authoredDirection` to
 // `referenceEye`, and returns the direction it shows to `viewerEye`. Returns the normalized

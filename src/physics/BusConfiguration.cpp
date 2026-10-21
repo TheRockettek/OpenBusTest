@@ -338,6 +338,37 @@ std::filesystem::path modelConfigurationPathForBus(const std::filesystem::path& 
     return modelConfigPath;
 }
 
+std::filesystem::path
+modelConfigurationPathForVehicle(const std::filesystem::path& vehicleConfigPath) {
+    openbus::rendering::TraceScope trace("config", "modelConfigurationPathForVehicle");
+    const VehicleConfig source =
+        loadVehicleConfig(vehicleConfigPath, VehicleFileKind::Vehicle);
+    if (source.modelPath.empty()) {
+        throw std::runtime_error("Vehicle configuration has no [model] entry: " +
+                                 vehicleConfigPath.string());
+    }
+    const std::filesystem::path modelConfigPath =
+        resolveModelConfigPath(vehicleConfigPath, source.modelPath);
+    if (!std::filesystem::exists(modelConfigPath)) {
+        throw std::runtime_error("Vehicle model configuration was not found: " +
+                                 modelConfigPath.string());
+    }
+    return modelConfigPath;
+}
+
+std::filesystem::path
+modelConfigurationPathForVehicle(const std::filesystem::path& vehicleConfigPath,
+                                 const std::filesystem::path& configuredPath) {
+    openbus::rendering::TraceScope trace("config", "modelConfigurationPathForVehicle.explicit");
+    const std::filesystem::path modelConfigPath =
+        resolveConfiguredModelPath(vehicleConfigPath, configuredPath);
+    if (!std::filesystem::exists(modelConfigPath)) {
+        throw std::runtime_error("Configured vehicle model was not found: " +
+                                 modelConfigPath.string());
+    }
+    return modelConfigPath;
+}
+
 ModelConfig loadBusModelConfiguration(const std::filesystem::path& busConfigPath) {
     openbus::rendering::TraceScope trace("config", "loadBusModelConfiguration");
     const std::filesystem::path modelConfigPath = modelConfigurationPathForBus(busConfigPath);

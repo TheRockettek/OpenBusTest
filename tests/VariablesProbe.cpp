@@ -41,13 +41,17 @@ int main() {
 
     simulation.sharedVariables().set("mouse_x", 9.0F);
     simulation.sharedVariables().set("mouse_y", -4.0F);
+    simulation.sharedVariables().set("preciptype", 1.0F);
+    simulation.sharedVariables().set("preciprate", 0.75F);
     simulation.sharedVariables().updateFrame(0.125F, 10.0F, 800.0F, 600.0F);
     valid &= require(simulation.sharedVariables().get("mouse_x") == 0.0F &&
                          simulation.sharedVariables().get("mouse_y") == 0.0F &&
                          simulation.sharedVariables().get("mouse_cursor_x") == 800.0F &&
                          simulation.sharedVariables().get("mouse_cursor_y") == 600.0F &&
-                         simulation.sharedVariables().get("timegap") == 0.125F,
-                     "frame refresh resets motion and retains separate cursor position/time");
+                         simulation.sharedVariables().get("timegap") == 0.125F &&
+                         simulation.sharedVariables().get("preciptype") == 1.0F &&
+                         simulation.sharedVariables().get("preciprate") == 0.75F,
+                     "frame refresh resets motion but preserves weather and cursor/time state");
 
     vehicle.setString("ident", "probe");
     valid &= require(vehicle.hasString("ident") && vehicle.getString("ident") == "probe",

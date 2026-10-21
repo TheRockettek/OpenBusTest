@@ -85,6 +85,27 @@ void runProbe(const std::filesystem::path& fixture) {
                 mapSplineProfileHasPathType(profile, 1) &&
                 !mapSplineProfileHasPathType(profile, 2),
             "path-type lookup checks all records without interpreting other path fields");
+    const std::vector<openbus::map::MapSplinePathOffset> humanPathOffsets =
+        mapSplineProfilePathOffsets(profile, 1);
+    require(humanPathOffsets.size() == 1, "valid typed path offsets are extracted");
+    requireNear(humanPathOffsets.front().lateralMeters, 0.0,
+                "path lateral offset is read from the second path field");
+    requireNear(humanPathOffsets.front().heightMeters, -2.0,
+                "path height offset is read from the third path field");
+
+    openbus::map::MapSplineProfile pairedPathProfile;
+    pairedPathProfile.paths = {
+        {{"0", "-1.9", "0.1", "3.5", "0"}, {0.0, -1.9, 0.1, 3.5, 0.0}, true, 0},
+        {{"0", "1.9", "0.1", "3.5", "1"}, {0.0, 1.9, 0.1, 3.5, 1.0}, true, 0},
+    };
+    const std::vector<openbus::map::MapSplinePathOffset> roadPathOffsets =
+        mapSplineProfilePathOffsets(pairedPathProfile, 0);
+    require(roadPathOffsets.size() == 2,
+            "both authored lane paths are retained for a shared road spline");
+    requireNear(roadPathOffsets[0].lateralMeters, -1.9, "first lane lateral offset");
+    requireNear(roadPathOffsets[1].lateralMeters, 1.9, "second lane lateral offset");
+    require(!roadPathOffsets[0].reversed && roadPathOffsets[1].reversed,
+            "authored forward and reverse lane direction flags are retained");
 }
 
 void runExplicitCantWidthProbe(const std::filesystem::path& fixture) {

@@ -1,6 +1,7 @@
 // Opaque/transparent batch submission for vehicle meshes.
 
 #include "app/vehicle/Vehicle.h"
+#include "app/vehicle/VehicleDrawSorting.h"
 
 void Vehicle::setOneSidedFrontFaceConvention() {
     glFrontFace(GL_CW);
@@ -135,36 +136,17 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
 }
 
 void Vehicle::sortTransparentBatch(Batch& batch) {
-    if (batch.vertices.size() < 6 || batch.vertices.size() % 3 != 0) {
+    const std::vector<std::size_t> triangleOrder =
+        openbus::app::vehicle::transparentTriangleOrder(
+            batch.vertices, openbus::rendering::modelViewMatrix());
+    if (triangleOrder.empty()) {
         return;
     }
-    struct TriangleDepth {
-        std::size_t index;
-        double depth;
-    };
-    const Matrix4& modelView = openbus::rendering::modelViewMatrix();
-    std::vector<TriangleDepth> triangles;
-    triangles.reserve(batch.vertices.size() / 3);
-    for (std::size_t index = 0; index < batch.vertices.size(); index += 3) {
-        const auto& first = batch.vertices[index];
-        const auto& second = batch.vertices[index + 1];
-        const auto& third = batch.vertices[index + 2];
-        const std::array<double, 4> center = {
-            (static_cast<double>(first.x) + second.x + third.x) / 3.0,
-            (static_cast<double>(first.y) + second.y + third.y) / 3.0,
-            (static_cast<double>(first.z) + second.z + third.z) / 3.0, 1.0};
-        const std::array<double, 4> viewCenter = transformPoint(modelView, center);
-        triangles.push_back({index, -viewCenter[2]});
-    }
-    std::stable_sort(triangles.begin(), triangles.end(),
-                     [](const TriangleDepth& first, const TriangleDepth& second) {
-                         return first.depth > second.depth;
-                     });
     std::vector<Vertex> sortedVertices;
     sortedVertices.reserve(batch.vertices.size());
-    for (const TriangleDepth& triangle : triangles) {
-        sortedVertices.insert(sortedVertices.end(), batch.vertices.begin() + triangle.index,
-                              batch.vertices.begin() + triangle.index + 3);
+    for (const std::size_t index : triangleOrder) {
+        sortedVertices.insert(sortedVertices.end(), batch.vertices.begin() + index,
+                              batch.vertices.begin() + index + 3);
     }
     if (batch.sharedGeometryBuffer) {
         GLuint privateBuffer = 0;
@@ -363,16 +345,7 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                       [&](const DisplayPart* first, const DisplayPart* second) {
                           return viewDepth(*first) < viewDepth(*second);
                       });
-            std::stable_sort(transparentBatches.begin(), transparentBatches.end(),
-                             [](const TransparentBatch& first, const TransparentBatch& second) {
-                                 if (first.depth != second.depth) {
-                                     return first.depth > second.depth;
-                                 }
-                                 if (first.renderType != second.renderType) {
-                                     return first.renderType < second.renderType;
-                                 }
-                                 return false;
-                             });
+            openbus::app::vehicle::sortTransparentBatches(transparentBatches);
             std::stable_sort(noDepthOpaqueBatches.begin(), noDepthOpaqueBatches.end(),
                              [](const TransparentBatch& first, const TransparentBatch& second) {
                                  if (first.renderType != second.renderType) {

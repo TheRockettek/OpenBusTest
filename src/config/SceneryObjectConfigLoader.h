@@ -19,6 +19,18 @@ struct SceneryTreeDefinition {
     double maximumRatio = 1.0;
 };
 
+struct SceneryObjectTrafficPath {
+    // OMSI SCO [path] records are local spline segments, not start/end coordinate pairs.
+    std::array<double, 3> startPosition = {};
+    double headingDegrees = 0.0;
+    double radius = 0.0;
+    double length = 0.0;
+    double gradientStartPercent = 0.0;
+    double gradientEndPercent = 0.0;
+    double pathTypeCode = 0.0;
+    double widthMeters = 0.0;
+};
+
 struct SceneryObjectConfig {
     std::filesystem::path sourcePath;
     std::filesystem::path modelPath;
@@ -37,6 +49,7 @@ struct SceneryObjectConfig {
     std::vector<std::string> constantFiles;
     VehicleConfig scriptConfiguration;
     std::vector<SceneryTreeDefinition> trees;
+    std::vector<SceneryObjectTrafficPath> trafficPaths;
     std::vector<ModelAttachmentPoint> attachmentPoints;
     ConfigurationDiagnostics diagnostics;
 };

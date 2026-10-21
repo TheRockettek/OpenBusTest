@@ -32,11 +32,18 @@ struct MapSplineHeightProfile {
 };
 
 struct MapSplinePathDefinition {
-    // Path-field meaning is not fully established; retain source text alongside numeric values.
+    // The first fields identify path type and lateral/height offsets; retain the rest verbatim.
     std::vector<std::string> rawFields;
     std::vector<double> numericFields;
     bool numericFieldsValid = false;
     std::optional<int> pathTypeCode;
+};
+
+struct MapSplinePathOffset {
+    double lateralMeters = 0.0;
+    double heightMeters = 0.0;
+    bool reversed = false;
+    bool bidirectional = false;
 };
 
 struct MapSplineProfile {
@@ -61,5 +68,7 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path);
 std::optional<double> mapSplineProfileCantHalfWidth(const MapSplineProfile& profile) noexcept;
 
 bool mapSplineProfileHasPathType(const MapSplineProfile& profile, int pathTypeCode) noexcept;
+std::vector<MapSplinePathOffset> mapSplineProfilePathOffsets(const MapSplineProfile& profile,
+                                                             int pathTypeCode);
 
 } // namespace openbus::map

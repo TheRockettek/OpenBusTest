@@ -184,6 +184,23 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             result.attachmentPoints.push_back(std::move(attachment));
             continue;
         }
+        if (keyword == "path") {
+            std::vector<double> values;
+            if (readDoubles(reader, keyword, 12, values, result.diagnostics) &&
+                values.size() == 12) {
+                SceneryObjectTrafficPath path;
+                std::copy_n(values.begin(), 3, path.startPosition.begin());
+                path.headingDegrees = values[3];
+                path.radius = values[4];
+                path.length = values[5];
+                path.gradientStartPercent = values[6];
+                path.gradientEndPercent = values[7];
+                path.pathTypeCode = values[8];
+                path.widthMeters = values[9];
+                result.trafficPaths.push_back(path);
+            }
+            continue;
+        }
         if (keyword == "tree") {
             std::vector<std::string> values;
             if (reader.readPayloads(5, values, result.diagnostics, keyword) && values.size() == 5) {

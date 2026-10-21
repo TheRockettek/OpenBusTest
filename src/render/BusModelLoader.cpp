@@ -1,6 +1,6 @@
 #include "render/BusModelLoader.h"
 
-#include "config/BusConfigLoader.h"
+#include "config/ModelConfigLoader.h"
 #include "core/PerfTrace.h"
 #include "core/Variables.h"
 
@@ -10,11 +10,13 @@
 
 namespace openbus::rendering {
 
-BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
-                                const std::filesystem::path& modelRoot,
-                                openbus::scripting::Vehicle& variables) {
-    openbus::rendering::TraceScope trace("config", "loadBusModel");
-    const ModelConfig configuration = loadBusModelConfig(configPath, modelRoot, variables);
+namespace {
+
+BusModelLoadResult loadModel(const std::filesystem::path& configPath,
+                             const std::filesystem::path& modelRoot,
+                             openbus::scripting::Vehicle& variables, ModelConfigKind kind) {
+    openbus::rendering::TraceScope trace("config", "loadVehicleModel");
+    const ModelConfig configuration = loadModelConfig(configPath, modelRoot, kind, variables);
     BusModelLoadResult result;
     result.interiorLights = configuration.interiorLights;
     result.enhancedLights = configuration.enhancedLights;
@@ -76,6 +78,20 @@ BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
         result.parts.push_back(std::move(part));
     }
     return result;
+}
+
+} // namespace
+
+BusModelLoadResult loadBusModel(const std::filesystem::path& configPath,
+                                const std::filesystem::path& modelRoot,
+                                openbus::scripting::Vehicle& variables) {
+    return loadModel(configPath, modelRoot, variables, ModelConfigKind::Bus);
+}
+
+BusModelLoadResult loadVehicleModel(const std::filesystem::path& configPath,
+                                    const std::filesystem::path& modelRoot,
+                                    openbus::scripting::Vehicle& variables) {
+    return loadModel(configPath, modelRoot, variables, ModelConfigKind::Vehicle);
 }
 
 } // namespace openbus::rendering

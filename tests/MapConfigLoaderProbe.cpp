@@ -100,12 +100,24 @@ void runFixtureProbe() {
                 writeUtf16Le(root / "ailists.cfg",
                              "[aigroup_2]\nNormalCars\nvehicles\\sedan.bus\t7\n"
                              "vehicles\\delivery van.ovh\n[end]\n"
+                             "[aigroup_2]\nTrucks\nvehicles\\truck.bus\t3\n[end]\n"
+                             "[aigroup_2]\nCommercial\nvehicles\\commercial.bus\n[end]\n"
+                             "[aigroup_2]\nCommercials\nvehicles\\commercial_van.bus\n[end]\n"
+                             "[aigroup_2]\nOther\nvehicles\\other.bus\n[end]\n"
                              "[aigroup_depot]\nCentral Depot\nFixture HOF\n"
                              "[aigroup_depot_typgroup_2]\nvehicles\\city_bus.bus\n"
                              "1234\tBlue livery\n[end]\n");
                 writeUtf16Le(root / "drivers.txt",
                              "humans\\drivers\\driver_one.hum\n"
                              "humans\\custom map\\driver_two.hum\n");
+                const std::filesystem::path timetableDirectory = root / "TTData";
+                std::filesystem::create_directories(timetableDirectory);
+                writeUtf16Le(timetableDirectory / "FixtureTrip.ttp",
+                             "[trip]\nFixtureLine\nTown End\n12\n"
+                             "[station]\n15479\n1\nMain Stop\n0\n0\n0\n0\n5\n");
+                writeUtf16Le(timetableDirectory / "FixtureLine.ttr",
+                             "[track_entry]\n30273\n0\n1\n1\n10\n0\n"
+                             "[track_entry]\n30274\n0\n0\n2\n10\n0\n");
                 {
                     std::ofstream terrain(root / "tile_0_0.map.terrain", std::ios::binary);
             writeU32(terrain, 2);
@@ -187,7 +199,7 @@ void runFixtureProbe() {
             invalidDensityHourRejected = true;
         }
         require(invalidDensityHourRejected, "density lookup rejects hours outside [0, 24]");
-        require(definition.aiTraffic.vehicleGroups.size() == 1 &&
+        require(definition.aiTraffic.vehicleGroups.size() == 5 &&
                     definition.aiTraffic.vehicleGroups[0].name == "NormalCars" &&
                     definition.aiTraffic.vehicleGroups[0].vehicles.size() == 2 &&
                     definition.aiTraffic.vehicleGroups[0].vehicles[0].assetPath ==
@@ -202,6 +214,19 @@ void runFixtureProbe() {
                         std::vector<std::string>{"NormalCars", "vehicles\\sedan.bus\t7",
                                                  "vehicles\\delivery van.ovh"},
                 "road vehicle references are extracted while full group lines are preserved");
+        require(openbus::map::mapAiRoadVehicleAssetPaths(definition.aiTraffic) ==
+                    std::vector<std::string>{"vehicles\\delivery van.ovh"} &&
+                    openbus::map::mapAiBusAssetPaths(definition.aiTraffic) ==
+                        std::vector<std::string>{"vehicles\\city_bus.bus"},
+                "random road traffic selects only .ovh assets while scheduled buses remain .bus-only");
+        require(definition.aiTraffic.timetableRoutes.size() == 1 &&
+                    definition.aiTraffic.timetableRoutes[0].tripName == "FixtureLine" &&
+                    definition.aiTraffic.timetableRoutes[0].destinationName == "Town End" &&
+                    definition.aiTraffic.timetableRoutes[0].lineName == "12" &&
+                    definition.aiTraffic.timetableRoutes[0].stationCount == 1 &&
+                    definition.aiTraffic.timetableRoutes[0].splineIds ==
+                        std::vector<int>{30273, 30274},
+                "timetable routes retain station metadata and ordered map spline IDs");
         require(definition.aiTraffic.busTypes.size() == 1 &&
                     definition.aiTraffic.busTypes[0].type == 2 &&
                     definition.aiTraffic.busTypes[0].assetPath == "vehicles\\city_bus.bus" &&

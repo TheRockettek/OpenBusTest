@@ -33,6 +33,10 @@ struct ViewFrustum {
 
 [[nodiscard]] Matrix4 poseMatrix(const BodyPose& pose);
 
+[[nodiscard]] Matrix4 makeOdeWheelAnimationTransform(
+    const BodyPose& chassis, const BodyPose& wheel, const std::array<double, 3>& modelCenter,
+    double modelOffsetZ);
+
 [[nodiscard]] Matrix4 rotationMatrix(double angleDegrees, double x, double y, double z);
 
 [[nodiscard]] bool invertAffineMatrix(const Matrix4& matrix, Matrix4& inverse);

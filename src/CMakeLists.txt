@@ -146,6 +146,7 @@ openbus_add_module(openbus_render
         render/OpenGLFunctions.cpp
         render/RenderPrimitives.cpp
         render/RendererReflection.cpp
+        render/WeatherEffects.cpp
         render/map/MapRenderer.cpp
         render/map/MapRendererDraw.cpp
         render/map/MapRendererHelpers.cpp

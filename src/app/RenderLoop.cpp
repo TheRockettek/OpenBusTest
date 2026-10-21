@@ -5,6 +5,7 @@
 #include "map/MapSplineProfile.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 RenderLoop::RenderLoop(int width, int height, const char* title)
@@ -23,9 +24,19 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     }
     if (const char* scriptRate = openbus::getEnvironment("OPENBUS_SCRIPT_HZ")) {
         try {
-            scriptRateHz_ = std::clamp(std::stod(scriptRate), 0.0, 1000.0);
+            std::size_t parsed = 0;
+            const double requestedRate = std::stod(scriptRate, &parsed);
+            if (!std::isfinite(requestedRate) || scriptRate[parsed] != '\0') {
+                throw std::invalid_argument("Invalid OPENBUS_SCRIPT_HZ");
+            }
+            const double rate = std::clamp(requestedRate, 0.0, 1000.0);
+            if (rate > 0.0 && !std::isfinite(1.0 / rate)) {
+                throw std::invalid_argument("OPENBUS_SCRIPT_HZ is too small");
+            }
+            scriptRateHz_ = rate;
         } catch (const std::exception&) {
             scriptRateHz_ = 0.0;
+            gameLog.Log("Invalid OPENBUS_SCRIPT_HZ; scripts will follow the render rate");
         }
     }
     if (const char* hoverRate = openbus::getEnvironment("OPENBUS_HOVER_HZ")) {
@@ -183,17 +194,28 @@ RenderLoop::~RenderLoop() {
     glfwTerminate();
 }
 
-Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& busConfigPath,
+Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
                                 const std::filesystem::path& modelConfigPath,
                                 const VehiclePlacement& placement,
                                 ModelLoadingPolicy loadingPolicy, bool isAiVehicle) {
-    const std::filesystem::path resolvedBusConfigPath = busConfigurationPathFor(busConfigPath);
-    const std::filesystem::path resolvedModelConfigPath =
-        modelConfigPath.empty()
-            ? modelConfigurationPathForBus(resolvedBusConfigPath)
-            : modelConfigurationPathForBus(resolvedBusConfigPath, modelConfigPath);
+    const std::filesystem::path resolvedVehicleConfigPath =
+        busConfigurationPathFor(vehicleConfigPath);
+    std::string extension = resolvedVehicleConfigPath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    const VehicleFileKind configKind =
+        extension == ".ovh" ? VehicleFileKind::Vehicle : VehicleFileKind::Bus;
+    const std::filesystem::path resolvedModelConfigPath = modelConfigPath.empty()
+        ? (configKind == VehicleFileKind::Bus
+               ? modelConfigurationPathForBus(resolvedVehicleConfigPath)
+               : modelConfigurationPathForVehicle(resolvedVehicleConfigPath))
+        : (configKind == VehicleFileKind::Bus
+               ? modelConfigurationPathForBus(resolvedVehicleConfigPath, modelConfigPath)
+               : modelConfigurationPathForVehicle(resolvedVehicleConfigPath, modelConfigPath));
     const std::shared_ptr<const SharedVehicleDefinition> definition =
-        sharedVehicleDefinition(resolvedBusConfigPath, resolvedModelConfigPath);
+        sharedVehicleDefinition(resolvedVehicleConfigPath, resolvedModelConfigPath, configKind);
     const VehicleConfig& vehicleConfiguration = definition->vehicleConfiguration;
     if (vehicleCameras_.empty()) {
         for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
@@ -243,17 +265,18 @@ bool RenderLoop::AddTrafficVehicle(int splineId, int pathTypeCode,
                                    std::optional<std::string> driverModelPath,
                                    double speedMetersPerSecond, double startDistanceMeters,
                                    double centerX, double centerY, double maximumDistanceMeters,
-                                   ModelLoadingPolicy loadingPolicy) {
+                                   ModelLoadingPolicy loadingPolicy, bool isBus,
+                                   std::size_t laneSelector) {
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
     }
     std::optional<openbus::map::MapTrafficActor> actor =
         mapRenderer_->createTrafficActor(splineId, busConfigPath.string(), speedMetersPerSecond,
-                                         0.0, std::move(driverModelPath), pathTypeCode);
+                                         0.0, std::move(driverModelPath), pathTypeCode,
+                                         laneSelector);
     if (!actor) {
         return false;
     }
-    actor->route = openbus::map::makeMapTrafficRoutePingPong(std::move(actor->route));
     if (!openbus::map::placeMapTrafficActorNearLooping(
             *actor, startDistanceMeters, centerX, centerY, maximumDistanceMeters, 1.0)) {
         return false;
@@ -269,7 +292,22 @@ bool RenderLoop::AddTrafficVehicle(int splineId, int pathTypeCode,
     placement.yawDegrees = openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians);
     Vehicle* vehicle = AddVehicle(busConfigPath, {}, placement, loadingPolicy, true);
     vehicle->followsMapTrafficRoute = true;
-    trafficVehicles_.push_back({vehicle, std::move(*actor)});
+    const double initialDistanceMeters = actor->distanceMeters;
+    trafficVehicles_.push_back(
+        {vehicle, std::move(*actor), initialDistanceMeters, isBus, true, false});
+    const TrafficVehicleState& spawned = trafficVehicles_.back();
+    const std::vector<openbus::map::MapTrafficRouteSegment>& routeSegments =
+        spawned.actor.route.segments;
+    gameLog.Log(std::string("Map ") + (isBus ? "AI bus" : "road AI vehicle") +
+                " spawned in: " + spawned.actor.modelPath +
+                ", start spline=" +
+                std::to_string(routeSegments.front().spline.placement.splineId) +
+                ", end spline=" +
+                std::to_string(routeSegments.back().spline.placement.splineId) +
+                ", lane offset=" + std::to_string(routeSegments.front().pathLateralMeters) +
+                ", reversed=" + (routeSegments.front().reversed ? "yes" : "no") +
+                ", route segments=" + std::to_string(routeSegments.size()) +
+                ", route length=" + std::to_string(spawned.actor.route.totalLength) + " m.");
     return true;
 }
 
@@ -296,8 +334,68 @@ bool RenderLoop::AddHumanTrafficActor(int splineId, const std::filesystem::path&
             *actor, startDistanceMeters, centerX, centerY, maximumDistanceMeters, 0.01)) {
         return false;
     }
-    humanTrafficActors_.push_back({std::move(*actor), widthMeters, heightMeters});
+    const double initialDistanceMeters = actor->distanceMeters;
+    humanTrafficActors_.push_back(
+        {std::move(*actor), widthMeters, heightMeters, initialDistanceMeters, true});
     return true;
+}
+
+void RenderLoop::SetMapTrafficPopulation(std::size_t roadVehicleCount, std::size_t busCount) {
+    std::size_t activeRoadVehicles = 0;
+    std::size_t activeBuses = 0;
+    for (TrafficVehicleState& state : trafficVehicles_) {
+        if (state.routeCompleted) {
+            continue;
+        }
+        const bool shouldEnable = state.isBus ? activeBuses < busCount
+                                              : activeRoadVehicles < roadVehicleCount;
+        if (shouldEnable) {
+            if (state.isBus) {
+                ++activeBuses;
+            } else {
+                ++activeRoadVehicles;
+            }
+        }
+        if (shouldEnable == state.populationEnabled) {
+            continue;
+        }
+        state.populationEnabled = shouldEnable;
+        if (!shouldEnable) {
+            state.vehicle->mapTrafficRouteFinished = true;
+            gameLog.Log(std::string("Map ") + (state.isBus ? "AI bus" : "road AI vehicle") +
+                        " unloaded from active population: " + state.actor.modelPath);
+            continue;
+        }
+        if (state.routeCompleted) {
+            continue;
+        }
+        state.actor.distanceMeters = state.initialDistanceMeters;
+        const std::optional<openbus::map::MapTrafficPose> pose =
+            openbus::map::sampleMapTrafficRoute(
+                state.actor.route, state.actor.distanceMeters, state.actor.lateralOffsetMeters);
+        if (!pose.has_value()) {
+            throw std::runtime_error("Could not sample a reactivated map traffic route pose");
+        }
+        state.vehicle->placement.position = pose->position;
+        state.vehicle->placement.position[2] += state.vehicle->aiDeltaHeight;
+        state.vehicle->placement.yawDegrees =
+            openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians);
+        state.vehicle->mapTrafficRouteFinished = false;
+        gameLog.Log(std::string("Map ") + (state.isBus ? "AI bus" : "road AI vehicle") +
+                    " spawned in from inactive population: " + state.actor.modelPath +
+                    ", spline=" + std::to_string(pose->splineId));
+    }
+}
+
+void RenderLoop::SetHumanTrafficPopulation(std::size_t count) {
+    for (std::size_t index = 0; index < humanTrafficActors_.size(); ++index) {
+        HumanTrafficState& human = humanTrafficActors_[index];
+        const bool shouldEnable = index < count;
+        if (shouldEnable && !human.populationEnabled) {
+            human.actor.distanceMeters = human.initialDistanceMeters;
+        }
+        human.populationEnabled = shouldEnable;
+    }
 }
 
 std::vector<int> RenderLoop::trafficSplineIds(int pathTypeCode) const {
@@ -305,8 +403,49 @@ std::vector<int> RenderLoop::trafficSplineIds(int pathTypeCode) const {
                                    : mapRenderer_->trafficSplineIds(pathTypeCode);
 }
 
+std::vector<int> RenderLoop::trafficRouteStartSplineIds(int pathTypeCode) const {
+    return mapRenderer_ == nullptr ? std::vector<int>{}
+                                   : mapRenderer_->trafficRouteStartSplineIds(pathTypeCode);
+}
+
+std::vector<int> RenderLoop::trafficRouteSplineIds(int splineId, int pathTypeCode) const {
+    if (mapRenderer_ == nullptr) {
+        return {};
+    }
+    const std::optional<openbus::map::MapTrafficRoute> route =
+        pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD
+            ? mapRenderer_->buildDrivingRoute(splineId)
+            : mapRenderer_->buildTrafficRoute(splineId, pathTypeCode);
+    if (!route.has_value()) {
+        return {};
+    }
+    std::vector<int> splineIds;
+    splineIds.reserve(route->segments.size());
+    for (const openbus::map::MapTrafficRouteSegment& segment : route->segments) {
+        if (segment.spline.placement.splineId != 0) {
+            splineIds.push_back(segment.spline.placement.splineId);
+        }
+    }
+    return splineIds;
+}
+
 std::size_t RenderLoop::trafficVehicleCount() const {
-    return trafficVehicles_.size();
+    return static_cast<std::size_t>(std::count_if(
+        trafficVehicles_.begin(), trafficVehicles_.end(), [](const TrafficVehicleState& state) {
+            return state.populationEnabled && !state.vehicle->mapTrafficRouteFinished;
+        }));
+}
+
+void RenderLoop::SetWeather(int precipitationType, double precipitationRate) {
+    if (precipitationType < 0 || precipitationType > 2 ||
+        !std::isfinite(precipitationRate) || precipitationRate < 0.0 ||
+        precipitationRate > 1.0) {
+        throw std::invalid_argument("Weather precipitation settings are invalid");
+    }
+    simulationState_.sharedVariables().set("preciptype",
+                                           static_cast<float>(precipitationType));
+    simulationState_.sharedVariables().set("preciprate",
+                                           static_cast<float>(precipitationRate));
 }
 
 void RenderLoop::SetPlayerVehicle(Vehicle* model) {

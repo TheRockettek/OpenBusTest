@@ -332,6 +332,118 @@ void parseAiListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraf
     }
 }
 
+void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTrafficData& aiTraffic,
+                            ConfigurationDiagnostics& diagnostics) {
+    if (!std::filesystem::is_directory(directory)) {
+        return;
+    }
+    std::unordered_map<std::string, std::filesystem::path> trackFiles;
+    std::vector<std::filesystem::path> tripFiles;
+    for (const std::filesystem::directory_entry& entry :
+         std::filesystem::directory_iterator(directory)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        std::string extension = lowerAscii(entry.path().extension().string());
+        if (extension == ".ttr") {
+            trackFiles.emplace(lowerAscii(entry.path().stem().string()), entry.path());
+        } else if (extension == ".ttp") {
+            tripFiles.push_back(entry.path());
+        }
+    }
+    std::sort(tripFiles.begin(), tripFiles.end());
+
+    for (const std::filesystem::path& tripPath : tripFiles) {
+        const std::vector<std::string> tripLines = splitLines(decodeText(tripPath));
+        MapAiTimetableRoute route;
+        std::size_t routeHeaderFields = 0;
+        for (std::size_t lineIndex = 0; lineIndex < tripLines.size(); ++lineIndex) {
+            const std::string section = lowerAscii(trim(tripLines[lineIndex]));
+            if (section == "[trip]") {
+                std::array<std::string*, 3> fields = {
+                    &route.tripName, &route.destinationName, &route.lineName};
+                std::size_t next = lineIndex + 1;
+                for (std::string* field : fields) {
+                    while (next < tripLines.size() && trim(tripLines[next]).empty()) {
+                        ++next;
+                    }
+                    if (next >= tripLines.size() || isSectionHeaderLine(trim(tripLines[next]))) {
+                        break;
+                    }
+                    *field = trim(tripLines[next++]);
+                    ++routeHeaderFields;
+                }
+                lineIndex = next > 0 ? next - 1 : lineIndex;
+            } else if (section == "[station]") {
+                std::array<std::string, 8> stationFields;
+                std::size_t next = lineIndex + 1;
+                bool complete = true;
+                for (std::string& field : stationFields) {
+                    while (next < tripLines.size() && trim(tripLines[next]).empty()) {
+                        ++next;
+                    }
+                    if (next >= tripLines.size() ||
+                        isSectionHeaderLine(trim(tripLines[next]))) {
+                        complete = false;
+                        break;
+                    }
+                    field = trim(tripLines[next++]);
+                }
+                int stationId = 0;
+                if (complete && parseInteger(stationFields[0], stationId) && stationId != 0 &&
+                    !stationFields[2].empty()) {
+                    ++route.stationCount;
+                } else {
+                    diagnostics.warning(lineIndex + 1, "station",
+                                        "invalid or truncated timetable station record in " +
+                                            tripPath.filename().string());
+                }
+                lineIndex = next > 0 ? next - 1 : lineIndex;
+            }
+        }
+        if (routeHeaderFields != 3 || route.tripName.empty() || route.destinationName.empty() ||
+            route.lineName.empty() || route.stationCount == 0) {
+            continue;
+        }
+
+        const auto trackFile = trackFiles.find(lowerAscii(route.tripName));
+        if (trackFile == trackFiles.end()) {
+            diagnostics.warning(0, "trip",
+                                "no matching timetable track file for " + route.tripName +
+                                    " in " + tripPath.filename().string());
+            continue;
+        }
+        const std::vector<std::string> trackLines = splitLines(decodeText(trackFile->second));
+        bool malformedTrackEntry = false;
+        for (std::size_t lineIndex = 0; lineIndex < trackLines.size(); ++lineIndex) {
+            if (lowerAscii(trim(trackLines[lineIndex])) != "[track_entry]") {
+                continue;
+            }
+            std::size_t next = lineIndex + 1;
+            while (next < trackLines.size() && trim(trackLines[next]).empty()) {
+                ++next;
+            }
+            int splineId = 0;
+            if (next >= trackLines.size() ||
+                isSectionHeaderLine(trim(trackLines[next])) ||
+                !parseInteger(trim(trackLines[next]), splineId) || splineId == 0) {
+                malformedTrackEntry = true;
+                diagnostics.warning(lineIndex + 1, "track_entry",
+                                    "invalid timetable spline ID in " +
+                                        trackFile->second.filename().string());
+                continue;
+            }
+            if (route.splineIds.empty() || route.splineIds.back() != splineId) {
+                route.splineIds.push_back(splineId);
+            }
+        }
+        if (malformedTrackEntry || route.splineIds.size() < 2) {
+            continue;
+        }
+        aiTraffic.timetableRoutes.push_back(std::move(route));
+    }
+}
+
 void parseDriverListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraffic) {
     const std::vector<std::string> lines = splitLines(decodeText(path));
     for (const std::string& sourceLine : lines) {
@@ -691,11 +803,50 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     if (std::filesystem::is_regular_file(aiListPath)) {
         parseAiListFile(aiListPath, definition.aiTraffic);
     }
+    parseAiTimetableRoutes(mapDirectory / "TTData", definition.aiTraffic,
+                           definition.diagnostics);
     const std::filesystem::path driverListPath = mapDirectory / "drivers.txt";
     if (std::filesystem::is_regular_file(driverListPath)) {
         parseDriverListFile(driverListPath, definition.aiTraffic);
     }
     return definition;
+}
+
+std::vector<std::string> mapAiRoadVehicleAssetPaths(const MapAiTrafficData& traffic) {
+    const std::unordered_set<std::string> allowedGroups = {
+        "normalcars", "trucks", "commercial", "commercials"};
+    std::vector<std::string> paths;
+    std::unordered_set<std::string> seen;
+    for (const MapAiVehicleGroup& group : traffic.vehicleGroups) {
+        if (!allowedGroups.contains(lowerAscii(group.name))) {
+            continue;
+        }
+        for (const MapAiVehicleEntry& vehicle : group.vehicles) {
+            const std::string extension =
+                lowerAscii(std::filesystem::path(vehicle.assetPath).extension().string());
+            if (extension != ".ovh") {
+                continue;
+            }
+            if (seen.insert(lowerAscii(vehicle.assetPath)).second) {
+                paths.push_back(vehicle.assetPath);
+            }
+        }
+    }
+    return paths;
+}
+
+std::vector<std::string> mapAiBusAssetPaths(const MapAiTrafficData& traffic) {
+    std::vector<std::string> paths;
+    std::unordered_set<std::string> seen;
+    for (const MapAiBusTypeDefinition& busType : traffic.busTypes) {
+        if (lowerAscii(std::filesystem::path(busType.assetPath).extension().string()) != ".bus") {
+            continue;
+        }
+        if (seen.insert(lowerAscii(busType.assetPath)).second) {
+            paths.push_back(busType.assetPath);
+        }
+    }
+    return paths;
 }
 
 std::size_t selectMapSpawnPoint(const MapDefinition& map, std::string_view selector) {

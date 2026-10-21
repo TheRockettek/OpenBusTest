@@ -3,6 +3,7 @@
 // Shared includes and tuning constants for the RenderLoop implementation files.
 
 #include "app/RenderLoop.h"
+#include "app/ScriptTickScheduler.h"
 #include "app/StatusHud.h"
 #include "app/vehicle/Vehicle.h"
 #include "input/VehicleKeyBindings.h"
@@ -14,7 +15,6 @@
 
 namespace openbus::app {
 
-inline constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 8;
 inline constexpr double DEFAULT_FIELD_OF_VIEW = 60.0;
 inline constexpr double MIN_FIELD_OF_VIEW = 20.0;
 inline constexpr double MAX_FIELD_OF_VIEW = 120.0;

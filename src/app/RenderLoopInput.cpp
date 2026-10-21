@@ -115,7 +115,9 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         glfwGetCursorPos(window_, &cursorX, &cursorY);
         simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-            vehicle->updateFrameVariables(vehicle.get() != playerVehicle_, timegap);
+            if (!vehicle->mapTrafficRouteFinished) {
+                vehicle->updateFrameVariables(vehicle.get() != playerVehicle_, timegap);
+            }
         }
         soundViewpoint_ = isExteriorView() ? RenderViewContext::PlayerExterior
                                            : RenderViewContext::PlayerInterior;

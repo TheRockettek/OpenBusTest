@@ -16,7 +16,7 @@ Scope: player/AI sound references in `.bus` files, sound CFG records, playback/t
 | Start/loop/end filename families | Heuristic | `_start`, `_loop`/`-loop`, and `_end` naming is used to infer loop pairing/stopping. This is an OpenBus heuristic, not confirmed OMSI behavior. |
 | Same-file retrigger | Partial | OpenBus defaults to a `KeepPlaying` policy and updates a live source; exact native OMSI retrigger behavior has not been validated. |
 
-Unknown authored triggers remain a content gap rather than a missing CFG keyword. For example, the supplied London run logs `ev_bremse_hup` as an unknown trigger, while a configured `ev_schluessel_steck` playback request succeeds in that run.
+Unknown authored triggers remain a content gap rather than a missing CFG keyword. A prior London run report identified `ev_bremse_hup`, `ev_bremszischen`, `ev_kompressor_ein`, and `ev_schluessel_steck` among the skipped names, but the source sound CFGs and event trace are not present in this checkout. `SoundEngineProbe` verifies that an unknown trigger does not start playback; it does not establish mappings for those authored names.
 
 The DL05's sound-volume script derives `Snd_OutsideVol` from its doors and driver
 window. Ambient exterior loops update their gain as those openings move and stop
@@ -27,8 +27,8 @@ volume mix, not acoustic occlusion or low-pass filtering.
 ## BUS audio references
 
 - `[sound]` loads the player sound CFG and is connected to the player sound bank.
-- `[sound_ai]` is parsed and its path retained, but AI vehicles do not select/use an AI sound bank.
-- Sound selection for AI vehicles and the complete OMSI AI sound trigger/state producer set are not implemented.
+- `[sound_ai]` is parsed and its path retained. AI vehicle construction selects that bank when configured and falls back to `[sound]` otherwise; `VehicleConfigProbe` verifies the selection and fallback.
+- Complete OMSI AI sound-trigger/state production and AI-specific playback parity remain incomplete.
 
 ## Audio file decoding and playback limits
 
