@@ -3,9 +3,9 @@
   "configurePresets": [
     {
       "name": "windows-clang-release",
-      "displayName": "Windows Clang Release",
-      "generator": "NMake Makefiles",
-      "binaryDir": "${sourceDir}/build-ode",
+      "displayName": "Windows Clang Release (Ninja)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-release-ninja",
       "cacheVariables": {
         "CMAKE_CXX_COMPILER": "C:/Program Files/LLVM/bin/clang-cl.exe",
         "CMAKE_BUILD_TYPE": "Release",
@@ -50,12 +50,15 @@
     }
   ],
   "buildPresets": [
-    { "name": "windows-clang-release", "configurePreset": "windows-clang-release" },
+    { "name": "windows-clang-release", "configurePreset": "windows-clang-release", "jobs": 12 },
     { "name": "windows-clang-ninja", "configurePreset": "windows-clang-ninja", "jobs": 12 },
     { "name": "windows-clang-benchmark", "configurePreset": "windows-clang-benchmark" },
     { "name": "windows-clang-bgfx", "configurePreset": "windows-clang-bgfx" }
   ],
   "testPresets": [
-    { "name": "windows-clang-release", "configurePreset": "windows-clang-release", "output": { "outputOnFailure": true } }
+    { "name": "windows-clang-release", "configurePreset": "windows-clang-release", "output": { "outputOnFailure": true } },
+    { "name": "windows-clang-ninja", "configurePreset": "windows-clang-ninja", "output": { "outputOnFailure": true } },
+    { "name": "windows-clang-benchmark", "configurePreset": "windows-clang-benchmark", "output": { "outputOnFailure": true } },
+    { "name": "windows-clang-bgfx", "configurePreset": "windows-clang-bgfx", "output": { "outputOnFailure": true } }
   ]
 }

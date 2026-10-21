@@ -1,5 +1,8 @@
 {
   "cmake.useCMakePresets": "always",
-  "cmake.buildDirectory": "${workspaceFolder}/build-ode",
+  "cmake.configurePreset": "windows-clang-ninja",
+  "cmake.buildPreset": "windows-clang-ninja",
+  "cmake.testPreset": "windows-clang-ninja",
+  "cmake.buildDirectory": "${workspaceFolder}/build-ninja",
   "python-envs.defaultEnvManager": "ms-python.python:system"
 }
