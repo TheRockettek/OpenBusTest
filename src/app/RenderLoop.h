@@ -79,7 +79,7 @@ class RenderLoop {
                            double startDistanceMeters, double centerX, double centerY,
                            double maximumDistanceMeters, ModelLoadingPolicy loadingPolicy = {});
     bool AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,
-                              double heightMeters, double speedMetersPerSecond,
+                              double widthMeters, double heightMeters, double speedMetersPerSecond,
                               double startDistanceMeters, double centerX, double centerY,
                               double maximumDistanceMeters);
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
@@ -173,6 +173,11 @@ class RenderLoop {
     bool clickableDebugOverlay_ = false;
     bool previousCollisionDebugKeyState_ = false;
     bool collisionDebugOverlay_ = false;
+    bool previousTrafficSplineDebugKeyState_ = false;
+    bool trafficSplineDebugOverlay_ = false;
+    bool trafficSplineDebugBuilt_ = false;
+    std::vector<std::pair<int, int>> trafficSplineDebugTiles_;
+    std::uint64_t trafficSplineDebugRevision_ = 0;
     bool collisionWireframeBuilt_ = false;
     std::uint64_t collisionWireframeRevision_ = 0;
     double clickableHoverRefreshInterval_ = 0.075;
@@ -215,6 +220,8 @@ class RenderLoop {
     std::string statusHudText_;
     openbus::rendering::StaticPrimitiveBuffer collisionWireframeBuffer_;
     std::vector<openbus::rendering::PrimitiveVertex> collisionWireframeVertices_;
+    openbus::rendering::StaticPrimitiveBuffer trafficSplineDebugBuffer_;
+    std::vector<openbus::rendering::PrimitiveVertex> trafficSplineDebugVertices_;
     std::array<int, 4> viewport_ = {0, 0, 1, 1};
     double scriptRateHz_ = 0.0;
     double scriptAccumulator_ = 0.0;
@@ -238,6 +245,7 @@ class RenderLoop {
     std::vector<TrafficVehicleState> trafficVehicles_;
     struct HumanTrafficState {
         openbus::map::MapTrafficActor actor;
+        double widthMeters = 0.2;
         double heightMeters = 1.7;
     };
     std::vector<HumanTrafficState> humanTrafficActors_;

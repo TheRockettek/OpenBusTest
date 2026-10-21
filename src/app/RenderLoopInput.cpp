@@ -133,6 +133,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             const bool mouseControlToggle = binding.action == "mouse_control_toggle";
             const bool dumpVariables = binding.action == "debug_dump_variables";
             const bool freeCameraToggle = binding.key == GLFW_KEY_F3;
+            const bool trafficSplineDebugToggle = binding.key == GLFW_KEY_F2;
             if (changed) {
                 keyEvents_.push_back({binding.action, pressed, glfwGetTime()});
                 if (mouseControlToggle && pressed) {
@@ -153,7 +154,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                 }
             }
             if (!mouseControlToggle && !dumpVariables && !freeCameraToggle &&
-                playerVehicle_ != nullptr && playerVehicle_->scripts &&
+                !trafficSplineDebugToggle && playerVehicle_ != nullptr && playerVehicle_->scripts &&
                 openbus::input::shouldDispatchKeyBinding(binding.flags, pressed,
                                                          previousVehicleKeyStates_[index])) {
                 playerVehicle_->scripts->invokeKeyBinding(binding.action, pressed, changed);
@@ -292,6 +293,16 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                         (collisionDebugOverlay_ ? "enabled" : "disabled"));
         }
         previousCollisionDebugKeyState_ = collisionDebugKeyPressed;
+    }
+    {
+        const bool trafficSplineDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_F2) == GLFW_PRESS;
+        if (trafficSplineDebugKeyPressed && !previousTrafficSplineDebugKeyState_) {
+            trafficSplineDebugOverlay_ = !trafficSplineDebugOverlay_;
+            gameLog.Log(std::string("AI and human traffic spline overlay ") +
+                        (trafficSplineDebugOverlay_ ? "enabled (cyan=road, magenta=human)"
+                                                    : "disabled"));
+        }
+        previousTrafficSplineDebugKeyState_ = trafficSplineDebugKeyPressed;
     }
     {
         const bool raisePlayerKeyPressed = glfwGetKey(window_, GLFW_KEY_U) == GLFW_PRESS;

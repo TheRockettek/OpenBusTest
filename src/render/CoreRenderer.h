@@ -79,6 +79,8 @@ struct ModelMaterial {
 bool initializeCoreRenderer();
 void shutdownCoreRenderer();
 void invalidateTextureBindings();
+// Call with the camera view before applying any object transforms.
+void setLightingViewMatrix(const Matrix4& view);
 void configureModelAlphaState(int alphaMode, bool noZwrite);
 // Frame-local total of triangle primitives submitted through the renderer.
 void resetFrameTriangleCount();

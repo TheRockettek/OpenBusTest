@@ -173,6 +173,17 @@ std::optional<openbus::map::MapTrafficRoute> MapRenderer::buildTrafficRoute(int 
     return impl_->trafficRouteNetwork.buildRoute(splineId);
 }
 
+std::optional<openbus::map::MapTrafficRoute> MapRenderer::buildTrafficRoute(
+    int splineId, int pathTypeCode) const {
+    if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
+        return impl_->roadTrafficRouteNetwork.buildRoute(splineId);
+    }
+    if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
+        return impl_->humanTrafficRouteNetwork.buildRoute(splineId);
+    }
+    return std::nullopt;
+}
+
 std::vector<int> MapRenderer::trafficSplineIds(int pathTypeCode) const {
     if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
         return impl_->roadTrafficRouteNetwork.splineIds();

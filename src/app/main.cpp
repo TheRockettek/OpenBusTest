@@ -385,7 +385,8 @@ int main() {
                 std::size_t addedTrafficVehicles = 0;
                 std::unordered_set<std::string> unavailableAiBuses;
                 for (std::size_t candidate = 0;
-                     candidate < roadSplineIds.size() && addedTrafficVehicles < targetTrafficCount;
+                     candidate < targetTrafficCount * 4 &&
+                     addedTrafficVehicles < targetTrafficCount;
                      ++candidate) {
                     const std::string& busPath =
                         aiBusConfigurations[candidate % aiBusConfigurations.size()];
@@ -401,7 +402,8 @@ int main() {
                                        mapDefinition.aiTraffic.driverModelPaths.size()]);
                     try {
                         if (renderer.AddTrafficVehicle(
-                                roadSplineIds[candidate], openbus::map::MAP_SPLINE_PATH_TYPE_ROAD,
+                                roadSplineIds[candidate % roadSplineIds.size()],
+                                openbus::map::MAP_SPLINE_PATH_TYPE_ROAD,
                                 busPath, driverPath, trafficSpeedMetersPerSecond,
                                 static_cast<double>(candidate) * trafficSpacingMeters,
                                 busPlacement.position[0], busPlacement.position[1],
@@ -439,7 +441,12 @@ int main() {
                 static_cast<std::size_t>(mapHumanBaseCount), configuredDensity, 200);
             const std::vector<int> humanSplineIds =
                 renderer.trafficSplineIds(openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN);
-            std::vector<std::pair<std::filesystem::path, double>> humanModels;
+            struct HumanModel {
+                std::filesystem::path configPath;
+                double widthMeters = 0.0;
+                double heightMeters = 0.0;
+            };
+            std::vector<HumanModel> humanModels;
             for (const std::string& configuredPath : mapDefinition.aiTraffic.driverModelPaths) {
                 std::string normalizedPath = configuredPath;
                 std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
@@ -465,13 +472,15 @@ int main() {
                                    record.values.size() == 2;
                         });
                     if (geometry == humanConfig.numericRecords.end() ||
+                        !std::isfinite(geometry->values[0]) || geometry->values[0] <= 0.0 ||
                         !std::isfinite(geometry->values[1]) || geometry->values[1] <= 0.0) {
                         applicationLog.Log("Skipping human configuration without valid "
-                                           "[humangeom] height: " +
+                                           "[humangeom] dimensions: " +
                                            humanConfigPath.generic_string() + ".");
                         continue;
                     }
-                    humanModels.emplace_back(humanConfigPath, geometry->values[1]);
+                    humanModels.push_back(
+                        {humanConfigPath, geometry->values[0], geometry->values[1]});
                 } catch (const std::exception& error) {
                     applicationLog.Log("Skipping human configuration '" +
                                        humanConfigPath.generic_string() + "': " + error.what());
@@ -479,8 +488,7 @@ int main() {
             }
             if (!configuredDensity.has_value()) {
                 applicationLog.Log("Map passenger traffic density is unavailable at " +
-                                   std::to_string(trafficHour) +
-                                   "h; using density factor 1.0.");
+                                   std::to_string(trafficHour) + "h; using density factor 1.0.");
             }
             if (humanSplineIds.empty()) {
                 applicationLog.Log("Map human traffic not spawned: no usable human-path splines "
@@ -497,13 +505,14 @@ int main() {
                 constexpr double trafficRadiusMeters = 750.0;
                 std::size_t addedHumans = 0;
                 for (std::size_t candidate = 0;
-                     candidate < humanSplineIds.size() && addedHumans < targetHumanCount;
+                     candidate < targetHumanCount * 4 && addedHumans < targetHumanCount;
                      ++candidate) {
-                    const auto& [humanConfigPath, height] =
-                        humanModels[addedHumans % humanModels.size()];
+                    const HumanModel& humanModel = humanModels[addedHumans % humanModels.size()];
                     try {
                         if (renderer.AddHumanTrafficActor(
-                                humanSplineIds[candidate], humanConfigPath, height,
+                                humanSplineIds[candidate % humanSplineIds.size()],
+                                humanModel.configPath,
+                                humanModel.widthMeters, humanModel.heightMeters,
                                 humanSpeedMetersPerSecond,
                                 static_cast<double>(candidate) * humanSpacingMeters,
                                 busPlacement.position[0], busPlacement.position[1],
@@ -512,15 +521,15 @@ int main() {
                         }
                     } catch (const std::exception& error) {
                         applicationLog.Log("Skipping human traffic actor '" +
-                                           humanConfigPath.generic_string() + "': " +
-                                           error.what());
+                                           humanModel.configPath.generic_string() +
+                                           "': " + error.what());
                     }
                 }
                 applicationLog.Log(
                     "Map human traffic spawned: " + std::to_string(addedHumans) + " of " +
-                    std::to_string(targetHumanCount) + " requested, density=" +
-                    std::to_string(configuredDensity.value_or(1.0)) + ", human paths=" +
-                    std::to_string(humanSplineIds.size()) + ".");
+                    std::to_string(targetHumanCount) +
+                    " requested, density=" + std::to_string(configuredDensity.value_or(1.0)) +
+                    ", human paths=" + std::to_string(humanSplineIds.size()) + ".");
             }
         }
 

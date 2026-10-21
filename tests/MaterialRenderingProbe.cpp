@@ -292,12 +292,98 @@ int main() {
         std::cerr << "legacy untextured materials were unexpectedly tinted by vertex colors\n";
         passed = false;
     }
+    auto lightingVertices = vertices;
+    for (std::size_t index = 0; index < lightingVertices.size(); index += 13) {
+        lightingVertices[index + 6] = 0.6F;
+        lightingVertices[index + 8] = 0.8F;
+    }
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(lightingVertices), lightingVertices.data(),
+                  GL_STATIC_DRAW);
+    const GLuint normalMap = texture({128, 220, 220, 255});
+    const std::vector<std::array<float, 4>> batchColors = {{{1, 1, 1, 1}}};
+    const std::vector<GLuint> batchTextures = {white};
+    GLuint indexBuffer = 0;
+    constexpr std::array<std::uint32_t, 3> indices = {0, 1, 2};
+    pglGenBuffers(1, &indexBuffer);
+    pglBindBuffer(GL_ARRAY_BUFFER, indexBuffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(indices), indices.data(), GL_STATIC_DRAW);
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    for (int source = 0; source < 4; ++source) {
+        material = {};
+        material.texture = white;
+        material.textured = true;
+        material.useBumpmap = source == 1;
+        material.bumpmap = source == 1 ? normalMap : 0;
+        material.bumpmapStrength = source == 1 ? 1.0F : 0.0F;
+        const auto drawLighting = [&]() {
+            if (source < 2) {
+                return draw(material, {1, 1, 1}, 1.0);
+            }
+            glClear(GL_COLOR_BUFFER_BIT);
+            if (source == 2) {
+                drawMaterialBatch(buffer, 3, batchColors, batchTextures, {});
+            } else {
+                drawIndexedModelBatch(buffer, indexBuffer, 3, material, {1, 1, 1}, 1.0, 0);
+            }
+            std::array<std::uint8_t, 4> result = {};
+            glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
+            return result;
+        };
+        setModelViewMatrix(identityMatrix());
+        setLightingViewMatrix(identityMatrix());
+        const auto baseline = drawLighting();
+        if (baseline[0] <= 148) {
+            std::cerr << "camera lighting probe did not exercise directional lighting\n";
+            passed = false;
+        }
+        for (int frame = 0; frame < 3; ++frame) {
+            drawTextureQuad(blue, -1, -1, 2, 2);
+            const auto afterHud = drawLighting();
+            if (afterHud != baseline) {
+                std::cerr << "HUD texture draw changed subsequent model rendering; source="
+                          << source << " frame=" << frame << '\n';
+                passed = false;
+            }
+        }
+        setLightingViewMatrix(translationMatrix({100, -200, 300}));
+        if (drawLighting() != baseline) {
+            std::cerr << "camera translation changed the directional light; source="
+                      << source << '\n';
+            passed = false;
+        }
+        setModelViewMatrix(rotationMatrix(180, 0, 0, 1));
+        const auto objectRotatedPixel = drawLighting();
+        if (close(objectRotatedPixel[0], baseline[0])) {
+            std::cerr << "lighting probe did not distinguish object and camera rotation; source="
+                      << source << '\n';
+            passed = false;
+        }
+        for (const double angle : {90.0, 180.0, 270.0, 0.0}) {
+            const Matrix4 view = rotationMatrix(angle, 0, 0, 1);
+            setModelViewMatrix(view);
+            setLightingViewMatrix(view);
+            const auto rotatedPixel = drawLighting();
+            for (std::size_t channel = 0; channel < 4; ++channel) {
+                if (!close(rotatedPixel[channel], baseline[channel])) {
+                    std::cerr << "camera rotation changed world-space lighting; source="
+                              << source << " angle=" << angle << " channel=" << channel
+                              << " baseline=" << static_cast<int>(baseline[channel])
+                              << " actual=" << static_cast<int>(rotatedPixel[channel]) << '\n';
+                    passed = false;
+                }
+            }
+        }
+    }
+    setModelViewMatrix(identityMatrix());
+    setLightingViewMatrix(identityMatrix());
     if (glGetError() != GL_NO_ERROR) {
         std::cerr << "OpenGL material probe failed\n";
         passed = false;
     }
-    const GLuint textures[] = {blue, white, mask, red, black};
-    glDeleteTextures(5, textures);
+    const GLuint textures[] = {blue, white, mask, red, black, normalMap};
+    glDeleteTextures(6, textures);
+    pglDeleteBuffers(1, &indexBuffer);
     pglDeleteBuffers(1, &buffer);
     shutdownCoreRenderer();
     glfwDestroyWindow(window);

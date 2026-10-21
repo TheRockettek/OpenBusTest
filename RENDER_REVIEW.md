@@ -66,6 +66,17 @@ rule out a driver/GPU draw-call bottleneck.
 
 ## Existing safeguards and constraints
 
+- HUD texture quads must update the cached vertex-array and array-buffer bindings.
+  Otherwise the next model draw can reuse stale state, losing ground textures or
+  changing lighting depending on whether reflections rendered that frame. The
+  material rendering probe checks repeated HUD-to-model transitions, including
+  indexed terrain/road-style draws. A stationary Cotterell/MAN_DL05 capture with
+  reflections and traffic enabled recorded 0 brightness spikes in 200 samples
+  after the fix (18/200 before).
+- Directional daylight is world-fixed and transformed by the camera view for
+  each main/reflection draw, before object transforms. Regular, material-batched,
+  and bump-mapped surfaces share that view-space direction. The material rendering
+  probe checks pixel brightness across camera rotations.
 - `MapRenderer::draw()` already rejects invisible terrain, roads, chunks, and
   individual scenery instances. It then performs a draw for each visible scenery
   instance after its material/dynamic-texture handling and transform.

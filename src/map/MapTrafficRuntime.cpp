@@ -46,6 +46,82 @@ MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath
     return actor;
 }
 
+MapTrafficRoute makeMapTrafficRoutePingPong(MapTrafficRoute route) {
+    if (route.closed || route.segments.empty() ||
+        route.cumulativeEndDistances.size() != route.segments.size() ||
+        !std::isfinite(route.totalLength) || route.totalLength <= 0.0) {
+        return route;
+    }
+
+    route.segments.reserve(route.segments.size() * 2);
+    route.cumulativeEndDistances.reserve(route.cumulativeEndDistances.size() * 2);
+    for (std::size_t index = route.segments.size(); index > 0; --index) {
+        MapTrafficRouteSegment segment = route.segments[index - 1];
+        segment.reversed = !segment.reversed;
+        route.totalLength += segment.spline.placement.length;
+        if (!std::isfinite(route.totalLength)) {
+            throw std::invalid_argument("Map traffic ping-pong route length overflowed");
+        }
+        route.segments.push_back(std::move(segment));
+        route.cumulativeEndDistances.push_back(route.totalLength);
+    }
+    route.closed = true;
+    return route;
+}
+
+namespace {
+
+bool placeMapTrafficActorNear(MapTrafficActor& actor, double startDistanceMeters, double centerX,
+                              double centerY, double maximumDistanceMeters,
+                              double endpointMarginMeters, bool loopOpenRoute) {
+    if (!std::isfinite(startDistanceMeters) || startDistanceMeters < 0.0 ||
+        !std::isfinite(centerX) || !std::isfinite(centerY) ||
+        !std::isfinite(maximumDistanceMeters) || maximumDistanceMeters < 0.0 ||
+        !std::isfinite(endpointMarginMeters) || endpointMarginMeters < 0.0 ||
+        !std::isfinite(actor.route.totalLength) || actor.route.totalLength <= 0.0) {
+        throw std::invalid_argument("Map traffic spawn position or route is invalid");
+    }
+
+    const double usableLength = std::max(0.0, actor.route.totalLength - endpointMarginMeters);
+    if (loopOpenRoute && !actor.route.closed && usableLength <= 0.0) {
+        return false;
+    }
+    const double distance = actor.route.closed
+                                ? std::fmod(startDistanceMeters, actor.route.totalLength)
+                                : loopOpenRoute && usableLength > 0.0
+                                      ? std::fmod(startDistanceMeters, usableLength)
+                                      : std::min(startDistanceMeters, usableLength);
+    const std::optional<MapTrafficPose> pose =
+        sampleMapTrafficRoute(actor.route, distance, actor.lateralOffsetMeters);
+    if (!pose.has_value()) {
+        throw std::runtime_error("Could not sample the map traffic spawn route pose");
+    }
+    const double dx = pose->position[0] - centerX;
+    const double dy = pose->position[1] - centerY;
+    if (std::hypot(dx, dy) > maximumDistanceMeters) {
+        return false;
+    }
+    actor.distanceMeters = distance;
+    return true;
+}
+
+} // namespace
+
+bool placeMapTrafficActorNear(MapTrafficActor& actor, double startDistanceMeters, double centerX,
+                              double centerY, double maximumDistanceMeters,
+                              double endpointMarginMeters) {
+    return placeMapTrafficActorNear(actor, startDistanceMeters, centerX, centerY,
+                                    maximumDistanceMeters, endpointMarginMeters, false);
+}
+
+bool placeMapTrafficActorNearLooping(MapTrafficActor& actor, double startDistanceMeters,
+                                     double centerX, double centerY,
+                                     double maximumDistanceMeters,
+                                     double endpointMarginMeters) {
+    return placeMapTrafficActorNear(actor, startDistanceMeters, centerX, centerY,
+                                    maximumDistanceMeters, endpointMarginMeters, true);
+}
+
 std::optional<MapTrafficRoute> buildMapTrafficRoute(const MapSplinePlacementReference& start,
                                                     const MapSplineChainResolver& chainResolver,
                                                     std::size_t segmentLimit) {

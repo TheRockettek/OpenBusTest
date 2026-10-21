@@ -247,33 +247,23 @@ bool RenderLoop::AddTrafficVehicle(int splineId, int pathTypeCode,
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
     }
-    if (!std::isfinite(startDistanceMeters) || startDistanceMeters < 0.0 ||
-        !std::isfinite(centerX) || !std::isfinite(centerY) ||
-        !std::isfinite(maximumDistanceMeters) || maximumDistanceMeters < 0.0) {
-        throw std::invalid_argument("Map traffic spawn position or distance is invalid");
-    }
-
     std::optional<openbus::map::MapTrafficActor> actor =
         mapRenderer_->createTrafficActor(splineId, busConfigPath.string(), speedMetersPerSecond,
                                          0.0, std::move(driverModelPath), pathTypeCode);
     if (!actor) {
         return false;
     }
-    actor->distanceMeters =
-        actor->route.closed
-            ? std::fmod(startDistanceMeters, actor->route.totalLength)
-            : std::min(startDistanceMeters, std::max(0.0, actor->route.totalLength - 1.0));
-    const std::optional<openbus::map::MapTrafficPose> pose = openbus::map::sampleMapTrafficRoute(
-        actor->route, actor->distanceMeters, actor->lateralOffsetMeters);
-    if (!pose) {
-        throw std::runtime_error("Could not sample the initial map traffic route pose");
-    }
-    const double dx = pose->position[0] - centerX;
-    const double dy = pose->position[1] - centerY;
-    if (dx * dx + dy * dy > maximumDistanceMeters * maximumDistanceMeters) {
+    actor->route = openbus::map::makeMapTrafficRoutePingPong(std::move(actor->route));
+    if (!openbus::map::placeMapTrafficActorNearLooping(
+            *actor, startDistanceMeters, centerX, centerY, maximumDistanceMeters, 1.0)) {
         return false;
     }
 
+    const std::optional<openbus::map::MapTrafficPose> pose = openbus::map::sampleMapTrafficRoute(
+        actor->route, actor->distanceMeters, actor->lateralOffsetMeters);
+    if (!pose.has_value()) {
+        throw std::runtime_error("Could not sample the initial map traffic route pose");
+    }
     VehiclePlacement placement;
     placement.position = pose->position;
     placement.yawDegrees = openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians);
@@ -283,43 +273,30 @@ bool RenderLoop::AddTrafficVehicle(int splineId, int pathTypeCode,
     return true;
 }
 
-bool RenderLoop::AddHumanTrafficActor(int splineId,
-                                      const std::filesystem::path& humanConfigPath,
-                                      double heightMeters, double speedMetersPerSecond,
-                                      double startDistanceMeters, double centerX, double centerY,
+bool RenderLoop::AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,
+                                      double widthMeters, double heightMeters,
+                                      double speedMetersPerSecond, double startDistanceMeters,
+                                      double centerX, double centerY,
                                       double maximumDistanceMeters) {
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add human traffic before loading a map");
     }
-    if (humanConfigPath.empty() || !std::isfinite(heightMeters) || heightMeters <= 0.0 ||
-        !std::isfinite(startDistanceMeters) || startDistanceMeters < 0.0 ||
-        !std::isfinite(centerX) || !std::isfinite(centerY) ||
-        !std::isfinite(maximumDistanceMeters) || maximumDistanceMeters < 0.0) {
+    if (humanConfigPath.empty() || !std::isfinite(widthMeters) || widthMeters <= 0.0 ||
+        !std::isfinite(heightMeters) || heightMeters <= 0.0) {
         throw std::invalid_argument("Human traffic spawn configuration is invalid");
     }
 
-    std::optional<openbus::map::MapTrafficActor> actor =
-        mapRenderer_->createTrafficActor(splineId, humanConfigPath.string(), speedMetersPerSecond,
-                                         0.0, std::nullopt,
-                                         openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN);
+    std::optional<openbus::map::MapTrafficActor> actor = mapRenderer_->createTrafficActor(
+        splineId, humanConfigPath.string(), speedMetersPerSecond, 0.0, std::nullopt,
+        openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN);
     if (!actor) {
         return false;
     }
-    actor->distanceMeters =
-        actor->route.closed
-            ? std::fmod(startDistanceMeters, actor->route.totalLength)
-            : std::min(startDistanceMeters, std::max(0.0, actor->route.totalLength - 0.01));
-    const std::optional<openbus::map::MapTrafficPose> pose = openbus::map::sampleMapTrafficRoute(
-        actor->route, actor->distanceMeters, actor->lateralOffsetMeters);
-    if (!pose) {
-        throw std::runtime_error("Could not sample the initial human traffic route pose");
-    }
-    const double dx = pose->position[0] - centerX;
-    const double dy = pose->position[1] - centerY;
-    if (dx * dx + dy * dy > maximumDistanceMeters * maximumDistanceMeters) {
+    if (!openbus::map::placeMapTrafficActorNearLooping(
+            *actor, startDistanceMeters, centerX, centerY, maximumDistanceMeters, 0.01)) {
         return false;
     }
-    humanTrafficActors_.push_back({std::move(*actor), heightMeters});
+    humanTrafficActors_.push_back({std::move(*actor), widthMeters, heightMeters});
     return true;
 }
 
@@ -350,6 +327,9 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
         map.entryPoints[spawnEntryPointIndex].placement.position[0],
         map.entryPoints[spawnEntryPointIndex].placement.position[1], groundTextureIndex, omsiRoot,
         simulationState_);
+    trafficSplineDebugBuilt_ = false;
+    trafficSplineDebugTiles_.clear();
+    ++trafficSplineDebugRevision_;
 }
 
 void RenderLoop::updateMapStreaming(double worldX, double worldY) {

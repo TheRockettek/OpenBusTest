@@ -42,6 +42,8 @@ class MapRenderer {
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;
     MapRenderStats renderStats() const;
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId) const;
+    std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId,
+                                                                   int pathTypeCode) const;
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
     std::optional<openbus::map::MapTrafficActor>
     createTrafficActor(int splineId, std::string modelPath, double speedMetersPerSecond,

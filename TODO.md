@@ -133,6 +133,10 @@ it.
 - [~] A focused E400 display/light regression remains blocked on the external
   E400 model CFG/assets, which are not included in this checkout; parser and
   runtime probes do not replace the requested visual comparison.
+- [~] In-game lighting flicker has been reported, but the bundled fixtures do
+  not reproduce it and the affected light source (interior, nightmap, exterior,
+  or scenery) is not identified. Diagnose against the installed model/map
+  assets before changing light-controller timing or shader behavior.
 
 Done when a configured display changes from script input and interior lights
 change from their controlling variables without manual texture replacement.
@@ -485,15 +489,28 @@ for the explicit boundary.
 - [~] Spawn configured `.bus` entries from modern `ailists.cfg` groups on
   `[path]` type-0 road splines. `.ovh`/legacy vehicle-list formats, complete
   group/depot selection, native density semantics, and population maintenance
-  remain incomplete.
-- [~] AI vehicles now advance at provisional fixed speed and recycle at open
-  route ends. Validated driving decisions, traffic interactions, and native
-  population lifecycle behavior remain incomplete.
+  remain incomplete. Startup now retries a bounded number of candidates over
+  the available routes to approach the requested population; looping actors
+  wrap spawn distances before open-route endpoints rather than stacking at the
+  end. The traffic runtime probe verifies repeated road-route placement and
+  movement across linked splines.
+- [~] AI vehicles advance at provisional fixed speed on open car-spline routes
+  extended with a reverse traversal, so they turn around on the same splines
+  rather than teleporting to the start. Validated driving decisions, traffic
+  interactions, and native population lifecycle behavior remain incomplete.
 - [x] Parse `drivers.txt` model paths and `.hum` fields, and distinguish
   type-1 human paths from type-0 road paths.
 - [~] Spawn and move human actors on nearby type-1 spline routes using
   passenger-density settings. Rendering currently uses colored primitive
-  proxies sized from `[humangeom]`, not the configured human models.
+  proxies sized from both `[humangeom]` dimensions, not the configured human
+  models. Startup retries a bounded number of route candidates and wraps
+  looping spawn distances before open-route endpoints; routes with no usable
+  distance after the endpoint margin are rejected instead of stacking actors
+  at the route start. The traffic runtime probe exercises repeated in-range AI
+  and human placement, fills requested four-actor AI and human populations
+  using bounded route candidates, and covers route-specific actor creation,
+  movement, endpoint margins, unusably short routes, and out-of-radius
+  rejection.
 - [ ] Load and render the `.hum`-referenced models for pedestrians and AI
   drivers, including their model configuration assets.
 - [ ] Apply validated `.hum` geometry, links, walk parameters, seat height,

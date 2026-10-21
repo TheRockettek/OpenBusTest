@@ -48,6 +48,23 @@ MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath
                                     bool leftHandTraffic,
                                     std::optional<std::string> driverModelPath = std::nullopt);
 
+// Extends an open route with its reverse traversal so actors can keep following
+// the same spline chain without teleporting to the route start.
+MapTrafficRoute makeMapTrafficRoutePingPong(MapTrafficRoute route);
+
+// Places an actor at a route distance if the sampled pose is within the spawn radius.
+// Open routes stop at totalLength - endpointMarginMeters; closed routes wrap.
+bool placeMapTrafficActorNear(MapTrafficActor& actor, double startDistanceMeters, double centerX,
+                              double centerY, double maximumDistanceMeters,
+                              double endpointMarginMeters = 0.0);
+
+// Places looping actors at a route distance, wrapping open routes before their endpoint margin.
+// Returns false if an open route has no usable distance after applying that margin.
+bool placeMapTrafficActorNearLooping(MapTrafficActor& actor, double startDistanceMeters,
+                                     double centerX, double centerY,
+                                     double maximumDistanceMeters,
+                                     double endpointMarginMeters = 0.0);
+
 // Resolves a route by following reciprocal next/previous spline links from a valid starting
 // placement. Missing links and ambiguous IDs stop the route; a reciprocal loop closes it.
 std::optional<MapTrafficRoute> buildMapTrafficRoute(const MapSplinePlacementReference& start,

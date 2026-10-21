@@ -1,6 +1,7 @@
 // Frame rendering: reflections, scene draw, HUD overlay and capture.
 
 #include "app/RenderLoopInternal.h"
+#include "map/MapSplineProfile.h"
 
 namespace {
 
@@ -56,14 +57,73 @@ std::vector<openbus::rendering::PrimitiveVertex> humanTrafficVertices(const Acto
         if (!pose) {
             continue;
         }
+        const double width = human.widthMeters;
         appendHumanBox(vertices, pose->position, pose->headingRadians, human.heightMeters, 0.08,
-                       0.48, 0.28, 0.22, trousers);
+                       0.48, width * 1.4, width * 1.1, trousers);
         appendHumanBox(vertices, pose->position, pose->headingRadians, human.heightMeters, 0.42,
-                       0.34, 0.42, 0.25, clothing);
+                       0.34, width * 2.1, width * 1.25, clothing);
         appendHumanBox(vertices, pose->position, pose->headingRadians, human.heightMeters, 0.78,
-                       0.18, 0.21, 0.20, skin);
+                       0.18, width * 1.05, width, skin);
     }
     return vertices;
+}
+
+void appendTrafficSplineDebugVertices(
+    const openbus::rendering::MapRenderer& mapRenderer, int pathTypeCode,
+    const std::vector<std::pair<int, int>>& activeTiles, const std::array<float, 3>& color,
+    std::vector<openbus::rendering::PrimitiveVertex>& vertices) {
+    for (const int splineId : mapRenderer.trafficSplineIds(pathTypeCode)) {
+        const std::optional<openbus::map::MapTrafficRoute> route =
+            mapRenderer.buildTrafficRoute(splineId, pathTypeCode);
+        if (!route.has_value() || route->segments.empty()) {
+            continue;
+        }
+
+        const openbus::map::MapTrafficRouteSegment& firstSegment = route->segments.front();
+        const openbus::map::MapSplinePlacementReference& splineReference = firstSegment.spline;
+        if (std::find(activeTiles.begin(), activeTiles.end(),
+                      std::pair{splineReference.tileX, splineReference.tileY}) ==
+            activeTiles.end()) {
+            continue;
+        }
+
+        const double splineLength = splineReference.placement.length;
+        if (!std::isfinite(splineLength) || splineLength <= 0.0) {
+            continue;
+        }
+        openbus::map::MapTrafficRoute singleSplineRoute;
+        singleSplineRoute.segments.push_back(firstSegment);
+        singleSplineRoute.cumulativeEndDistances.push_back(splineLength);
+        singleSplineRoute.totalLength = splineLength;
+
+        constexpr double sampleSpacingMeters = 2.0;
+        constexpr std::size_t maximumSamplesPerSpline = 2048;
+        const double requestedSamples = std::ceil(splineLength / sampleSpacingMeters);
+        const std::size_t sampleCount =
+            requestedSamples >= static_cast<double>(maximumSamplesPerSpline)
+                ? maximumSamplesPerSpline
+                : std::max<std::size_t>(1, static_cast<std::size_t>(requestedSamples));
+        std::optional<openbus::map::MapTrafficPose> previousPose =
+            openbus::map::sampleMapTrafficRoute(singleSplineRoute, 0.0, 0.0);
+        for (std::size_t sampleIndex = 1; sampleIndex <= sampleCount; ++sampleIndex) {
+            const double distance = splineLength * static_cast<double>(sampleIndex) /
+                                    static_cast<double>(sampleCount);
+            const std::optional<openbus::map::MapTrafficPose> pose =
+                openbus::map::sampleMapTrafficRoute(singleSplineRoute, distance, 0.0);
+            if (previousPose.has_value() && pose.has_value()) {
+                vertices.push_back(
+                    {static_cast<float>(previousPose->position[0]),
+                     static_cast<float>(previousPose->position[1]),
+                     static_cast<float>(previousPose->position[2] + 0.08), color[0], color[1],
+                     color[2]});
+                vertices.push_back({static_cast<float>(pose->position[0]),
+                                    static_cast<float>(pose->position[1]),
+                                    static_cast<float>(pose->position[2] + 0.08), color[0], color[1],
+                                    color[2]});
+            }
+            previousPose = pose;
+        }
+    }
 }
 
 } // namespace
@@ -532,6 +592,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         TraceScope phase("render", "RenderLoop::draw.reflections");
         renderReflectionViews(simulation);
     }
+    openbus::rendering::setLightingViewMatrix(modelViewMatrix());
     {
         TraceScope phase("render", "RenderLoop::draw.ground");
         if (mapRenderer_ != nullptr) {
@@ -725,6 +786,37 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         glDepthMask(depthWriteWasEnabled);
         if (!depthWasEnabled) {
             glDisable(GL_DEPTH_TEST);
+        }
+    }
+    if (!renderingReflection_ && trafficSplineDebugOverlay_ && mapRenderer_ != nullptr) {
+        const std::vector<std::pair<int, int>>& activeTiles =
+            mapRenderer_->activeTileCoordinates();
+        if (!trafficSplineDebugBuilt_ || trafficSplineDebugTiles_ != activeTiles) {
+            trafficSplineDebugVertices_.clear();
+            appendTrafficSplineDebugVertices(
+                *mapRenderer_, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, activeTiles,
+                {0.15F, 0.9F, 1.0F}, trafficSplineDebugVertices_);
+            appendTrafficSplineDebugVertices(
+                *mapRenderer_, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN, activeTiles,
+                {1.0F, 0.25F, 0.9F}, trafficSplineDebugVertices_);
+            trafficSplineDebugTiles_ = activeTiles;
+            trafficSplineDebugBuilt_ = true;
+            ++trafficSplineDebugRevision_;
+        }
+
+        if (!trafficSplineDebugVertices_.empty()) {
+            const GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+            GLboolean depthWriteWasEnabled = GL_TRUE;
+            glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+            glDisable(GL_DEPTH_TEST);
+            glDepthMask(GL_FALSE);
+            openbus::rendering::drawStaticPrimitives(
+                trafficSplineDebugBuffer_, trafficSplineDebugVertices_, GL_LINES, 2.0F,
+                trafficSplineDebugRevision_);
+            glDepthMask(depthWriteWasEnabled);
+            if (depthWasEnabled) {
+                glEnable(GL_DEPTH_TEST);
+            }
         }
     }
     if (!renderingReflection_ && statusHudTexture_ != 0) {

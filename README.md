@@ -455,6 +455,8 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   as an orange wireframe, plus the bus fallback collision box. Static map
   collision streams around the bus (one-tile load radius, two-tile unload
   radius); the debug wireframe refreshes as tiles enter and leave that set.
+- Press `F2` to show traffic spline centerlines in the active map tiles; road/AI
+  paths are cyan and human paths are magenta.
 - Press `U` to raise the player bus and its physics bodies 5 m at the current
   X/Y location; it then falls naturally under gravity.
 - VSync is enabled by default; set `OPENBUS_VSYNC=0`, `off`, or `false` before

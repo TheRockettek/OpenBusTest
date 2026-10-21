@@ -1,5 +1,6 @@
 #include "render/CoreRenderer.h"
 #include "render/ComputeCulling.h"
+#include "render/MatrixMath.h"
 #include "core/Environment.h"
 
 #include "core/Logger.h"
@@ -351,7 +352,7 @@ void main() {
                 mapNormal.xy *= strength;
                 surfaceNormal = normalize(tangent * mapNormal.x + bitangent * mapNormal.y +
                                            surfaceNormal * mapNormal.z);
-                vec3 lightDirection = normalize(vec3(0.35, 0.55, 0.75));
+                vec3 lightDirection = normalize(uLightDirection);
                 float bumpLighting = 0.65 +
                                      0.35 * max(dot(surfaceNormal, lightDirection), 0.0);
                 color.rgb *= mix(1.0, bumpLighting, strength);
@@ -928,7 +929,6 @@ bool initializeCoreRenderer() {
         pglEnableVertexAttribArray(1);
         pglBindVertexArray(0);
         useProgram(modelProgram);
-        pglUniform3f(modelUniforms.lightDirection, -0.35f, 0.5f, 0.8f);
         pglUniform1f(modelUniforms.ambientLight, 0.58f);
         pglUniform1f(modelUniforms.diffuseLight, 0.42f);
         pglUniform1i(modelUniforms.texture, 0);
@@ -943,7 +943,6 @@ bool initializeCoreRenderer() {
         pglUniform1i(modelUniforms.freeTexture, 4);
         pglUniform1i(modelUniforms.textTexture, 5);
         useProgram(materialProgram);
-        pglUniform3f(materialUniforms.lightDirection, -0.35f, 0.5f, 0.8f);
         pglUniform1f(materialUniforms.ambientLight, 0.58f);
         pglUniform1f(materialUniforms.diffuseLight, 0.42f);
         for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
@@ -955,6 +954,7 @@ bool initializeCoreRenderer() {
         useProgram(textureQuadProgram);
         pglUniform1i(textureQuadTexture, 0);
         useProgram(0);
+        setLightingViewMatrix(identityMatrix());
         currentVertexArray = 0;
         currentArrayBuffer = 0;
         currentProgram = 0;
@@ -1044,6 +1044,18 @@ void invalidateTextureBindings() {
     wrapParametersValid = false;
     pglActiveTexture(GL_TEXTURE0);
     currentTextureUnit = GL_TEXTURE0;
+}
+
+void setLightingViewMatrix(const Matrix4& view) {
+    const auto direction = transformPoint(view, {-0.35, 0.5, 0.8, 0.0});
+    const GLuint previousProgram = currentProgram;
+    useProgram(modelProgram);
+    pglUniform3f(modelUniforms.lightDirection, static_cast<float>(direction[0]),
+                 static_cast<float>(direction[1]), static_cast<float>(direction[2]));
+    useProgram(materialProgram);
+    pglUniform3f(materialUniforms.lightDirection, static_cast<float>(direction[0]),
+                 static_cast<float>(direction[1]), static_cast<float>(direction[2]));
+    useProgram(previousProgram);
 }
 
 void configureModelAlphaState(int alphaMode, bool noZwrite) {
@@ -1320,7 +1332,9 @@ void drawTextureQuad(GLuint texture, float x, float y, float width, float height
                                                 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
     useProgram(textureQuadProgram);
     pglBindVertexArray(textureQuadVertexArray);
+    currentVertexArray = textureQuadVertexArray;
     pglBindBuffer(GL_ARRAY_BUFFER, textureQuadBuffer);
+    currentArrayBuffer = textureQuadBuffer;
     pglBufferData(GL_ARRAY_BUFFER, static_cast<std::ptrdiff_t>(vertices.size() * sizeof(float)),
                   vertices.data(), GL_STREAM_DRAW);
     pglVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), nullptr);
