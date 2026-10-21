@@ -191,6 +191,17 @@ bool advanceMapTrafficActor(MapTrafficActor& actor, double elapsedSeconds) {
     return true;
 }
 
+bool advanceMapTrafficActorLooping(MapTrafficActor& actor, double elapsedSeconds) {
+    const double previousDistance = actor.distanceMeters;
+    if (advanceMapTrafficActor(actor, elapsedSeconds)) {
+        return true;
+    }
+    const double overflowDistance =
+        previousDistance + actor.speedMetersPerSecond * elapsedSeconds - actor.route.totalLength;
+    actor.distanceMeters = std::fmod(std::max(0.0, overflowDistance), actor.route.totalLength);
+    return true;
+}
+
 std::size_t advanceMapTrafficActors(std::vector<MapTrafficActor>& actors, double elapsedSeconds) {
     if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0) {
         throw std::invalid_argument("Map traffic update time must be finite and non-negative");

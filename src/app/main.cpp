@@ -7,6 +7,8 @@
 #include "map/MapConfigLoader.h"
 #include "map/MapSplineProfile.h"
 #include "config/ModelConfigLoader.h"
+#include "config/HumanConfigLoader.h"
+#include "core/AssetPath.h"
 #include "core/PerfTrace.h"
 #include "app/RenderLoop.h"
 
@@ -344,7 +346,7 @@ int main() {
             for (int index = 0; index < aiVehicleCount; ++index) {
                 renderer.AddVehicle(aiBusConfigPath, aiModelConfigPath,
                                     aiVehiclePlacement(index, aiVehicleCount),
-                                    {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+                                    {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred}, true);
             }
         }
         const int mapAiBaseCount = nonnegativeEnvironmentInt("OPENBUS_MAP_AI_COUNT", 8, 200);
@@ -404,7 +406,7 @@ int main() {
                                 static_cast<double>(candidate) * trafficSpacingMeters,
                                 busPlacement.position[0], busPlacement.position[1],
                                 trafficRadiusMeters,
-                                {AssetLoadingMode::Deferred, AssetLoadingMode::Eager})) {
+                                {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred})) {
                             ++addedTrafficVehicles;
                         }
                     } catch (const std::exception& error) {
@@ -418,6 +420,107 @@ int main() {
                     " of " + std::to_string(targetTrafficCount) +
                     " requested, density=" + std::to_string(roadDensity) +
                     ", road paths=" + std::to_string(roadSplineIds.size()) + ".");
+            }
+        }
+        const int mapHumanBaseCount =
+            nonnegativeEnvironmentInt("OPENBUS_MAP_HUMAN_COUNT", 8, 200);
+        if (mapHumanBaseCount == 0) {
+            applicationLog.Log("Map human traffic is disabled by OPENBUS_MAP_HUMAN_COUNT=0.");
+        } else if (mapDefinition.aiTraffic.driverModelPaths.empty()) {
+            applicationLog.Log(
+                "Map human traffic not spawned: drivers.txt contains no .hum model paths.");
+        } else {
+            const double trafficHour =
+                nonnegativeEnvironmentDouble("OPENBUS_MAP_AI_HOUR", 12.0, 24.0);
+            const std::optional<double> configuredDensity =
+                openbus::map::mapTrafficDensityAtHour(
+                    mapDefinition.aiTraffic.passengerDensity, trafficHour);
+            const std::size_t targetHumanCount = openbus::map::mapTrafficPopulationForDensity(
+                static_cast<std::size_t>(mapHumanBaseCount), configuredDensity, 200);
+            const std::vector<int> humanSplineIds =
+                renderer.trafficSplineIds(openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN);
+            std::vector<std::pair<std::filesystem::path, double>> humanModels;
+            for (const std::string& configuredPath : mapDefinition.aiTraffic.driverModelPaths) {
+                std::string normalizedPath = configuredPath;
+                std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+                const std::filesystem::path humanConfigPath =
+                    openbus::assets::resolveCaseInsensitivePath(omsiRootPath() / normalizedPath);
+                if (!std::filesystem::is_regular_file(humanConfigPath)) {
+                    applicationLog.Log("Skipping missing human model configuration '" +
+                                       configuredPath + "'.");
+                    continue;
+                }
+                try {
+                    const openbus::config::HumanConfig humanConfig =
+                        openbus::config::loadHumanConfig(humanConfigPath);
+                    if (humanConfig.diagnostics.hasErrors()) {
+                        applicationLog.Log("Skipping invalid human configuration '" +
+                                           humanConfigPath.generic_string() + "'.");
+                        continue;
+                    }
+                    const auto geometry = std::find_if(
+                        humanConfig.numericRecords.begin(), humanConfig.numericRecords.end(),
+                        [](const openbus::config::HumanNumericRecord& record) {
+                            return record.keyword == "humangeom" && record.valid &&
+                                   record.values.size() == 2;
+                        });
+                    if (geometry == humanConfig.numericRecords.end() ||
+                        !std::isfinite(geometry->values[1]) || geometry->values[1] <= 0.0) {
+                        applicationLog.Log("Skipping human configuration without valid "
+                                           "[humangeom] height: " +
+                                           humanConfigPath.generic_string() + ".");
+                        continue;
+                    }
+                    humanModels.emplace_back(humanConfigPath, geometry->values[1]);
+                } catch (const std::exception& error) {
+                    applicationLog.Log("Skipping human configuration '" +
+                                       humanConfigPath.generic_string() + "': " + error.what());
+                }
+            }
+            if (!configuredDensity.has_value()) {
+                applicationLog.Log("Map passenger traffic density is unavailable at " +
+                                   std::to_string(trafficHour) +
+                                   "h; using density factor 1.0.");
+            }
+            if (humanSplineIds.empty()) {
+                applicationLog.Log("Map human traffic not spawned: no usable human-path splines "
+                                   "([path] type 1) were found.");
+            } else if (humanModels.empty()) {
+                applicationLog.Log("Map human traffic not spawned: no valid .hum configurations "
+                                   "were available.");
+            } else if (targetHumanCount == 0) {
+                applicationLog.Log("Map passenger traffic density resolves to zero at " +
+                                   std::to_string(trafficHour) + "h.");
+            } else {
+                constexpr double humanSpeedMetersPerSecond = 1.2;
+                constexpr double humanSpacingMeters = 8.0;
+                constexpr double trafficRadiusMeters = 750.0;
+                std::size_t addedHumans = 0;
+                for (std::size_t candidate = 0;
+                     candidate < humanSplineIds.size() && addedHumans < targetHumanCount;
+                     ++candidate) {
+                    const auto& [humanConfigPath, height] =
+                        humanModels[addedHumans % humanModels.size()];
+                    try {
+                        if (renderer.AddHumanTrafficActor(
+                                humanSplineIds[candidate], humanConfigPath, height,
+                                humanSpeedMetersPerSecond,
+                                static_cast<double>(candidate) * humanSpacingMeters,
+                                busPlacement.position[0], busPlacement.position[1],
+                                trafficRadiusMeters)) {
+                            ++addedHumans;
+                        }
+                    } catch (const std::exception& error) {
+                        applicationLog.Log("Skipping human traffic actor '" +
+                                           humanConfigPath.generic_string() + "': " +
+                                           error.what());
+                    }
+                }
+                applicationLog.Log(
+                    "Map human traffic spawned: " + std::to_string(addedHumans) + " of " +
+                    std::to_string(targetHumanCount) + " requested, density=" +
+                    std::to_string(configuredDensity.value_or(1.0)) + ", human paths=" +
+                    std::to_string(humanSplineIds.size()) + ".");
             }
         }
 

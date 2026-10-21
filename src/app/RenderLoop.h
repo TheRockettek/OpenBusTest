@@ -71,12 +71,17 @@ class RenderLoop {
     bool benchmarkClickTargetFound() const;
     Vehicle* AddVehicle(const std::filesystem::path& busConfigPath,
                         const std::filesystem::path& modelConfigPath,
-                        const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy = {});
+                        const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy = {},
+                        bool isAiVehicle = false);
     bool AddTrafficVehicle(int splineId, int pathTypeCode,
                            const std::filesystem::path& busConfigPath,
                            std::optional<std::string> driverModelPath, double speedMetersPerSecond,
                            double startDistanceMeters, double centerX, double centerY,
                            double maximumDistanceMeters, ModelLoadingPolicy loadingPolicy = {});
+    bool AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,
+                              double heightMeters, double speedMetersPerSecond,
+                              double startDistanceMeters, double centerX, double centerY,
+                              double maximumDistanceMeters);
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
     std::size_t trafficVehicleCount() const;
 
@@ -231,6 +236,11 @@ class RenderLoop {
         openbus::map::MapTrafficActor actor;
     };
     std::vector<TrafficVehicleState> trafficVehicles_;
+    struct HumanTrafficState {
+        openbus::map::MapTrafficActor actor;
+        double heightMeters = 1.7;
+    };
+    std::vector<HumanTrafficState> humanTrafficActors_;
     Vehicle* playerVehicle_ = nullptr;
     GLFWcursor* clickableCursor_ = nullptr;
     GLFWcursor* mouseSteeringCursor_ = nullptr;

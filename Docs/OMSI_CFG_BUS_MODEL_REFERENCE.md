@@ -112,7 +112,8 @@ One alpha/rendering mode integer:
 
 - `0`: ignore alpha; render opaque
 - `1`: clip alpha at `0.5`
-- `2`: blend alpha with the existing image
+- `2`: blend alpha with the existing image and write depth, so the surface
+  occludes later geometry. `[matl_noZwrite]` disables those depth writes.
 
 ### `[matl_noZcheck]`
 

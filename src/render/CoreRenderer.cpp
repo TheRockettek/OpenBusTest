@@ -1046,6 +1046,23 @@ void invalidateTextureBindings() {
     currentTextureUnit = GL_TEXTURE0;
 }
 
+void configureModelAlphaState(int alphaMode, bool noZwrite) {
+    if (alphaMode == 2 || noZwrite) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(alphaMode == 2 && !noZwrite ? GL_TRUE : GL_FALSE);
+    } else if (alphaMode == 1) {
+        glDisable(GL_BLEND);
+        // Surviving cutout fragments are opaque and must occlude later draws.
+        glDepthMask(GL_TRUE);
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(-1.0F, -1.0F);
+    } else {
+        glDisable(GL_BLEND);
+        glDepthMask(GL_TRUE);
+    }
+}
+
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
                     const std::array<double, 3>& color, double alpha, int alphaMode,
                     bool cullBackFaces) {

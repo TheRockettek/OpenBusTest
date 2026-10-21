@@ -277,8 +277,9 @@ validation and shader/draw regression coverage are still incomplete.
 - `envmap-angle-b.png`
 
 These captures are visual evidence only, not proof that the reflection equation
-matches OMSI. Transparent `[matl_alpha]` mode-2 depth behavior also remains an
-explicit implementation gap; the alpha screenshots above do not close it.
+matches OMSI. `[matl_alpha]` mode-2 depth writes are covered by the automated
+OpenGL overlap regression; screenshots remain useful for representative
+vehicle-specific visual validation.
 
 ## Review checklist
 

@@ -11,12 +11,12 @@ Scope: the vehicle `.bus` file, its model CFG, and the passenger-cabin/path file
 | `[cog]` | Partial | Not consistently reconciled with `[schwerpunkt]`; use of the two CG forms together is not established. |
 | `[rollwiderstand]` | Active subset | A non-negative authored force in newtons opposes longitudinal motion; negative values are rejected, and when absent the previous mass-scaled OpenBus fallback is retained. Native OMSI physics parity remains unverified. |
 | `[rot_pnt_long]` | Parsed only | The longitudinal rotation point is consumed but does not currently affect vehicle physics. |
-| `[ai_deltaheight]` | Parsed only | No AI vehicle height correction is applied. |
+| `[ai_deltaheight]` | Active subset | Applied as a vertical offset to AI vehicle placement, including map-route updates; player vehicles are unchanged. Native OMSI sign/unit parity still needs live validation. |
 | `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`, `[ai_veh_type]`, `[sinus]` | Not implemented | Family-specific AI/drivetrain behavior is absent. |
 | `[coupling_front]`, `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, `[couple_front_open_for_sound]` | Not implemented | Coupling and multi-vehicle behavior are absent; articulated multi-body physics is not implemented. |
 | `[control_cable_front]`, `[control_cable_back]` | Not implemented | No cross-vehicle control/electrical variable transfer. |
 | `[contact_shoe]`, `[rail_body_osc]` | Not implemented | Rail/trolley-specific behavior is absent. |
-| `[sound_ai]` | Parsed only | Its referenced path is retained, but there is no AI sound-bank selection/runtime. See [audio status](IMPLEMENTATION_STATUS_AUDIO.md). |
+| `[sound_ai]` | Partial | AI vehicle initialization selects the authored AI sound bank and falls back to `[sound]` when absent. AI ambient/spatial playback parity remains unverified. See [audio status](IMPLEMENTATION_STATUS_AUDIO.md). |
 | `[registration_automatic]`, `[registration_free]`, `[kmcounter_init]` | Partial | Startup selection/number seeding and odometer initialization exist; persistence and the full OMSI selection UI do not. |
 
 Other BUS gaps include the complete configurable input map and vehicle-family-specific view systems. The player runtime currently dispatches physical W/A/S/D transitions to scripts rather than implementing every OMSI input-context record.
@@ -57,7 +57,7 @@ override is applied.
 | Keyword / family | Status | Current boundary |
 | --- | --- | --- |
 | `[matl_bumpmap]`, `[matl_envmap]`, `[matl_freetex]`, `[matl_lightmap]`, `[matl_nightmap]` | Partial | Loading/shader/material paths exist, but controller, blending, binding, or visual-parity details remain incomplete. Environment-map behavior still needs representative visual validation. |
-| `[matl_transmap]` with `[matl_alpha]` mode `2` | Partial | Transmap alpha sampling exists; blended depth behavior is not OMSI-verified and currently lacks the documented depth-write behavior. |
+| `[matl_transmap]` with `[matl_alpha]` mode `2` | Active subset | Transmap alpha sampling and mode-2 depth writes are active; `[matl_noZwrite]` suppresses writes. An OpenGL overlap probe covers both modes, but representative OMSI visual parity remains unverified. |
 | `[matl_item]` | Parsed/no-op | It does not yet define a complete, independently applied material-item scope. |
 | `[CTC]`, `[CTCTexture]` | Partial | Mappings are retained, but complete runtime paint-scheme selection/substitution is absent. |
 | `[texchanges]`, `[newtexchangemaster]`, `[entries]` | Not implemented | Texture-change tables and replacement selection are not loaded/applied. |

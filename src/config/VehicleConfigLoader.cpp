@@ -879,6 +879,7 @@ void selectRegistrationAtIndex(VehicleConfig& configuration, std::size_t index) 
     if (optionCount == 0) {
         return;
     }
+
     index %= optionCount;
     configuration.selectedRegistrationIndex = index;
     configuration.selectedVehicleNumber =
@@ -886,6 +887,23 @@ void selectRegistrationAtIndex(VehicleConfig& configuration, std::size_t index) 
     configuration.selectedRegistration = index < configuration.registrationNumbers.size()
                                              ? configuration.registrationNumbers[index]
                                              : configuration.selectedVehicleNumber;
+}
+
+std::filesystem::path soundConfigPathForVehicle(const VehicleConfig& configuration,
+                                                bool isAiVehicle) {
+    if (isAiVehicle && !configuration.soundAiConfigPath.empty()) {
+        return configuration.soundAiConfigPath;
+    }
+    return configuration.soundConfigPath;
+}
+
+VehiclePlacement placementForVehicle(const VehicleConfig& configuration,
+                                     const VehiclePlacement& placement, bool isAiVehicle) {
+    VehiclePlacement result = placement;
+    if (isAiVehicle && configuration.hasAiDeltaHeight) {
+        result.position[2] += configuration.aiDeltaHeight;
+    }
+    return result;
 }
 
 ModelConfig loadVehicleModelConfig(const std::filesystem::path& configPath,

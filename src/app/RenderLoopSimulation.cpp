@@ -111,13 +111,9 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
     if (mapRenderer_ != nullptr) {
         mapRenderer_->updateTrafficActors(std::clamp(frameTimeStep_, 0.0, 0.25));
     }
-    std::vector<Vehicle*> completedTrafficVehicles;
     const double trafficTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
     for (TrafficVehicleState& trafficVehicle : trafficVehicles_) {
-        if (!openbus::map::advanceMapTrafficActor(trafficVehicle.actor, trafficTimeStep)) {
-            completedTrafficVehicles.push_back(trafficVehicle.vehicle);
-            continue;
-        }
+        openbus::map::advanceMapTrafficActorLooping(trafficVehicle.actor, trafficTimeStep);
         const std::optional<openbus::map::MapTrafficPose> pose =
             openbus::map::sampleMapTrafficRoute(trafficVehicle.actor.route,
                                                 trafficVehicle.actor.distanceMeters,
@@ -125,28 +121,14 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
         if (!pose) {
             throw std::runtime_error("Could not sample an active map traffic route pose");
         }
-        trafficVehicle.vehicle->placement.position = pose->position;
+        std::array<double, 3> trafficPosition = pose->position;
+        trafficPosition[2] += trafficVehicle.vehicle->aiDeltaHeight;
+        trafficVehicle.vehicle->placement.position = trafficPosition;
         trafficVehicle.vehicle->placement.yawDegrees =
             openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians);
     }
-    if (!completedTrafficVehicles.empty()) {
-        trafficVehicles_.erase(
-            std::remove_if(trafficVehicles_.begin(), trafficVehicles_.end(),
-                           [&completedTrafficVehicles](const TrafficVehicleState& trafficVehicle) {
-                               return std::find(completedTrafficVehicles.begin(),
-                                                completedTrafficVehicles.end(),
-                                                trafficVehicle.vehicle) !=
-                                      completedTrafficVehicles.end();
-                           }),
-            trafficVehicles_.end());
-        vehicles_.erase(
-            std::remove_if(vehicles_.begin(), vehicles_.end(),
-                           [&completedTrafficVehicles](const std::unique_ptr<Vehicle>& vehicle) {
-                               return std::find(completedTrafficVehicles.begin(),
-                                                completedTrafficVehicles.end(),
-                                                vehicle.get()) != completedTrafficVehicles.end();
-                           }),
-            vehicles_.end());
+    for (HumanTrafficState& human : humanTrafficActors_) {
+        openbus::map::advanceMapTrafficActorLooping(human.actor, trafficTimeStep);
     }
     updateScripts();
     if (drivetrainDiagnosticsEnabled_) {

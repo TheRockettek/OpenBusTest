@@ -70,6 +70,45 @@ int main() {
     const auto close = [](int actual, int expected) { return std::abs(actual - expected) <= 2; };
     bool passed = true;
     ModelMaterial material;
+    const auto setTriangleDepth = [&](float depth) {
+        auto depthVertices = vertices;
+        for (std::size_t index = 2; index < depthVertices.size(); index += 13) {
+            depthVertices[index] = depth;
+        }
+        pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+        pglBufferData(GL_ARRAY_BUFFER, sizeof(depthVertices), depthVertices.data(), GL_STATIC_DRAW);
+    };
+    const auto drawOverlappingAlphaSurfaces = [&](bool noZwrite) {
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        ModelMaterial overlapMaterial;
+        overlapMaterial.emissionColor = {1, 1, 1};
+        setTriangleDepth(-1.0F);
+        configureModelAlphaState(2, noZwrite);
+        drawModelBatch(buffer, 3, overlapMaterial, {1, 0, 0}, 0.5, 2);
+        setTriangleDepth(-2.0F);
+        configureModelAlphaState(2, noZwrite);
+        drawModelBatch(buffer, 3, overlapMaterial, {0, 0, 1}, 0.5, 2);
+        std::array<std::uint8_t, 4> overlapPixel = {};
+        glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, overlapPixel.data());
+        return overlapPixel;
+    };
+    const auto alphaDepthPixel = drawOverlappingAlphaSurfaces(false);
+    if (alphaDepthPixel[0] < 100 || alphaDepthPixel[2] > 4) {
+        std::cerr << "alpha mode 2 did not depth-occlude a later overlapping surface\n";
+        passed = false;
+    }
+    const auto noDepthWritePixel = drawOverlappingAlphaSurfaces(true);
+    if (noDepthWritePixel[2] <= noDepthWritePixel[0]) {
+        std::cerr << "matl_noZwrite did not preserve blended overlap behavior\n";
+        passed = false;
+    }
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+
     material.texture = blue;
     material.textured = true;
     const auto texturedPixel = draw(material, {1, 1, 1}, 1.0);
@@ -87,6 +126,16 @@ int main() {
     pixel = draw(material, {1, 1, 1}, 0.25);
     if (!close(pixel[3], 32)) {
         std::cerr << "transmap replaced rather than scaled material opacity\n";
+        passed = false;
+    }
+    material = {};
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    pglActiveTexture(GL_TEXTURE3);
+    GLint transmapBinding = -1;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &transmapBinding);
+    pglActiveTexture(GL_TEXTURE0);
+    if (transmapBinding != 0) {
+        std::cerr << "missing auxiliary transmap retained a stale texture binding\n";
         passed = false;
     }
     material = {};

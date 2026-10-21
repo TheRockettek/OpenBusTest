@@ -2,6 +2,7 @@
 
 #include "app/RenderLoopInternal.h"
 #include "render/map/MapRenderer.h"
+#include "map/MapSplineProfile.h"
 
 #include <algorithm>
 #include <cmath>
@@ -185,7 +186,7 @@ RenderLoop::~RenderLoop() {
 Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& busConfigPath,
                                 const std::filesystem::path& modelConfigPath,
                                 const VehiclePlacement& placement,
-                                ModelLoadingPolicy loadingPolicy) {
+                                ModelLoadingPolicy loadingPolicy, bool isAiVehicle) {
     const std::filesystem::path resolvedBusConfigPath = busConfigurationPathFor(busConfigPath);
     const std::filesystem::path resolvedModelConfigPath =
         modelConfigPath.empty()
@@ -228,9 +229,10 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& busConfigPath,
         reflectionRenderer_->initialize(vehicleCameras_);
     }
     const double modelOffsetZ = -vehicleConfiguration.centerOfGravityHeight;
-    auto model = std::make_unique<Vehicle>(definition, placement, modelOffsetZ, loadingPolicy,
-                                           *assetRequestManager_, simulationState_, soundEngine_,
-                                           soundViewpoint_);
+    auto model = std::make_unique<Vehicle>(
+        definition, placementForVehicle(vehicleConfiguration, placement, isAiVehicle),
+        modelOffsetZ, loadingPolicy, *assetRequestManager_, simulationState_, soundEngine_,
+        soundViewpoint_, isAiVehicle);
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
     return result;
@@ -275,9 +277,49 @@ bool RenderLoop::AddTrafficVehicle(int splineId, int pathTypeCode,
     VehiclePlacement placement;
     placement.position = pose->position;
     placement.yawDegrees = openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians);
-    Vehicle* vehicle = AddVehicle(busConfigPath, {}, placement, loadingPolicy);
+    Vehicle* vehicle = AddVehicle(busConfigPath, {}, placement, loadingPolicy, true);
     vehicle->followsMapTrafficRoute = true;
     trafficVehicles_.push_back({vehicle, std::move(*actor)});
+    return true;
+}
+
+bool RenderLoop::AddHumanTrafficActor(int splineId,
+                                      const std::filesystem::path& humanConfigPath,
+                                      double heightMeters, double speedMetersPerSecond,
+                                      double startDistanceMeters, double centerX, double centerY,
+                                      double maximumDistanceMeters) {
+    if (mapRenderer_ == nullptr) {
+        throw std::logic_error("Cannot add human traffic before loading a map");
+    }
+    if (humanConfigPath.empty() || !std::isfinite(heightMeters) || heightMeters <= 0.0 ||
+        !std::isfinite(startDistanceMeters) || startDistanceMeters < 0.0 ||
+        !std::isfinite(centerX) || !std::isfinite(centerY) ||
+        !std::isfinite(maximumDistanceMeters) || maximumDistanceMeters < 0.0) {
+        throw std::invalid_argument("Human traffic spawn configuration is invalid");
+    }
+
+    std::optional<openbus::map::MapTrafficActor> actor =
+        mapRenderer_->createTrafficActor(splineId, humanConfigPath.string(), speedMetersPerSecond,
+                                         0.0, std::nullopt,
+                                         openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN);
+    if (!actor) {
+        return false;
+    }
+    actor->distanceMeters =
+        actor->route.closed
+            ? std::fmod(startDistanceMeters, actor->route.totalLength)
+            : std::min(startDistanceMeters, std::max(0.0, actor->route.totalLength - 0.01));
+    const std::optional<openbus::map::MapTrafficPose> pose = openbus::map::sampleMapTrafficRoute(
+        actor->route, actor->distanceMeters, actor->lateralOffsetMeters);
+    if (!pose) {
+        throw std::runtime_error("Could not sample the initial human traffic route pose");
+    }
+    const double dx = pose->position[0] - centerX;
+    const double dy = pose->position[1] - centerY;
+    if (dx * dx + dy * dy > maximumDistanceMeters * maximumDistanceMeters) {
+        return false;
+    }
+    humanTrafficActors_.push_back({std::move(*actor), heightMeters});
     return true;
 }
 

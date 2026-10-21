@@ -2,6 +2,72 @@
 
 #include "app/RenderLoopInternal.h"
 
+namespace {
+
+void appendHumanBox(std::vector<openbus::rendering::PrimitiveVertex>& vertices,
+                    const std::array<double, 3>& position, double headingRadians,
+                    double heightMeters, double bottomFraction, double partHeightFraction,
+                    double widthMeters, double depthMeters,
+                    const std::array<double, 3>& color) {
+    const double forwardX = std::cos(headingRadians);
+    const double forwardY = std::sin(headingRadians);
+    const double rightX = -forwardY;
+    const double rightY = forwardX;
+    const double bottom = heightMeters * bottomFraction;
+    const double partHeight = heightMeters * partHeightFraction;
+    const double halfWidth = widthMeters * 0.5;
+    const double halfDepth = depthMeters * 0.5;
+    const std::array<std::array<double, 3>, 8> corners = {{
+        {-halfDepth, -halfWidth, bottom},
+        {halfDepth, -halfWidth, bottom},
+        {halfDepth, halfWidth, bottom},
+        {-halfDepth, halfWidth, bottom},
+        {-halfDepth, -halfWidth, bottom + partHeight},
+        {halfDepth, -halfWidth, bottom + partHeight},
+        {halfDepth, halfWidth, bottom + partHeight},
+        {-halfDepth, halfWidth, bottom + partHeight},
+    }};
+    constexpr std::array<std::array<int, 4>, 6> faces = {{
+        {4, 5, 6, 7}, {0, 1, 5, 4}, {1, 2, 6, 5},
+        {2, 3, 7, 6}, {3, 0, 4, 7}, {0, 3, 2, 1},
+    }};
+    for (const auto& face : faces) {
+        for (int index : {face[0], face[1], face[2], face[0], face[2], face[3]}) {
+            const auto& local = corners[static_cast<std::size_t>(index)];
+            vertices.push_back(
+                {static_cast<float>(position[0] + forwardX * local[0] + rightX * local[1]),
+                 static_cast<float>(position[1] + forwardY * local[0] + rightY * local[1]),
+                 static_cast<float>(position[2] + local[2]), static_cast<float>(color[0]),
+                 static_cast<float>(color[1]), static_cast<float>(color[2])});
+        }
+    }
+}
+
+template <typename Actors>
+std::vector<openbus::rendering::PrimitiveVertex> humanTrafficVertices(const Actors& actors) {
+    std::vector<openbus::rendering::PrimitiveVertex> vertices;
+    vertices.reserve(actors.size() * 108);
+    constexpr std::array<double, 3> clothing = {0.18, 0.30, 0.56};
+    constexpr std::array<double, 3> trousers = {0.16, 0.18, 0.22};
+    constexpr std::array<double, 3> skin = {0.72, 0.52, 0.38};
+    for (const auto& human : actors) {
+        const auto pose = openbus::map::sampleMapTrafficRoute(
+            human.actor.route, human.actor.distanceMeters, human.actor.lateralOffsetMeters);
+        if (!pose) {
+            continue;
+        }
+        appendHumanBox(vertices, pose->position, pose->headingRadians, human.heightMeters, 0.08,
+                       0.48, 0.28, 0.22, trousers);
+        appendHumanBox(vertices, pose->position, pose->headingRadians, human.heightMeters, 0.42,
+                       0.34, 0.42, 0.25, clothing);
+        appendHumanBox(vertices, pose->position, pose->headingRadians, human.heightMeters, 0.78,
+                       0.18, 0.21, 0.20, skin);
+    }
+    return vertices;
+}
+
+} // namespace
+
 void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
     if (renderingReflection_ || reflectionRenderer_->empty()) {
         return;
@@ -477,6 +543,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             glDisable(GL_CULL_FACE);
             glDisable(GL_POLYGON_OFFSET_FILL);
             mapRenderer_->draw();
+            const std::vector<openbus::rendering::PrimitiveVertex> humanVertices =
+                humanTrafficVertices(humanTrafficActors_);
+            openbus::rendering::drawPrimitives(humanVertices, GL_TRIANGLES);
         } else if (!captureMode_) {
             glEnable(GL_DEPTH_TEST);
             glDepthFunc(GL_LESS);
@@ -493,16 +562,27 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     {
         TraceScope phase("render", "RenderLoop::draw.model");
         bool playerDrawn = false;
+        const auto modelLoadDeadline = std::chrono::steady_clock::now() +
+                                       std::chrono::milliseconds(4);
         const auto drawVehicles = [&](VehicleRenderPass renderPass, bool playerVehicles) {
             for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-                if (!vehicle->loaded || vehicle->displayLists.empty() ||
-                    (vehicle.get() == playerVehicle_) != playerVehicles) {
+                if ((vehicle.get() == playerVehicle_) != playerVehicles) {
                     continue;
                 }
-                pushMatrix();
                 const RenderViewContext vehicleContext =
                     vehicle.get() == playerVehicle_ ? context : RenderViewContext::NonPlayer;
                 VehiclePlacement placedVehicle = vehicle->placement;
+                const double dx = placedVehicle.position[0] - chassis.position[0];
+                const double dy = placedVehicle.position[1] - chassis.position[1];
+                const double dz = placedVehicle.position[2] - chassis.position[2];
+                if (renderPass == VehicleRenderPass::Opaque) {
+                    vehicle->ensureLoaded(vehicleContext, std::sqrt(dx * dx + dy * dy + dz * dz),
+                                          modelLoadDeadline);
+                }
+                if (!vehicle->loaded || vehicle->displayLists.empty()) {
+                    continue;
+                }
+                pushMatrix();
                 if (vehicle.get() == playerVehicle_) {
                     applyPose(chassis);
                     if (renderPass == VehicleRenderPass::Opaque) {

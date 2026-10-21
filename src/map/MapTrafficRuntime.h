@@ -61,6 +61,9 @@ std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route
 // Advances one actor. Returns false when it reaches the end of an open route.
 bool advanceMapTrafficActor(MapTrafficActor& actor, double elapsedSeconds);
 
+// Advances an actor and recycles it to the start when it reaches the end of an open route.
+bool advanceMapTrafficActorLooping(MapTrafficActor& actor, double elapsedSeconds);
+
 // Advances a population and removes actors that reach the end of open routes.
 // The population is unchanged if any actor has invalid runtime state.
 std::size_t advanceMapTrafficActors(std::vector<MapTrafficActor>& actors, double elapsedSeconds);

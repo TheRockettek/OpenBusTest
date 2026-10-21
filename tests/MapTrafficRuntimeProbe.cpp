@@ -143,6 +143,13 @@ int main() {
         require(!advanceMapTrafficActor(actor, 1.0),
                 "actor reports leaving an open route at its endpoint");
         requireNear(actor.distanceMeters, 20.0, "open route clamps at its endpoint");
+        actor.route = *route;
+        actor.distanceMeters = 18.0;
+        actor.speedMetersPerSecond = 5.0;
+        require(advanceMapTrafficActorLooping(actor, 1.0),
+                "looping actor remains active after reaching an open-route endpoint");
+        requireNear(actor.distanceMeters, 3.0,
+                    "looping actor carries elapsed travel distance into the next lap");
         bool invalidElapsedRejected = false;
         try {
             static_cast<void>(advanceMapTrafficActor(actor, -0.1));

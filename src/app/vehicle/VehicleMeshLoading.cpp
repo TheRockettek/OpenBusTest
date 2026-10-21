@@ -243,6 +243,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
         batch.baseTextureName = resolveCtcTextureName(textureName);
         batch.texturePath = texturePath;
         batch.textureRoot = part.objPath.parent_path();
+        batch.sourceMeshPath = part.objPath;
         batch.textureName = batch.baseTextureName;
         batch.environmentTextureName = environmentTextureName;
         batch.environmentStrength = environmentStrength;
@@ -657,15 +658,13 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     }
 }
 
-void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance) {
+void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance,
+                           std::chrono::steady_clock::time_point frameDeadline) {
     TraceScope trace("obj", "ensureLoaded");
     const int selectedLod = lodForDistance(viewDistance);
     activeLod = selectedLod;
     bool loadedPart = false;
-    const bool immediateLoad =
-        !hasLoadedInitialView || loadingPolicy.modelMode == AssetLoadingMode::Eager;
-    const auto loadStart = std::chrono::steady_clock::now();
-    constexpr auto loadBudget = std::chrono::milliseconds(4);
+    const bool immediateLoad = loadingPolicy.modelMode == AssetLoadingMode::Eager;
     static const std::size_t maxObjWorkers = [] {
         if (const char* value = openbus::getEnvironment("OPENBUS_OBJ_WORKERS")) {
             try {
@@ -690,7 +689,7 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance) {
     }();
     const std::size_t maxLoadsThisFrame = immediateLoad ? pendingParts.size() : maxObjLoadsPerFrame;
     const auto budgetReached = [&] {
-        return !immediateLoad && std::chrono::steady_clock::now() - loadStart >= loadBudget;
+        return !immediateLoad && std::chrono::steady_clock::now() >= frameDeadline;
     };
 
     std::size_t activeObjWorkers = 0;
@@ -707,7 +706,8 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance) {
     for (Part& part : pendingParts) {
         const bool viewpointMatches = openbus::rendering::viewpointMatches(part.viewpoint, context);
         const bool lodMatches = selectedLod < 0 || part.lodIndex == selectedLod;
-        if (part.objRequest || (viewpointMatches && lodMatches)) {
+        const bool visiblePart = viewpointMatches && lodMatches;
+        if (part.objRequest || (immediateLoad ? visiblePart : !visiblePart)) {
             continue;
         }
         if (activeObjWorkers >= maxObjWorkers) {
@@ -721,7 +721,7 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance) {
     std::size_t loadedThisFrame = 0;
     auto part = pendingParts.begin();
     while (part != pendingParts.end() && loadedThisFrame < maxLoadsThisFrame) {
-        if (budgetReached() && loadedThisFrame > 0) {
+        if (budgetReached()) {
             break;
         }
         const bool viewpointMatches =
@@ -733,10 +733,19 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance) {
             continue;
         }
         std::shared_ptr<ParsedObj> parsed;
-        if (!part->objRequest) {
+        if (part->objRequest) {
+            if (!immediateLoad &&
+                part->objRequest->future.wait_for(std::chrono::milliseconds(0)) !=
+                    std::future_status::ready) {
+                ++part;
+                continue;
+            }
+            parsed = part->objRequest->future.get();
+        } else if (immediateLoad) {
             parsed = parsedObjFuture(part->objPath, part->bundleEntry).get();
         } else {
-            parsed = part->objRequest->future.get();
+            ++part;
+            continue;
         }
         loadObj(*part, parsed);
         part = pendingParts.erase(part);
@@ -746,7 +755,7 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance) {
 
     auto backgroundPart = pendingParts.begin();
     while (backgroundPart != pendingParts.end() && loadedThisFrame < maxLoadsThisFrame) {
-        if (budgetReached() && loadedThisFrame > 0) {
+        if (budgetReached()) {
             break;
         }
         const bool viewpointMatches =

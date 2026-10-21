@@ -232,6 +232,7 @@ struct Vehicle {
         std::string baseTextureName;
         std::filesystem::path texturePath;
         std::filesystem::path textureRoot;
+        std::filesystem::path sourceMeshPath;
         std::string textureName;
         std::string environmentTextureName;
         GLuint environmentTexture = 0;
@@ -371,6 +372,7 @@ struct Vehicle {
     VehiclePlacement placement;
     bool followsMapTrafficRoute = false;
     double modelOffsetZ = 0.0;
+    double aiDeltaHeight = 0.0;
     double textureScale = 1;
     double odometerMetres = 0.0;
     std::array<double, 2> odometerPosition = {};
@@ -488,7 +490,7 @@ struct Vehicle {
                      const VehiclePlacement& configuredPlacement, double configuredModelOffsetZ,
                      ModelLoadingPolicy policy, AssetRequestManager& manager,
                      SimulationState& simulationState, SoundEngine& soundEngine,
-                     openbus::rendering::ViewpointContext& soundViewpoint)
+                     openbus::rendering::ViewpointContext& soundViewpoint, bool isAiVehicle)
         : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
           modelCacheKey(definition->cacheKey), assets(&manager), placement(configuredPlacement),
           modelOffsetZ(configuredModelOffsetZ),
@@ -513,7 +515,10 @@ struct Vehicle {
             vehicleConfiguration.hasOdometerInitial
                 ? std::max(0.0, vehicleConfiguration.odometerInitialKilometres) * 1000.0
                 : 0.0;
-        soundBank.load(vehicleConfiguration.soundConfigPath);
+        soundBank.load(soundConfigPathForVehicle(vehicleConfiguration, isAiVehicle));
+        aiDeltaHeight = isAiVehicle && vehicleConfiguration.hasAiDeltaHeight
+                            ? vehicleConfiguration.aiDeltaHeight
+                            : 0.0;
         scripts = std::make_unique<ScriptRuntime>(
             vehicleConfiguration, variables, simulationState,
             [this, &soundEngine, &soundViewpoint](const std::string& name, const std::string& file,
@@ -586,6 +591,9 @@ struct Vehicle {
 
     void spawn();
 
+    void ensureLoaded(RenderViewContext context, double viewDistance,
+                      std::chrono::steady_clock::time_point frameDeadline);
+
   private:
     static std::string trim(const std::string& value);
 
@@ -633,9 +641,6 @@ struct Vehicle {
     int lodForDistance(double distance) const;
 
     void rebuildDisplayOrder();
-
-    // Load visible OBJ geometry immediately; texture decoding remains asynchronous.
-    void ensureLoaded(RenderViewContext context, double viewDistance);
 
     void load(const SharedVehicleDefinition& definition);
 };

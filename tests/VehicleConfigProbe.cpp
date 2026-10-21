@@ -54,6 +54,7 @@ int main() {
               "[boundingbox]\n2.4\n12.0\n3.2\n0.1\n-0.2\n1.4\n"
               "[sound]\nsound/player.cfg\n"
               "[sound_ai]\nsound/ai.cfg\n"
+              "[ai_deltaheight]\n0.35\n"
               "[paths]\nmodel/paths.cfg\n"
               "[passengercabin]\nmodel/cabin.cfg\n"
               "[number]\nregistrations.org\n"
@@ -65,6 +66,9 @@ int main() {
     config.close();
 
     const VehicleConfig result = loadVehicleConfig(configPath, VehicleFileKind::Bus);
+    VehicleConfig aiSoundFallback = result;
+    aiSoundFallback.soundAiConfigPath.clear();
+    const VehiclePlacement testPlacement{{1.0, 2.0, 3.0}, 0.0};
     const bool caseMismatchedScriptConverted =
         result.scripts.size() == 1 && std::filesystem::exists(generatedLuaPath(scriptPath));
     VehicleConfig secondRegistration = result;
@@ -125,6 +129,12 @@ int main() {
         result.boundingBox != std::array<double, 6>{2.4, 12.0, 3.2, 0.1, -0.2, 1.4} ||
         result.soundConfigPath.generic_string() != (root / "sound/player.cfg").generic_string() ||
         result.soundAiConfigPath.generic_string() != (root / "sound/ai.cfg").generic_string() ||
+        soundConfigPathForVehicle(result, false) != result.soundConfigPath ||
+        soundConfigPathForVehicle(result, true) != result.soundAiConfigPath ||
+        soundConfigPathForVehicle(aiSoundFallback, true) != aiSoundFallback.soundConfigPath ||
+        !result.hasAiDeltaHeight || result.aiDeltaHeight != 0.35 ||
+        placementForVehicle(result, testPlacement, false).position[2] != 3.0 ||
+        placementForVehicle(result, testPlacement, true).position[2] != 3.35 ||
         result.pathsConfigPath.generic_string() != (root / "model/paths.cfg").generic_string() ||
         result.passengerCabinConfigPath.generic_string() != (root / "model/cabin.cfg").generic_string() ||
         result.numberConfigPath.generic_string() != (root / "registrations.org").generic_string() ||

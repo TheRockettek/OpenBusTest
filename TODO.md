@@ -43,8 +43,12 @@ against one unambiguous support matrix.
   alternating bumps, hard steering transitions, braking over bumps, and
   high-speed wheel contact. Assert finite poses/velocities, bounded angular
   speed, no excessive suspension travel, and left/right symmetry.
-- [ ] Use the stress probe to tune remaining ODE solver/contact parameters;
-  do not accept visual smoothness alone as proof of stability.
+- [~] The wheel/static contact defaults use the more compliant settings, and
+  the deterministic stress probe passes for both axle configurations (maximum
+  angular speed 0.227 rad/s; suspension travel 0.237 m or less). Further solver
+  tuning is blocked on a validated vehicle/reference envelope; the probe alone
+  does not establish native OMSI parity. Do not accept visual smoothness alone
+  as proof of stability.
 - [~] Articulated configuration is parsed and exposed, but articulated
   multi-body physics is not complete.
 - [ ] Implement articulated body sections, joints, collision, and rendering,
@@ -60,11 +64,13 @@ both supported vehicles pass it without wheel shake or explosive motion.
 - [x] Optional `OPENBUS_WHEELS_FROM_ODE=1` mode is documented and runnable.
 - [~] ODE wheel translation and orientation were corrected and smoke-tested,
   but there is no dedicated renderer assertion for wheel-to-arch alignment.
-- [ ] Add a renderer/pose diagnostic or capture test proving all configured
-  wheels remain aligned with their authored pivots while steering, pitching,
-  rolling, and suspending.
-- [ ] Validate the default animation path and ODE path side by side so the
-  opt-in mode cannot silently regress normal rendering.
+- [x] Extend the deterministic two-/three-axle stress probe with authored
+  wheel-pivot alignment bounds throughout steering, pitch, roll, and suspension
+  motion; stationary alignment is checked separately.
+- [~] Deterministic two-/three-axle pose bounds cover dynamic wheel placement,
+  but side-by-side visual validation of the default and ODE animation paths
+  remains blocked on external vehicle assets and a safe capture destination;
+  the current capture routine writes into the existing screenshots directory.
 
 Done when MAN DL05 and E400 wheel poses pass stationary, steering, bump, and
 motion checks in both supported rendering modes.
@@ -78,18 +84,22 @@ motion checks in both supported rendering modes.
   shader, but need representative assets and repeatable visual validation.
 - [~] Transparent and no-depth batches are sorted by render type and depth;
   validate difficult overlapping glass/decal cases and reflection passes.
-- [ ] Match the documented `[matl_alpha]` mode-2 depth behavior. The current
-  transparent pass disables depth writes, so blended surfaces do not occlude
-  later transparent geometry as OMSI specifies; add an overlap regression.
+- [x] Match `[matl_alpha]` mode-2 depth writes unless `[matl_noZwrite]` is
+  authored; the OpenGL overlap probe verifies that a blended surface occludes
+  later geometry and that the explicit no-depth-write override still works.
 - [~] Bump-map rendering now applies derivative-based normal-map shading from
   the configured texture and strength. Representative OMSI visual parity and
   parallax semantics still need validation.
-- [ ] Verify `matl_change`, CTC, and texture-array layer selection with a
-  real vehicle configuration, including activation-variable changes over time.
-- [ ] Verify missing, delayed, and failed auxiliary textures do not leave
-  stale GL bindings or permanently blank materials.
-- [ ] Add automated or captured evidence for TGA, PNG/JPEG, DXT DDS, indexed/RLE
-  TGA, alpha, address modes, light/night/trans/free textures, and envmaps.
+- [~] Runtime verification of `matl_change`, CTC, and texture-array layer
+  selection is blocked because the representative MAN DL05/E400 model assets
+  are not present in this checkout; the focused tests use parser fixtures only.
+- [~] A GPU regression verifies that a missing auxiliary transmap binds
+  texture zero after a prior material used a transmap; asynchronous delayed and
+  failed-load/recovery behavior still lacks an injected vehicle-runtime test.
+- [~] Automated probes cover PNG RGBA, 32-bit alpha TGA, indexed/RLE TGA,
+  DXT1/DXT4 DDS, transmap alpha, lightmap, and free-texture rendering. JPEG,
+  DXT5, texture address modes, nightmaps, and environment maps still need
+  focused evidence.
 
 Done when every supported material keyword has a documented runtime semantic,
 representative assets exercise it, and screenshots/logs or focused tests prove
@@ -120,8 +130,9 @@ it.
   runtime path: assigned mesh groups now receive bounded controller-driven
   emissive colour. Positional falloff and `[light_enh]`, `[light_enh_2]`, and
   `[spotlight]` runtime semantics remain incomplete.
-- [ ] Add a focused E400 display/light test using real model CFG data and
-  screenshots at day/night or brightness changes.
+- [~] A focused E400 display/light regression remains blocked on the external
+  E400 model CFG/assets, which are not included in this checkout; parser and
+  runtime probes do not replace the requested visual comparison.
 
 Done when a configured display changes from script input and interior lights
 change from their controlling variables without manual texture replacement.
@@ -250,7 +261,8 @@ for alignment is not mistaken for supporting it.
   physics semantics.
 - [x] Apply the parsed `[inv_min_turnradius]` steering constraint to the live
   physics steering limit.
-- [ ] Apply the parsed `[ai_deltaheight]` correction to the AI vehicle path.
+- [x] Apply `[ai_deltaheight]` to initial and map-route AI vehicle placement;
+  player vehicles remain unaffected.
 - [ ] Add the documented vehicle-family records `[rowdy_factor]`, `[boogies]`,
   `[ai_brakeperformance]`, `[ai_veh_type]`, and `[sinus]`, or explicitly mark
   them unsupported when their family-specific semantics cannot be preserved.
@@ -262,8 +274,9 @@ for alignment is not mistaken for supporting it.
 - [ ] Implement `[new_attachment]` attachment transforms and the rail/trolley
   records `[contact_shoe]` and `[rail_body_osc]`, or explicitly scope them out
   with diagnostics.
-- [ ] Complete `[sound_ai]` selection for AI vehicles; the path is retained,
-  but the AI sound runtime is not selected.
+- [x] Select `[sound_ai]` for AI vehicle sound-bank loading, falling back to
+  `[sound]` when no AI-specific path is authored. Full AI ambient/spatial sound
+  behavior remains unverified.
 - [ ] Complete `[registration_automatic]`, `[registration_free]`, and
   `[kmcounter_init]` runtime selection/persistence as tracked in the E400
   comparison section.
@@ -464,12 +477,42 @@ for the explicit boundary.
   line-numbered warnings and preserve each section's opaque payload lines;
   no runtime meaning is inferred from them.
 
-- [ ] Implement or explicitly scope out the runtime effects of retained
+#### AI vehicle and human traffic
+
+- [x] Use `[sound_ai]` for AI vehicles and apply `[ai_deltaheight]` to their
+  placement. Focused vehicle configuration coverage verifies AI/player
+  selection and preserves fallback to `[sound]`.
+- [~] Spawn configured `.bus` entries from modern `ailists.cfg` groups on
+  `[path]` type-0 road splines. `.ovh`/legacy vehicle-list formats, complete
+  group/depot selection, native density semantics, and population maintenance
+  remain incomplete.
+- [~] AI vehicles now advance at provisional fixed speed and recycle at open
+  route ends. Validated driving decisions, traffic interactions, and native
+  population lifecycle behavior remain incomplete.
+- [x] Parse `drivers.txt` model paths and `.hum` fields, and distinguish
+  type-1 human paths from type-0 road paths.
+- [~] Spawn and move human actors on nearby type-1 spline routes using
+  passenger-density settings. Rendering currently uses colored primitive
+  proxies sized from `[humangeom]`, not the configured human models.
+- [ ] Load and render the `.hum`-referenced models for pedestrians and AI
+  drivers, including their model configuration assets.
+- [ ] Apply validated `.hum` geometry, links, walk parameters, seat height,
+  mass, and voice to human actors; parsing these values alone is not runtime
+  support.
+- [ ] Validate human path field meanings, route continuity, density behavior,
+  and actor placement against representative OMSI maps.
+
+- [~] Apply road and passenger traffic-density schedules to their respective
+  capped populations using provisional linear interpolation and endpoint
+  clamping. Verify native units, interpolation, and time-of-day policy before
+  treating the behavior as OMSI-compatible.
+- [ ] Implement or explicitly scope out the remaining runtime effects of retained
   `global.cfg` settings: `[description]`, `[NextIDCode]`,
   `[worldcoordinates]`, `[dynhelperactive]`, `[realrail]`, `[LHT]`,
   `[backgroundimage]`, `[mapcam]`, `[moneysystem]`, `[ticketpack]`,
   `[repair_time_min]`, `[years]`, `[realyearoffset]`, `[standarddepot]`, `[addseason]`,
-  `[trafficdensity_road]`, and `[trafficdensity_passenger]`.
+  `[trafficdensity_road]`, and `[trafficdensity_passenger]` beyond the
+  provisional population multiplier above.
 - [~] Spline `skewStart`/`skewEnd` fields now drive a provisional longitudinal
   shear in rendered/collision road geometry. Verify the assumed units and
   formula against OMSI before treating it as compatible. `.sli`
@@ -479,11 +522,12 @@ for the explicit boundary.
   reports 951 profile strips with fewer than two points (including `pavement_a.sli`);
   verify whether these are intentional degenerate/editor strips or a
   profile-reader/geometry omission.
-- [ ] Complete remaining map-section semantics: render `[water]`, implement
-  `[variable_terrain]` and `[variable_terrainlightmap]`, apply `[rule]` and
-  `[kill_rule]`, and resolve `[spline_terrain_align_2]`. Decode/render
-  `.map.LM.bmp` and `.map.terrain_0.rdy` adjunct data where applicable. The
-  Cotterell run skipped 8 water surfaces, 27 variable-terrain tiles, 27
+- [~] Provisional `[water]` tile quads are decoded, validated, rendered, and
+  covered by `OpenBusMapWaterGeometryProbe`; OMSI parity and water collision
+  remain incomplete. `[variable_terrain]` and `[variable_terrainlightmap]`,
+  `[rule]`, `[kill_rule]`, and `[spline_terrain_align_2]` remain unsupported.
+  Decode/render `.map.LM.bmp` and `.map.terrain_0.rdy` adjunct data where
+  applicable. The Cotterell run skipped 27 variable-terrain tiles, 27
   variable-terrain-lightmap tiles, 2,212 `[rule]` records, and 1 `[kill_rule]`.
 - [ ] Resolve Chrono map variants using `[selobject]`, `[selspline]`,
   `[delete]`, `[typ]`, and `[relabel]`; these records are currently parser-only
@@ -509,10 +553,10 @@ for the explicit boundary.
   parser regression covers the route-arrow-style one-line friendly name and
   group list. Route-arrow `text.bmp` textures were among 27 missing scenery
   textures; verify whether these should be generated by the text-texture path.
-- [ ] Investigate the rejected parked Opel Manta asset (`manta_b.dds` decode
-  failure) and the standalone texture failure log entry with empty name/path;
-  identify unsupported DDS data versus missing references and add useful
-  source context to texture diagnostics.
+- [~] An empty-name/empty-path texture request is now treated as an intentionally
+  untextured batch instead of a decode failure, and decode failures include the
+  source mesh path. The parked Opel Manta DDS remains unverified because its
+  model asset is not present in this checkout.
 
 - [x] Add curved centerline tessellation for the recognized Freyfurt asphalt
   profiles. Signed-radius geometry is checked by `OpenBusMapSplineGeometryProbe`
@@ -622,21 +666,23 @@ for the explicit boundary.
   workload, reflection intervals, texture scaling, and material batching.
 - [x] Audit the renderer for OpenGL compatibility-profile API use; see
   `Docs/OPENGL_API_AUDIT.md` (no active compatibility API calls found).
-- [ ] Remove the unused compatibility-era texture-environment enum fallback
-  definitions in `src/app/RenderLoop.cpp` after confirming no platform header or
-  generated source relies on them; retain constants that have active core-GL
-  uses.
+- [x] Remove unused compatibility-era texture-environment enum fallback
+  definitions from `src/render/GlCompat.h` after confirming no source or
+  generated code uses them; active core-GL constants remain available.
 - [ ] Validate Windows and Linux helper scripts from clean build directories.
-- [ ] Run clang-tidy/format checks and resolve relevant warnings in the final
-  supported configuration.
+- [~] Focused clang-format checks pass for changed ranges, and clang-tidy runs
+  using the exported Windows compile database. The repository-wide checks still
+  report existing formatting/lint warnings outside the touched ranges; Linux
+  validation was not available in this Windows environment.
 
 Done when performance options have documented tradeoffs and both primary build
 platforms have a reproducible build-and-smoke procedure.
 
 ## 7. Final release gate
 
-- [ ] Run all focused probes, physics stress tests, parser/configuration tests,
-  and material/display tests from a clean build.
+- [x] Run all configured probes, physics stress tests, parser/configuration
+  tests, and material/display tests from a fresh Windows Clang release build;
+  all 43 CTest tests pass.
 - [ ] Run the complete screenshot matrix for MAN DL05 and E400, retaining the
   build revision, asset revision, logs, and expected results.
 - [ ] Remove or label stale claims in README and the reference documents.

@@ -546,6 +546,11 @@ void Vehicle::ensureTexture(Batch& batch, bool visible) {
     }
     TraceScope phase("texture", "ensureTexture");
     updateMaterialChange(batch);
+    if (batch.textureName.empty() && batch.texturePath.empty()) {
+        batch.textureLoadAttempted = true;
+        batch.textured = false;
+        return;
+    }
     if (batch.textureLoadAttempted) {
         return;
     }
@@ -611,7 +616,8 @@ void Vehicle::ensureTexture(Batch& batch, bool visible) {
         !batch.textureCacheEntry->decodeFailureLogged) {
         batch.textureCacheEntry->decodeFailureLogged = true;
         textureLog.Log("decode-failed: " + batch.textureName +
-                       " resolved=" + batch.texturePath.generic_string());
+                       " resolved=" + batch.texturePath.generic_string() +
+                       " source=" + batch.sourceMeshPath.generic_string());
     }
     // if (!batch.environmentLoadAttempted && !batch.environmentTextureName.empty() &&
     //     batch.environmentStrength > 0.0) {

@@ -79,6 +79,7 @@ struct ModelMaterial {
 bool initializeCoreRenderer();
 void shutdownCoreRenderer();
 void invalidateTextureBindings();
+void configureModelAlphaState(int alphaMode, bool noZwrite);
 // Frame-local total of triangle primitives submitted through the renderer.
 void resetFrameTriangleCount();
 void resetFrameReflectionTriangleCount();

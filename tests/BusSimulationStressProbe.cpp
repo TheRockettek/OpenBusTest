@@ -121,6 +121,21 @@ bool finitePose(const BodyPose& pose) {
                        [](double value) { return std::isfinite(value); });
 }
 
+double wheelPivotError(const BusConfiguration& configuration, const BodyPose& chassis,
+                       const BodyPose& wheel, std::size_t wheelIndex) {
+    const double deltaX = wheel.position[0] - chassis.position[0];
+    const double deltaY = wheel.position[1] - chassis.position[1];
+    const double deltaZ = wheel.position[2] - chassis.position[2];
+    const double localX =
+        chassis.rotation[0] * deltaX + chassis.rotation[3] * deltaY + chassis.rotation[6] * deltaZ;
+    const double localY =
+        chassis.rotation[1] * deltaX + chassis.rotation[4] * deltaY + chassis.rotation[7] * deltaZ;
+    const BusAxle& axle = configuration.axles[wheelIndex / 2];
+    const double expectedY =
+        (wheelIndex % 2 == 0 ? 1.0 : -1.0) * (axle.trackWidth * 0.5 - configuration.wheelHalfWidth);
+    return std::hypot(localX - axle.position, localY - expectedY);
+}
+
 double rotationDelta(const BodyPose& previous, const BodyPose& current) {
     double trace = 0.0;
     for (std::size_t index = 0; index < previous.rotation.size(); ++index) {
@@ -135,6 +150,10 @@ struct StressMetrics {
     double maximumWheelSpeed = 0.0;
     double maximumWheelAngularSpeed = 0.0;
     double maximumSuspensionTravel = 0.0;
+    double maximumPitch = 0.0;
+    double maximumRoll = 0.0;
+    double settledWheelPivotError = 0.0;
+    double maximumWheelPivotError = 0.0;
     double maximumStraightPairDifference = 0.0;
     double speedAtHighSpeedBump = 0.0;
     double speedAtBrakeStart = 0.0;
@@ -142,6 +161,7 @@ struct StressMetrics {
 };
 
 bool runStressCase(const std::string& name, BusConfiguration configuration) {
+    const BusConfiguration alignmentConfiguration = configuration;
     BusSimulation simulation(std::move(configuration), VehiclePlacement{{15.0, -72.0, 0.0}, 0.0},
                              60.0, 8, 0.0, {makeTerrain()});
     constexpr double fixedStep = 1.0 / 60.0;
@@ -166,6 +186,11 @@ bool runStressCase(const std::string& name, BusConfiguration configuration) {
     if (!finitePose(settledPose) || settledPose.position[2] > 2.0 || simulation.speed() > 1.0) {
         std::cerr << name << ": did not settle onto the flat spawn terrain\n";
         return false;
+    }
+    for (std::size_t wheel = 0; wheel < simulation.wheelCount(); ++wheel) {
+        metrics.settledWheelPivotError = std::max(
+            metrics.settledWheelPivotError, wheelPivotError(alignmentConfiguration, settledPose,
+                                                            simulation.wheelPose(wheel), wheel));
     }
 
     bool sawBrakingPhase = false;
@@ -214,13 +239,16 @@ bool runStressCase(const std::string& name, BusConfiguration configuration) {
         metrics.maximumChassisSpeed = std::max(metrics.maximumChassisSpeed, chassisSpeed);
         metrics.maximumChassisAngularSpeed =
             std::max(metrics.maximumChassisAngularSpeed, chassisAngularSpeed);
+        metrics.maximumPitch = std::max(
+            metrics.maximumPitch, std::abs(std::asin(std::clamp(-chassis.rotation[6], -1.0, 1.0))));
+        metrics.maximumRoll = std::max(
+            metrics.maximumRoll, std::abs(std::atan2(chassis.rotation[7], chassis.rotation[8])));
         previousChassis = chassis;
 
         for (std::size_t wheel = 0; wheel < simulation.wheelCount(); ++wheel) {
             const BodyPose pose = simulation.wheelPose(wheel);
             const double wheelRotation = simulation.wheelRotation(wheel);
-            const double suspensionTravel =
-                std::abs(simulation.wheelSuspensionSliderTravel(wheel));
+            const double suspensionTravel = std::abs(simulation.wheelSuspensionSliderTravel(wheel));
             if (!finitePose(pose) || !std::isfinite(wheelRotation) ||
                 !std::isfinite(suspensionTravel)) {
                 std::cerr << name << ": non-finite wheel pose or telemetry\n";
@@ -242,6 +270,9 @@ bool runStressCase(const std::string& name, BusConfiguration configuration) {
                 std::max(metrics.maximumWheelAngularSpeed, wheelAngularSpeed);
             metrics.maximumSuspensionTravel =
                 std::max(metrics.maximumSuspensionTravel, suspensionTravel);
+            metrics.maximumWheelPivotError = std::max(
+                metrics.maximumWheelPivotError,
+                wheelPivotError(alignmentConfiguration, chassis, pose, wheel));
             previousWheels[wheel] = pose;
             previousWheelRotation[wheel] = wheelRotation;
         }
@@ -272,6 +303,9 @@ bool runStressCase(const std::string& name, BusConfiguration configuration) {
               << " maxWheelSpeed=" << metrics.maximumWheelSpeed
               << " maxWheelSpin=" << metrics.maximumWheelAngularSpeed
               << " maxSuspensionTravel=" << metrics.maximumSuspensionTravel
+              << " maxPitch=" << metrics.maximumPitch << " maxRoll=" << metrics.maximumRoll
+              << " settledWheelPivotError=" << metrics.settledWheelPivotError
+              << " maxWheelPivotError=" << metrics.maximumWheelPivotError
               << " straightPairDifference=" << metrics.maximumStraightPairDifference
               << " speedAtBump=" << metrics.speedAtHighSpeedBump
               << " finalPosition=" << simulation.positionX() << ',' << simulation.positionY() << ','
@@ -280,9 +314,11 @@ bool runStressCase(const std::string& name, BusConfiguration configuration) {
               << '\n';
 
     if (steeringReversals == 0 || !sawBrakingPhase || brakingSteps < 240 ||
+        metrics.maximumPitch < 0.001 || metrics.maximumRoll < 0.001 ||
+        metrics.maximumSuspensionTravel < 0.01 || metrics.settledWheelPivotError > 0.02 ||
         metrics.maximumChassisSpeed > 45.0 || metrics.maximumChassisAngularSpeed > 2.5 ||
         metrics.maximumWheelSpeed > 60.0 || metrics.maximumWheelAngularSpeed > 120.0 ||
-        metrics.maximumSuspensionTravel > 0.28 ||
+        metrics.maximumSuspensionTravel > 0.28 || metrics.maximumWheelPivotError > 0.15 ||
         metrics.maximumStraightPairDifference > 0.12 || metrics.speedAtHighSpeedBump < 12.0 ||
         metrics.speedAtBrakeStart <= 1.0 ||
         metrics.speedAfterBraking >= metrics.speedAtBrakeStart * 0.75) {

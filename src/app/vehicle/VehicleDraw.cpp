@@ -17,21 +17,7 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
     }
     const int alphaMode = alphaModeOverride >= 0 ? alphaModeOverride : batch.alphaMode;
     const bool noZwrite = alphaModeOverride >= 0 ? false : batch.noZwrite;
-    if (alphaMode == 2 || noZwrite) {
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glDepthMask(GL_FALSE);
-    } else if (alphaMode == 1) {
-        glDisable(GL_BLEND);
-        // Alpha mode 1 is a cutout: the shader discards transparent texels,
-        // while surviving fragments are opaque and must occlude later draws.
-        glDepthMask(GL_TRUE);
-        glEnable(GL_POLYGON_OFFSET_FILL);
-        glPolygonOffset(-1.0f, -1.0f);
-    } else {
-        glDisable(GL_BLEND);
-        glDepthMask(GL_TRUE);
-    }
+    openbus::rendering::configureModelAlphaState(alphaMode, noZwrite);
     // Ground-projected fake shadows must still be occluded by vehicle
     // geometry; keep their noZwrite behavior but honor the depth test.
     const bool noZcheck = batch.noZcheck && !forceDepthTest;

@@ -134,6 +134,10 @@ void prepareScriptConfiguration(VehicleConfig& configuration, bool convertScript
 std::size_t registrationOptionCount(const VehicleConfig& configuration);
 // Selects the parallel number/plate entry, wrapping within their paired range.
 void selectRegistrationAtIndex(VehicleConfig& configuration, std::size_t index);
+std::filesystem::path soundConfigPathForVehicle(const VehicleConfig& configuration,
+                                                bool isAiVehicle);
+VehiclePlacement placementForVehicle(const VehicleConfig& configuration,
+                                     const VehiclePlacement& placement, bool isAiVehicle);
 
 namespace openbus::scripting {
 class Vehicle;

@@ -30,6 +30,13 @@ bool require(bool condition, const char* description) {
     return true;
 }
 
+bool writeBytes(const std::filesystem::path& path, const std::vector<std::uint8_t>& bytes) {
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+    return output.good();
+}
+
 } // namespace
 
 int main() {
@@ -212,5 +219,65 @@ int main() {
     valid &= require(image.rgba.size() == 4 && image.rgba[1] == 255 && image.rgba[3] == 0,
                      "32-bit TGA alpha channel is preserved when descriptor bits are unset");
     openbus::probe::removeProbeFile(tgaPath);
+
+    const std::filesystem::path pngPath =
+        std::filesystem::temp_directory_path() / "openbus_rgba.png";
+    const std::vector<std::uint8_t> pngBytes = {
+         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+         0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+         0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+         0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xe0, 0x51, 0xb2, 0xf0,
+         0x03, 0x00, 0x01, 0x59, 0x00, 0xb5, 0x46, 0xcb, 0x2a, 0x07, 0x00, 0x00,
+         0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+    valid &= require(writeBytes(pngPath, pngBytes), "write PNG fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(pngPath, image),
+                     "PNG image loads");
+    valid &= require(image.width == 1 && image.height == 1 && image.rgba.size() == 4 &&
+                         image.rgba[0] == 12 && image.rgba[1] == 34 && image.rgba[2] == 56 &&
+                         image.rgba[3] == 78,
+                     "PNG RGBA channels decode unchanged");
+    openbus::probe::removeProbeFile(pngPath);
+
+    const std::filesystem::path indexedTgaPath =
+        std::filesystem::temp_directory_path() / "openbus_indexed_tga.tga";
+    std::vector<std::uint8_t> indexedTga(18, 0);
+    indexedTga[1] = 1;
+    indexedTga[2] = 1;
+    indexedTga[5] = 2;
+    indexedTga[7] = 24;
+    indexedTga[12] = 2;
+    indexedTga[14] = 1;
+    indexedTga[16] = 8;
+    indexedTga[17] = 0x20;
+    indexedTga.insert(indexedTga.end(), {0, 0, 255, 0, 255, 0, 0, 1});
+    valid &= require(writeBytes(indexedTgaPath, indexedTga), "write indexed TGA fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(indexedTgaPath, image),
+                     "indexed TGA loads");
+    valid &= require(image.width == 2 && image.height == 1 && image.rgba.size() == 8 &&
+                         image.rgba[0] == 255 && image.rgba[1] == 0 && image.rgba[4] == 0 &&
+                         image.rgba[5] == 255,
+                     "indexed TGA expands color-map entries");
+    openbus::probe::removeProbeFile(indexedTgaPath);
+
+    const std::filesystem::path rleIndexedTgaPath =
+        std::filesystem::temp_directory_path() / "openbus_rle_indexed_tga.tga";
+    std::vector<std::uint8_t> rleIndexedTga(18, 0);
+    rleIndexedTga[1] = 1;
+    rleIndexedTga[2] = 9;
+    rleIndexedTga[5] = 2;
+    rleIndexedTga[7] = 24;
+    rleIndexedTga[12] = 2;
+    rleIndexedTga[14] = 1;
+    rleIndexedTga[16] = 8;
+    rleIndexedTga[17] = 0x20;
+    rleIndexedTga.insert(rleIndexedTga.end(), {0, 0, 255, 0, 255, 0, 0x81, 1});
+    valid &= require(writeBytes(rleIndexedTgaPath, rleIndexedTga), "write RLE indexed TGA fixture");
+    valid &= require(openbus::rendering::TextureLoader::readImage(rleIndexedTgaPath, image),
+                     "RLE indexed TGA loads");
+    valid &= require(image.width == 2 && image.height == 1 && image.rgba.size() == 8 &&
+                         image.rgba[1] == 255 && image.rgba[5] == 255 && image.rgba[3] == 255 &&
+                         image.rgba[7] == 255,
+                     "RLE indexed TGA repeats palette indices");
+    openbus::probe::removeProbeFile(rleIndexedTgaPath);
     return valid ? 0 : 1;
 }
