@@ -54,6 +54,7 @@ bool Vehicle::loadSharedDisplayLists() {
     }
     loaded = !displayLists.empty();
     hasSharedGeometry = loaded;
+    sharedDisplayListsCached = loaded;
     hasLoadedInitialView = loaded;
     loggedAllObjectsLoaded = loaded;
     if (loaded) {
@@ -64,7 +65,7 @@ bool Vehicle::loadSharedDisplayLists() {
 }
 
 void Vehicle::cacheSharedDisplayLists() {
-    if (displayLists.empty()) {
+    if (displayLists.empty() || sharedDisplayListsCached) {
         return;
     }
     for (DisplayPart& part : displayLists) {
@@ -74,6 +75,7 @@ void Vehicle::cacheSharedDisplayLists() {
     }
     std::lock_guard<std::mutex> lock(sharedDisplayCacheMutex());
     sharedDisplayCache().try_emplace(modelCacheKey, displayLists);
+    sharedDisplayListsCached = true;
 }
 
 void Vehicle::clearSharedDisplayCache() {
@@ -776,6 +778,9 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance,
     hasLoadedInitialView = true;
     if (loadedPart) {
         rebuildDisplayOrder();
+    }
+    if (pendingParts.empty() && !displayLists.empty() && !sharedDisplayListsCached) {
+        cacheSharedDisplayLists();
     }
     loaded = !displayLists.empty() || !pendingParts.empty();
     if (!loggedAllObjectsLoaded && pendingParts.empty() && loaded) {

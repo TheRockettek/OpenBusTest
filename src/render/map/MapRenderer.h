@@ -13,10 +13,12 @@
 #include <vector>
 
 class SimulationState;
+struct ModelConfig;
 
 namespace openbus::rendering {
 
 class MapSceneLoader;
+class AssetRequestManager;
 
 struct MapRenderStats {
     std::size_t activeTiles = 0;
@@ -40,7 +42,8 @@ class MapRenderer {
   public:
     MapRenderer(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
                 double spawnWorldX, double spawnWorldY, std::size_t groundTextureIndex,
-                const std::filesystem::path& omsiRoot, SimulationState& simulationState);
+                const std::filesystem::path& omsiRoot, SimulationState& simulationState,
+                AssetRequestManager& assetRequests);
     ~MapRenderer();
 
     MapRenderer(const MapRenderer&) = delete;
@@ -55,8 +58,12 @@ class MapRenderer {
                                                                    int pathTypeCode) const;
     std::optional<openbus::map::MapTrafficRoute> buildDrivingRoute(
         int splineId, std::size_t laneSelector = 0, std::size_t routeSeed = 0,
-        double minimumTurnRadiusMeters = 0.0) const;
+        double minimumTurnRadiusMeters = 0.0,
+        openbus::map::MapTrafficVehicleFilter vehicle = {},
+        const std::vector<int>& requiredSplineSequence = {}) const;
     std::vector<openbus::map::MapTrafficLaneStart> trafficEntryLanes() const;
+    std::optional<openbus::map::MapTrafficLaneStart> selectTrafficEntryLane(
+        openbus::map::MapTrafficVehicleFilter vehicle, std::size_t selectionSeed) const;
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
     std::vector<int> trafficRouteStartSplineIds(int pathTypeCode) const;
     std::optional<openbus::map::MapTrafficSplineEndpointStatus> trafficSplineEndpointStatus(
@@ -70,6 +77,12 @@ class MapRenderer {
                        std::optional<std::string> driverModelPath = std::nullopt,
                        std::optional<int> pathTypeCode = std::nullopt,
                        std::size_t laneSelector = 0) const;
+    void loadHumanTrafficModel(const std::filesystem::path& humanConfigPath);
+    void drawHumanTrafficActor(const std::filesystem::path& humanConfigPath,
+                               const openbus::map::MapTrafficPose& pose) const;
+    void updateTrafficSignalControllers(
+        const std::vector<openbus::map::MapTrafficActor*>& actors,
+        double elapsedSeconds, double initialClockSeconds) const;
     bool addTrafficActor(openbus::map::MapTrafficActor actor);
     std::size_t updateTrafficActors(double elapsedSeconds);
     const std::vector<openbus::map::MapTrafficActor>& trafficActors() const;
@@ -80,9 +93,16 @@ class MapRenderer {
     friend class MapSceneLoader;
 
     void initializeActiveScripts();
+    bool finishHumanTrafficModelLoad(const std::string& cacheKey) const;
+    void loadHumanTrafficModelNow(
+        const std::filesystem::path& humanConfigPath,
+        const std::filesystem::path& modelConfigPath,
+        const ModelConfig& configuration,
+        const std::array<double, 2>& geometry) const;
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    AssetRequestManager* assetRequests_ = nullptr;
 };
 
 } // namespace openbus::rendering

@@ -4,6 +4,117 @@
 
 namespace openbus::rendering {
 
+void MapRenderer::drawHumanTrafficActor(
+    const std::filesystem::path& humanConfigPath,
+    const openbus::map::MapTrafficPose& pose) const {
+    const std::string cacheKey = humanConfigPath.lexically_normal().generic_string();
+    auto model = impl_->humanTrafficModels.find(cacheKey);
+    if (model == impl_->humanTrafficModels.end()) {
+        if (impl_->failedHumanTrafficModels.contains(cacheKey)) {
+            return;
+        }
+        if (!impl_->pendingHumanTrafficModels.contains(cacheKey)) {
+            throw std::logic_error("Human traffic model was not requested before drawing");
+        }
+        try {
+            if (!finishHumanTrafficModelLoad(cacheKey)) {
+                return;
+            }
+        } catch (const std::exception& error) {
+            impl_->pendingHumanTrafficModels.erase(cacheKey);
+            impl_->failedHumanTrafficModels.insert(cacheKey);
+            gameLog.Log("Could not asynchronously load human traffic model '" +
+                        humanConfigPath.generic_string() + "': " + error.what());
+            return;
+        }
+        model = impl_->humanTrafficModels.find(cacheKey);
+        if (model == impl_->humanTrafficModels.end()) {
+            return;
+        }
+    }
+    if (model->second.batchIndexes.size() != model->second.texturePaths.size() ||
+        model->second.batchIndexes.size() != model->second.textureImages.size()) {
+        throw std::logic_error("Human traffic model texture state is inconsistent");
+    }
+    for (std::size_t index = 0; index < model->second.batchIndexes.size(); ++index) {
+        std::shared_future<std::shared_ptr<Image>>& imageRequest =
+            model->second.textureImages[index];
+        if (!imageRequest.valid() ||
+            imageRequest.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            continue;
+        }
+
+        const std::filesystem::path& texturePath = model->second.texturePaths[index];
+        const std::string textureKey = texturePath.lexically_normal().generic_string();
+        Impl::ModelBatch& batch =
+            impl_->sceneryBatches[model->second.batchIndexes[index]];
+        try {
+            const auto existingTexture = impl_->dynamicSceneryTextures.find(textureKey);
+            if (existingTexture != impl_->dynamicSceneryTextures.end()) {
+                batch.material.texture = existingTexture->second;
+            } else {
+                const std::shared_ptr<Image> image = imageRequest.get();
+                if (!image) {
+                    throw std::runtime_error("Texture decoder returned no image");
+                }
+                const GLuint texture = uploadTextureImage(*image);
+                const auto [insertedTexture, inserted] =
+                    impl_->dynamicSceneryTextures.emplace(textureKey, texture);
+                if (!inserted) {
+                    glDeleteTextures(1, &texture);
+                } else {
+                    impl_->ownedTextures.push_back(texture);
+                }
+                batch.material.texture = insertedTexture->second;
+            }
+            batch.material.textured = batch.material.texture != 0;
+        } catch (const std::exception& error) {
+            gameLog.Log("Could not asynchronously load human model texture " +
+                        texturePath.generic_string() + ": " + error.what());
+        }
+        imageRequest = {};
+        impl_->humanTextureRequests.erase(textureKey);
+    }
+    const double headingDegrees = pose.headingRadians * 180.0 / std::acos(-1.0);
+    const Matrix4 transform = makeSceneryInstanceTransform(
+        pose.position[0], pose.position[1], pose.position[2],
+        {headingDegrees, 0.0, 0.0, 0.0, 0.0, 0.0}, 1, nullptr);
+    for (const std::size_t batchIndex : model->second.batchIndexes) {
+        if (batchIndex >= impl_->sceneryBatches.size()) {
+            throw std::logic_error("Human traffic model references an invalid mesh batch");
+        }
+    }
+
+    pushMatrix();
+    multiplyMatrix(transform);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+    const auto drawBatches = [&](bool transparent) {
+        for (const std::size_t batchIndex : model->second.batchIndexes) {
+            const Impl::ModelBatch& batch = impl_->sceneryBatches[batchIndex];
+            const bool isTransparent = batch.alphaMode == 2 || batch.alphaMode == 3;
+            if (isTransparent != transparent) {
+                continue;
+            }
+            drawModelBatch(batch.buffer, batch.vertexCount, batch.material, batch.color,
+                           batch.alpha, batch.alphaMode, batch.cullBackFaces);
+        }
+    };
+    drawBatches(false);
+
+    glDepthMask(GL_FALSE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    drawBatches(true);
+
+    popMatrix();
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glDisable(GL_BLEND);
+}
+
 void MapRenderer::draw(bool renderTypeFourOnly) const {
     TraceScope trace("map", "MapRenderer::draw");
     IndirectCullingBatch indirectBatch;

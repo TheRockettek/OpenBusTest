@@ -100,13 +100,27 @@ void runFixtureProbe() {
                 writeUtf16Le(root / "ailists.cfg",
                              "[aigroup_2]\nNormalCars\nvehicles\\sedan.bus\t7\n"
                              "vehicles\\delivery van.ovh\n[end]\n"
-                             "[aigroup_2]\nTrucks\nvehicles\\truck.bus\t3\n[end]\n"
+                             "[aigroup_2]\nTrucks\nvehicles\\truck.bus\t3\n"
+                             "vehicles\\truck.ovh\n[end]\n"
                              "[aigroup_2]\nCommercial\nvehicles\\commercial.bus\n[end]\n"
-                             "[aigroup_2]\nCommercials\nvehicles\\commercial_van.bus\n[end]\n"
+                             "[aigroup_2]\nCommercials\nvehicles\\commercial_van.bus\n"
+                             "vehicles\\delivery van.ovh\n[end]\n"
                              "[aigroup_2]\nOther\nvehicles\\other.bus\n[end]\n"
+                             "[aigroup_2]\nNormalCar\nvehicles\\normal_car.ovh\n[end]\n"
+                             "[aigroup_2]\nAmbulance\nvehicles\\ambulance.ovh\n[end]\n"
                              "[aigroup_depot]\nCentral Depot\nFixture HOF\n"
                              "[aigroup_depot_typgroup_2]\nvehicles\\city_bus.bus\n"
                              "1234\tBlue livery\n[end]\n");
+                writeUtf16Le(root / "unsched_vehgroups.txt",
+                             "[group]\nTrucks\n0\n[group]\nNormalCars\n0\n"
+                             "[group]\nCommercials\n0\n[group]\nAmbulance\n0\n");
+                writeUtf16Le(root / "unsched_trafficdens.txt",
+                             "[group]\nNormalCars\n2\n[set_day_of_week]\n1\n"
+                             "[trafficdensity]\n0\n0.2\n[trafficdensity]\n12\n0.8\n"
+                             "[set_day_of_week]\n4\n[trafficdensity]\n0\n0.1\n"
+                             "[trafficdensity]\n12\n0.1\n[group]\nTrucks\n1\n"
+                             "[set_day_of_week]\n0\n[trafficdensity]\n0\n0.4\n"
+                             "[trafficdensity]\n12\n0.2\n");
                 writeUtf16Le(root / "drivers.txt",
                              "humans\\drivers\\driver_one.hum\n"
                              "humans\\custom map\\driver_two.hum\n");
@@ -203,7 +217,7 @@ void runFixtureProbe() {
             invalidDensityHourRejected = true;
         }
         require(invalidDensityHourRejected, "density lookup rejects hours outside [0, 24]");
-        require(definition.aiTraffic.vehicleGroups.size() == 5 &&
+        require(definition.aiTraffic.vehicleGroups.size() == 7 &&
                     definition.aiTraffic.vehicleGroups[0].name == "NormalCars" &&
                     definition.aiTraffic.vehicleGroups[0].vehicles.size() == 2 &&
                     definition.aiTraffic.vehicleGroups[0].vehicles[0].assetPath ==
@@ -219,10 +233,136 @@ void runFixtureProbe() {
                                                  "vehicles\\delivery van.ovh"},
                 "road vehicle references are extracted while full group lines are preserved");
         require(openbus::map::mapAiRoadVehicleAssetPaths(definition.aiTraffic) ==
-                    std::vector<std::string>{"vehicles\\delivery van.ovh"} &&
+                    std::vector<std::string>{"vehicles\\delivery van.ovh",
+                                             "vehicles\\truck.ovh",
+                                             "vehicles\\normal_car.ovh",
+                                             "vehicles\\ambulance.ovh"} &&
                     openbus::map::mapAiBusAssetPaths(definition.aiTraffic) ==
                         std::vector<std::string>{"vehicles\\city_bus.bus"},
-                "random road traffic selects only .ovh assets while scheduled buses remain .bus-only");
+                "random road traffic selects supported AI groups and only .ovh assets while "
+                "scheduled buses remain .bus-only");
+        const std::vector<openbus::map::MapAiRoadVehicle> roadVehicles =
+            openbus::map::mapAiRoadVehicles(definition.aiTraffic);
+        require(definition.aiTraffic.unscheduledVehicleGroupNames ==
+                    std::vector<std::string>{"Trucks", "NormalCars", "Commercials", "Ambulance"} &&
+                    definition.aiTraffic.hasUnscheduledTrafficDensityFile &&
+                    definition.aiTraffic.unscheduledTrafficDensityGroups.size() == 2 &&
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].name == "NormalCars" &&
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].factor == 2.0 &&
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules.size() == 2 &&
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules[0]
+                            .dayOfWeekMask == 1 &&
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules[0]
+                            .points.size() == 2 &&
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules[0]
+                            .points[1]
+                            .hour == 12.0 &&
+                    definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules[0]
+                            .points[1]
+                            .density == 0.8 &&
+                    roadVehicles.size() == 5 &&
+                    roadVehicles[0].assetPath == "vehicles\\delivery van.ovh" &&
+                    roadVehicles[0].groupIndex == 1 &&
+                    roadVehicles[1].assetPath == "vehicles\\truck.ovh" &&
+                    roadVehicles[1].groupIndex == 0 &&
+                    roadVehicles[1].defaultVehicleType == 3 &&
+                    roadVehicles[2].assetPath == "vehicles\\delivery van.ovh" &&
+                    roadVehicles[2].groupIndex == 2 &&
+                    roadVehicles[3].assetPath == "vehicles\\normal_car.ovh" &&
+                    roadVehicles[3].groupIndex == 1 &&
+                    roadVehicles[4].assetPath == "vehicles\\ambulance.ovh" &&
+                    roadVehicles[4].groupIndex == 3,
+                "road vehicle group indices map to unsched_vehgroups.txt, including aliases");
+        const std::vector<openbus::map::MapAiRoadVehicle> weekdayRoadVehicles =
+            openbus::map::mapAiRoadVehicles(definition.aiTraffic, 12.0, 1);
+        const std::optional<double> weekdayGroupDensity =
+            openbus::map::mapAiRoadTrafficDensityAtHour(
+                definition.aiTraffic, roadVehicles, 12.0, 1);
+        const std::optional<double> weekendGroupDensity =
+            openbus::map::mapAiRoadTrafficDensityAtHour(
+                definition.aiTraffic, roadVehicles, 12.0, 4);
+        const std::optional<double> maximumGroupDensity =
+            openbus::map::mapAiMaximumRoadTrafficDensity(definition.aiTraffic, roadVehicles);
+        require(weekdayGroupDensity.has_value() &&
+                    std::abs(*weekdayGroupDensity - 0.6) < 1.0e-9 &&
+                    weekendGroupDensity.has_value() &&
+                    std::abs(*weekendGroupDensity - (0.4 / 3.0)) < 1.0e-9 &&
+                    maximumGroupDensity.has_value() &&
+                    std::abs(*maximumGroupDensity - 0.6) < 1.0e-9,
+                "group density curves select weekday/weekend masks and average road groups");
+        double normalCarSelectionWeight = 0.0;
+        double truckSelectionWeight = 0.0;
+        for (const openbus::map::MapAiRoadVehicle& vehicle : weekdayRoadVehicles) {
+            if (vehicle.groupName == "normalcars") {
+                normalCarSelectionWeight += vehicle.selectionWeight;
+            } else if (vehicle.groupName == "trucks") {
+                truckSelectionWeight += vehicle.selectionWeight;
+            } else {
+                require(vehicle.selectionWeight == 0.0,
+                        "groups without a matching density schedule are not selected");
+            }
+        }
+        require(std::abs(normalCarSelectionWeight - 1.6) < 1.0e-9 &&
+                    std::abs(truckSelectionWeight - 0.2) < 1.0e-9,
+                "schedule factors weight group selection independent of group size");
+        const std::vector<openbus::map::MapAiRoadVehicle> poolRoadVehicles =
+            openbus::map::mapAiRoadVehiclesForPool(definition.aiTraffic);
+        double poolNormalCarWeight = 0.0;
+        double poolTruckWeight = 0.0;
+        for (const openbus::map::MapAiRoadVehicle& vehicle : poolRoadVehicles) {
+            if (vehicle.groupName == "normalcars") {
+                poolNormalCarWeight += vehicle.selectionWeight;
+            } else if (vehicle.groupName == "trucks") {
+                poolTruckWeight += vehicle.selectionWeight;
+            } else {
+                require(vehicle.selectionWeight == 0.0,
+                        "pool composition excludes groups without density curves");
+            }
+        }
+        const auto weekdayGroupPopulation =
+            openbus::map::mapAiRoadTrafficPopulationByGroup(
+                definition.aiTraffic, 9, 12.0, 1);
+        const auto weekendGroupPopulation =
+            openbus::map::mapAiRoadTrafficPopulationByGroup(
+                definition.aiTraffic, 10, 12.0, 4);
+        require(std::abs(poolNormalCarWeight - 1.6) < 1.0e-9 &&
+                    std::abs(poolTruckWeight - 0.4) < 1.0e-9 &&
+                    weekdayGroupPopulation.size() == 2 &&
+                    weekdayGroupPopulation[0].groupIndex == 0 &&
+                    weekdayGroupPopulation[0].populationCount == 1 &&
+                    weekdayGroupPopulation[1].groupIndex == 1 &&
+                    weekdayGroupPopulation[1].populationCount == 8 &&
+                    weekendGroupPopulation.size() == 2 &&
+                    weekendGroupPopulation[0].groupIndex == 0 &&
+                    weekendGroupPopulation[0].populationCount == 5 &&
+                    weekendGroupPopulation[1].groupIndex == 1 &&
+                    weekendGroupPopulation[1].populationCount == 5,
+                "the pool covers future groups and scheduled population targets rebalance");
+        std::size_t selectedNormalCars = 0;
+        std::size_t selectedTrucks = 0;
+        for (std::size_t seed = 0; seed < 500; ++seed) {
+            const auto selected =
+                openbus::map::selectMapAiRoadVehicle(weekdayRoadVehicles, seed);
+            require(selected.has_value(),
+                    "positive scheduled group density selects a road vehicle");
+            const std::string& selectedGroup = weekdayRoadVehicles[*selected].groupName;
+            selectedNormalCars += selectedGroup == "normalcars" ? 1U : 0U;
+            selectedTrucks += selectedGroup == "trucks" ? 1U : 0U;
+            require(selectedGroup == "normalcars" || selectedGroup == "trucks",
+                    "weighted selection excludes zero-density groups");
+        }
+        require(selectedNormalCars > selectedTrucks && selectedTrucks > 0,
+                "weighted startup selection respects each group's scheduled density");
+        writeUtf16Le(root / "unsched_trafficdens.txt", "");
+        const openbus::map::MapDefinition emptyDensityDefinition =
+            openbus::map::loadMapDefinition(root);
+        const std::vector<openbus::map::MapAiRoadVehicle> emptyDensityRoadVehicles =
+            openbus::map::mapAiRoadVehicles(emptyDensityDefinition.aiTraffic);
+        require(!emptyDensityDefinition.aiTraffic.hasUnscheduledTrafficDensityFile &&
+                    !openbus::map::mapAiRoadTrafficDensityAtHour(
+                         emptyDensityDefinition.aiTraffic, emptyDensityRoadVehicles, 12.0, 1)
+                         .has_value(),
+                "an empty unscheduled-density file preserves the global-density fallback");
         require(definition.aiTraffic.timetableRoutes.size() == 1 &&
                     definition.aiTraffic.timetableRoutes[0].timetableKey == "fixturetrip" &&
                     definition.aiTraffic.timetableRoutes[0].tripName == "FixtureLine" &&

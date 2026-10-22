@@ -186,32 +186,12 @@ void MapSceneLoader::buildTileContent() {
         for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
             reportVariableParent(attachment.id, tileX, tileY, attachment.variableParentId);
         }
-        const auto reportRules = [&](int objectId,
-                                     const std::vector<openbus::map::MapTileRule>& rules) {
-            for (const openbus::map::MapTileRule& rule : rules) {
-                recordSkipped(skipped,
-                              rule.kill ? "[kill_rule] records parsed but not applied"
-                                        : "[rule] records parsed but not applied",
-                              tileName + " id=" + std::to_string(objectId) +
-                                  " first-field=" + rule.fields[0]);
-            }
-        };
-        for (const openbus::map::MapSceneryPlacement& object : tile.sceneryObjects) {
-            reportRules(object.id, object.rules);
-        }
-        for (const openbus::map::MapAttachedObject& object : tile.attachedObjects) {
-            reportRules(object.id, object.rules);
-        }
-        for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
-            reportRules(attachment.id, attachment.rules);
-        }
         for (const openbus::map::MapSplinePlacement& spline : tile.splines) {
             if (spline.splineTerrainAlign2.has_value()) {
                 recordSkipped(skipped,
                               "[spline_terrain_align_2] values parsed but alignment not applied",
                               tileName + " spline=" + std::to_string(spline.splineId));
             }
-            reportRules(spline.splineId, spline.rules);
         }
         if (tile.hasWaterMarker) {
             if (!tileReference.hasWaterFile) {
@@ -307,7 +287,9 @@ void MapSceneLoader::buildTileContent() {
                                             std::size_t rotationCount,
                                             const std::array<double, 9>* orientationMatrix =
                                                 nullptr,
-                                            std::vector<std::string> placementLabels = {}) {
+                                            std::vector<std::string> placementLabels = {},
+                                            const std::vector<openbus::map::MapTileRule>*
+                                                placementRules = nullptr) {
             const std::filesystem::path configPath = resolveSceneryConfigPath(assetPath);
             if (configPath.empty()) {
                 recordSkipped(skipped, "scenery placements whose .sco config was not found",
@@ -340,6 +322,7 @@ void MapSceneLoader::buildTileContent() {
                     position[2] += worldZ;
                     return position;
                 };
+                std::shared_ptr<openbus::map::MapTrafficSignalController> signalController;
                 for (const SceneryObjectTrafficPath& path : trafficPaths->second) {
                     const std::vector<openbus::map::MapSplineSample> samples =
                         openbus::map::tessellateMapSpline(path.startPosition[0],
@@ -363,13 +346,39 @@ void MapSceneLoader::buildTileContent() {
                     segment.pathTypeCode = path.pathTypeCode;
                     segment.tileX = tileX;
                     segment.tileY = tileY;
+                    const auto trafficSignal = [&] {
+                        std::optional<openbus::map::MapTrafficSignalSchedule> schedule =
+                            path.trafficSignal;
+                        if (schedule.has_value() && schedule->hasConditionalOverrides &&
+                            schedule->program != nullptr) {
+                            if (!signalController) {
+                                signalController =
+                                    std::make_shared<openbus::map::MapTrafficSignalController>(
+                                        schedule->program);
+                            }
+                            schedule->controller = signalController;
+                        }
+                        return schedule;
+                    };
                     if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
                         openbus::map::MapTrafficRouteSegment lane;
                         lane.points = segment.points;
-                        lane.trafficSignal = path.trafficSignal;
+                        lane.trafficSignal = trafficSignal();
+                        if (placementRules != nullptr) {
+                            lane.pathRules = openbus::map::mapTrafficRulesForPath(
+                                *placementRules, path.pathIndex);
+                        }
                         impl_->roadTrafficLaneNetwork.addSegment(std::move(lane));
+                    } else if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
+                        openbus::map::MapTrafficRouteSegment lane;
+                        lane.points = segment.points;
+                        lane.trafficSignal = trafficSignal();
+                        impl_->humanTrafficLaneNetwork.addSegment(std::move(lane));
                     }
                     impl_->sceneryTrafficPathSegments.push_back(segment);
+                }
+                if (signalController) {
+                    impl_->trafficSignalControllers.push_back(std::move(signalController));
                 }
             }
             if (editorOnlySceneryAssets.contains(configPath.lexically_normal().generic_string())) {
@@ -487,7 +496,7 @@ void MapSceneLoader::buildTileContent() {
             addSceneryInstance(placement->assetPath, objectDescription, pose.x, pose.y, pose.z, 0.0,
                                pose.rotationDegrees, pose.rotationCount,
                                pose.hasOrientationMatrix ? &pose.orientationMatrix : nullptr,
-                               object.labels);
+                               object.labels, &object.rules);
         }
         for (const openbus::map::MapAttachedObject& object : tile.attachedObjects) {
             const std::string description = tileName +
@@ -511,7 +520,7 @@ void MapSceneLoader::buildTileContent() {
             addSceneryInstance(placement->assetPath, description, placement->pose.x,
                                placement->pose.y, placement->pose.z, 0.0,
                                placement->pose.rotationDegrees, placement->pose.rotationCount,
-                               &placement->pose.orientationMatrix, object.labels);
+                               &placement->pose.orientationMatrix, object.labels, &object.rules);
         }
         for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
             const std::string description =
@@ -537,7 +546,8 @@ void MapSceneLoader::buildTileContent() {
                 addSceneryInstance(
                     attachment.assetPath, description, renderedPose.x, renderedPose.y,
                     renderedPose.z, 0.0, renderedPose.rotationDegrees, renderedPose.rotationCount,
-                    renderedPose.hasOrientationMatrix ? &renderedPose.orientationMatrix : nullptr);
+                    renderedPose.hasOrientationMatrix ? &renderedPose.orientationMatrix : nullptr,
+                    {}, &attachment.rules);
             }
         }
         for (const openbus::map::MapSplinePlacement& spline : tile.splines) {

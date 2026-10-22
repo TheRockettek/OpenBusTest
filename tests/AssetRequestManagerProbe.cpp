@@ -51,6 +51,27 @@ int main() {
     bool passed = true;
     {
         openbus::rendering::AssetRequestManager assets;
+        std::promise<void> taskEntered;
+        std::promise<void> releaseTask;
+        const std::shared_future<void> taskRelease = releaseTask.get_future().share();
+        std::future<int> task = assets.submit([&] {
+            taskEntered.set_value();
+            taskRelease.wait();
+            return 42;
+        });
+        if (taskEntered.get_future().wait_for(5s) != std::future_status::ready) {
+            std::cerr << "asset worker task did not start asynchronously\n";
+            passed = false;
+        } else if (task.wait_for(0s) != std::future_status::timeout) {
+            std::cerr << "asset worker task completed before its release signal\n";
+            passed = false;
+        }
+        releaseTask.set_value();
+        if (task.wait_for(5s) != std::future_status::ready || task.get() != 42) {
+            std::cerr << "asset worker task did not publish its result\n";
+            passed = false;
+        }
+
         std::promise<void> resolverEntered;
         std::promise<void> releaseResolver;
         const std::shared_future<void> release = releaseResolver.get_future().share();

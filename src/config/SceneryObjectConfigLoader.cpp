@@ -190,6 +190,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             if (readDoubles(reader, keyword, 12, values, result.diagnostics) &&
                 values.size() == 12) {
                 SceneryObjectTrafficPath path;
+                path.pathIndex = result.trafficPaths.size();
                 std::copy_n(values.begin(), 3, path.startPosition.begin());
                 path.headingDegrees = values[3];
                 path.radius = values[4];
@@ -399,7 +400,46 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                                                       "unknown scenery-object keyword");
     }
 
-    bool hasSignalizedTrafficPath = false;
+    auto signalProgram = std::make_shared<openbus::map::MapTrafficSignalProgram>();
+    signalProgram->cycleDurationSeconds = result.trafficLightsGroupDurationSeconds;
+    for (const SceneryObjectTrafficLight& light : result.trafficLights) {
+        signalProgram->lights.push_back(light.phases);
+        signalProgram->approachDistancesMeters.push_back(light.approachDistanceMeters);
+    }
+    const auto addControlPoint = [&](double rawLightIndex, double timeSeconds,
+                                     double ifRequest,
+                                     std::optional<double> jumpToSeconds,
+                                     const char* keyword) {
+        if (!std::isfinite(rawLightIndex) || rawLightIndex < 0.0 ||
+            std::floor(rawLightIndex) != rawLightIndex ||
+            rawLightIndex >= static_cast<double>(result.trafficLights.size()) ||
+            !std::isfinite(timeSeconds) || timeSeconds < 0.0 ||
+            !std::isfinite(ifRequest) ||
+            (jumpToSeconds.has_value() &&
+             (!std::isfinite(*jumpToSeconds) || *jumpToSeconds < 0.0))) {
+            result.diagnostics.warning(
+                0, keyword, "expected an existing light index and finite non-negative times");
+            return;
+        }
+        signalProgram->controlPoints.push_back(
+            {static_cast<std::size_t>(rawLightIndex), timeSeconds, ifRequest > 0.5,
+             jumpToSeconds});
+    };
+    for (const std::array<double, 3>& stop : result.trafficLightStops) {
+        addControlPoint(stop[0], stop[1], stop[2], std::nullopt, "traffic_light_stop");
+    }
+    for (const std::array<double, 4>& jump : result.trafficLightJumps) {
+        addControlPoint(jump[0], jump[1], jump[2], jump[3], "traffic_light_jump");
+    }
+    const bool signalProgramValid =
+        !result.trafficLights.empty() &&
+        openbus::map::mapTrafficSignalProgramValid(*signalProgram);
+    if (!signalProgramValid &&
+        (!result.trafficLightStops.empty() || !result.trafficLightJumps.empty())) {
+        result.diagnostics.warning(0, "traffic_light_jump",
+                                   "conditional signal program is invalid and will be ignored");
+    }
+
     for (SceneryObjectTrafficPath& path : result.trafficPaths) {
         if (path.trafficLightIndex < 0) {
             continue;
@@ -419,22 +459,17 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         openbus::map::MapTrafficSignalSchedule schedule;
         schedule.cycleDurationSeconds = result.trafficLightsGroupDurationSeconds;
         schedule.phases = light.phases;
+        schedule.lightIndex = static_cast<std::size_t>(path.trafficLightIndex);
+        schedule.approachDistanceMeters = light.approachDistanceMeters;
+        schedule.program = signalProgramValid ? signalProgram : nullptr;
         schedule.hasConditionalOverrides =
-            !result.trafficLightStops.empty() || !result.trafficLightJumps.empty();
+            signalProgramValid && !signalProgram->controlPoints.empty();
         if (!openbus::map::mapTrafficSignalStateAtTime(schedule, 0.0).has_value()) {
             result.diagnostics.warning(0, "traffic_light",
                                        "signalized path has an invalid phase schedule");
             continue;
         }
         path.trafficSignal = std::move(schedule);
-        hasSignalizedTrafficPath = true;
-    }
-    if (hasSignalizedTrafficPath &&
-        (!result.trafficLightStops.empty() || !result.trafficLightJumps.empty())) {
-        result.diagnostics.warning(
-            0, "traffic_light_jump",
-            "AI traffic uses the base phase cycle; request-driven stop/jump timing is not "
-            "simulated");
     }
 
     if (result.modelPath.empty() && !hasInlineModel && result.trees.empty()) {

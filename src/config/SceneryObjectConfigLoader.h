@@ -4,6 +4,7 @@
 #include "map/MapTrafficSignal.h"
 
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -23,6 +24,7 @@ struct SceneryTreeDefinition {
 
 struct SceneryObjectTrafficPath {
     // OMSI SCO [path] records are local spline segments, not start/end coordinate pairs.
+    std::size_t pathIndex = 0;
     std::array<double, 3> startPosition = {};
     double headingDegrees = 0.0;
     double radius = 0.0;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -40,6 +41,7 @@ struct MapSplinePathDefinition {
 };
 
 struct MapSplinePathOffset {
+    std::size_t pathIndex = 0;
     double lateralMeters = 0.0;
     double heightMeters = 0.0;
     bool reversed = false;

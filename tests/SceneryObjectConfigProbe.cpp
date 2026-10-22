@@ -104,6 +104,17 @@ int main(int argc, char** argv) {
                              configuration.trafficLightJumps.size() == 1,
                          "conditional traffic-light records are parsed");
         if (hasExpectedSignal) {
+            const auto& program = configuration.trafficPaths[0].trafficSignal->program;
+            valid &= require(
+                program != nullptr && program->controlPoints.size() == 2 &&
+                    program->controlPoints[0].lightIndex == 0 &&
+                    program->controlPoints[0].timeSeconds == 1.0 &&
+                    program->controlPoints[0].ifRequest &&
+                    !program->controlPoints[0].jumpToSeconds.has_value() &&
+                    program->controlPoints[1].jumpToSeconds == 3.0,
+                "SCO stop/jump records become indexed signal-clock control points");
+        }
+        if (hasExpectedSignal) {
             valid &= require(
                 openbus::map::mapTrafficSignalStateAtTime(
                     *configuration.trafficPaths[0].trafficSignal, 2.9) == 0 &&
@@ -111,8 +122,8 @@ int main(int argc, char** argv) {
                         *configuration.trafficPaths[0].trafficSignal, 3.0) == 6,
                 "parsed traffic-light cycle returns the active phase");
         }
-        valid &= require(configuration.diagnostics.entries.size() == 1,
-                         "unsupported conditional timing is reported once");
+        valid &= require(configuration.diagnostics.entries.empty(),
+                         "valid conditional signal timing is not reported unsupported");
     }
     return valid ? 0 : 1;
 }

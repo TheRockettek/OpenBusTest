@@ -301,8 +301,11 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         if (trafficSplineDebugKeyPressed && !previousTrafficSplineDebugKeyState_) {
             trafficSplineDebugOverlay_ = !trafficSplineDebugOverlay_;
             gameLog.Log(std::string("AI and human traffic spline overlay ") +
-                        (trafficSplineDebugOverlay_ ? "enabled (cyan=road, magenta=human)"
-                                                    : "disabled"));
+                        (trafficSplineDebugOverlay_
+                             ? "enabled (cyan=road, magenta=human, green=AI box, white=other "
+                               "vehicle, blue=junction actor, amber=junction reservation, "
+                               "red/green=signal stop)"
+                             : "disabled"));
         }
         previousTrafficSplineDebugKeyState_ = trafficSplineDebugKeyPressed;
     }

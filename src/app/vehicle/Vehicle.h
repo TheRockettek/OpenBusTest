@@ -368,14 +368,17 @@ struct Vehicle {
     std::vector<InteriorLightController> interiorLightControllers;
     Matrix4 interiorLightRootModelView = identityMatrix();
     std::string modelCacheKey;
+    std::shared_ptr<const SharedVehicleDefinition> deferredDefinition;
     AssetRequestManager* assets;
     VehiclePlacement placement;
     bool followsMapTrafficRoute = false;
     bool mapTrafficRouteFinished = false;
+    bool mapTrafficTileActive = true;
     double modelOffsetZ = 0.0;
     double aiDeltaHeight = 0.0;
     double trafficLengthMeters = 0.0;
     double trafficWidthMeters = 0.0;
+    double trafficHeightMeters = 0.0;
     double textureScale = 1;
     double odometerMetres = 0.0;
     std::array<double, 2> odometerPosition = {};
@@ -398,6 +401,7 @@ struct Vehicle {
     Matrix4 preparedDrawProjection = {};
     bool loaded = false;
     bool hasSharedGeometry = false;
+    bool sharedDisplayListsCached = false;
     bool hasLoadedInitialView = false;
     bool loggedAllObjectsLoaded = false;
     int activeLod = -1;
@@ -484,6 +488,7 @@ struct Vehicle {
     bool handleMouseClick(const std::string& eventName);
 
     void joinTextureWorkers();
+    void finishDeferredTrafficInitialization();
 
 #ifdef _WIN32
     bool comInitialized = false;
@@ -493,7 +498,8 @@ struct Vehicle {
                      const VehiclePlacement& configuredPlacement, double configuredModelOffsetZ,
                      ModelLoadingPolicy policy, AssetRequestManager& manager,
                      SimulationState& simulationState, SoundEngine& soundEngine,
-                     openbus::rendering::ViewpointContext& soundViewpoint, bool isAiVehicle)
+                     openbus::rendering::ViewpointContext& soundViewpoint, bool isAiVehicle,
+                     bool deferTrafficInitialization = false)
         : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
           modelCacheKey(definition->cacheKey), assets(&manager), placement(configuredPlacement),
           modelOffsetZ(configuredModelOffsetZ),
@@ -509,14 +515,18 @@ struct Vehicle {
             frustumCulling = std::string(culling) == "1";
         }
 #ifdef _WIN32
-        const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        comInitialized = SUCCEEDED(comResult);
+        if (!deferTrafficInitialization) {
+            const HRESULT comResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            comInitialized = SUCCEEDED(comResult);
+        }
 #endif
         VehicleConfig vehicleConfiguration = definition->vehicleConfiguration;
         trafficLengthMeters = vehicleConfiguration.boundingBox[1] +
                               2.0 * std::abs(vehicleConfiguration.boundingBox[4]);
         trafficWidthMeters = vehicleConfiguration.boundingBox[0] +
                              2.0 * std::abs(vehicleConfiguration.boundingBox[3]);
+        trafficHeightMeters = vehicleConfiguration.boundingBox[2] +
+                              2.0 * std::abs(vehicleConfiguration.boundingBox[5]);
         selectRuntimeRegistration(vehicleConfiguration, configuredPlacement);
         odometerMetres =
             vehicleConfiguration.hasOdometerInitial
@@ -549,6 +559,10 @@ struct Vehicle {
         }
         for (const std::string& name : definition->modelStringVariables) {
             variables.declareString(name);
+        }
+        if (deferTrafficInitialization) {
+            deferredDefinition = definition;
+            return;
         }
         load(*definition);
         scripts->initialize();

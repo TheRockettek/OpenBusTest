@@ -519,8 +519,10 @@ for the explicit boundary.
   across them so each scheduled departure has one owner. Native density
   units/interpolation remain provisional. Startup builds a bounded pool queued
   only at incoming endpoint lanes; density reductions unload vehicles off-screen
-  and increases admit them only at clear off-screen endpoints. Replenishment
-  beyond the startup pool remains incomplete. Vehicles enter at
+  and increases admit them only at clear off-screen endpoints. Entries are
+  recycled from the bounded pool after route completion; re-entry resets route
+  progress, speed, and junction-wait state. The startup pool remains the hard
+  capacity. Vehicles enter at
   distance zero and zero speed when off-screen, over 50 m plus vehicle radius
   from the camera, and clear of other vehicles.
   Internal joins and closed circuits are excluded; missing timetable endpoint
@@ -538,14 +540,14 @@ for the explicit boundary.
   an unconnected endpoint is off-screen; population reductions happen off-screen.
   Regressions exercise actual
   left/right turns below 4.5 m/s on 10 m curves, radius rejection, following,
-  stopped-player-bus avoidance, crossing progress/separation, and long-frame
-  blockage and crossing wait-age priority. Fixed-cycle SCO signals linked to
-  road paths hold AI traffic on non-permissive phases and release it on states
-  6-8; regressions cover route-start and loop-wrap signal approaches.
-  Conditional jump/stop timing, cycle origin, stop-line fidelity, signs,
-  authored right-of-way and fairness at complex junctions, overtaking, lane
-  changing, articulated dynamics, and physical player-to-AI collision response
-  are listed in the remaining-work checklist below.
+  stopped-player-bus avoidance, crossing progress/separation, long-frame
+  blockage, crossing wait-age priority, and four-approach no-overlap/progress.
+  Fixed-cycle SCO signals linked to road paths hold AI traffic on non-permissive
+  phases and release it on states 6-8; regressions cover route-start, loop-wrap,
+  and request-driven conditional stop/jump timing. Cycle origin, stop-line
+  fidelity, signs, native right-of-way and deadlock recovery at live junctions,
+  overtaking, lane changing, articulated dynamics, and physical player-to-AI
+  collision response are listed in the remaining-work checklist below.
 - [x] Hold road AI vehicles at visible unconnected route ends and unload them
   only after the endpoint is outside the camera view and beyond the spawn
   distance threshold. Regression coverage verifies visible-end retention and
@@ -569,9 +571,10 @@ for the explicit boundary.
 - [x] Parse `drivers.txt` model paths and `.hum` fields, and distinguish
   type-1 human paths from type-0 road paths.
 - [~] Spawn and move human actors on nearby type-1 spline routes using
-  passenger-density settings. Rendering currently uses colored primitive
-  proxies sized from both `[humangeom]` dimensions, not the configured human
-  models; proxy arms and legs now swing with walking progress. Active human
+  passenger-density settings. Configured `.hum` model first-LOD meshes now
+  render at actor poses; `.hum` and model CFG parsing, mesh parsing, and texture
+  decoding run asynchronously, while OpenGL upload remains on the render
+  thread. Native animation and visual parity remain incomplete. Active human
   footprints are included in road AI's swept-path obstacle set, so vehicles
   yield rather than pass through pedestrians. Pedestrians also stop/resume
   around occupied vehicle footprints, but have no physical collision response
@@ -587,8 +590,9 @@ for the explicit boundary.
   using bounded route candidates, and covers route-specific actor creation,
   movement, endpoint margins, unusably short routes, out-of-radius rejection,
   and vehicle yielding to pedestrian footprints.
-- [ ] Load and render the `.hum`-referenced models for pedestrians and AI
-  drivers, including their model configuration assets.
+- [~] Load and render `.hum`-referenced pedestrian models. Configuration,
+  mesh parsing, and texture decoding run asynchronously, with OpenGL upload on
+  the render thread; AI driver models and native animation remain unimplemented.
 - [ ] Apply validated `.hum` geometry, links, walk parameters, seat height,
   mass, and voice to human actors; parsing these values alone is not runtime
   support.
@@ -610,50 +614,92 @@ constitute full OMSI parity or in-game visual validation:
 - [x] Admit road vehicles and scheduled buses only from clear, off-screen
   incoming endpoints; retain vehicles at visible unconnected ends and recycle
   them only after those ends are hidden. Closed circuits and internal joins are
-  not spawn locations, and buses never fall back to mid-route spawning.
+  not spawn locations, and buses never fall back to mid-route spawning. Entry
+  is also gated on the endpoint being in the active tile window; vehicles are
+  hidden and paused when their current tile becomes inactive.
 - [x] Follow directed authored lanes and scenery junction paths, filter turns
   by vehicle turning radius, and apply bend-speed, acceleration, braking, and
   headway limits. Swept footprints make vehicles yield to the player, other AI,
   static vehicles, and pedestrians; junction reservations age waiting
-  movements.
+  movements, while actors already on junction paths clear before new approaches
+  regardless of authored priority. Routine vehicle queue, spawn, unload, and
+  junction-entry logs are suppressed; a single stuck diagnostic is emitted
+  after 45 seconds without route progress, excluding detected red-signal waits.
+- [x] Show the number of currently spawned map AI vehicles in the on-screen
+  status HUD.
+- [x] Extend the F2 traffic overlay with vehicle and pedestrian behavior
+  footprints, signal stop boxes colored by current permission, and sampled
+  junction-path reservations; the overlay log describes the color legend.
 - [x] Attach timetable departures to complete endpoint-matched bus routes,
   handle midnight rollover, skip missed trips, and partition departures across
   pool buses without assigning a trip twice.
 - [x] Parse fixed-cycle SCO traffic lights and attach them to linked paths.
   AI stops on non-green or invalid phases and resumes on states 6-8, including
-  signalized route starts and loop-wrap approaches. Conditional signal timing,
-  cycle origin, and native stop-line fidelity remain open.
+  signalized route starts and loop-wrap approaches. Conditional stop/jump
+  controls now advance from vehicle and pedestrian requests; cycle origin and
+  native stop-line fidelity remain open.
 - [x] Move pedestrian actors on type-1 human paths, use parsed `[humangeom]`
   dimensions for proxy sizing and collision footprints, and stop pedestrians
-  around occupied vehicle/human footprints. Proxy limbs swing with walking
-  progress; configured `.hum` model rendering and native animation are still
-  open.
+  around occupied vehicle/human footprints. Configured `.hum` first-LOD models
+  render asynchronously; native skeletal animation remains open.
 - [x] Defer population decreases until actors are off-screen and admit
   preallocated actors only at clear off-screen route positions. Density
   interpolation and pool sizing remain provisional.
+- [x] Keep map AI vehicles out of unloaded tiles: admit them only from active
+  entry tiles, hide and pause them outside the active tile window, and exclude
+  paused vehicles from pedestrian obstacles and signal/junction actor updates.
 
 #### Remaining AI traffic implementation
 
 The entries above describe current behavior and its test coverage. These are
 the outstanding implementation and validation tasks:
 
-- [ ] **Maintain target population:** replenish the bounded startup pool when
-  actors leave the active system, within the configured cap. Admit replacements
-  only at safe, off-screen incoming endpoints; never spawn buses mid-route.
-- [ ] **Complete scheduled bus routes:** resolve the Cotterell timetable/endpoint
-  mismatch described above, then validate departure ownership and multi-bus
-  dispatch on a map with a complete endpoint-compatible timetable route.
-- [ ] **Complete traffic control:** apply conditional SCO signal
-  `[traffic_light_stop]` / `[traffic_light_jump]` behavior; verify cycle origin,
-  approach distance and stop-line placement; implement traffic-sign rules.
-- [ ] **Improve junction control:** support authored right-of-way and validate
-  reservation fairness, deadlock recovery, and safe progress at representative
-  multi-approach junctions.
+- [x] Recognize `.ovh` road vehicles in `NormalCar`/`NormalCars`, `Trucks`,
+  `Commercial`/`Commercials`, and `Ambulance` AI-list groups. Preserve their
+  `unsched_vehgroups.txt` indices and use the configured AI vehicle type (with
+  trucks-group fallback) for route access checks.
+- [x] Decode and apply group-specific map `[rule]` / `[kill_rule]` values on
+  spline-profile and scenery-object paths: km/h speed limits, per-group
+  traffic-density factors (zero excludes the group; positive factors weight
+  entry and junction choices), authored priorities before wait-age tie-breaking
+  among equal priorities,
+  `no_cars`, `bus`, `trucks`, and `overtaking_prohib`. Scheduled buses bypass
+  unscheduled access/density filters. Overtaking/lane changes are not
+  implemented, so vehicles currently never overtake. `unsched_trafficdens.txt`
+  group/day curves now drive the capped, time-varying road population target
+  and weight startup pool composition; active group targets are recomputed as
+  curves change, with safe off-screen admission and retirement. The fixed
+  startup pool may constrain large group-proportion changes, and the initial
+  weekday is taken from the host calendar because no map simulation date is
+  available. Native visual density-category parity remains unverified. Focused
+  probes cover path and group indexing, parsing/validation, scheduled group
+  selection/rebalancing, access, density weighting, speed caps, priority
+  ordering/fairness, and kill rules.
+- [x] **Maintain target population:** recycle preallocated vehicle entries when
+  routes end or the target increases, up to the startup pool cap. Re-entry is
+  limited to clear, off-screen incoming endpoints; scheduled buses also wait
+  for their owned departure. Recycled actors reset route progress, speed, and
+  junction-wait state, and buses never spawn mid-route.
+- [ ] **Complete scheduled bus routes:** route candidates now follow timetable
+  spline sequences through the directed lane graph, with the previous seeded
+  route search retained as fallback. Recheck Cotterell's timetable/endpoint
+  mismatch, then validate departure ownership and multi-bus dispatch on a map
+  with a complete endpoint-compatible timetable route.
+- [ ] **Complete traffic control:** verify SCO signal cycle origin, approach
+  distance and stop-line placement; implement traffic-sign rules.
+- [~] **Improve junction control:** committed junction-path actors clear before
+  new approaches; otherwise authored path/group priorities precede wait age,
+  with wait aging fairly ordering equal-priority movements. Synthetic
+  regressions cover separation, progress, junction clearing, and priority-over-
+  wait. Validate native right-of-way behavior and deadlock recovery at
+  representative live junctions.
 - [ ] **Add advanced vehicle behavior:** implement safe overtaking and lane
   changes, then extend swept-footprint handling to articulated vehicles.
-- [ ] **Render configured human models:** load and render `.hum` model
-  configurations for pedestrians and AI drivers instead of relying on primitive
-  proxies; add configured skeletal/limb animation.
+- [~] **Render configured human models:** pedestrians now render the configured
+  `.hum` first-LOD meshes instead of primitive proxies. `.hum`/model CFG
+  parsing, mesh parsing, and texture decoding are asynchronous; OpenGL upload
+  remains on the render thread. AI driver model rendering and configured
+  skeletal/limb animation remain open.
 - [ ] **Use remaining `.hum` behavior:** validate and apply links, walk
   parameters, seat height, mass, and voice; verify human-path field meanings,
   route continuity, density behavior, and placement on representative maps.

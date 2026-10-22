@@ -88,6 +88,8 @@ void runProbe(const std::filesystem::path& fixture) {
     const std::vector<openbus::map::MapSplinePathOffset> humanPathOffsets =
         mapSplineProfilePathOffsets(profile, 1);
     require(humanPathOffsets.size() == 1, "valid typed path offsets are extracted");
+    require(humanPathOffsets.front().pathIndex == 0,
+            "path offsets retain the original [path] record index");
     requireNear(humanPathOffsets.front().lateralMeters, 0.0,
                 "path lateral offset is read from the second path field");
     requireNear(humanPathOffsets.front().heightMeters, -2.0,
@@ -102,6 +104,8 @@ void runProbe(const std::filesystem::path& fixture) {
         mapSplineProfilePathOffsets(pairedPathProfile, 0);
     require(roadPathOffsets.size() == 2,
             "both authored lane paths are retained for a shared road spline");
+    require(roadPathOffsets[0].pathIndex == 0 && roadPathOffsets[1].pathIndex == 1,
+            "filtered road paths retain their original indices among all path types");
     requireNear(roadPathOffsets[0].lateralMeters, -1.9, "first lane lateral offset");
     requireNear(roadPathOffsets[1].lateralMeters, 1.9, "second lane lateral offset");
     require(!roadPathOffsets[0].reversed && roadPathOffsets[1].reversed,

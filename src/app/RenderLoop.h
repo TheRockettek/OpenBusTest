@@ -14,6 +14,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <string>
 #include <utility>
@@ -76,10 +77,14 @@ class RenderLoop {
     bool AddTrafficVehicle(int splineId, int pathTypeCode,
                            const std::filesystem::path& busConfigPath,
                            std::optional<std::string> driverModelPath, double speedMetersPerSecond,
-                           ModelLoadingPolicy loadingPolicy = {},
-                           bool isBus = false, std::size_t laneSelector = 0,
-                           std::size_t routeSeed = 1,
-                           std::vector<double> scheduledDepartureMinutes = {});
+                           ModelLoadingPolicy loadingPolicy = {}, bool isBus = false,
+                           std::size_t laneSelector = 0, std::size_t routeSeed = 1,
+                           std::vector<double> scheduledDepartureMinutes = {},
+                           std::optional<std::size_t> unscheduledGroupIndex = std::nullopt,
+                           int defaultVehicleType = 0,
+                           std::vector<int> requiredRouteSplineIds = {});
+    int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
+                           int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
                                     bool isBus) const;
     void SetMapTrafficStartHour(double startHour);
@@ -87,15 +92,22 @@ class RenderLoop {
                               double widthMeters, double heightMeters, double speedMetersPerSecond,
                               double startDistanceMeters, double centerX, double centerY,
                               double maximumDistanceMeters);
-    void SetMapTrafficPopulation(std::size_t roadVehicleCount, std::size_t busCount);
+    void SetMapTrafficPopulation(
+        std::size_t roadVehicleCount, std::size_t busCount,
+        std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> roadGroupPopulations = {},
+        bool useGroupRoadPopulation = false);
     void SetHumanTrafficPopulation(std::size_t count);
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
     std::vector<openbus::map::MapTrafficLaneStart> trafficEntryLanes() const;
+    std::optional<openbus::map::MapTrafficLaneStart>
+    selectTrafficEntryLane(openbus::map::MapTrafficVehicleFilter vehicle,
+                           std::size_t selectionSeed) const;
     std::vector<int> trafficRouteStartSplineIds(int pathTypeCode) const;
-    std::vector<int> trafficRouteSplineIds(int splineId, int pathTypeCode,
-                                          std::size_t laneSelector = 0,
-                                          double minimumTurnRadiusMeters = 0.0,
-                                          std::size_t routeSeed = 0) const;
+    std::vector<int>
+    trafficRouteSplineIds(int splineId, int pathTypeCode, std::size_t laneSelector = 0,
+                          double minimumTurnRadiusMeters = 0.0, std::size_t routeSeed = 0,
+                          const std::vector<int>& requiredSplineSequence = {},
+                          openbus::map::MapTrafficVehicleFilter vehicle = {}) const;
     std::size_t trafficVehicleCount() const;
     void SetWeather(int precipitationType, double precipitationRate);
 
@@ -242,6 +254,8 @@ class RenderLoop {
     std::vector<openbus::rendering::PrimitiveVertex> collisionWireframeVertices_;
     openbus::rendering::StaticPrimitiveBuffer trafficSplineDebugBuffer_;
     std::vector<openbus::rendering::PrimitiveVertex> trafficSplineDebugVertices_;
+    openbus::rendering::StaticPrimitiveBuffer trafficBehaviorDebugBuffer_;
+    std::uint64_t trafficBehaviorDebugRevision_ = 0;
     std::array<int, 4> viewport_ = {0, 0, 1, 1};
     double scriptRateHz_ = 0.0;
     double scriptAccumulator_ = 0.0;
@@ -260,6 +274,7 @@ class RenderLoop {
     std::vector<std::unique_ptr<Vehicle>> vehicles_;
     struct TrafficVehicleState {
         Vehicle* vehicle = nullptr;
+        std::future<std::unique_ptr<Vehicle>> pendingVehicle;
         openbus::map::MapTrafficActor actor;
         std::vector<double> scheduledDepartureMinutes;
         double nextScheduledDepartureElapsedSeconds = 0.0;
@@ -267,14 +282,19 @@ class RenderLoop {
         std::size_t nextScheduledDepartureIndex = 0;
         bool isBus = false;
         bool populationEnabled = false;
+        bool vehicleLoadFailed = false;
         bool scheduledTripActive = false;
-        bool waitingAtVisibleRouteEnd = false;
-        std::size_t previousSegment = 0;
+        double lastProgressDistanceMeters = 0.0;
+        double stoppedSecondsSinceProgress = 0.0;
+        bool stuckDiagnosticLogged = false;
     };
     std::vector<TrafficVehicleState> trafficVehicles_;
     std::size_t targetRoadTrafficCount_ = 0;
+    std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> targetRoadGroupPopulations_;
+    bool useGroupRoadPopulation_ = false;
     std::size_t targetBusTrafficCount_ = 0;
     double mapTrafficStartHour_ = 12.0;
+    void finishPendingTrafficVehicleLoads();
     void updateTrafficDriving(const BusSimulation& simulation, double elapsedSeconds);
     struct HumanTrafficState {
         openbus::map::MapTrafficActor actor;

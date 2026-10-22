@@ -323,6 +323,30 @@ Each rule block has four payload lines. Most geometry/numeric values are kept
 as strings by the merger; do not assume radians/metres for every field without
 separate evidence.
 
+OpenBus interprets traffic-rule payloads as the zero-based path index, rule
+name, numeric value, and zero-based `unsched_vehgroups.txt` group index. The
+supported names are `speedlimit` (km/h; non-positive clears the limit),
+`trafficdensity` (non-negative relative factor; zero excludes unscheduled
+traffic, positive values weight eligible entry/junction choices), `priority`
+(observed levels 64 low, 128 default, 192 high), `no_cars`, `bus`, `trucks`,
+and `overtaking_prohib`. These rules are group-scoped; the map AI vehicle's
+configured vehicle type distinguishes cars, cabs, buses, and trucks. Cars are
+denied by `no_cars`; cabs may use such a path when `bus` or `trucks` is enabled;
+unscheduled buses/trucks require their corresponding permission. Scheduled
+buses bypass unscheduled access and density rules. `[kill_rule]` clears the
+matching path/group rule. The path index refers to the source order of all
+`.sli` or `.sco` `[path]` records, including records of other path types.
+
+These semantics are covered by OpenBus probes, but the rules are not a full
+OMSI traffic simulation: `unsched_trafficdens.txt` group factors and weekday
+masks apply hourly curves to the capped aggregate road population, startup
+pool composition, and dynamic per-group active targets. The fixed pool can
+constrain large group-proportion changes; the initial weekday comes from the
+host calendar because no map simulation-date source is available.
+Overtaking/lane changes are not implemented. Continuous path-rule density
+factors remain relative route-selection weights rather than native
+density-category targets.
+
 IDs and nonzero `id_previous` / `id_next` values are offset during a merge by
 the merger. The literal zero connection values are preserved for ordinary
 (non-Chrono) tiles. This is evidence that the two ID positions are treated as

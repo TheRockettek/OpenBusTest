@@ -68,6 +68,17 @@ struct MapTrafficDensityPoint {
     double density = 0.0;
 };
 
+struct MapAiTrafficDensitySchedule {
+    int dayOfWeekMask = 0;
+    std::vector<MapTrafficDensityPoint> points;
+};
+
+struct MapAiTrafficDensityGroup {
+    std::string name;
+    double factor = 0.0;
+    std::vector<MapAiTrafficDensitySchedule> schedules;
+};
+
 std::optional<double> mapTrafficDensityAtHour(const std::vector<MapTrafficDensityPoint>& schedule,
                                               double hour);
 std::size_t mapTrafficPopulationForDensity(std::size_t basePopulation,
@@ -115,6 +126,9 @@ struct MapAiTrafficData {
     std::vector<MapTrafficDensityPoint> roadDensity;
     std::vector<MapTrafficDensityPoint> passengerDensity;
     std::vector<MapAiVehicleGroup> vehicleGroups;
+    std::vector<std::string> unscheduledVehicleGroupNames;
+    bool hasUnscheduledTrafficDensityFile = false;
+    std::vector<MapAiTrafficDensityGroup> unscheduledTrafficDensityGroups;
     std::vector<MapAiBusTypeDefinition> busTypes;
     std::vector<MapAiDepotDefinition> depots;
     std::vector<MapAiTimetableRoute> timetableRoutes;
@@ -122,6 +136,33 @@ struct MapAiTrafficData {
     std::vector<std::string> driverModelPaths;
 };
 
+struct MapAiRoadVehicle {
+    std::string assetPath;
+    std::size_t groupIndex = 0;
+    int defaultVehicleType = 0;
+    std::string groupName;
+    double selectionWeight = 1.0;
+};
+
+struct MapAiRoadTrafficGroupPopulation {
+    std::size_t groupIndex = 0;
+    std::size_t populationCount = 0;
+};
+
+std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic);
+std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic,
+                                                double hour, int dayOfWeekMask);
+std::vector<MapAiRoadVehicle> mapAiRoadVehiclesForPool(const MapAiTrafficData& traffic);
+std::optional<std::size_t> selectMapAiRoadVehicle(
+    const std::vector<MapAiRoadVehicle>& vehicles, std::size_t selectionSeed);
+std::vector<MapAiRoadTrafficGroupPopulation> mapAiRoadTrafficPopulationByGroup(
+    const MapAiTrafficData& traffic, std::size_t populationCount, double hour,
+    int dayOfWeekMask);
+std::optional<double> mapAiRoadTrafficDensityAtHour(
+    const MapAiTrafficData& traffic, const std::vector<MapAiRoadVehicle>& vehicles,
+    double hour, int dayOfWeekMask);
+std::optional<double> mapAiMaximumRoadTrafficDensity(
+    const MapAiTrafficData& traffic, const std::vector<MapAiRoadVehicle>& vehicles);
 std::vector<std::string> mapAiRoadVehicleAssetPaths(const MapAiTrafficData& traffic);
 std::vector<std::string> mapAiBusAssetPaths(const MapAiTrafficData& traffic);
 

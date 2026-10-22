@@ -39,6 +39,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <future>
 #include <limits>
 #include <map>
 #include <optional>
@@ -136,6 +137,7 @@ std::filesystem::path groundTexturePath(const openbus::map::MapDefinition& map,
                                         const std::string& configuredPath);
 
 GLuint loadTexture(const std::filesystem::path& path, bool repeat = true);
+GLuint uploadTextureImage(const Image& image, bool repeat = true);
 
 std::filesystem::path normalizedAssetPath(const std::string& value);
 
@@ -250,6 +252,25 @@ struct MapRenderer::Impl {
         std::size_t sceneryLodIndex = 0;
     };
 
+    struct HumanModelAsset {
+        std::vector<std::size_t> batchIndexes;
+        std::vector<std::filesystem::path> texturePaths;
+        std::vector<std::shared_future<std::shared_ptr<Image>>> textureImages;
+    };
+
+    struct HumanModelConfiguration {
+        std::filesystem::path modelConfigPath;
+        ModelConfig configuration;
+        std::array<double, 2> geometry = {};
+    };
+
+    struct PendingHumanModel {
+        std::filesystem::path humanConfigPath;
+        std::future<HumanModelConfiguration> configurationRequest;
+        std::optional<HumanModelConfiguration> configuration;
+        std::vector<std::shared_future<std::shared_ptr<ParsedObj>>> meshRequests;
+    };
+
     struct SceneryInstance {
         std::size_t batchIndex = 0;
         double x = 0.0;
@@ -317,6 +338,11 @@ struct MapRenderer::Impl {
     std::unordered_map<std::uint64_t, openbus::map::TerrainGrid> terrainByCoordinate;
     std::vector<WaterBatch> waterBatches;
     std::vector<ModelBatch> sceneryBatches;
+    std::unordered_map<std::string, HumanModelAsset> humanTrafficModels;
+    std::unordered_map<std::string, PendingHumanModel> pendingHumanTrafficModels;
+    std::unordered_set<std::string> failedHumanTrafficModels;
+    std::unordered_map<std::string, std::shared_future<std::shared_ptr<Image>>>
+        humanTextureRequests;
     std::vector<std::vector<double>> sceneryLodThresholdSets;
     std::vector<std::unique_ptr<SceneryScriptState>> sceneryScriptStates;
     std::vector<std::size_t> activeSceneryScriptStateIndices;
@@ -329,7 +355,10 @@ struct MapRenderer::Impl {
     openbus::map::MapTrafficRouteNetwork roadTrafficRouteNetwork;
     openbus::map::MapTrafficLaneNetwork roadTrafficLaneNetwork;
     openbus::map::MapTrafficRouteNetwork humanTrafficRouteNetwork;
+    openbus::map::MapTrafficLaneNetwork humanTrafficLaneNetwork;
     std::vector<TrafficPathDebugSegment> sceneryTrafficPathSegments;
+    std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>>
+        trafficSignalControllers;
     std::unordered_map<int, std::vector<openbus::map::MapSplinePathOffset>>
         roadTrafficSplinePathOffsets;
     std::unordered_map<int, std::vector<openbus::map::MapSplinePathOffset>>

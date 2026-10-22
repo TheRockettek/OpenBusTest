@@ -11,8 +11,10 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <type_traits>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace openbus::rendering {
@@ -52,6 +54,16 @@ class AssetRequestManager {
 
     AssetRequestManager(const AssetRequestManager&) = delete;
     AssetRequestManager& operator=(const AssetRequestManager&) = delete;
+
+    template <typename Function>
+    auto submit(Function&& function) -> std::future<std::invoke_result_t<Function>> {
+        using Result = std::invoke_result_t<Function>;
+        auto task = std::make_shared<std::packaged_task<Result()>>(
+            std::forward<Function>(function));
+        std::future<Result> result = task->get_future();
+        enqueue([task] { (*task)(); });
+        return result;
+    }
 
     std::shared_future<std::shared_ptr<ParsedObj>> requestObj(const std::filesystem::path& path,
                                                               const std::string& bundleEntry = {});

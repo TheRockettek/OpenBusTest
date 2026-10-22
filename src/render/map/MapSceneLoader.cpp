@@ -44,6 +44,7 @@ void MapSceneLoader::load() {
     indexMapContent();
     buildTileContent();
     impl_->roadTrafficLaneNetwork.finalize();
+    impl_->humanTrafficLaneNetwork.finalize();
     const openbus::map::MapTrafficLaneNetworkStats laneStats =
         impl_->roadTrafficLaneNetwork.stats();
     gameLog.Log("Map road lane network: lanes=" + std::to_string(laneStats.lanes) +
@@ -318,6 +319,9 @@ void MapSceneLoader::indexMapContent() {
                             segment.reversed = lane.reversed;
                             segment.pathLateralMeters = lane.lateralMeters;
                             segment.pathHeightMeters = lane.heightMeters;
+                            segment.pathRules =
+                                openbus::map::mapTrafficRulesForPath(spline.rules,
+                                                                     lane.pathIndex);
                             if (lane.bidirectional) {
                                 impl_->roadTrafficLaneNetwork.addSegment(segment);
                                 segment.reversed = true;
@@ -329,9 +333,24 @@ void MapSceneLoader::indexMapContent() {
                 if (openbus::map::mapSplineProfileHasPathType(
                         *profile, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN)) {
                     humanTrafficSplines.push_back(spline);
-                    impl_->humanTrafficSplinePathOffsets[spline.splineId] =
-                        openbus::map::mapSplineProfilePathOffsets(
-                            *profile, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN);
+                    auto pathOffsets = openbus::map::mapSplineProfilePathOffsets(
+                        *profile, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN);
+                    impl_->humanTrafficSplinePathOffsets[spline.splineId] = pathOffsets;
+                    if (spline.geometryValid && std::isfinite(spline.length) &&
+                        spline.length > 0.0) {
+                        for (const auto& pathOffset : pathOffsets) {
+                            openbus::map::MapTrafficRouteSegment segment;
+                            segment.spline = {spline, tileReference.x, tileReference.y};
+                            segment.reversed = pathOffset.reversed;
+                            segment.pathLateralMeters = pathOffset.lateralMeters;
+                            segment.pathHeightMeters = pathOffset.heightMeters;
+                            impl_->humanTrafficLaneNetwork.addSegment(segment);
+                            if (pathOffset.bidirectional) {
+                                segment.reversed = !segment.reversed;
+                                impl_->humanTrafficLaneNetwork.addSegment(std::move(segment));
+                            }
+                        }
+                    }
                 }
             }
             roadConnections.addSpline(spline, tileReference.x, tileReference.y,
