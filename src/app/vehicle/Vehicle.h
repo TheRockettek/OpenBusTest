@@ -374,6 +374,8 @@ struct Vehicle {
     bool mapTrafficRouteFinished = false;
     double modelOffsetZ = 0.0;
     double aiDeltaHeight = 0.0;
+    double trafficLengthMeters = 0.0;
+    double trafficWidthMeters = 0.0;
     double textureScale = 1;
     double odometerMetres = 0.0;
     std::array<double, 2> odometerPosition = {};
@@ -511,6 +513,10 @@ struct Vehicle {
         comInitialized = SUCCEEDED(comResult);
 #endif
         VehicleConfig vehicleConfiguration = definition->vehicleConfiguration;
+        trafficLengthMeters = vehicleConfiguration.boundingBox[1] +
+                              2.0 * std::abs(vehicleConfiguration.boundingBox[4]);
+        trafficWidthMeters = vehicleConfiguration.boundingBox[0] +
+                             2.0 * std::abs(vehicleConfiguration.boundingBox[3]);
         selectRuntimeRegistration(vehicleConfiguration, configuredPlacement);
         odometerMetres =
             vehicleConfiguration.hasOdometerInitial

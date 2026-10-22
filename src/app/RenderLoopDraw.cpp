@@ -185,7 +185,7 @@ void appendHumanBox(std::vector<openbus::rendering::PrimitiveVertex>& vertices,
 template <typename Actors>
 std::vector<openbus::rendering::PrimitiveVertex> humanTrafficVertices(const Actors& actors) {
     std::vector<openbus::rendering::PrimitiveVertex> vertices;
-    vertices.reserve(actors.size() * 108);
+    vertices.reserve(actors.size() * 216);
     constexpr std::array<double, 3> clothing = {0.18, 0.30, 0.56};
     constexpr std::array<double, 3> trousers = {0.16, 0.18, 0.22};
     constexpr std::array<double, 3> skin = {0.72, 0.52, 0.38};
@@ -199,10 +199,35 @@ std::vector<openbus::rendering::PrimitiveVertex> humanTrafficVertices(const Acto
             continue;
         }
         const double width = human.widthMeters;
-        appendHumanBox(vertices, pose->position, pose->headingRadians, human.heightMeters, 0.08,
-                       0.48, width * 1.4, width * 1.1, trousers);
+        const double walkingSpeed =
+            std::clamp(std::abs(human.actor.speedMetersPerSecond) / 1.2, 0.0, 1.0);
+        const double gaitPhase =
+            2.0 * std::acos(-1.0) * human.actor.distanceMeters / 0.8;
+        const double legSwing = 0.10 * walkingSpeed * std::sin(gaitPhase);
+        const double forwardX = std::cos(pose->headingRadians);
+        const double forwardY = std::sin(pose->headingRadians);
+        const double rightX = -forwardY;
+        const double rightY = forwardX;
+        const auto limbPosition = [&](double lateralOffset, double forwardOffset) {
+            return std::array<double, 3>{
+                pose->position[0] + rightX * lateralOffset + forwardX * forwardOffset,
+                pose->position[1] + rightY * lateralOffset + forwardY * forwardOffset,
+                pose->position[2]};
+        };
+        for (const double side : {-1.0, 1.0}) {
+            appendHumanBox(vertices,
+                           limbPosition(side * width * 0.22, side * legSwing),
+                           pose->headingRadians, human.heightMeters, 0.02, 0.48,
+                           width * 0.48, width * 0.52, trousers);
+        }
         appendHumanBox(vertices, pose->position, pose->headingRadians, human.heightMeters, 0.42,
                        0.34, width * 2.1, width * 1.25, clothing);
+        for (const double side : {-1.0, 1.0}) {
+            appendHumanBox(vertices,
+                           limbPosition(side * width * 0.78, -side * legSwing * 0.8),
+                           pose->headingRadians, human.heightMeters, 0.38, 0.40,
+                           width * 0.46, width * 0.52, clothing);
+        }
         appendHumanBox(vertices, pose->position, pose->headingRadians, human.heightMeters, 0.78,
                        0.18, width * 1.05, width, skin);
     }
@@ -611,6 +636,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 lastMainCameraPose_.pitchRadians =
                     std::atan2(forwardWorld[2], std::hypot(forwardWorld[0], forwardWorld[1]));
                 lastMainCameraPoseValid_ = true;
+                trafficCameraViewProjection_ =
+                    multiplyMatrix4(openbus::rendering::projectionMatrix(), view);
             }
             const auto toLocalPoint = [&chassis](const std::array<double, 3>& world) {
                 const double x = world[0] - chassis.position[0];

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "map/MapSceneryPlacement.h"
+#include "map/MapTrafficSignal.h"
 
 #include <array>
 #include <optional>
@@ -16,6 +17,7 @@ struct MapTrafficRouteSegment {
     bool reversed = false;
     double pathLateralMeters = 0.0;
     double pathHeightMeters = 0.0;
+    std::optional<MapTrafficSignalSchedule> trafficSignal;
     // Scenery junction paths are sampled in world space, like the F2 overlay.
     std::vector<std::array<double, 3>> points;
 };
@@ -35,6 +37,11 @@ struct MapTrafficActor {
     double distanceMeters = 0.0;
     double speedMetersPerSecond = 0.0;
     double lateralOffsetMeters = 0.0;
+    double cruiseSpeedMetersPerSecond = 0.0;
+    double lengthMeters = 4.5;
+    double widthMeters = 1.8;
+    double minimumTurnRadiusMeters = 4.5;
+    double junctionWaitSeconds = 0.0;
 };
 
 struct MapTrafficPose {
@@ -53,11 +60,20 @@ struct MapTrafficSplineEndpointStatus {
 double mapTrafficLaneOffsetMeters(bool leftHandTraffic, double distanceMeters);
 double mapTrafficHeadingToVehicleYawDegrees(double headingRadians);
 double mapTrafficHourAtElapsedSeconds(double startHour, double elapsedSeconds);
+double mapTrafficNextDepartureElapsedSeconds(double startHour, double elapsedSeconds,
+                                             double departureMinutes);
+bool mapTrafficScheduledDepartureDue(double elapsedSeconds, double departureElapsedSeconds);
+std::vector<std::vector<double>> mapTrafficPartitionScheduledDepartures(
+    const std::vector<double>& departureMinutes, std::size_t partitionCount);
 
 MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath,
                                     double speedMetersPerSecond, double laneOffsetMagnitudeMeters,
                                     bool leftHandTraffic,
                                     std::optional<std::string> driverModelPath = std::nullopt);
+
+// True when either complete ordered spline sequence occurs contiguously in the other.
+bool mapTrafficRoutesShareCompleteOrderedPath(const std::vector<int>& firstSplineIds,
+                                              const std::vector<int>& secondSplineIds);
 
 // Places an actor at a route distance if the sampled pose is within the spawn radius.
 // Open routes stop at totalLength - endpointMarginMeters; closed routes wrap.
@@ -92,6 +108,37 @@ bool advanceMapTrafficActorLooping(MapTrafficActor& actor, double elapsedSeconds
 // The population is unchanged if any actor has invalid runtime state.
 std::size_t advanceMapTrafficActors(std::vector<MapTrafficActor>& actors, double elapsedSeconds);
 
+struct MapTrafficObstacle {
+    MapTrafficPose pose;
+    double lengthMeters = 4.5;
+    double widthMeters = 1.8;
+};
+
+// OBB clearance is shared by entry admission and swept-path movement checks.
+bool mapTrafficHasClearance(const MapTrafficObstacle& vehicle,
+                           const std::vector<MapTrafficObstacle>& obstacles,
+                           double clearanceMeters = 0.5);
+// Advances in small collision-checked steps, looping open routes; returns false if blocked.
+bool advanceMapTrafficActorLoopingAvoidingObstacles(
+    MapTrafficActor& actor, const std::vector<MapTrafficObstacle>& obstacles,
+    double lengthMeters, double widthMeters, double elapsedSeconds);
+bool canSpawnMapTrafficEntry(const MapTrafficActor& actor, bool entryHidden,
+                            const std::vector<MapTrafficObstacle>& obstacles);
+bool mapTrafficRouteEndReadyForUnload(const MapTrafficActor& actor, bool endpointHidden);
+// True when a bounding sphere is farther than minimumDistanceMeters (horizontally) from the
+// camera and lies entirely outside the clip volume of the column-major projection * view.
+bool mapTrafficEntryHiddenFromCamera(const std::array<double, 3>& position, double radiusMeters,
+                                     const std::array<double, 3>& cameraPosition,
+                                     const std::array<double, 16>& viewProjection,
+                                     double minimumDistanceMeters);
+double mapTrafficCurveSpeedLimit(const MapTrafficRoute& route, double distanceMeters,
+                                double cruiseSpeedMetersPerSecond,
+                                double minimumTurnRadiusMeters);
+// Uses small synchronous steps and swept footprints; never moves external obstacles.
+void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
+                              const std::vector<MapTrafficObstacle>& obstacles,
+                              double elapsedSeconds, double signalClockSeconds = 0.0);
+
 class MapTrafficRouteNetwork {
   public:
     void addTileSplines(const std::vector<MapSplinePlacement>& splines, int tileX, int tileY);
@@ -114,6 +161,12 @@ struct MapTrafficLaneNetworkStats {
     std::size_t nearMissDeadEnds = 0;
 };
 
+struct MapTrafficLaneStart {
+    int splineId = 0;
+    std::size_t laneSelector = 0;
+    bool operator==(const MapTrafficLaneStart&) const = default;
+};
+
 // Directed authored lanes, joined by coincident endpoints (including scenery paths).
 class MapTrafficLaneNetwork {
   public:
@@ -121,14 +174,19 @@ class MapTrafficLaneNetwork {
     void finalize();
     MapTrafficLaneNetworkStats stats() const;
     // laneSelector chooses among the spline's authored lanes (modulo its lane count).
-    std::optional<MapTrafficRoute> buildRoute(int splineId, std::size_t laneSelector = 0) const;
+    std::optional<MapTrafficRoute> buildRoute(int splineId, std::size_t laneSelector = 0,
+                                            std::size_t routeSeed = 0,
+                                            double minimumTurnRadiusMeters = 0.0) const;
     std::size_t laneCount(int splineId) const;
+    std::vector<MapTrafficLaneStart> entryLanes() const;
 
   private:
     std::vector<MapTrafficRouteSegment> segments_;
     std::vector<double> lengths_;
-    std::vector<std::optional<std::size_t>> next_;
+    std::vector<std::vector<std::size_t>> next_;
     std::unordered_map<int, std::vector<std::size_t>> lanesBySpline_;
+    std::vector<std::size_t> incoming_;
+    std::vector<double> maximumCurvatures_;
     MapTrafficLaneNetworkStats stats_;
     bool finalized_ = false;
 };

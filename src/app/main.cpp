@@ -26,6 +26,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -107,19 +108,6 @@ double nonnegativeEnvironmentDouble(const char* name, double fallback, double ma
     return std::min(parsed, maximum);
 }
 
-std::vector<int> mapTrafficRouteStartsWithMinimumSplines(const RenderLoop& renderer,
-                                                         int pathTypeCode,
-                                                         std::size_t minimumSplineCount) {
-    std::vector<int> eligible;
-    for (const int splineId : renderer.trafficRouteStartSplineIds(pathTypeCode)) {
-        if (renderer.trafficRouteSplineIds(splineId, pathTypeCode).size() >=
-            minimumSplineCount) {
-            eligible.push_back(splineId);
-        }
-    }
-    return eligible;
-}
-
 std::size_t maximumMapTrafficPopulation(
     std::size_t basePopulation,
     const std::vector<openbus::map::MapTrafficDensityPoint>& schedule) {
@@ -150,31 +138,167 @@ std::size_t maximumMapTrafficPopulation(
     return maximum;
 }
 
-std::vector<int> mapBusLineRouteStarts(const RenderLoop& renderer,
-                                      const openbus::map::MapAiTrafficData& traffic) {
+struct MapBusLineRouteStart {
+    openbus::map::MapTrafficLaneStart entry;
+    std::size_t routeSeed = 0;
+    std::size_t timetableRouteIndex = 0;
+};
+
+struct MapBusLineRouteSearch {
+    std::vector<MapBusLineRouteStart> starts;
+    std::size_t feasibleRoutesExamined = 0;
+    std::size_t sharedTimetableSplineIds = 0;
+    std::size_t longestCommonOrderedRun = 0;
+    std::string bestTimetableLineName;
+    std::string bestTimetableDestinationName;
+    openbus::map::MapTrafficLaneStart bestEntry;
+    std::size_t bestRouteSeed = 0;
+    std::size_t bestRouteSplineCount = 0;
+    std::size_t bestTimetableSplineCount = 0;
+    std::size_t bestTimetablePathOffset = 0;
+    std::size_t bestRoutePathOffset = 0;
+    std::optional<int> nextTimetableSplineId;
+    std::optional<int> nextRouteSplineId;
+    std::vector<int> bestCommonSplineIds;
+};
+
+struct OrderedSplineRun {
+    std::size_t length = 0;
+    std::size_t firstStartIndex = 0;
+    std::size_t secondStartIndex = 0;
+};
+
+OrderedSplineRun longestCommonOrderedSplineRun(const std::vector<int>& first,
+                                               const std::vector<int>& second) {
+    std::vector<std::size_t> previous(second.size() + 1);
+    std::vector<std::size_t> current(second.size() + 1);
+    OrderedSplineRun longest;
+    for (std::size_t firstIndex = 0; firstIndex < first.size(); ++firstIndex) {
+        for (std::size_t index = 1; index <= second.size(); ++index) {
+            current[index] =
+                first[firstIndex] == second[index - 1] ? previous[index - 1] + 1 : 0;
+            if (current[index] > longest.length) {
+                longest = {current[index], firstIndex + 1 - current[index],
+                           index - current[index]};
+            }
+        }
+        std::swap(previous, current);
+        std::fill(current.begin(), current.end(), 0);
+    }
+    return longest;
+}
+
+MapBusLineRouteSearch mapBusLineRouteStarts(
+    const RenderLoop& renderer, const openbus::map::MapAiTrafficData& traffic,
+    double minimumTurnRadiusMeters) {
     constexpr std::size_t minimumLineSplineCount = 2;
-    std::vector<int> eligible;
-    for (const int splineId : mapTrafficRouteStartsWithMinimumSplines(
-             renderer, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, minimumLineSplineCount)) {
-        const std::vector<int> routeSplineIds =
-            renderer.trafficRouteSplineIds(splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD);
-        const bool matchesTimetableLine =
-            std::any_of(traffic.timetableRoutes.begin(), traffic.timetableRoutes.end(),
-                        [&](const openbus::map::MapAiTimetableRoute& line) {
-                            if (line.stationCount == 0 || line.destinationName.empty() ||
-                                line.lineName.empty() ||
-                                line.splineIds.size() < minimumLineSplineCount) {
-                                return false;
-                            }
-                            return std::search(line.splineIds.begin(), line.splineIds.end(),
-                                               routeSplineIds.begin(), routeSplineIds.end()) !=
-                                   line.splineIds.end();
-                        });
-        if (matchesTimetableLine) {
-            eligible.push_back(splineId);
+    constexpr std::size_t routeSeedCount = 16;
+    MapBusLineRouteSearch result;
+    std::unordered_set<int> timetableSplineIds;
+    std::unordered_set<int> candidateSplineIds;
+    std::size_t eligibleTimetableRouteCount = 0;
+    for (const openbus::map::MapAiTimetableRoute& line : traffic.timetableRoutes) {
+        if (line.stationCount > 0 && !line.destinationName.empty() && !line.lineName.empty() &&
+            line.splineIds.size() >= minimumLineSplineCount &&
+            !line.scheduledDepartureMinutes.empty()) {
+            timetableSplineIds.insert(line.splineIds.begin(), line.splineIds.end());
+            ++eligibleTimetableRouteCount;
         }
     }
-    return eligible;
+    std::unordered_set<std::size_t> matchedTimetableRoutes;
+    const auto recordCommonRun = [&](const openbus::map::MapTrafficLaneStart& entry,
+                                     std::size_t routeSeed,
+                                     const std::vector<int>& routeSplineIds,
+                                     const openbus::map::MapAiTimetableRoute& line,
+                                     const OrderedSplineRun& commonRun) {
+        if (commonRun.length <= result.longestCommonOrderedRun) {
+            return;
+        }
+        result.longestCommonOrderedRun = commonRun.length;
+        result.bestTimetableLineName = line.lineName;
+        result.bestTimetableDestinationName = line.destinationName;
+        result.bestEntry = entry;
+        result.bestRouteSeed = routeSeed;
+        result.bestRouteSplineCount = routeSplineIds.size();
+        result.bestTimetableSplineCount = line.splineIds.size();
+        result.bestTimetablePathOffset = commonRun.firstStartIndex;
+        result.bestRoutePathOffset = commonRun.secondStartIndex;
+        const std::size_t timetableNextIndex =
+            commonRun.firstStartIndex + commonRun.length;
+        const std::size_t routeNextIndex =
+            commonRun.secondStartIndex + commonRun.length;
+        result.nextTimetableSplineId =
+            timetableNextIndex < line.splineIds.size()
+                ? std::optional<int>(line.splineIds[timetableNextIndex])
+                : std::nullopt;
+        result.nextRouteSplineId =
+            routeNextIndex < routeSplineIds.size()
+                ? std::optional<int>(routeSplineIds[routeNextIndex])
+                : std::nullopt;
+        result.bestCommonSplineIds.assign(
+            line.splineIds.begin() + commonRun.firstStartIndex,
+            line.splineIds.begin() + timetableNextIndex);
+    };
+    for (const auto& entry : renderer.trafficEntryLanes()) {
+        if (matchedTimetableRoutes.size() == eligibleTimetableRouteCount) {
+            break;
+        }
+        for (std::size_t routeSeed = 0; routeSeed < routeSeedCount; ++routeSeed) {
+            const std::vector<int> routeSplineIds =
+                renderer.trafficRouteSplineIds(
+                    entry.splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD,
+                    entry.laneSelector, minimumTurnRadiusMeters, routeSeed);
+            if (routeSplineIds.size() < minimumLineSplineCount) {
+                continue;
+            }
+            ++result.feasibleRoutesExamined;
+            candidateSplineIds.insert(routeSplineIds.begin(), routeSplineIds.end());
+            bool matchesTimetableLine = false;
+            for (std::size_t lineIndex = 0; lineIndex < traffic.timetableRoutes.size();
+                 ++lineIndex) {
+                const openbus::map::MapAiTimetableRoute& line =
+                    traffic.timetableRoutes[lineIndex];
+                if (line.stationCount == 0 || line.destinationName.empty() ||
+                    line.lineName.empty() || line.splineIds.size() < minimumLineSplineCount ||
+                    line.scheduledDepartureMinutes.empty() ||
+                    matchedTimetableRoutes.contains(lineIndex)) {
+                    continue;
+                }
+                const OrderedSplineRun commonRun =
+                    longestCommonOrderedSplineRun(line.splineIds, routeSplineIds);
+                recordCommonRun(entry, routeSeed, routeSplineIds, line, commonRun);
+                if (openbus::map::mapTrafficRoutesShareCompleteOrderedPath(
+                        line.splineIds, routeSplineIds)) {
+                    result.starts.push_back({entry, routeSeed, lineIndex});
+                    matchedTimetableRoutes.insert(lineIndex);
+                    matchesTimetableLine = true;
+                    break;
+                }
+            }
+            if (matchesTimetableLine) {
+                break;
+            }
+        }
+    }
+    for (const int splineId : candidateSplineIds) {
+        if (timetableSplineIds.contains(splineId)) {
+            ++result.sharedTimetableSplineIds;
+        }
+    }
+    return result;
+}
+
+std::string formatSplineIds(const std::vector<int>& splineIds) {
+    std::ostringstream formatted;
+    formatted << '[';
+    for (std::size_t index = 0; index < splineIds.size(); ++index) {
+        if (index > 0) {
+            formatted << ", ";
+        }
+        formatted << splineIds[index];
+    }
+    formatted << ']';
+    return formatted.str();
 }
 
 std::string formatPlacement(const VehiclePlacement& placement) {
@@ -428,12 +552,13 @@ int main() {
                                     {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred}, true);
             }
         }
-        const int mapAiBaseCount = nonnegativeEnvironmentInt("OPENBUS_MAP_AI_COUNT", 8, 200);
-        const int mapAiBusCount = nonnegativeEnvironmentInt("OPENBUS_MAP_BUS_COUNT", 2, 200);
+        const int mapAiBaseCount = nonnegativeEnvironmentInt("OPENBUS_MAP_AI_COUNT", 200, 200);
+        const int mapAiBusCount = nonnegativeEnvironmentInt("OPENBUS_MAP_BUS_COUNT", 20, 200);
         const int mapHumanBaseCount =
             nonnegativeEnvironmentInt("OPENBUS_MAP_HUMAN_COUNT", 8, 200);
         const double mapAiStartHour = openbus::map::mapTrafficHourAtElapsedSeconds(
             nonnegativeEnvironmentDouble("OPENBUS_MAP_AI_HOUR", 12.0, 24.0), 0.0);
+        renderer.SetMapTrafficStartHour(mapAiStartHour);
         if (mapAiBaseCount == 0) {
             applicationLog.Log("Map-driven AI traffic is disabled by OPENBUS_MAP_AI_COUNT=0.");
         } else {
@@ -448,9 +573,7 @@ int main() {
                 openbus::map::mapAiRoadVehicleAssetPaths(mapDefinition.aiTraffic);
             const std::vector<int> roadSplineIds =
                 renderer.trafficSplineIds(openbus::map::MAP_SPLINE_PATH_TYPE_ROAD);
-            const std::vector<int> roadRouteStartSplineIds =
-                mapTrafficRouteStartsWithMinimumSplines(
-                    renderer, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, 1);
+            const auto roadEntries = renderer.trafficEntryLanes();
             if (!configuredDensity.has_value()) {
                 applicationLog.Log("Map road traffic density is unavailable at " +
                                    std::to_string(mapAiStartHour) +
@@ -460,14 +583,12 @@ int main() {
                 applicationLog.Log(
                     "Map road traffic not spawned: NormalCars, Trucks, Commercial, and "
                     "Commercials have no loadable .ovh entries.");
-            } else if (roadRouteStartSplineIds.empty()) {
+            } else if (roadEntries.empty()) {
                 applicationLog.Log(
-                    "Map road traffic not spawned: no valid authored road lane is available.");
+                    "Map road traffic not queued: no unconnected incoming road lane is available.");
             } else if (roadVehiclePoolCount == 0) {
                 applicationLog.Log("Map road traffic schedule has no positive population.");
             } else {
-                constexpr double trafficRadiusMeters = 750.0;
-                constexpr double trafficSpacingMeters = 35.0;
                 constexpr double trafficSpeedMetersPerSecond = 12.0;
                 std::size_t addedTrafficVehicles = 0;
                 std::unordered_set<std::string> unavailableAiVehicles;
@@ -490,15 +611,12 @@ int main() {
                                        mapDefinition.aiTraffic.driverModelPaths.size()]);
                     try {
                         if (renderer.AddTrafficVehicle(
-                                roadRouteStartSplineIds[
-                                    candidate % roadRouteStartSplineIds.size()],
+                                roadEntries[candidate % roadEntries.size()].splineId,
                                 openbus::map::MAP_SPLINE_PATH_TYPE_ROAD,
                                 vehiclePath, driverPath, trafficSpeedMetersPerSecond,
-                                static_cast<double>(candidate) * trafficSpacingMeters,
-                                busPlacement.position[0], busPlacement.position[1],
-                                trafficRadiusMeters,
                                 {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred}, false,
-                                candidate)) {
+                                roadEntries[candidate % roadEntries.size()].laneSelector,
+                                candidate + 1)) {
                             ++addedTrafficVehicles;
                         }
                     } catch (const std::exception& error) {
@@ -510,12 +628,13 @@ int main() {
                 applicationLog.Log(
                     "Map road AI vehicle pool created: " + std::to_string(addedTrafficVehicles) +
                     " of " + std::to_string(roadVehiclePoolCount) +
-                    " maximum scheduled, active at startup=" +
+                    " maximum scheduled, target active=" +
                     std::to_string(targetRoadVehicleCount) + ", density=" +
                     std::to_string(roadDensity) +
                     ", road paths=" + std::to_string(roadSplineIds.size()) +
-                    ", authored lane route starts=" +
-                    std::to_string(roadRouteStartSplineIds.size()) + ".");
+                    ", endpoint entry lanes=" +
+                    std::to_string(roadEntries.size()) +
+                    ". Vehicles wait for an off-screen, clear entry before spawning.");
             }
         }
 
@@ -524,61 +643,211 @@ int main() {
         } else {
             const std::vector<std::string> aiBusConfigurations =
                 openbus::map::mapAiBusAssetPaths(mapDefinition.aiTraffic);
-            const std::vector<int> busLineRouteStartSplineIds =
-                mapBusLineRouteStarts(renderer, mapDefinition.aiTraffic);
             if (aiBusConfigurations.empty()) {
                 applicationLog.Log(
                     "Map AI buses not spawned: ailists.cfg has no loadable depot bus "
                     "configurations.");
-            } else if (busLineRouteStartSplineIds.empty()) {
-                applicationLog.Log(
-                    "Map AI buses not spawned: no timetable trip with station data maps to "
-                    "a route of at least two road splines.");
             } else {
                 constexpr double busTrafficSpeedMetersPerSecond = 11.0;
-                constexpr double busTrafficSpacingMeters = 160.0;
-                constexpr double busTrafficRadiusMeters = 750.0;
                 std::size_t addedBuses = 0;
+                std::size_t eligibleTimetableRoutes = 0;
+                std::size_t feasibleRoutesExamined = 0;
+                std::size_t sharedTimetableSplineIds = 0;
+                std::size_t longestCommonOrderedRun = 0;
+                std::string bestOverlapTimetableLine;
+                std::string bestOverlapDestination;
+                openbus::map::MapTrafficLaneStart bestOverlapEntry;
+                std::size_t bestOverlapRouteSeed = 0;
+                std::size_t bestOverlapRouteSplineCount = 0;
+                std::size_t bestOverlapTimetableSplineCount = 0;
+                std::size_t bestOverlapTimetablePathOffset = 0;
+                std::size_t bestOverlapRoutePathOffset = 0;
+                std::optional<int> nextOverlapTimetableSplineId;
+                std::optional<int> nextOverlapRouteSplineId;
+                std::vector<int> bestOverlapSplineIds;
                 std::unordered_set<std::string> unavailableAiBuses;
-                for (std::size_t candidate = 0;
-                     candidate < static_cast<std::size_t>(mapAiBusCount) * 4 &&
-                     addedBuses < static_cast<std::size_t>(mapAiBusCount);
-                     ++candidate) {
-                    const std::string& busPath =
-                        aiBusConfigurations[candidate % aiBusConfigurations.size()];
+                std::unordered_map<std::string,
+                                   MapBusLineRouteSearch>
+                    busEntryLanes;
+                struct MatchedBusRoute {
+                    std::string busPath;
+                    MapBusLineRouteStart routeStart;
+                };
+                std::vector<MatchedBusRoute> matchedBusRoutes;
+                std::unordered_set<std::size_t> assignedTimetableRoutes;
+                for (const std::string& busPath : aiBusConfigurations) {
                     if (unavailableAiBuses.contains(busPath)) {
                         continue;
                     }
-                    const std::optional<std::string> driverPath =
-                        mapDefinition.aiTraffic.driverModelPaths.empty()
-                            ? std::nullopt
-                            : std::optional<std::string>(
-                                  mapDefinition.aiTraffic.driverModelPaths
-                                      [addedBuses %
-                                       mapDefinition.aiTraffic.driverModelPaths.size()]);
-                    try {
-                        if (renderer.AddTrafficVehicle(
-                                busLineRouteStartSplineIds[
-                                    candidate % busLineRouteStartSplineIds.size()],
-                                openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, busPath, driverPath,
-                                busTrafficSpeedMetersPerSecond,
-                                static_cast<double>(candidate) * busTrafficSpacingMeters,
-                                busPlacement.position[0], busPlacement.position[1],
-                                busTrafficRadiusMeters,
-                                {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred}, true)) {
-                            ++addedBuses;
+                    auto entries = busEntryLanes.find(busPath);
+                    if (entries == busEntryLanes.end()) {
+                        try {
+                            const double turnRadius =
+                                renderer.trafficMinimumTurnRadius(busPath, true);
+                            auto search = mapBusLineRouteStarts(
+                                renderer, mapDefinition.aiTraffic, turnRadius);
+                            feasibleRoutesExamined += search.feasibleRoutesExamined;
+                            sharedTimetableSplineIds += search.sharedTimetableSplineIds;
+                            if (search.longestCommonOrderedRun > longestCommonOrderedRun) {
+                                longestCommonOrderedRun = search.longestCommonOrderedRun;
+                                bestOverlapTimetableLine = search.bestTimetableLineName;
+                                bestOverlapDestination = search.bestTimetableDestinationName;
+                                bestOverlapEntry = search.bestEntry;
+                                bestOverlapRouteSeed = search.bestRouteSeed;
+                                bestOverlapRouteSplineCount = search.bestRouteSplineCount;
+                                bestOverlapTimetableSplineCount =
+                                    search.bestTimetableSplineCount;
+                                bestOverlapTimetablePathOffset =
+                                    search.bestTimetablePathOffset;
+                                bestOverlapRoutePathOffset = search.bestRoutePathOffset;
+                                nextOverlapTimetableSplineId = search.nextTimetableSplineId;
+                                nextOverlapRouteSplineId = search.nextRouteSplineId;
+                                bestOverlapSplineIds = std::move(search.bestCommonSplineIds);
+                            }
+                            entries = busEntryLanes.emplace(busPath, std::move(search)).first;
+                        } catch (const std::exception& error) {
+                            unavailableAiBuses.insert(busPath);
+                            applicationLog.Log("Skipping map AI bus '" + busPath +
+                                               "': " + error.what());
+                            continue;
                         }
-                    } catch (const std::exception& error) {
-                        unavailableAiBuses.insert(busPath);
-                        applicationLog.Log("Skipping map AI bus '" + busPath +
-                                           "': " + error.what());
+                    }
+                    if (entries->second.starts.empty()) {
+                        continue;
+                    }
+                    for (const MapBusLineRouteStart& routeStart : entries->second.starts) {
+                        if (assignedTimetableRoutes.insert(routeStart.timetableRouteIndex).second) {
+                            matchedBusRoutes.push_back({busPath, routeStart});
+                        }
                     }
                 }
-                applicationLog.Log("Map AI buses spawned: " + std::to_string(addedBuses) +
-                                   " of " + std::to_string(mapAiBusCount) +
-                                   " requested on timetable routes with stops (" +
-                                   std::to_string(busLineRouteStartSplineIds.size()) +
-                                   " eligible route starts).");
+                eligibleTimetableRoutes = matchedBusRoutes.size();
+                const std::size_t busPoolLimit = static_cast<std::size_t>(mapAiBusCount);
+                std::vector<std::size_t> busesPerRoute(matchedBusRoutes.size(), 0);
+                std::size_t allocatedBuses = 0;
+                for (std::size_t index = 0;
+                     index < matchedBusRoutes.size() && allocatedBuses < busPoolLimit;
+                     ++index) {
+                    busesPerRoute[index] = 1;
+                    ++allocatedBuses;
+                }
+                while (allocatedBuses < busPoolLimit) {
+                    std::size_t bestRoute = matchedBusRoutes.size();
+                    double bestDepartureLoad = 0.0;
+                    for (std::size_t index = 0; index < matchedBusRoutes.size(); ++index) {
+                        const auto& departures = mapDefinition.aiTraffic
+                                                     .timetableRoutes[matchedBusRoutes[index]
+                                                                          .routeStart
+                                                                          .timetableRouteIndex]
+                                                         .scheduledDepartureMinutes;
+                        if (busesPerRoute[index] >= departures.size()) {
+                            continue;
+                        }
+                        const double departureLoad =
+                            static_cast<double>(departures.size()) /
+                            static_cast<double>(busesPerRoute[index] + 1);
+                        if (departureLoad > bestDepartureLoad) {
+                            bestDepartureLoad = departureLoad;
+                            bestRoute = index;
+                        }
+                    }
+                    if (bestRoute == matchedBusRoutes.size()) {
+                        break;
+                    }
+                    ++busesPerRoute[bestRoute];
+                    ++allocatedBuses;
+                }
+                for (std::size_t routeIndex = 0;
+                     routeIndex < matchedBusRoutes.size() && addedBuses < busPoolLimit;
+                     ++routeIndex) {
+                    const MatchedBusRoute& matchedRoute = matchedBusRoutes[routeIndex];
+                    const auto& timetable = mapDefinition.aiTraffic.timetableRoutes[
+                        matchedRoute.routeStart.timetableRouteIndex];
+                    if (busesPerRoute[routeIndex] == 0) {
+                        continue;
+                    }
+                    const auto departurePartitions =
+                        openbus::map::mapTrafficPartitionScheduledDepartures(
+                            timetable.scheduledDepartureMinutes, busesPerRoute[routeIndex]);
+                    for (const auto& departures : departurePartitions) {
+                        if (addedBuses >= busPoolLimit) {
+                            break;
+                        }
+                        const std::optional<std::string> driverPath =
+                            mapDefinition.aiTraffic.driverModelPaths.empty()
+                                ? std::nullopt
+                                : std::optional<std::string>(
+                                      mapDefinition.aiTraffic.driverModelPaths[
+                                          addedBuses %
+                                          mapDefinition.aiTraffic.driverModelPaths.size()]);
+                        try {
+                            if (renderer.AddTrafficVehicle(
+                                    matchedRoute.routeStart.entry.splineId,
+                                    openbus::map::MAP_SPLINE_PATH_TYPE_ROAD,
+                                    matchedRoute.busPath, driverPath,
+                                    busTrafficSpeedMetersPerSecond,
+                                    {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred}, true,
+                                    matchedRoute.routeStart.entry.laneSelector,
+                                    matchedRoute.routeStart.routeSeed, departures)) {
+                                ++addedBuses;
+                            } else {
+                                applicationLog.Log(
+                                    "Skipping scheduled map AI bus: matched timetable route could "
+                                    "not be rebuilt from its endpoint entry.");
+                            }
+                        } catch (const std::exception& error) {
+                            applicationLog.Log("Skipping map AI bus '" +
+                                               matchedRoute.busPath + "': " + error.what());
+                            break;
+                        }
+                    }
+                }
+                if (eligibleTimetableRoutes == 0) {
+                    std::string routeSearchSummary =
+                        "Map AI buses not spawned: no timetable trip with station data maps to "
+                        "a feasible route of at least two road splines from an endpoint. Searched " +
+                        std::to_string(feasibleRoutesExamined) +
+                        " feasible endpoint routes; " +
+                        std::to_string(sharedTimetableSplineIds) +
+                        " distinct spline IDs overlap with timetable paths; the longest ordered "
+                        "contiguous match was " +
+                        std::to_string(longestCommonOrderedRun) + " spline IDs.";
+                    if (!bestOverlapTimetableLine.empty()) {
+                        routeSearchSummary +=
+                            " Best overlap: line '" + bestOverlapTimetableLine + "' to '" +
+                            bestOverlapDestination + "', endpoint spline=" +
+                            std::to_string(bestOverlapEntry.splineId) + ", lane=" +
+                            std::to_string(bestOverlapEntry.laneSelector) + ", route seed=" +
+                            std::to_string(bestOverlapRouteSeed) + ", timetable/route lengths=" +
+                            std::to_string(bestOverlapTimetableSplineCount) + "/" +
+                            std::to_string(bestOverlapRouteSplineCount) +
+                            ", common-path offsets=" +
+                            std::to_string(bestOverlapTimetablePathOffset) + "/" +
+                            std::to_string(bestOverlapRoutePathOffset) +
+                            ", common splines=" + formatSplineIds(bestOverlapSplineIds) + ".";
+                        if (nextOverlapTimetableSplineId.has_value() ||
+                            nextOverlapRouteSplineId.has_value()) {
+                            routeSearchSummary +=
+                                " Next spline after overlap (timetable/route)=" +
+                                (nextOverlapTimetableSplineId.has_value()
+                                     ? std::to_string(*nextOverlapTimetableSplineId)
+                                     : std::string("end")) +
+                                "/" +
+                                (nextOverlapRouteSplineId.has_value()
+                                     ? std::to_string(*nextOverlapRouteSplineId)
+                                     : std::string("end")) +
+                                ".";
+                        }
+                    }
+                    applicationLog.Log(routeSearchSummary);
+                } else {
+                    applicationLog.Log(
+                        "Map AI buses queued at endpoint entries: " + std::to_string(addedBuses) +
+                        " of " + std::to_string(mapAiBusCount) +
+                        " requested across " + std::to_string(eligibleTimetableRoutes) +
+                        " matched timetable routes with departures. Multiple buses on a route "
+                        "receive disjoint departure subsets.");
+                }
             }
         }
         if (mapHumanBaseCount == 0) {

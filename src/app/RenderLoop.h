@@ -76,9 +76,13 @@ class RenderLoop {
     bool AddTrafficVehicle(int splineId, int pathTypeCode,
                            const std::filesystem::path& busConfigPath,
                            std::optional<std::string> driverModelPath, double speedMetersPerSecond,
-                           double startDistanceMeters, double centerX, double centerY,
-                           double maximumDistanceMeters, ModelLoadingPolicy loadingPolicy = {},
-                           bool isBus = false, std::size_t laneSelector = 0);
+                           ModelLoadingPolicy loadingPolicy = {},
+                           bool isBus = false, std::size_t laneSelector = 0,
+                           std::size_t routeSeed = 1,
+                           std::vector<double> scheduledDepartureMinutes = {});
+    double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
+                                    bool isBus) const;
+    void SetMapTrafficStartHour(double startHour);
     bool AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,
                               double widthMeters, double heightMeters, double speedMetersPerSecond,
                               double startDistanceMeters, double centerX, double centerY,
@@ -86,8 +90,12 @@ class RenderLoop {
     void SetMapTrafficPopulation(std::size_t roadVehicleCount, std::size_t busCount);
     void SetHumanTrafficPopulation(std::size_t count);
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
+    std::vector<openbus::map::MapTrafficLaneStart> trafficEntryLanes() const;
     std::vector<int> trafficRouteStartSplineIds(int pathTypeCode) const;
-    std::vector<int> trafficRouteSplineIds(int splineId, int pathTypeCode) const;
+    std::vector<int> trafficRouteSplineIds(int splineId, int pathTypeCode,
+                                          std::size_t laneSelector = 0,
+                                          double minimumTurnRadiusMeters = 0.0,
+                                          std::size_t routeSeed = 0) const;
     std::size_t trafficVehicleCount() const;
     void SetWeather(int precipitationType, double precipitationRate);
 
@@ -155,6 +163,8 @@ class RenderLoop {
     bool freeCameraEnabled_ = false;
     bool mouseLookEnabled_ = false;
     bool lastMainCameraPoseValid_ = false;
+    // Main-camera projection * view, used to admit traffic only at off-screen entries.
+    openbus::rendering::Matrix4 trafficCameraViewProjection_ = {};
     // Main-view eye in vehicle-local space, used to aim viewer-following reflection cameras.
     std::array<double, 3> reflectionViewerEyeLocal_ = {};
     bool reflectionViewerEyeLocalValid_ = false;
@@ -251,20 +261,29 @@ class RenderLoop {
     struct TrafficVehicleState {
         Vehicle* vehicle = nullptr;
         openbus::map::MapTrafficActor actor;
-        double initialDistanceMeters = 0.0;
+        std::vector<double> scheduledDepartureMinutes;
+        double nextScheduledDepartureElapsedSeconds = 0.0;
+        double lastScheduledDepartureMinutes = 0.0;
+        std::size_t nextScheduledDepartureIndex = 0;
         bool isBus = false;
-        bool populationEnabled = true;
-        bool routeCompleted = false;
+        bool populationEnabled = false;
+        bool scheduledTripActive = false;
+        bool waitingAtVisibleRouteEnd = false;
+        std::size_t previousSegment = 0;
     };
     std::vector<TrafficVehicleState> trafficVehicles_;
+    std::size_t targetRoadTrafficCount_ = 0;
+    std::size_t targetBusTrafficCount_ = 0;
+    double mapTrafficStartHour_ = 12.0;
+    void updateTrafficDriving(const BusSimulation& simulation, double elapsedSeconds);
     struct HumanTrafficState {
         openbus::map::MapTrafficActor actor;
         double widthMeters = 0.2;
         double heightMeters = 1.7;
-        double initialDistanceMeters = 0.0;
-        bool populationEnabled = true;
+        bool populationEnabled = false;
     };
     std::vector<HumanTrafficState> humanTrafficActors_;
+    std::size_t targetHumanTrafficCount_ = 0;
     Vehicle* playerVehicle_ = nullptr;
     GLFWcursor* clickableCursor_ = nullptr;
     GLFWcursor* mouseSteeringCursor_ = nullptr;

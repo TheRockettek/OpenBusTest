@@ -100,11 +100,15 @@ struct MapAiDepotDefinition {
 };
 
 struct MapAiTimetableRoute {
+    // The .ttp filename stem referenced by [addtrip] in a .ttl file.
+    std::string timetableKey;
     std::string tripName;
     std::string destinationName;
     std::string lineName;
     std::size_t stationCount = 0;
     std::vector<int> splineIds;
+    // Parsed schedule values are minutes after midnight; dispatch is handled separately.
+    std::vector<double> scheduledDepartureMinutes;
 };
 
 struct MapAiTrafficData {

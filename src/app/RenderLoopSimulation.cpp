@@ -3,6 +3,8 @@
 #include "app/RenderLoopInternal.h"
 #include "render/map/MapRenderer.h"
 
+#include <numbers>
+
 namespace {
 
 void logVariableSet(const std::string& scope, const Variables& variables) {
@@ -111,22 +113,296 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
     if (mapRenderer_ != nullptr) {
         mapRenderer_->updateTrafficActors(std::clamp(frameTimeStep_, 0.0, 0.25));
     }
+    updateTrafficDriving(simulation, std::clamp(frameTimeStep_, 0.0, 0.25));
     const double trafficTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
-    for (TrafficVehicleState& trafficVehicle : trafficVehicles_) {
-        if (trafficVehicle.vehicle->mapTrafficRouteFinished) {
+    std::vector<openbus::map::MapTrafficObstacle> vehicleObstacles;
+    for (const auto& vehicle : vehicles_) {
+        if (vehicle->followsMapTrafficRoute || vehicle->mapTrafficRouteFinished) {
             continue;
         }
-        if (!openbus::map::advanceMapTrafficActor(trafficVehicle.actor, trafficTimeStep)) {
+        openbus::map::MapTrafficPose pose;
+        if (vehicle.get() == playerVehicle_) {
+            const auto chassis = simulation.chassisPose();
+            pose.position = chassis.position;
+            pose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
+        } else {
+            pose.position = vehicle->placement.position;
+            pose.headingRadians =
+                (90.0 - vehicle->placement.yawDegrees) * std::numbers::pi / 180.0;
+        }
+        vehicleObstacles.push_back(
+            {pose, vehicle->trafficLengthMeters, vehicle->trafficWidthMeters});
+    }
+    for (const TrafficVehicleState& trafficVehicle : trafficVehicles_) {
+        if (!trafficVehicle.populationEnabled) {
+            continue;
+        }
+        const auto pose = openbus::map::sampleMapTrafficRoute(
+            trafficVehicle.actor.route, trafficVehicle.actor.distanceMeters,
+            trafficVehicle.actor.lateralOffsetMeters);
+        if (!pose) {
+            throw std::runtime_error("Cannot sample an active AI vehicle for pedestrian avoidance");
+        }
+        vehicleObstacles.push_back(
+            {*pose, trafficVehicle.actor.lengthMeters, trafficVehicle.actor.widthMeters});
+    }
+    const auto humanFootprint = [](const HumanTrafficState& human) {
+        const auto pose = openbus::map::sampleMapTrafficRoute(
+            human.actor.route, human.actor.distanceMeters, human.actor.lateralOffsetMeters);
+        if (!pose) {
+            throw std::runtime_error("Cannot sample an active human traffic obstacle");
+        }
+        return openbus::map::MapTrafficObstacle{
+            *pose, human.widthMeters * 1.25, human.widthMeters * 2.1};
+    };
+    for (std::size_t index = 0; index < humanTrafficActors_.size(); ++index) {
+        HumanTrafficState& human = humanTrafficActors_[index];
+        if (!human.populationEnabled) {
+            continue;
+        }
+        std::vector<openbus::map::MapTrafficObstacle> obstacles = vehicleObstacles;
+        for (std::size_t otherIndex = 0; otherIndex < humanTrafficActors_.size(); ++otherIndex) {
+            if (otherIndex != index && humanTrafficActors_[otherIndex].populationEnabled) {
+                obstacles.push_back(humanFootprint(humanTrafficActors_[otherIndex]));
+            }
+        }
+        openbus::map::advanceMapTrafficActorLoopingAvoidingObstacles(
+            human.actor, obstacles, human.widthMeters * 1.25,
+            human.widthMeters * 2.1, trafficTimeStep);
+    }
+    updateScripts();
+    if (drivetrainDiagnosticsEnabled_) {
+        const double now = glfwGetTime();
+        if (lastDrivetrainDiagnosticTime_ < 0.0 || now - lastDrivetrainDiagnosticTime_ >= 1.0) {
+            lastDrivetrainDiagnosticTime_ = now;
+            logDrivetrainDiagnosticVariables();
+        }
+    }
+}
+
+void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double elapsedSeconds) {
+    using namespace openbus::map;
+    const double currentSimulationTime = simulation.simulationTime();
+    const auto advanceScheduledDeparture = [&](TrafficVehicleState& state,
+                                               double afterElapsedSeconds) {
+        state.nextScheduledDepartureIndex =
+            (state.nextScheduledDepartureIndex + 1) % state.scheduledDepartureMinutes.size();
+        state.nextScheduledDepartureElapsedSeconds =
+            mapTrafficNextDepartureElapsedSeconds(
+                mapTrafficStartHour_, afterElapsedSeconds + 1.0e-6,
+                state.scheduledDepartureMinutes[state.nextScheduledDepartureIndex]);
+    };
+    const auto finishScheduledTrip = [&](TrafficVehicleState& state) {
+        if (!state.isBus || !state.scheduledTripActive) {
+            return;
+        }
+        state.scheduledTripActive = false;
+        while (mapTrafficScheduledDepartureDue(
+            currentSimulationTime, state.nextScheduledDepartureElapsedSeconds)) {
+            advanceScheduledDeparture(state, currentSimulationTime);
+        }
+    };
+    std::vector<MapTrafficObstacle> external;
+    for (const auto& vehicle : vehicles_) {
+        if (vehicle->followsMapTrafficRoute || vehicle->mapTrafficRouteFinished) {
+            continue;
+        }
+        MapTrafficPose pose;
+        if (vehicle.get() == playerVehicle_) {
+            const auto chassis = simulation.chassisPose();
+            pose.position = chassis.position;
+            pose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
+        } else {
+            pose.position = vehicle->placement.position;
+            pose.headingRadians = (90.0 - vehicle->placement.yawDegrees) *
+                                  std::numbers::pi / 180.0;
+        }
+        external.push_back({pose, vehicle->trafficLengthMeters, vehicle->trafficWidthMeters});
+    }
+    const auto hidden = [&](const MapTrafficActor& actor, double distance) {
+        if (!lastMainCameraPoseValid_) {
+            return false;
+        }
+        const auto pose = sampleMapTrafficRoute(actor.route, distance, 0.0);
+        if (!pose) {
+            throw std::runtime_error("Cannot sample a queued traffic entry");
+        }
+        // Pad the sphere so queued traffic never pops in at the screen edge.
+        const double radius = std::hypot(actor.lengthMeters, actor.widthMeters) * 0.5 + 2.0;
+        return mapTrafficEntryHiddenFromCamera(pose->position, radius,
+                                               lastMainCameraPose_.position,
+                                               trafficCameraViewProjection_, 50.0);
+    };
+    std::vector<MapTrafficObstacle> occupied = external;
+    std::size_t roadCount = 0;
+    std::size_t busCount = 0;
+    for (const auto& state : trafficVehicles_) {
+        if (!state.populationEnabled) {
+            continue;
+        }
+        state.isBus ? ++busCount : ++roadCount;
+        const auto pose = sampleMapTrafficRoute(state.actor.route, state.actor.distanceMeters, 0.0);
+        if (!pose) {
+            throw std::runtime_error("Cannot sample active traffic for entry admission");
+        }
+        occupied.push_back({*pose, state.actor.lengthMeters, state.actor.widthMeters});
+    }
+
+    const auto humanFootprint = [&](const HumanTrafficState& human) {
+        const auto pose = sampleMapTrafficRoute(
+            human.actor.route, human.actor.distanceMeters, human.actor.lateralOffsetMeters);
+        if (!pose) {
+            throw std::runtime_error("Cannot sample a map human traffic actor");
+        }
+        return MapTrafficObstacle{*pose, human.widthMeters * 1.25, human.widthMeters * 2.1};
+    };
+
+    std::size_t humanCount = 0;
+    for (const HumanTrafficState& human : humanTrafficActors_) {
+        humanCount += human.populationEnabled ? 1U : 0U;
+    }
+    for (std::size_t index = humanTrafficActors_.size();
+         index > 0 && humanCount > targetHumanTrafficCount_; --index) {
+        HumanTrafficState& human = humanTrafficActors_[index - 1];
+        if (human.populationEnabled && hidden(human.actor, human.actor.distanceMeters)) {
+            human.populationEnabled = false;
+            human.actor.speedMetersPerSecond = human.actor.cruiseSpeedMetersPerSecond;
+            --humanCount;
+            gameLog.Log("Map human traffic actor unloaded off-screen by population schedule: " +
+                        human.actor.modelPath);
+        }
+    }
+
+    for (const HumanTrafficState& human : humanTrafficActors_) {
+        if (human.populationEnabled) {
+            occupied.push_back(humanFootprint(human));
+        }
+    }
+    for (HumanTrafficState& human : humanTrafficActors_) {
+        if (human.populationEnabled || humanCount >= targetHumanTrafficCount_) {
+            continue;
+        }
+        human.actor.speedMetersPerSecond = human.actor.cruiseSpeedMetersPerSecond;
+        const double distance = human.actor.distanceMeters;
+        if (!hidden(human.actor, distance)) {
+            advanceMapTrafficActorLooping(human.actor, elapsedSeconds);
+            continue;
+        }
+        const MapTrafficObstacle candidate = humanFootprint(human);
+        if (!mapTrafficHasClearance(candidate, occupied)) {
+            advanceMapTrafficActorLooping(human.actor, elapsedSeconds);
+            continue;
+        }
+        human.populationEnabled = true;
+        ++humanCount;
+        occupied.push_back(candidate);
+        gameLog.Log("Map human traffic actor spawned at a clear off-screen path: " +
+                    human.actor.modelPath + ", spline=" +
+                    std::to_string(candidate.pose.splineId) + ", camera distance=" +
+                    std::to_string(std::hypot(
+                        candidate.pose.position[0] - lastMainCameraPose_.position[0],
+                        candidate.pose.position[1] - lastMainCameraPose_.position[1])) +
+                    " m.");
+    }
+    for (const HumanTrafficState& human : humanTrafficActors_) {
+        if (human.populationEnabled) {
+            external.push_back(humanFootprint(human));
+        }
+    }
+
+    for (auto& state : trafficVehicles_) {
+        auto& count = state.isBus ? busCount : roadCount;
+        const auto target = state.isBus ? targetBusTrafficCount_ : targetRoadTrafficCount_;
+        if (state.populationEnabled && count > target &&
+            hidden(state.actor, state.actor.distanceMeters)) {
+            state.populationEnabled = false;
+            state.vehicle->mapTrafficRouteFinished = true;
+            finishScheduledTrip(state);
+            --count;
+            gameLog.Log(std::string("Map ") + (state.isBus ? "AI bus" : "road AI vehicle") +
+                        " unloaded off-screen by population schedule: " + state.actor.modelPath);
+        }
+        if (state.populationEnabled || count >= target || !hidden(state.actor, 0.0) ||
+            !canSpawnMapTrafficEntry(state.actor, true, occupied)) {
+            continue;
+        }
+        if (state.isBus && !mapTrafficScheduledDepartureDue(
+                               currentSimulationTime,
+                               state.nextScheduledDepartureElapsedSeconds)) {
+            continue;
+        }
+        state.actor.distanceMeters = 0.0;
+        state.actor.speedMetersPerSecond = 0.0;
+        state.populationEnabled = true;
+        state.waitingAtVisibleRouteEnd = false;
+        state.previousSegment = 0;
+        state.vehicle->mapTrafficRouteFinished = false;
+        if (state.isBus) {
+            state.lastScheduledDepartureMinutes =
+                state.scheduledDepartureMinutes[state.nextScheduledDepartureIndex];
+            state.scheduledTripActive = true;
+            advanceScheduledDeparture(state, state.nextScheduledDepartureElapsedSeconds);
+        }
+        const auto pose = sampleMapTrafficRoute(state.actor.route, 0.0, 0.0);
+        occupied.push_back({*pose, state.actor.lengthMeters, state.actor.widthMeters});
+        ++count;
+        gameLog.Log(std::string("Map ") + (state.isBus ? "AI bus" : "road AI vehicle") +
+                    " spawned in at clear off-screen endpoint: " + state.actor.modelPath +
+                    ", spline=" + std::to_string(pose->splineId) + ", camera distance=" +
+                    std::to_string(std::hypot(
+                        pose->position[0] - lastMainCameraPose_.position[0],
+                        pose->position[1] - lastMainCameraPose_.position[1])) + " m" +
+                    (state.isBus
+                         ? ", scheduled departure minute=" +
+                               std::to_string(state.lastScheduledDepartureMinutes)
+                         : std::string()));
+    }
+    std::vector<MapTrafficActor*> actors;
+    for (auto& state : trafficVehicles_) {
+        if (state.populationEnabled) {
+            const auto& route = state.actor.route;
+            if (!route.closed && !route.loopStartDistance &&
+                state.actor.distanceMeters >= route.totalLength) {
+                state.actor.speedMetersPerSecond = 0.0;
+            } else {
+                actors.push_back(&state.actor);
+            }
+        }
+    }
+    advanceMapTrafficDriving(actors, external, elapsedSeconds,
+                             std::max(0.0, currentSimulationTime - elapsedSeconds));
+    for (TrafficVehicleState& trafficVehicle : trafficVehicles_) {
+        if (!trafficVehicle.populationEnabled) {
+            continue;
+        }
+        const auto& route = trafficVehicle.actor.route;
+        const bool atUnconnectedRouteEnd =
+            !route.closed && !route.loopStartDistance &&
+            trafficVehicle.actor.distanceMeters >= route.totalLength;
+        if (atUnconnectedRouteEnd &&
+            mapTrafficRouteEndReadyForUnload(
+                trafficVehicle.actor, hidden(trafficVehicle.actor, route.totalLength))) {
             trafficVehicle.vehicle->mapTrafficRouteFinished = true;
-            trafficVehicle.routeCompleted = true;
+            trafficVehicle.populationEnabled = false;
+            finishScheduledTrip(trafficVehicle);
             const int finalSplineId =
                 trafficVehicle.actor.route.segments.back().spline.placement.splineId;
             gameLog.Log(std::string("Map ") +
                         (trafficVehicle.isBus ? "AI bus" : "road AI vehicle") +
-                        " unloaded at unconnected lane end: " +
+                        " unloaded off-screen at unconnected lane end: " +
                         trafficVehicle.actor.modelPath +
                         ", final spline=" + std::to_string(finalSplineId));
             continue;
+        }
+        if (atUnconnectedRouteEnd) {
+            trafficVehicle.actor.speedMetersPerSecond = 0.0;
+            if (!trafficVehicle.waitingAtVisibleRouteEnd) {
+                trafficVehicle.waitingAtVisibleRouteEnd = true;
+                gameLog.Log(std::string("Map ") +
+                            (trafficVehicle.isBus ? "AI bus" : "road AI vehicle") +
+                            " waiting at visible unconnected lane end: " +
+                            trafficVehicle.actor.modelPath);
+            }
         }
         const std::optional<openbus::map::MapTrafficPose> pose =
             openbus::map::sampleMapTrafficRoute(trafficVehicle.actor.route,
@@ -140,19 +416,25 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
         trafficVehicle.vehicle->placement.position = trafficPosition;
         trafficVehicle.vehicle->placement.yawDegrees =
             openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians);
-    }
-    for (HumanTrafficState& human : humanTrafficActors_) {
-        if (human.populationEnabled) {
-            openbus::map::advanceMapTrafficActorLooping(human.actor, trafficTimeStep);
+        const double speedKmh = trafficVehicle.actor.speedMetersPerSecond * 3.6;
+        trafficVehicle.vehicle->variables.set("velocity", speedKmh);
+        trafficVehicle.vehicle->variables.set("velocity_ground", speedKmh);
+        const auto segmentEnd = std::lower_bound(route.cumulativeEndDistances.begin(),
+                                                 route.cumulativeEndDistances.end(),
+                                                 trafficVehicle.actor.distanceMeters);
+        const auto segmentIndex = static_cast<std::size_t>(
+            segmentEnd - route.cumulativeEndDistances.begin());
+        if (segmentIndex != trafficVehicle.previousSegment &&
+            segmentIndex < route.segments.size() && !route.segments[segmentIndex].points.empty()) {
+            gameLog.Log("Map traffic entering junction path: " + trafficVehicle.actor.modelPath +
+                        ", speed=" + std::to_string(trafficVehicle.actor.speedMetersPerSecond) +
+                        " m/s, curve speed limit=" +
+                        std::to_string(mapTrafficCurveSpeedLimit(
+                            route, trafficVehicle.actor.distanceMeters,
+                            trafficVehicle.actor.cruiseSpeedMetersPerSecond,
+                            trafficVehicle.actor.minimumTurnRadiusMeters)) + " m/s.");
         }
-    }
-    updateScripts();
-    if (drivetrainDiagnosticsEnabled_) {
-        const double now = glfwGetTime();
-        if (lastDrivetrainDiagnosticTime_ < 0.0 || now - lastDrivetrainDiagnosticTime_ >= 1.0) {
-            lastDrivetrainDiagnosticTime_ = now;
-            logDrivetrainDiagnosticVariables();
-        }
+        trafficVehicle.previousSegment = segmentIndex;
     }
 }
 

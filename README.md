@@ -80,24 +80,61 @@ density-scaled road-vehicle base population (default `8`, maximum `200`).
 clock advances from it using elapsed simulation time and wraps at midnight.
 Road and pedestrian populations follow their map density schedules as the
 clock advances. A pool sized for each schedule's maximum is created at
-startup; actors are enabled or disabled as the scheduled population changes.
+startup; road vehicles and buses wait in an inactive queue until admitted at
+an unconnected incoming lane end. Internal spline joins and closed circuits
+are never spawn points. Admission requires a clear vehicle footprint, an
+endpoint outside the main camera frustum, and at least 50 m clearance from the
+camera (plus the vehicle radius). No vehicles are distributed partway along
+routes at startup or reactivation. Density reductions remove surplus vehicles
+only off-screen. Vehicles that reach an unconnected lane end stop there if it
+is visible, then rejoin the entry queue after the endpoint is off-screen and
+beyond the camera-distance threshold. `.ttl` timetable departure times are
+parsed and linked to `.ttp` trips. Matched buses wait for their next departure
+before endpoint admission, including midnight rollover, while retaining the
+off-screen and clearance checks. When multiple pooled buses serve a route, its
+departure list is partitioned so each bus gets a disjoint subset of departure
+times.
+Active pedestrian traffic actors also occupy collision footprints, so road AI
+stops/yields rather than sweeping through them. Pedestrians likewise pause
+before occupied vehicle footprints and resume when clear; this is kinematic
+avoidance, not physical collision response or animated locomotion.
 Vehicles follow the authored lane offsets, heights, and travel directions shown
 by the cyan F2 overlay, including scenery junction paths. Matching lane endpoints
 join within 0.5 m horizontally and vertically; opposite-direction lanes are not
-used as a forced return route. At a branch, the straightest compatible continuation
-is selected. Vehicles retire at unconnected lane ends; genuine connected loops
-continue without reversing. Startup rotates spawns across each spline's authored
-lanes, so both travel directions are populated. Spawn and population
-unload/reactivation events, route-end retirement, and a lane-network summary
-(lane count, unconnected ends, and near-miss gaps within 3 m) are logged.
+used as a forced return route. Road vehicles make reproducible seeded choices
+among compatible straight, left, and right movements. Turns tighter than the
+vehicle's minimum turning radius are rejected; authored radius data is used
+when present, otherwise a conservative class/wheelbase estimate is used.
+Genuine loops continue forward without reversing.
+
+Traffic accelerates at up to 1.6 m/s^2 and normally brakes at up to 3 m/s^2.
+Lookahead reduces speed before bends using a 1.8 m/s^2 lateral-acceleration
+limit. A 1.5-second following-headway target and a 2 m standstill buffer respond
+to vehicles ahead, including the player bus. Oriented vehicle footprints and
+small swept movement steps prevent AI from advancing through occupied space;
+an emergency stop can exceed comfortable braking when a blockage appears too
+close. Crossing movements use conservative three-second reservations and
+increase priority for approaches that have waited longer; authored traffic
+lights and road-sign right-of-way rules are not yet modeled.
+Queues, actual endpoint spawns, junction entry speeds, off-screen population
+unloads, route-end recycling, and lane-network statistics are logged.
+Route planning tries an alternative branch if a later turn is impossible,
+rejecting the entry route if no drivable exit or loop is reachable. Vehicles
+exit only at unconnected lane ends; missing or misaligned authored connections
+can still terminate a route.
 AI buses are
 selected separately from depot bus definitions and follow only timetable
 routes whose `.ttp` trip names a destination and at least one station, and
-whose `.ttr` spline chain contains the entire selected road route. Set
+whose `.ttr` spline chain contains the selected road route. They must also have
+an eligible endpoint entry; maps without one do not receive fallback mid-route
+bus spawns. Set
 `OPENBUS_MAP_BUS_COUNT` to control their population (default `2`, maximum
-`200`; `0` disables map AI buses). The current bus pool is created at startup;
-timetable data selects eligible routes, but individual departure times are not
-yet used to dispatch buses.
+`200`; `0` disables map AI buses). The bounded bus pool is created at startup
+and only buses with a matched timetable route and parsed departures are
+admitted at scheduled times. Maps without a complete endpoint-compatible
+timetable route do not spawn scheduled buses. Traffic remains lane-constrained and kinematic:
+signal/sign compliance, overtaking, lane changing, articulated swept-body
+physics, and collision response when the player drives into AI are not implemented.
 
 Road and timetable route networks are indexed from every tile listed in
 `global.cfg` at map startup. AI vehicles retain those predefined lane routes while

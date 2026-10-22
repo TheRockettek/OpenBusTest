@@ -339,6 +339,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
     }
     std::unordered_map<std::string, std::filesystem::path> trackFiles;
     std::vector<std::filesystem::path> tripFiles;
+    std::vector<std::filesystem::path> lineFiles;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(directory)) {
         if (!entry.is_regular_file()) {
@@ -349,13 +350,17 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
             trackFiles.emplace(lowerAscii(entry.path().stem().string()), entry.path());
         } else if (extension == ".ttp") {
             tripFiles.push_back(entry.path());
+        } else if (extension == ".ttl") {
+            lineFiles.push_back(entry.path());
         }
     }
     std::sort(tripFiles.begin(), tripFiles.end());
+    std::sort(lineFiles.begin(), lineFiles.end());
 
     for (const std::filesystem::path& tripPath : tripFiles) {
         const std::vector<std::string> tripLines = splitLines(decodeText(tripPath));
         MapAiTimetableRoute route;
+        route.timetableKey = lowerAscii(tripPath.stem().string());
         std::size_t routeHeaderFields = 0;
         for (std::size_t lineIndex = 0; lineIndex < tripLines.size(); ++lineIndex) {
             const std::string section = lowerAscii(trim(tripLines[lineIndex]));
@@ -441,6 +446,57 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
             continue;
         }
         aiTraffic.timetableRoutes.push_back(std::move(route));
+    }
+
+    for (const std::filesystem::path& linePath : lineFiles) {
+        const std::vector<std::string> lineLines = splitLines(decodeText(linePath));
+        for (std::size_t lineIndex = 0; lineIndex < lineLines.size(); ++lineIndex) {
+            if (lowerAscii(trim(lineLines[lineIndex])) != "[addtrip]") {
+                continue;
+            }
+            std::array<std::string, 3> fields;
+            std::size_t next = lineIndex + 1;
+            bool complete = true;
+            for (std::string& field : fields) {
+                while (next < lineLines.size() && trim(lineLines[next]).empty()) {
+                    ++next;
+                }
+                if (next >= lineLines.size() || isSectionHeaderLine(trim(lineLines[next]))) {
+                    complete = false;
+                    break;
+                }
+                field = trim(lineLines[next++]);
+            }
+            int tripIndex = 0;
+            double departureMinutes = 0.0;
+            if (!complete || fields[0].empty() ||
+                !parseInteger(fields[1], tripIndex) ||
+                !parseReal(fields[2], departureMinutes) || departureMinutes < 0.0) {
+                diagnostics.warning(lineIndex + 1, "addtrip",
+                                    "invalid or truncated timetable departure in " +
+                                        linePath.filename().string());
+                lineIndex = next > 0 ? next - 1 : lineIndex;
+                continue;
+            }
+            const std::string timetableKey = lowerAscii(fields[0]);
+            const auto route = std::find_if(
+                aiTraffic.timetableRoutes.begin(), aiTraffic.timetableRoutes.end(),
+                [&](const MapAiTimetableRoute& candidate) {
+                    return candidate.timetableKey == timetableKey;
+                });
+            if (route == aiTraffic.timetableRoutes.end()) {
+                diagnostics.warning(lineIndex + 1, "addtrip",
+                                    "departure references missing trip " + fields[0] +
+                                        " in " + linePath.filename().string());
+            } else {
+                route->scheduledDepartureMinutes.push_back(departureMinutes);
+            }
+            lineIndex = next > 0 ? next - 1 : lineIndex;
+        }
+    }
+    for (MapAiTimetableRoute& route : aiTraffic.timetableRoutes) {
+        std::sort(route.scheduledDepartureMinutes.begin(),
+                  route.scheduledDepartureMinutes.end());
     }
 }
 

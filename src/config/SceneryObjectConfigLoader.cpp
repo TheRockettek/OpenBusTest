@@ -6,6 +6,7 @@
 #include "core/Variables.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_set>
 
 namespace {
@@ -201,6 +202,93 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             }
             continue;
         }
+        if (keyword == "traffic_lights_group") {
+            Line value;
+            double cycleDuration = 0.0;
+            if (reader.readPayload(value, result.diagnostics, keyword)) {
+                if (parseDouble(value.text, cycleDuration) && std::isfinite(cycleDuration) &&
+                    cycleDuration > 0.0) {
+                    result.trafficLightsGroupDurationSeconds = cycleDuration;
+                } else {
+                    result.diagnostics.warning(value.number, keyword,
+                                               "expected a positive cycle duration");
+                }
+            }
+            continue;
+        }
+        if (keyword == "traffic_light") {
+            Line value;
+            if (reader.readPayload(value, result.diagnostics, keyword)) {
+                result.trafficLights.push_back({value.text, {}, std::nullopt});
+            }
+            continue;
+        }
+        if (keyword == "phase") {
+            Line stateLine;
+            Line durationLine;
+            int state = 0;
+            double duration = 0.0;
+            if (reader.readPayload(stateLine, result.diagnostics, keyword) &&
+                reader.readPayload(durationLine, result.diagnostics, keyword)) {
+                if (!result.trafficLights.empty() && parseInt(stateLine.text, state) &&
+                    state >= 0 && state <= 12 && parseDouble(durationLine.text, duration) &&
+                    std::isfinite(duration) && duration >= 0.0) {
+                    result.trafficLights.back().phases.push_back({state, duration});
+                } else {
+                    result.diagnostics.warning(
+                        stateLine.number, keyword,
+                        "expected a phase state in [0, 12], a non-negative duration, and a "
+                        "preceding [traffic_light]");
+                }
+            }
+            continue;
+        }
+        if (keyword == "approachdist") {
+            Line value;
+            double distance = 0.0;
+            if (reader.readPayload(value, result.diagnostics, keyword)) {
+                if (!result.trafficLights.empty() && parseDouble(value.text, distance) &&
+                    std::isfinite(distance) && distance >= 0.0) {
+                    result.trafficLights.back().approachDistanceMeters = distance;
+                } else {
+                    result.diagnostics.warning(
+                        value.number, keyword,
+                        "expected a non-negative distance after a [traffic_light]");
+                }
+            }
+            continue;
+        }
+        if (keyword == "use_traffic_light") {
+            Line value;
+            int lightIndex = -1;
+            if (reader.readPayload(value, result.diagnostics, keyword)) {
+                if (result.trafficPaths.empty() || !parseInt(value.text, lightIndex) ||
+                    lightIndex < -1) {
+                    result.diagnostics.warning(value.number, keyword,
+                                               "expected a light index for a preceding [path]");
+                } else {
+                    result.trafficPaths.back().trafficLightIndex = lightIndex;
+                }
+            }
+            continue;
+        }
+        if (keyword == "traffic_light_stop" || keyword == "traffic_light_jump") {
+            const std::size_t valueCount = keyword == "traffic_light_stop" ? 3 : 4;
+            std::vector<double> values;
+            if (readDoubles(reader, keyword, valueCount, values, result.diagnostics) &&
+                values.size() == valueCount) {
+                if (keyword == "traffic_light_stop") {
+                    std::array<double, 3> stop{};
+                    std::copy(values.begin(), values.end(), stop.begin());
+                    result.trafficLightStops.push_back(stop);
+                } else {
+                    std::array<double, 4> jump{};
+                    std::copy(values.begin(), values.end(), jump.begin());
+                    result.trafficLightJumps.push_back(jump);
+                }
+            }
+            continue;
+        }
         if (keyword == "tree") {
             std::vector<std::string> values;
             if (reader.readPayloads(5, values, result.diagnostics, keyword) && values.size() == 5) {
@@ -309,6 +397,44 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         openbus::config::logUnhandledConfigurationTag("scenery object (.sco)", configPath,
                                                       line.number, line.keyword(),
                                                       "unknown scenery-object keyword");
+    }
+
+    bool hasSignalizedTrafficPath = false;
+    for (SceneryObjectTrafficPath& path : result.trafficPaths) {
+        if (path.trafficLightIndex < 0) {
+            continue;
+        }
+        if (static_cast<std::size_t>(path.trafficLightIndex) >= result.trafficLights.size()) {
+            result.diagnostics.warning(0, "use_traffic_light",
+                                       "path references a missing traffic light");
+            continue;
+        }
+        if (result.trafficLightsGroupDurationSeconds <= 0.0) {
+            result.diagnostics.warning(0, "traffic_lights_group",
+                                       "signalized path has no valid group cycle duration");
+            continue;
+        }
+        const SceneryObjectTrafficLight& light =
+            result.trafficLights[static_cast<std::size_t>(path.trafficLightIndex)];
+        openbus::map::MapTrafficSignalSchedule schedule;
+        schedule.cycleDurationSeconds = result.trafficLightsGroupDurationSeconds;
+        schedule.phases = light.phases;
+        schedule.hasConditionalOverrides =
+            !result.trafficLightStops.empty() || !result.trafficLightJumps.empty();
+        if (!openbus::map::mapTrafficSignalStateAtTime(schedule, 0.0).has_value()) {
+            result.diagnostics.warning(0, "traffic_light",
+                                       "signalized path has an invalid phase schedule");
+            continue;
+        }
+        path.trafficSignal = std::move(schedule);
+        hasSignalizedTrafficPath = true;
+    }
+    if (hasSignalizedTrafficPath &&
+        (!result.trafficLightStops.empty() || !result.trafficLightJumps.empty())) {
+        result.diagnostics.warning(
+            0, "traffic_light_jump",
+            "AI traffic uses the base phase cycle; request-driven stop/jump timing is not "
+            "simulated");
     }
 
     if (result.modelPath.empty() && !hasInlineModel && result.trees.empty()) {

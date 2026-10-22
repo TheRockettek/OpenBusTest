@@ -1,4 +1,5 @@
 #include "map/MapTrafficRuntime.h"
+#include "map/MapSplineGeometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -35,6 +36,349 @@ void requireNear(double actual, double expected, const char* message) {
     }
 }
 
+void verifyDrivingBehavior() {
+    using namespace openbus::map;
+    const auto straight = [](int id, double x, double y, double heading, double length) {
+        MapTrafficRouteSegment segment{{makeSpline(id, 0, 0, y), 0, 0}};
+        segment.spline.placement.localX = x;
+        segment.spline.placement.elevation = 0.0;
+        segment.spline.placement.rotationDegrees = heading;
+        segment.spline.placement.length = length;
+        return segment;
+    };
+    const auto oneSegment = [](const MapTrafficRouteSegment& segment) {
+        MapTrafficRoute route;
+        route.segments = {segment};
+        route.totalLength = segment.spline.placement.length;
+        route.cumulativeEndDistances = {route.totalLength};
+        return route;
+    };
+    const auto footprint = [](const MapTrafficActor& actor) {
+        return MapTrafficObstacle{
+            *sampleMapTrafficRoute(actor.route, actor.distanceMeters, actor.lateralOffsetMeters),
+            actor.lengthMeters, actor.widthMeters};
+    };
+    MapTrafficSignalSchedule cycleSignal;
+    cycleSignal.cycleDurationSeconds = 10.0;
+    cycleSignal.phases = {{0, 3.0}, {6, 5.0}, {9, 2.0}};
+    require(mapTrafficSignalStateAtTime(cycleSignal, 0.0) == 0 &&
+                mapTrafficSignalStateAtTime(cycleSignal, 3.0) == 6 &&
+                mapTrafficSignalStateAtTime(cycleSignal, 8.0) == 9 &&
+                mapTrafficSignalStateAtTime(cycleSignal, 10.0) == 0,
+            "signal phase schedule wraps at the configured cycle duration");
+    require(!mapTrafficSignalStateAtTime(
+                 MapTrafficSignalSchedule{9.0, {{0, 3.0}, {6, 5.0}}, false}, 0.0)
+                 .has_value(),
+            "signal schedules whose phases do not cover the cycle are rejected");
+
+    MapTrafficLaneNetwork junction;
+    junction.addSegment(straight(1001, 0.0, -40.0, 0.0, 40.0));
+    junction.addSegment(straight(1002, 0.0, 0.0, 0.0, 40.0));
+    for (const double radius : {-10.0, 10.0}) {
+        MapTrafficRouteSegment turn;
+        const double length = std::acos(-1.0) * 5.0;
+        for (const auto& sample : tessellateMapSpline(0.0, 0.0, 0.0, length, radius)) {
+            turn.points.push_back({sample.x, sample.y, 0.0});
+        }
+        junction.addSegment(turn);
+        junction.addSegment(straight(radius < 0 ? 1003 : 1004, radius, 10.0,
+                                    radius < 0 ? -90.0 : 90.0, 60.0));
+    }
+    junction.finalize();
+    require(junction.entryLanes() == std::vector<MapTrafficLaneStart>{{1001, 0}},
+            "only an unconnected incoming lane is an entry, not internal or exit splines");
+    std::optional<MapTrafficRoute> left;
+    std::optional<MapTrafficRoute> right;
+    bool foundStraight = false;
+    for (std::size_t seed = 1; seed <= 12; ++seed) {
+        const auto route = junction.buildRoute(1001, 0, seed, 4.5);
+        require(route.has_value(), "a normal car can route through an authored junction");
+        const int exit = route->segments.back().spline.placement.splineId;
+        if (exit == 1003) left = route;
+        if (exit == 1004) right = route;
+        if (exit == 1002) foundStraight = true;
+        const auto largeVehicle = junction.buildRoute(1001, 0, seed, 20.0);
+        require(largeVehicle && largeVehicle->segments.back().spline.placement.splineId == 1002,
+                "vehicles with a 20 m minimum radius reject the 10 m junction turns");
+        const auto exactRadius = junction.buildRoute(1001, 0, seed, 10.0);
+        require(exactRadius &&
+                    exactRadius->segments.back().spline.placement.splineId == exit,
+                "a vehicle with a 10 m minimum radius can use authored 10 m turns");
+    }
+    require(left && right && foundStraight,
+            "seeded junction choices include left, right, and straight movements");
+    for (const auto* route : {&*left, &*right}) {
+        auto actor = makeMapTrafficActor(*route, "car.ovh", 12.0, 0.0, false);
+        actor.minimumTurnRadiusMeters = 10.0;
+        actor.speedMetersPerSecond = 0.0;
+        bool sampledTurn = false;
+        bool reachedExit = false;
+        for (int frame = 0; frame < 400; ++frame) {
+            const double oldSpeed = actor.speedMetersPerSecond;
+            advanceMapTrafficDriving({&actor}, {}, 0.1);
+            require(actor.speedMetersPerSecond <= oldSpeed + 0.160001 &&
+                        actor.speedMetersPerSecond >= oldSpeed - 0.300001,
+                    "free driving respects acceleration and comfortable braking limits");
+            if (actor.distanceMeters > 40.0 && actor.distanceMeters < 55.0) {
+                sampledTurn = true;
+                require(actor.speedMetersPerSecond <= 4.5,
+                        "10 m radius junction turns are traversed below 4.5 m/s");
+            }
+            if (actor.distanceMeters > 60.0) {
+                reachedExit = true;
+                break;
+            }
+        }
+        require(sampledTurn && reachedExit,
+                "vehicles actually traverse left/right scenery curves and enter their exit lane");
+        const auto exitPose = sampleMapTrafficRoute(actor.route, actor.distanceMeters, 0.0);
+        require(std::abs(std::abs(exitPose->headingRadians) - std::acos(-1.0) * 0.5) < 0.01,
+                "vehicles leave the turn aligned with the perpendicular exit lane");
+    }
+    MapTrafficLaneNetwork radiusBlocked;
+    radiusBlocked.addSegment(straight(1500, 0.0, -40.0, 0.0, 40.0));
+    radiusBlocked.addSegment(straight(1501, 0.0, 0.0, 0.0, 10.0));
+    for (const auto& [radius, startY] : {std::pair{5.0, 10.0}, std::pair{40.0, 0.0}}) {
+        MapTrafficRouteSegment turn;
+        for (const auto& sample : tessellateMapSpline(
+                 0.0, startY, 0.0, radius * std::acos(-1.0) * 0.5, radius)) {
+            turn.points.push_back({sample.x, sample.y, 0.0});
+        }
+        radiusBlocked.addSegment(turn);
+        radiusBlocked.addSegment(straight(radius == 5.0 ? 1502 : 1503, radius,
+                                         startY + radius, 90.0, 60.0));
+    }
+    radiusBlocked.finalize();
+    const auto alternative = radiusBlocked.buildRoute(1500, 0, 0, 20.0);
+    require(alternative && alternative->segments.back().spline.placement.splineId == 1503,
+            "routing backtracks from an impossible later bend to a feasible branch");
+    require(!radiusBlocked.buildRoute(1500, 0, 0, 60.0),
+            "no route is spawned when every branch needs an impossible turning radius");
+    const auto road = oneSegment(straight(1100, 0.0, 0.0, 0.0, 500.0));
+    auto stoppedFollower = makeMapTrafficActor(road, "car.ovh", 12.0, 0.0, false);
+    const MapTrafficObstacle playerBus{{{0.0, 60.0, 0.0}, 0.0, 0}, 12.0, 2.5};
+    for (int frame = 0; frame < 300; ++frame) {
+        advanceMapTrafficDriving({&stoppedFollower}, {playerBus}, 0.1);
+        require(mapTrafficHasClearance(footprint(stoppedFollower), {playerBus}, 0.49),
+                "a follower never overlaps a stopped player bus");
+    }
+    require(stoppedFollower.speedMetersPerSecond < 0.01 &&
+                stoppedFollower.distanceMeters < 51.0 && stoppedFollower.distanceMeters > 40.0,
+            "a car brakes to rest behind the bus with a standstill gap");
+    requireNear(playerBus.pose.position[1], 60.0,
+                "traffic avoidance never changes the player bus state");
+    auto leader = makeMapTrafficActor(road, "slow.ovh", 6.0, 0.0, false);
+    auto follower = makeMapTrafficActor(road, "fast.ovh", 12.0, 0.0, false);
+    leader.distanceMeters = 30.0;
+    for (int frame = 0; frame < 300; ++frame) {
+        advanceMapTrafficDriving({&follower, &leader}, {}, 0.1);
+        require(mapTrafficHasClearance(footprint(follower), {footprint(leader)}, 0.49),
+                "a faster vehicle cannot drive through a slower leader");
+        require(follower.distanceMeters < leader.distanceMeters,
+                "same-lane vehicles retain their ordering");
+    }
+    require(follower.distanceMeters > 100.0 && follower.speedMetersPerSecond <= 6.5,
+            "following traffic makes progress at the leader's speed");
+    auto closeLeader = makeMapTrafficActor(road, "leader.ovh", 10.0, 0.0, false);
+    auto closeFollower = makeMapTrafficActor(road, "follower.ovh", 10.0, 0.0, false);
+    closeLeader.distanceMeters = 5.5;
+    closeLeader.speedMetersPerSecond = 0.0;
+    closeFollower.speedMetersPerSecond = 0.0;
+    for (int frame = 0; frame < 150; ++frame) {
+        advanceMapTrafficDriving({&closeFollower, &closeLeader}, {}, 0.1);
+        require(mapTrafficHasClearance(footprint(closeLeader), {footprint(closeFollower)}, 0.49),
+                "a close queue restarts without losing physical clearance");
+    }
+    require(closeLeader.distanceMeters > 50.0 && closeFollower.distanceMeters > 40.0,
+            "a close follower cannot immobilize its leader after a blockage clears");
+    auto cutIn = makeMapTrafficActor(road, "car.ovh", 20.0, 0.0, false);
+    const MapTrafficObstacle suddenObstacle{{{0.0, 10.0, 0.0}, 0.0, 0}, 4.5, 1.8};
+    advanceMapTrafficDriving({&cutIn}, {suddenObstacle}, 2.0);
+    require(mapTrafficHasClearance(footprint(cutIn), {suddenObstacle}, 0.49),
+            "swept movement prevents tunnelling during a long frame or sudden blockage");
+    require(cutIn.speedMetersPerSecond == 0.0, "emergency blockage stops the actor");
+    auto pedestrianApproach = makeMapTrafficActor(road, "car.ovh", 20.0, 0.0, false);
+    pedestrianApproach.speedMetersPerSecond = 20.0;
+    const MapTrafficObstacle pedestrian{{{0.0, 10.0, 0.0}, 0.0, 0}, 0.5, 0.8};
+    advanceMapTrafficDriving({&pedestrianApproach}, {pedestrian}, 2.0);
+    require(mapTrafficHasClearance(footprint(pedestrianApproach), {pedestrian}, 0.0) &&
+                pedestrianApproach.speedMetersPerSecond == 0.0,
+            "road AI yields to a pedestrian footprint instead of driving through it");
+    auto pedestrianWalker =
+        makeMapTrafficActor(road, "walker.hum", 1.2, 0.0, false);
+    const MapTrafficObstacle parkedVehicle{{{0.0, 5.0, 0.0}, 0.0, 0}, 4.5, 1.8};
+    require(!advanceMapTrafficActorLoopingAvoidingObstacles(
+                pedestrianWalker, {parkedVehicle}, 0.5, 0.8, 3.0) &&
+                pedestrianWalker.distanceMeters > 0.0 &&
+                pedestrianWalker.distanceMeters < 2.6,
+            "pedestrians stop before an occupied vehicle footprint");
+    require(advanceMapTrafficActorLoopingAvoidingObstacles(
+                pedestrianWalker, {}, 0.5, 0.8, 1.0) &&
+                pedestrianWalker.distanceMeters > 2.4,
+            "pedestrians resume along their route after the vehicle clears");
+    auto adjacent = makeMapTrafficActor(road, "car.ovh", 10.0, 0.0, false);
+    const MapTrafficObstacle oncoming{{{3.8, 10.0, 0.0}, std::acos(-1.0), 0}, 12.0, 2.5};
+    advanceMapTrafficDriving({&adjacent}, {oncoming}, 1.0);
+    requireNear(adjacent.speedMetersPerSecond, 10.0,
+                "an oncoming bus in the adjacent lane does not falsely block this lane");
+    auto north = makeMapTrafficActor(
+        oneSegment(straight(1200, 0.0, -40.0, 0.0, 100.0)), "north.ovh", 8.0, 0.0, false);
+    auto east = makeMapTrafficActor(
+        oneSegment(straight(1201, -40.0, 0.0, 90.0, 100.0)), "east.ovh", 8.0, 0.0, false);
+    bool crossingYieldObserved = false;
+    for (int frame = 0; frame < 250; ++frame) {
+        advanceMapTrafficDriving({&north, &east}, {}, 0.1);
+        crossingYieldObserved = crossingYieldObserved ||
+                                north.junctionWaitSeconds > 0.0 ||
+                                east.junctionWaitSeconds > 0.0;
+        require(mapTrafficHasClearance(footprint(north), {footprint(east)}, 0.49),
+                "conflicting junction movements remain separated");
+    }
+    require(crossingYieldObserved && north.distanceMeters > 60.0 && east.distanceMeters > 60.0,
+            "waiting vehicles gain junction priority and both conflicting movements traverse");
+    auto entryActor = makeMapTrafficActor(road, "entry.ovh", 12.0, 0.0, false);
+    require(!canSpawnMapTrafficEntry(entryActor, false, {}),
+            "vehicles do not materialize at a visible endpoint");
+    require(!canSpawnMapTrafficEntry(entryActor, true, {footprint(entryActor)}),
+            "occupied endpoint entries queue rather than overlapping spawns");
+    require(canSpawnMapTrafficEntry(entryActor, true, {}),
+            "an off-screen, clear endpoint admits a spawn at distance zero");
+    requireNear(entryActor.distanceMeters, 0.0, "entry admission does not offset actors into a route");
+    require(mapTrafficRoutesShareCompleteOrderedPath({1, 2, 3, 4}, {2, 3}),
+            "a complete timetable path can be a contiguous part of a longer endpoint route");
+    require(mapTrafficRoutesShareCompleteOrderedPath({2, 3}, {1, 2, 3, 4}),
+            "a complete endpoint route can be a contiguous part of a longer timetable path");
+    require(!mapTrafficRoutesShareCompleteOrderedPath({1, 2, 3}, {2, 4}),
+            "route matching rejects partial or out-of-order spline overlaps");
+    require(!mapTrafficRoutesShareCompleteOrderedPath({1}, {1, 2}),
+            "route matching requires at least two ordered spline IDs");
+    entryActor.distanceMeters = entryActor.route.totalLength;
+    require(!mapTrafficRouteEndReadyForUnload(entryActor, false),
+            "vehicles wait at visible unconnected route ends instead of unloading");
+    require(mapTrafficRouteEndReadyForUnload(entryActor, true),
+            "vehicles unload after their unconnected route end becomes hidden");
+    entryActor.distanceMeters = 0.0;
+    require(!mapTrafficRouteEndReadyForUnload(entryActor, true),
+            "vehicles do not unload before reaching an open route end");
+    {
+        // Camera at the origin looking along +Y with a 90 degree, square perspective frustum.
+        constexpr double nearPlane = 0.1;
+        constexpr double farPlane = 1000.0;
+        std::array<double, 16> viewProjection = {};
+        viewProjection[0] = 1.0;
+        viewProjection[9] = 1.0;
+        viewProjection[6] = (farPlane + nearPlane) / (farPlane - nearPlane);
+        viewProjection[14] = -2.0 * farPlane * nearPlane / (farPlane - nearPlane);
+        viewProjection[7] = 1.0;
+        const std::array<double, 3> camera = {0.0, 0.0, 0.0};
+        require(!mapTrafficEntryHiddenFromCamera({0.0, 100.0, 0.0}, 3.0, camera, viewProjection,
+                                                 50.0),
+                "an entry in front of the camera is visible, so nothing spawns there");
+        require(mapTrafficEntryHiddenFromCamera({0.0, -100.0, 0.0}, 3.0, camera, viewProjection,
+                                                50.0),
+                "an entry behind the camera is hidden");
+        require(mapTrafficEntryHiddenFromCamera({200.0, 100.0, 0.0}, 3.0, camera, viewProjection,
+                                                50.0),
+                "an entry beside the view frustum is hidden");
+        require(!mapTrafficEntryHiddenFromCamera({103.0, 100.0, 0.0}, 5.0, camera,
+                                                 viewProjection, 50.0),
+                "a vehicle footprint straddling the screen edge counts as visible");
+        require(!mapTrafficEntryHiddenFromCamera({0.0, -30.0, 0.0}, 3.0, camera, viewProjection,
+                                                 50.0),
+                "entries near the camera never admit spawns even when behind it");
+        require(mapTrafficEntryHiddenFromCamera({0.0, 1500.0, 0.0}, 3.0, camera, viewProjection,
+                                                50.0),
+                "entries beyond the far plane are hidden");
+    }
+    MapTrafficLaneNetwork twoWay;
+    auto forward = straight(1300, 0.0, 0.0, 0.0, 20.0);
+    auto reverse = forward;
+    reverse.reversed = true;
+    reverse.pathLateralMeters = 3.5;
+    auto continuation = forward;
+    continuation.spline.placement = straight(1301, 0.0, 20.0, 0.0, 20.0).spline.placement;
+    auto reverseContinuation = continuation;
+    reverseContinuation.reversed = true;
+    reverseContinuation.pathLateralMeters = 3.5;
+    for (const auto& lane : {forward, reverse, continuation, reverseContinuation}) {
+        twoWay.addSegment(lane);
+    }
+    twoWay.finalize();
+    require(twoWay.entryLanes() == std::vector<MapTrafficLaneStart>{{1300, 0}, {1301, 1}},
+            "reverse lanes enter at the far open end, never at an internal spline join");
+    MapTrafficLaneNetwork circular;
+    auto circle = straight(1400, 0.0, 0.0, 0.0, 40.0 * std::acos(-1.0));
+    circle.spline.placement.radius = 20.0;
+    circular.addSegment(circle);
+    circular.finalize();
+    require(circular.entryLanes().empty(), "a closed circuit has no endpoint spawn candidates");
+    const auto circleRoute = circular.buildRoute(1400);
+    auto circulating = makeMapTrafficActor(*circleRoute, "car.ovh", 5.0, 0.0, false);
+    circulating.distanceMeters = circleRoute->totalLength - 1.0;
+    advanceMapTrafficDriving({&circulating}, {}, 1.0);
+    require(circulating.distanceMeters < 5.0,
+            "the driving controller preserves genuine loops without endpoint teleportation");
+
+    MapTrafficRoute signalRoute;
+    MapTrafficRouteSegment approach = straight(1600, 0.0, -20.0, 0.0, 20.0);
+    MapTrafficRouteSegment signalPath = straight(1601, 0.0, 0.0, 0.0, 4.0);
+    MapTrafficSignalSchedule redThenGreen;
+    redThenGreen.cycleDurationSeconds = 200.0;
+    redThenGreen.phases = {{0, 100.0}, {6, 100.0}};
+    signalPath.trafficSignal = redThenGreen;
+    MapTrafficRouteSegment exit = straight(1602, 0.0, 4.0, 0.0, 80.0);
+    signalRoute.segments = {approach, signalPath, exit};
+    signalRoute.cumulativeEndDistances = {20.0, 24.0, 104.0};
+    signalRoute.totalLength = 104.0;
+    auto signalActor = makeMapTrafficActor(signalRoute, "car.ovh", 8.0, 0.0, false);
+    for (int frame = 0; frame < 300; ++frame) {
+        advanceMapTrafficDriving({&signalActor}, {}, 0.1);
+    }
+    require(signalActor.distanceMeters >= 16.8 && signalActor.distanceMeters <= 17.001 &&
+                signalActor.speedMetersPerSecond < 1.0e-6,
+            "AI traffic stops before entering a signalized path on red");
+    advanceMapTrafficDriving({&signalActor}, {}, 3.0, 100.0);
+    require(signalActor.distanceMeters > 20.0,
+            "AI traffic proceeds through the signalized path on green");
+
+    MapTrafficRoute signalStartRoute;
+    signalStartRoute.segments = {signalPath, exit};
+    signalStartRoute.cumulativeEndDistances = {4.0, 84.0};
+    signalStartRoute.totalLength = 84.0;
+    auto signalStartActor = makeMapTrafficActor(
+        signalStartRoute, "car.ovh", 8.0, 0.0, false);
+    advanceMapTrafficDriving({&signalStartActor}, {}, 1.0);
+    require(signalStartActor.distanceMeters == 0.0 &&
+                signalStartActor.speedMetersPerSecond < 1.0e-6,
+            "AI traffic starting on a signalized path waits at route entry on red");
+    advanceMapTrafficDriving({&signalStartActor}, {}, 1.0, 100.0);
+    require(signalStartActor.distanceMeters > 0.0,
+            "AI traffic starting on a signalized path proceeds on green");
+
+    MapTrafficRoute loopSignalRoute = *circleRoute;
+    loopSignalRoute.segments.front().trafficSignal = redThenGreen;
+    auto loopSignalActor = makeMapTrafficActor(
+        loopSignalRoute, "car.ovh", 8.0, 0.0, false);
+    loopSignalActor.distanceMeters = loopSignalRoute.totalLength - 5.0;
+    for (int frame = 0; frame < 100; ++frame) {
+        advanceMapTrafficDriving({&loopSignalActor}, {}, 0.05);
+    }
+    require(loopSignalActor.distanceMeters < loopSignalRoute.totalLength - 2.0 &&
+                loopSignalActor.speedMetersPerSecond < 1.0e-6,
+            "AI traffic approaching a signal across a loop wrap stops before red");
+    advanceMapTrafficDriving({&loopSignalActor}, {}, 3.0, 100.0);
+    require(loopSignalActor.distanceMeters < 10.0,
+            "AI traffic resumes across the loop wrap when the signal turns green");
+
+    bool rejected = false;
+    try {
+        advanceMapTrafficDriving({&entryActor}, {}, -1.0);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected, "invalid driving time is explicitly rejected");
+}
+
 } // namespace
 
 int main() {
@@ -44,6 +388,7 @@ int main() {
     std::size_t verifiedHumanPopulationSpawns = 0;
     try {
         using namespace openbus::map;
+        verifyDrivingBehavior();
         const auto spawnPopulation =
             [](const MapTrafficRouteNetwork& routeNetwork, const std::vector<int>& splineIds,
                const std::string& modelPath, double speedMetersPerSecond,
@@ -259,6 +604,25 @@ int main() {
                     "map traffic clock wraps across midnight");
         requireNear(mapTrafficHourAtElapsedSeconds(12.0, 86400.0), 12.0,
                     "map traffic clock wraps after a full day");
+        requireNear(mapTrafficNextDepartureElapsedSeconds(6.0, 0.0, 405.0), 2700.0,
+                    "scheduled departure is measured from the configured start hour");
+        requireNear(mapTrafficNextDepartureElapsedSeconds(23.5, 0.0, 30.0), 3600.0,
+                    "a departure after midnight is scheduled on the next clock day");
+        requireNear(mapTrafficNextDepartureElapsedSeconds(6.75, 0.0, 405.0), 0.0,
+                    "departure at the configured start hour is immediately due");
+        requireNear(mapTrafficNextDepartureElapsedSeconds(6.75, 1.0, 405.0), 86400.0,
+                    "a missed departure rolls to the following day");
+        require(!mapTrafficScheduledDepartureDue(2699.0, 2700.0),
+                "a queued bus is held before its departure time");
+        require(mapTrafficScheduledDepartureDue(2700.0, 2700.0) &&
+                    mapTrafficScheduledDepartureDue(2701.0, 2700.0),
+                "a queued bus becomes eligible at and after its departure time");
+        const auto departurePartitions =
+            mapTrafficPartitionScheduledDepartures({360.0, 370.0, 390.0, 410.0, 440.0}, 2);
+        require(departurePartitions.size() == 2 &&
+                    departurePartitions[0] == std::vector<double>({360.0, 390.0, 440.0}) &&
+                    departurePartitions[1] == std::vector<double>({370.0, 410.0}),
+                "overlapping bus assignments partition departures without duplication");
         MapTrafficActor createdActor = makeMapTrafficActor(
             *route, "Vehicles\\traffic.bus", 8.0, 1.5, true,
             std::string("Humans\\driver.hum"));

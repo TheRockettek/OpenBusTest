@@ -1,9 +1,11 @@
 #pragma once
 
 #include "config/VehicleConfigLoader.h"
+#include "map/MapTrafficSignal.h"
 
 #include <array>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,6 +31,14 @@ struct SceneryObjectTrafficPath {
     double gradientEndPercent = 0.0;
     double pathTypeCode = 0.0;
     double widthMeters = 0.0;
+    int trafficLightIndex = -1;
+    std::optional<openbus::map::MapTrafficSignalSchedule> trafficSignal;
+};
+
+struct SceneryObjectTrafficLight {
+    std::string name;
+    std::vector<openbus::map::MapTrafficSignalPhase> phases;
+    std::optional<double> approachDistanceMeters;
 };
 
 struct SceneryObjectConfig {
@@ -50,6 +60,10 @@ struct SceneryObjectConfig {
     VehicleConfig scriptConfiguration;
     std::vector<SceneryTreeDefinition> trees;
     std::vector<SceneryObjectTrafficPath> trafficPaths;
+    double trafficLightsGroupDurationSeconds = 0.0;
+    std::vector<SceneryObjectTrafficLight> trafficLights;
+    std::vector<std::array<double, 3>> trafficLightStops;
+    std::vector<std::array<double, 4>> trafficLightJumps;
     std::vector<ModelAttachmentPoint> attachmentPoints;
     ConfigurationDiagnostics diagnostics;
 };

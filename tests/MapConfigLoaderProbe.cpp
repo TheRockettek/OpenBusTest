@@ -118,6 +118,10 @@ void runFixtureProbe() {
                 writeUtf16Le(timetableDirectory / "FixtureLine.ttr",
                              "[track_entry]\n30273\n0\n1\n1\n10\n0\n"
                              "[track_entry]\n30274\n0\n0\n2\n10\n0\n");
+                writeUtf16Le(timetableDirectory / "Fixture.ttl",
+                             "[newtour]\nDriver\n1\n"
+                             "Dep.: 8:15:0\n[addtrip]\nFixtureTrip\n0\n495.000\n"
+                             "Dep.: 6:45:0\n[addtrip]\nFixtureTrip\n0\n405.000\n");
                 {
                     std::ofstream terrain(root / "tile_0_0.map.terrain", std::ios::binary);
             writeU32(terrain, 2);
@@ -220,13 +224,16 @@ void runFixtureProbe() {
                         std::vector<std::string>{"vehicles\\city_bus.bus"},
                 "random road traffic selects only .ovh assets while scheduled buses remain .bus-only");
         require(definition.aiTraffic.timetableRoutes.size() == 1 &&
+                    definition.aiTraffic.timetableRoutes[0].timetableKey == "fixturetrip" &&
                     definition.aiTraffic.timetableRoutes[0].tripName == "FixtureLine" &&
                     definition.aiTraffic.timetableRoutes[0].destinationName == "Town End" &&
                     definition.aiTraffic.timetableRoutes[0].lineName == "12" &&
                     definition.aiTraffic.timetableRoutes[0].stationCount == 1 &&
                     definition.aiTraffic.timetableRoutes[0].splineIds ==
-                        std::vector<int>{30273, 30274},
-                "timetable routes retain station metadata and ordered map spline IDs");
+                        std::vector<int>{30273, 30274} &&
+                    definition.aiTraffic.timetableRoutes[0].scheduledDepartureMinutes ==
+                        std::vector<double>{405.0, 495.0},
+                "timetable routes retain station data, ordered splines, and scheduled departures");
         require(definition.aiTraffic.busTypes.size() == 1 &&
                     definition.aiTraffic.busTypes[0].type == 2 &&
                     definition.aiTraffic.busTypes[0].assetPath == "vehicles\\city_bus.bus" &&
@@ -620,6 +627,10 @@ void runInstalledMapProbe(const std::filesystem::path& root) {
     std::size_t splineCount = 0;
     std::size_t objectCount = 0;
     std::size_t sceneryPlacementCount = 0;
+    std::size_t timetableDepartureCount = 0;
+    for (const openbus::map::MapAiTimetableRoute& route : definition.aiTraffic.timetableRoutes) {
+        timetableDepartureCount += route.scheduledDepartureMinutes.size();
+    }
     for (const openbus::map::MapTileReference& reference : definition.tiles) {
         groundTextureSidecarCount += reference.groundTextureSidecars.size();
         lightmapSidecarCount += reference.hasLightmapFile ? 1 : 0;
@@ -649,7 +660,9 @@ void runInstalledMapProbe(const std::filesystem::path& root) {
               << " terrain_readiness=" << terrainReadinessSidecarCount
               << " terrain=" << terrainCount << " spline_records=" << splineCount
               << " object_records=" << objectCount
-              << " scenery_placements=" << sceneryPlacementCount << '\n';
+              << " scenery_placements=" << sceneryPlacementCount
+              << " timetable_routes=" << definition.aiTraffic.timetableRoutes.size()
+              << " timetable_departures=" << timetableDepartureCount << '\n';
     if (root.filename() == "Grande Porto 2022") {
         require(definition.metadata.name == "Grande Porto 2022" &&
                     definition.metadata.friendlyName == "Grande Porto 2022" &&

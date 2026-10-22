@@ -54,7 +54,9 @@ class MapRenderer {
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId,
                                                                    int pathTypeCode) const;
     std::optional<openbus::map::MapTrafficRoute> buildDrivingRoute(
-        int splineId, std::size_t laneSelector = 0) const;
+        int splineId, std::size_t laneSelector = 0, std::size_t routeSeed = 0,
+        double minimumTurnRadiusMeters = 0.0) const;
+    std::vector<openbus::map::MapTrafficLaneStart> trafficEntryLanes() const;
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
     std::vector<int> trafficRouteStartSplineIds(int pathTypeCode) const;
     std::optional<openbus::map::MapTrafficSplineEndpointStatus> trafficSplineEndpointStatus(

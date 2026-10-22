@@ -366,6 +366,7 @@ void MapSceneLoader::buildTileContent() {
                     if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
                         openbus::map::MapTrafficRouteSegment lane;
                         lane.points = segment.points;
+                        lane.trafficSignal = path.trafficSignal;
                         impl_->roadTrafficLaneNetwork.addSegment(std::move(lane));
                     }
                     impl_->sceneryTrafficPathSegments.push_back(segment);

@@ -58,8 +58,16 @@ int main(int argc, char** argv) {
             return 1;
         }
         output << "[mesh]\nmesh.x\n"
+                  "[traffic_lights_group]\n10\n"
+                  "[traffic_light]\nRoad\n"
+                  "[phase]\n0\n3\n"
+                  "[phase]\n6\n7\n"
+                  "[approachdist]\n5\n"
                   "[path]\n"
                   "1\n2\n3\n4\n5\n6\n7\n8\n0\n2.5\n0\n0\n"
+                  "[use_traffic_light]\n0\n"
+                  "[traffic_light_stop]\n0\n1\n2\n"
+                  "[traffic_light_jump]\n0\n1\n2\n3\n"
                   "[path]\n"
                   "-1\n-2\n-3\n-4\n-5\n-6\n-7\n-8\n1\n1\n2\n0\n";
     }
@@ -81,8 +89,30 @@ int main(int argc, char** argv) {
         valid &= require(configuration.trafficPaths[0].pathTypeCode == 0.0 &&
                              configuration.trafficPaths[1].pathTypeCode == 1.0,
                          "path categories preserved");
-        valid &= require(configuration.diagnostics.entries.empty(),
-                         "path sections produce no parser diagnostics");
+        const bool hasExpectedSignal =
+            configuration.trafficLights.size() == 1 &&
+            configuration.trafficPaths[0].trafficLightIndex == 0 &&
+            configuration.trafficPaths[0].trafficSignal.has_value() &&
+            configuration.trafficPaths[0].trafficSignal->cycleDurationSeconds == 10.0 &&
+            configuration.trafficPaths[0].trafficSignal->phases.size() == 2 &&
+            configuration.trafficPaths[0].trafficSignal->hasConditionalOverrides &&
+            configuration.trafficLights[0].approachDistanceMeters == 5.0;
+        valid &= require(
+            hasExpectedSignal,
+            "traffic-light phases and path association are retained");
+        valid &= require(configuration.trafficLightStops.size() == 1 &&
+                             configuration.trafficLightJumps.size() == 1,
+                         "conditional traffic-light records are parsed");
+        if (hasExpectedSignal) {
+            valid &= require(
+                openbus::map::mapTrafficSignalStateAtTime(
+                    *configuration.trafficPaths[0].trafficSignal, 2.9) == 0 &&
+                    openbus::map::mapTrafficSignalStateAtTime(
+                        *configuration.trafficPaths[0].trafficSignal, 3.0) == 6,
+                "parsed traffic-light cycle returns the active phase");
+        }
+        valid &= require(configuration.diagnostics.entries.size() == 1,
+                         "unsupported conditional timing is reported once");
     }
     return valid ? 0 : 1;
 }
