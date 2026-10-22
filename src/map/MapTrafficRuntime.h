@@ -32,6 +32,7 @@ struct MapTrafficPathRules {
     bool busesAllowed = false;
     bool trucksAllowed = false;
     bool overtakingProhibited = false;
+    // OMSI traffic priority: lower values have right-of-way.
     double priority = 128.0;
 };
 
@@ -86,6 +87,7 @@ struct MapTrafficActor {
     MapTrafficRoute route;
     double distanceMeters = 0.0;
     double speedMetersPerSecond = 0.0;
+    double targetSpeedMetersPerSecond = 0.0;
     double lateralOffsetMeters = 0.0;
     double cruiseSpeedMetersPerSecond = 0.0;
     double lengthMeters = 4.5;

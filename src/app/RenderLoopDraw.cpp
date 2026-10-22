@@ -228,6 +228,16 @@ void appendTrafficBehaviorBox(std::vector<openbus::rendering::PrimitiveVertex>& 
     }
 }
 
+void appendTrafficBehaviorLine(std::vector<openbus::rendering::PrimitiveVertex>& vertices,
+                               const std::array<double, 3>& from,
+                               const std::array<double, 3>& to,
+                               const std::array<float, 3>& color) {
+    for (const auto& point : {from, to}) {
+        vertices.push_back({static_cast<float>(point[0]), static_cast<float>(point[1]),
+                            static_cast<float>(point[2]), color[0], color[1], color[2]});
+    }
+}
+
 void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& mapRenderer,
                                       int pathTypeCode,
                                       const std::vector<std::pair<int, int>>& activeTiles,
@@ -299,10 +309,12 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
             }
             constexpr float endpointMarkerHalfSize = 0.45F;
             constexpr float endpointMarkerZOffset = 0.16F;
-            constexpr std::array<float, 3> endpointMarkerColor = {1.0F, 0.48F, 0.02F};
-            const auto appendEndpointJoinOrMarker =
+            constexpr std::array<float, 3> startMarkerColor = {0.2F, 1.0F, 0.2F};
+            constexpr std::array<float, 3> endMarkerColor = {1.0F, 0.2F, 0.2F};
+            constexpr std::array<float, 3> unconnectedMarkerColor = {1.0F, 0.48F, 0.02F};
+            const auto appendEndpointMarker =
                 [&](const std::optional<openbus::map::MapTrafficPose>& pose,
-                    double pathHeightOffset) {
+                    double pathHeightOffset, bool isStart, bool splineConnected) {
                     if (!pose.has_value()) {
                         return;
                     }
@@ -310,6 +322,7 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
                     endpointPosition[2] += pathHeightOffset;
                     if (const std::optional<std::array<double, 3>> joinedEndpoint =
                             sceneryEndpoints.find(pathTypeCode, endpointPosition, splineId)) {
+                        splineConnected = true;
                         const double horizontalGap =
                             std::hypot(endpointPosition[0] - (*joinedEndpoint)[0],
                                        endpointPosition[1] - (*joinedEndpoint)[1]);
@@ -325,32 +338,52 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
                                                 static_cast<float>((*joinedEndpoint)[2] + 0.08),
                                                 color[0], color[1], color[2]});
                         }
-                        return;
                     }
                     const float x = static_cast<float>(endpointPosition[0]);
                     const float y = static_cast<float>(endpointPosition[1]);
                     const float z = static_cast<float>(endpointPosition[2] + endpointMarkerZOffset);
-                    vertices.push_back({x - endpointMarkerHalfSize, y - endpointMarkerHalfSize, z,
-                                        endpointMarkerColor[0], endpointMarkerColor[1],
-                                        endpointMarkerColor[2]});
-                    vertices.push_back({x + endpointMarkerHalfSize, y + endpointMarkerHalfSize, z,
-                                        endpointMarkerColor[0], endpointMarkerColor[1],
-                                        endpointMarkerColor[2]});
-                    vertices.push_back({x - endpointMarkerHalfSize, y + endpointMarkerHalfSize, z,
-                                        endpointMarkerColor[0], endpointMarkerColor[1],
-                                        endpointMarkerColor[2]});
-                    vertices.push_back({x + endpointMarkerHalfSize, y - endpointMarkerHalfSize, z,
-                                        endpointMarkerColor[0], endpointMarkerColor[1],
-                                        endpointMarkerColor[2]});
+                    const auto& markerColor =
+                        splineConnected ? (isStart ? startMarkerColor : endMarkerColor)
+                                        : unconnectedMarkerColor;
+                    if (isStart) {
+                        vertices.push_back({x - endpointMarkerHalfSize, y - endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                        vertices.push_back({x + endpointMarkerHalfSize, y - endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                        vertices.push_back({x + endpointMarkerHalfSize, y - endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                        vertices.push_back({x + endpointMarkerHalfSize, y + endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                        vertices.push_back({x + endpointMarkerHalfSize, y + endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                        vertices.push_back({x - endpointMarkerHalfSize, y + endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                        vertices.push_back({x - endpointMarkerHalfSize, y + endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                        vertices.push_back({x - endpointMarkerHalfSize, y - endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                    } else {
+                        vertices.push_back({x - endpointMarkerHalfSize, y - endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                        vertices.push_back({x + endpointMarkerHalfSize, y + endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                        vertices.push_back({x - endpointMarkerHalfSize, y + endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                        vertices.push_back({x + endpointMarkerHalfSize, y - endpointMarkerHalfSize,
+                                            z, markerColor[0], markerColor[1], markerColor[2]});
+                    }
                 };
-            if (endpointStatus.has_value()) {
-                if (!endpointStatus->startConnected) {
-                    appendEndpointJoinOrMarker(startPose, pathOffset.heightMeters);
-                }
-                if (!endpointStatus->endConnected) {
-                    appendEndpointJoinOrMarker(previousPose, pathOffset.heightMeters);
-                }
-            }
+            const bool startConnected =
+                endpointStatus.has_value() &&
+                (firstSegment.reversed ? endpointStatus->endConnected
+                                       : endpointStatus->startConnected);
+            const bool endConnected =
+                endpointStatus.has_value() &&
+                (firstSegment.reversed ? endpointStatus->startConnected
+                                       : endpointStatus->endConnected);
+            appendEndpointMarker(startPose, pathOffset.heightMeters, true, startConnected);
+            appendEndpointMarker(previousPose, pathOffset.heightMeters, false, endConnected);
+
         }
     }
 }
@@ -1123,6 +1156,87 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             appendTrafficBehaviorBox(behaviorVertices, stop->pose, 0.35,
                                      std::max(actor.widthMeters + 1.0, 2.5), 0.12, color);
         };
+        const auto behaviorColor = [](openbus::map::MapTrafficBlockReason reason, bool onJunction,
+                                      bool deadlocked) {
+            if (deadlocked) {
+                return std::array<float, 3>{1.0F, 0.05F, 0.05F};
+            }
+            switch (reason) {
+            case openbus::map::MapTrafficBlockReason::Leader:
+                return std::array<float, 3>{1.0F, 0.85F, 0.05F};
+            case openbus::map::MapTrafficBlockReason::CrossingReservation:
+                return std::array<float, 3>{1.0F, 0.5F, 0.05F};
+            case openbus::map::MapTrafficBlockReason::JunctionTraffic:
+                return std::array<float, 3>{0.9F, 0.15F, 1.0F};
+            case openbus::map::MapTrafficBlockReason::Signal:
+            case openbus::map::MapTrafficBlockReason::Collision:
+                return std::array<float, 3>{1.0F, 0.1F, 0.1F};
+            case openbus::map::MapTrafficBlockReason::Vehicle:
+            case openbus::map::MapTrafficBlockReason::Obstacle:
+                return std::array<float, 3>{1.0F, 0.3F, 0.05F};
+            case openbus::map::MapTrafficBlockReason::None:
+                return onJunction ? std::array<float, 3>{0.15F, 0.45F, 1.0F}
+                                  : std::array<float, 3>{0.15F, 1.0F, 0.2F};
+            }
+            return std::array<float, 3>{1.0F, 1.0F, 1.0F};
+        };
+        const auto appendJunctionStopBar = [&](const openbus::map::MapTrafficActor& actor,
+                                               const std::array<float, 3>& color) {
+            if (openbus::map::mapTrafficActorOnJunctionPath(actor, actor.distanceMeters)) {
+                return;
+            }
+            double junctionStart = std::numeric_limits<double>::infinity();
+            const double searchEnd = std::min(actor.route.totalLength, actor.distanceMeters + 80.0);
+            for (double distance = actor.distanceMeters; distance <= searchEnd; distance += 0.5) {
+                if (openbus::map::mapTrafficRoutePositionOnJunctionPath(actor.route, distance)) {
+                    junctionStart = distance;
+                    break;
+                }
+            }
+            if (!std::isfinite(junctionStart)) {
+                return;
+            }
+            const double stopDistance =
+                std::max(actor.distanceMeters, junctionStart - actor.lengthMeters * 0.5 - 0.5);
+            const auto stopPose = openbus::map::sampleMapTrafficRoute(
+                actor.route, stopDistance, actor.lateralOffsetMeters);
+            if (stopPose.has_value() &&
+                openbus::map::mapTrafficPoseOnActiveTile(*stopPose, activeTiles)) {
+                appendTrafficBehaviorBox(behaviorVertices, *stopPose, 0.3,
+                                         std::max(actor.widthMeters + 1.0, 2.5), 0.12, color);
+            }
+        };
+        std::unordered_map<const openbus::map::MapTrafficActor*,
+                           openbus::map::MapTrafficPose>
+            activeActorPoses;
+        for (const TrafficVehicleState& state : trafficVehicles_) {
+            if (!state.populationEnabled || state.vehicle == nullptr ||
+                !state.vehicle->mapTrafficTileActive) {
+                continue;
+            }
+            const auto pose = openbus::map::sampleMapTrafficRoute(
+                state.actor.route, state.actor.distanceMeters, state.actor.lateralOffsetMeters);
+            if (pose.has_value()) {
+                activeActorPoses.emplace(&state.actor, *pose);
+            }
+        }
+        std::vector<openbus::map::MapTrafficPose> externalVehiclePoses;
+        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+            if (vehicle->followsMapTrafficRoute || vehicle->mapTrafficRouteFinished) {
+                continue;
+            }
+            openbus::map::MapTrafficPose pose;
+            if (vehicle.get() == playerVehicle_) {
+                const auto chassis = simulation.chassisPose();
+                pose.position = chassis.position;
+                pose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
+            } else {
+                pose.position = vehicle->placement.position;
+                pose.headingRadians =
+                    (90.0 - vehicle->placement.yawDegrees) * std::numbers::pi / 180.0;
+            }
+            externalVehiclePoses.push_back(pose);
+        }
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
             if (vehicle->followsMapTrafficRoute || vehicle->mapTrafficRouteFinished ||
                 !vehicle->loaded || vehicle->displayLists.empty()) {
@@ -1144,6 +1258,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 appendTrafficBehaviorBox(vertices, pose, vehicle->trafficLengthMeters,
                                          vehicle->trafficWidthMeters, vehicle->trafficHeightMeters,
                                          {0.95F, 0.95F, 0.95F});
+                appendTrafficBehaviorBox(behaviorVertices, pose, vehicle->trafficLengthMeters,
+                                         vehicle->trafficWidthMeters, 0.1, {1.0F, 1.0F, 1.0F});
             }
         }
         for (const TrafficVehicleState& state : trafficVehicles_) {
@@ -1158,18 +1274,28 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             }
             const bool onJunction = openbus::map::mapTrafficRoutePositionOnJunctionPath(
                 state.actor.route, state.actor.distanceMeters);
+            const std::array<float, 3> color =
+                behaviorColor(state.actor.blockReason, onJunction, state.deadlocked);
             if (state.vehicle->loaded && !state.vehicle->displayLists.empty()) {
                 appendTrafficBehaviorBox(vehicleBodyVertices, *pose, state.actor.lengthMeters,
                                          state.actor.widthMeters,
-                                         state.vehicle->trafficHeightMeters,
-                                         state.deadlocked ? std::array<float, 3>{1.0F, 0.1F, 0.1F}
-                                         : onJunction ? std::array<float, 3>{0.15F, 0.45F, 1.0F}
-                                                      : std::array<float, 3>{0.15F, 1.0F, 0.2F});
+                                         state.vehicle->trafficHeightMeters, color);
             }
+            appendTrafficBehaviorBox(behaviorVertices, *pose, state.actor.lengthMeters,
+                                     state.actor.widthMeters, 0.1, color);
             appendSignalStopBox(state.actor);
 
             const double reservationHorizon = state.actor.speedMetersPerSecond * 3.0;
-            for (double ahead = 1.0; ahead < reservationHorizon; ahead += 2.0) {
+            for (double ahead = 2.0; ahead < reservationHorizon; ahead += 2.0) {
+                const auto predictedPose = openbus::map::sampleMapTrafficRoute(
+                    state.actor.route, state.actor.distanceMeters + ahead,
+                    state.actor.lateralOffsetMeters);
+                if (predictedPose.has_value() &&
+                    openbus::map::mapTrafficPoseOnActiveTile(*predictedPose, activeTiles)) {
+                    appendTrafficBehaviorBox(behaviorVertices, *predictedPose, 2.0,
+                                             state.actor.widthMeters + 0.25, 0.08,
+                                             {0.05F, 0.85F, 1.0F});
+                }
                 const double reservationDistance = state.actor.distanceMeters + ahead;
                 if (!openbus::map::mapTrafficRoutePositionOnJunctionPath(state.actor.route,
                                                                          reservationDistance)) {
@@ -1185,6 +1311,46 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                          state.actor.lengthMeters, state.actor.widthMeters, 0.12,
                                          {1.0F, 0.5F, 0.05F});
             }
+            if (state.actor.junctionClaimEndMeters.has_value()) {
+                const double claimEnd =
+                    std::min(*state.actor.junctionClaimEndMeters, state.actor.route.totalLength);
+                for (double distance = state.actor.distanceMeters + 1.0; distance < claimEnd;
+                     distance += 2.0) {
+                    const auto claimPose = openbus::map::sampleMapTrafficRoute(
+                        state.actor.route, distance, state.actor.lateralOffsetMeters);
+                    if (claimPose.has_value() &&
+                        openbus::map::mapTrafficPoseOnActiveTile(*claimPose, activeTiles)) {
+                        appendTrafficBehaviorBox(behaviorVertices, *claimPose,
+                                                 state.actor.lengthMeters,
+                                                 state.actor.widthMeters + 0.3, 0.08,
+                                                 {0.05F, 0.75F, 0.65F});
+                    }
+                }
+            }
+            if (state.actor.blockReason ==
+                    openbus::map::MapTrafficBlockReason::JunctionTraffic ||
+                state.actor.blockReason ==
+                    openbus::map::MapTrafficBlockReason::CrossingReservation) {
+                appendJunctionStopBar(state.actor, color);
+            }
+            if (state.actor.blockingActor != nullptr) {
+                const auto blockerPose = activeActorPoses.find(state.actor.blockingActor);
+                if (blockerPose != activeActorPoses.end()) {
+                    std::array<double, 3> from = pose->position;
+                    std::array<double, 3> to = blockerPose->second.position;
+                    from[2] += 0.25;
+                    to[2] += 0.25;
+                    appendTrafficBehaviorLine(behaviorVertices, from, to, color);
+                }
+            } else if (state.actor.blockingObstacleIndex.has_value() &&
+                       *state.actor.blockingObstacleIndex < externalVehiclePoses.size()) {
+                std::array<double, 3> from = pose->position;
+                std::array<double, 3> to =
+                    externalVehiclePoses[*state.actor.blockingObstacleIndex].position;
+                from[2] += 0.25;
+                to[2] += 0.25;
+                appendTrafficBehaviorLine(behaviorVertices, from, to, color);
+            }
         }
         for (const HumanTrafficState& human : humanTrafficActors_) {
             if (!human.populationEnabled) {
@@ -1198,6 +1364,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             }
             appendTrafficBehaviorBox(behaviorVertices, *pose, human.feetDistanceMeters * 1.25,
                                      human.feetDistanceMeters * 2.1, human.heightMeters,
+                                     {1.0F, 0.25F, 0.9F});
+            appendTrafficBehaviorBox(behaviorVertices, *pose, human.feetDistanceMeters * 1.25,
+                                     human.feetDistanceMeters * 2.1, 0.08,
                                      {1.0F, 0.25F, 0.9F});
             appendSignalStopBox(human.actor);
         }
@@ -1297,6 +1466,95 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                        << "ROADS " << mapStats.activeRoadBatches << '/' << mapStats.totalRoadBatches
                        << " COLLISION TILES " << simulation.loadedMapCollisionTileCount()
                        << " AI VEHICLES " << spawnedAiVehicleCount;
+            if (trafficSplineDebugOverlay_) {
+                std::size_t clearCount = 0;
+                std::size_t followingCount = 0;
+                std::size_t yieldCount = 0;
+                std::size_t reservationCount = 0;
+                std::size_t signalCount = 0;
+                std::size_t blockedCount = 0;
+                std::size_t junctionCount = 0;
+                std::size_t claimCount = 0;
+                const TrafficVehicleState* hottestBlock = nullptr;
+                for (const TrafficVehicleState& state : trafficVehicles_) {
+                    if (!state.populationEnabled || state.vehicle == nullptr ||
+                        !state.vehicle->mapTrafficTileActive) {
+                        continue;
+                    }
+                    switch (state.actor.blockReason) {
+                    case openbus::map::MapTrafficBlockReason::None:
+                        ++clearCount;
+                        break;
+                    case openbus::map::MapTrafficBlockReason::Leader:
+                        ++followingCount;
+                        break;
+                    case openbus::map::MapTrafficBlockReason::JunctionTraffic:
+                        ++yieldCount;
+                        break;
+                    case openbus::map::MapTrafficBlockReason::CrossingReservation:
+                        ++reservationCount;
+                        break;
+                    case openbus::map::MapTrafficBlockReason::Signal:
+                        ++signalCount;
+                        break;
+                    case openbus::map::MapTrafficBlockReason::Vehicle:
+                    case openbus::map::MapTrafficBlockReason::Obstacle:
+                    case openbus::map::MapTrafficBlockReason::Collision:
+                        ++blockedCount;
+                        break;
+                    }
+                    junctionCount += openbus::map::mapTrafficActorOnJunctionPath(
+                                         state.actor, state.actor.distanceMeters)
+                                         ? 1U
+                                         : 0U;
+                    claimCount += state.actor.junctionClaimEndMeters.has_value() ? 1U : 0U;
+                    if (state.actor.blockReason != openbus::map::MapTrafficBlockReason::None &&
+                        (hottestBlock == nullptr ||
+                         state.actor.speedMetersPerSecond <
+                             hottestBlock->actor.speedMetersPerSecond)) {
+                        hottestBlock = &state;
+                    }
+                }
+                statusText << '\n'
+                           << "F2 C" << clearCount << " F" << followingCount << " Y"
+                           << yieldCount << " R" << reservationCount << " S" << signalCount
+                           << " B" << blockedCount << " J" << junctionCount << " L" << claimCount
+                           << " HOT ";
+                if (hottestBlock == nullptr) {
+                    statusText << "NONE";
+                } else {
+                    const auto pose = openbus::map::sampleMapTrafficRoute(
+                        hottestBlock->actor.route, hottestBlock->actor.distanceMeters,
+                        hottestBlock->actor.lateralOffsetMeters);
+                    const char* reason = "BLOCK";
+                    switch (hottestBlock->actor.blockReason) {
+                    case openbus::map::MapTrafficBlockReason::Leader:
+                        reason = "FLW";
+                        break;
+                    case openbus::map::MapTrafficBlockReason::JunctionTraffic:
+                        reason = "YLD";
+                        break;
+                    case openbus::map::MapTrafficBlockReason::CrossingReservation:
+                        reason = "RSV";
+                        break;
+                    case openbus::map::MapTrafficBlockReason::Signal:
+                        reason = "SIG";
+                        break;
+                    case openbus::map::MapTrafficBlockReason::None:
+                        reason = "CLR";
+                        break;
+                    case openbus::map::MapTrafficBlockReason::Vehicle:
+                    case openbus::map::MapTrafficBlockReason::Obstacle:
+                    case openbus::map::MapTrafficBlockReason::Collision:
+                        reason = "BLK";
+                        break;
+                    }
+                    statusText << 'S' << (pose ? pose->splineId : 0) << ' ' << reason << ' '
+                               << std::fixed << std::setprecision(0)
+                               << hottestBlock->actor.speedMetersPerSecond * 3.6 << "KMH T"
+                               << hottestBlock->actor.targetSpeedMetersPerSecond * 3.6 << "KMH";
+                }
+            }
             const std::string currentStatus = statusText.str();
             if (currentStatus != statusHudText_) {
                 const std::vector<std::uint8_t> pixels = [&]() {

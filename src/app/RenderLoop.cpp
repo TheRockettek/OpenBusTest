@@ -359,7 +359,6 @@ bool RenderLoop::AddTrafficVehicle(
             return false;
         }
     }
-
     const std::optional<openbus::map::MapTrafficPose> pose =
         openbus::map::sampleMapTrafficRoute(actor.route, 0.0, actor.lateralOffsetMeters);
     if (!pose.has_value()) {

@@ -302,10 +302,14 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             trafficSplineDebugOverlay_ = !trafficSplineDebugOverlay_;
             gameLog.Log(std::string("AI and human traffic spline overlay ") +
                         (trafficSplineDebugOverlay_
-                             ? "enabled (cyan=road, magenta=human, green=AI body, white=other "
-                               "vehicle body, blue=junction actor, red=deadlocked AI after 15s "
-                               "without progress; body outlines are depth-tested; "
-                               "amber=junction reservation and red/green=signal stop are x-ray)"
+                             ? "enabled (cyan=road, magenta=human, white=other vehicle; AI "
+                               "green=clear, yellow=following, purple=junction yield, amber="
+                               "crossing reservation, red=signal/obstacle, blue=in junction, "
+                               "bright red=deadlocked; x-ray footprints show occupied areas, "
+                               "cyan shows 3s route, teal shows junction claim, and lines link "
+                               "blockers; red/green bars show signal stops; HUD C=clear F=following "
+                               "Y=yield R=reservation S=signal B=blocked J=junction L=claim; "
+                               "HOT=slowest blocked vehicle with spline, reason, current/target speed)"
                              : "disabled"));
         }
         previousTrafficSplineDebugKeyState_ = trafficSplineDebugKeyPressed;

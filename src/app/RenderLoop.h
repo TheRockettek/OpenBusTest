@@ -292,6 +292,10 @@ class RenderLoop {
         bool scheduledTripActive = false;
         bool deadlocked = false;
         bool deadlockRemovalCommitted = false;
+        std::optional<std::size_t> activeSpawnCandidateIndex;
+        std::vector<std::size_t> rejectedSpawnCandidateIndices;
+        double spawnedAtDistanceMeters = 0.0;
+        bool movedSinceSpawn = false;
         double lastProgressDistanceMeters = 0.0;
         double stoppedSecondsSinceProgress = 0.0;
         bool stuckDiagnosticLogged = false;

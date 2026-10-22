@@ -748,12 +748,14 @@ the outstanding implementation and validation tasks:
   new approaches; otherwise authored path/group priorities precede wait age,
   with wait aging fairly ordering equal-priority movements. Before claiming a
   junction, a vehicle on a lower-priority approach spline gives way to
-  higher-priority traffic that would cross or merge into its movement before
-  it clears, and releases an unused claim if such traffic appears; priority
-  traffic ignores that unused claim. Synthetic
+  higher-priority traffic only when predicted arrival times overlap at a
+  crossing or merge, and releases an unused claim if such traffic appears;
+  priority traffic ignores that unused claim. Deadlock exemptions follow
+  actual blocker chains instead of bus proximity. Synthetic
   regressions cover separation, progress, junction clearing, priority-over-
-  wait, and main-road priority at T-junctions. Validate native right-of-way behavior and deadlock recovery at
-  representative live junctions.
+  wait, main-road priority at T-junctions, unobstructed turn transitions, and
+  approach stop distance. Validate native right-of-way behavior and deadlock
+  recovery at representative live junctions.
 - [ ] **Add advanced vehicle behavior:** implement safe overtaking and lane
   changes, then extend swept-footprint handling to articulated vehicles.
 - [~] **Render configured human models:** pedestrians now render the configured

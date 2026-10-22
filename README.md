@@ -134,11 +134,13 @@ and waits at the entry line while any vehicle inside or already admitted would
 cross or merge into its path, so two approaches never lock each other inside
 the box. A vehicle approaching on a lower-priority spline gives way at its
 entry line to any higher-priority vehicle whose path crosses or merges into its
-junction movement and would arrive before it could clear (plus two seconds);
+junction movement and would arrive within the same conflict window (plus a
+0.75-second safety margin accounting for vehicle occupancy); traffic that has
+already cleared before the turn arrives does not hold it back;
 higher-priority vehicles do not wait for such a vehicle's unused claim. Waiting
 time only orders vehicles of equal priority. Crossing movements use
-conservative three-second reservations; road-sign right-of-way rules beyond
-authored spline priority are not yet modeled.
+time-aware three-second lookahead reservations; road-sign right-of-way rules
+beyond authored spline priority are not yet modeled.
 Queues, actual endpoint spawns, junction entry speeds, off-screen population
 unloads, route-end recycling, and lane-network statistics are logged.
 Route planning tries an alternative branch if a later turn is impossible,

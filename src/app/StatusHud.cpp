@@ -19,6 +19,10 @@ std::array<std::uint8_t, 7> statusHudGlyph(char character) {
         return {0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110};
     case 'E':
         return {0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111};
+    case 'F':
+        return {0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000};
+    case 'G':
+        return {0b01111, 0b10000, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110};
     case 'H':
         return {0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001};
     case 'I':
@@ -27,6 +31,8 @@ std::array<std::uint8_t, 7> statusHudGlyph(char character) {
         return {0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100};
     case 'L':
         return {0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111};
+    case 'M':
+        return {0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001};
     case 'N':
         return {0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001};
     case 'O':
@@ -41,6 +47,8 @@ std::array<std::uint8_t, 7> statusHudGlyph(char character) {
         return {0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110};
     case 'V':
         return {0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100};
+    case 'W':
+        return {0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010};
     case 'K':
         return {0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001};
     case '0':
