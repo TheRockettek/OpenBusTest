@@ -736,9 +736,8 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance,
         }
         std::shared_ptr<ParsedObj> parsed;
         if (part->objRequest) {
-            if (!immediateLoad &&
-                part->objRequest->future.wait_for(std::chrono::milliseconds(0)) !=
-                    std::future_status::ready) {
+            if (!immediateLoad && part->objRequest->future.wait_for(std::chrono::milliseconds(0)) !=
+                                      std::future_status::ready) {
                 ++part;
                 continue;
             }

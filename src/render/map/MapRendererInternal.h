@@ -256,12 +256,13 @@ struct MapRenderer::Impl {
         std::vector<std::size_t> batchIndexes;
         std::vector<std::filesystem::path> texturePaths;
         std::vector<std::shared_future<std::shared_ptr<Image>>> textureImages;
+        double heightMeters = 0.0;
     };
 
     struct HumanModelConfiguration {
         std::filesystem::path modelConfigPath;
         ModelConfig configuration;
-        std::array<double, 2> geometry = {};
+        double heightMeters = 0.0;
     };
 
     struct PendingHumanModel {
@@ -298,6 +299,7 @@ struct MapRenderer::Impl {
         openbus::scripting::SceneryObject variables;
         std::unique_ptr<ScriptRuntime> runtime;
         std::shared_ptr<SceneryRuntimeDefinition> definition;
+        std::optional<openbus::map::MapTrafficSignalSchedule> trafficSignal;
         std::map<std::pair<bool, int>, DynamicSceneryTexture> dynamicTextures;
         std::vector<std::string> placementLabels;
         int ownerTileX = 0;
@@ -357,8 +359,7 @@ struct MapRenderer::Impl {
     openbus::map::MapTrafficRouteNetwork humanTrafficRouteNetwork;
     openbus::map::MapTrafficLaneNetwork humanTrafficLaneNetwork;
     std::vector<TrafficPathDebugSegment> sceneryTrafficPathSegments;
-    std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>>
-        trafficSignalControllers;
+    std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>> trafficSignalControllers;
     std::unordered_map<int, std::vector<openbus::map::MapSplinePathOffset>>
         roadTrafficSplinePathOffsets;
     std::unordered_map<int, std::vector<openbus::map::MapSplinePathOffset>>

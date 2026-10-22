@@ -60,6 +60,26 @@ struct MapTrafficRoute {
     std::optional<double> loopStartDistance;
 };
 
+struct MapTrafficSpawnCandidate {
+    double distanceMeters = 0.0;
+    int tileX = 0;
+    int tileY = 0;
+};
+
+// Last constraint that held a driving actor below cruise speed; used for stall diagnostics.
+enum class MapTrafficBlockReason {
+    None,
+    Leader,
+    Vehicle,
+    Obstacle,
+    CrossingReservation,
+    JunctionTraffic,
+    Signal,
+    Collision,
+};
+
+const char* mapTrafficBlockReasonName(MapTrafficBlockReason reason) noexcept;
+
 struct MapTrafficActor {
     std::string modelPath;
     std::optional<std::string> driverModelPath;
@@ -75,6 +95,13 @@ struct MapTrafficActor {
     int vehicleType = 0;
     std::optional<std::size_t> unscheduledGroupIndex;
     bool scheduled = false;
+    MapTrafficBlockReason blockReason = MapTrafficBlockReason::None;
+    // What blockReason refers to: another driving actor, or an index into the obstacle list
+    // passed to the last advanceMapTrafficDriving call. Identity only; never dereferenced here.
+    const MapTrafficActor* blockingActor = nullptr;
+    std::optional<std::size_t> blockingObstacleIndex;
+    // Route distance up to which this actor holds an admitted claim on its upcoming junction.
+    std::optional<double> junctionClaimEndMeters;
 };
 
 struct MapTrafficPose {
@@ -117,6 +144,7 @@ mapTrafficPathSpeedLimitForVehicle(const MapTrafficPathRules& rules,
 double mapTrafficPathPriorityForVehicle(const MapTrafficPathRules& rules,
                                         const MapTrafficVehicleFilter& vehicle) noexcept;
 bool mapTrafficRoutePositionOnJunctionPath(const MapTrafficRoute& route, double distanceMeters);
+bool mapTrafficActorOnJunctionPath(const MapTrafficActor& actor, double distanceMeters);
 std::vector<std::vector<double>>
 mapTrafficPartitionScheduledDepartures(const std::vector<double>& departureMinutes,
                                        std::size_t partitionCount);
@@ -130,6 +158,10 @@ void resetMapTrafficActorForEntry(MapTrafficActor& actor) noexcept;
 // True when either complete ordered spline sequence occurs contiguously in the other.
 bool mapTrafficRoutesShareCompleteOrderedPath(const std::vector<int>& firstSplineIds,
                                               const std::vector<int>& secondSplineIds);
+
+// Returns the longest two-or-more-spline timetable match beginning at the route endpoint.
+std::vector<int> mapTrafficRoutePrefixMatchingTimetable(
+    const std::vector<int>& timetableSplineIds, const std::vector<int>& routeSplineIds);
 
 // Places an actor at a route distance if the sampled pose is within the spawn radius.
 // Open routes stop at totalLength - endpointMarginMeters; closed routes wrap.
@@ -152,6 +184,8 @@ std::optional<MapTrafficRoute> buildMapTrafficRoute(const MapSplinePlacementRefe
 std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route,
                                                     double distanceMeters,
                                                     double lateralOffsetMeters);
+std::vector<MapTrafficSpawnCandidate> mapTrafficRouteSpawnCandidates(const MapTrafficRoute& route,
+                                                                     double vehicleLengthMeters);
 
 // Advances one actor. Returns false when it reaches the end of an open route.
 bool advanceMapTrafficActor(MapTrafficActor& actor, double elapsedSeconds);
@@ -173,6 +207,11 @@ struct MapTrafficObstacle {
     double lengthMeters = 4.5;
     double widthMeters = 1.8;
 };
+
+// True when a route actor is aligned behind an obstacle within the supplied bumper gap.
+bool mapTrafficActorBehindObstacle(const MapTrafficActor& actor,
+                                   const MapTrafficObstacle& obstacle,
+                                   double maximumGapMeters);
 
 // OBB clearance is shared by entry admission and swept-path movement checks.
 bool mapTrafficHasClearance(const MapTrafficObstacle& vehicle,
@@ -244,12 +283,21 @@ class MapTrafficLaneNetwork {
     std::vector<MapTrafficLaneStart> entryLanes() const;
     std::optional<MapTrafficLaneStart> selectEntryLane(MapTrafficVehicleFilter vehicle,
                                                        std::size_t selectionSeed) const;
+    // Connected road lanes with a forward continuation, including internal lanes.
+    std::vector<MapTrafficLaneStart> spawnLanes() const;
+    std::optional<MapTrafficLaneStart> selectSpawnLane(MapTrafficVehicleFilter vehicle,
+                                                       std::size_t selectionSeed) const;
 
   private:
+    std::optional<MapTrafficLaneStart>
+    selectLane(MapTrafficVehicleFilter vehicle, std::size_t selectionSeed,
+               const std::vector<MapTrafficLaneStart>& candidates) const;
+
     std::vector<MapTrafficRouteSegment> segments_;
     std::vector<double> lengths_;
     std::vector<std::vector<std::size_t>> next_;
     std::unordered_map<int, std::vector<std::size_t>> lanesBySpline_;
+    std::vector<MapTrafficLaneStart> spawnLanes_;
     std::vector<std::size_t> incoming_;
     std::vector<double> maximumCurvatures_;
     MapTrafficLaneNetworkStats stats_;

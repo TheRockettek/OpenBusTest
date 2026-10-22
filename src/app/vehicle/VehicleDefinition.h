@@ -25,8 +25,7 @@ struct SharedVehicleDefinition {
 // Thread-safe; returns the cached definition when the same pair was loaded before.
 [[nodiscard]] std::shared_ptr<const SharedVehicleDefinition>
 sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
-                        const std::filesystem::path& modelConfigPath,
-                        VehicleFileKind configKind);
+                        const std::filesystem::path& modelConfigPath, VehicleFileKind configKind);
 
 void applyVehiclePlacement(const VehiclePlacement& placement);
 

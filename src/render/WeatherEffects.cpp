@@ -23,16 +23,20 @@ double unitValue(std::uint32_t seed) {
 }
 
 PrimitiveVertex vertex(double x, double y, double z, const std::array<float, 3>& color) {
-    return {static_cast<float>(x), static_cast<float>(y), static_cast<float>(z), color[0], color[1],
+    return {static_cast<float>(x),
+            static_cast<float>(y),
+            static_cast<float>(z),
+            color[0],
+            color[1],
             color[2]};
 }
 
 } // namespace
 
-std::vector<PrimitiveVertex>
-makePrecipitationVertices(PrecipitationType type, double rate, double elapsedSeconds) {
-    if (!std::isfinite(rate) || rate < 0.0 || rate > 1.0 ||
-        !std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0) {
+std::vector<PrimitiveVertex> makePrecipitationVertices(PrecipitationType type, double rate,
+                                                       double elapsedSeconds) {
+    if (!std::isfinite(rate) || rate < 0.0 || rate > 1.0 || !std::isfinite(elapsedSeconds) ||
+        elapsedSeconds < 0.0) {
         throw std::invalid_argument("Precipitation effect input is outside its valid range");
     }
     if (type == PrecipitationType::None || rate == 0.0) {
@@ -54,15 +58,13 @@ makePrecipitationVertices(PrecipitationType type, double rate, double elapsedSec
 
     const bool rain = type == PrecipitationType::Rain;
     const std::array<float, 3> color =
-        rain ? std::array<float, 3>{0.52F, 0.66F, 0.82F}
-             : std::array<float, 3>{0.92F, 0.96F, 1.0F};
+        rain ? std::array<float, 3>{0.52F, 0.66F, 0.82F} : std::array<float, 3>{0.92F, 0.96F, 1.0F};
     const double fallSpeed = rain ? 2.2 : 0.28;
     for (std::size_t index = 0; index < particleCount; ++index) {
         const std::uint32_t seed = static_cast<std::uint32_t>(index + 1);
         const double xOffset = unitValue(seed * 3U + 1U) * 2.0 - 1.0;
         const double phase = unitValue(seed * 3U + 2U) * particleHeight;
-        const double fallOffset =
-            std::fmod(elapsedSeconds * fallSpeed + phase, particleHeight);
+        const double fallOffset = std::fmod(elapsedSeconds * fallSpeed + phase, particleHeight);
         const double sway = rain ? 0.0 : std::sin(elapsedSeconds * 0.8 + phase) * 0.025;
         const double x = xOffset + sway;
         const double y = 1.0 - fallOffset;

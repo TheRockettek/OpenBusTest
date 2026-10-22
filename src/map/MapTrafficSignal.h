@@ -29,9 +29,10 @@ struct MapTrafficSignalProgram {
     std::vector<MapTrafficSignalControlPoint> controlPoints;
 };
 
-inline std::optional<int> mapTrafficSignalPhaseAtTime(
-    double cycleDurationSeconds, const std::vector<MapTrafficSignalPhase>& phases,
-    double elapsedSeconds) {
+inline std::optional<int>
+mapTrafficSignalPhaseAtTime(double cycleDurationSeconds,
+                            const std::vector<MapTrafficSignalPhase>& phases,
+                            double elapsedSeconds) {
     if (!std::isfinite(cycleDurationSeconds) || cycleDurationSeconds <= 0.0 ||
         !std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 || phases.empty()) {
         return std::nullopt;
@@ -47,8 +48,7 @@ inline std::optional<int> mapTrafficSignalPhaseAtTime(
         }
         configuredDuration += phase.durationSeconds;
     }
-    const double durationTolerance =
-        std::max(1.0, cycleDurationSeconds) * 1.0e-9;
+    const double durationTolerance = std::max(1.0, cycleDurationSeconds) * 1.0e-9;
     const bool finalPhaseExtendsToCycle = phases.back().durationSeconds == 0.0;
     if (configuredDuration > cycleDurationSeconds + durationTolerance ||
         (!finalPhaseExtendsToCycle &&
@@ -75,9 +75,8 @@ inline std::optional<int> mapTrafficSignalPhaseAtTime(
 }
 
 inline bool mapTrafficSignalProgramValid(const MapTrafficSignalProgram& program) {
-    if (!std::isfinite(program.cycleDurationSeconds) ||
-        program.cycleDurationSeconds <= 0.0 || program.lights.empty() ||
-        program.approachDistancesMeters.size() != program.lights.size()) {
+    if (!std::isfinite(program.cycleDurationSeconds) || program.cycleDurationSeconds <= 0.0 ||
+        program.lights.empty() || program.approachDistancesMeters.size() != program.lights.size()) {
         return false;
     }
     for (const auto& phases : program.lights) {
@@ -98,8 +97,7 @@ inline bool mapTrafficSignalProgramValid(const MapTrafficSignalProgram& program)
 
 class MapTrafficSignalController {
   public:
-    explicit MapTrafficSignalController(
-        std::shared_ptr<const MapTrafficSignalProgram> program)
+    explicit MapTrafficSignalController(std::shared_ptr<const MapTrafficSignalProgram> program)
         : program_(std::move(program)),
           requests_(program_ == nullptr ? 0 : program_->lights.size(), false),
           passed_(program_ == nullptr ? 0 : program_->controlPoints.size(), false) {
@@ -146,8 +144,7 @@ class MapTrafficSignalController {
                 if (rewoundControl_ == index) {
                     continue;
                 }
-                const double pointTime = normalizedTime(
-                    program_->controlPoints[index].timeSeconds);
+                const double pointTime = normalizedTime(program_->controlPoints[index].timeSeconds);
                 const double distance = normalizedTime(pointTime - clockSeconds_);
                 if (distance <= 1.0e-9 && passed_[index]) {
                     continue;
@@ -167,8 +164,7 @@ class MapTrafficSignalController {
                 remaining = std::max(0.0, remaining - distanceToPoint);
             }
             const std::size_t pointIndex = *nextPoint;
-            const MapTrafficSignalControlPoint& point =
-                program_->controlPoints[pointIndex];
+            const MapTrafficSignalControlPoint& point = program_->controlPoints[pointIndex];
             if (!controlPointActive(pointIndex)) {
                 passed_[pointIndex] = true;
                 continue;
@@ -185,21 +181,17 @@ class MapTrafficSignalController {
 
             const double sourceTime = normalizedTime(point.timeSeconds);
             const double targetTime =
-                *point.jumpToSeconds < cycle
-                    ? normalizedTime(*point.jumpToSeconds)
-                    : 0.0;
-            const bool noProgress =
-                normalizedTime(targetTime - sourceTime) <= 1.0e-9;
-            rewoundControl_ =
-                targetTime > 1.0e-9 && targetTime < sourceTime - 1.0e-9
-                    ? pointIndex
-                    : std::optional<std::size_t>{};
+                *point.jumpToSeconds < cycle ? normalizedTime(*point.jumpToSeconds) : 0.0;
+            const bool noProgress = normalizedTime(targetTime - sourceTime) <= 1.0e-9;
+            rewoundControl_ = targetTime > 1.0e-9 && targetTime < sourceTime - 1.0e-9
+                                  ? pointIndex
+                                  : std::optional<std::size_t>{};
             clockSeconds_ = targetTime;
             std::fill(passed_.begin(), passed_.end(), false);
             for (std::size_t index = 0; index < program_->controlPoints.size(); ++index) {
                 if (index != pointIndex &&
-                    normalizedTime(normalizedTime(
-                        program_->controlPoints[index].timeSeconds) - targetTime) <= 1.0e-9) {
+                    normalizedTime(normalizedTime(program_->controlPoints[index].timeSeconds) -
+                                   targetTime) <= 1.0e-9) {
                     passed_[index] = true;
                 }
             }
@@ -240,8 +232,8 @@ class MapTrafficSignalController {
             return;
         }
         if (rewoundControl_.has_value()) {
-            const double sourceTime = normalizedTime(
-                program_->controlPoints[*rewoundControl_].timeSeconds);
+            const double sourceTime =
+                normalizedTime(program_->controlPoints[*rewoundControl_].timeSeconds);
             const double distanceToSource = normalizedTime(sourceTime - clockSeconds_);
             if (distanceToSource <= elapsedSeconds + 1.0e-9) {
                 rewoundControl_.reset();
@@ -252,15 +244,12 @@ class MapTrafficSignalController {
     }
 
     bool controlPointActive(std::size_t pointIndex) const {
-        const MapTrafficSignalControlPoint& point =
-            program_->controlPoints[pointIndex];
+        const MapTrafficSignalControlPoint& point = program_->controlPoints[pointIndex];
         bool requested = requests_[point.lightIndex];
         if (point.ifRequest) {
-            for (const MapTrafficSignalControlPoint& other :
-                 program_->controlPoints) {
+            for (const MapTrafficSignalControlPoint& other : program_->controlPoints) {
                 if (other.ifRequest && other.timeSeconds == point.timeSeconds &&
-                    other.jumpToSeconds == point.jumpToSeconds &&
-                    requests_[other.lightIndex]) {
+                    other.jumpToSeconds == point.jumpToSeconds && requests_[other.lightIndex]) {
                     requested = true;
                     break;
                 }
@@ -300,8 +289,14 @@ struct MapTrafficSignalSchedule {
 };
 
 // Returns the active OMSI light phase, or no value when the schedule is invalid.
-inline std::optional<int> mapTrafficSignalStateAtTime(
-    const MapTrafficSignalSchedule& schedule, double elapsedSeconds) {
+inline std::optional<int> mapTrafficSignalStateAtTime(const MapTrafficSignalSchedule& schedule,
+                                                      double elapsedSeconds) {
+    if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0) {
+        return std::nullopt;
+    }
+    if (schedule.controller != nullptr && schedule.hasConditionalOverrides) {
+        return schedule.controller->state(schedule.lightIndex);
+    }
     return mapTrafficSignalPhaseAtTime(schedule.cycleDurationSeconds, schedule.phases,
                                        elapsedSeconds);
 }

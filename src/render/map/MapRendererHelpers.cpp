@@ -75,8 +75,8 @@ GLuint loadTexture(const std::filesystem::path& path, bool repeat) {
 
 GLuint uploadTextureImage(const Image& image, bool repeat) {
     if (image.width <= 0 || image.height <= 0 ||
-        image.rgba.size() < static_cast<std::size_t>(image.width) *
-                                static_cast<std::size_t>(image.height) * 4U) {
+        image.rgba.size() <
+            static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4U) {
         throw std::runtime_error("Texture image dimensions or pixel data are invalid");
     }
     GLuint texture = 0;

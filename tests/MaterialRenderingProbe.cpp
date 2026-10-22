@@ -4,10 +4,12 @@
 
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <numbers>
 
 using namespace openbus::rendering;
 
@@ -69,6 +71,38 @@ int main() {
     };
     const auto close = [](int actual, int expected) { return std::abs(actual - expected) <= 2; };
     bool passed = true;
+    constexpr std::array<float, 39> humanVertices = {
+        0.08F, -0.03F, 0.20F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.14F, -0.03F, 0.20F, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.11F,  0.04F, 0.20F, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1};
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(humanVertices), humanVertices.data(), GL_STATIC_DRAW);
+    const auto drawHumanGaitFrame = [&](double phaseRadians) {
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT);
+        setModelViewMatrix(translationMatrix({0, 0, -0.5}));
+        ModelMaterial humanMaterial;
+        humanMaterial.emissionColor = {1, 1, 1};
+        drawModelBatch(buffer, 3, humanMaterial, {1, 1, 1}, 1.0, 0, false,
+                       HumanGaitParameters{phaseRadians, 1.0, 1.7});
+        std::array<std::uint8_t, 32 * 32 * 4> image = {};
+        glReadPixels(0, 0, 32, 32, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
+        return image;
+    };
+    const auto gaitFrameA = drawHumanGaitFrame(0.0);
+    const auto gaitFrameB = drawHumanGaitFrame(std::numbers::pi / 2.0);
+    const bool gaitFrameVisible =
+        std::any_of(gaitFrameA.begin(), gaitFrameA.end(),
+                    [](std::uint8_t channel) { return channel != 0; }) &&
+        std::any_of(gaitFrameB.begin(), gaitFrameB.end(),
+                    [](std::uint8_t channel) { return channel != 0; });
+    if (!gaitFrameVisible || gaitFrameA == gaitFrameB) {
+        std::cerr << "human gait shader did not visibly deform the pedestrian mesh\n";
+        passed = false;
+    }
+    setModelViewMatrix(identityMatrix());
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
     ModelMaterial material;
     const auto setTriangleDepth = [&](float depth) {
         auto depthVertices = vertices;

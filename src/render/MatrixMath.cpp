@@ -114,10 +114,9 @@ Matrix4 makeOdeWheelAnimationTransform(const BodyPose& chassis, const BodyPose& 
         const double modelLocalPosition = modelCenter[row] + (row == 2 ? modelOffsetZ : 0.0);
         relative[12 + row] = odeLocalPosition - modelLocalPosition;
         for (int column = 0; column < 3; ++column) {
-            relative[column * 4 + row] =
-                chassis.rotation[row] * wheel.rotation[column] +
-                chassis.rotation[3 + row] * wheel.rotation[3 + column] +
-                chassis.rotation[6 + row] * wheel.rotation[6 + column];
+            relative[column * 4 + row] = chassis.rotation[row] * wheel.rotation[column] +
+                                         chassis.rotation[3 + row] * wheel.rotation[3 + column] +
+                                         chassis.rotation[6 + row] * wheel.rotation[6 + column];
         }
     }
     Matrix4 base = identityMatrix();
@@ -128,10 +127,8 @@ Matrix4 makeOdeWheelAnimationTransform(const BodyPose& chassis, const BodyPose& 
     Matrix4 inverseBase = identityMatrix();
     static_cast<void>(invertAffineMatrix(base, inverseBase));
     relative = multiplyMatrix4(relative, inverseBase);
-    const Matrix4 toOrigin =
-        translationMatrix({-modelCenter[0], -modelCenter[1], -modelCenter[2]});
-    const Matrix4 fromOrigin =
-        translationMatrix({modelCenter[0], modelCenter[1], modelCenter[2]});
+    const Matrix4 toOrigin = translationMatrix({-modelCenter[0], -modelCenter[1], -modelCenter[2]});
+    const Matrix4 fromOrigin = translationMatrix({modelCenter[0], modelCenter[1], modelCenter[2]});
     return multiplyMatrix4(fromOrigin, multiplyMatrix4(relative, toOrigin));
 }
 

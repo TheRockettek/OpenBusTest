@@ -517,31 +517,54 @@ for the explicit boundary.
   it departs, and missed trips are skipped when its route completes. When a
   route receives multiple pool buses, its sorted departures are partitioned
   across them so each scheduled departure has one owner. Native density
-  units/interpolation remain provisional. Startup builds a bounded pool queued
-  only at incoming endpoint lanes; density reductions unload vehicles off-screen
-  and increases admit them only at clear off-screen endpoints. Entries are
-  recycled from the bounded pool after route completion; re-entry resets route
-  progress, speed, and junction-wait state. The startup pool remains the hard
-  capacity. Vehicles enter at
-  distance zero and zero speed when off-screen, over 50 m plus vehicle radius
-  from the camera, and clear of other vehicles.
-  Internal joins and closed circuits are excluded; missing timetable endpoint
-  routes do not fall back to mid-route bus spawning.
+  units/interpolation remain provisional. Startup builds a bounded pool from
+  connected road lanes with a forward continuation; isolated splines and
+  terminal dead ends are excluded. Road vehicles can enter on connected
+  internal lanes at clear, off-screen interior positions in the current active
+  tile window, including tiles activated later during streaming. Candidate
+  positions keep a vehicle-sized margin from spline endpoints, remain over
+  50 m plus vehicle radius from the camera, and preserve collision clearance.
+  Scheduled buses remain restricted to incoming endpoint lanes and their
+  timetable. Population changes unload vehicles off-screen; route-complete
+  actors are recycled from the bounded pool, resetting route progress, speed,
+  and junction-wait state. The startup pool remains the hard capacity.
+  Missing timetable endpoint routes do not fall back to mid-route bus spawning.
 - [~] AI vehicles advance with lookahead speed control along directed authored
   lane paths, including scenery junction paths, matching the cyan F2 geometry.
   Matching endpoints connect within 0.5 m horizontally and vertically; road
-  vehicles make seeded straight/left/right choices filtered by minimum turn
-  radius. Normal acceleration/braking limits are 1.6/3 m/s^2 and bend speeds
-  target at most 1.8 m/s^2 lateral acceleration. Following uses a 1.5 s headway
-  target and 2 m standstill buffer. Oriented swept footprints prevent advancement
-  through player/AI/static vehicles, and conservative crossing reservations
-  age blocked movements so a repeatedly yielding approach gains priority.
+  vehicles blend small position and heading mismatches between adjacent road
+  splines, while retaining authored junction-path curves; rendered yaw follows
+  the sampled path tangent. Vehicles make seeded straight/left/right choices
+  filtered by minimum turn radius. Normal acceleration/braking limits are
+  1.6/3 m/s^2, bend speeds
+  target at most 1.8 m/s^2 lateral acceleration, and curve speed has a 2 m/s
+  floor (capped by cruise speed); routes beyond the minimum turn radius remain
+  rejected at route selection. Following uses a speed-dependent
+  1.5 s time headway and 2 m standstill buffer. Oriented swept footprints prevent advancement
+  through player/AI/static vehicles. Same-route following respects route order
+  across spline boundaries so a rear vehicle's reservation cannot block a
+  leader on a curve. A gap- and relative-speed-based following target and a
+  gentler signal approach envelope damp speed changes while retaining swept
+  collision and stop-line safeguards. Conservative crossing reservations
+  age blocked junction movements at 8 priority points per second (capped at 255);
+  stopped actors queued at a signal or behind the player/AI bus reset their
+  stuck timer, and pending removals are canceled while that wait remains valid.
+  any vehicle part (front, center, or rear) inside a junction counts as
+  committed. Approaches check the full junction connector and exit clearance
+  before entry, preventing a queued merge exit from leaving a vehicle stopped
+  across the main road. Committed vehicles use physical swept clearance within
+  the junction instead of the larger approach headway, and accrued wait
+  survives approach movement while a junction path is in lookahead. Regressions
+  cover queued T-junction exits, right-turn wait aging, clearance, and no-overlap.
   Vehicles return to endpoint queues only after
   an unconnected endpoint is off-screen; population reductions happen off-screen.
   Regressions exercise actual
-  left/right turns below 4.5 m/s on 10 m curves, radius rejection, following,
+  left/right turns below 4.5 m/s on 10 m curves, radius rejection, following
+  gaps at different speeds,
   stopped-player-bus avoidance, crossing progress/separation, long-frame
-  blockage, crossing wait-age priority, and four-approach no-overlap/progress.
+  blockage, crossing wait-age priority, right-turn merge clearance, and
+  four-approach no-overlap/progress. Crossing reservations distinguish
+  same-direction traffic on a curved shared path from conflicting movements.
   Fixed-cycle SCO signals linked to road paths hold AI traffic on non-permissive
   phases and release it on states 6-8; regressions cover route-start, loop-wrap,
   and request-driven conditional stop/jump timing. Cycle origin, stop-line
@@ -572,7 +595,9 @@ for the explicit boundary.
   type-1 human paths from type-0 road paths.
 - [~] Spawn and move human actors on nearby type-1 spline routes using
   passenger-density settings. Configured `.hum` model first-LOD meshes now
-  render at actor poses; `.hum` and model CFG parsing, mesh parsing, and texture
+  render at actor poses, uniformly scaled to the declared human height while
+  preserving mesh proportions; the first `[humangeom]` value is foot distance,
+  not body width. `.hum` and model CFG parsing, mesh parsing, and texture
   decoding run asynchronously, while OpenGL upload remains on the render
   thread. Native animation and visual parity remain incomplete. Active human
   footprints are included in road AI's swept-path obstacle set, so vehicles
@@ -611,25 +636,53 @@ for the explicit boundary.
 These enhancements are implemented and covered by synthetic probes, but do not
 constitute full OMSI parity or in-game visual validation:
 
-- [x] Admit road vehicles and scheduled buses only from clear, off-screen
-  incoming endpoints; retain vehicles at visible unconnected ends and recycle
-  them only after those ends are hidden. Closed circuits and internal joins are
-  not spawn locations, and buses never fall back to mid-route spawning. Entry
-  is also gated on the endpoint being in the active tile window; vehicles are
-  hidden and paused when their current tile becomes inactive.
+- [x] Admit road vehicles on clear, off-screen interior positions across
+  connected road routes in the active tile window; connected internal lanes
+  and circuits are eligible, while isolated splines and terminal dead ends
+  are not. Scheduled buses remain endpoint-only. Retain vehicles at visible
+  unconnected route ends and recycle them only after those ends are hidden.
+  Reevaluate road candidates as tiles become active; vehicles are hidden and
+  paused when their current tile becomes inactive.
 - [x] Follow directed authored lanes and scenery junction paths, filter turns
   by vehicle turning radius, and apply bend-speed, acceleration, braking, and
   headway limits. Swept footprints make vehicles yield to the player, other AI,
-  static vehicles, and pedestrians; junction reservations age waiting
-  movements, while actors already on junction paths clear before new approaches
-  regardless of authored priority. Routine vehicle queue, spawn, unload, and
-  junction-entry logs are suppressed; a single stuck diagnostic is emitted
-  after 45 seconds without route progress, excluding detected red-signal waits.
+  static vehicles, and pedestrians; any part of a vehicle entering a junction
+  commits it to clear under physical swept-footprint checks, with reduced
+  lookahead headway until it exits. Junction reservations age waiting movements,
+  while committed actors clear before new approaches regardless of authored
+  priority. Before entering, a vehicle must claim the junction group
+  (scenery junction paths joined by connectors shorter than the vehicle):
+  it waits at the entry line while any vehicle inside or already admitted
+  would cross or merge into its swept path, so conflicting approaches never
+  meet inside the box; same-lane followers share the leader's claim. Claims
+  follow queue order: a vehicle cannot claim while an unclaimed leader is
+  still between it and the entry, and never waits on a claim held by a
+  vehicle queued behind it in its lane. A red
+  signal ahead of the entry releases an unused claim. Routine vehicle queue, spawn, unload, and
+  junction-entry logs are suppressed; a single stuck diagnostic, naming the
+  blocking constraint, the exact blocking vehicle or obstacle, and world
+  position, is emitted after 15 seconds without route progress, excluding
+  detected red-signal waits and queues behind a bus.
+  Following targets only leaders projected onto the vehicle's own path, so
+  vehicles in adjacent lanes or on roads straight ahead of a turn are ignored.
+  Moving in-lane leaders are handled by the damped following model rather than
+  the parked-obstacle lookahead, so followers no longer brake to a crawl behind
+  a moving car or stop short of a junction it is still driving through.
+  The F2 overlay marks those active stalled vehicles red, excluding inactive
+  tiles, route-end holding, and signal waits; deadlocked vehicles are removed
+  from active traffic and not recycled into the population. A stopped vehicle
+  is only treated as deadlocked when its chain of blockers ends in a cycle or
+  an unknown blocker; chains ending at moving traffic, a signal, an AI bus, or
+  the player bus are legitimate queues.
 - [x] Show the number of currently spawned map AI vehicles in the on-screen
   status HUD.
 - [x] Extend the F2 traffic overlay with vehicle and pedestrian behavior
   footprints, signal stop boxes colored by current permission, and sampled
-  junction-path reservations; the overlay log describes the color legend.
+  junction-path reservations; vehicle body boxes require drawable model
+  geometry and depth-test against the scene, while signal and reservation
+  diagnostics remain visible through objects. Deadlocked AI bodies are red,
+  junction actors blue, and ordinary AI bodies green. The overlay log describes
+  the color legend.
 - [x] Attach timetable departures to complete endpoint-matched bus routes,
   handle midnight rollover, skip missed trips, and partition departures across
   pool buses without assigning a trip twice.
@@ -641,7 +694,9 @@ constitute full OMSI parity or in-game visual validation:
 - [x] Move pedestrian actors on type-1 human paths, use parsed `[humangeom]`
   dimensions for proxy sizing and collision footprints, and stop pedestrians
   around occupied vehicle/human footprints. Configured `.hum` first-LOD models
-  render asynchronously; native skeletal animation remains open.
+  render asynchronously; a shader-driven walking gait follows actual route
+  movement. Model `[smoothskin]`/`[setbone]` records are recognized, but native
+  weighted skeletal animation and in-game visual validation remain open.
 - [x] Defer population decreases until actors are off-screen and admit
   preallocated actors only at clear off-screen route positions. Density
   interpolation and pool sizing remain provisional.
@@ -677,21 +732,27 @@ the outstanding implementation and validation tasks:
   ordering/fairness, and kill rules.
 - [x] **Maintain target population:** recycle preallocated vehicle entries when
   routes end or the target increases, up to the startup pool cap. Re-entry is
-  limited to clear, off-screen incoming endpoints; scheduled buses also wait
-  for their owned departure. Recycled actors reset route progress, speed, and
-  junction-wait state, and buses never spawn mid-route.
-- [ ] **Complete scheduled bus routes:** route candidates now follow timetable
-  spline sequences through the directed lane graph, with the previous seeded
-  route search retained as fallback. Recheck Cotterell's timetable/endpoint
+  limited to clear, off-screen connected road positions in active tiles;
+  scheduled buses remain limited to incoming endpoints and wait for their
+  owned departure. Recycled actors reset route progress, speed, and
+  junction-wait state.
+- [ ] **Complete scheduled bus routes:** route candidates now follow complete
+  timetable paths or the longest matching two-or-more-spline section from the
+  endpoint through the directed lane graph, with seeded route search retained.
+  Recheck Cotterell's timetable/endpoint
   mismatch, then validate departure ownership and multi-bus dispatch on a map
   with a complete endpoint-compatible timetable route.
 - [ ] **Complete traffic control:** verify SCO signal cycle origin, approach
   distance and stop-line placement; implement traffic-sign rules.
 - [~] **Improve junction control:** committed junction-path actors clear before
   new approaches; otherwise authored path/group priorities precede wait age,
-  with wait aging fairly ordering equal-priority movements. Synthetic
-  regressions cover separation, progress, junction clearing, and priority-over-
-  wait. Validate native right-of-way behavior and deadlock recovery at
+  with wait aging fairly ordering equal-priority movements. Before claiming a
+  junction, a vehicle on a lower-priority approach spline gives way to
+  higher-priority traffic that would cross or merge into its movement before
+  it clears, and releases an unused claim if such traffic appears; priority
+  traffic ignores that unused claim. Synthetic
+  regressions cover separation, progress, junction clearing, priority-over-
+  wait, and main-road priority at T-junctions. Validate native right-of-way behavior and deadlock recovery at
   representative live junctions.
 - [ ] **Add advanced vehicle behavior:** implement safe overtaking and lane
   changes, then extend swept-footprint handling to articulated vehicles.

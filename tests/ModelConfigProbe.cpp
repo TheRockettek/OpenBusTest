@@ -574,6 +574,31 @@ int main() {
         std::cerr << "lax material or animation records were not recovered\n";
         return 1;
     }
+    const std::filesystem::path setBoneConfigPath = root / "setbone.cfg";
+    std::ofstream setBoneConfig(setBoneConfigPath);
+    setBoneConfig << "[mesh]\ndisplay.obj\n"
+                     "[smoothskin]\n"
+                     "[setbone]\nBone.001\n0\n"
+                     "[setbone]\nBone.002\n1\n"
+                     "[mesh]\ndisplay.obj\n";
+    setBoneConfig.close();
+    const ModelConfig setBoneResult =
+        loadModelConfig(setBoneConfigPath, root, ModelConfigKind::Bus, variables);
+    if (setBoneResult.diagnostics.hasErrors() || !setBoneResult.diagnostics.entries.empty() ||
+        setBoneResult.parts.size() != 2) {
+        std::cerr << "smoothskin/setbone records were not recognized and consumed\n";
+        return 1;
+    }
+    const std::filesystem::path invalidSetBoneConfigPath = root / "invalid_setbone.cfg";
+    std::ofstream invalidSetBoneConfig(invalidSetBoneConfigPath);
+    invalidSetBoneConfig << "[mesh]\ndisplay.obj\n[setbone]\nBone.001\ninvalid\n";
+    invalidSetBoneConfig.close();
+    const ModelConfig invalidSetBoneResult =
+        loadModelConfig(invalidSetBoneConfigPath, root, ModelConfigKind::Bus, variables);
+    if (!invalidSetBoneResult.diagnostics.hasErrors()) {
+        std::cerr << "invalid setbone index was not diagnosed\n";
+        return 1;
+    }
     openbus::probe::removeProbeDirectory(root);
 
     if (result.diagnostics.hasErrors() || shadowMarkerWarned || result.parts.size() != 1 ||

@@ -39,8 +39,7 @@ std::filesystem::path modelRootFor(const std::filesystem::path& modelConfigPath)
 
 std::shared_ptr<const SharedVehicleDefinition>
 sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
-                        const std::filesystem::path& modelConfigPath,
-                        VehicleFileKind configKind) {
+                        const std::filesystem::path& modelConfigPath, VehicleFileKind configKind) {
     static std::mutex cacheMutex;
     static std::unordered_map<std::string, std::shared_ptr<const SharedVehicleDefinition>> cache;
     const std::string key = normalizedConfigPath(busConfigPath) + "|" +
@@ -61,13 +60,12 @@ sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
     definition->vehicleConfiguration = loadVehicleConfig(busConfigPath, configKind);
 
     openbus::scripting::Vehicle modelVariables;
-    definition->modelConfiguration = configKind == VehicleFileKind::Bus
-                                         ? openbus::rendering::loadBusModel(
-                                               modelConfigPath, definition->modelRoot,
+    definition->modelConfiguration =
+        configKind == VehicleFileKind::Bus
+            ? openbus::rendering::loadBusModel(modelConfigPath, definition->modelRoot,
                                                modelVariables)
-                                         : openbus::rendering::loadVehicleModel(
-                                               modelConfigPath, definition->modelRoot,
-                                               modelVariables);
+            : openbus::rendering::loadVehicleModel(modelConfigPath, definition->modelRoot,
+                                                   modelVariables);
     for (const auto& [name, value] : modelVariables.numericValues()) {
         (void)value;
         definition->modelNumericVariables.push_back(name);

@@ -136,9 +136,8 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
 }
 
 void Vehicle::sortTransparentBatch(Batch& batch) {
-    const std::vector<std::size_t> triangleOrder =
-        openbus::app::vehicle::transparentTriangleOrder(
-            batch.vertices, openbus::rendering::modelViewMatrix());
+    const std::vector<std::size_t> triangleOrder = openbus::app::vehicle::transparentTriangleOrder(
+        batch.vertices, openbus::rendering::modelViewMatrix());
     if (triangleOrder.empty()) {
         return;
     }

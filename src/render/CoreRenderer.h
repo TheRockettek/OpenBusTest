@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace openbus::rendering {
@@ -76,6 +77,12 @@ struct ModelMaterial {
     float texcoordOffsetY = 0.0f;
 };
 
+struct HumanGaitParameters {
+    double phaseRadians = 0.0;
+    double weight = 0.0;
+    double heightMeters = 0.0;
+};
+
 bool initializeCoreRenderer();
 void shutdownCoreRenderer();
 void invalidateTextureBindings();
@@ -91,7 +98,8 @@ void setFrameTriangleCountReflectionPass(bool reflectionPass);
 
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
                     const std::array<double, 3>& color, double alpha, int alphaMode,
-                    bool cullBackFaces = false);
+                    bool cullBackFaces = false,
+                    std::optional<HumanGaitParameters> humanGait = std::nullopt);
 void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexCount,
                            const ModelMaterial& material, const std::array<double, 3>& color,
                            double alpha, int alphaMode, bool cullBackFaces = false);

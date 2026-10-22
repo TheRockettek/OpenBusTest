@@ -93,6 +93,10 @@ struct Uniforms {
     GLint diffuseLight = -1;
     GLint texcoordOffset = -1;
     GLint flipTextureY = -1;
+    GLint humanGaitEnabled = -1;
+    GLint humanGaitPhase = -1;
+    GLint humanGaitWeight = -1;
+    GLint humanGaitHeight = -1;
     std::array<GLint, MAX_MATERIAL_TEXTURES> materialFlipTextureY = {};
     GLint useMaterialColors = -1;
     GLint materialColors = -1;
@@ -190,11 +194,31 @@ uniform mat4 uProjection;
 uniform mat4 uModelView;
 uniform vec2 uTexcoordOffset;
 uniform bool uFlipModelTextureY;
+uniform bool uHumanGaitEnabled;
+uniform float uHumanGaitPhase;
+uniform float uHumanGaitWeight;
+uniform float uHumanGaitHeight;
 out vec3 vTexCoord;
 out vec3 vNormal;
 out vec3 vViewPosition;
 void main() {
-    vec4 viewPosition = uModelView * vec4(aPosition, 1.0);
+    vec3 position = aPosition;
+    if (uHumanGaitEnabled && uHumanGaitWeight > 0.0 && uHumanGaitHeight > 0.0) {
+        const float pi = 3.14159265;
+        float heightFraction = clamp(position.z / uHumanGaitHeight, 0.0, 1.0);
+        float side = position.x < 0.0 ? -1.0 : 1.0;
+        float lateralWeight = smoothstep(0.025, 0.09, abs(position.x));
+        float legWeight = (1.0 - smoothstep(0.36, 0.58, heightFraction)) * lateralWeight;
+        float armWeight = smoothstep(0.56, 0.76, heightFraction) * lateralWeight;
+        float sidePhase = uHumanGaitPhase + (side < 0.0 ? pi : 0.0);
+        float legSwing = sin(sidePhase) * uHumanGaitWeight;
+        position.y += legSwing * 0.12 * legWeight;
+        position.z += max(0.0, cos(sidePhase)) * 0.045 * legWeight * uHumanGaitWeight;
+        position.y -= legSwing * 0.075 * armWeight;
+        position.z += 0.018 * (0.5 - 0.5 * cos(2.0 * uHumanGaitPhase)) *
+                      smoothstep(0.08, 0.28, heightFraction) * uHumanGaitWeight;
+    }
+    vec4 viewPosition = uModelView * vec4(position, 1.0);
     float textureY = uFlipModelTextureY ? 1.0 - aTexCoord.y : aTexCoord.y;
     vTexCoord = vec3(aTexCoord.x + uTexcoordOffset.x, textureY + uTexcoordOffset.y,
                      aTexCoord.z);
@@ -604,6 +628,10 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.diffuseLight = pglGetUniformLocation(program, "uDiffuseLight");
         uniforms.texcoordOffset = pglGetUniformLocation(program, "uTexcoordOffset");
         uniforms.flipTextureY = pglGetUniformLocation(program, "uFlipModelTextureY");
+        uniforms.humanGaitEnabled = pglGetUniformLocation(program, "uHumanGaitEnabled");
+        uniforms.humanGaitPhase = pglGetUniformLocation(program, "uHumanGaitPhase");
+        uniforms.humanGaitWeight = pglGetUniformLocation(program, "uHumanGaitWeight");
+        uniforms.humanGaitHeight = pglGetUniformLocation(program, "uHumanGaitHeight");
         uniforms.useMaterialColors = pglGetUniformLocation(program, "uUseMaterialColors");
         uniforms.materialColors = pglGetUniformLocation(program, "uMaterialColors");
         uniforms.useMaterialTextures = pglGetUniformLocation(program, "uUseMaterialTextures");
@@ -1077,7 +1105,7 @@ void configureModelAlphaState(int alphaMode, bool noZwrite) {
 
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
                     const std::array<double, 3>& color, double alpha, int alphaMode,
-                    bool cullBackFaces) {
+                    bool cullBackFaces, std::optional<HumanGaitParameters> humanGait) {
     TraceScope trace("render", "CoreRenderer::drawModelBatch");
     if (modelProgram == 0 || buffer == 0 || vertexCount == 0) {
         return;
@@ -1086,6 +1114,15 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     uploadMatrices(modelUniforms);
     uploadModelUniforms(material, color, alpha, alphaMode);
     pglUniform1i(modelUniforms.cullBackFaces, cullBackFaces && !modelViewReversesWinding() ? 1 : 0);
+    const bool animateHuman =
+        humanGait.has_value() && humanGait->weight > 0.0 && humanGait->heightMeters > 0.0;
+    pglUniform1i(modelUniforms.humanGaitEnabled, animateHuman ? 1 : 0);
+    if (animateHuman) {
+        pglUniform1f(modelUniforms.humanGaitPhase, static_cast<GLfloat>(humanGait->phaseRadians));
+        pglUniform1f(modelUniforms.humanGaitWeight,
+                     static_cast<GLfloat>(std::clamp(humanGait->weight, 0.0, 1.0)));
+        pglUniform1f(modelUniforms.humanGaitHeight, static_cast<GLfloat>(humanGait->heightMeters));
+    }
     selectTextureUnit(GL_TEXTURE0);
     if (material.textureArray) {
         selectTextureUnit(GL_TEXTURE0 + 7);

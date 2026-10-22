@@ -406,15 +406,12 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         signalProgram->lights.push_back(light.phases);
         signalProgram->approachDistancesMeters.push_back(light.approachDistanceMeters);
     }
-    const auto addControlPoint = [&](double rawLightIndex, double timeSeconds,
-                                     double ifRequest,
-                                     std::optional<double> jumpToSeconds,
-                                     const char* keyword) {
+    const auto addControlPoint = [&](double rawLightIndex, double timeSeconds, double ifRequest,
+                                     std::optional<double> jumpToSeconds, const char* keyword) {
         if (!std::isfinite(rawLightIndex) || rawLightIndex < 0.0 ||
             std::floor(rawLightIndex) != rawLightIndex ||
             rawLightIndex >= static_cast<double>(result.trafficLights.size()) ||
-            !std::isfinite(timeSeconds) || timeSeconds < 0.0 ||
-            !std::isfinite(ifRequest) ||
+            !std::isfinite(timeSeconds) || timeSeconds < 0.0 || !std::isfinite(ifRequest) ||
             (jumpToSeconds.has_value() &&
              (!std::isfinite(*jumpToSeconds) || *jumpToSeconds < 0.0))) {
             result.diagnostics.warning(
@@ -422,8 +419,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             return;
         }
         signalProgram->controlPoints.push_back(
-            {static_cast<std::size_t>(rawLightIndex), timeSeconds, ifRequest > 0.5,
-             jumpToSeconds});
+            {static_cast<std::size_t>(rawLightIndex), timeSeconds, ifRequest > 0.5, jumpToSeconds});
     };
     for (const std::array<double, 3>& stop : result.trafficLightStops) {
         addControlPoint(stop[0], stop[1], stop[2], std::nullopt, "traffic_light_stop");
@@ -432,8 +428,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         addControlPoint(jump[0], jump[1], jump[2], jump[3], "traffic_light_jump");
     }
     const bool signalProgramValid =
-        !result.trafficLights.empty() &&
-        openbus::map::mapTrafficSignalProgramValid(*signalProgram);
+        !result.trafficLights.empty() && openbus::map::mapTrafficSignalProgramValid(*signalProgram);
     if (!signalProgramValid &&
         (!result.trafficLightStops.empty() || !result.trafficLightJumps.empty())) {
         result.diagnostics.warning(0, "traffic_light_jump",

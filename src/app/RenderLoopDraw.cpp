@@ -875,7 +875,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                     throw std::runtime_error("Cannot sample a pedestrian render pose");
                 }
                 mapRenderer_->drawHumanTrafficActor(std::filesystem::path(human.actor.modelPath),
-                                                    *pose);
+                                                    *pose, human.gait.phaseRadians,
+                                                    human.gait.weight);
             }
         } else if (!captureMode_) {
             glEnable(GL_DEPTH_TEST);
@@ -1094,6 +1095,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         }
 
         std::vector<openbus::rendering::PrimitiveVertex> behaviorVertices;
+        std::vector<openbus::rendering::PrimitiveVertex> vehicleBodyVertices;
         std::vector<openbus::map::MapTrafficPose> renderedSignalStops;
         const auto appendSignalStopBox = [&](const openbus::map::MapTrafficActor& actor) {
             const auto stop =
@@ -1122,7 +1124,8 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                      std::max(actor.widthMeters + 1.0, 2.5), 0.12, color);
         };
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-            if (vehicle->followsMapTrafficRoute || vehicle->mapTrafficRouteFinished) {
+            if (vehicle->followsMapTrafficRoute || vehicle->mapTrafficRouteFinished ||
+                !vehicle->loaded || vehicle->displayLists.empty()) {
                 continue;
             }
             openbus::map::MapTrafficPose pose;
@@ -1136,7 +1139,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                     (90.0 - vehicle->placement.yawDegrees) * std::numbers::pi / 180.0;
             }
             if (openbus::map::mapTrafficPoseOnActiveTile(pose, activeTiles)) {
-                appendTrafficBehaviorBox(behaviorVertices, pose, vehicle->trafficLengthMeters,
+                std::vector<openbus::rendering::PrimitiveVertex>& vertices =
+                    vehicle.get() == playerVehicle_ ? behaviorVertices : vehicleBodyVertices;
+                appendTrafficBehaviorBox(vertices, pose, vehicle->trafficLengthMeters,
                                          vehicle->trafficWidthMeters, vehicle->trafficHeightMeters,
                                          {0.95F, 0.95F, 0.95F});
             }
@@ -1153,10 +1158,14 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             }
             const bool onJunction = openbus::map::mapTrafficRoutePositionOnJunctionPath(
                 state.actor.route, state.actor.distanceMeters);
-            appendTrafficBehaviorBox(behaviorVertices, *pose, state.actor.lengthMeters,
-                                     state.actor.widthMeters, state.vehicle->trafficHeightMeters,
-                                     onJunction ? std::array<float, 3>{0.15F, 0.45F, 1.0F}
-                                                : std::array<float, 3>{0.15F, 1.0F, 0.2F});
+            if (state.vehicle->loaded && !state.vehicle->displayLists.empty()) {
+                appendTrafficBehaviorBox(vehicleBodyVertices, *pose, state.actor.lengthMeters,
+                                         state.actor.widthMeters,
+                                         state.vehicle->trafficHeightMeters,
+                                         state.deadlocked ? std::array<float, 3>{1.0F, 0.1F, 0.1F}
+                                         : onJunction ? std::array<float, 3>{0.15F, 0.45F, 1.0F}
+                                                      : std::array<float, 3>{0.15F, 1.0F, 0.2F});
+            }
             appendSignalStopBox(state.actor);
 
             const double reservationHorizon = state.actor.speedMetersPerSecond * 3.0;
@@ -1187,10 +1196,24 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 !openbus::map::mapTrafficPoseOnActiveTile(*pose, activeTiles)) {
                 continue;
             }
-            appendTrafficBehaviorBox(behaviorVertices, *pose, human.widthMeters * 1.25,
-                                     human.widthMeters * 2.1, human.heightMeters,
+            appendTrafficBehaviorBox(behaviorVertices, *pose, human.feetDistanceMeters * 1.25,
+                                     human.feetDistanceMeters * 2.1, human.heightMeters,
                                      {1.0F, 0.25F, 0.9F});
             appendSignalStopBox(human.actor);
+        }
+        if (!vehicleBodyVertices.empty()) {
+            const GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+            GLboolean depthWriteWasEnabled = GL_TRUE;
+            glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+            glEnable(GL_DEPTH_TEST);
+            glDepthMask(GL_FALSE);
+            openbus::rendering::drawStaticPrimitives(trafficBehaviorDebugBuffer_,
+                                                     vehicleBodyVertices, GL_LINES, 1.5F,
+                                                     ++trafficBehaviorDebugRevision_);
+            glDepthMask(depthWriteWasEnabled);
+            if (!depthWasEnabled) {
+                glDisable(GL_DEPTH_TEST);
+            }
         }
         if (!behaviorVertices.empty()) {
             const GLboolean depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);

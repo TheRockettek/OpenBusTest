@@ -177,8 +177,8 @@ std::optional<openbus::map::MapTrafficRoute> MapRenderer::buildTrafficRoute(int 
     return impl_->trafficRouteNetwork.buildRoute(splineId);
 }
 
-std::optional<openbus::map::MapTrafficRoute> MapRenderer::buildTrafficRoute(
-    int splineId, int pathTypeCode) const {
+std::optional<openbus::map::MapTrafficRoute>
+MapRenderer::buildTrafficRoute(int splineId, int pathTypeCode) const {
     if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
         return impl_->roadTrafficRouteNetwork.buildRoute(splineId);
     }
@@ -225,14 +225,13 @@ MapRenderer::trafficSplineEndpointStatus(int splineId, int pathTypeCode) const {
     return std::nullopt;
 }
 
-std::vector<openbus::map::MapSplinePathOffset> MapRenderer::trafficSplinePathOffsets(
-    int splineId, int pathTypeCode) const {
-    const auto* pathOffsets =
-        pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD
-            ? &impl_->roadTrafficSplinePathOffsets
-            : pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN
-                  ? &impl_->humanTrafficSplinePathOffsets
-                  : nullptr;
+std::vector<openbus::map::MapSplinePathOffset>
+MapRenderer::trafficSplinePathOffsets(int splineId, int pathTypeCode) const {
+    const auto* pathOffsets = pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD
+                                  ? &impl_->roadTrafficSplinePathOffsets
+                              : pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN
+                                  ? &impl_->humanTrafficSplinePathOffsets
+                                  : nullptr;
     if (pathOffsets == nullptr) {
         return {};
     }
@@ -249,8 +248,7 @@ std::optional<openbus::map::MapTrafficActor>
 MapRenderer::createTrafficActor(int splineId, std::string modelPath, double speedMetersPerSecond,
                                 double laneOffsetMagnitudeMeters,
                                 std::optional<std::string> driverModelPath,
-                                std::optional<int> pathTypeCode,
-                                std::size_t laneSelector) const {
+                                std::optional<int> pathTypeCode, std::size_t laneSelector) const {
     std::optional<openbus::map::MapTrafficRoute> route;
     if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
         route = buildDrivingRoute(splineId, laneSelector);
@@ -268,8 +266,7 @@ MapRenderer::createTrafficActor(int splineId, std::string modelPath, double spee
 }
 
 void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfigPath) {
-    const std::string cacheKey =
-        humanConfigPath.lexically_normal().generic_string();
+    const std::string cacheKey = humanConfigPath.lexically_normal().generic_string();
     if (impl_->humanTrafficModels.contains(cacheKey) ||
         impl_->pendingHumanTrafficModels.contains(cacheKey) ||
         impl_->failedHumanTrafficModels.contains(cacheKey)) {
@@ -292,29 +289,27 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
             throw std::runtime_error("Human traffic configuration is invalid: " +
                                      humanConfigPath.string());
         }
-        const auto geometry = std::find_if(
-            humanConfig.numericRecords.begin(), humanConfig.numericRecords.end(),
-            [](const openbus::config::HumanNumericRecord& record) {
-                return record.keyword == "humangeom" && record.valid &&
-                       record.values.size() == 2 && std::isfinite(record.values[0]) &&
-                       record.values[0] > 0.0 && std::isfinite(record.values[1]) &&
-                       record.values[1] > 0.0;
-            });
+        const auto geometry =
+            std::find_if(humanConfig.numericRecords.begin(), humanConfig.numericRecords.end(),
+                         [](const openbus::config::HumanNumericRecord& record) {
+                             return record.keyword == "humangeom" && record.valid &&
+                                    record.values.size() == 2 && std::isfinite(record.values[0]) &&
+                                    record.values[0] > 0.0 && std::isfinite(record.values[1]) &&
+                                    record.values[1] > 0.0;
+                         });
         if (geometry == humanConfig.numericRecords.end()) {
             throw std::runtime_error("Human traffic configuration has no valid [humangeom]: " +
                                      humanConfigPath.string());
         }
         const std::filesystem::path modelConfigPath =
-            openbus::assets::resolveReferencedPath(humanConfigPath,
-                                                   humanConfig.modelConfigPath);
+            openbus::assets::resolveReferencedPath(humanConfigPath, humanConfig.modelConfigPath);
         if (!std::filesystem::is_regular_file(modelConfigPath)) {
             throw std::runtime_error("Human traffic model configuration is missing: " +
                                      modelConfigPath.string());
         }
         openbus::scripting::SceneryObject variables;
-        ModelConfig configuration = loadModelConfig(
-            modelConfigPath, modelConfigPath.parent_path(), ModelConfigKind::SceneryObject,
-            variables);
+        ModelConfig configuration = loadModelConfig(modelConfigPath, modelConfigPath.parent_path(),
+                                                    ModelConfigKind::SceneryObject, variables);
         if (configuration.diagnostics.hasErrors()) {
             throw std::runtime_error("Human traffic model configuration is invalid: " +
                                      modelConfigPath.string());
@@ -326,8 +321,8 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
             throw std::runtime_error("Human traffic model has no first-LOD meshes: " +
                                      modelConfigPath.string());
         }
-        return Impl::HumanModelConfiguration{
-            modelConfigPath, std::move(configuration), {geometry->values[0], geometry->values[1]}};
+        return Impl::HumanModelConfiguration{modelConfigPath, std::move(configuration),
+                                             geometry->values[1]};
     });
     impl_->pendingHumanTrafficModels.emplace(cacheKey, std::move(pending));
 }
@@ -367,30 +362,26 @@ bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey) const
         }
     }
     const std::filesystem::path humanConfigPath = pendingModel.humanConfigPath;
-    Impl::HumanModelConfiguration configuration =
-        std::move(*pendingModel.configuration);
+    Impl::HumanModelConfiguration configuration = std::move(*pendingModel.configuration);
     impl_->pendingHumanTrafficModels.erase(pending);
     loadHumanTrafficModelNow(humanConfigPath, configuration.modelConfigPath,
-                             configuration.configuration, configuration.geometry);
+                             configuration.configuration, configuration.heightMeters);
     return impl_->humanTrafficModels.contains(cacheKey);
 }
 
-void MapRenderer::loadHumanTrafficModelNow(
-    const std::filesystem::path& humanConfigPath,
-    const std::filesystem::path& modelConfigPath,
-    const ModelConfig& configuration,
-    const std::array<double, 2>& geometry) const {
-    const std::string cacheKey =
-        humanConfigPath.lexically_normal().generic_string();
+void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanConfigPath,
+                                           const std::filesystem::path& modelConfigPath,
+                                           const ModelConfig& configuration,
+                                           double heightMeters) const {
+    const std::string cacheKey = humanConfigPath.lexically_normal().generic_string();
     if (impl_->humanTrafficModels.contains(cacheKey)) {
         return;
     }
     const std::filesystem::path modelRoot = modelConfigPath.parent_path();
     for (const ConfigurationDiagnostic& diagnostic : configuration.diagnostics.entries) {
         if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error) {
-            gameLog.Log("Human model configuration error: " +
-                        modelConfigPath.generic_string() + " line=" +
-                        std::to_string(diagnostic.line) + " [" + diagnostic.keyword +
+            gameLog.Log("Human model configuration error: " + modelConfigPath.generic_string() +
+                        " line=" + std::to_string(diagnostic.line) + " [" + diagnostic.keyword +
                         "] " + diagnostic.message);
         }
     }
@@ -404,22 +395,21 @@ void MapRenderer::loadHumanTrafficModelNow(
         std::shared_ptr<ParsedObj> mesh;
     };
     std::vector<ParsedHumanPart> parsedParts;
-    std::array<double, 3> minimum = {
-        std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity(),
-        std::numeric_limits<double>::infinity()};
-    std::array<double, 3> maximum = {
-        -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(),
-        -std::numeric_limits<double>::infinity()};
+    std::array<double, 3> minimum = {std::numeric_limits<double>::infinity(),
+                                     std::numeric_limits<double>::infinity(),
+                                     std::numeric_limits<double>::infinity()};
+    std::array<double, 3> maximum = {-std::numeric_limits<double>::infinity(),
+                                     -std::numeric_limits<double>::infinity(),
+                                     -std::numeric_limits<double>::infinity()};
     for (const ModelPart& part : configuration.parts) {
         if (part.lodIndex > 0 || part.objPath.empty()) {
             continue;
         }
         try {
             std::string extension = part.objPath.extension().string();
-            std::transform(extension.begin(), extension.end(), extension.begin(),
-                           [](unsigned char value) {
-                               return static_cast<char>(std::tolower(value));
-                           });
+            std::transform(
+                extension.begin(), extension.end(), extension.begin(),
+                [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
             std::shared_ptr<ParsedObj> mesh;
             if (extension == ".o3d") {
                 mesh = assetRequests_->requestObj(part.objPath, part.bundleEntry).get();
@@ -442,12 +432,12 @@ void MapRenderer::loadHumanTrafficModelNow(
             }
             parsedParts.push_back({&part, std::move(mesh)});
         } catch (const std::exception& error) {
-            gameLog.Log("Could not load human model mesh " + part.objPath.generic_string() +
-                        ": " + error.what());
+            gameLog.Log("Could not load human model mesh " + part.objPath.generic_string() + ": " +
+                        error.what());
         }
     }
-    if (parsedParts.empty() || !std::isfinite(minimum[0]) ||
-        !std::isfinite(minimum[1]) || !std::isfinite(minimum[2])) {
+    if (parsedParts.empty() || !std::isfinite(minimum[0]) || !std::isfinite(minimum[1]) ||
+        !std::isfinite(minimum[2])) {
         throw std::runtime_error("Human traffic model has no loadable mesh: " +
                                  modelConfigPath.string());
     }
@@ -457,15 +447,30 @@ void MapRenderer::loadHumanTrafficModelNow(
 
     const std::array<double, 3> extent = {maximum[0] - minimum[0], maximum[1] - minimum[1],
                                           maximum[2] - minimum[2]};
-    const double horizontalScale =
-        extent[0] > 1.0e-6 ? geometry[0] / extent[0] : 1.0;
-    const double verticalScale =
-        extent[2] > 1.0e-6 ? geometry[1] / extent[2] : 1.0;
-    const std::array<double, 2> horizontalCenter = {
-        (minimum[0] + maximum[0]) * 0.5, (minimum[1] + maximum[1]) * 0.5};
+    if (!std::isfinite(heightMeters) || heightMeters <= 0.0 || extent[2] <= 1.0e-6) {
+        throw std::runtime_error("Human traffic model has invalid height geometry: " +
+                                 modelConfigPath.string());
+    }
+    const double modelScale = heightMeters / extent[2];
+    const std::array<double, 2> horizontalCenter = {(minimum[0] + maximum[0]) * 0.5,
+                                                    (minimum[1] + maximum[1]) * 0.5};
     std::vector<Impl::ModelBatch> batches;
     std::vector<std::filesystem::path> texturePaths;
     std::vector<std::shared_future<std::shared_ptr<Image>>> textureImages;
+    const auto drainGlErrors = [] {
+        GLenum firstError = GL_NO_ERROR;
+        for (;;) {
+            const GLenum error = glGetError();
+            if (error == GL_NO_ERROR) {
+                break;
+            }
+            if (firstError == GL_NO_ERROR) {
+                firstError = error;
+            }
+        }
+        return firstError;
+    };
+    bool loggedPriorUploadError = false;
     for (const ParsedHumanPart& parsedPart : parsedParts) {
         const ModelPart& part = *parsedPart.part;
         std::unordered_map<int, std::vector<ModelVertex>> verticesByMaterial;
@@ -481,21 +486,18 @@ void MapRenderer::loadHumanTrafficModelNow(
                 if (!validIndex(index.position, parsedPart.mesh->positions.size())) {
                     continue;
                 }
-                const std::size_t positionIndex =
-                    static_cast<std::size_t>(index.position - 1);
-                const ObjPosition& sourcePosition =
-                    parsedPart.mesh->positions[positionIndex];
+                const std::size_t positionIndex = static_cast<std::size_t>(index.position - 1);
+                const ObjPosition& sourcePosition = parsedPart.mesh->positions[positionIndex];
                 const std::array<double, 4> vertexColor =
                     positionIndex < parsedPart.mesh->vertexColors.size()
                         ? parsedPart.mesh->vertexColors[positionIndex]
                         : std::array<double, 4>{1.0, 1.0, 1.0, 1.0};
                 std::array<double, 3> normal = {0.0, 0.0, 1.0};
                 if (validIndex(index.normal, parsedPart.mesh->normals.size())) {
-                    const ObjNormal& sourceNormal = parsedPart.mesh->normals[
-                        static_cast<std::size_t>(index.normal - 1)];
+                    const ObjNormal& sourceNormal =
+                        parsedPart.mesh->normals[static_cast<std::size_t>(index.normal - 1)];
                     normal = {sourceNormal.x, sourceNormal.y, sourceNormal.z};
-                    const double normalLength =
-                        std::hypot(normal[0], normal[1], normal[2]);
+                    const double normalLength = std::hypot(normal[0], normal[1], normal[2]);
                     if (normalLength > 1.0e-8) {
                         for (double& component : normal) {
                             component /= normalLength;
@@ -505,18 +507,16 @@ void MapRenderer::loadHumanTrafficModelNow(
                 float u = 0.0F;
                 float v = 0.0F;
                 if (validIndex(index.texCoord, parsedPart.mesh->texCoords.size())) {
-                    const ObjTexCoord& coordinate = parsedPart.mesh->texCoords[
-                        static_cast<std::size_t>(index.texCoord - 1)];
+                    const ObjTexCoord& coordinate =
+                        parsedPart.mesh->texCoords[static_cast<std::size_t>(index.texCoord - 1)];
                     u = static_cast<float>(coordinate.u);
                     v = static_cast<float>(1.0 - coordinate.v);
                 }
                 verticesByMaterial[materialIndex].push_back(
-                    {static_cast<float>((sourcePosition.x - horizontalCenter[0]) *
-                                        horizontalScale),
-                     static_cast<float>((sourcePosition.y - horizontalCenter[1]) *
-                                        horizontalScale),
-                     static_cast<float>((sourcePosition.z - minimum[2]) * verticalScale), u, v,
-                     0.0F, static_cast<float>(normal[0]), static_cast<float>(normal[1]),
+                    {static_cast<float>((sourcePosition.x - horizontalCenter[0]) * modelScale),
+                     static_cast<float>((sourcePosition.y - horizontalCenter[1]) * modelScale),
+                     static_cast<float>((sourcePosition.z - minimum[2]) * modelScale), u, v, 0.0F,
+                     static_cast<float>(normal[0]), static_cast<float>(normal[1]),
                      static_cast<float>(normal[2]), static_cast<float>(vertexColor[0]),
                      static_cast<float>(vertexColor[1]), static_cast<float>(vertexColor[2]),
                      static_cast<float>(vertexColor[3])});
@@ -526,24 +526,23 @@ void MapRenderer::loadHumanTrafficModelNow(
             if (vertices.empty()) {
                 continue;
             }
-            const auto sourceMaterial = std::find_if(
-                parsedPart.mesh->materials.begin(), parsedPart.mesh->materials.end(),
-                [materialIndex](const auto& item) {
-                    return item.second.materialIndex == materialIndex;
-                });
+            const auto sourceMaterial =
+                std::find_if(parsedPart.mesh->materials.begin(), parsedPart.mesh->materials.end(),
+                             [materialIndex](const auto& item) {
+                                 return item.second.materialIndex == materialIndex;
+                             });
             const ModelMaterialState* materialState = nullptr;
-            const auto state = std::find_if(
-                part.materialStatesInOrder.begin(), part.materialStatesInOrder.end(),
-                [materialIndex](const ModelMaterialState& item) {
-                    return item.materialIndex == materialIndex;
-                });
+            const auto state =
+                std::find_if(part.materialStatesInOrder.begin(), part.materialStatesInOrder.end(),
+                             [materialIndex](const ModelMaterialState& item) {
+                                 return item.materialIndex == materialIndex;
+                             });
             if (state != part.materialStatesInOrder.end()) {
                 materialState = &*state;
             }
-            std::string textureName =
-                sourceMaterial == parsedPart.mesh->materials.end()
-                    ? std::string{}
-                    : sourceMaterial->second.textureName;
+            std::string textureName = sourceMaterial == parsedPart.mesh->materials.end()
+                                          ? std::string{}
+                                          : sourceMaterial->second.textureName;
             if (materialState != nullptr && !materialState->textureName.empty()) {
                 textureName = materialState->textureName;
             }
@@ -583,8 +582,7 @@ void MapRenderer::loadHumanTrafficModelNow(
                 findSceneryTexture(modelRoot, modelRoot, impl_->omsiRoot, textureName);
             std::shared_future<std::shared_ptr<Image>> textureImage;
             if (!texturePath.empty()) {
-                const std::string textureKey =
-                    texturePath.lexically_normal().generic_string();
+                const std::string textureKey = texturePath.lexically_normal().generic_string();
                 auto texture = impl_->dynamicSceneryTextures.find(textureKey);
                 if (texture != impl_->dynamicSceneryTextures.end()) {
                     batch.material.texture = texture->second;
@@ -592,34 +590,45 @@ void MapRenderer::loadHumanTrafficModelNow(
                 } else {
                     auto request = impl_->humanTextureRequests.find(textureKey);
                     if (request == impl_->humanTextureRequests.end()) {
-                        textureImage = assetRequests_->submit([texturePath] {
-                            auto image = std::make_shared<Image>();
-                            if (!TextureLoader::readImage(texturePath, *image)) {
-                                throw std::runtime_error("Could not decode human model texture: " +
-                                                         texturePath.string());
-                            }
-                            return image;
-                        }).share();
-                        request = impl_->humanTextureRequests
-                                      .emplace(textureKey, std::move(textureImage))
-                                      .first;
+                        textureImage = assetRequests_
+                                           ->submit([texturePath] {
+                                               auto image = std::make_shared<Image>();
+                                               if (!TextureLoader::readImage(texturePath, *image)) {
+                                                   throw std::runtime_error(
+                                                       "Could not decode human model texture: " +
+                                                       texturePath.string());
+                                               }
+                                               return image;
+                                           })
+                                           .share();
+                        request =
+                            impl_->humanTextureRequests.emplace(textureKey, std::move(textureImage))
+                                .first;
                     }
                     textureImage = request->second;
                 }
             } else if (!textureName.empty()) {
                 gameLog.Log("Human model texture was not found: " + textureName);
             }
+            const GLenum priorGlError = drainGlErrors();
+            if (priorGlError != GL_NO_ERROR && !loggedPriorUploadError) {
+                gameLog.Log("OpenGL error predates human mesh upload; error=" +
+                            std::to_string(priorGlError));
+                loggedPriorUploadError = true;
+            }
             pglGenBuffers(1, &batch.buffer);
             pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
             pglBufferData(GL_ARRAY_BUFFER,
                           static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
                           vertices.data(), GL_STATIC_DRAW);
-            if (batch.buffer == 0 || glGetError() != GL_NO_ERROR) {
+            const GLenum uploadError = drainGlErrors();
+            if (batch.buffer == 0 || uploadError != GL_NO_ERROR) {
                 if (batch.buffer != 0) {
                     pglDeleteBuffers(1, &batch.buffer);
                 }
-                gameLog.Log("Could not upload human model mesh: " +
-                            modelConfigPath.generic_string());
+                gameLog.Log("Could not upload human model mesh '" + part.objPath.generic_string() +
+                            "', material=" + std::to_string(materialIndex) +
+                            ", OpenGL error=" + std::to_string(uploadError));
                 continue;
             }
             texturePaths.push_back(texturePath);
@@ -636,6 +645,7 @@ void MapRenderer::loadHumanTrafficModelNow(
     asset.batchIndexes.reserve(batches.size());
     asset.texturePaths = std::move(texturePaths);
     asset.textureImages = std::move(textureImages);
+    asset.heightMeters = heightMeters;
     impl_->sceneryBatches.reserve(impl_->sceneryBatches.size() + batches.size());
     for (Impl::ModelBatch& batch : batches) {
         asset.batchIndexes.push_back(impl_->sceneryBatches.size());
@@ -645,10 +655,23 @@ void MapRenderer::loadHumanTrafficModelNow(
 }
 
 void MapRenderer::updateTrafficSignalControllers(
-    const std::vector<openbus::map::MapTrafficActor*>& actors,
-    double elapsedSeconds, double initialClockSeconds) const {
-    openbus::map::advanceMapTrafficSignalControllers(
-        impl_->trafficSignalControllers, actors, elapsedSeconds, initialClockSeconds);
+    const std::vector<openbus::map::MapTrafficActor*>& actors, double elapsedSeconds,
+    double initialClockSeconds) const {
+    openbus::map::advanceMapTrafficSignalControllers(impl_->trafficSignalControllers, actors,
+                                                     elapsedSeconds, initialClockSeconds);
+    const double signalClockSeconds = initialClockSeconds + elapsedSeconds;
+    for (const std::size_t stateIndex : impl_->activeSceneryScriptStateIndices) {
+        Impl::SceneryScriptState& scriptState = *impl_->sceneryScriptStates[stateIndex];
+        if (!scriptState.trafficSignal.has_value()) {
+            continue;
+        }
+        const std::optional<int> phase = openbus::map::mapTrafficSignalStateAtTime(
+            *scriptState.trafficSignal, signalClockSeconds);
+        if (!phase.has_value()) {
+            throw std::runtime_error("Could not resolve a scenery traffic-light phase");
+        }
+        scriptState.variables.set("trafficlightphase", static_cast<float>(*phase));
+    }
 }
 
 std::optional<openbus::map::MapTrafficRoute>
@@ -665,9 +688,20 @@ std::vector<openbus::map::MapTrafficLaneStart> MapRenderer::trafficEntryLanes() 
     return impl_->roadTrafficLaneNetwork.entryLanes();
 }
 
-std::optional<openbus::map::MapTrafficLaneStart> MapRenderer::selectTrafficEntryLane(
-    openbus::map::MapTrafficVehicleFilter vehicle, std::size_t selectionSeed) const {
+std::optional<openbus::map::MapTrafficLaneStart>
+MapRenderer::selectTrafficEntryLane(openbus::map::MapTrafficVehicleFilter vehicle,
+                                    std::size_t selectionSeed) const {
     return impl_->roadTrafficLaneNetwork.selectEntryLane(vehicle, selectionSeed);
+}
+
+std::vector<openbus::map::MapTrafficLaneStart> MapRenderer::trafficSpawnLanes() const {
+    return impl_->roadTrafficLaneNetwork.spawnLanes();
+}
+
+std::optional<openbus::map::MapTrafficLaneStart>
+MapRenderer::selectTrafficSpawnLane(openbus::map::MapTrafficVehicleFilter vehicle,
+                                    std::size_t selectionSeed) const {
+    return impl_->roadTrafficLaneNetwork.selectSpawnLane(vehicle, selectionSeed);
 }
 
 bool MapRenderer::addTrafficActor(openbus::map::MapTrafficActor actor) {

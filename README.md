@@ -127,9 +127,18 @@ limit. A 1.5-second following-headway target and a 2 m standstill buffer respond
 to vehicles ahead, including the player bus. Oriented vehicle footprints and
 small swept movement steps prevent AI from advancing through occupied space;
 an emergency stop can exceed comfortable braking when a blockage appears too
-close. Crossing movements use conservative three-second reservations and
-increase priority for approaches that have waited longer; authored traffic
-lights and road-sign right-of-way rules are not yet modeled.
+close. Moving vehicles in the same lane are followed with a damped gap model
+instead of being treated as parked obstacles, so a queue keeps flowing through a
+junction behind a moving leader. Before entering a junction, a vehicle claims it
+and waits at the entry line while any vehicle inside or already admitted would
+cross or merge into its path, so two approaches never lock each other inside
+the box. A vehicle approaching on a lower-priority spline gives way at its
+entry line to any higher-priority vehicle whose path crosses or merges into its
+junction movement and would arrive before it could clear (plus two seconds);
+higher-priority vehicles do not wait for such a vehicle's unused claim. Waiting
+time only orders vehicles of equal priority. Crossing movements use
+conservative three-second reservations; road-sign right-of-way rules beyond
+authored spline priority are not yet modeled.
 Queues, actual endpoint spawns, junction entry speeds, off-screen population
 unloads, route-end recycling, and lane-network statistics are logged.
 Route planning tries an alternative branch if a later turn is impossible,
@@ -228,8 +237,11 @@ partial:
   the host calendar because no map simulation-date source is available.
 - Scheduled OMSI AI buses use matched timetable routes and departures; fixed
   SCO traffic-light schedules stop road traffic and pedestrians on linked
-  paths. Conditional stop/jump overrides and `signalroutes.cfg` routing remain
-  incomplete, and a full in-game OMSI parity validation has not been performed.
+  paths. Signalized scenery instances expose the active phase through
+  `trafficlightphase` for model scripts/visibility variables. Conditional
+  stop/jump overrides and `signalroutes.cfg` routing remain incomplete, and
+  model-specific lamp animation plus full in-game OMSI parity have not been
+  validated.
 
 The existing centerline probe validates linked endpoints and signed curve
 directions, but does not validate cross-section profile placement, sidewalks,

@@ -25,11 +25,10 @@ inline ScriptTickSchedule scheduleScriptTicks(double accumulatorSeconds, double 
         throw std::invalid_argument("Script tick scheduler received an invalid time value");
     }
 
-    double accumulator = accumulatorSeconds +
-                         std::clamp(elapsedSeconds, 0.0, MAX_SCRIPT_FRAME_DELTA_SECONDS);
+    double accumulator =
+        accumulatorSeconds + std::clamp(elapsedSeconds, 0.0, MAX_SCRIPT_FRAME_DELTA_SECONDS);
     ScriptTickSchedule schedule;
-    while (accumulator >= tickDurationSeconds &&
-           schedule.ticks < MAX_SCRIPT_CATCH_UP_TICKS) {
+    while (accumulator >= tickDurationSeconds && schedule.ticks < MAX_SCRIPT_CATCH_UP_TICKS) {
         accumulator -= tickDurationSeconds;
         ++schedule.ticks;
     }

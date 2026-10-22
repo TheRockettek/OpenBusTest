@@ -320,8 +320,7 @@ void MapSceneLoader::indexMapContent() {
                             segment.pathLateralMeters = lane.lateralMeters;
                             segment.pathHeightMeters = lane.heightMeters;
                             segment.pathRules =
-                                openbus::map::mapTrafficRulesForPath(spline.rules,
-                                                                     lane.pathIndex);
+                                openbus::map::mapTrafficRulesForPath(spline.rules, lane.pathIndex);
                             if (lane.bidirectional) {
                                 impl_->roadTrafficLaneNetwork.addSegment(segment);
                                 segment.reversed = true;

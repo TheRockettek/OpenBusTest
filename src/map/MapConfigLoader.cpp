@@ -186,9 +186,8 @@ std::string canonicalAiRoadGroupName(std::string name) {
 
 bool isSupportedRoadAiGroup(std::string_view name) {
     const std::string normalized = lowerAscii(std::string(name));
-    return normalized == "normalcar" || normalized == "normalcars" ||
-           normalized == "trucks" || normalized == "commercial" ||
-           normalized == "commercials" || normalized == "ambulance";
+    return normalized == "normalcar" || normalized == "normalcars" || normalized == "trucks" ||
+           normalized == "commercial" || normalized == "commercials" || normalized == "ambulance";
 }
 
 bool isSectionHeaderLine(const std::string& value) {
@@ -350,8 +349,7 @@ void parseAiListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraf
     }
 }
 
-void parseUnscheduledVehicleGroups(const std::filesystem::path& path,
-                                   MapAiTrafficData& aiTraffic) {
+void parseUnscheduledVehicleGroups(const std::filesystem::path& path, MapAiTrafficData& aiTraffic) {
     const std::vector<std::string> lines = splitLines(decodeText(path));
     for (std::size_t cursor = 0; cursor < lines.size(); ++cursor) {
         if (lowerAscii(trim(lines[cursor])) != "[group]") {
@@ -437,9 +435,9 @@ void parseUnscheduledTrafficDensities(const std::filesystem::path& path,
             const auto densityText = readValue(cursor);
             double hour = 0.0;
             double density = 0.0;
-            if (!currentGroup.has_value() || !hourText.has_value() ||
-                !densityText.has_value() || !parseReal(*hourText, hour) || hour < 0.0 ||
-                hour > 24.0 || !parseReal(*densityText, density)) {
+            if (!currentGroup.has_value() || !hourText.has_value() || !densityText.has_value() ||
+                !parseReal(*hourText, hour) || hour < 0.0 || hour > 24.0 ||
+                !parseReal(*densityText, density)) {
                 diagnostics.warning(sectionLine + 1, "trafficdensity",
                                     "expected a group and finite hour/density values");
                 continue;
@@ -448,8 +446,7 @@ void parseUnscheduledTrafficDensities(const std::filesystem::path& path,
                 aiTraffic.unscheduledTrafficDensityGroups[*currentGroup].schedules.push_back(
                     {0, {}});
                 currentSchedule =
-                    aiTraffic.unscheduledTrafficDensityGroups[*currentGroup].schedules.size() -
-                    1;
+                    aiTraffic.unscheduledTrafficDensityGroups[*currentGroup].schedules.size() - 1;
             }
             if (invalidDaySchedule || !currentSchedule.has_value()) {
                 diagnostics.warning(sectionLine + 1, "trafficdensity",
@@ -462,8 +459,7 @@ void parseUnscheduledTrafficDensities(const std::filesystem::path& path,
         }
     }
 
-    for (const MapAiTrafficDensityGroup& group :
-         aiTraffic.unscheduledTrafficDensityGroups) {
+    for (const MapAiTrafficDensityGroup& group : aiTraffic.unscheduledTrafficDensityGroups) {
         for (const MapAiTrafficDensitySchedule& schedule : group.schedules) {
             if (!schedule.points.empty() &&
                 !mapTrafficDensityAtHour(schedule.points, schedule.points.front().hour)
@@ -474,8 +470,7 @@ void parseUnscheduledTrafficDensities(const std::filesystem::path& path,
             }
         }
     }
-    aiTraffic.hasUnscheduledTrafficDensityFile =
-        !aiTraffic.unscheduledTrafficDensityGroups.empty();
+    aiTraffic.hasUnscheduledTrafficDensityFile = !aiTraffic.unscheduledTrafficDensityGroups.empty();
 }
 
 void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTrafficData& aiTraffic,
@@ -511,8 +506,8 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
         for (std::size_t lineIndex = 0; lineIndex < tripLines.size(); ++lineIndex) {
             const std::string section = lowerAscii(trim(tripLines[lineIndex]));
             if (section == "[trip]") {
-                std::array<std::string*, 3> fields = {
-                    &route.tripName, &route.destinationName, &route.lineName};
+                std::array<std::string*, 3> fields = {&route.tripName, &route.destinationName,
+                                                      &route.lineName};
                 std::size_t next = lineIndex + 1;
                 for (std::string* field : fields) {
                     while (next < tripLines.size() && trim(tripLines[next]).empty()) {
@@ -533,8 +528,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                     while (next < tripLines.size() && trim(tripLines[next]).empty()) {
                         ++next;
                     }
-                    if (next >= tripLines.size() ||
-                        isSectionHeaderLine(trim(tripLines[next]))) {
+                    if (next >= tripLines.size() || isSectionHeaderLine(trim(tripLines[next]))) {
                         complete = false;
                         break;
                     }
@@ -560,8 +554,8 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
         const auto trackFile = trackFiles.find(lowerAscii(route.tripName));
         if (trackFile == trackFiles.end()) {
             diagnostics.warning(0, "trip",
-                                "no matching timetable track file for " + route.tripName +
-                                    " in " + tripPath.filename().string());
+                                "no matching timetable track file for " + route.tripName + " in " +
+                                    tripPath.filename().string());
             continue;
         }
         const std::vector<std::string> trackLines = splitLines(decodeText(trackFile->second));
@@ -575,8 +569,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 ++next;
             }
             int splineId = 0;
-            if (next >= trackLines.size() ||
-                isSectionHeaderLine(trim(trackLines[next])) ||
+            if (next >= trackLines.size() || isSectionHeaderLine(trim(trackLines[next])) ||
                 !parseInteger(trim(trackLines[next]), splineId) || splineId == 0) {
                 malformedTrackEntry = true;
                 diagnostics.warning(lineIndex + 1, "track_entry",
@@ -615,8 +608,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
             }
             int tripIndex = 0;
             double departureMinutes = 0.0;
-            if (!complete || fields[0].empty() ||
-                !parseInteger(fields[1], tripIndex) ||
+            if (!complete || fields[0].empty() || !parseInteger(fields[1], tripIndex) ||
                 !parseReal(fields[2], departureMinutes) || departureMinutes < 0.0) {
                 diagnostics.warning(lineIndex + 1, "addtrip",
                                     "invalid or truncated timetable departure in " +
@@ -625,15 +617,15 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 continue;
             }
             const std::string timetableKey = lowerAscii(fields[0]);
-            const auto route = std::find_if(
-                aiTraffic.timetableRoutes.begin(), aiTraffic.timetableRoutes.end(),
-                [&](const MapAiTimetableRoute& candidate) {
-                    return candidate.timetableKey == timetableKey;
-                });
+            const auto route =
+                std::find_if(aiTraffic.timetableRoutes.begin(), aiTraffic.timetableRoutes.end(),
+                             [&](const MapAiTimetableRoute& candidate) {
+                                 return candidate.timetableKey == timetableKey;
+                             });
             if (route == aiTraffic.timetableRoutes.end()) {
                 diagnostics.warning(lineIndex + 1, "addtrip",
-                                    "departure references missing trip " + fields[0] +
-                                        " in " + linePath.filename().string());
+                                    "departure references missing trip " + fields[0] + " in " +
+                                        linePath.filename().string());
             } else {
                 route->scheduledDepartureMinutes.push_back(departureMinutes);
             }
@@ -641,8 +633,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
         }
     }
     for (MapAiTimetableRoute& route : aiTraffic.timetableRoutes) {
-        std::sort(route.scheduledDepartureMinutes.begin(),
-                  route.scheduledDepartureMinutes.end());
+        std::sort(route.scheduledDepartureMinutes.begin(), route.scheduledDepartureMinutes.end());
     }
 }
 
@@ -1005,8 +996,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     if (std::filesystem::is_regular_file(aiListPath)) {
         parseAiListFile(aiListPath, definition.aiTraffic);
     }
-    const std::filesystem::path unscheduledGroupsPath =
-        mapDirectory / "unsched_vehgroups.txt";
+    const std::filesystem::path unscheduledGroupsPath = mapDirectory / "unsched_vehgroups.txt";
     if (std::filesystem::is_regular_file(unscheduledGroupsPath)) {
         parseUnscheduledVehicleGroups(unscheduledGroupsPath, definition.aiTraffic);
         for (const MapAiVehicleGroup& group : definition.aiTraffic.vehicleGroups) {
@@ -1017,8 +1007,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
                 definition.aiTraffic.unscheduledVehicleGroupNames.begin(),
                 definition.aiTraffic.unscheduledVehicleGroupNames.end(),
                 [&](const std::string& name) {
-                    return canonicalAiRoadGroupName(name) ==
-                           canonicalAiRoadGroupName(group.name);
+                    return canonicalAiRoadGroupName(name) == canonicalAiRoadGroupName(group.name);
                 });
             if (!groupIndexFound) {
                 definition.diagnostics.warning(
@@ -1036,11 +1025,10 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     const std::filesystem::path unscheduledTrafficDensityPath =
         mapDirectory / "unsched_trafficdens.txt";
     if (std::filesystem::is_regular_file(unscheduledTrafficDensityPath)) {
-        parseUnscheduledTrafficDensities(unscheduledTrafficDensityPath,
-                                         definition.aiTraffic, definition.diagnostics);
+        parseUnscheduledTrafficDensities(unscheduledTrafficDensityPath, definition.aiTraffic,
+                                         definition.diagnostics);
     }
-    parseAiTimetableRoutes(mapDirectory / "TTData", definition.aiTraffic,
-                           definition.diagnostics);
+    parseAiTimetableRoutes(mapDirectory / "TTData", definition.aiTraffic, definition.diagnostics);
     const std::filesystem::path driverListPath = mapDirectory / "drivers.txt";
     if (std::filesystem::is_regular_file(driverListPath)) {
         parseDriverListFile(driverListPath, definition.aiTraffic);
@@ -1070,8 +1058,8 @@ std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic)
             if (extension != ".ovh") {
                 continue;
             }
-            const std::string key = lowerAscii(vehicle.assetPath) + "\n" +
-                                    std::to_string(unscheduledGroupIndex);
+            const std::string key =
+                lowerAscii(vehicle.assetPath) + "\n" + std::to_string(unscheduledGroupIndex);
             if (seen.insert(key).second) {
                 vehicles.push_back({vehicle.assetPath, unscheduledGroupIndex,
                                     lowerAscii(group.name) == "trucks" ? 3 : 0,
@@ -1084,26 +1072,24 @@ std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic)
 
 namespace {
 
-const MapAiTrafficDensityGroup* findAiTrafficDensityGroup(
-    const MapAiTrafficData& traffic, std::string_view groupName) {
+const MapAiTrafficDensityGroup* findAiTrafficDensityGroup(const MapAiTrafficData& traffic,
+                                                          std::string_view groupName) {
     const std::string normalized = canonicalAiRoadGroupName(std::string(groupName));
-    const auto found = std::find_if(
-        traffic.unscheduledTrafficDensityGroups.begin(),
-        traffic.unscheduledTrafficDensityGroups.end(),
-        [&](const MapAiTrafficDensityGroup& group) {
-            return canonicalAiRoadGroupName(group.name) == normalized;
-        });
+    const auto found = std::find_if(traffic.unscheduledTrafficDensityGroups.begin(),
+                                    traffic.unscheduledTrafficDensityGroups.end(),
+                                    [&](const MapAiTrafficDensityGroup& group) {
+                                        return canonicalAiRoadGroupName(group.name) == normalized;
+                                    });
     return found == traffic.unscheduledTrafficDensityGroups.end() ? nullptr : &*found;
 }
 
 double aiTrafficGroupDensityAtHour(const MapAiTrafficDensityGroup& group, double hour,
                                    int dayOfWeekMask) {
-    const auto schedule = std::find_if(
-        group.schedules.begin(), group.schedules.end(),
-        [&](const MapAiTrafficDensitySchedule& candidate) {
-            return candidate.dayOfWeekMask == 0 ||
-                   (candidate.dayOfWeekMask & dayOfWeekMask) != 0;
-        });
+    const auto schedule = std::find_if(group.schedules.begin(), group.schedules.end(),
+                                       [&](const MapAiTrafficDensitySchedule& candidate) {
+                                           return candidate.dayOfWeekMask == 0 ||
+                                                  (candidate.dayOfWeekMask & dayOfWeekMask) != 0;
+                                       });
     if (schedule == group.schedules.end()) {
         return 0.0;
     }
@@ -1139,8 +1125,7 @@ std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic,
     for (MapAiRoadVehicle& vehicle : vehicles) {
         const double density = densityPerGroup.at(vehicle.groupName);
         const std::size_t entryCount = entriesPerGroup.at(vehicle.groupName);
-        vehicle.selectionWeight =
-            entryCount == 0 ? 0.0 : density / static_cast<double>(entryCount);
+        vehicle.selectionWeight = entryCount == 0 ? 0.0 : density / static_cast<double>(entryCount);
     }
     return vehicles;
 }
@@ -1152,8 +1137,7 @@ std::vector<MapAiRoadVehicle> mapAiRoadVehiclesForPool(const MapAiTrafficData& t
     }
 
     std::vector<double> candidateHours{0.0, 24.0};
-    for (const MapAiTrafficDensityGroup& group :
-         traffic.unscheduledTrafficDensityGroups) {
+    for (const MapAiTrafficDensityGroup& group : traffic.unscheduledTrafficDensityGroups) {
         for (const MapAiTrafficDensitySchedule& schedule : group.schedules) {
             for (const MapTrafficDensityPoint& point : schedule.points) {
                 candidateHours.push_back(point.hour);
@@ -1184,17 +1168,15 @@ std::vector<MapAiRoadVehicle> mapAiRoadVehiclesForPool(const MapAiTrafficData& t
     }
     for (MapAiRoadVehicle& vehicle : vehicles) {
         const std::size_t entryCount = entriesPerGroup.at(vehicle.groupName);
-        vehicle.selectionWeight =
-            entryCount == 0
-                ? 0.0
-                : maximumDensityPerGroup.at(vehicle.groupName) /
-                      static_cast<double>(entryCount);
+        vehicle.selectionWeight = entryCount == 0 ? 0.0
+                                                  : maximumDensityPerGroup.at(vehicle.groupName) /
+                                                        static_cast<double>(entryCount);
     }
     return vehicles;
 }
 
-std::optional<std::size_t> selectMapAiRoadVehicle(
-    const std::vector<MapAiRoadVehicle>& vehicles, std::size_t selectionSeed) {
+std::optional<std::size_t> selectMapAiRoadVehicle(const std::vector<MapAiRoadVehicle>& vehicles,
+                                                  std::size_t selectionSeed) {
     long double totalWeight = 0.0L;
     for (const MapAiRoadVehicle& vehicle : vehicles) {
         if (!std::isfinite(vehicle.selectionWeight) || vehicle.selectionWeight < 0.0) {
@@ -1206,8 +1188,7 @@ std::optional<std::size_t> selectMapAiRoadVehicle(
         return std::nullopt;
     }
 
-    std::uint64_t random = static_cast<std::uint64_t>(selectionSeed) +
-                           0x9e3779b97f4a7c15ULL;
+    std::uint64_t random = static_cast<std::uint64_t>(selectionSeed) + 0x9e3779b97f4a7c15ULL;
     random = (random ^ (random >> 30U)) * 0xbf58476d1ce4e5b9ULL;
     random = (random ^ (random >> 27U)) * 0x94d049bb133111ebULL;
     random ^= random >> 31U;
@@ -1225,19 +1206,17 @@ std::optional<std::size_t> selectMapAiRoadVehicle(
     return std::nullopt;
 }
 
-std::vector<MapAiRoadTrafficGroupPopulation> mapAiRoadTrafficPopulationByGroup(
-    const MapAiTrafficData& traffic, std::size_t populationCount, double hour,
-    int dayOfWeekMask) {
-    const std::vector<MapAiRoadVehicle> vehicles =
-        mapAiRoadVehicles(traffic, hour, dayOfWeekMask);
+std::vector<MapAiRoadTrafficGroupPopulation>
+mapAiRoadTrafficPopulationByGroup(const MapAiTrafficData& traffic, std::size_t populationCount,
+                                  double hour, int dayOfWeekMask) {
+    const std::vector<MapAiRoadVehicle> vehicles = mapAiRoadVehicles(traffic, hour, dayOfWeekMask);
     std::unordered_map<std::size_t, long double> weightByGroup;
     long double totalWeight = 0.0L;
     for (const MapAiRoadVehicle& vehicle : vehicles) {
         if (!std::isfinite(vehicle.selectionWeight) || vehicle.selectionWeight < 0.0) {
             throw std::invalid_argument("AI road vehicle selection weight is invalid");
         }
-        weightByGroup[vehicle.groupIndex] +=
-            static_cast<long double>(vehicle.selectionWeight);
+        weightByGroup[vehicle.groupIndex] += static_cast<long double>(vehicle.selectionWeight);
         totalWeight += static_cast<long double>(vehicle.selectionWeight);
     }
     if (populationCount == 0 || totalWeight <= 0.0L) {
@@ -1276,22 +1255,22 @@ std::vector<MapAiRoadTrafficGroupPopulation> mapAiRoadTrafficPopulationByGroup(
                   }
                   return left.groupIndex < right.groupIndex;
               });
-    for (std::size_t index = 0;
-         assignedCount < populationCount && index < remainders.size(); ++index) {
-        const auto population = std::find_if(
-            populations.begin(), populations.end(),
-            [&](const MapAiRoadTrafficGroupPopulation& candidate) {
-                return candidate.groupIndex == remainders[index].groupIndex;
-            });
+    for (std::size_t index = 0; assignedCount < populationCount && index < remainders.size();
+         ++index) {
+        const auto population =
+            std::find_if(populations.begin(), populations.end(),
+                         [&](const MapAiRoadTrafficGroupPopulation& candidate) {
+                             return candidate.groupIndex == remainders[index].groupIndex;
+                         });
         ++population->populationCount;
         ++assignedCount;
     }
     return populations;
 }
 
-std::optional<double> mapAiRoadTrafficDensityAtHour(
-    const MapAiTrafficData& traffic, const std::vector<MapAiRoadVehicle>& vehicles,
-    double hour, int dayOfWeekMask) {
+std::optional<double> mapAiRoadTrafficDensityAtHour(const MapAiTrafficData& traffic,
+                                                    const std::vector<MapAiRoadVehicle>& vehicles,
+                                                    double hour, int dayOfWeekMask) {
     if (!traffic.hasUnscheduledTrafficDensityFile) {
         return std::nullopt;
     }
@@ -1311,8 +1290,8 @@ std::optional<double> mapAiRoadTrafficDensityAtHour(
             continue;
         }
         totalFactors += static_cast<long double>(group->factor);
-        totalDensity += static_cast<long double>(
-            aiTrafficGroupDensityAtHour(*group, hour, dayOfWeekMask));
+        totalDensity +=
+            static_cast<long double>(aiTrafficGroupDensityAtHour(*group, hour, dayOfWeekMask));
     }
     if (totalFactors <= 0.0L) {
         return 0.0;
@@ -1321,14 +1300,14 @@ std::optional<double> mapAiRoadTrafficDensityAtHour(
     return static_cast<double>(std::clamp(averageDensity, 0.0L, 2.0L));
 }
 
-std::optional<double> mapAiMaximumRoadTrafficDensity(
-    const MapAiTrafficData& traffic, const std::vector<MapAiRoadVehicle>& vehicles) {
+std::optional<double>
+mapAiMaximumRoadTrafficDensity(const MapAiTrafficData& traffic,
+                               const std::vector<MapAiRoadVehicle>& vehicles) {
     if (!traffic.hasUnscheduledTrafficDensityFile) {
         return std::nullopt;
     }
     std::vector<double> candidateHours{0.0, 24.0};
-    for (const MapAiTrafficDensityGroup& group :
-         traffic.unscheduledTrafficDensityGroups) {
+    for (const MapAiTrafficDensityGroup& group : traffic.unscheduledTrafficDensityGroups) {
         for (const MapAiTrafficDensitySchedule& schedule : group.schedules) {
             for (const MapTrafficDensityPoint& point : schedule.points) {
                 candidateHours.push_back(point.hour);
@@ -1342,10 +1321,10 @@ std::optional<double> mapAiMaximumRoadTrafficDensity(
     double maximumDensity = 0.0;
     for (const int dayOfWeekMask : {1, 2, 4}) {
         for (const double hour : candidateHours) {
-            maximumDensity = std::max(
-                maximumDensity,
-                mapAiRoadTrafficDensityAtHour(traffic, vehicles, hour, dayOfWeekMask)
-                    .value_or(0.0));
+            maximumDensity =
+                std::max(maximumDensity,
+                         mapAiRoadTrafficDensityAtHour(traffic, vehicles, hour, dayOfWeekMask)
+                             .value_or(0.0));
         }
     }
     return maximumDensity;

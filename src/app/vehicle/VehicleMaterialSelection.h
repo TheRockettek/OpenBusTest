@@ -8,9 +8,9 @@
 
 namespace openbus::app::vehicle {
 
-inline std::string resolveCtcTextureName(
-    const std::string& textureName,
-    const std::unordered_map<std::string, std::string>& replacements) {
+inline std::string
+resolveCtcTextureName(const std::string& textureName,
+                      const std::unordered_map<std::string, std::string>& replacements) {
     std::string key = textureName;
     std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
         return static_cast<char>(std::tolower(character));
@@ -19,13 +19,11 @@ inline std::string resolveCtcTextureName(
     return found == replacements.end() ? textureName : found->second;
 }
 
-inline int resolveTextureArrayLayer(bool textureArray, int requestedLayer,
-                                    std::size_t layerCount) {
+inline int resolveTextureArrayLayer(bool textureArray, int requestedLayer, std::size_t layerCount) {
     if (!textureArray || requestedLayer <= 0 || layerCount == 0) {
         return 0;
     }
-    return static_cast<int>(
-        std::min(static_cast<std::size_t>(requestedLayer), layerCount - 1));
+    return static_cast<int>(std::min(static_cast<std::size_t>(requestedLayer), layerCount - 1));
 }
 
 } // namespace openbus::app::vehicle

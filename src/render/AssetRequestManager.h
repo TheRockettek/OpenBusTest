@@ -58,8 +58,8 @@ class AssetRequestManager {
     template <typename Function>
     auto submit(Function&& function) -> std::future<std::invoke_result_t<Function>> {
         using Result = std::invoke_result_t<Function>;
-        auto task = std::make_shared<std::packaged_task<Result()>>(
-            std::forward<Function>(function));
+        auto task =
+            std::make_shared<std::packaged_task<Result()>>(std::forward<Function>(function));
         std::future<Result> result = task->get_future();
         enqueue([task] { (*task)(); });
         return result;

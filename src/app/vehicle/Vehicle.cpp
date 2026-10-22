@@ -25,8 +25,7 @@ void Vehicle::finishDeferredTrafficInitialization() {
     if (!deferredDefinition) {
         throw std::logic_error("Deferred traffic vehicle initialization was not requested");
     }
-    const std::shared_ptr<const SharedVehicleDefinition> definition =
-        std::move(deferredDefinition);
+    const std::shared_ptr<const SharedVehicleDefinition> definition = std::move(deferredDefinition);
     for (const std::string& error : scripts->errors()) {
         gameLog.Log("Lua script error: " + error);
     }

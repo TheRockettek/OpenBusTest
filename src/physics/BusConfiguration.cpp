@@ -341,8 +341,7 @@ std::filesystem::path modelConfigurationPathForBus(const std::filesystem::path& 
 std::filesystem::path
 modelConfigurationPathForVehicle(const std::filesystem::path& vehicleConfigPath) {
     openbus::rendering::TraceScope trace("config", "modelConfigurationPathForVehicle");
-    const VehicleConfig source =
-        loadVehicleConfig(vehicleConfigPath, VehicleFileKind::Vehicle);
+    const VehicleConfig source = loadVehicleConfig(vehicleConfigPath, VehicleFileKind::Vehicle);
     if (source.modelPath.empty()) {
         throw std::runtime_error("Vehicle configuration has no [model] entry: " +
                                  vehicleConfigPath.string());

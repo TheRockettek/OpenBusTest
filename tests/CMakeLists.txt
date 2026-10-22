@@ -104,6 +104,7 @@ endforeach()
 
 # Render (header-only probes need only the include root)
 openbus_add_probe(OpenBusCameraMathProbe CameraMathProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusHumanGaitProbe HumanGaitProbe.cpp LIBS openbus_render)
 openbus_add_probe(OpenBusAssetRequestManagerProbe AssetRequestManagerProbe.cpp LIBS openbus_render)
 openbus_add_probe(OpenBusReflectionSettingsProbe ReflectionSettingsProbe.cpp
     LIBS openbus_render NO_TEST)

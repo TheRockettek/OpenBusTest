@@ -79,7 +79,9 @@ bool isKnownKeyword(const std::string& keyword) {
                                                              "nocollision",
                                                              "rendertype",
                                                              "scripttexture",
+                                                             "setbone",
                                                              "shadow",
+                                                             "smoothskin",
                                                              "smoke",
                                                              "spotlight",
                                                              "tcoordtransx",
@@ -580,6 +582,33 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             currentPartIndex = result.parts.size() - 1;
             currentMaterialKey.clear();
             currentMaterialIndex = static_cast<std::size_t>(-1);
+            continue;
+        }
+        // [smoothskin] enables bone-weighted deformation for the current mesh.
+        if (keyword == "smoothskin") {
+            if (requirePart() != nullptr) {
+                openbus::config::logUnhandledConfigurationTag(
+                    "model.cfg", configPath, line.number, line.keyword(),
+                    "recognized but skeletal skinning is not implemented");
+            }
+            continue;
+        }
+        // [setbone]: bone name followed by its non-negative O3D bone index.
+        if (keyword == "setbone") {
+            ModelPart* current = requirePart();
+            std::vector<std::string> values;
+            if (current != nullptr && readValues(reader, line.number, keyword, 2, values,
+                                                 result.diagnostics)) {
+                int boneIndex = -1;
+                if (trim(values[0]).empty() || !parseInt(values[1], boneIndex) || boneIndex < 0) {
+                    result.diagnostics.error(line.number, keyword,
+                                             "expected a bone name and non-negative bone index");
+                } else {
+                    openbus::config::logUnhandledConfigurationTag(
+                        "model.cfg", configPath, line.number, line.keyword(),
+                        "recognized but skeletal skinning is not implemented");
+                }
+            }
             continue;
         }
         // [mesh_ident]: identifier used by later [animparent] records. OMSI

@@ -302,10 +302,11 @@ bool RenderLoop::AddTrafficVehicle(
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
     }
-    const auto entries = mapRenderer_->trafficEntryLanes();
+    const auto laneStarts =
+        isBus ? mapRenderer_->trafficEntryLanes() : mapRenderer_->trafficSpawnLanes();
     if (pathTypeCode != openbus::map::MAP_SPLINE_PATH_TYPE_ROAD ||
-        std::find(entries.begin(), entries.end(),
-                  openbus::map::MapTrafficLaneStart{splineId, laneSelector}) == entries.end()) {
+        std::find(laneStarts.begin(), laneStarts.end(),
+                  openbus::map::MapTrafficLaneStart{splineId, laneSelector}) == laneStarts.end()) {
         return false;
     }
     const auto resolvedConfig = busConfigurationPathFor(busConfigPath);
@@ -350,6 +351,14 @@ bool RenderLoop::AddTrafficVehicle(
     actor.lengthMeters =
         configuration.boundingBox[1] + 2.0 * std::abs(configuration.boundingBox[4]);
     actor.widthMeters = configuration.boundingBox[0] + 2.0 * std::abs(configuration.boundingBox[3]);
+    std::vector<openbus::map::MapTrafficSpawnCandidate> spawnCandidates;
+    if (!isBus) {
+        spawnCandidates =
+            openbus::map::mapTrafficRouteSpawnCandidates(actor.route, actor.lengthMeters);
+        if (spawnCandidates.empty()) {
+            return false;
+        }
+    }
 
     const std::optional<openbus::map::MapTrafficPose> pose =
         openbus::map::sampleMapTrafficRoute(actor.route, 0.0, actor.lateralOffsetMeters);
@@ -376,6 +385,7 @@ bool RenderLoop::AddTrafficVehicle(
     TrafficVehicleState trafficState;
     trafficState.pendingVehicle = std::move(pendingVehicle);
     trafficState.actor = std::move(actor);
+    trafficState.spawnCandidates = std::move(spawnCandidates);
     trafficState.scheduledDepartureMinutes = std::move(scheduledDepartureMinutes);
     trafficState.isBus = isBus;
     if (isBus) {
@@ -418,15 +428,15 @@ double RenderLoop::trafficMinimumTurnRadius(const std::filesystem::path& vehicle
 }
 
 bool RenderLoop::AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,
-                                      double widthMeters, double heightMeters,
+                                      double feetDistanceMeters, double heightMeters,
                                       double speedMetersPerSecond, double startDistanceMeters,
                                       double centerX, double centerY,
                                       double maximumDistanceMeters) {
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add human traffic before loading a map");
     }
-    if (humanConfigPath.empty() || !std::isfinite(widthMeters) || widthMeters <= 0.0 ||
-        !std::isfinite(heightMeters) || heightMeters <= 0.0) {
+    if (humanConfigPath.empty() || !std::isfinite(feetDistanceMeters) ||
+        feetDistanceMeters <= 0.0 || !std::isfinite(heightMeters) || heightMeters <= 0.0) {
         throw std::invalid_argument("Human traffic spawn configuration is invalid");
     }
 
@@ -441,9 +451,9 @@ bool RenderLoop::AddHumanTrafficActor(int splineId, const std::filesystem::path&
                                                        centerY, maximumDistanceMeters, 0.01)) {
         return false;
     }
-    actor->lengthMeters = widthMeters * 1.25;
-    actor->widthMeters = widthMeters * 2.1;
-    humanTrafficActors_.push_back({std::move(*actor), widthMeters, heightMeters, false});
+    actor->lengthMeters = feetDistanceMeters * 1.25;
+    actor->widthMeters = feetDistanceMeters * 2.1;
+    humanTrafficActors_.push_back({std::move(*actor), feetDistanceMeters, heightMeters, {}, false});
     return true;
 }
 
@@ -476,6 +486,18 @@ RenderLoop::selectTrafficEntryLane(openbus::map::MapTrafficVehicleFilter vehicle
                                    std::size_t selectionSeed) const {
     return mapRenderer_ == nullptr ? std::nullopt
                                    : mapRenderer_->selectTrafficEntryLane(vehicle, selectionSeed);
+}
+
+std::vector<openbus::map::MapTrafficLaneStart> RenderLoop::trafficSpawnLanes() const {
+    return mapRenderer_ == nullptr ? std::vector<openbus::map::MapTrafficLaneStart>{}
+                                   : mapRenderer_->trafficSpawnLanes();
+}
+
+std::optional<openbus::map::MapTrafficLaneStart>
+RenderLoop::selectTrafficSpawnLane(openbus::map::MapTrafficVehicleFilter vehicle,
+                                   std::size_t selectionSeed) const {
+    return mapRenderer_ == nullptr ? std::nullopt
+                                   : mapRenderer_->selectTrafficSpawnLane(vehicle, selectionSeed);
 }
 
 std::vector<int> RenderLoop::trafficRouteStartSplineIds(int pathTypeCode) const {

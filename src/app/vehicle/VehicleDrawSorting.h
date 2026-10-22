@@ -24,8 +24,8 @@ void sortTransparentBatches(std::vector<TransparentBatch>& batches) {
 }
 
 template <typename VertexContainer>
-std::vector<std::size_t> transparentTriangleOrder(
-    const VertexContainer& vertices, const openbus::rendering::Matrix4& modelView) {
+std::vector<std::size_t> transparentTriangleOrder(const VertexContainer& vertices,
+                                                  const openbus::rendering::Matrix4& modelView) {
     if (vertices.size() < 6 || vertices.size() % 3 != 0) {
         return {};
     }

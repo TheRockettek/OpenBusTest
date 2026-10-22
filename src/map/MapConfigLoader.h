@@ -150,19 +150,19 @@ struct MapAiRoadTrafficGroupPopulation {
 };
 
 std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic);
-std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic,
-                                                double hour, int dayOfWeekMask);
+std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic, double hour,
+                                                int dayOfWeekMask);
 std::vector<MapAiRoadVehicle> mapAiRoadVehiclesForPool(const MapAiTrafficData& traffic);
-std::optional<std::size_t> selectMapAiRoadVehicle(
-    const std::vector<MapAiRoadVehicle>& vehicles, std::size_t selectionSeed);
-std::vector<MapAiRoadTrafficGroupPopulation> mapAiRoadTrafficPopulationByGroup(
-    const MapAiTrafficData& traffic, std::size_t populationCount, double hour,
-    int dayOfWeekMask);
-std::optional<double> mapAiRoadTrafficDensityAtHour(
-    const MapAiTrafficData& traffic, const std::vector<MapAiRoadVehicle>& vehicles,
-    double hour, int dayOfWeekMask);
-std::optional<double> mapAiMaximumRoadTrafficDensity(
-    const MapAiTrafficData& traffic, const std::vector<MapAiRoadVehicle>& vehicles);
+std::optional<std::size_t> selectMapAiRoadVehicle(const std::vector<MapAiRoadVehicle>& vehicles,
+                                                  std::size_t selectionSeed);
+std::vector<MapAiRoadTrafficGroupPopulation>
+mapAiRoadTrafficPopulationByGroup(const MapAiTrafficData& traffic, std::size_t populationCount,
+                                  double hour, int dayOfWeekMask);
+std::optional<double> mapAiRoadTrafficDensityAtHour(const MapAiTrafficData& traffic,
+                                                    const std::vector<MapAiRoadVehicle>& vehicles,
+                                                    double hour, int dayOfWeekMask);
+std::optional<double> mapAiMaximumRoadTrafficDensity(const MapAiTrafficData& traffic,
+                                                     const std::vector<MapAiRoadVehicle>& vehicles);
 std::vector<std::string> mapAiRoadVehicleAssetPaths(const MapAiTrafficData& traffic);
 std::vector<std::string> mapAiBusAssetPaths(const MapAiTrafficData& traffic);
 

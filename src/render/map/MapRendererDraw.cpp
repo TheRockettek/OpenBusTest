@@ -4,9 +4,9 @@
 
 namespace openbus::rendering {
 
-void MapRenderer::drawHumanTrafficActor(
-    const std::filesystem::path& humanConfigPath,
-    const openbus::map::MapTrafficPose& pose) const {
+void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfigPath,
+                                        const openbus::map::MapTrafficPose& pose,
+                                        double gaitPhaseRadians, double gaitWeight) const {
     const std::string cacheKey = humanConfigPath.lexically_normal().generic_string();
     auto model = impl_->humanTrafficModels.find(cacheKey);
     if (model == impl_->humanTrafficModels.end()) {
@@ -46,8 +46,7 @@ void MapRenderer::drawHumanTrafficActor(
 
         const std::filesystem::path& texturePath = model->second.texturePaths[index];
         const std::string textureKey = texturePath.lexically_normal().generic_string();
-        Impl::ModelBatch& batch =
-            impl_->sceneryBatches[model->second.batchIndexes[index]];
+        Impl::ModelBatch& batch = impl_->sceneryBatches[model->second.batchIndexes[index]];
         try {
             const auto existingTexture = impl_->dynamicSceneryTextures.find(textureKey);
             if (existingTexture != impl_->dynamicSceneryTextures.end()) {
@@ -76,9 +75,9 @@ void MapRenderer::drawHumanTrafficActor(
         impl_->humanTextureRequests.erase(textureKey);
     }
     const double headingDegrees = pose.headingRadians * 180.0 / std::acos(-1.0);
-    const Matrix4 transform = makeSceneryInstanceTransform(
-        pose.position[0], pose.position[1], pose.position[2],
-        {headingDegrees, 0.0, 0.0, 0.0, 0.0, 0.0}, 1, nullptr);
+    const Matrix4 transform =
+        makeSceneryInstanceTransform(pose.position[0], pose.position[1], pose.position[2],
+                                     {headingDegrees, 0.0, 0.0, 0.0, 0.0, 0.0}, 1, nullptr);
     for (const std::size_t batchIndex : model->second.batchIndexes) {
         if (batchIndex >= impl_->sceneryBatches.size()) {
             throw std::logic_error("Human traffic model references an invalid mesh batch");
@@ -98,8 +97,10 @@ void MapRenderer::drawHumanTrafficActor(
             if (isTransparent != transparent) {
                 continue;
             }
-            drawModelBatch(batch.buffer, batch.vertexCount, batch.material, batch.color,
-                           batch.alpha, batch.alphaMode, batch.cullBackFaces);
+            drawModelBatch(
+                batch.buffer, batch.vertexCount, batch.material, batch.color, batch.alpha,
+                batch.alphaMode, batch.cullBackFaces,
+                HumanGaitParameters{gaitPhaseRadians, gaitWeight, model->second.heightMeters});
         }
     };
     drawBatches(false);

@@ -12,7 +12,7 @@ enum class PrecipitationType {
     Snow = 2,
 };
 
-std::vector<PrimitiveVertex>
-makePrecipitationVertices(PrecipitationType type, double rate, double elapsedSeconds);
+std::vector<PrimitiveVertex> makePrecipitationVertices(PrecipitationType type, double rate,
+                                                       double elapsedSeconds);
 
 } // namespace openbus::rendering
