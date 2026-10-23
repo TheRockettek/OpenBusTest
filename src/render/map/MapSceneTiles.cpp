@@ -166,8 +166,7 @@ void MapSceneLoader::buildTileContent() {
             recordSkipped(skipped, "unimplemented map tile sections [" + diagnostic.keyword + "]",
                           tileName + " line=" + std::to_string(diagnostic.line));
         }
-        const auto reportVariableParent = [&](int objectId,
-                                              const std::optional<int>& parentId) {
+        const auto reportVariableParent = [&](int objectId, const std::optional<int>& parentId) {
             if (parentId.has_value()) {
                 const bool resolved = sceneryObjectsById.contains(*parentId) ||
                                       attachedObjectsById.contains(*parentId) ||
@@ -330,7 +329,7 @@ void MapSceneLoader::buildTileContent() {
                         }
                         const auto schedule = attachController(*configuredSignal);
                         sceneryTrafficSignalsByLightIndex.try_emplace(schedule.lightIndex,
-                                                                       schedule);
+                                                                      schedule);
                         if (!sceneryTrafficSignal.has_value()) {
                             sceneryTrafficSignal = schedule;
                         }
@@ -384,8 +383,8 @@ void MapSceneLoader::buildTileContent() {
                                       attachController(*path.trafficSignal))
                                 : std::nullopt;
                         if (pathSignal.has_value()) {
-                            sceneryTrafficSignalsByLightIndex.try_emplace(
-                                pathSignal->lightIndex, *pathSignal);
+                            sceneryTrafficSignalsByLightIndex.try_emplace(pathSignal->lightIndex,
+                                                                          *pathSignal);
                         }
                         if (pathSignal.has_value() && !sceneryTrafficSignal.has_value()) {
                             sceneryTrafficSignal = pathSignal;

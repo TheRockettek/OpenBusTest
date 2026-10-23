@@ -36,6 +36,16 @@ std::string lower(std::string value) {
     return value;
 }
 
+bool isConfigurationIdentifier(const std::string& value) {
+    if (value.empty() ||
+        !(std::isalpha(static_cast<unsigned char>(value.front())) || value.front() == '_')) {
+        return false;
+    }
+    return std::all_of(value.begin() + 1, value.end(), [](unsigned char character) {
+        return std::isalnum(character) || character == '_';
+    });
+}
+
 bool parseInt(const std::string& value, int& result) {
     const std::string normalized = trim(value);
     if (normalized.empty()) {

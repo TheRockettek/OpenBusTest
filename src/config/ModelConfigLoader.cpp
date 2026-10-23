@@ -249,7 +249,7 @@ bool parseNewAnimation(Reader& reader, const std::filesystem::path& configPath,
             reader.pushBack(std::move(field));
             break;
         }
-        if (field.text == "--" || isSeparatorLine(field.text)) {
+        if (field.text.starts_with("--") || isSeparatorLine(field.text)) {
             break;
         }
         if (!field.text.empty() && (field.text.front() == '#' || field.text.front() == '\'')) {
@@ -365,10 +365,12 @@ bool parseNewAnimation(Reader& reader, const std::filesystem::path& configPath,
             variables.declare(variable);
             continue;
         }
-        openbus::config::logUnhandledConfigurationTag("model.cfg animation", configPath,
-                                                      field.number, field.text,
-                                                      "animation operation is not implemented");
-        break;
+        if (openbus::config::isConfigurationIdentifier(field.text)) {
+            openbus::config::logUnhandledConfigurationTag("model.cfg animation", configPath,
+                                                          field.number, field.text,
+                                                          "animation operation is not implemented");
+            break;
+        }
     }
     if (drivenAnimations.empty()) {
         drivenAnimations.push_back({});
@@ -868,8 +870,12 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     attachment.hasRotation = true;
                 } else {
                     if (attachment.name.empty() && !sawOperation) {
-                        attachment.name = trim(entry.text);
-                    } else {
+                        const std::string attachmentName = trim(entry.text);
+                        if (!openbus::config::isConfigurationIdentifier(attachmentName)) {
+                            continue;
+                        }
+                        attachment.name = attachmentName;
+                    } else if (openbus::config::isConfigurationIdentifier(entry.text)) {
                         openbus::config::logUnhandledConfigurationTag(
                             "model.cfg attachment", configPath, entry.number, entry.text,
                             "attachment operation is not implemented");

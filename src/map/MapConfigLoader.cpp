@@ -579,8 +579,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 continue;
             }
             std::size_t selectorLine = next + 1;
-            while (selectorLine < trackLines.size() &&
-                   trim(trackLines[selectorLine]).empty()) {
+            while (selectorLine < trackLines.size() && trim(trackLines[selectorLine]).empty()) {
                 ++selectorLine;
             }
             if (selectorLine >= trackLines.size() ||

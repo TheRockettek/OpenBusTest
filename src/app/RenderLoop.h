@@ -82,11 +82,10 @@ class RenderLoop {
                            std::size_t laneSelector = 0, std::size_t routeSeed = 1,
                            std::vector<double> scheduledDepartureMinutes = {},
                            std::optional<std::size_t> unscheduledGroupIndex = std::nullopt,
-                           int defaultVehicleType = 0,
-                           std::vector<int> requiredRouteSplineIds = {},
-                           std::vector<std::optional<std::size_t>>
-                               requiredSceneryPathSequence = {},
-                           bool stopAtRequiredSequenceEnd = false);
+                           int defaultVehicleType = 0, std::vector<int> requiredRouteSplineIds = {},
+                           std::vector<std::optional<std::size_t>> requiredSceneryPathSequence = {},
+                           bool stopAtRequiredSequenceEnd = false,
+                           bool allowIntermediarySegmentsBetweenRequired = false);
     int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -103,8 +102,10 @@ class RenderLoop {
     void SetHumanTrafficPopulation(std::size_t count);
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
     std::vector<openbus::map::MapTrafficLaneStart>
-    trafficLanesForTimetableEntry(int splineId,
-                                  std::optional<std::size_t> sceneryPathIndex) const;
+    trafficLanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
+    std::optional<openbus::map::MapTrafficLaneConnectionGap>
+    trafficLaneConnectionGap(int fromSplineId, std::optional<std::size_t> fromPathIndex,
+                             int toSplineId, std::optional<std::size_t> toPathIndex) const;
     std::vector<openbus::map::MapTrafficLaneStart> trafficEntryLanes() const;
     std::optional<openbus::map::MapTrafficLaneStart>
     selectTrafficEntryLane(openbus::map::MapTrafficVehicleFilter vehicle,
@@ -114,14 +115,14 @@ class RenderLoop {
     selectTrafficSpawnLane(openbus::map::MapTrafficVehicleFilter vehicle,
                            std::size_t selectionSeed) const;
     std::vector<int> trafficRouteStartSplineIds(int pathTypeCode) const;
-    std::vector<openbus::map::MapTrafficRouteRequirement>
-    trafficRouteSegments(int splineId, int pathTypeCode, std::size_t laneSelector = 0,
-                         double minimumTurnRadiusMeters = 0.0, std::size_t routeSeed = 0,
-                         const std::vector<int>& requiredSplineSequence = {},
-                         openbus::map::MapTrafficVehicleFilter vehicle = {},
-                         const std::vector<std::optional<std::size_t>>&
-                             requiredSceneryPathSequence = {},
-                         bool stopAtRequiredSequenceEnd = false) const;
+    std::vector<openbus::map::MapTrafficRouteRequirement> trafficRouteSegments(
+        int splineId, int pathTypeCode, std::size_t laneSelector = 0,
+        double minimumTurnRadiusMeters = 0.0, std::size_t routeSeed = 0,
+        const std::vector<int>& requiredSplineSequence = {},
+        openbus::map::MapTrafficVehicleFilter vehicle = {},
+        const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence = {},
+        bool stopAtRequiredSequenceEnd = false,
+        bool allowIntermediarySegmentsBetweenRequired = false) const;
     std::size_t trafficVehicleCount() const;
     void SetWeather(int precipitationType, double precipitationRate);
 
@@ -300,6 +301,9 @@ class RenderLoop {
         bool populationEnabled = false;
         bool vehicleLoadFailed = false;
         bool scheduledTripActive = false;
+        unsigned lastScheduledAdmissionDiagnosticBlockerMask = 8;
+        double lastScheduledAdmissionDiagnosticCameraDistanceMeters = -1.0;
+        double lastScheduledProgressDiagnosticDistanceMeters = -1.0;
         bool deadlocked = false;
         bool deadlockRemovalCommitted = false;
         std::optional<std::size_t> activeSpawnCandidateIndex;

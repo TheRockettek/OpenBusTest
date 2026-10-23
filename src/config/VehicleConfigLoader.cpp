@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cctype>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -294,7 +295,7 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
             pendingPointIndex = -1;
             continue;
         }
-        if (keyword == "pathlink") {
+        if (keyword == "pathlink" || keyword == "pathlink_oneway") {
             std::vector<std::string> values;
             if (!readValues(reader, keyword, 2, values, result.diagnostics)) {
                 continue;
@@ -306,6 +307,7 @@ void loadPassengerPaths(const VehicleConfig& source, VehicleConfig& result) {
                                          "expected two non-negative path-point indexes");
                 continue;
             }
+            link.oneWay = keyword == "pathlink_oneway";
             result.passengerPathLinks.push_back(link);
             result.passengerPathsLoaded = true;
             continue;
@@ -452,7 +454,7 @@ bool parseAxle(Reader& reader, VehicleConfig& result, const Line& keywordLine) {
                                 name == "achse_feder" || name == "achse_maxforce" ||
                                 name == "achse_daempfer" || name == "achse_antrieb";
         if (!recognized) {
-            if (!name.empty() && name.front() != ';' && name.front() != '/') {
+            if (openbus::config::isConfigurationIdentifier(name)) {
                 openbus::config::logUnhandledConfigurationTag(
                     "vehicle axle block", result.sourcePath, field.number, field.text,
                     "axle subdirective is not implemented");

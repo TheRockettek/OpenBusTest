@@ -989,10 +989,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                     const double dz = placement.position[2] - chassis.position[2];
                     loadOrder.emplace_back(dx * dx + dy * dy + dz * dz, vehicle.get());
                 }
-                std::sort(loadOrder.begin(), loadOrder.end(),
-                          [](const auto& left, const auto& right) {
-                              return left.first < right.first;
-                          });
+                std::sort(
+                    loadOrder.begin(), loadOrder.end(),
+                    [](const auto& left, const auto& right) { return left.first < right.first; });
                 for (const auto& [distanceSquared, vehicle] : loadOrder) {
                     const RenderViewContext vehicleContext =
                         vehicle == playerVehicle_ ? context : RenderViewContext::NonPlayer;

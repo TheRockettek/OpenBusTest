@@ -26,6 +26,8 @@ int main() {
               "[CTC]\nColorscheme\nTexture\\Advert\n0\n"
               "[CTCTexture]\nFarbschema_Tex1\n3803_l.tga\n"
               "[mesh]\ndisplay.obj\n"
+              "[newanim]\n"
+              "----Lower left window 2---\n"
               "[visible]\nscenery_lamp\n1\n"
               "[absheight]\n"
               "[shadow]\n"
@@ -366,7 +368,11 @@ int main() {
     const std::filesystem::path attachmentConfigPath = root / "attachment.sco";
     std::ofstream attachmentConfig(attachmentConfigPath);
     attachmentConfig << "[model]\nattachment.cfg\n"
-                        "[new_attachment]\nleft\nattach_rot_z\n180\n"
+                        "[new_attachment]\n"
+                        "Detail-Faktor: here is how to configure whether the object is larger "
+                        "oder kleiner angenommen wird.\n"
+                        "* 0.5 = object is displayed when only half the configured size.\n"
+                        "left\nattach_rot_z\n180\n"
                         "attach_trans\n0\n0.04\n0.8\n"
                         "[new_attachment]\nright\nattach_trans\n1\n2\n3\n";
     attachmentConfig.close();
@@ -470,7 +476,10 @@ int main() {
     convertedXMesh.close();
     const std::filesystem::path xModelConfigPath = root / "scenery_model.cfg";
     std::ofstream xModelConfig(xModelConfigPath);
-    xModelConfig << "[new_attachment]\nmodel_anchor\nattach_rot_y\n15\n"
+    xModelConfig << "[new_attachment]\n"
+                    "This value is multiplied by the graphics option value.\n"
+                    "* 1.0 = object appears at the configured size.\n"
+                    "model_anchor\nattach_rot_y\n15\n"
                     "attach_trans\n2\n3\n4\n[mesh]\ntree.x\n";
     xModelConfig.close();
     Variables xSceneryVariables(ScriptObjectKind::SceneryObject);
@@ -587,6 +596,21 @@ int main() {
         lax.parts[0].animations[1].variable != "second_rotation" ||
         lax.parts[0].animations[2].variable != "second_translation") {
         std::cerr << "lax material or animation records were not recovered\n";
+        return 1;
+    }
+    const std::filesystem::path animationLabelsConfigPath = root / "animation-labels.cfg";
+    std::ofstream animationLabelsConfig(animationLabelsConfigPath);
+    animationLabelsConfig << "[mesh]\nfirst.obj\n"
+                             "[newanim]\nanim_rot\nflap_pos\n1\n"
+                             "Obere Reihe\nKlappfenster OL1\n"
+                             "[mesh]\nsecond.obj\n";
+    animationLabelsConfig.close();
+    const ModelConfig animationLabels =
+        loadModelConfig(animationLabelsConfigPath, root, ModelConfigKind::Bus, variables);
+    if (animationLabels.diagnostics.hasErrors() || animationLabels.parts.size() != 2 ||
+        animationLabels.parts[0].animations.size() != 1 ||
+        animationLabels.parts[0].animations[0].variable != "flap_pos") {
+        std::cerr << "descriptive text between animation and mesh records was not ignored\n";
         return 1;
     }
     const std::filesystem::path setBoneConfigPath = root / "setbone.cfg";

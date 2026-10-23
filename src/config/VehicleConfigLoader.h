@@ -53,6 +53,7 @@ struct PassengerPathPoint {
 struct PassengerPathLink {
     int from = -1;
     int to = -1;
+    bool oneWay = false;
 };
 
 struct VehicleConfig {

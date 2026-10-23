@@ -383,9 +383,10 @@ for alignment is not mistaken for supporting it.
   `[linkToPrevVeh]`, and `[stamper]`; basic `[drivpos]`, `[passpos]`,
   `[entry]`, `[exit]`, and illumination records do not yet provide passenger
   movement, boarding, or ticket interaction.
-- [ ] Complete path runtime use of extended `[pathpnt]` records and
-  `[stepsoundpack]`; loading the basic graph is not equivalent to passenger
-  route selection or step-sound playback.
+- [~] Load `[pathlink_oneway]` and preserve its directed-link flag alongside
+  ordinary `[pathlink]` records; `OpenBusVehicleConfigProbe` distinguishes both
+  forms. Passenger movement does not yet consume the graph, and extended
+  `[pathpnt]` records and `[stepsoundpack]` runtime use remain incomplete.
 - [~] Player sound CFG runs untriggered `[sound]` records with `[volcurve]`
   controls as ambient loops and applies their configured base gain. This
   enables authored window-dependent ambience (for example, `cabwindowopen`)
@@ -401,6 +402,29 @@ for alignment is not mistaken for supporting it.
 - [ ] Add configurable input CFG support for `[game]`, `[ctrl]`, `[axis]`,
   and keyboard-context `[entry]`; current controls are hardcoded to the
   runtime key map.
+- [ ] Implement observed configuration records that remain unhandled in their
+  current contexts: model animation `[anim_rot_x]` and animation operation
+  `[Scheiben]`; SCO `[approachdist]`, `[carpark_p]`, `[collisionmesh]`,
+  `[complexity]`, `[crossingproblem]`, `[entrypoint]`, `[joinable]`, `[mass]`,
+  `[momentofintertia]`, `[matl_texadress_border]`, `[newanim]`,
+  `[nomaplighting]`, `[shadow]` per-mesh cast-shadow behavior,
+  `[splinehelper]`, and `[terrainhole]`; model-config
+  `[crashmode_pole]`, `[detail_factor]`, `[LightMapMapping]`,
+  `[traffic_light]`, and `[traffic_lights_group]`; and spline-profile
+  `[length]`, `[matl]`, `[nightmapmode]`, and `[rail_enh]`. Some names have
+  implementations in other contexts (for example, `[traffic_light]` data in
+  SCO files and `[matl]` model materials); the missing scope is the context
+  shown by the runtime warning, not the keyword globally. `[newachse]`
+  descriptive text lines are labels rather than configuration tags and are
+  ignored; only identifier-like unknown axle fields are reported.
+  Model-animation divider comments beginning with `--` are also ignored rather
+  than logged as unknown animation operations. Descriptive multiword labels
+  between animation records and in `[new_attachment]` blocks are not
+  configuration operations and are ignored; identifier-like unknown
+  operations still produce diagnostics. The latest live Cotterell audit found
+  49 distinct unsupported warning keywords (case-insensitive), all
+  cross-referenced here by configuration context; attachment prose no longer
+  produces false warnings.
 - [ ] Define safe handling for general metadata `[friendlyname]`,
   `[description]`, and `[usrinfo]`; never copy `[usrinfo]` values into logs,
   diagnostics, or source control.
@@ -534,7 +558,9 @@ for the explicit boundary.
   timetable. Population changes unload vehicles off-screen; route-complete
   actors are recycled from the bounded pool, resetting route progress, speed,
   and junction-wait state. The startup pool remains the hard capacity.
-  Missing timetable endpoint routes do not fall back to mid-route bus spawning.
+  When no complete timetable match exists, a route sharing at least two
+  consecutive timetable splines may use an explicitly logged partial endpoint
+  fallback; buses never spawn partway along a route.
 - [~] AI vehicles advance with lookahead speed control along directed authored
   lane paths, including scenery junction paths, matching the cyan F2 geometry.
   Matching endpoints connect within 0.5 m horizontally and vertically; road
@@ -601,12 +627,31 @@ for the explicit boundary.
   a later complete route. Road traffic paths authored inside placed scenery
   objects retain the parent object's map ID and path index, allowing repeated
   timetable `.ttr` entries for junction paths to match the directed lane graph.
-  A live Cotterell startup recognized U28 and line 12 as complete routes, while
-  seven other candidate routes remained partial endpoint fallbacks; one
-  requested bus queued successfully. Fallback status is logged rather than
-  mislabeled as timetable-faithful. Verify actual departure timing and in-game
-  route progress; full OMSI schedule parity and the remaining partial map
-  routes still need validation.
+  Repeated checkpoints on ordinary map splines are collapsed to one route
+  segment; distinct placed-scenery paths retain their individual selectors.
+  A live Cotterell run still reports three complete routes and seven partial
+  endpoint fallbacks, so unrepresented or disconnected map paths remain.
+  A live Cotterell startup recognized complete routes for line 12, U28, and one
+  U18 trip; other candidate trips remain explicitly logged as partial endpoint
+  fallbacks rather than timetable-faithful. A one-bus live run departed line 12
+  from endpoint spline 14089 at minute 483, emitted progress at 100 m intervals
+  through 700 m, and reached its open route end after 785.68 m. Full OMSI
+  schedule parity and the remaining partial map routes still need validation.
+  The current seven fallback candidates match only timetable suffixes, omitting
+  121 or 146 earlier checkpoints; startup diagnostics now report the matched
+  offset, omitted prefix, and next expected spline/path rather than implying
+  those are complete. A bounded authored-origin graph check now reports the
+  longest ordered timetable prefix reachable from each unmatched trip's
+  starting checkpoint. A live Cotterell startup found one X18 trip matching
+  73/205 checkpoints from spline 10433, lane 5, before the graph disconnects
+  at spline 10811; this confirms the fallback is not caused only by a suffix
+  search. The direct-transition diagnostic found zero road lanes for spline
+  10811, and an exact search of the installed Cotterell `.map`, `.sco`, and
+  `.ttr` files found that ID only in `Uni_Ctrl.ttr`. The next represented
+  checkpoint, spline 10813/path 5, is not reachable directly from spline 10810
+  either. This points to an absent map source record and a real graph break,
+  rather than a turn-radius limit; do not silently skip it and label the route
+  complete.
 - [x] Parse `drivers.txt` model paths and `.hum` fields, and distinguish
   type-1 human paths from type-0 road paths.
 - [~] Spawn and move human actors on nearby type-1 spline routes using
@@ -753,10 +798,31 @@ the outstanding implementation and validation tasks:
   owned departure. Recycled actors reset route progress, speed, and
   junction-wait state.
 - [~] **Complete scheduled bus routes:** complete timetable matches are now
-  preferred over endpoint-only partial matches, and the live Cotterell startup
-  queued two endpoint buses: one complete U18 route and partial fallbacks for
-  line 12/U28. Departure selection is regression-tested; verify live departure
-  ownership and route progress, and resolve the remaining partial routes.
+  preferred over endpoint-only partial matches. Cotterell startup has queued
+  endpoint buses for line 12, U28, and one complete U18 route; other trips
+  remain partial fallbacks. Departure selection, midnight rollover, and the
+  exact decimal-start-hour boundary are regression-tested; the boundary bug
+  that could produce a negative due time is fixed. A one-bus live run confirmed
+  a line 12 bus departed endpoint spline 14089 at timetable minute 483 once its
+  tile was active, its footprint clear, and the camera rotated away, then
+  reached the route end after 785.68 m. Progress diagnostics reported each
+  100 m through 700 m. Earlier runs confirmed visible endpoints and inactive
+  endpoint tiles correctly hold dispatch. Bounded diagnostics report changes
+  in camera, clearance, and active-tile blockers, including camera distance.
+  A bounded authored-origin search now identifies the longest connected
+  timetable prefix and first disconnected checkpoint. Route search can traverse
+  intermediate lanes and now consumes repeated consecutive timetable
+  checkpoints consistently with the route matcher. A live Cotterell check
+  confirms that this recovers the absent spline 10811 by following represented
+  checkpoints in order, improving U18/X18 origin coverage from 73 to 110 of 204
+  represented checkpoints. It then reaches a genuine lane-graph break between
+  spline 14280 and represented spline 14292; neither an intermediary bridge nor
+  unconstrained routes connect that pair. The nearest directed lane endpoints
+  are 23.99 m apart horizontally and 0.92 m vertically, with heading alignment
+  -1.0, so this is not a join-tolerance defect. Startup still finds 3 exact
+  routes and 7 endpoint-only partial fallbacks. Do not classify those fallbacks
+  as timetable-faithful or synthesize the disconnected transition; resolve it
+  against valid map lane data before claiming full timetable coverage.
 - [ ] **Complete traffic control:** verify SCO signal cycle origin, approach
   distance and stop-line placement; implement traffic-sign rules.
 - [~] **Improve junction control:** committed junction-path actors clear before

@@ -300,7 +300,7 @@ bool RenderLoop::AddTrafficVehicle(
     std::vector<double> scheduledDepartureMinutes, std::optional<std::size_t> unscheduledGroupIndex,
     int defaultVehicleType, std::vector<int> requiredRouteSplineIds,
     std::vector<std::optional<std::size_t>> requiredSceneryPathSequence,
-    bool stopAtRequiredSequenceEnd) {
+    bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired) {
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
     }
@@ -309,13 +309,12 @@ bool RenderLoop::AddTrafficVehicle(
     const openbus::map::MapTrafficLaneStart requestedStart{splineId, laneSelector};
     const bool isExistingEntry =
         std::find(laneStarts.begin(), laneStarts.end(), requestedStart) != laneStarts.end();
-    const auto timetableEntryLanes =
-        isBus && !requiredRouteSplineIds.empty()
-            ? mapRenderer_->lanesForTimetableEntry(
-                  splineId, requiredSceneryPathSequence.empty()
-                                ? std::nullopt
-                                : requiredSceneryPathSequence.front())
-            : std::vector<openbus::map::MapTrafficLaneStart>{};
+    const auto timetableEntryLanes = isBus && !requiredRouteSplineIds.empty()
+                                         ? mapRenderer_->lanesForTimetableEntry(
+                                               splineId, requiredSceneryPathSequence.empty()
+                                                             ? std::nullopt
+                                                             : requiredSceneryPathSequence.front())
+                                         : std::vector<openbus::map::MapTrafficLaneStart>{};
     const bool isScheduledTimetableStart =
         std::find(timetableEntryLanes.begin(), timetableEntryLanes.end(), requestedStart) !=
         timetableEntryLanes.end();
@@ -339,11 +338,10 @@ bool RenderLoop::AddTrafficVehicle(
         vehicleType, isBus ? std::nullopt : unscheduledGroupIndex, isBus};
     const double routeSearchTurnRadius =
         isBus && !requiredRouteSplineIds.empty() ? 0.0 : turnRadius;
-    auto route = mapRenderer_->buildDrivingRoute(splineId, laneSelector, routeSeed,
-                                                 routeSearchTurnRadius,
-                                                 vehicleFilter, requiredRouteSplineIds,
-                                                 requiredSceneryPathSequence,
-                                                 stopAtRequiredSequenceEnd);
+    auto route = mapRenderer_->buildDrivingRoute(
+        splineId, laneSelector, routeSeed, routeSearchTurnRadius, vehicleFilter,
+        requiredRouteSplineIds, requiredSceneryPathSequence, stopAtRequiredSequenceEnd,
+        allowIntermediarySegmentsBetweenRequired);
     if (!route) {
         return false;
     }
@@ -505,11 +503,19 @@ std::vector<openbus::map::MapTrafficLaneStart> RenderLoop::trafficEntryLanes() c
 }
 
 std::vector<openbus::map::MapTrafficLaneStart>
-RenderLoop::trafficLanesForTimetableEntry(
-    int splineId, std::optional<std::size_t> sceneryPathIndex) const {
+RenderLoop::trafficLanesForTimetableEntry(int splineId,
+                                          std::optional<std::size_t> sceneryPathIndex) const {
     return mapRenderer_ == nullptr
                ? std::vector<openbus::map::MapTrafficLaneStart>{}
                : mapRenderer_->lanesForTimetableEntry(splineId, sceneryPathIndex);
+}
+
+std::optional<openbus::map::MapTrafficLaneConnectionGap>
+RenderLoop::trafficLaneConnectionGap(int fromSplineId, std::optional<std::size_t> fromPathIndex,
+                                     int toSplineId, std::optional<std::size_t> toPathIndex) const {
+    return mapRenderer_ == nullptr ? std::nullopt
+                                   : mapRenderer_->nearestTrafficLaneConnectionGap(
+                                         fromSplineId, fromPathIndex, toSplineId, toPathIndex);
 }
 
 std::optional<openbus::map::MapTrafficLaneStart>
@@ -536,24 +542,21 @@ std::vector<int> RenderLoop::trafficRouteStartSplineIds(int pathTypeCode) const 
                                    : mapRenderer_->trafficRouteStartSplineIds(pathTypeCode);
 }
 
-std::vector<openbus::map::MapTrafficRouteRequirement>
-RenderLoop::trafficRouteSegments(int splineId, int pathTypeCode, std::size_t laneSelector,
-                                 double minimumTurnRadiusMeters, std::size_t routeSeed,
-                                 const std::vector<int>& requiredSplineSequence,
-                                 openbus::map::MapTrafficVehicleFilter vehicle,
-                                 const std::vector<std::optional<std::size_t>>&
-                                     requiredSceneryPathSequence,
-                                 bool stopAtRequiredSequenceEnd) const {
+std::vector<openbus::map::MapTrafficRouteRequirement> RenderLoop::trafficRouteSegments(
+    int splineId, int pathTypeCode, std::size_t laneSelector, double minimumTurnRadiusMeters,
+    std::size_t routeSeed, const std::vector<int>& requiredSplineSequence,
+    openbus::map::MapTrafficVehicleFilter vehicle,
+    const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence,
+    bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired) const {
     if (mapRenderer_ == nullptr) {
         return {};
     }
     const std::optional<openbus::map::MapTrafficRoute> route =
         pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD
-            ? mapRenderer_->buildDrivingRoute(splineId, laneSelector, routeSeed,
-                                              minimumTurnRadiusMeters, vehicle,
-                                              requiredSplineSequence,
-                                              requiredSceneryPathSequence,
-                                              stopAtRequiredSequenceEnd)
+            ? mapRenderer_->buildDrivingRoute(
+                  splineId, laneSelector, routeSeed, minimumTurnRadiusMeters, vehicle,
+                  requiredSplineSequence, requiredSceneryPathSequence, stopAtRequiredSequenceEnd,
+                  allowIntermediarySegmentsBetweenRequired)
             : mapRenderer_->buildTrafficRoute(splineId, pathTypeCode);
     if (!route.has_value()) {
         return {};
@@ -562,8 +565,7 @@ RenderLoop::trafficRouteSegments(int splineId, int pathTypeCode, std::size_t lan
     routeSegments.reserve(route->segments.size());
     for (const openbus::map::MapTrafficRouteSegment& segment : route->segments) {
         if (segment.spline.placement.splineId != 0) {
-            routeSegments.push_back(
-                {segment.spline.placement.splineId, segment.sceneryPathIndex});
+            routeSegments.push_back({segment.spline.placement.splineId, segment.sceneryPathIndex});
         }
     }
     return routeSegments;

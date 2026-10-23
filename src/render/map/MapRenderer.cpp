@@ -185,8 +185,7 @@ TrafficSignalDebugStats MapRenderer::trafficSignalDebugStats() const {
         ++stats.activeSignalModels;
         stats.controllerDrivenModels +=
             scriptState.trafficSignal->hasConditionalOverrides ? 1U : 0U;
-        const auto phase =
-            scriptState.variables.numericValues().find("trafficlightphase");
+        const auto phase = scriptState.variables.numericValues().find("trafficlightphase");
         if (phase == scriptState.variables.numericValues().end() || !std::isfinite(phase->second) ||
             phase->second < 0.0F || phase->second > 12.0F ||
             std::floor(phase->second) != phase->second) {
@@ -337,8 +336,7 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
                                                     ModelConfigKind::SceneryObject, variables);
         if (configuration.diagnostics.hasErrors()) {
             std::string diagnosticDetails;
-            for (const ConfigurationDiagnostic& diagnostic :
-                 configuration.diagnostics.entries) {
+            for (const ConfigurationDiagnostic& diagnostic : configuration.diagnostics.entries) {
                 if (diagnostic.severity != ConfigurationDiagnostic::Severity::Error) {
                     continue;
                 }
@@ -708,25 +706,30 @@ void MapRenderer::updateTrafficSignalControllers(
     }
 }
 
-std::optional<openbus::map::MapTrafficRoute>
-MapRenderer::buildDrivingRoute(int splineId, std::size_t laneSelector, std::size_t routeSeed,
-                               double minimumTurnRadiusMeters,
-                               openbus::map::MapTrafficVehicleFilter vehicle,
-                               const std::vector<int>& requiredSplineSequence,
-                               const std::vector<std::optional<std::size_t>>&
-                                   requiredSceneryPathSequence,
-                               bool stopAtRequiredSequenceEnd) const {
-    return impl_->roadTrafficLaneNetwork.buildRoute(splineId, laneSelector, routeSeed,
-                                                    minimumTurnRadiusMeters, vehicle,
-                                                    requiredSplineSequence,
-                                                    requiredSceneryPathSequence,
-                                                    stopAtRequiredSequenceEnd);
+std::optional<openbus::map::MapTrafficRoute> MapRenderer::buildDrivingRoute(
+    int splineId, std::size_t laneSelector, std::size_t routeSeed, double minimumTurnRadiusMeters,
+    openbus::map::MapTrafficVehicleFilter vehicle, const std::vector<int>& requiredSplineSequence,
+    const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence,
+    bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired) const {
+    return impl_->roadTrafficLaneNetwork.buildRoute(
+        splineId, laneSelector, routeSeed, minimumTurnRadiusMeters, vehicle, requiredSplineSequence,
+        requiredSceneryPathSequence, stopAtRequiredSequenceEnd,
+        allowIntermediarySegmentsBetweenRequired);
 }
 
 std::vector<openbus::map::MapTrafficLaneStart>
 MapRenderer::lanesForTimetableEntry(int splineId,
                                     std::optional<std::size_t> sceneryPathIndex) const {
     return impl_->roadTrafficLaneNetwork.lanesForTimetableEntry(splineId, sceneryPathIndex);
+}
+
+std::optional<openbus::map::MapTrafficLaneConnectionGap>
+MapRenderer::nearestTrafficLaneConnectionGap(int fromSplineId,
+                                             std::optional<std::size_t> fromPathIndex,
+                                             int toSplineId,
+                                             std::optional<std::size_t> toPathIndex) const {
+    return impl_->roadTrafficLaneNetwork.nearestConnectionGap(fromSplineId, fromPathIndex,
+                                                              toSplineId, toPathIndex);
 }
 
 std::vector<openbus::map::MapTrafficLaneStart> MapRenderer::trafficEntryLanes() const {

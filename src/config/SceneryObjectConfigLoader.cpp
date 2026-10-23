@@ -156,8 +156,11 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                     attachment.hasRotation = true;
                 } else {
                     if (attachment.name.empty() && !sawOperation) {
+                        if (!openbus::config::isConfigurationIdentifier(entry.text)) {
+                            continue;
+                        }
                         attachment.name = entry.text;
-                    } else {
+                    } else if (openbus::config::isConfigurationIdentifier(entry.text)) {
                         openbus::config::logUnhandledConfigurationTag(
                             "scenery object attachment", configPath, entry.number, entry.text,
                             "attachment operation is not implemented");

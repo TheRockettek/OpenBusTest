@@ -85,9 +85,8 @@ class MapSceneLoader {
     std::unordered_map<std::string, std::size_t> sceneryLodThresholdSetByAsset;
     std::unordered_map<std::string, std::vector<ModelAttachmentPoint>> sceneryAttachmentPoints;
     std::unordered_map<std::string, std::vector<SceneryObjectTrafficPath>> sceneryTrafficPaths;
-    std::unordered_map<
-        std::string,
-        std::vector<std::optional<openbus::map::MapTrafficSignalSchedule>>>
+    std::unordered_map<std::string,
+                       std::vector<std::optional<openbus::map::MapTrafficSignalSchedule>>>
         sceneryTrafficLightSchedules;
     std::unordered_map<std::string, VehicleConfig> sceneryScriptConfigurations;
     std::unordered_map<std::string, std::vector<ModelScriptTexture>> sceneryModelScriptTextures;

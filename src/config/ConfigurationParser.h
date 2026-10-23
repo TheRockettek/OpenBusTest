@@ -44,6 +44,7 @@ class Reader {
 
 std::string trim(const std::string& value);
 std::string lower(std::string value);
+bool isConfigurationIdentifier(const std::string& value);
 bool parseInt(const std::string& value, int& result);
 bool parseDouble(const std::string& value, double& result);
 bool parseFloat(const std::string& value, float& result);

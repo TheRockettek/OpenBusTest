@@ -32,6 +32,7 @@ int main() {
              "0\n[pathpnt]\n0\n0\n0\n"
              "1\n[pathpnt]\n1\n0\n0\n"
              "[pathlink]\n0\n1\n"
+             "[pathlink_oneway]\n1\n0\n"
              "[next_stepsound]\n0\n"
              "[next_roomheight]\n1.85\n";
     paths.close();
@@ -101,6 +102,29 @@ int main() {
                           "[add_camera_reflexion_2_static]\n1\n2\n3\n0\n40\n10\n-5\n12\n");
     const VehicleConfig reflectionCameras =
         loadVehicleConfig(reflectionCameraPath, VehicleFileKind::Bus, false);
+    const std::filesystem::path axleLabelsPath = root / "axle_labels.bus";
+    std::ofstream axleLabels(axleLabelsPath);
+    axleLabels << "[model]\nmodel.cfg\n"
+                  "[newachse]\n"
+                  "Vorderachse:\n"
+                  "Koordinate:\n"
+                  "achse_long\n1.5\n"
+                  "Breite der Auflagefläche beider Reifen\n"
+                  "achse_maxwidth\n2.4\n"
+                  "achse_minwidth\n1.8\n"
+                  "Raddurchmesser der Räder dieser Achse\n"
+                  "achse_raddurchmesser\n1.0\n"
+                  "Federkonstante der Federung PRO SEITE in kN/m\n"
+                  "achse_feder\n300\n"
+                  "Höchstbelastung in kN\n"
+                  "achse_maxforce\n80\n"
+                  "Dämpferkonstante in kNs/m\n"
+                  "achse_daempfer\n20\n"
+                  "Ist diese Achse angetrieben?\n"
+                  "achse_antrieb\n1\n";
+    axleLabels.close();
+    const VehicleConfig axleLabelsConfig =
+        loadVehicleConfig(axleLabelsPath, VehicleFileKind::Bus, false);
     const std::filesystem::path ovhConfigPath = root / "ai_car.ovh";
     std::ofstream ovhConfig(ovhConfigPath);
     ovhConfig << "[friendlyname]\nTest\nAI car\nDefault\n"
@@ -134,6 +158,13 @@ int main() {
 
     if (!reflectionCameraKeywordsParsed || !ovhModelLoaded) {
         std::cerr << "Reflection camera parsing or OVH vehicle model loading failed\n";
+        return 1;
+    }
+    if (axleLabelsConfig.diagnostics.hasErrors() || axleLabelsConfig.axles.size() != 1 ||
+        axleLabelsConfig.axles.front().position != 1.5 ||
+        axleLabelsConfig.axles.front().maxWidth != 2.4 ||
+        axleLabelsConfig.axles.front().driven != true) {
+        std::cerr << "Descriptive axle labels interfered with numeric axle records\n";
         return 1;
     }
     if (result.diagnostics.hasErrors() || !caseMismatchedScriptConverted ||
@@ -171,7 +202,12 @@ int main() {
         result.passengerExitPathPoints.size() != 1 ||
         result.passengerPositions[0].interiorLightIndexes != std::array<int, 4>{1, 2, 3, 4} ||
         !result.passengerPathsLoaded || result.passengerPathPoints.size() != 2 ||
-        result.passengerPathLinks.size() != 1 || result.passengerStepSoundPacks.size() != 1 ||
+        result.passengerPathLinks.size() != 2 ||
+        result.passengerPathLinks[0].from != 0 || result.passengerPathLinks[0].to != 1 ||
+        result.passengerPathLinks[0].oneWay ||
+        result.passengerPathLinks[1].from != 1 || result.passengerPathLinks[1].to != 0 ||
+        !result.passengerPathLinks[1].oneWay ||
+        result.passengerStepSoundPacks.size() != 1 ||
         result.passengerStepSoundPacks[0].size() != 2 ||
         result.passengerPathNextStepSound != 0 ||
         result.passengerPathNextRoomHeights.size() != 1 ||

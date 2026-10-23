@@ -97,28 +97,41 @@ environment; set it to `1.0` for normal scheduled density.
 Pedestrian `.hum` and model CFG parsing, mesh parsing, and texture decoding
 also use workers. OpenGL uploads and script initialization remain on the
 main/render thread. Road vehicles and buses wait in an inactive queue until
-their model and scripts are ready and they can be admitted at a connected
-incoming lane end. Isolated splines, internal spline joins, and closed circuits
-are never spawn points. Admission requires a clear vehicle footprint, an
-endpoint outside the main camera frustum, and at least 50 m clearance from the
-camera (plus the vehicle radius). No vehicles are distributed partway along
-routes at startup or reactivation. Density reductions remove surplus vehicles
-only off-screen. Vehicles are retired immediately when they reach an open
-route end; subsequent spawns still obey the off-screen and clearance checks.
+their model and scripts are ready. Road traffic may be admitted at clear,
+off-screen interior positions on connected lanes; scheduled buses remain
+restricted to incoming timetable endpoints. Isolated splines and terminal dead
+ends are excluded from road-traffic spawn candidates. Admission requires a
+clear vehicle footprint, an entry outside the main camera frustum, and at least
+50 m clearance from the camera (plus the vehicle radius). Density reductions
+remove surplus vehicles only off-screen. Vehicles are retired when they reach
+an open route end; subsequent spawns still obey the off-screen and clearance
+checks.
 `.ttl` timetable departure times are
 parsed and linked to `.ttp` trips. Matched buses wait for their next departure
 at or after the configured starting hour before endpoint admission, including
-midnight rollover, while retaining the off-screen and clearance checks. When
+midnight rollover. Admission waits until the endpoint tile is active, the
+endpoint is outside the camera views, and its vehicle-sized clearance is
+available; a due bus remains queued while any of those conditions is false.
+When
 multiple pooled buses serve a route, its departure list is partitioned so each
 bus gets a disjoint subset of departure times. Timetable `.ttr` entries retain
 repeated scenery-object IDs and their selected path indexes, so scheduled route
 validation checks the complete ordered path rather than matching only shared
-road sections. Exact timetable-selected scenery paths can bridge small authored
-vertical offsets (up to 2.5 m) when their horizontal endpoints and headings
-align; ordinary road-traffic connectivity keeps its stricter limits. Cotterell
-live startup validation recognizes U28 and line 12 as complete timetable routes;
-other routes remain explicitly logged as partial endpoint fallbacks when the
-map graph cannot reproduce their full authored sequence.
+road sections. Repeated timetable checkpoints on an ordinary map spline are
+matched to that spline's single route segment, while repeated placed-scenery
+object IDs retain distinct path selectors. Exact timetable-selected scenery
+paths can bridge small authored vertical offsets (up to 2.5 m) when their
+horizontal endpoints and headings align; ordinary road-traffic connectivity
+keeps its stricter limits. Cotterell
+startup validation has recognized complete routes for line 12, U28, and one
+U18 trip; other trips remain explicitly logged as partial endpoint fallbacks
+when the map graph cannot reproduce their full authored sequence. A departure
+that exactly matches the configured start hour is eligible immediately,
+including when the hour is represented as a decimal value. A live Cotterell
+check confirmed a minute-483 bus departs once its endpoint tile is active, the
+entry is clear, and the camera no longer sees it. A one-bus run then confirmed
+route progress at 100 m intervals through 700 m and arrival at the open route
+end after 785.68 m.
 Pedestrian model choices come from the map's `humans.txt`; `drivers.txt` is
 reserved for AI driver models and is not used as a pedestrian roster.
 Pedestrians follow the authored human-path offsets and heights, render the

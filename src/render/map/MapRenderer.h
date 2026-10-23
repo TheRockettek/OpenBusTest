@@ -64,16 +64,18 @@ class MapRenderer {
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId) const;
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId,
                                                                    int pathTypeCode) const;
-    std::optional<openbus::map::MapTrafficRoute>
-    buildDrivingRoute(int splineId, std::size_t laneSelector = 0, std::size_t routeSeed = 0,
-                      double minimumTurnRadiusMeters = 0.0,
-                      openbus::map::MapTrafficVehicleFilter vehicle = {},
-                      const std::vector<int>& requiredSplineSequence = {},
-                      const std::vector<std::optional<std::size_t>>&
-                          requiredSceneryPathSequence = {},
-                      bool stopAtRequiredSequenceEnd = false) const;
+    std::optional<openbus::map::MapTrafficRoute> buildDrivingRoute(
+        int splineId, std::size_t laneSelector = 0, std::size_t routeSeed = 0,
+        double minimumTurnRadiusMeters = 0.0, openbus::map::MapTrafficVehicleFilter vehicle = {},
+        const std::vector<int>& requiredSplineSequence = {},
+        const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence = {},
+        bool stopAtRequiredSequenceEnd = false,
+        bool allowIntermediarySegmentsBetweenRequired = false) const;
     std::vector<openbus::map::MapTrafficLaneStart>
     lanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
+    std::optional<openbus::map::MapTrafficLaneConnectionGap>
+    nearestTrafficLaneConnectionGap(int fromSplineId, std::optional<std::size_t> fromPathIndex,
+                                    int toSplineId, std::optional<std::size_t> toPathIndex) const;
     std::vector<openbus::map::MapTrafficLaneStart> trafficEntryLanes() const;
     std::optional<openbus::map::MapTrafficLaneStart>
     selectTrafficEntryLane(openbus::map::MapTrafficVehicleFilter vehicle,

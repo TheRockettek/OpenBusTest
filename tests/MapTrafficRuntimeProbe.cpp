@@ -231,6 +231,64 @@ void verifyDrivingBehavior() {
         requiredSequence.buildRoute(1022, 0, 0, 0.0, {}, {1022, 1023});
     require(completeRequiredSequence && completeRequiredSequence->segments.size() == 2,
             "an endpoint route succeeds when it completes the required timetable sequence");
+    MapTrafficLaneNetwork intermediaryRequiredSequence;
+    intermediaryRequiredSequence.addSegment(straight(1030, 0.0, 0.0, 0.0, 20.0));
+    intermediaryRequiredSequence.addSegment(straight(1031, 0.0, 20.0, 0.0, 20.0));
+    intermediaryRequiredSequence.addSegment(straight(1032, 0.0, 40.0, 0.0, 20.0));
+    intermediaryRequiredSequence.finalize();
+    require(!intermediaryRequiredSequence.buildRoute(1030, 0, 0, 0.0, {}, {1030, 1032}),
+            "timetable checkpoints remain adjacent by default");
+    const auto intermediaryMatchedRoute = intermediaryRequiredSequence.buildRoute(
+        1030, 0, 0, 0.0, {}, {1030, 1032}, {}, true, true);
+    require(intermediaryMatchedRoute && intermediaryMatchedRoute->segments.size() == 3 &&
+                mapTrafficTimetablePathContainedInRouteInOrder(
+                    {{1030, std::nullopt}, {1032, std::nullopt}},
+                    {{1030, std::nullopt}, {1031, std::nullopt}, {1032, std::nullopt}}),
+            "scheduled path search traverses connected intermediary lanes between checkpoints");
+    const auto repeatedIntermediaryCheckpointRoute = intermediaryRequiredSequence.buildRoute(
+        1030, 0, 0, 0.0, {}, {1030, 1030, 1032}, {}, true, true);
+    require(repeatedIntermediaryCheckpointRoute &&
+                repeatedIntermediaryCheckpointRoute->segments.size() == 3,
+            "connected route search consumes consecutive duplicate timetable checkpoints");
+    MapTrafficLaneNetwork outOfOrderWaypointNetwork;
+    outOfOrderWaypointNetwork.addSegment(straight(1040, 0.0, 0.0, 0.0, 20.0));
+    outOfOrderWaypointNetwork.addSegment(straight(1042, 0.0, 20.0, 0.0, 20.0));
+    outOfOrderWaypointNetwork.addSegment(straight(1041, 0.0, 40.0, 0.0, 20.0));
+    outOfOrderWaypointNetwork.addSegment(straight(1042, 0.0, 60.0, 0.0, 20.0));
+    outOfOrderWaypointNetwork.addSegment(straight(1043, 0.0, 80.0, 0.0, 20.0));
+    outOfOrderWaypointNetwork.finalize();
+    const auto waypointConnectionGap =
+        outOfOrderWaypointNetwork.nearestConnectionGap(1040, std::nullopt, 1041, std::nullopt);
+    require(waypointConnectionGap && waypointConnectionGap->horizontalMeters == 20.0 &&
+                waypointConnectionGap->verticalMeters == 0.0 &&
+                waypointConnectionGap->headingAlignment > 0.99,
+            "connection diagnostics report the closest directed endpoint gap and alignment");
+    const auto outOfOrderWaypointRoute =
+        outOfOrderWaypointNetwork.buildRoute(1040, 0, 0, 0.0, {},
+                                             {1040, 1041, 1042, 1043}, {}, true, true);
+    require(outOfOrderWaypointRoute && outOfOrderWaypointRoute->segments.size() == 5 &&
+                mapTrafficTimetablePathContainedInRouteInOrder(
+                    {{1040, std::nullopt}, {1041, std::nullopt}, {1042, std::nullopt},
+                     {1043, std::nullopt}},
+                    [&] {
+                        std::vector<MapTrafficRouteRequirement> routeRequirements;
+                        for (const auto& segment : outOfOrderWaypointRoute->segments) {
+                            routeRequirements.push_back(
+                                {segment.spline.placement.splineId, segment.sceneryPathIndex});
+                        }
+                        return routeRequirements;
+                    }()),
+            "waypoint search can pass a later checkpoint before matching the required order");
+    MapTrafficLaneNetwork repeatedTimetableSpline;
+    repeatedTimetableSpline.addSegment(straight(1027, 0.0, 0.0, 0.0, 20.0));
+    repeatedTimetableSpline.addSegment(straight(1028, 0.0, 20.0, 0.0, 20.0));
+    repeatedTimetableSpline.addSegment(straight(1029, 0.0, 40.0, 0.0, 20.0));
+    repeatedTimetableSpline.finalize();
+    const auto repeatedSplineRoute = repeatedTimetableSpline.buildRoute(
+        1027, 0, 0, 0.0, {}, {1027, 1027, 1028, 1028, 1029}, {47, 46, 24, 23, 0}, true);
+    require(repeatedSplineRoute && repeatedSplineRoute->segments.size() == 3 &&
+                repeatedSplineRoute->segments.back().spline.placement.splineId == 1029,
+            "repeated timetable checkpoints on ordinary splines collapse to one route segment");
     MapTrafficLaneNetwork scheduledHeightStep;
     MapTrafficRouteSegment scheduledIncoming;
     scheduledIncoming.spline.placement.splineId = 1025;
@@ -2313,6 +2371,36 @@ void verifyDrivingBehavior() {
             "an endpoint route matches a consecutive timetable section from its first spline");
     require(mapTrafficRoutePrefixMatchingTimetable({1, 2, 3, 4}, {9, 2, 3}).empty(),
             "timetable overlap after the route endpoint does not qualify a bus route");
+    const std::vector<MapTrafficRouteRequirement> repeatedMapSplineTimetable{
+        {20, 47}, {20, 46}, {21, 24}, {21, 23}, {22, 0}};
+    const std::vector<MapTrafficRouteRequirement> mapSplineRoute{
+        {20, std::nullopt}, {21, std::nullopt}, {22, std::nullopt}};
+    require(mapTrafficTimetablePathContainedInRoute(repeatedMapSplineTimetable,
+                                                    mapSplineRoute),
+            "repeated checkpoints on ordinary map splines match one route segment each");
+    require(!mapTrafficTimetablePathContainedInRoute(
+                repeatedMapSplineTimetable,
+                std::vector<MapTrafficRouteRequirement>{{20, std::nullopt},
+                                                        {21, std::nullopt}}),
+            "a route missing the timetable suffix remains a partial match");
+    const std::vector<MapTrafficRouteRequirement> repeatedSceneryPathTimetable{
+        {30, 13}, {30, 12}, {31, 0}};
+    const std::vector<MapTrafficRouteRequirement> sceneryPathRoute{
+        {30, 13}, {30, 12}, {31, std::nullopt}};
+    require(mapTrafficTimetablePathContainedInRoute(repeatedSceneryPathTimetable,
+                                                    sceneryPathRoute),
+            "repeated placed-scenery IDs retain their distinct timetable path selectors");
+    require(!mapTrafficTimetablePathContainedInRoute(
+                {{30, 13}, {30, 11}, {31, 0}}, sceneryPathRoute),
+            "a scenery timetable match rejects a different authored path selector");
+    const auto repeatedPrefix = mapTrafficRoutePrefixMatch(
+        repeatedMapSplineTimetable,
+        std::vector<MapTrafficRouteRequirement>{{21, std::nullopt}, {22, std::nullopt}});
+    require(repeatedPrefix.routePrefix.size() == 2 &&
+                repeatedPrefix.routePrefix.back().splineId == 22 &&
+                repeatedPrefix.timetableStartIndex == 2 &&
+                repeatedPrefix.timetableEntriesMatched == 3,
+            "partial matching collapses repeated map-spline checkpoints and reports its position");
     entryActor.distanceMeters = entryActor.route.totalLength;
     require(mapTrafficRouteEndReadyForUnload(entryActor),
             "vehicles unload immediately when they reach an open route end");
@@ -3412,6 +3500,11 @@ int main(int argc, char** argv) {
                     "a departure after midnight is scheduled on the next clock day");
         requireNear(mapTrafficNextDepartureElapsedSeconds(6.75, 0.0, 405.0), 0.0,
                     "departure at the configured start hour is immediately due");
+        requireNear(mapTrafficNextDepartureElapsedSeconds(8.05, 0.0, 483.0), 0.0,
+                    "a decimal start hour matching a timetable departure is immediately due");
+        require(mapTrafficScheduledDepartureDue(
+                    0.0, mapTrafficNextDepartureElapsedSeconds(8.05, 0.0, 483.0)),
+                "a timetable departure at a decimal start hour does not produce a negative due time");
         requireNear(mapTrafficNextDepartureElapsedSeconds(6.75, 1.0, 405.0), 86400.0,
                     "a missed departure rolls to the following day");
         require(mapTrafficNextDepartureIndex(12.0, 0.0, {483.0, 739.0, 780.0}) == 1,

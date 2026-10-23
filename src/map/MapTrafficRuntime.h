@@ -47,6 +47,12 @@ struct MapTrafficRouteRequirement {
     std::optional<std::size_t> sceneryPathIndex;
 };
 
+struct MapTrafficRoutePrefixMatch {
+    std::vector<MapTrafficRouteRequirement> routePrefix;
+    std::size_t timetableStartIndex = 0;
+    std::size_t timetableEntriesMatched = 0;
+};
+
 struct MapTrafficRouteSegment {
     MapSplinePlacementReference spline;
     bool reversed = false;
@@ -180,6 +186,19 @@ bool mapTrafficRoutesShareCompleteOrderedPath(const std::vector<int>& firstSplin
 // Returns the longest two-or-more-spline timetable match beginning at the route endpoint.
 std::vector<int> mapTrafficRoutePrefixMatchingTimetable(const std::vector<int>& timetableSplineIds,
                                                         const std::vector<int>& routeSplineIds);
+// Ordinary spline checkpoints can repeat within one lane; placed scenery paths retain selectors.
+bool mapTrafficTimetablePathContainedInRoute(
+    const std::vector<MapTrafficRouteRequirement>& timetablePath,
+    const std::vector<MapTrafficRouteRequirement>& route);
+bool mapTrafficTimetablePathContainedInRouteInOrder(
+    const std::vector<MapTrafficRouteRequirement>& timetablePath,
+    const std::vector<MapTrafficRouteRequirement>& route);
+MapTrafficRoutePrefixMatch
+mapTrafficRoutePrefixMatch(const std::vector<MapTrafficRouteRequirement>& timetablePath,
+                           const std::vector<MapTrafficRouteRequirement>& route);
+std::vector<MapTrafficRouteRequirement>
+mapTrafficRoutePrefixMatchingTimetable(const std::vector<MapTrafficRouteRequirement>& timetablePath,
+                                       const std::vector<MapTrafficRouteRequirement>& route);
 
 // Places an actor at a route distance if the sampled pose is within the spawn radius.
 // Open routes stop at totalLength - endpointMarginMeters; closed routes wrap.
@@ -250,8 +269,7 @@ bool mapTrafficEntryHiddenFromCamera(const std::array<double, 3>& position, doub
                                      const std::array<double, 3>& cameraPosition,
                                      const std::array<double, 16>& viewProjection,
                                      double minimumDistanceMeters);
-bool mapTrafficEntryHiddenFromCameras(const std::array<double, 3>& position,
-                                      double radiusMeters,
+bool mapTrafficEntryHiddenFromCameras(const std::array<double, 3>& position, double radiusMeters,
                                       const MapTrafficCameraView& mainCamera,
                                       const std::vector<MapTrafficCameraView>& additionalCameras,
                                       double minimumDistanceMeters);
@@ -293,6 +311,12 @@ struct MapTrafficLaneStart {
     bool operator==(const MapTrafficLaneStart&) const = default;
 };
 
+struct MapTrafficLaneConnectionGap {
+    double horizontalMeters = 0.0;
+    double verticalMeters = 0.0;
+    double headingAlignment = 1.0;
+};
+
 // Directed authored lanes, joined by coincident endpoints (including scenery paths).
 class MapTrafficLaneNetwork {
   public:
@@ -305,10 +329,14 @@ class MapTrafficLaneNetwork {
                double minimumTurnRadiusMeters = 0.0, MapTrafficVehicleFilter vehicle = {},
                const std::vector<int>& requiredSplineSequence = {},
                const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence = {},
-               bool stopAtRequiredSequenceEnd = false) const;
+               bool stopAtRequiredSequenceEnd = false,
+               bool allowIntermediarySegmentsBetweenRequired = false) const;
     std::size_t laneCount(int splineId) const;
     std::vector<MapTrafficLaneStart>
     lanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
+    std::optional<MapTrafficLaneConnectionGap>
+    nearestConnectionGap(int fromSplineId, std::optional<std::size_t> fromPathIndex, int toSplineId,
+                         std::optional<std::size_t> toPathIndex) const;
     std::vector<MapTrafficLaneStart> entryLanes() const;
     std::optional<MapTrafficLaneStart> selectEntryLane(MapTrafficVehicleFilter vehicle,
                                                        std::size_t selectionSeed) const;

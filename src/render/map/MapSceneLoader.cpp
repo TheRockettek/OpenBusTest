@@ -90,8 +90,7 @@ void MapSceneLoader::resolveTrafficLightVariableParents() {
                 int lightIndex = -1;
                 const auto [end, error] =
                     std::from_chars(label.data(), label.data() + label.size(), lightIndex);
-                if (error != std::errc{} || end != label.data() + label.size() ||
-                    lightIndex < 0) {
+                if (error != std::errc{} || end != label.data() + label.size() || lightIndex < 0) {
                     continue;
                 }
                 const auto schedule = parentSchedules.find(static_cast<std::size_t>(lightIndex));
@@ -102,17 +101,17 @@ void MapSceneLoader::resolveTrafficLightVariableParents() {
             }
         }
         if (!scriptState->trafficSignal.has_value()) {
-            const std::string selection = scriptState->placementLabels.empty()
-                                              ? "no light-index label"
-                                              : "light-index labels=" +
-                                                    scriptState->placementLabels.front();
+            const std::string selection =
+                scriptState->placementLabels.empty()
+                    ? "no light-index label"
+                    : "light-index labels=" + scriptState->placementLabels.front();
             recordSkipped(skipped, "[trafficlight] variable parents without a matching schedule",
                           "object ID=" +
                               (scriptState->mapObjectId.has_value()
                                    ? std::to_string(*scriptState->mapObjectId)
                                    : std::string("unknown")) +
-                              " parentObjectId=" +
-                              std::to_string(*scriptState->variableParentId) + " " + selection);
+                              " parentObjectId=" + std::to_string(*scriptState->variableParentId) +
+                              " " + selection);
         }
     }
 }

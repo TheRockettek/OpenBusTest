@@ -585,17 +585,48 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
             std::optional<RoadSpawnLocation> spawn;
             if (state.isBus) {
-                if (!hidden(state.actor, 0.0) ||
-                    !canSpawnMapTrafficEntry(state.actor, true, occupied)) {
-                    continue;
-                }
                 const auto entryPose = sampleMapTrafficRoute(state.actor.route, 0.0, 0.0);
                 if (!entryPose) {
                     throw std::runtime_error("Could not sample a map traffic entry pose");
                 }
-                if (!poseOnActiveTile(*entryPose) ||
-                    !mapTrafficScheduledDepartureDue(currentSimulationTime,
+                if (!mapTrafficScheduledDepartureDue(currentSimulationTime,
                                                      state.nextScheduledDepartureElapsedSeconds)) {
+                    continue;
+                }
+                const bool entryHidden = hiddenAtPose(state.actor, *entryPose);
+                const bool entryClear = canSpawnMapTrafficEntry(state.actor, true, occupied);
+                const bool entryOnActiveTile = poseOnActiveTile(*entryPose);
+                if (!entryHidden || !entryClear || !entryOnActiveTile) {
+                    const unsigned blockerMask = (entryHidden ? 0u : 1u) | (entryClear ? 0u : 2u) |
+                                                 (entryOnActiveTile ? 0u : 4u);
+                    const double cameraDistanceMeters =
+                        lastMainCameraPoseValid_
+                            ? std::hypot(
+                                  std::hypot(
+                                      entryPose->position[0] - lastMainCameraPose_.position[0],
+                                      entryPose->position[1] - lastMainCameraPose_.position[1]),
+                                  entryPose->position[2] - lastMainCameraPose_.position[2])
+                            : 0.0;
+                    if (blockerMask != state.lastScheduledAdmissionDiagnosticBlockerMask ||
+                        !lastMainCameraPoseValid_ ||
+                        std::abs(cameraDistanceMeters -
+                                 state.lastScheduledAdmissionDiagnosticCameraDistanceMeters) >=
+                            50.0) {
+                        gameLog.Log("Scheduled map AI bus departure waiting: spline=" +
+                                    std::to_string(entryPose->splineId) +
+                                    ", hidden=" + std::to_string(entryHidden) +
+                                    ", clear=" + std::to_string(entryClear) +
+                                    ", activeTile=" + std::to_string(entryOnActiveTile) +
+                                    ", cameraValid=" + std::to_string(lastMainCameraPoseValid_) +
+                                    ", cameraDistance=" + std::to_string(cameraDistanceMeters) +
+                                    "m, simulationSeconds=" +
+                                    std::to_string(currentSimulationTime) + ", departureSeconds=" +
+                                    std::to_string(state.nextScheduledDepartureElapsedSeconds) +
+                                    ": " + state.actor.modelPath);
+                        state.lastScheduledAdmissionDiagnosticBlockerMask = blockerMask;
+                        state.lastScheduledAdmissionDiagnosticCameraDistanceMeters =
+                            cameraDistanceMeters;
+                    }
                     continue;
                 }
                 spawn = RoadSpawnLocation{0.0, *entryPose, 0};
@@ -610,6 +641,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             state.populationEnabled = true;
             state.lastProgressDistanceMeters = state.actor.distanceMeters;
             state.spawnedAtDistanceMeters = state.actor.distanceMeters;
+            state.lastScheduledProgressDiagnosticDistanceMeters = state.actor.distanceMeters;
             state.movedSinceSpawn = false;
             state.activeSpawnCandidateIndex =
                 state.isBus ? std::nullopt : std::optional<std::size_t>(spawn->candidateIndex);
@@ -623,6 +655,10 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     state.scheduledDepartureMinutes[state.nextScheduledDepartureIndex];
                 state.scheduledTripActive = true;
                 advanceScheduledDeparture(state, state.nextScheduledDepartureElapsedSeconds);
+                gameLog.Log("Scheduled map AI bus departed from endpoint spline=" +
+                            std::to_string(spawn->pose.splineId) + " at timetable minute=" +
+                            std::to_string(state.lastScheduledDepartureMinutes) + ": " +
+                            state.actor.modelPath);
             }
             occupied.push_back({spawn->pose, state.actor.lengthMeters, state.actor.widthMeters});
             ++*count;
@@ -687,6 +723,14 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 !route.closed && !route.loopStartDistance &&
                 trafficVehicle.actor.distanceMeters >= route.totalLength;
             if (atUnconnectedRouteEnd && mapTrafficRouteEndReadyForUnload(trafficVehicle.actor)) {
+                if (trafficVehicle.isBus && trafficVehicle.scheduledTripActive) {
+                    gameLog.Log("Scheduled map AI bus reached route end after travelling " +
+                                std::to_string(trafficVehicle.actor.distanceMeters -
+                                               trafficVehicle.spawnedAtDistanceMeters) +
+                                "m for timetable minute=" +
+                                std::to_string(trafficVehicle.lastScheduledDepartureMinutes) +
+                                ": " + trafficVehicle.actor.modelPath);
+                }
                 trafficVehicle.vehicle->mapTrafficRouteFinished = true;
                 trafficVehicle.vehicle->mapTrafficTileActive = false;
                 trafficVehicle.populationEnabled = false;
@@ -755,6 +799,20 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 trafficVehicle.stoppedSecondsSinceProgress = 0.0;
                 trafficVehicle.deadlocked = false;
                 trafficVehicle.stuckDiagnosticLogged = false;
+            }
+            if (trafficVehicle.isBus && trafficVehicle.scheduledTripActive &&
+                trafficVehicle.actor.distanceMeters -
+                        trafficVehicle.lastScheduledProgressDiagnosticDistanceMeters >=
+                    100.0) {
+                gameLog.Log("Scheduled map AI bus route progress: timetable minute=" +
+                            std::to_string(trafficVehicle.lastScheduledDepartureMinutes) +
+                            ", route distance=" +
+                            std::to_string(trafficVehicle.actor.distanceMeters -
+                                           trafficVehicle.spawnedAtDistanceMeters) +
+                            "m, spline=" + std::to_string(pose->splineId) + ": " +
+                            trafficVehicle.actor.modelPath);
+                trafficVehicle.lastScheduledProgressDiagnosticDistanceMeters =
+                    trafficVehicle.actor.distanceMeters;
             }
             if (trafficVehicle.deadlocked && !trafficVehicle.stuckDiagnosticLogged) {
                 const auto segmentEnd = std::lower_bound(route.cumulativeEndDistances.begin(),
