@@ -275,6 +275,10 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
         if (pathOffsets.empty()) {
             pathOffsets.push_back({});
         }
+        std::optional<openbus::map::MapTrafficRoute> aiRouteSegments;
+        if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
+            aiRouteSegments = openbus::map::subdivideMapTrafficRoute(singleSplineRoute);
+        }
         constexpr double sampleSpacingMeters = 2.0;
         constexpr std::size_t maximumSamplesPerSpline = 2048;
         const double requestedSamples = std::ceil(splineLength / sampleSpacingMeters);
@@ -384,6 +388,38 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
             appendEndpointMarker(startPose, pathOffset.heightMeters, true, startConnected);
             appendEndpointMarker(previousPose, pathOffset.heightMeters, false, endConnected);
 
+            if (aiRouteSegments.has_value()) {
+                constexpr float splitMarkerHalfWidth = 0.35F;
+                constexpr float splitMarkerZOffset = 0.12F;
+                constexpr std::array<float, 3> splitMarkerColor = {1.0F, 0.9F, 0.1F};
+                for (std::size_t pieceIndex = 0;
+                     pieceIndex + 1 < aiRouteSegments->cumulativeEndDistances.size();
+                     ++pieceIndex) {
+                    const auto splitPose = openbus::map::sampleMapTrafficRoute(
+                        singleSplineRoute,
+                        aiRouteSegments->cumulativeEndDistances[pieceIndex],
+                        pathOffset.lateralMeters);
+                    if (!splitPose.has_value()) {
+                        continue;
+                    }
+                    const double rightX = std::cos(splitPose->headingRadians);
+                    const double rightY = -std::sin(splitPose->headingRadians);
+                    const double x = splitPose->position[0];
+                    const double y = splitPose->position[1];
+                    const double z = splitPose->position[2] + pathOffset.heightMeters +
+                                     splitMarkerZOffset;
+                    vertices.push_back(
+                        {static_cast<float>(x - rightX * splitMarkerHalfWidth),
+                         static_cast<float>(y - rightY * splitMarkerHalfWidth),
+                         static_cast<float>(z), splitMarkerColor[0], splitMarkerColor[1],
+                         splitMarkerColor[2]});
+                    vertices.push_back(
+                        {static_cast<float>(x + rightX * splitMarkerHalfWidth),
+                         static_cast<float>(y + rightY * splitMarkerHalfWidth),
+                         static_cast<float>(z), splitMarkerColor[0], splitMarkerColor[1],
+                         splitMarkerColor[2]});
+                }
+            }
         }
     }
 }

@@ -328,6 +328,7 @@ bool RenderLoop::AddTrafficVehicle(
     if (!route) {
         return false;
     }
+    *route = openbus::map::subdivideMapTrafficRoute(*route);
     auto actor = openbus::map::makeMapTrafficActor(std::move(*route), busConfigPath.string(),
                                                    speedMetersPerSecond, 0.0, false,
                                                    std::move(driverModelPath));
@@ -359,6 +360,7 @@ bool RenderLoop::AddTrafficVehicle(
             return false;
         }
     }
+
     const std::optional<openbus::map::MapTrafficPose> pose =
         openbus::map::sampleMapTrafficRoute(actor.route, 0.0, actor.lateralOffsetMeters);
     if (!pose.has_value()) {

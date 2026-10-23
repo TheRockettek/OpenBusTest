@@ -51,6 +51,8 @@ struct MapTrafficRouteSegment {
     std::optional<MapTrafficSignalSchedule> trafficSignal;
     // Scenery junction paths are sampled in world space, like the F2 overlay.
     std::vector<std::array<double, 3>> points;
+    // Route-local start position on the original spline for safely subdivided segments.
+    std::optional<double> splineDistanceAtRouteStartMeters;
 };
 
 struct MapTrafficRoute {
@@ -102,7 +104,8 @@ struct MapTrafficActor {
     // passed to the last advanceMapTrafficDriving call. Identity only; never dereferenced here.
     const MapTrafficActor* blockingActor = nullptr;
     std::optional<std::size_t> blockingObstacleIndex;
-    // Route distance up to which this actor holds an admitted claim on its upcoming junction.
+    // End of the rolling local junction reservation (also used by the F2 overlay).
+    // This does not imply ownership of the entire remaining authored spline.
     std::optional<double> junctionClaimEndMeters;
 };
 
@@ -182,6 +185,9 @@ bool placeMapTrafficActorNearLooping(MapTrafficActor& actor, double startDistanc
 std::optional<MapTrafficRoute> buildMapTrafficRoute(const MapSplinePlacementReference& start,
                                                     const MapSplineChainResolver& chainResolver,
                                                     std::size_t segmentLimit = 1024);
+
+// Splits eligible straight road segments while keeping a 5 m buffer at each segment join.
+MapTrafficRoute subdivideMapTrafficRoute(const MapTrafficRoute& route);
 
 std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route,
                                                     double distanceMeters,
