@@ -284,12 +284,11 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
                                                                             routeSplineIds)) {
                     std::vector<int> matchedPrefix =
                         openbus::map::mapTrafficRoutePrefixMatchingTimetable(line.splineIds,
-                                                                              routeSplineIds);
+                                                                             routeSplineIds);
                     if (matchedPrefix.empty()) {
                         continue;
                     }
-                    result.starts.push_back(
-                        {entry, 0, lineIndex, std::move(matchedPrefix)});
+                    result.starts.push_back({entry, 0, lineIndex, std::move(matchedPrefix)});
                     matchedTimetableRoutes.insert(lineIndex);
                     matchesTimetableLine = true;
                     break;
@@ -337,7 +336,7 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
                 }
                 std::vector<int> matchedPrefix =
                     openbus::map::mapTrafficRoutePrefixMatchingTimetable(line.splineIds,
-                                                                          routeSplineIds);
+                                                                         routeSplineIds);
                 if (!matchedPrefix.empty()) {
                     result.starts.push_back(
                         {entry, routeSeed, lineIndex, std::move(matchedPrefix)});

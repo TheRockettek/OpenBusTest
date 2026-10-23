@@ -165,8 +165,8 @@ bool mapTrafficRoutesShareCompleteOrderedPath(const std::vector<int>& firstSplin
                                               const std::vector<int>& secondSplineIds);
 
 // Returns the longest two-or-more-spline timetable match beginning at the route endpoint.
-std::vector<int> mapTrafficRoutePrefixMatchingTimetable(
-    const std::vector<int>& timetableSplineIds, const std::vector<int>& routeSplineIds);
+std::vector<int> mapTrafficRoutePrefixMatchingTimetable(const std::vector<int>& timetableSplineIds,
+                                                        const std::vector<int>& routeSplineIds);
 
 // Places an actor at a route distance if the sampled pose is within the spawn radius.
 // Open routes stop at totalLength - endpointMarginMeters; closed routes wrap.
@@ -217,8 +217,7 @@ struct MapTrafficObstacle {
 };
 
 // True when a route actor is aligned behind an obstacle within the supplied bumper gap.
-bool mapTrafficActorBehindObstacle(const MapTrafficActor& actor,
-                                   const MapTrafficObstacle& obstacle,
+bool mapTrafficActorBehindObstacle(const MapTrafficActor& actor, const MapTrafficObstacle& obstacle,
                                    double maximumGapMeters);
 
 // OBB clearance is shared by entry admission and swept-path movement checks.

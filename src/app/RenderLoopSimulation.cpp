@@ -324,7 +324,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
     }
     // Follow the actual blocker chain; proximity to an unrelated bus must not mask a deadlock.
     const auto legitimateStoppedWait = [&](const TrafficVehicleState& waitingVehicle) {
-        if (waitingVehicle.actor.speedMetersPerSecond > MAP_TRAFFIC_STOPPED_SPEED_METERS_PER_SECOND) {
+        if (waitingVehicle.actor.speedMetersPerSecond >
+            MAP_TRAFFIC_STOPPED_SPEED_METERS_PER_SECOND) {
             return false;
         }
         std::unordered_set<const TrafficVehicleState*> visited;
@@ -393,17 +394,15 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     state.stoppedSecondsSinceProgress = 0.0;
                     state.deadlocked = false;
                     state.stuckDiagnosticLogged = false;
-                } else if (state.populationEnabled && state.vehicle != nullptr &&
-                           !state.isBus && !state.movedSinceSpawn &&
-                           state.activeSpawnCandidateIndex.has_value() &&
+                } else if (state.populationEnabled && state.vehicle != nullptr && !state.isBus &&
+                           !state.movedSinceSpawn && state.activeSpawnCandidateIndex.has_value() &&
                            *state.activeSpawnCandidateIndex < state.spawnCandidates.size() &&
                            state.rejectedSpawnCandidateIndices.size() + 1 <
                                state.spawnCandidates.size() &&
                            std::ranges::find(state.rejectedSpawnCandidateIndices,
                                              *state.activeSpawnCandidateIndex) ==
                                state.rejectedSpawnCandidateIndices.end()) {
-                    state.rejectedSpawnCandidateIndices.push_back(
-                        *state.activeSpawnCandidateIndex);
+                    state.rejectedSpawnCandidateIndices.push_back(*state.activeSpawnCandidateIndex);
                     state.vehicle->mapTrafficTileActive = false;
                     state.vehicle->mapTrafficRouteFinished = true;
                     state.vehicle->variables.set("velocity", 0.0);
@@ -417,11 +416,10 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     const auto spawnPose =
                         sampleMapTrafficRoute(state.actor.route, state.spawnedAtDistanceMeters,
                                               state.actor.lateralOffsetMeters);
-                    gameLog.Log(
-                        "Map road AI vehicle made no route progress from spawn spline=" +
-                        std::to_string(spawnPose ? spawnPose->splineId : 0) +
-                        "; rejecting that spawn candidate and retrying elsewhere: " +
-                        state.actor.modelPath);
+                    gameLog.Log("Map road AI vehicle made no route progress from spawn spline=" +
+                                std::to_string(spawnPose ? spawnPose->splineId : 0) +
+                                "; rejecting that spawn candidate and retrying elsewhere: " +
+                                state.actor.modelPath);
                     state.activeSpawnCandidateIndex.reset();
                     continue;
                 } else {
@@ -530,8 +528,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             MapTrafficPose pose;
             std::size_t candidateIndex = 0;
         };
-        const auto findRoadSpawn = [&](const TrafficVehicleState& state)
-            -> std::optional<RoadSpawnLocation> {
+        const auto findRoadSpawn =
+            [&](const TrafficVehicleState& state) -> std::optional<RoadSpawnLocation> {
             const MapTrafficRoute& route = state.actor.route;
             for (std::size_t candidateIndex = 0; candidateIndex < state.spawnCandidates.size();
                  ++candidateIndex) {
@@ -628,8 +626,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             state.spawnedAtDistanceMeters = state.actor.distanceMeters;
             state.movedSinceSpawn = false;
             state.activeSpawnCandidateIndex =
-                state.isBus ? std::nullopt
-                            : std::optional<std::size_t>(spawn->candidateIndex);
+                state.isBus ? std::nullopt : std::optional<std::size_t>(spawn->candidateIndex);
             state.stoppedSecondsSinceProgress = 0.0;
             state.deadlocked = false;
             state.stuckDiagnosticLogged = false;
@@ -784,42 +781,39 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 const auto& blockingObstacleIndex = trafficVehicle.actor.blockingObstacleIndex;
                 if (blockingObstacleIndex.has_value() && *blockingObstacleIndex < external.size()) {
                     const auto& obstacle = external[*blockingObstacleIndex];
-                    blocker = std::string(playerBusObstacleIndex == blockingObstacleIndex
-                                              ? "player bus"
-                                          : *blockingObstacleIndex < externalVehicleObstacleCount
-                                              ? "static vehicle"
-                                              : "pedestrian") +
-                              " at (" + std::to_string(obstacle.pose.position[0]) + ", " +
-                              std::to_string(obstacle.pose.position[1]) + ")";
+                    blocker =
+                        std::string(playerBusObstacleIndex == blockingObstacleIndex ? "player bus"
+                                    : *blockingObstacleIndex < externalVehicleObstacleCount
+                                        ? "static vehicle"
+                                        : "pedestrian") +
+                        " at (" + std::to_string(obstacle.pose.position[0]) + ", " +
+                        std::to_string(obstacle.pose.position[1]) + ")";
                 } else if (const auto found =
                                trafficStateByActor.find(trafficVehicle.actor.blockingActor);
                            trafficVehicle.actor.blockingActor != nullptr &&
                            found != trafficStateByActor.end()) {
                     const MapTrafficActor& other = found->second->actor;
-                    const auto otherPose = sampleMapTrafficRoute(
-                        other.route, other.distanceMeters, other.lateralOffsetMeters);
-                    blocker = other.modelPath +
-                              (otherPose ? " at (" + std::to_string(otherPose->position[0]) +
-                                               ", " + std::to_string(otherPose->position[1]) +
-                                               ")"
-                                         : std::string()) +
-                              ", speed=" + std::to_string(other.speedMetersPerSecond) +
-                              " m/s, its block reason=" +
-                              mapTrafficBlockReasonName(other.blockReason);
+                    const auto otherPose = sampleMapTrafficRoute(other.route, other.distanceMeters,
+                                                                 other.lateralOffsetMeters);
+                    blocker =
+                        other.modelPath +
+                        (otherPose ? " at (" + std::to_string(otherPose->position[0]) + ", " +
+                                         std::to_string(otherPose->position[1]) + ")"
+                                   : std::string()) +
+                        ", speed=" + std::to_string(other.speedMetersPerSecond) +
+                        " m/s, its block reason=" + mapTrafficBlockReasonName(other.blockReason);
                 }
                 gameLog.Log(
                     std::string("Map ") + (trafficVehicle.isBus ? "AI bus" : "road AI vehicle") +
                     " appears stuck after " +
                     std::to_string(trafficVehicle.stoppedSecondsSinceProgress) +
                     " seconds without route progress and will be removed from active traffic: " +
-                    trafficVehicle.actor.modelPath +
-                    ", spline=" + std::to_string(splineId) +
+                    trafficVehicle.actor.modelPath + ", spline=" + std::to_string(splineId) +
                     ", route distance=" + std::to_string(trafficVehicle.actor.distanceMeters) +
                     " m, junction path=" + (onJunctionPath ? "yes" : "no") +
                     ", curve speed limit=" + std::to_string(curveSpeedLimit) +
                     " m/s, junction wait=" +
-                    std::to_string(trafficVehicle.actor.junctionWaitSeconds) +
-                    " s, blocked by=" +
+                    std::to_string(trafficVehicle.actor.junctionWaitSeconds) + " s, blocked by=" +
                     openbus::map::mapTrafficBlockReasonName(trafficVehicle.actor.blockReason) +
                     ", position=(" + std::to_string(pose->position[0]) + ", " +
                     std::to_string(pose->position[1]) + "), heading=" +

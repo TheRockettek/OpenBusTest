@@ -229,8 +229,7 @@ void appendTrafficBehaviorBox(std::vector<openbus::rendering::PrimitiveVertex>& 
 }
 
 void appendTrafficBehaviorLine(std::vector<openbus::rendering::PrimitiveVertex>& vertices,
-                               const std::array<double, 3>& from,
-                               const std::array<double, 3>& to,
+                               const std::array<double, 3>& from, const std::array<double, 3>& to,
                                const std::array<float, 3>& color) {
     for (const auto& point : {from, to}) {
         vertices.push_back({static_cast<float>(point[0]), static_cast<float>(point[1]),
@@ -346,9 +345,9 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
                     const float x = static_cast<float>(endpointPosition[0]);
                     const float y = static_cast<float>(endpointPosition[1]);
                     const float z = static_cast<float>(endpointPosition[2] + endpointMarkerZOffset);
-                    const auto& markerColor =
-                        splineConnected ? (isStart ? startMarkerColor : endMarkerColor)
-                                        : unconnectedMarkerColor;
+                    const auto& markerColor = splineConnected
+                                                  ? (isStart ? startMarkerColor : endMarkerColor)
+                                                  : unconnectedMarkerColor;
                     if (isStart) {
                         vertices.push_back({x - endpointMarkerHalfSize, y - endpointMarkerHalfSize,
                                             z, markerColor[0], markerColor[1], markerColor[2]});
@@ -377,14 +376,12 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
                                             z, markerColor[0], markerColor[1], markerColor[2]});
                     }
                 };
-            const bool startConnected =
-                endpointStatus.has_value() &&
-                (firstSegment.reversed ? endpointStatus->endConnected
-                                       : endpointStatus->startConnected);
-            const bool endConnected =
-                endpointStatus.has_value() &&
-                (firstSegment.reversed ? endpointStatus->startConnected
-                                       : endpointStatus->endConnected);
+            const bool startConnected = endpointStatus.has_value() &&
+                                        (firstSegment.reversed ? endpointStatus->endConnected
+                                                               : endpointStatus->startConnected);
+            const bool endConnected = endpointStatus.has_value() &&
+                                      (firstSegment.reversed ? endpointStatus->startConnected
+                                                             : endpointStatus->endConnected);
             appendEndpointMarker(startPose, pathOffset.heightMeters, true, startConnected);
             appendEndpointMarker(previousPose, pathOffset.heightMeters, false, endConnected);
 
@@ -396,8 +393,7 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
                      pieceIndex + 1 < aiRouteSegments->cumulativeEndDistances.size();
                      ++pieceIndex) {
                     const auto splitPose = openbus::map::sampleMapTrafficRoute(
-                        singleSplineRoute,
-                        aiRouteSegments->cumulativeEndDistances[pieceIndex],
+                        singleSplineRoute, aiRouteSegments->cumulativeEndDistances[pieceIndex],
                         pathOffset.lateralMeters);
                     if (!splitPose.has_value()) {
                         continue;
@@ -406,18 +402,16 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
                     const double rightY = -std::sin(splitPose->headingRadians);
                     const double x = splitPose->position[0];
                     const double y = splitPose->position[1];
-                    const double z = splitPose->position[2] + pathOffset.heightMeters +
-                                     splitMarkerZOffset;
-                    vertices.push_back(
-                        {static_cast<float>(x - rightX * splitMarkerHalfWidth),
-                         static_cast<float>(y - rightY * splitMarkerHalfWidth),
-                         static_cast<float>(z), splitMarkerColor[0], splitMarkerColor[1],
-                         splitMarkerColor[2]});
-                    vertices.push_back(
-                        {static_cast<float>(x + rightX * splitMarkerHalfWidth),
-                         static_cast<float>(y + rightY * splitMarkerHalfWidth),
-                         static_cast<float>(z), splitMarkerColor[0], splitMarkerColor[1],
-                         splitMarkerColor[2]});
+                    const double z =
+                        splitPose->position[2] + pathOffset.heightMeters + splitMarkerZOffset;
+                    vertices.push_back({static_cast<float>(x - rightX * splitMarkerHalfWidth),
+                                        static_cast<float>(y - rightY * splitMarkerHalfWidth),
+                                        static_cast<float>(z), splitMarkerColor[0],
+                                        splitMarkerColor[1], splitMarkerColor[2]});
+                    vertices.push_back({static_cast<float>(x + rightX * splitMarkerHalfWidth),
+                                        static_cast<float>(y + rightY * splitMarkerHalfWidth),
+                                        static_cast<float>(z), splitMarkerColor[0],
+                                        splitMarkerColor[1], splitMarkerColor[2]});
                 }
             }
         }
@@ -1234,16 +1228,15 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             }
             const double stopDistance =
                 std::max(actor.distanceMeters, junctionStart - actor.lengthMeters * 0.5 - 0.5);
-            const auto stopPose = openbus::map::sampleMapTrafficRoute(
-                actor.route, stopDistance, actor.lateralOffsetMeters);
+            const auto stopPose = openbus::map::sampleMapTrafficRoute(actor.route, stopDistance,
+                                                                      actor.lateralOffsetMeters);
             if (stopPose.has_value() &&
                 openbus::map::mapTrafficPoseOnActiveTile(*stopPose, activeTiles)) {
                 appendTrafficBehaviorBox(behaviorVertices, *stopPose, 0.3,
                                          std::max(actor.widthMeters + 1.0, 2.5), 0.12, color);
             }
         };
-        std::unordered_map<const openbus::map::MapTrafficActor*,
-                           openbus::map::MapTrafficPose>
+        std::unordered_map<const openbus::map::MapTrafficActor*, openbus::map::MapTrafficPose>
             activeActorPoses;
         for (const TrafficVehicleState& state : trafficVehicles_) {
             if (!state.populationEnabled || state.vehicle == nullptr ||
@@ -1356,15 +1349,13 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                         state.actor.route, distance, state.actor.lateralOffsetMeters);
                     if (claimPose.has_value() &&
                         openbus::map::mapTrafficPoseOnActiveTile(*claimPose, activeTiles)) {
-                        appendTrafficBehaviorBox(behaviorVertices, *claimPose,
-                                                 state.actor.lengthMeters,
-                                                 state.actor.widthMeters + 0.3, 0.08,
-                                                 {0.05F, 0.75F, 0.65F});
+                        appendTrafficBehaviorBox(
+                            behaviorVertices, *claimPose, state.actor.lengthMeters,
+                            state.actor.widthMeters + 0.3, 0.08, {0.05F, 0.75F, 0.65F});
                     }
                 }
             }
-            if (state.actor.blockReason ==
-                    openbus::map::MapTrafficBlockReason::JunctionTraffic ||
+            if (state.actor.blockReason == openbus::map::MapTrafficBlockReason::JunctionTraffic ||
                 state.actor.blockReason ==
                     openbus::map::MapTrafficBlockReason::CrossingReservation) {
                 appendJunctionStopBar(state.actor, color);
@@ -1402,8 +1393,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                      human.feetDistanceMeters * 2.1, human.heightMeters,
                                      {1.0F, 0.25F, 0.9F});
             appendTrafficBehaviorBox(behaviorVertices, *pose, human.feetDistanceMeters * 1.25,
-                                     human.feetDistanceMeters * 2.1, 0.08,
-                                     {1.0F, 0.25F, 0.9F});
+                                     human.feetDistanceMeters * 2.1, 0.08, {1.0F, 0.25F, 0.9F});
             appendSignalStopBox(human.actor);
         }
         if (!vehicleBodyVertices.empty()) {
@@ -1545,16 +1535,15 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                          : 0U;
                     claimCount += state.actor.junctionClaimEndMeters.has_value() ? 1U : 0U;
                     if (state.actor.blockReason != openbus::map::MapTrafficBlockReason::None &&
-                        (hottestBlock == nullptr ||
-                         state.actor.speedMetersPerSecond <
-                             hottestBlock->actor.speedMetersPerSecond)) {
+                        (hottestBlock == nullptr || state.actor.speedMetersPerSecond <
+                                                        hottestBlock->actor.speedMetersPerSecond)) {
                         hottestBlock = &state;
                     }
                 }
                 statusText << '\n'
-                           << "F2 C" << clearCount << " F" << followingCount << " Y"
-                           << yieldCount << " R" << reservationCount << " S" << signalCount
-                           << " B" << blockedCount << " J" << junctionCount << " L" << claimCount
+                           << "F2 C" << clearCount << " F" << followingCount << " Y" << yieldCount
+                           << " R" << reservationCount << " S" << signalCount << " B"
+                           << blockedCount << " J" << junctionCount << " L" << claimCount
                            << " HOT ";
                 if (hottestBlock == nullptr) {
                     statusText << "NONE";
