@@ -18,6 +18,7 @@ class TraceScope {
   public:
     TraceScope(const char* category, const char* name);
     ~TraceScope();
+    void finish();
 
   private:
     const char* category_;
@@ -38,6 +39,7 @@ class TraceScope {
   public:
     constexpr TraceScope(const char*, const char*) noexcept {}
     ~TraceScope() noexcept {}
+    constexpr void finish() noexcept {}
 };
 #endif
 

@@ -26,6 +26,13 @@ void record(const char* name) {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
 }
 
+void recordAndFinish(const char* name) {
+    openbus::rendering::TraceScope scope("probe", name);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    scope.finish();
+    scope.finish();
+}
+
 std::string readTrace(const std::filesystem::path& path) {
     std::ifstream input(path);
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
@@ -85,6 +92,7 @@ int main(int argc, char** argv) {
         passed = passed && !std::filesystem::exists(path) && SetRecording(true);
         passed = SetRecording(true) && passed;
         record("first");
+        recordAndFinish("explicit-finish");
         {
             TraceScope spanningPause("probe", "spanning-pause");
             SetRecording(false);
@@ -103,7 +111,14 @@ int main(int argc, char** argv) {
         SetRecording(false);
         SetRecording(false);
         const std::string contents = readTrace(path);
+        const std::string explicitFinishMarker = "\"name\":\"explicit-finish\"";
+        std::size_t explicitFinishCount = 0;
+        for (auto pos = contents.find(explicitFinishMarker); pos != std::string::npos;
+             pos = contents.find(explicitFinishMarker, pos + explicitFinishMarker.size())) {
+            ++explicitFinishCount;
+        }
         passed = passed && savedTrace(contents) &&
+                 explicitFinishCount == 1 &&
                  contents.find("\"name\":\"first\"") != std::string::npos &&
                  contents.find("\"name\":\"second\"") != std::string::npos &&
                  contents.find("\"name\":\"worker\"") != std::string::npos &&

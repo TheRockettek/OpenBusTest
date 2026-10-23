@@ -653,20 +653,28 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
     {
         TraceScope movementTrace("traffic", "RenderLoop::updateTrafficDriving.vehicleMovement");
         std::vector<MapTrafficActor*> actors;
-        for (auto& state : trafficVehicles_) {
-            if (state.populationEnabled && state.vehicle != nullptr &&
-                state.vehicle->mapTrafficTileActive) {
-                const auto& route = state.actor.route;
-                if (!route.closed && !route.loopStartDistance &&
-                    state.actor.distanceMeters >= route.totalLength) {
-                    state.actor.speedMetersPerSecond = 0.0;
-                } else {
-                    actors.push_back(&state.actor);
+        {
+            TraceScope actorCollectionTrace(
+                "traffic", "RenderLoop::updateTrafficDriving.vehicleMovement.actorCollection");
+            for (auto& state : trafficVehicles_) {
+                if (state.populationEnabled && state.vehicle != nullptr &&
+                    state.vehicle->mapTrafficTileActive) {
+                    const auto& route = state.actor.route;
+                    if (!route.closed && !route.loopStartDistance &&
+                        state.actor.distanceMeters >= route.totalLength) {
+                        state.actor.speedMetersPerSecond = 0.0;
+                    } else {
+                        actors.push_back(&state.actor);
+                    }
                 }
             }
         }
-        advanceMapTrafficDriving(actors, external, elapsedSeconds,
-                                 std::max(0.0, currentSimulationTime - elapsedSeconds));
+        {
+            TraceScope runtimeTrace(
+                "traffic", "RenderLoop::updateTrafficDriving.vehicleMovement.runtimeAdvance");
+            advanceMapTrafficDriving(actors, external, elapsedSeconds,
+                                     std::max(0.0, currentSimulationTime - elapsedSeconds));
+        }
     }
     {
         TraceScope commitTrace("traffic",

@@ -740,6 +740,29 @@ Trace durations are CPU wall times, not GPU execution times: driver backpressure
 can appear in a GL call or in `RenderLoop::endFrame.swapBuffers`. Compare whole
 `main` frame times rather than treating a shorter draw scope as an equal FPS gain.
 
+Traffic captures break `RenderLoop::updateTrafficDriving.vehicleMovement` into
+actor collection and runtime advance. `MapTrafficRuntime::advanceMapTrafficDriving`
+then reports route classification, substep occupancy/claims, priority-pair
+arbitration, and actor movement stages; actor movement includes following and
+obstacle projection, route lookahead, junction admission, swept movement, and
+reservations. Use these nested spans in Perfetto to find which part dominates
+vehicle movement time.
+
+AI traffic uses moving occupancy rather than fixed-distance blocks: following
+targets account for leader speed, braking distance, and time headway, while
+rolling junction claims and predicted crossing reservations protect merges and
+intersections. Lookahead collision checks use spatial indexes for occupied
+footprints and predicted movement reservations, then perform the full footprint
+test on nearby candidates. Nearby candidates are checked in their original index
+order, so the first conflict, yielding, and stall diagnostics match a full scan.
+
+For a repeatable free-flow lookahead benchmark, run
+`build-release-ninja\OpenBusMapTrafficRuntimeProbe.exe --benchmark-lookahead`
+after building the `OpenBusMapTrafficRuntimeProbe` target in Release mode. It
+reports average update time for 69 actors over 30 updates plus final distance and
+speed totals for before/after comparisons. This synthetic case stresses distant
+reservations; it is not a substitute for profiling a populated map.
+
 ## Repeatable render benchmark
 
 Run `benchmark_rendering.bat` to build an isolated Release executable

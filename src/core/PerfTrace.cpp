@@ -308,8 +308,13 @@ TraceScope::TraceScope(const char* category, const char* name)
 }
 
 TraceScope::~TraceScope() {
+    finish();
+}
+
+void TraceScope::finish() {
     if (recordingId_ != 0) {
         perfTrace().pushDuration(category_, name_, startTimestampUs_, recordingId_);
+        recordingId_ = 0;
     }
 }
 #endif

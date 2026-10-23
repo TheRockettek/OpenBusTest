@@ -1,5 +1,6 @@
 #include "map/MapTrafficRuntime.h"
 
+#include "core/PerfTrace.h"
 #include "map/MapSplineGeometry.h"
 #include "map/MapTileWindow.h"
 
@@ -8,6 +9,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <numbers>
 #include <map>
 #include <limits>
@@ -15,6 +17,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -797,47 +800,19 @@ std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route
         double outgoingLength = 0.0;
         bool loopSeam = false;
     };
-    std::vector<Transition> transitions;
-    transitions.reserve(route.segments.size());
     const auto segmentLength = [&](std::size_t index) {
         const double start = index == 0 ? 0.0 : route.cumulativeEndDistances[index - 1];
         return route.cumulativeEndDistances[index] - start;
     };
-    for (std::size_t index = 0; index + 1 < route.segments.size(); ++index) {
-        if (route.segments[index].points.empty() && route.segments[index + 1].points.empty()) {
-            if (!segmentsAreContinuousOnSameSpline(route.segments[index], segmentLength(index),
-                                                   route.segments[index + 1])) {
-                transitions.push_back({route.cumulativeEndDistances[index], segmentLength(index),
-                                       segmentLength(index + 1), false});
-            }
-        }
-    }
-    if (route.closed || route.loopStartDistance.has_value()) {
-        std::size_t loopSegment = 0;
-        if (route.loopStartDistance) {
-            const auto end =
-                std::lower_bound(route.cumulativeEndDistances.begin(),
-                                 route.cumulativeEndDistances.end(), *route.loopStartDistance);
-            loopSegment =
-                end == route.cumulativeEndDistances.end()
-                    ? route.segments.size() - 1
-                    : static_cast<std::size_t>(end - route.cumulativeEndDistances.begin());
-        }
-        if (route.segments.back().points.empty() && route.segments[loopSegment].points.empty()) {
-            transitions.push_back({route.totalLength, segmentLength(route.segments.size() - 1),
-                                   segmentLength(loopSegment), true});
-        }
-    }
-
     std::optional<Transition> selected;
     double selectedHalfWindow = 0.0;
     double transitionDistance = std::numeric_limits<double>::infinity();
     double queryDistance = routeDistance;
-    for (const Transition& transition : transitions) {
+    const auto considerTransition = [&](const Transition& transition) {
         const double halfWindow =
             std::min({2.0, transition.incomingLength * 0.25, transition.outgoingLength * 0.25});
         if (halfWindow < 0.1) {
-            continue;
+            return;
         }
         double unwrappedDistance = routeDistance;
         if (transition.loopSeam) {
@@ -856,6 +831,40 @@ std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route
             selectedHalfWindow = halfWindow;
             transitionDistance = distanceToTransition;
             queryDistance = unwrappedDistance;
+        }
+    };
+
+    const double transitionSearchStart = std::max(0.0, routeDistance - 2.0);
+    const double transitionSearchEnd = routeDistance + 2.0;
+    auto boundary = std::lower_bound(route.cumulativeEndDistances.begin(),
+                                     route.cumulativeEndDistances.end(), transitionSearchStart);
+    for (std::size_t index = static_cast<std::size_t>(
+             boundary - route.cumulativeEndDistances.begin());
+         index + 1 < route.segments.size() &&
+         route.cumulativeEndDistances[index] <= transitionSearchEnd;
+         ++index) {
+        if (route.segments[index].points.empty() && route.segments[index + 1].points.empty() &&
+            !segmentsAreContinuousOnSameSpline(route.segments[index], segmentLength(index),
+                                               route.segments[index + 1])) {
+            considerTransition({route.cumulativeEndDistances[index], segmentLength(index),
+                                segmentLength(index + 1), false});
+        }
+    }
+    if ((route.closed || route.loopStartDistance.has_value()) &&
+        route.segments.back().points.empty()) {
+        std::size_t loopSegment = 0;
+        if (route.loopStartDistance) {
+            const auto end =
+                std::lower_bound(route.cumulativeEndDistances.begin(),
+                                 route.cumulativeEndDistances.end(), *route.loopStartDistance);
+            loopSegment =
+                end == route.cumulativeEndDistances.end()
+                    ? route.segments.size() - 1
+                    : static_cast<std::size_t>(end - route.cumulativeEndDistances.begin());
+        }
+        if (route.segments[loopSegment].points.empty()) {
+            considerTransition({route.totalLength, segmentLength(route.segments.size() - 1),
+                                segmentLength(loopSegment), true});
         }
     }
     if (!selected.has_value()) {
@@ -1986,6 +1995,7 @@ double mapTrafficCurveSpeedLimit(const MapTrafficRoute& route, double distanceMe
 void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                               const std::vector<MapTrafficObstacle>& obstacles,
                               double elapsedSeconds, double signalClockSeconds) {
+    openbus::rendering::TraceScope trace("traffic", "MapTrafficRuntime::advanceMapTrafficDriving");
     if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
         !std::isfinite(signalClockSeconds) || signalClockSeconds < 0.0) {
         throw std::invalid_argument("Traffic driving timestep is invalid");
@@ -2006,6 +2016,11 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         }
         validateFootprint(actorFootprint(*actor, actor->distanceMeters));
     }
+    std::unordered_map<const MapTrafficActor*, std::size_t> actorIndexByPointer;
+    actorIndexByPointer.reserve(actors.size());
+    for (std::size_t index = 0; index < actors.size(); ++index) {
+        actorIndexByPointer.emplace(actors[index], index);
+    }
     for (const auto& obstacle : obstacles) {
         validateFootprint(obstacle);
     }
@@ -2024,9 +2039,21 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
     const auto trafficFootprintsOverlap = [=](const MapTrafficObstacle& first,
                                               const MapTrafficObstacle& second,
                                               double clearanceMeters) {
-        return std::abs(first.pose.position[2] - second.pose.position[2]) <=
-                   trafficVerticalClearanceMeters &&
-               footprintsOverlap(first, second, clearanceMeters);
+        if (std::abs(first.pose.position[2] - second.pose.position[2]) >
+            trafficVerticalClearanceMeters) {
+            return false;
+        }
+        const double deltaX = second.pose.position[0] - first.pose.position[0];
+        const double deltaY = second.pose.position[1] - first.pose.position[1];
+        // Clearance inflates both rectangles' sides, so their corners grow by sqrt(2).
+        const double maximumCenterDistance = (std::hypot(first.lengthMeters, first.widthMeters) +
+                                              std::hypot(second.lengthMeters, second.widthMeters)) *
+                                                 0.5 +
+                                             std::numbers::sqrt2 * std::max(0.0, clearanceMeters);
+        if (deltaX * deltaX + deltaY * deltaY >= maximumCenterDistance * maximumCenterDistance) {
+            return false;
+        }
+        return footprintsOverlap(first, second, clearanceMeters);
     };
     struct MovementReservation {
         MapTrafficObstacle footprint;
@@ -2050,6 +2077,71 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         }
         return first.points == second.points;
     };
+    const auto sameDirectedRouteValue = [&](const MapTrafficActor& first,
+                                            const MapTrafficActor& second) {
+        if (first.lateralOffsetMeters != second.lateralOffsetMeters ||
+            first.route.closed != second.route.closed ||
+            first.route.loopStartDistance != second.route.loopStartDistance ||
+            first.route.segments.size() != second.route.segments.size()) {
+            return false;
+        }
+        for (std::size_t index = 0; index < first.route.segments.size(); ++index) {
+            if (!sameDirectedSegment(first.route.segments[index], second.route.segments[index])) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto combineRouteHash = [](std::size_t& seed, std::size_t value) {
+        seed ^= value + std::size_t{0x9e3779b9} + (seed << 6) + (seed >> 2);
+    };
+    // Arbitration revisits actor pairs across several passes; compare full routes once per pair.
+    std::unordered_map<std::size_t, std::vector<std::size_t>> routeClassesByHash;
+    std::vector<std::size_t> routeClassByActor(actors.size());
+    routeClassesByHash.reserve(actors.size());
+    openbus::rendering::TraceScope routeTrace(
+        "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.routeClassification");
+    for (std::size_t actorIndex = 0; actorIndex < actors.size(); ++actorIndex) {
+        const MapTrafficActor& actor = *actors[actorIndex];
+        std::size_t routeHash = std::hash<double>{}(actor.lateralOffsetMeters);
+        combineRouteHash(routeHash, std::hash<bool>{}(actor.route.closed));
+        combineRouteHash(routeHash, std::hash<bool>{}(actor.route.loopStartDistance.has_value()));
+        if (actor.route.loopStartDistance.has_value()) {
+            combineRouteHash(routeHash, std::hash<double>{}(*actor.route.loopStartDistance));
+        }
+        combineRouteHash(routeHash, actor.route.segments.size());
+        for (const MapTrafficRouteSegment& segment : actor.route.segments) {
+            combineRouteHash(routeHash, std::hash<bool>{}(segment.reversed));
+            combineRouteHash(routeHash, std::hash<double>{}(segment.pathLateralMeters));
+            combineRouteHash(routeHash, std::hash<double>{}(segment.pathHeightMeters));
+            combineRouteHash(routeHash, segment.points.empty() ? 0U : 1U);
+            if (segment.points.empty()) {
+                combineRouteHash(routeHash, std::hash<int>{}(segment.spline.placement.splineId));
+                combineRouteHash(routeHash, std::hash<int>{}(segment.spline.tileX));
+                combineRouteHash(routeHash, std::hash<int>{}(segment.spline.tileY));
+            } else {
+                for (const auto& point : segment.points) {
+                    for (const double coordinate : point) {
+                        combineRouteHash(routeHash, std::hash<double>{}(coordinate));
+                    }
+                }
+            }
+        }
+        auto& matchingClasses = routeClassesByHash[routeHash];
+        bool matchedExistingClass = false;
+        for (const std::size_t representative : matchingClasses) {
+            if (sameDirectedRouteValue(actor, *actors[representative])) {
+                routeClassByActor[actorIndex] = routeClassByActor[representative];
+                matchedExistingClass = true;
+                break;
+            }
+        }
+        if (!matchedExistingClass) {
+            routeClassByActor[actorIndex] = actorIndex;
+            matchingClasses.push_back(actorIndex);
+        }
+    }
+    routeTrace.finish();
     const auto sameDirectedFlow = [&](const MapTrafficActor& firstActor, double firstDistance,
                                       const MapTrafficRouteSegment& firstSegment,
                                       const MapTrafficPose& firstPose,
@@ -2119,18 +2211,12 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
     };
     const auto sameDirectedRoute = [&](const MapTrafficActor& first,
                                        const MapTrafficActor& second) {
-        if (first.lateralOffsetMeters != second.lateralOffsetMeters ||
-            first.route.closed != second.route.closed ||
-            first.route.loopStartDistance != second.route.loopStartDistance ||
-            first.route.segments.size() != second.route.segments.size()) {
-            return false;
+        const auto firstIndex = actorIndexByPointer.find(&first);
+        const auto secondIndex = actorIndexByPointer.find(&second);
+        if (firstIndex != actorIndexByPointer.end() && secondIndex != actorIndexByPointer.end()) {
+            return routeClassByActor[firstIndex->second] == routeClassByActor[secondIndex->second];
         }
-        for (std::size_t index = 0; index < first.route.segments.size(); ++index) {
-            if (!sameDirectedSegment(first.route.segments[index], second.route.segments[index])) {
-                return false;
-            }
-        }
-        return true;
+        return sameDirectedRouteValue(first, second);
     };
     const auto isBehindOnRoute = [](const MapTrafficActor& candidate,
                                     const MapTrafficActor& other) {
@@ -2179,10 +2265,9 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
     // Queue order is based on the vehicles' current poses so source-spline boundaries do not
     // determine whether a junction path can be claimed.
     const auto queuedBehindInLane = [&](const MapTrafficActor& candidate,
-                                        const MapTrafficActor& other) {
-        const MapTrafficObstacle candidateFootprint =
-            actorFootprint(candidate, candidate.distanceMeters);
-        const MapTrafficObstacle otherFootprint = actorFootprint(other, other.distanceMeters);
+                                        const MapTrafficObstacle& candidateFootprint,
+                                        const MapTrafficActor& other,
+                                        const MapTrafficObstacle& otherFootprint) {
         const double headingDifference =
             candidateFootprint.pose.headingRadians - otherFootprint.pose.headingRadians;
         if (std::cos(headingDifference) < 0.7 ||
@@ -2515,24 +2600,158 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         return first[0] <= second[2] && second[0] <= first[2] && first[1] <= second[3] &&
                second[1] <= first[3];
     };
+    struct OccupancyCell {
+        std::int64_t x = 0;
+        std::int64_t y = 0;
+
+        bool operator==(const OccupancyCell&) const = default;
+    };
+    struct OccupancyCellHash {
+        std::size_t operator()(const OccupancyCell& cell) const noexcept {
+            std::size_t seed = std::hash<std::int64_t>{}(cell.x);
+            seed ^= std::hash<std::int64_t>{}(cell.y) + std::size_t{0x9e3779b9} + (seed << 6) +
+                    (seed >> 2);
+            return seed;
+        }
+    };
+    constexpr double occupancyCellSizeMeters = 12.0;
+    const auto occupancyCellForPosition = [](double x, double y) -> std::optional<OccupancyCell> {
+        const double cellX = std::floor(x / occupancyCellSizeMeters);
+        const double cellY = std::floor(y / occupancyCellSizeMeters);
+        constexpr double minimumCell = -9.0e18;
+        constexpr double maximumCell = 9.0e18;
+        if (!std::isfinite(cellX) || !std::isfinite(cellY) || cellX < minimumCell ||
+            cellX > maximumCell || cellY < minimumCell || cellY > maximumCell) {
+            return std::nullopt;
+        }
+        return OccupancyCell{static_cast<std::int64_t>(cellX), static_cast<std::int64_t>(cellY)};
+    };
     for (double remaining = elapsedSeconds; remaining > 1.0e-9;) {
+        openbus::rendering::TraceScope stepTrace(
+            "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.substep");
         const double step = std::min(remaining, 0.05);
         remaining -= step;
         const double currentSignalClockSeconds = signalClockSeconds + elapsedSeconds - remaining;
         std::vector<MapTrafficObstacle> occupied = obstacles;
+        std::vector<MovementReservation> reservations;
+        std::vector<JunctionClaim> junctionClaims;
+        openbus::rendering::TraceScope occupancyTrace(
+            "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.substepOccupancyAndClaims");
         for (const auto* actor : actors) {
             occupied.push_back(actorFootprint(*actor, actor->distanceMeters));
         }
-        std::vector<MovementReservation> reservations;
-        std::vector<JunctionClaim> junctionClaims;
         for (std::size_t candidateIndex = 0; candidateIndex < actors.size(); ++candidateIndex) {
             const MapTrafficActor& candidate = *actors[candidateIndex];
             if (const auto range = activeJunctionClaimRange(candidate)) {
-                junctionClaims.push_back(makeJunctionClaim(candidate, range->first, range->second,
-                                                           currentSignalClockSeconds));
+                junctionClaims.push_back(makeJunctionClaim(
+                    candidate, range->first, range->second, currentSignalClockSeconds));
                 junctionClaims.back().actorIndex = candidateIndex;
             }
         }
+        occupancyTrace.finish();
+        std::unordered_map<OccupancyCell, std::vector<std::size_t>, OccupancyCellHash>
+            occupancyCells;
+        std::unordered_map<OccupancyCell, std::vector<std::size_t>, OccupancyCellHash>
+            reservationCells;
+        double largestReservationRadiusMeters = 0.0;
+        bool reservationIndexValid = true;
+        occupancyCells.reserve(occupied.size());
+        std::vector<OccupancyCell> occupancyCellByIndex(occupied.size());
+        std::vector<std::size_t> occupancySlotByIndex(occupied.size());
+        double largestFootprintRadiusMeters = 0.0;
+        bool occupancyIndexValid = true;
+        {
+            openbus::rendering::TraceScope occupancyIndexTrace(
+                "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.substepOccupancyIndex");
+            for (std::size_t index = 0; index < occupied.size(); ++index) {
+                const MapTrafficObstacle& footprint = occupied[index];
+                largestFootprintRadiusMeters =
+                    std::max(largestFootprintRadiusMeters,
+                             std::hypot(footprint.lengthMeters, footprint.widthMeters) * 0.5);
+                const auto cell = occupancyCellForPosition(footprint.pose.position[0],
+                                                           footprint.pose.position[1]);
+                if (!cell) {
+                    occupancyIndexValid = false;
+                    break;
+                }
+                auto& members = occupancyCells[*cell];
+                occupancyCellByIndex[index] = *cell;
+                occupancySlotByIndex[index] = members.size();
+                members.push_back(index);
+            }
+        }
+        // Candidates are returned in index order so the first conflict, and any diagnostics
+        // recorded while scanning, match a full linear scan.
+        const auto collectNearbyIndexed = [&](const MapTrafficObstacle& footprint,
+                                              double clearanceMeters, const auto& cells,
+                                              double largestRadiusMeters, bool indexValid,
+                                              std::size_t count, std::vector<std::size_t>& out) {
+            out.clear();
+            const auto collectAll = [&] {
+                out.resize(count);
+                for (std::size_t index = 0; index < count; ++index) {
+                    out[index] = index;
+                }
+            };
+            if (!indexValid) {
+                collectAll();
+                return;
+            }
+            const double radius = std::hypot(footprint.lengthMeters, footprint.widthMeters) * 0.5 +
+                                  largestRadiusMeters +
+                                  std::numbers::sqrt2 * std::max(0.0, clearanceMeters);
+            const double x = footprint.pose.position[0];
+            const double y = footprint.pose.position[1];
+            const auto minimum = occupancyCellForPosition(x - radius, y - radius);
+            const auto maximum = occupancyCellForPosition(x + radius, y + radius);
+            if (!minimum || !maximum ||
+                static_cast<long double>(maximum->x) - minimum->x > 256.0L ||
+                static_cast<long double>(maximum->y) - minimum->y > 256.0L) {
+                collectAll();
+                return;
+            }
+            for (std::int64_t cellX = minimum->x; cellX <= maximum->x; ++cellX) {
+                for (std::int64_t cellY = minimum->y; cellY <= maximum->y; ++cellY) {
+                    const auto cell = cells.find({cellX, cellY});
+                    if (cell != cells.end()) {
+                        out.insert(out.end(), cell->second.begin(), cell->second.end());
+                    }
+                }
+            }
+            std::sort(out.begin(), out.end());
+        };
+        const auto updateOccupiedFootprint = [&](std::size_t index,
+                                                 const MapTrafficObstacle& footprint) {
+            const auto cell =
+                occupancyCellForPosition(footprint.pose.position[0], footprint.pose.position[1]);
+            if (!cell) {
+                occupancyIndexValid = false;
+                occupied[index] = footprint;
+                return;
+            }
+            if (!occupancyIndexValid || *cell == occupancyCellByIndex[index]) {
+                occupied[index] = footprint;
+                return;
+            }
+            const auto oldCell = occupancyCells.find(occupancyCellByIndex[index]);
+            if (oldCell == occupancyCells.end()) {
+                throw std::logic_error("Traffic occupancy index lost a footprint cell");
+            }
+            auto& oldMembers = oldCell->second;
+            const std::size_t slot = occupancySlotByIndex[index];
+            const std::size_t lastIndex = oldMembers.back();
+            oldMembers[slot] = lastIndex;
+            occupancySlotByIndex[lastIndex] = slot;
+            oldMembers.pop_back();
+            if (oldMembers.empty()) {
+                occupancyCells.erase(oldCell);
+            }
+            auto& newMembers = occupancyCells[*cell];
+            occupancyCellByIndex[index] = *cell;
+            occupancySlotByIndex[index] = newMembers.size();
+            newMembers.push_back(index);
+            occupied[index] = footprint;
+        };
         // First overlapping footprint in the local windows, not an authored path endpoint.
         const auto claimsConflict = [&](const JunctionClaim& first,
                                         const JunctionClaim& second) -> std::optional<double> {
@@ -2670,6 +2889,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                                                   std::numeric_limits<double>::infinity());
         std::vector<std::vector<std::size_t>> yieldsTo(actors.size());
         std::vector<std::optional<JunctionClaim>> prioritySweeps(actors.size());
+        openbus::rendering::TraceScope priorityTrace(
+            "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.priorityPairArbitration");
         for (std::size_t lowIndex = 0; lowIndex < actors.size(); ++lowIndex) {
             const MapTrafficActor& low = *actors[lowIndex];
             std::optional<JunctionClaim> lowClaim;
@@ -2684,19 +2905,25 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 const bool tieBreaksInFavorOfHigh =
                     priorities[highIndex] == priorities[lowIndex] &&
                     (junctionArrivals[highIndex] < junctionArrivals[lowIndex] - 1.0e-6 ||
-                     (std::abs(junctionArrivals[highIndex] - junctionArrivals[lowIndex]) <= 1.0e-6 &&
+                     (std::abs(junctionArrivals[highIndex] - junctionArrivals[lowIndex]) <=
+                          1.0e-6 &&
                       highIndex < lowIndex));
                 if (highIndex == lowIndex ||
-                    (priorities[highIndex] >= priorities[lowIndex] &&
-                     !tieBreaksInFavorOfHigh) ||
-                    highHeld || sameDirectedRoute(low, high) || queuedBehindInLane(low, high) ||
-                    queuedBehindInLane(high, low)) {
+                    (priorities[highIndex] >= priorities[lowIndex] && !tieBreaksInFavorOfHigh) ||
+                    highHeld) {
                     continue;
                 }
                 const auto& lowPosition = occupied[obstacles.size() + lowIndex].pose.position;
                 const auto& highPosition = occupied[obstacles.size() + highIndex].pose.position;
                 if (std::hypot(highPosition[0] - lowPosition[0], highPosition[1] - lowPosition[1]) >
                     250.0) {
+                    continue;
+                }
+                if (sameDirectedRoute(low, high) ||
+                    queuedBehindInLane(low, occupied[obstacles.size() + lowIndex], high,
+                                       occupied[obstacles.size() + highIndex]) ||
+                    queuedBehindInLane(high, occupied[obstacles.size() + highIndex], low,
+                                       occupied[obstacles.size() + lowIndex])) {
                     continue;
                 }
                 // Opposing turns that share a non-passing connector need a single winner,
@@ -2718,9 +2945,9 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     }
                 }
                 if (!lowClaim.has_value()) {
-                    lowClaim =
-                        makeJunctionClaim(low, low.distanceMeters,
-                                          low.distanceMeters + std::max(15.0, previewDistance(low)),
+                    lowClaim = makeJunctionClaim(low, low.distanceMeters,
+                                                 low.distanceMeters +
+                                                     std::max(15.0, previewDistance(low)),
                                           currentSignalClockSeconds);
                 }
                 if (!prioritySweeps[highIndex].has_value()) {
@@ -2743,6 +2970,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 }
             }
         }
+        priorityTrace.finish();
         const auto yieldsForPriority = [&](std::size_t lowIndex, std::size_t highIndex) {
             return canStillYield[lowIndex] &&
                    std::ranges::find(yieldsTo[lowIndex], highIndex) != yieldsTo[lowIndex].end();
@@ -2769,7 +2997,11 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 }
                 return actors[first]->junctionWaitSeconds > actors[second]->junctionWaitSeconds;
             });
+        openbus::rendering::TraceScope movementTrace(
+            "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.actorMovementPass");
         for (const std::size_t index : priorityOrder) {
+            openbus::rendering::TraceScope actorTrace(
+                "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.actorMovement");
             auto& actor = *actors[index];
             const std::size_t own = obstacles.size() + index;
             bool blockedByCrossingReservation = false;
@@ -2787,12 +3019,14 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 canStillYield[index] && !yieldsTo[index].empty() ? actors[yieldsTo[index].front()]
                                                                  : nullptr;
             MapTrafficBlockReason clearBlockReason = MapTrafficBlockReason::None;
-            // In-lane leaders that are still moving. The following model already controls the gap
-            // to them, so the lookahead must not treat them as parked obstacles.
+            // In-lane leaders that are still moving. The following model already controls
+            // the gap to them, so the lookahead must not treat them as parked obstacles.
             std::vector<const MapTrafficActor*> movingLaneLeaders;
             std::vector<bool> followingObstacleLookahead(obstacles.size(), false);
             const MapTrafficActor* clearBlockingActor = nullptr;
             std::optional<std::size_t> clearBlockingObstacle;
+            std::vector<std::size_t> nearbyOccupied;
+            std::vector<std::size_t> nearbyReservations;
             const auto clearAt = [&](double distance, double clearance,
                                      bool allowFollowingVehicleLookahead) {
                 auto footprint = actorFootprint(actor, distance);
@@ -2807,62 +3041,78 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         std::cos(footprint.pose.headingRadians) * extension * 0.5;
                     clearance = 0.25;
                 }
-                for (std::size_t other = 0; other < occupied.size(); ++other) {
-                    if (other != own &&
-                        trafficFootprintsOverlap(footprint, occupied[other], clearance)) {
-                        if (allowFollowingVehicleLookahead && other < obstacles.size() &&
-                            followingObstacleLookahead[other]) {
-                            continue;
+                const auto blocksAt = [&](std::size_t other) {
+                    if (other == own ||
+                        !trafficFootprintsOverlap(footprint, occupied[other], clearance)) {
+                        return false;
+                    }
+                    if (allowFollowingVehicleLookahead && other < obstacles.size() &&
+                        followingObstacleLookahead[other]) {
+                        return false;
+                    }
+                    clearBlockReason = MapTrafficBlockReason::Obstacle;
+                    clearBlockingActor = nullptr;
+                    clearBlockingObstacle.reset();
+                    if (other < obstacles.size()) {
+                        clearBlockingObstacle = other;
+                    }
+                    if (other >= obstacles.size()) {
+                        const auto& otherActor = *actors[other - obstacles.size()];
+                        // Break only sustained junction collision cycles, and never
+                        // worsen the overlapping footprint that caused the cycle.
+                        const bool collisionDeadlockRecovery =
+                            actor.junctionWaitSeconds >= 1.0 &&
+                            otherActor.junctionWaitSeconds >= 1.0 &&
+                            onJunctionPath(actor, actor.distanceMeters) &&
+                            onJunctionPath(otherActor, otherActor.distanceMeters) &&
+                            (actor.blockReason == MapTrafficBlockReason::Collision ||
+                             otherActor.blockReason == MapTrafficBlockReason::Collision) &&
+                            (actor.blockingActor == &otherActor ||
+                             otherActor.blockingActor == &actor);
+                        if (collisionDeadlockRecovery &&
+                            footprintSeparation(physicalFootprint, occupied[other], 0.5) + 1.0e-6 >=
+                                footprintSeparation(occupied[own], occupied[other], 0.5)) {
+                            return false;
                         }
-                        clearBlockReason = MapTrafficBlockReason::Obstacle;
-                        clearBlockingActor = nullptr;
-                        clearBlockingObstacle.reset();
-                        if (other < obstacles.size()) {
-                            clearBlockingObstacle = other;
+                        if (allowFollowingVehicleLookahead &&
+                            ((sameDirectedRoute(actor, otherActor) &&
+                              isBehindOnRoute(actor, otherActor)) ||
+                             std::ranges::find(movingLaneLeaders, &otherActor) !=
+                                 movingLaneLeaders.end())) {
+                            return false;
                         }
-                        if (other >= obstacles.size()) {
-                            const auto& otherActor = *actors[other - obstacles.size()];
-                            // Break only sustained junction collision cycles, and never worsen
-                            // the overlapping footprint that caused the cycle.
-                            const bool collisionDeadlockRecovery =
-                                actor.junctionWaitSeconds >= 1.0 &&
-                                otherActor.junctionWaitSeconds >= 1.0 &&
-                                onJunctionPath(actor, actor.distanceMeters) &&
-                                onJunctionPath(otherActor, otherActor.distanceMeters) &&
-                                (actor.blockReason == MapTrafficBlockReason::Collision ||
-                                 otherActor.blockReason == MapTrafficBlockReason::Collision) &&
-                                (actor.blockingActor == &otherActor ||
-                                 otherActor.blockingActor == &actor);
-                            if (collisionDeadlockRecovery &&
-                                footprintSeparation(physicalFootprint, occupied[other], 0.5) +
-                                        1.0e-6 >=
-                                    footprintSeparation(occupied[own], occupied[other], 0.5)) {
-                                continue;
-                            }
-                            if (allowFollowingVehicleLookahead &&
-                                ((sameDirectedRoute(actor, otherActor) &&
-                                  isBehindOnRoute(actor, otherActor)) ||
-                                 std::ranges::find(movingLaneLeaders, &otherActor) !=
-                                     movingLaneLeaders.end())) {
-                                continue;
-                            }
-                            clearBlockingActor = &otherActor;
-                            const bool crossing =
-                                std::abs(std::cos(footprint.pose.headingRadians -
-                                                  occupied[other].pose.headingRadians)) < 0.7;
-                            const bool otherOnJunction =
-                                onJunctionPath(otherActor, otherActor.distanceMeters);
-                            if ((onJunctionPath(actor, distance) && crossing) || otherOnJunction) {
-                                blockedByJunctionTraffic = true;
-                                clearBlockReason = MapTrafficBlockReason::JunctionTraffic;
-                            } else {
-                                clearBlockReason = MapTrafficBlockReason::Vehicle;
-                            }
+                        clearBlockingActor = &otherActor;
+                        const bool crossing =
+                            std::abs(std::cos(footprint.pose.headingRadians -
+                                              occupied[other].pose.headingRadians)) < 0.7;
+                        const bool otherOnJunction =
+                            onJunctionPath(otherActor, otherActor.distanceMeters);
+                        if ((onJunctionPath(actor, distance) && crossing) || otherOnJunction) {
+                            blockedByJunctionTraffic = true;
+                            clearBlockReason = MapTrafficBlockReason::JunctionTraffic;
+                        } else {
+                            clearBlockReason = MapTrafficBlockReason::Vehicle;
                         }
+                    }
+                    return true;
+                };
+                collectNearbyIndexed(footprint, clearance, occupancyCells,
+                                     largestFootprintRadiusMeters, occupancyIndexValid,
+                                     occupied.size(), nearbyOccupied);
+                for (const std::size_t other : nearbyOccupied) {
+                    if (blocksAt(other)) {
                         return false;
                     }
                 }
-                for (const auto& reservation : reservations) {
+                collectNearbyIndexed(footprint, clearance, reservationCells,
+                                     largestReservationRadiusMeters, reservationIndexValid,
+                                     reservations.size(), nearbyReservations);
+                for (const std::size_t reservationIndex : nearbyReservations) {
+                    const auto& reservation = reservations[reservationIndex];
+                    // Most reserved samples are far away; reject them before route comparisons.
+                    if (!trafficFootprintsOverlap(footprint, reservation.footprint, clearance)) {
+                        continue;
+                    }
                     if (yieldsForPriority(reservation.actorIndex, index)) {
                         continue;
                     }
@@ -2888,15 +3138,12 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     if (sameDirectedRoute(actor, *reservation.actor)) {
                         continue;
                     }
-                    const bool footprintsConflict =
-                        trafficFootprintsOverlap(footprint, reservation.footprint, clearance);
                     const bool sameFlow =
-                        footprintsConflict &&
                         sameDirectedFlow(actor, distance, candidateSegment, footprint.pose,
                                          *reservation.actor, reservation.distanceMeters,
                                          reservedSegment, reservation.footprint.pose);
                     // Following is handled separately; reserve crossing movements only.
-                    if (footprintsConflict && !sameFlow &&
+                    if (!sameFlow &&
                         std::abs(std::cos(footprint.pose.headingRadians -
                                           reservation.footprint.pose.headingRadians)) < 0.7) {
                         const double candidateArrivalSeconds = actorArrivalSeconds(actor, distance);
@@ -2953,6 +3200,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 standstillFollowingGapMeters + actor.speedMetersPerSecond * headwaySeconds +
                 actor.speedMetersPerSecond * actor.speedMetersPerSecond / (2.0 * braking) +
                 actor.cruiseSpeedMetersPerSecond * followingResponseSeconds + 5.0;
+            openbus::rendering::TraceScope followingTrace(
+                "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.actorFollowingSearch");
             for (std::size_t otherIndex = 0; otherIndex < actors.size(); ++otherIndex) {
                 if (otherIndex == index) {
                     continue;
@@ -2971,9 +3220,10 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         alongRouteMeters += actor.route.totalLength - cycleStart;
                     }
                 } else {
-                    // A leader must sit on this actor's own path, not merely straight ahead:
-                    // project it onto the route so curves, adjacent lanes, side roads, and
-                    // over/underpasses are not mistaken for the vehicle in front.
+                    // A leader must sit on this actor's own path, not merely straight
+                    // ahead: project it onto the route so curves, adjacent lanes, side
+                    // roads, and over/underpasses are not mistaken for the vehicle in
+                    // front.
                     const double deltaX =
                         otherFootprint.pose.position[0] - actorFootprintNow.pose.position[0];
                     const double deltaY =
@@ -3035,6 +3285,9 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 nearestFollowingSpeedMetersPerSecond = otherActor.speedMetersPerSecond;
                 nearestFollowingActor = &otherActor;
             }
+            followingTrace.finish();
+            openbus::rendering::TraceScope obstacleTrace(
+                "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.actorObstacleProjection");
             for (std::size_t obstacleIndex = 0; obstacleIndex < obstacles.size(); ++obstacleIndex) {
                 const MapTrafficObstacle& obstacle = obstacles[obstacleIndex];
                 const double halfLengths = (actor.lengthMeters + obstacle.lengthMeters) * 0.5;
@@ -3097,6 +3350,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 limitTarget(std::sqrt(2.0 * braking * availableStoppingDistance),
                             MapTrafficBlockReason::Obstacle, nullptr, obstacleIndex);
             }
+            obstacleTrace.finish();
             if (std::isfinite(nearestFollowingGapMeters)) {
                 const double closingDistance =
                     std::max(0.0, (actor.speedMetersPerSecond * actor.speedMetersPerSecond -
@@ -3155,6 +3409,9 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     ? std::max(lookahead, upcomingJunctionRange->second - actor.distanceMeters)
                     : lookahead;
             double clearedThroughDistance = -std::numeric_limits<double>::infinity();
+            {
+                openbus::rendering::TraceScope lookaheadTrace(
+                    "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.actorRouteLookahead");
             for (double ahead = 0.0; ahead <= movementLookahead; ahead += 1.0) {
                 if (ahead > signalStopDistance) {
                     break;
@@ -3169,8 +3426,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 const double curveLimit = mapTrafficCurveSpeedLimit(
                     actor.route, distance, actor.cruiseSpeedMetersPerSecond,
                     actor.minimumTurnRadiusMeters);
-                limitTarget(
-                    std::sqrt(curveLimit * curveLimit + 2.0 * braking * std::max(0.0, ahead - 2.0)),
+                    limitTarget(std::sqrt(curveLimit * curveLimit +
+                                          2.0 * braking * std::max(0.0, ahead - 2.0)),
                     MapTrafficBlockReason::None);
                 const std::optional<double> speedLimit = mapTrafficPathSpeedLimitForVehicle(
                     routeSegmentAtDistance(actor.route, distance).pathRules,
@@ -3186,14 +3443,15 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     const double approachBuffer = clearance <= 0.5 ? 0.0 : 1.0;
                     double availableGapMeters = std::max(0.0, ahead - approachBuffer);
                     if (upcomingJunctionRange.has_value() &&
-                        distance >=
-                            upcomingJunctionRange->first - actor.lengthMeters * 0.5 - clearance &&
+                            distance >= upcomingJunctionRange->first - actor.lengthMeters * 0.5 -
+                                            clearance &&
                         (compactJunction ? distance <= upcomingJunctionRange->second
                                          : distance <= upcomingJunctionRange->first +
                                                            actor.lengthMeters + 4.0)) {
                         availableGapMeters = std::min(availableGapMeters, junctionEntryStopGap);
                     }
-                    // A time headway makes the required following distance grow with speed.
+                        // A time headway makes the required following distance grow with
+                        // speed.
                     limitTarget(std::min(availableGapMeters / headwaySeconds,
                                          std::sqrt(2.0 * braking * availableGapMeters)),
                                 clearBlockReason, clearBlockingActor, clearBlockingObstacle);
@@ -3201,6 +3459,11 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 }
                 clearedThroughDistance = distance;
             }
+            }
+            {
+                openbus::rendering::TraceScope admissionTrace(
+                    "traffic",
+                    "MapTrafficRuntime::advanceMapTrafficDriving.actorJunctionAdmission");
             bool junctionClaimHeld = actor.junctionClaimEndMeters.has_value() &&
                                      actor.distanceMeters < *actor.junctionClaimEndMeters;
             if (!committedToJunction && junctionClaimHeld &&
@@ -3209,13 +3472,14 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 actor.junctionClaimEndMeters.reset();
                 junctionClaimHeld = false;
             }
-            if (!committedToJunction && !junctionClaimHeld && upcomingJunctionRange.has_value() &&
-                junctionEntryStopGap <= lookahead &&
+                if (!committedToJunction && !junctionClaimHeld &&
+                    upcomingJunctionRange.has_value() && junctionEntryStopGap <= lookahead &&
                 (!std::isfinite(signalStopDistance) ||
                  actor.distanceMeters + signalStopDistance >=
                      upcomingJunctionRange->first - actor.lengthMeters * 0.5)) {
-                // Enter only if no actor inside or admitted to a junction will cross this path,
-                // so two vehicles never meet head-on or side-on inside the junction box.
+                    // Enter only if no actor inside or admitted to a junction will cross
+                    // this path, so two vehicles never meet head-on or side-on inside the
+                    // junction box.
                 JunctionClaim wanted = makeJunctionClaim(
                     actor,
                     std::max(actor.distanceMeters,
@@ -3227,14 +3491,20 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 const MapTrafficActor* conflictingActor = nullptr;
                 double conflictStopDistance = std::numeric_limits<double>::infinity();
                 for (const JunctionClaim& claim : junctionClaims) {
-                    // A lower-priority claimant that can still stop gives way to this vehicle.
+                        // A lower-priority claimant that can still stop gives way to this
+                        // vehicle.
+                        const std::size_t claimActorIndex = actorIndexByPointer.at(claim.actor);
                     if (claim.actor == &actor || sameDirectedRoute(actor, *claim.actor) ||
-                        queuedBehindInLane(actor, *claim.actor) ||
-                        queuedBehindInLane(*claim.actor, actor)) {
+                            queuedBehindInLane(actor, occupied[own], *claim.actor,
+                                               occupied[obstacles.size() + claimActorIndex]) ||
+                            queuedBehindInLane(*claim.actor,
+                                               occupied[obstacles.size() + claimActorIndex], actor,
+                                               occupied[own])) {
                         continue;
                     }
-                    // Opposing vehicles cannot share a non-passable corridor, regardless of
-                    // its length. Hold only until the leader's tail clears the shared portion.
+                        // Opposing vehicles cannot share a non-passable corridor,
+                        // regardless of its length. Hold only until the leader's tail
+                        // clears the shared portion.
                     if (opposingJunctionMovements(actor, *claim.actor)) {
                         conflictingActor = claim.actor;
                         conflictStopDistance = junctionEntryStopDistance;
@@ -3255,21 +3525,23 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 }
                 if (conflictingActor != nullptr) {
                     blockedByJunctionTraffic = true;
-                    junctionAdmissionStopDistance = std::min(
-                        junctionAdmissionStopDistance,
-                        compactJunction ? std::min(junctionEntryStopDistance, conflictStopDistance)
+                        junctionAdmissionStopDistance =
+                            std::min(junctionAdmissionStopDistance,
+                                     compactJunction
+                                         ? std::min(junctionEntryStopDistance, conflictStopDistance)
                                         : conflictStopDistance);
-                    const double conflictGap = std::max(
-                        0.0,
-                        (compactJunction ? std::min(junctionEntryStopDistance, conflictStopDistance)
+                        const double conflictGap =
+                            std::max(0.0, (compactJunction ? std::min(junctionEntryStopDistance,
+                                                                      conflictStopDistance)
                                          : conflictStopDistance) -
                             actor.distanceMeters);
                     limitTarget(std::min(conflictGap / headwaySeconds,
                                          std::sqrt(2.0 * braking * conflictGap)),
                                 MapTrafficBlockReason::JunctionTraffic, conflictingActor);
                 } else {
-                    const double admissionWindow =
-                        actor.speedMetersPerSecond * actor.speedMetersPerSecond / (2.0 * braking) +
+                        const double admissionWindow = actor.speedMetersPerSecond *
+                                                           actor.speedMetersPerSecond /
+                                                           (2.0 * braking) +
                         actor.speedMetersPerSecond * 0.5 + 2.0;
                     const double junctionPathEnd =
                         compactJunction ? (actor.route.closed || actor.route.loopStartDistance
@@ -3278,7 +3550,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                                                           actor.route.totalLength))
                                         : std::min(wanted.distances.back(),
                                                    actor.distanceMeters + movementLookahead);
-                    // Claims follow queue order: a leader still short of the entry claims first.
+                        // Claims follow queue order: a leader still short of the entry
+                        // claims first.
                     const bool leaderStillQueuedAhead =
                         nearestFollowingActor != nullptr &&
                         nearestFollowingGapMeters < junctionEntryStopGap &&
@@ -3291,6 +3564,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     }
                 }
             }
+            }
             actor.targetSpeedMetersPerSecond = target;
             const double oldSpeed = actor.speedMetersPerSecond;
             const double newSpeed = target < oldSpeed
@@ -3301,11 +3575,13 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 !committedToJunction && std::isfinite(junctionAdmissionStopDistance)
                     ? std::max(0.0, junctionAdmissionStopDistance - actor.distanceMeters)
                     : std::numeric_limits<double>::infinity();
-            const double travel =
-                std::min({requestedTravel, signalStopDistance, junctionStopGap});
+            const double travel = std::min({requestedTravel, signalStopDistance, junctionStopGap});
             double admitted = 0.0;
             bool blockedDuringMovement = false;
             // Sweep rather than testing just the final pose, including at low frame rates.
+            {
+                openbus::rendering::TraceScope sweepTrace(
+                    "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.actorSweptMovement");
             for (double offset = std::min(0.2, travel); offset <= travel && travel > 0.0;
                  offset = std::min(offset + 0.2, travel)) {
                 if (!clearAt(actor.distanceMeters + offset, 0.5, false)) {
@@ -3316,6 +3592,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 if (offset == travel) {
                     break;
                 }
+            }
             }
             actor.speedMetersPerSecond =
                 admitted + 1.0e-9 < travel || travel + 1.0e-9 < requestedTravel ? 0.0 : newSpeed;
@@ -3355,7 +3632,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             } else {
                 actor.distanceMeters = std::min(actor.distanceMeters, actor.route.totalLength);
             }
-            occupied[own] = actorFootprint(actor, actor.distanceMeters);
+            updateOccupiedFootprint(own, actorFootprint(actor, actor.distanceMeters));
             if (actor.distanceMeters < distanceBeforeMovement) {
                 actor.junctionClaimEndMeters.reset();
             }
@@ -3366,6 +3643,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 actor.junctionClaimEndMeters.reset();
             }
             if (actor.speedMetersPerSecond > 0.1) {
+                openbus::rendering::TraceScope reservationTrace(
+                    "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.actorReservations");
                 for (double ahead = 1.0; ahead < actor.speedMetersPerSecond * 3.0 &&
                                          ahead <= signalStopDistance - admitted;
                      ahead += 1.0) {
@@ -3374,9 +3653,20 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         {actorFootprint(actor, reservationDistance), &actor, index,
                          reservationDistance,
                          step + actorArrivalSeconds(actor, reservationDistance)});
+                    const auto& footprint = reservations.back().footprint;
+                    largestReservationRadiusMeters =
+                        std::max(largestReservationRadiusMeters,
+                                 std::hypot(footprint.lengthMeters, footprint.widthMeters) * 0.5);
+                    if (const auto cell = occupancyCellForPosition(footprint.pose.position[0],
+                                                                   footprint.pose.position[1])) {
+                        reservationCells[*cell].push_back(reservations.size() - 1);
+                    } else {
+                        reservationIndexValid = false;
+                    }
                 }
             }
         }
+        movementTrace.finish();
     }
 }
 

@@ -2,10 +2,13 @@
 #include "map/MapSplineGeometry.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_map>
 
 namespace {
@@ -618,6 +621,27 @@ void verifyDrivingBehavior() {
     }
     require(crossingYieldObserved && north.distanceMeters > 60.0 && east.distanceMeters > 60.0,
             "waiting vehicles gain junction priority and both conflicting movements traverse");
+    for (const double offset : {-12.01, -0.01, 11.99}) {
+        auto shiftedNorth = makeMapTrafficActor(
+            oneSegment(straight(1200, offset, offset - 40.0, 0.0, 100.0)),
+            "north.ovh", 8.0, 0.0, false);
+        auto shiftedEast = makeMapTrafficActor(
+            oneSegment(straight(1201, offset - 40.0, offset, 90.0, 100.0)),
+            "east.ovh", 8.0, 0.0, false);
+        shiftedNorth.lengthMeters = 18.0;
+        bool shiftedYieldObserved = false;
+        for (int frame = 0; frame < 250; ++frame) {
+            advanceMapTrafficDriving({&shiftedNorth, &shiftedEast}, {}, 0.1);
+            shiftedYieldObserved = shiftedYieldObserved ||
+                                   shiftedNorth.junctionWaitSeconds > 0.0 ||
+                                   shiftedEast.junctionWaitSeconds > 0.0;
+            require(mapTrafficHasClearance(footprint(shiftedNorth), {footprint(shiftedEast)}, 0.49),
+                    "cross-cell reservations protect long vehicles across negative cell boundaries");
+        }
+        require(shiftedYieldObserved && shiftedNorth.distanceMeters > 60.0 &&
+                    shiftedEast.distanceMeters > 60.0,
+                "cross-cell reservation checks let both crossing vehicles traverse");
+    }
     MapTrafficGroupRules committedPathRules;
     committedPathRules.groupIndex = 0;
     committedPathRules.priority = 192.0;
@@ -1045,6 +1069,34 @@ void verifyDrivingBehavior() {
     require(shallowMergeFirst.distanceMeters > 60.0 &&
                 shallowMergeSecond.distanceMeters > 60.0,
             "vehicles continue through shared road flow without a spline-boundary deadlock");
+    const auto makeSharedExitRoute = [&](int approachId, double headingDegrees) {
+        constexpr double approachLength = 30.0;
+        constexpr double exitLength = 70.0;
+        const double headingRadians = headingDegrees * std::acos(-1.0) / 180.0;
+        auto approach = straight(approachId,
+                                 -std::sin(headingRadians) * approachLength,
+                                 -std::cos(headingRadians) * approachLength,
+                                 headingDegrees, approachLength);
+        auto exit = straight(1390, 0.0, 0.0, 90.0, exitLength);
+        MapTrafficRoute route;
+        route.segments = {approach, exit};
+        route.cumulativeEndDistances = {approachLength, approachLength + exitLength};
+        route.totalLength = route.cumulativeEndDistances.back();
+        return route;
+    };
+    auto diagonalMerge = makeMapTrafficActor(
+        makeSharedExitRoute(1391, 60.0), "diagonal-merge.ovh", 8.0, 0.0, false);
+    auto straightMerge = makeMapTrafficActor(
+        makeSharedExitRoute(1392, 90.0), "straight-merge.ovh", 8.0, 0.0, false);
+    diagonalMerge.speedMetersPerSecond = 8.0;
+    straightMerge.speedMetersPerSecond = 8.0;
+    for (int frame = 0; frame < 300; ++frame) {
+        advanceMapTrafficDriving({&diagonalMerge, &straightMerge}, {}, 0.1);
+        require(mapTrafficHasClearance(footprint(diagonalMerge), {footprint(straightMerge)}, 0.49),
+                "moving-block merge arbitration preserves clearance on a shared exit spline");
+    }
+    require(diagonalMerge.distanceMeters > 60.0 && straightMerge.distanceMeters > 60.0,
+            "both streams progress through a shared-exit merge after yielding as needed");
     MapTrafficRoute seamRoute;
     MapTrafficRoute seamLeaderRoute;
     for (int piece = 0; piece < 30; ++piece) {
@@ -1829,6 +1881,41 @@ void verifyDrivingBehavior() {
     advanceMapTrafficDriving({&waitingRightTurn, &highPriorityCrossing}, {}, 0.1);
     require(waitingRightTurn.junctionWaitSeconds > 0.0,
             "a right-turning approach accrues wait time when lookahead sees crossing traffic");
+    MapTrafficRoute priorityTurnExitRoute =
+        oneSegment(straight(1250, -40.0, -2.0, 90.0, 100.0));
+    priorityTurnExitRoute.segments.front().pathRules.groups.push_back(approachingPathRules);
+    auto yieldingRightTurn =
+        makeMapTrafficActor(rightTurnRoute, "yielding-right-turn.ovh", 8.0, 0.0, false);
+    auto approachingPriorityExit = makeMapTrafficActor(
+        priorityTurnExitRoute, "approaching-priority-exit.ovh", 8.0, 0.0, false);
+    yieldingRightTurn.unscheduledGroupIndex = 0;
+    approachingPriorityExit.unscheduledGroupIndex = 0;
+    yieldingRightTurn.distanceMeters = 15.0;
+    approachingPriorityExit.distanceMeters = 20.0;
+    yieldingRightTurn.speedMetersPerSecond = 8.0;
+    approachingPriorityExit.speedMetersPerSecond = 8.0;
+    double yieldingTurnMinimumSpeed = std::numeric_limits<double>::infinity();
+    bool yieldingTurnWaitedBeforeEntry = false;
+    for (int frame = 0; frame < 120; ++frame) {
+        advanceMapTrafficDriving({&yieldingRightTurn, &approachingPriorityExit}, {}, 0.1);
+        require(mapTrafficHasClearance(footprint(yieldingRightTurn),
+                                       {footprint(approachingPriorityExit)}, 0.49),
+                "a lower-priority turn and an approaching exit vehicle remain separated");
+        if (yieldingRightTurn.distanceMeters >= 30.0 &&
+            yieldingRightTurn.distanceMeters <= 30.0 + connectorLength) {
+            yieldingTurnMinimumSpeed =
+                std::min(yieldingTurnMinimumSpeed, yieldingRightTurn.speedMetersPerSecond);
+        }
+        yieldingTurnWaitedBeforeEntry =
+            yieldingTurnWaitedBeforeEntry ||
+            (yieldingRightTurn.junctionWaitSeconds > 0.0 &&
+             yieldingRightTurn.distanceMeters < 30.0);
+    }
+    require(yieldingRightTurn.distanceMeters > 60.0 &&
+                approachingPriorityExit.distanceMeters > 60.0 &&
+                yieldingTurnWaitedBeforeEntry &&
+                yieldingTurnMinimumSpeed > 1.5,
+            "a lower-priority turn waits before entry and clears without stopping mid-turn");
     auto shortConnectorRightTurn =
         makeMapTrafficActor(rightTurnRoute, "short-connector-right-turn.ovh", 8.0, 0.0, false);
     auto nearPriorityCrossing = makeMapTrafficActor(
@@ -2407,14 +2494,64 @@ void verifyTrafficRules() {
             "authored speed limits cap vehicle speed in km/h converted to m/s");
 }
 
+void benchmarkDrivingLookahead() {
+    using namespace openbus::map;
+    std::vector<MapTrafficActor> actors(69);
+    std::vector<MapTrafficActor*> pointers;
+    for (std::size_t index = 0; index < actors.size(); ++index) {
+        auto& actor = actors[index];
+        for (int segmentIndex = 0; segmentIndex < 20; ++segmentIndex) {
+            MapTrafficRouteSegment segment;
+            segment.spline.placement =
+                makeSpline(10000 + static_cast<int>(index) * 20 + segmentIndex, 0, 0,
+                           segmentIndex * 10.0);
+            segment.spline.placement.localX = static_cast<double>(index) * 100.0;
+            actor.route.segments.push_back(segment);
+            actor.route.cumulativeEndDistances.push_back((segmentIndex + 1) * 10.0);
+        }
+        actor.route.totalLength = 200.0;
+        actor.distanceMeters = 20.0;
+        actor.speedMetersPerSecond = 10.0;
+        actor.cruiseSpeedMetersPerSecond = 12.0;
+        pointers.push_back(&actor);
+    }
+    // Warm up outside the timed region; actors have distinct, non-conflicting routes.
+    advanceMapTrafficDriving(pointers, {}, 0.016);
+    const auto start = std::chrono::steady_clock::now();
+    constexpr int updates = 30;
+    for (int update = 0; update < updates; ++update) {
+        advanceMapTrafficDriving(pointers, {}, 0.016);
+    }
+    const double milliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    double distanceSum = 0.0;
+    double speedSum = 0.0;
+    for (const auto& actor : actors) {
+        require(actor.blockReason == MapTrafficBlockReason::None,
+                "distant movement reservations must not block free-flowing traffic");
+        requireNear(actor.speedMetersPerSecond, 10.0 + 31.0 * 0.016 * 1.6,
+                    "free-flowing benchmark actors accelerate without reservation constraints");
+        distanceSum += actor.distanceMeters;
+        speedSum += actor.speedMetersPerSecond;
+    }
+    std::cout << std::setprecision(17)
+              << "TRAFFIC_LOOKAHEAD_BENCHMARK actors=" << actors.size()
+              << " updates=" << updates << " ms_per_update=" << milliseconds / updates
+              << " distance_sum=" << distanceSum << " speed_sum=" << speedSum << '\n';
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     std::size_t verifiedAiSpawns = 0;
     std::size_t verifiedHumanSpawns = 0;
     std::size_t verifiedAiPopulationSpawns = 0;
     std::size_t verifiedHumanPopulationSpawns = 0;
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-lookahead") {
+            benchmarkDrivingLookahead();
+            return 0;
+        }
         using namespace openbus::map;
         verifyDrivingBehavior();
         verifyTrafficRules();
