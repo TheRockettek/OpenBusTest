@@ -135,7 +135,8 @@ void runFixtureProbe() {
                              "[station]\n15479\n1\nMain Stop\n0\n0\n0\n0\n5\n");
                 writeUtf16Le(timetableDirectory / "FixtureLine.ttr",
                              "[track_entry]\n30273\n0\n1\n1\n10\n0\n"
-                             "[track_entry]\n30274\n0\n0\n2\n10\n0\n");
+                             "[track_entry]\n30273\n1\n1\n2\n10\n0\n"
+                             "[track_entry]\n30274\n0\n0\n3\n10\n0\n");
                 writeUtf16Le(timetableDirectory / "Fixture.ttl",
                              "[newtour]\nDriver\n1\n"
                              "Dep.: 8:15:0\n[addtrip]\nFixtureTrip\n0\n495.000\n"
@@ -375,9 +376,12 @@ void runFixtureProbe() {
                     definition.aiTraffic.timetableRoutes[0].stationCount == 1 &&
                     definition.aiTraffic.timetableRoutes[0].splineIds ==
                         std::vector<int>{30273, 30274} &&
+                    definition.aiTraffic.timetableRoutes[0].trackEntries ==
+                        std::vector<openbus::map::MapAiTimetableRoute::TrackEntry>{
+                            {30273, 0}, {30273, 1}, {30274, 0}} &&
                     definition.aiTraffic.timetableRoutes[0].scheduledDepartureMinutes ==
                         std::vector<double>{405.0, 495.0},
-                "timetable routes retain station data, ordered splines, and scheduled departures");
+                "timetable routes retain ordered path selectors, stations, and departures");
         require(definition.aiTraffic.busTypes.size() == 1 &&
                     definition.aiTraffic.busTypes[0].type == 2 &&
                     definition.aiTraffic.busTypes[0].assetPath == "vehicles\\city_bus.bus" &&

@@ -68,7 +68,12 @@ class MapRenderer {
     buildDrivingRoute(int splineId, std::size_t laneSelector = 0, std::size_t routeSeed = 0,
                       double minimumTurnRadiusMeters = 0.0,
                       openbus::map::MapTrafficVehicleFilter vehicle = {},
-                      const std::vector<int>& requiredSplineSequence = {}) const;
+                      const std::vector<int>& requiredSplineSequence = {},
+                      const std::vector<std::optional<std::size_t>>&
+                          requiredSceneryPathSequence = {},
+                      bool stopAtRequiredSequenceEnd = false) const;
+    std::vector<openbus::map::MapTrafficLaneStart>
+    lanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
     std::vector<openbus::map::MapTrafficLaneStart> trafficEntryLanes() const;
     std::optional<openbus::map::MapTrafficLaneStart>
     selectTrafficEntryLane(openbus::map::MapTrafficVehicleFilter vehicle,

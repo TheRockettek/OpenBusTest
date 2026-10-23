@@ -83,7 +83,10 @@ class RenderLoop {
                            std::vector<double> scheduledDepartureMinutes = {},
                            std::optional<std::size_t> unscheduledGroupIndex = std::nullopt,
                            int defaultVehicleType = 0,
-                           std::vector<int> requiredRouteSplineIds = {});
+                           std::vector<int> requiredRouteSplineIds = {},
+                           std::vector<std::optional<std::size_t>>
+                               requiredSceneryPathSequence = {},
+                           bool stopAtRequiredSequenceEnd = false);
     int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -99,6 +102,9 @@ class RenderLoop {
         bool useGroupRoadPopulation = false);
     void SetHumanTrafficPopulation(std::size_t count);
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
+    std::vector<openbus::map::MapTrafficLaneStart>
+    trafficLanesForTimetableEntry(int splineId,
+                                  std::optional<std::size_t> sceneryPathIndex) const;
     std::vector<openbus::map::MapTrafficLaneStart> trafficEntryLanes() const;
     std::optional<openbus::map::MapTrafficLaneStart>
     selectTrafficEntryLane(openbus::map::MapTrafficVehicleFilter vehicle,
@@ -108,11 +114,14 @@ class RenderLoop {
     selectTrafficSpawnLane(openbus::map::MapTrafficVehicleFilter vehicle,
                            std::size_t selectionSeed) const;
     std::vector<int> trafficRouteStartSplineIds(int pathTypeCode) const;
-    std::vector<int>
-    trafficRouteSplineIds(int splineId, int pathTypeCode, std::size_t laneSelector = 0,
-                          double minimumTurnRadiusMeters = 0.0, std::size_t routeSeed = 0,
-                          const std::vector<int>& requiredSplineSequence = {},
-                          openbus::map::MapTrafficVehicleFilter vehicle = {}) const;
+    std::vector<openbus::map::MapTrafficRouteRequirement>
+    trafficRouteSegments(int splineId, int pathTypeCode, std::size_t laneSelector = 0,
+                         double minimumTurnRadiusMeters = 0.0, std::size_t routeSeed = 0,
+                         const std::vector<int>& requiredSplineSequence = {},
+                         openbus::map::MapTrafficVehicleFilter vehicle = {},
+                         const std::vector<std::optional<std::size_t>>&
+                             requiredSceneryPathSequence = {},
+                         bool stopAtRequiredSequenceEnd = false) const;
     std::size_t trafficVehicleCount() const;
     void SetWeather(int precipitationType, double precipitationRate);
 

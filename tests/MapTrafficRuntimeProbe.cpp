@@ -231,6 +231,40 @@ void verifyDrivingBehavior() {
         requiredSequence.buildRoute(1022, 0, 0, 0.0, {}, {1022, 1023});
     require(completeRequiredSequence && completeRequiredSequence->segments.size() == 2,
             "an endpoint route succeeds when it completes the required timetable sequence");
+    MapTrafficLaneNetwork scheduledHeightStep;
+    MapTrafficRouteSegment scheduledIncoming;
+    scheduledIncoming.spline.placement.splineId = 1025;
+    scheduledIncoming.points = {{0.0, 0.0, 0.0}, {0.0, 10.0, 0.0}};
+    scheduledIncoming.sceneryPathIndex = 3;
+    MapTrafficRouteSegment scheduledOutgoing;
+    scheduledOutgoing.spline.placement.splineId = 1026;
+    scheduledOutgoing.points = {{0.1, 10.0, 1.98}, {0.1, 20.0, 2.18}};
+    scheduledOutgoing.sceneryPathIndex = 7;
+    scheduledHeightStep.addSegment(std::move(scheduledIncoming));
+    scheduledHeightStep.addSegment(std::move(scheduledOutgoing));
+    scheduledHeightStep.finalize();
+    const auto unconstrainedHeightStepRoute = scheduledHeightStep.buildRoute(1025);
+    require(unconstrainedHeightStepRoute &&
+                unconstrainedHeightStepRoute->segments.size() == 1,
+            "ordinary road routing does not connect lanes with a large vertical step");
+    const auto scheduledHeightStepRoute = scheduledHeightStep.buildRoute(
+        1025, 0, 0, 0.0, {}, {1025, 1026}, {3, 7}, true);
+    require(scheduledHeightStepRoute && scheduledHeightStepRoute->segments.size() == 2 &&
+                scheduledHeightStepRoute->segments[1].points.front() ==
+                    scheduledHeightStepRoute->segments[0].points.back() &&
+                std::abs(scheduledHeightStepRoute->segments[1].points.back()[2] - 0.2) < 1.0e-8,
+            "an exact timetable path selector may bridge a small authored vertical step");
+    MapTrafficLaneNetwork sceneryTimetableRoute;
+    auto invisibleRoadSpline = straight(15155, 0.0, 0.0, 0.0, 20.0);
+    auto placedJunctionPath = straight(10129, 0.0, 20.0, 0.0, 20.0);
+    sceneryTimetableRoute.addSegment(std::move(invisibleRoadSpline));
+    sceneryTimetableRoute.addSegment(std::move(placedJunctionPath));
+    sceneryTimetableRoute.finalize();
+    const auto sceneryTimetableMatch =
+        sceneryTimetableRoute.buildRoute(15155, 0, 0, 0.0, {}, {15155, 10129});
+    require(sceneryTimetableMatch && sceneryTimetableMatch->segments.size() == 2 &&
+                sceneryTimetableMatch->segments[1].spline.placement.splineId == 10129,
+            "a placed scenery traffic path retains its map object ID for timetable matching");
     const auto beforeTransition = sampleMapTrafficRoute(*transitionRoute, 19.99, 0.0);
     const auto afterTransition = sampleMapTrafficRoute(*transitionRoute, 20.01, 0.0);
     require(beforeTransition && afterTransition &&
@@ -3292,16 +3326,58 @@ int main(int argc, char** argv) {
         MapTrafficRouteSegment timetableTurn;
         timetableTurn.spline.placement.splineId = 62;
         timetableTurn.points = {{0.0, 0.0, 0.0}, {10.0, 0.0, 0.0}};
+        MapTrafficRouteSegment timetableAfterDestination;
+        timetableAfterDestination.spline.placement.splineId = 63;
+        timetableAfterDestination.points = {{10.0, 0.0, 0.0}, {20.0, 0.0, 0.0}};
         timetableLanes.addSegment(timetableApproach);
         timetableLanes.addSegment(timetableStraight);
         timetableLanes.addSegment(timetableTurn);
+        timetableLanes.addSegment(timetableAfterDestination);
         timetableLanes.finalize();
+        const auto authoredEntryLanes = timetableLanes.entryLanes();
+        const auto timetableStartLanes = timetableLanes.lanesForTimetableEntry(61, std::nullopt);
+        require(std::find(authoredEntryLanes.begin(), authoredEntryLanes.end(),
+                          MapTrafficLaneStart{61, 0}) == authoredEntryLanes.end() &&
+                    timetableStartLanes == std::vector<MapTrafficLaneStart>{{61, 0}},
+                "timetable starts can select their authored route entry without a mid-route spawn");
         const auto timetableGuidedRoute = timetableLanes.buildRoute(60, 0, 0, 0.0, {}, {60, 62});
-        require(timetableGuidedRoute && timetableGuidedRoute->segments.size() == 2 &&
-                    timetableGuidedRoute->segments.back().spline.placement.splineId == 62,
+        require(timetableGuidedRoute && timetableGuidedRoute->segments.size() == 3 &&
+                    timetableGuidedRoute->segments[1].spline.placement.splineId == 62 &&
+                    timetableGuidedRoute->segments.back().spline.placement.splineId == 63,
                 "a timetable spline sequence guides route choice through a non-default turn");
+        const auto timetableEndingRoute =
+            timetableLanes.buildRoute(60, 0, 0, 0.0, {}, {60, 62}, {}, true);
+        require(timetableEndingRoute && timetableEndingRoute->segments.size() == 2 &&
+                    timetableEndingRoute->segments.back().spline.placement.splineId == 62,
+                "a scheduled route can end at the timetable destination instead of continuing");
         require(!timetableLanes.buildRoute(60, 0, 0, 0.0, {}, {60, 63}),
                 "a timetable-guided route rejects a spline sequence absent from the lane network");
+        MapTrafficLaneNetwork indexedSceneryPaths;
+        MapTrafficRouteSegment sceneryPathA;
+        sceneryPathA.spline.placement.splineId = 70;
+        sceneryPathA.sceneryPathIndex = 0;
+        sceneryPathA.points = {{0.0, 0.0, 0.0}, {10.0, 0.0, 0.0}};
+        MapTrafficRouteSegment sceneryPathB;
+        sceneryPathB.spline.placement.splineId = 70;
+        sceneryPathB.sceneryPathIndex = 1;
+        sceneryPathB.points = {{10.0, 0.0, 0.0}, {20.0, 0.0, 0.0}};
+        MapTrafficRouteSegment sceneryExit;
+        sceneryExit.spline.placement.splineId = 71;
+        sceneryExit.points = {{20.0, 0.0, 0.0}, {30.0, 0.0, 0.0}};
+        indexedSceneryPaths.addSegment(sceneryPathA);
+        indexedSceneryPaths.addSegment(sceneryPathB);
+        indexedSceneryPaths.addSegment(sceneryExit);
+        indexedSceneryPaths.finalize();
+        const auto indexedTimetableRoute =
+            indexedSceneryPaths.buildRoute(70, 0, 0, 0.0, {}, {70, 70, 71},
+                                           {std::size_t{0}, std::size_t{1}, std::nullopt});
+        require(indexedTimetableRoute && indexedTimetableRoute->segments.size() == 3 &&
+                    indexedTimetableRoute->segments[1].sceneryPathIndex == 1,
+                "timetable path indices disambiguate successive paths of the same SCO");
+        require(!indexedSceneryPaths.buildRoute(
+                    70, 0, 0, 0.0, {}, {70, 70, 71},
+                    {std::size_t{0}, std::size_t{0}, std::nullopt}),
+                "a timetable path index rejects the wrong SCO junction movement");
         MapTrafficActor oneWayActor =
             makeMapTrafficActor(*route, "Vehicles\\one_way.bus", 2.0, 0.0, false);
         oneWayActor.distanceMeters = 19.5;
@@ -3338,6 +3414,12 @@ int main(int argc, char** argv) {
                     "departure at the configured start hour is immediately due");
         requireNear(mapTrafficNextDepartureElapsedSeconds(6.75, 1.0, 405.0), 86400.0,
                     "a missed departure rolls to the following day");
+        require(mapTrafficNextDepartureIndex(12.0, 0.0, {483.0, 739.0, 780.0}) == 1,
+                "the initial bus departure is the next one today, not the first timetable time");
+        requireNear(mapTrafficNextDepartureElapsedSeconds(12.0, 0.0, 739.0), 1140.0,
+                    "the selected noon-start timetable departure is due in 19 minutes");
+        require(mapTrafficNextDepartureIndex(14.0, 0.0, {483.0, 739.0, 780.0}) == 0,
+                "after today's final departure, buses roll over to the first time tomorrow");
         require(!mapTrafficScheduledDepartureDue(2699.0, 2700.0),
                 "a queued bus is held before its departure time");
         require(mapTrafficScheduledDepartureDue(2700.0, 2700.0) &&

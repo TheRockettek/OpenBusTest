@@ -107,10 +107,18 @@ only off-screen. Vehicles are retired immediately when they reach an open
 route end; subsequent spawns still obey the off-screen and clearance checks.
 `.ttl` timetable departure times are
 parsed and linked to `.ttp` trips. Matched buses wait for their next departure
-before endpoint admission, including midnight rollover, while retaining the
-off-screen and clearance checks. When multiple pooled buses serve a route, its
-departure list is partitioned so each bus gets a disjoint subset of departure
-times.
+at or after the configured starting hour before endpoint admission, including
+midnight rollover, while retaining the off-screen and clearance checks. When
+multiple pooled buses serve a route, its departure list is partitioned so each
+bus gets a disjoint subset of departure times. Timetable `.ttr` entries retain
+repeated scenery-object IDs and their selected path indexes, so scheduled route
+validation checks the complete ordered path rather than matching only shared
+road sections. Exact timetable-selected scenery paths can bridge small authored
+vertical offsets (up to 2.5 m) when their horizontal endpoints and headings
+align; ordinary road-traffic connectivity keeps its stricter limits. Cotterell
+live startup validation recognizes U28 and line 12 as complete timetable routes;
+other routes remain explicitly logged as partial endpoint fallbacks when the
+map graph cannot reproduce their full authored sequence.
 Pedestrian model choices come from the map's `humans.txt`; `drivers.txt` is
 reserved for AI driver models and is not used as a pedestrian roster.
 Pedestrians follow the authored human-path offsets and heights, render the
@@ -185,16 +193,19 @@ rejecting the entry route if no drivable exit or loop is reachable. Vehicles
 exit only at unconnected lane ends; missing or misaligned authored connections
 can still terminate a route.
 AI buses are
-selected separately from depot bus definitions and follow only timetable
-routes whose `.ttp` trip names a destination and at least one station, and
-whose `.ttr` spline chain contains the selected road route. They must also have
-an eligible endpoint entry; maps without one do not receive fallback mid-route
-bus spawns. Set
+selected separately from depot bus definitions. When an endpoint route matches
+a timetable's `.ttr` spline chain, buses follow that route and use its parsed
+departures. Complete matches are searched across candidate endpoints before
+considering fallbacks. For an individual timetable without a complete endpoint
+match, if a generated endpoint route shares at least two consecutive splines,
+OpenBus can queue it as an explicitly logged fallback using that timetable's
+departures; this route is not guaranteed to serve the authored itinerary.
+Either way, buses require connected endpoint entries and never spawn partway
+along a route. Set
 `OPENBUS_MAP_BUS_COUNT` to control their population (default `20`, maximum
 `200`; `0` disables map AI buses). The bounded bus pool is created at startup
-and only buses with a matched timetable route and parsed departures are
-admitted at scheduled times. Maps without a complete endpoint-compatible
-timetable route do not spawn scheduled buses. Traffic remains lane-constrained and kinematic:
+and buses are admitted at scheduled times. Traffic remains lane-constrained and
+kinematic:
 signal/sign compliance, overtaking, lane changing, articulated swept-body
 physics, and collision response when the player drives into AI are not implemented.
 

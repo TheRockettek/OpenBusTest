@@ -712,10 +712,21 @@ std::optional<openbus::map::MapTrafficRoute>
 MapRenderer::buildDrivingRoute(int splineId, std::size_t laneSelector, std::size_t routeSeed,
                                double minimumTurnRadiusMeters,
                                openbus::map::MapTrafficVehicleFilter vehicle,
-                               const std::vector<int>& requiredSplineSequence) const {
+                               const std::vector<int>& requiredSplineSequence,
+                               const std::vector<std::optional<std::size_t>>&
+                                   requiredSceneryPathSequence,
+                               bool stopAtRequiredSequenceEnd) const {
     return impl_->roadTrafficLaneNetwork.buildRoute(splineId, laneSelector, routeSeed,
                                                     minimumTurnRadiusMeters, vehicle,
-                                                    requiredSplineSequence);
+                                                    requiredSplineSequence,
+                                                    requiredSceneryPathSequence,
+                                                    stopAtRequiredSequenceEnd);
+}
+
+std::vector<openbus::map::MapTrafficLaneStart>
+MapRenderer::lanesForTimetableEntry(int splineId,
+                                    std::optional<std::size_t> sceneryPathIndex) const {
+    return impl_->roadTrafficLaneNetwork.lanesForTimetableEntry(splineId, sceneryPathIndex);
 }
 
 std::vector<openbus::map::MapTrafficLaneStart> MapRenderer::trafficEntryLanes() const {

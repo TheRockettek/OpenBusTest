@@ -393,6 +393,10 @@ void MapSceneLoader::buildTileContent() {
                         if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
                             openbus::map::MapTrafficRouteSegment lane;
                             lane.points = segment.points;
+                            if (mapObjectId.has_value()) {
+                                lane.spline.placement.splineId = *mapObjectId;
+                                lane.sceneryPathIndex = path.pathIndex;
+                            }
                             lane.trafficSignal = pathSignal;
                             if (placementRules != nullptr) {
                                 lane.pathRules = openbus::map::mapTrafficRulesForPath(

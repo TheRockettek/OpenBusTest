@@ -366,8 +366,10 @@ for alignment is not mistaken for supporting it.
   retained as flags without a runtime collision consumer; `[NightMapMode]` is
   parsed but discarded. `[maplight]` is also consumed without generating
   tile lightmaps.
-- [ ] Implement passenger-cabin `[noticketsale]` eligibility for ticket
-  interactions; the keyword is currently unhandled.
+- [ ] Implement passenger-cabin `[noticketsale]` eligibility and the observed
+  `[ticket_sale]`, `[ticket_sale_money_point_2]`, and
+  `[ticket_sale_change_point_2]` ticket-machine behavior/locations; these
+  interactions are currently unhandled.
 - [x] Resolve scenery-object `[model]` CFG references for static map geometry
   and material loading.
 - [~] Scenery SCO `[script]`, `[varnamelist]`, `[stringvarnamelist]`, and
@@ -579,25 +581,32 @@ for the explicit boundary.
   only after the endpoint is outside the camera view and beyond the spawn
   distance threshold. Regression coverage verifies visible-end retention and
   hidden-end retirement.
-- [~] Match timetable bus paths against complete ordered spline sequences in
-  either direction of containment and try up to 16 feasible route seeds per
-  endpoint using each bus model's minimum turning radius. Only routes with
-  parsed departures are eligible for scheduled dispatch. Constrained route
-  searches now reject a dead-end route that fails to complete the required
-  timetable sequence instead of treating a two-spline partial route as success.
-  Cotterell still has no eligible timetable endpoint: the last captured
-  pre-fix diagnostic checked 476 feasible endpoint routes, found 130 distinct
-  overlapping spline IDs, and a longest ordered contiguous match of only 16
-  spline IDs. That diagnostic identified the best
-  partial candidate as U28 to University (112 timetable splines versus a
-  42-spline route from endpoint spline 129, lane 1, seed 5) and logs its
-  contiguous shared spline IDs. The first divergence is timetable spline
-  10813 versus route spline 11507 after offsets 40/24. Investigate why this
-  endpoint route turns away from the authored timetable path and validate
-  multi-bus schedule dispatch on a map with a complete match. A guided retry
-  at that branch did not reach route reporting within 60 seconds and was
-  removed; bound/optimize route exploration before retrying. Never fall back
-  to mid-route spawning.
+- [~] Match timetable bus paths against the complete ordered `.ttr` track-entry
+  sequence, including repeated scenery-object IDs and their path selectors, and
+  try up to 16 feasible route seeds per endpoint using each bus model's minimum
+  turning radius. Exact timetable-selected SCO paths can bridge up to 2.5 m of
+  vertical endpoint offset when horizontal position and heading align; the
+  route copy is height-aligned without changing ordinary traffic connections.
+  Only routes with parsed departures are eligible for scheduled dispatch.
+  Constrained route searches reject dead-end routes that fail to complete the
+  required timetable sequence instead of treating a short common section as a
+  complete trip.
+  A bus now selects the earliest departure at or after the configured starting
+  hour rather than waiting for the first time in the timetable on the next day.
+  When no full route match exists, the best connected endpoint route sharing
+  at least two consecutive timetable splines can be dispatched using that
+  timetable's departures; startup logs identify this as an itinerary-inaccurate
+  fallback. Complete timetable matches are now preferred over partial endpoint
+  matches across all candidate endpoints, so an early partial match cannot hide
+  a later complete route. Road traffic paths authored inside placed scenery
+  objects retain the parent object's map ID and path index, allowing repeated
+  timetable `.ttr` entries for junction paths to match the directed lane graph.
+  A live Cotterell startup recognized U28 and line 12 as complete routes, while
+  seven other candidate routes remained partial endpoint fallbacks; one
+  requested bus queued successfully. Fallback status is logged rather than
+  mislabeled as timetable-faithful. Verify actual departure timing and in-game
+  route progress; full OMSI schedule parity and the remaining partial map
+  routes still need validation.
 - [x] Parse `drivers.txt` model paths and `.hum` fields, and distinguish
   type-1 human paths from type-0 road paths.
 - [~] Spawn and move human actors on nearby type-1 spline routes using
@@ -743,12 +752,11 @@ the outstanding implementation and validation tasks:
   scheduled buses remain limited to incoming endpoints and wait for their
   owned departure. Recycled actors reset route progress, speed, and
   junction-wait state.
-- [ ] **Complete scheduled bus routes:** route candidates now follow complete
-  timetable paths or the longest matching two-or-more-spline section from the
-  endpoint through the directed lane graph, with seeded route search retained.
-  Recheck Cotterell's timetable/endpoint
-  mismatch, then validate departure ownership and multi-bus dispatch on a map
-  with a complete endpoint-compatible timetable route.
+- [~] **Complete scheduled bus routes:** complete timetable matches are now
+  preferred over endpoint-only partial matches, and the live Cotterell startup
+  queued two endpoint buses: one complete U18 route and partial fallbacks for
+  line 12/U28. Departure selection is regression-tested; verify live departure
+  ownership and route progress, and resolve the remaining partial routes.
 - [ ] **Complete traffic control:** verify SCO signal cycle origin, approach
   distance and stop-line placement; implement traffic-sign rules.
 - [~] **Improve junction control:** committed junction-path actors clear before

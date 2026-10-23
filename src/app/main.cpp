@@ -169,6 +169,9 @@ struct MapBusLineRouteStart {
     std::size_t routeSeed = 0;
     std::size_t timetableRouteIndex = 0;
     std::vector<int> requiredSplineSequence;
+    std::vector<std::optional<std::size_t>> requiredSceneryPathSequence;
+    bool endpointRouteFallback = false;
+    bool stopAtRequiredSequenceEnd = false;
 };
 
 struct MapBusLineRouteSearch {
@@ -184,6 +187,7 @@ struct MapBusLineRouteSearch {
     std::size_t bestTimetableSplineCount = 0;
     std::size_t bestTimetablePathOffset = 0;
     std::size_t bestRoutePathOffset = 0;
+    std::size_t bestTimetableRouteIndex = 0;
     std::optional<int> nextTimetableSplineId;
     std::optional<int> nextRouteSplineId;
     std::vector<int> bestCommonSplineIds;
@@ -194,6 +198,63 @@ struct OrderedSplineRun {
     std::size_t firstStartIndex = 0;
     std::size_t secondStartIndex = 0;
 };
+
+bool timetableEntryMatchesRouteSegment(
+    const openbus::map::MapAiTimetableRoute::TrackEntry& timetableEntry,
+    const openbus::map::MapTrafficRouteRequirement& routeSegment) {
+    return timetableEntry.splineId == routeSegment.splineId &&
+           (!routeSegment.sceneryPathIndex ||
+            (timetableEntry.pathIndex >= 0 &&
+             static_cast<std::size_t>(timetableEntry.pathIndex) ==
+                 *routeSegment.sceneryPathIndex));
+}
+
+bool timetablePathContainedInRoute(
+    const std::vector<openbus::map::MapAiTimetableRoute::TrackEntry>& timetable,
+    const std::vector<openbus::map::MapTrafficRouteRequirement>& route) {
+    if (timetable.size() < 2 || route.size() < 2) {
+        return false;
+    }
+    const auto containsTimetableInRoute = [&] {
+        for (std::size_t start = 0; start + timetable.size() <= route.size(); ++start) {
+            bool matches = true;
+            for (std::size_t offset = 0; offset < timetable.size(); ++offset) {
+                if (!timetableEntryMatchesRouteSegment(timetable[offset],
+                                                       route[start + offset])) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                return true;
+            }
+        }
+        return false;
+    };
+    return containsTimetableInRoute();
+}
+
+std::vector<openbus::map::MapTrafficRouteRequirement>
+routePrefixMatchingTimetable(
+    const std::vector<openbus::map::MapAiTimetableRoute::TrackEntry>& timetable,
+    const std::vector<openbus::map::MapTrafficRouteRequirement>& route) {
+    std::size_t longestLength = 0;
+    for (std::size_t timetableStart = 0; timetableStart + 1 < timetable.size();
+         ++timetableStart) {
+        std::size_t matchingLength = 0;
+        while (matchingLength < route.size() &&
+               timetableStart + matchingLength < timetable.size() &&
+               timetableEntryMatchesRouteSegment(timetable[timetableStart + matchingLength],
+                                                 route[matchingLength])) {
+            ++matchingLength;
+        }
+        longestLength = std::max(longestLength, matchingLength);
+    }
+    if (longestLength < 2) {
+        return {};
+    }
+    return {route.begin(), route.begin() + static_cast<std::ptrdiff_t>(longestLength)};
+}
 
 OrderedSplineRun longestCommonOrderedSplineRun(const std::vector<int>& first,
                                                const std::vector<int>& second) {
@@ -224,16 +285,37 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
     std::size_t eligibleTimetableRouteCount = 0;
     for (const openbus::map::MapAiTimetableRoute& line : traffic.timetableRoutes) {
         if (line.stationCount > 0 && !line.destinationName.empty() && !line.lineName.empty() &&
-            line.splineIds.size() >= minimumLineSplineCount &&
+            line.trackEntries.size() >= minimumLineSplineCount &&
             !line.scheduledDepartureMinutes.empty()) {
             timetableSplineIds.insert(line.splineIds.begin(), line.splineIds.end());
             ++eligibleTimetableRouteCount;
         }
     }
     std::unordered_set<std::size_t> matchedTimetableRoutes;
+    std::vector<std::optional<MapBusLineRouteStart>> fallbackStarts(
+        traffic.timetableRoutes.size());
+    const auto recordFallback = [&](const openbus::map::MapTrafficLaneStart& entry,
+                                    std::size_t routeSeed, std::size_t lineIndex,
+                                    const std::vector<openbus::map::MapTrafficRouteRequirement>&
+                                        matchedPrefix) {
+        std::optional<MapBusLineRouteStart>& fallback = fallbackStarts[lineIndex];
+        if (!fallback || matchedPrefix.size() > fallback->requiredSplineSequence.size()) {
+            MapBusLineRouteStart routeStart;
+            routeStart.entry = entry;
+            routeStart.routeSeed = routeSeed;
+            routeStart.timetableRouteIndex = lineIndex;
+            routeStart.endpointRouteFallback = true;
+            for (const auto& segment : matchedPrefix) {
+                routeStart.requiredSplineSequence.push_back(segment.splineId);
+                routeStart.requiredSceneryPathSequence.push_back(segment.sceneryPathIndex);
+            }
+            fallback = std::move(routeStart);
+        }
+    };
     const auto recordCommonRun = [&](const openbus::map::MapTrafficLaneStart& entry,
                                      std::size_t routeSeed, const std::vector<int>& routeSplineIds,
                                      const openbus::map::MapAiTimetableRoute& line,
+                                     std::size_t timetableRouteIndex,
                                      const OrderedSplineRun& commonRun) {
         if (commonRun.length <= result.longestCommonOrderedRun) {
             return;
@@ -247,6 +329,7 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
         result.bestTimetableSplineCount = line.splineIds.size();
         result.bestTimetablePathOffset = commonRun.firstStartIndex;
         result.bestRoutePathOffset = commonRun.secondStartIndex;
+        result.bestTimetableRouteIndex = timetableRouteIndex;
         const std::size_t timetableNextIndex = commonRun.firstStartIndex + commonRun.length;
         const std::size_t routeNextIndex = commonRun.secondStartIndex + commonRun.length;
         result.nextTimetableSplineId = timetableNextIndex < line.splineIds.size()
@@ -258,7 +341,26 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
         result.bestCommonSplineIds.assign(line.splineIds.begin() + commonRun.firstStartIndex,
                                           line.splineIds.begin() + timetableNextIndex);
     };
-    for (const auto& entry : renderer.trafficEntryLanes()) {
+    std::vector<openbus::map::MapTrafficLaneStart> candidateEntries =
+        renderer.trafficEntryLanes();
+    for (const openbus::map::MapAiTimetableRoute& line : traffic.timetableRoutes) {
+        if (line.trackEntries.empty() || line.scheduledDepartureMinutes.empty()) {
+            continue;
+        }
+        const auto& firstEntry = line.trackEntries.front();
+        const std::optional<std::size_t> pathIndex =
+            firstEntry.pathIndex >= 0
+                ? std::optional<std::size_t>(static_cast<std::size_t>(firstEntry.pathIndex))
+                : std::nullopt;
+        for (const auto& lane :
+             renderer.trafficLanesForTimetableEntry(firstEntry.splineId, pathIndex)) {
+            if (std::find(candidateEntries.begin(), candidateEntries.end(), lane) ==
+                candidateEntries.end()) {
+                candidateEntries.push_back(lane);
+            }
+        }
+    }
+    for (const auto& entry : candidateEntries) {
         if (matchedTimetableRoutes.size() == eligibleTimetableRouteCount) {
             break;
         }
@@ -266,43 +368,63 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
         for (std::size_t lineIndex = 0; lineIndex < traffic.timetableRoutes.size(); ++lineIndex) {
             const openbus::map::MapAiTimetableRoute& line = traffic.timetableRoutes[lineIndex];
             if (line.stationCount == 0 || line.destinationName.empty() || line.lineName.empty() ||
-                line.splineIds.size() < minimumLineSplineCount ||
+                line.trackEntries.size() < minimumLineSplineCount ||
                 line.scheduledDepartureMinutes.empty() ||
                 matchedTimetableRoutes.contains(lineIndex)) {
                 continue;
             }
-            for (std::size_t pathOffset = 0; pathOffset + 1 < line.splineIds.size(); ++pathOffset) {
-                if (line.splineIds[pathOffset] != entry.splineId) {
+            for (std::size_t pathOffset = 0; pathOffset + 1 < line.trackEntries.size();
+                 ++pathOffset) {
+                if (line.trackEntries[pathOffset].splineId != entry.splineId) {
                     continue;
                 }
-                std::vector<int> requiredSplineSequence(line.splineIds.begin() +
-                                                            static_cast<std::ptrdiff_t>(pathOffset),
-                                                        line.splineIds.end());
-                const std::vector<int> routeSplineIds = renderer.trafficRouteSplineIds(
+                std::vector<int> requiredSplineSequence;
+                std::vector<std::optional<std::size_t>> requiredSceneryPathSequence;
+                for (auto trackEntry = line.trackEntries.begin() +
+                                       static_cast<std::ptrdiff_t>(pathOffset);
+                     trackEntry != line.trackEntries.end(); ++trackEntry) {
+                    requiredSplineSequence.push_back(trackEntry->splineId);
+                    requiredSceneryPathSequence.push_back(
+                        trackEntry->pathIndex >= 0
+                            ? std::optional<std::size_t>(
+                                  static_cast<std::size_t>(trackEntry->pathIndex))
+                            : std::nullopt);
+                }
+                const auto routeSegments = renderer.trafficRouteSegments(
                     entry.splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, entry.laneSelector,
-                    minimumTurnRadiusMeters, 0, requiredSplineSequence, {2, std::nullopt, true});
-                if (routeSplineIds.size() < minimumLineSplineCount) {
+                    0.0, 0, requiredSplineSequence, {2, std::nullopt, true},
+                    requiredSceneryPathSequence, true);
+                if (routeSegments.size() < minimumLineSplineCount) {
                     continue;
                 }
                 ++result.feasibleRoutesExamined;
-                candidateSplineIds.insert(routeSplineIds.begin(), routeSplineIds.end());
+                std::vector<int> routeSplineIds;
+                routeSplineIds.reserve(routeSegments.size());
+                for (const auto& segment : routeSegments) {
+                    routeSplineIds.push_back(segment.splineId);
+                    candidateSplineIds.insert(segment.splineId);
+                }
                 const OrderedSplineRun commonRun =
                     longestCommonOrderedSplineRun(line.splineIds, routeSplineIds);
-                recordCommonRun(entry, 0, routeSplineIds, line, commonRun);
-                if (!openbus::map::mapTrafficRoutesShareCompleteOrderedPath(line.splineIds,
-                                                                            routeSplineIds)) {
-                    std::vector<int> matchedPrefix =
-                        openbus::map::mapTrafficRoutePrefixMatchingTimetable(line.splineIds,
-                                                                             routeSplineIds);
+                recordCommonRun(entry, 0, routeSplineIds, line, lineIndex, commonRun);
+                if (!timetablePathContainedInRoute(line.trackEntries, routeSegments)) {
+                    const auto matchedPrefix =
+                        routePrefixMatchingTimetable(line.trackEntries, routeSegments);
                     if (matchedPrefix.empty()) {
                         continue;
                     }
-                    result.starts.push_back({entry, 0, lineIndex, std::move(matchedPrefix)});
-                    matchedTimetableRoutes.insert(lineIndex);
-                    matchesTimetableLine = true;
-                    break;
+                    recordFallback(entry, 0, lineIndex, std::move(matchedPrefix));
+                    continue;
                 }
-                result.starts.push_back({entry, 0, lineIndex, std::move(requiredSplineSequence)});
+                MapBusLineRouteStart routeStart;
+                routeStart.entry = entry;
+                routeStart.routeSeed = 0;
+                routeStart.timetableRouteIndex = lineIndex;
+                routeStart.requiredSplineSequence = std::move(requiredSplineSequence);
+                routeStart.requiredSceneryPathSequence =
+                    std::move(requiredSceneryPathSequence);
+                routeStart.stopAtRequiredSequenceEnd = pathOffset == 0;
+                result.starts.push_back(std::move(routeStart));
                 matchedTimetableRoutes.insert(lineIndex);
                 matchesTimetableLine = true;
                 break;
@@ -315,48 +437,57 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
             continue;
         }
         for (std::size_t routeSeed = 0; routeSeed < routeSeedCount; ++routeSeed) {
-            const std::vector<int> routeSplineIds = renderer.trafficRouteSplineIds(
+            const auto routeSegments = renderer.trafficRouteSegments(
                 entry.splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, entry.laneSelector,
                 minimumTurnRadiusMeters, routeSeed, {}, {2, std::nullopt, true});
-            if (routeSplineIds.size() < minimumLineSplineCount) {
+            if (routeSegments.size() < minimumLineSplineCount) {
                 continue;
             }
             ++result.feasibleRoutesExamined;
-            candidateSplineIds.insert(routeSplineIds.begin(), routeSplineIds.end());
+            std::vector<int> routeSplineIds;
+            routeSplineIds.reserve(routeSegments.size());
+            for (const auto& segment : routeSegments) {
+                routeSplineIds.push_back(segment.splineId);
+                candidateSplineIds.insert(segment.splineId);
+            }
             bool matchesTimetableLine = false;
             for (std::size_t lineIndex = 0; lineIndex < traffic.timetableRoutes.size();
                  ++lineIndex) {
                 const openbus::map::MapAiTimetableRoute& line = traffic.timetableRoutes[lineIndex];
                 if (line.stationCount == 0 || line.destinationName.empty() ||
-                    line.lineName.empty() || line.splineIds.size() < minimumLineSplineCount ||
+                    line.lineName.empty() ||
+                    line.trackEntries.size() < minimumLineSplineCount ||
                     line.scheduledDepartureMinutes.empty() ||
                     matchedTimetableRoutes.contains(lineIndex)) {
                     continue;
                 }
                 const OrderedSplineRun commonRun =
                     longestCommonOrderedSplineRun(line.splineIds, routeSplineIds);
-                recordCommonRun(entry, routeSeed, routeSplineIds, line, commonRun);
-                if (openbus::map::mapTrafficRoutesShareCompleteOrderedPath(line.splineIds,
-                                                                           routeSplineIds)) {
-                    result.starts.push_back({entry, routeSeed, lineIndex, {}});
+                recordCommonRun(entry, routeSeed, routeSplineIds, line, lineIndex, commonRun);
+                if (timetablePathContainedInRoute(line.trackEntries, routeSegments)) {
+                    MapBusLineRouteStart routeStart;
+                    routeStart.entry = entry;
+                    routeStart.routeSeed = routeSeed;
+                    routeStart.timetableRouteIndex = lineIndex;
+                    result.starts.push_back(std::move(routeStart));
                     matchedTimetableRoutes.insert(lineIndex);
                     matchesTimetableLine = true;
                     break;
                 }
-                std::vector<int> matchedPrefix =
-                    openbus::map::mapTrafficRoutePrefixMatchingTimetable(line.splineIds,
-                                                                         routeSplineIds);
+                const auto matchedPrefix =
+                    routePrefixMatchingTimetable(line.trackEntries, routeSegments);
                 if (!matchedPrefix.empty()) {
-                    result.starts.push_back(
-                        {entry, routeSeed, lineIndex, std::move(matchedPrefix)});
-                    matchedTimetableRoutes.insert(lineIndex);
-                    matchesTimetableLine = true;
-                    break;
+                    recordFallback(entry, routeSeed, lineIndex, std::move(matchedPrefix));
                 }
             }
             if (matchesTimetableLine) {
                 break;
             }
+        }
+    }
+    for (std::size_t lineIndex = 0; lineIndex < fallbackStarts.size(); ++lineIndex) {
+        if (!matchedTimetableRoutes.contains(lineIndex) && fallbackStarts[lineIndex]) {
+            result.starts.push_back(std::move(*fallbackStarts[lineIndex]));
         }
     }
     for (const int splineId : candidateSplineIds) {
@@ -783,6 +914,8 @@ int main() {
                 std::optional<int> nextOverlapTimetableSplineId;
                 std::optional<int> nextOverlapRouteSplineId;
                 std::vector<int> bestOverlapSplineIds;
+                std::size_t bestOverlapTimetableRouteIndex = 0;
+                std::string bestOverlapBusPath;
                 std::unordered_set<std::string> unavailableAiBuses;
                 std::unordered_map<std::string, MapBusLineRouteSearch> busEntryLanes;
                 struct MatchedBusRoute {
@@ -817,6 +950,9 @@ int main() {
                                 nextOverlapTimetableSplineId = search.nextTimetableSplineId;
                                 nextOverlapRouteSplineId = search.nextRouteSplineId;
                                 bestOverlapSplineIds = std::move(search.bestCommonSplineIds);
+                                bestOverlapTimetableRouteIndex =
+                                    search.bestTimetableRouteIndex;
+                                bestOverlapBusPath = busPath;
                             }
                             entries = busEntryLanes.emplace(busPath, std::move(search)).first;
                         } catch (const std::exception& error) {
@@ -834,6 +970,54 @@ int main() {
                             matchedBusRoutes.push_back({busPath, routeStart});
                         }
                     }
+                }
+                if (matchedBusRoutes.empty() && longestCommonOrderedRun >= 2 &&
+                    !bestOverlapBusPath.empty() &&
+                    bestOverlapTimetableRouteIndex <
+                        mapDefinition.aiTraffic.timetableRoutes.size()) {
+                    MapBusLineRouteStart fallbackRoute;
+                    fallbackRoute.entry = bestOverlapEntry;
+                    fallbackRoute.routeSeed = bestOverlapRouteSeed;
+                    fallbackRoute.timetableRouteIndex = bestOverlapTimetableRouteIndex;
+                    fallbackRoute.endpointRouteFallback = true;
+                    matchedBusRoutes.push_back({bestOverlapBusPath, std::move(fallbackRoute)});
+                    applicationLog.Log(
+                        "No endpoint route fully matches the authored bus timetable. Using a "
+                        "connected endpoint route with scheduled departures as a temporary "
+                        "fallback; it shares " +
+                        std::to_string(longestCommonOrderedRun) +
+                        " consecutive timetable splines and is not a timetable-faithful trip.");
+                }
+                const std::size_t endpointFallbackCount = static_cast<std::size_t>(
+                    std::count_if(matchedBusRoutes.begin(), matchedBusRoutes.end(),
+                                  [](const MatchedBusRoute& route) {
+                                      return route.routeStart.endpointRouteFallback;
+                                  }));
+                if (endpointFallbackCount > 0) {
+                    applicationLog.Log(
+                        "Scheduled bus route search found " +
+                        std::to_string(matchedBusRoutes.size() - endpointFallbackCount) +
+                        " complete timetable route(s) and " +
+                        std::to_string(endpointFallbackCount) +
+                        " endpoint-only partial-route fallback(s); fallback trips are not "
+                        "timetable-faithful.");
+                } else if (!matchedBusRoutes.empty()) {
+                    applicationLog.Log(
+                        "Scheduled bus route search found " +
+                        std::to_string(matchedBusRoutes.size()) +
+                        " complete timetable route(s).");
+                }
+                for (const MatchedBusRoute& matchedRoute : matchedBusRoutes) {
+                    const auto& timetable =
+                        mapDefinition.aiTraffic
+                            .timetableRoutes[matchedRoute.routeStart.timetableRouteIndex];
+                    applicationLog.Log(
+                        "Scheduled bus route " + timetable.lineName + " to " +
+                        timetable.destinationName + " (" + timetable.tripName + ") starts at " +
+                        std::to_string(matchedRoute.routeStart.entry.splineId) +
+                        (matchedRoute.routeStart.endpointRouteFallback
+                             ? " using a partial endpoint fallback."
+                             : " with a complete timetable match."));
                 }
                 eligibleTimetableRoutes = matchedBusRoutes.size();
                 const std::size_t busPoolLimit = mapAiBusPoolCount;
@@ -901,7 +1085,9 @@ int main() {
                                     {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred}, true,
                                     matchedRoute.routeStart.entry.laneSelector,
                                     matchedRoute.routeStart.routeSeed, departures, std::nullopt, 0,
-                                    matchedRoute.routeStart.requiredSplineSequence)) {
+                                    matchedRoute.routeStart.requiredSplineSequence,
+                                    matchedRoute.routeStart.requiredSceneryPathSequence,
+                                    matchedRoute.routeStart.stopAtRequiredSequenceEnd)) {
                                 ++addedBuses;
                             } else {
                                 applicationLog.Log(
@@ -953,6 +1139,17 @@ int main() {
                         }
                     }
                     applicationLog.Log(routeSearchSummary);
+                } else if (matchedBusRoutes.front().routeStart.endpointRouteFallback) {
+                    applicationLog.Log(
+                        "Endpoint-only scheduled AI bus fallback queued: " +
+                        std::to_string(addedBuses) + " buses with departures from line '" +
+                        mapDefinition
+                            .aiTraffic
+                            .timetableRoutes[matchedBusRoutes.front()
+                                                 .routeStart.timetableRouteIndex]
+                            .lineName +
+                        "'; route fidelity is incomplete and the authored timetable path is not "
+                        "being claimed.");
                 } else {
                     applicationLog.Log(
                         "Map AI buses queued at endpoint entries: " + std::to_string(addedBuses) +

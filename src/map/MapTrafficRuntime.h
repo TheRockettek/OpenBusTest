@@ -42,6 +42,11 @@ struct MapTrafficVehicleFilter {
     bool scheduled = false;
 };
 
+struct MapTrafficRouteRequirement {
+    int splineId = 0;
+    std::optional<std::size_t> sceneryPathIndex;
+};
+
 struct MapTrafficRouteSegment {
     MapSplinePlacementReference spline;
     bool reversed = false;
@@ -49,6 +54,7 @@ struct MapTrafficRouteSegment {
     double pathHeightMeters = 0.0;
     MapTrafficPathRules pathRules;
     std::optional<MapTrafficSignalSchedule> trafficSignal;
+    std::optional<std::size_t> sceneryPathIndex;
     // Scenery junction paths are sampled in world space, like the F2 overlay.
     std::vector<std::array<double, 3>> points;
     // Route-local start position on the original spline for safely subdivided segments.
@@ -141,6 +147,8 @@ double mapTrafficHeadingToVehicleYawDegrees(double headingRadians);
 double mapTrafficHourAtElapsedSeconds(double startHour, double elapsedSeconds);
 double mapTrafficNextDepartureElapsedSeconds(double startHour, double elapsedSeconds,
                                              double departureMinutes);
+std::size_t mapTrafficNextDepartureIndex(double startHour, double elapsedSeconds,
+                                         const std::vector<double>& departureMinutes);
 bool mapTrafficScheduledDepartureDue(double elapsedSeconds, double departureElapsedSeconds);
 MapTrafficPathRules mapTrafficRulesForPath(const std::vector<MapTileRule>& rules,
                                            std::size_t pathIndex);
@@ -295,8 +303,12 @@ class MapTrafficLaneNetwork {
     std::optional<MapTrafficRoute>
     buildRoute(int splineId, std::size_t laneSelector = 0, std::size_t routeSeed = 0,
                double minimumTurnRadiusMeters = 0.0, MapTrafficVehicleFilter vehicle = {},
-               const std::vector<int>& requiredSplineSequence = {}) const;
+               const std::vector<int>& requiredSplineSequence = {},
+               const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence = {},
+               bool stopAtRequiredSequenceEnd = false) const;
     std::size_t laneCount(int splineId) const;
+    std::vector<MapTrafficLaneStart>
+    lanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
     std::vector<MapTrafficLaneStart> entryLanes() const;
     std::optional<MapTrafficLaneStart> selectEntryLane(MapTrafficVehicleFilter vehicle,
                                                        std::size_t selectionSeed) const;
@@ -314,6 +326,8 @@ class MapTrafficLaneNetwork {
     std::vector<double> lengths_;
     std::vector<std::vector<std::size_t>> next_;
     std::unordered_map<int, std::vector<std::size_t>> lanesBySpline_;
+    std::vector<MapTrafficPose> laneStarts_;
+    std::vector<MapTrafficPose> laneEnds_;
     std::vector<MapTrafficLaneStart> spawnLanes_;
     std::vector<std::size_t> incoming_;
     std::vector<double> maximumCurvatures_;

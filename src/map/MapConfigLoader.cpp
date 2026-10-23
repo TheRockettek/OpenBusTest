@@ -569,6 +569,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 ++next;
             }
             int splineId = 0;
+            int pathIndex = 0;
             if (next >= trackLines.size() || isSectionHeaderLine(trim(trackLines[next])) ||
                 !parseInteger(trim(trackLines[next]), splineId) || splineId == 0) {
                 malformedTrackEntry = true;
@@ -577,6 +578,21 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                                         trackFile->second.filename().string());
                 continue;
             }
+            std::size_t selectorLine = next + 1;
+            while (selectorLine < trackLines.size() &&
+                   trim(trackLines[selectorLine]).empty()) {
+                ++selectorLine;
+            }
+            if (selectorLine >= trackLines.size() ||
+                isSectionHeaderLine(trim(trackLines[selectorLine])) ||
+                !parseInteger(trim(trackLines[selectorLine]), pathIndex)) {
+                malformedTrackEntry = true;
+                diagnostics.warning(lineIndex + 1, "track_entry",
+                                    "invalid timetable path index in " +
+                                        trackFile->second.filename().string());
+                continue;
+            }
+            route.trackEntries.push_back({splineId, pathIndex});
             if (route.splineIds.empty() || route.splineIds.back() != splineId) {
                 route.splineIds.push_back(splineId);
             }

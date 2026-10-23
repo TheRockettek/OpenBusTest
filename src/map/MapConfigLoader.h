@@ -118,6 +118,12 @@ struct MapAiTimetableRoute {
     std::string lineName;
     std::size_t stationCount = 0;
     std::vector<int> splineIds;
+    struct TrackEntry {
+        int splineId = 0;
+        int pathIndex = 0;
+        bool operator==(const TrackEntry&) const = default;
+    };
+    std::vector<TrackEntry> trackEntries;
     // Parsed schedule values are minutes after midnight; dispatch is handled separately.
     std::vector<double> scheduledDepartureMinutes;
 };
