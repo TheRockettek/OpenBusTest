@@ -182,6 +182,7 @@ class RenderLoop {
     bool lastMainCameraPoseValid_ = false;
     // Main-camera projection * view, used to admit traffic only at off-screen entries.
     openbus::rendering::Matrix4 trafficCameraViewProjection_ = {};
+    std::vector<openbus::map::MapTrafficCameraView> trafficReflectionCameraViews_;
     // Main-view eye in vehicle-local space, used to aim viewer-following reflection cameras.
     std::array<double, 3> reflectionViewerEyeLocal_ = {};
     bool reflectionViewerEyeLocalValid_ = false;

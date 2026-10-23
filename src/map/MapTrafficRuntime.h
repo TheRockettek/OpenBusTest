@@ -115,6 +115,11 @@ struct MapTrafficPose {
     int splineId = 0;
 };
 
+struct MapTrafficCameraView {
+    std::array<double, 3> position = {};
+    std::array<double, 16> viewProjection = {};
+};
+
 struct MapTrafficSignalStopDebugInfo {
     MapTrafficPose pose;
     double distanceAheadMeters = 0.0;
@@ -237,6 +242,11 @@ bool mapTrafficEntryHiddenFromCamera(const std::array<double, 3>& position, doub
                                      const std::array<double, 3>& cameraPosition,
                                      const std::array<double, 16>& viewProjection,
                                      double minimumDistanceMeters);
+bool mapTrafficEntryHiddenFromCameras(const std::array<double, 3>& position,
+                                      double radiusMeters,
+                                      const MapTrafficCameraView& mainCamera,
+                                      const std::vector<MapTrafficCameraView>& additionalCameras,
+                                      double minimumDistanceMeters);
 double mapTrafficCurveSpeedLimit(const MapTrafficRoute& route, double distanceMeters,
                                  double cruiseSpeedMetersPerSecond, double minimumTurnRadiusMeters);
 // Uses small synchronous steps and swept footprints; never moves external obstacles.

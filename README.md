@@ -75,13 +75,21 @@ Random map road traffic uses only `.ovh` entries from the `NormalCars`,
 are excluded from this pool and spawned separately as scheduled AI buses using
 bus-type configurations and timetable routes. Other groups and legacy
 vehicle-list formats are not supported by this runtime. `OPENBUS_MAP_AI_COUNT` sets the
-density-scaled road-vehicle base population (default `8`, maximum `200`).
+density-scaled road-vehicle base population (default `200`, maximum `200`).
 `OPENBUS_MAP_AI_HOUR` sets the starting hour (default `12`); the in-game traffic
 clock advances from it using elapsed simulation time and wraps at midnight.
 Road and pedestrian populations follow their map density schedules as the
 clock advances. A pool sized for each schedule's maximum is queued at
 startup; vehicle instances are constructed and their scripts loaded on asset
 workers, while model mesh parsing is deferred to asynchronous requests.
+`OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER` scales the map's scheduled density
+factor for road vehicles, buses, and pedestrians (default `1.0`, maximum
+`100.0`; each population remains capped at `200`). Thus a multiplier of `10`
+does not mean 10 times the population cap: the target is the base population
+times the map's density factor times this multiplier. The `run.bat` testing
+launcher defaults it to `10.0`, and `profile.bat` sets it to `25` for denser
+profiling traffic; `run.bat` respects a value already set in the
+environment; set it to `1.0` for normal scheduled density.
 Pedestrian `.hum` and model CFG parsing, mesh parsing, and texture decoding
 also use workers. OpenGL uploads and script initialization remain on the
 main/render thread. Road vehicles and buses wait in an inactive queue until
@@ -153,7 +161,7 @@ routes whose `.ttp` trip names a destination and at least one station, and
 whose `.ttr` spline chain contains the selected road route. They must also have
 an eligible endpoint entry; maps without one do not receive fallback mid-route
 bus spawns. Set
-`OPENBUS_MAP_BUS_COUNT` to control their population (default `2`, maximum
+`OPENBUS_MAP_BUS_COUNT` to control their population (default `20`, maximum
 `200`; `0` disables map AI buses). The bounded bus pool is created at startup
 and only buses with a matched timetable route and parsed departures are
 admitted at scheduled times. Maps without a complete endpoint-compatible

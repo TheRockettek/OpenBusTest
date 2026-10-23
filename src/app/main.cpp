@@ -109,10 +109,14 @@ double nonnegativeEnvironmentDouble(const char* name, double fallback, double ma
 
 std::size_t
 maximumMapTrafficPopulation(std::size_t basePopulation,
-                            const std::vector<openbus::map::MapTrafficDensityPoint>& schedule) {
+                            const std::vector<openbus::map::MapTrafficDensityPoint>& schedule,
+                            double densityMultiplier) {
     constexpr std::size_t populationCap = 200;
-    const std::size_t fallback =
-        openbus::map::mapTrafficPopulationForDensity(basePopulation, std::nullopt, populationCap);
+    const auto populationForDensity = [&](std::optional<double> density) {
+        return openbus::map::mapTrafficPopulationForDensity(
+            basePopulation, density.value_or(1.0) * densityMultiplier, populationCap);
+    };
+    const std::size_t fallback = populationForDensity(std::nullopt);
     if (schedule.empty() || !std::isfinite(schedule.front().hour) || schedule.front().hour < 0.0 ||
         schedule.front().hour > 24.0) {
         return fallback;
@@ -122,18 +126,23 @@ maximumMapTrafficPopulation(std::size_t basePopulation,
     if (!firstDensity.has_value()) {
         return fallback;
     }
-    std::size_t maximum =
-        openbus::map::mapTrafficPopulationForDensity(basePopulation, firstDensity, populationCap);
+    std::size_t maximum = populationForDensity(firstDensity);
     for (const openbus::map::MapTrafficDensityPoint& point : schedule) {
         const std::optional<double> density =
             openbus::map::mapTrafficDensityAtHour(schedule, point.hour);
         if (!density.has_value()) {
             return maximum;
         }
-        maximum = std::max(maximum, openbus::map::mapTrafficPopulationForDensity(
-                                        basePopulation, density, populationCap));
+        maximum = std::max(maximum, populationForDensity(density));
     }
     return maximum;
+}
+
+std::size_t mapTrafficPopulationForTestDensity(std::size_t basePopulation,
+                                               std::optional<double> density,
+                                               double densityMultiplier) {
+    return openbus::map::mapTrafficPopulationForDensity(
+        basePopulation, density.value_or(1.0) * densityMultiplier, 200);
 }
 
 int currentMapAiStartWeekday() {
@@ -623,9 +632,18 @@ int main() {
                                     {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred}, true);
             }
         }
-        const int mapAiBaseCount = nonnegativeEnvironmentInt("OPENBUS_MAP_AI_COUNT", 200, 200);
+        const int mapAiBaseCount = nonnegativeEnvironmentInt("OPENBUS_MAP_AI_COUNT", 200, 1000);
         const int mapAiBusCount = nonnegativeEnvironmentInt("OPENBUS_MAP_BUS_COUNT", 20, 200);
         const int mapHumanBaseCount = nonnegativeEnvironmentInt("OPENBUS_MAP_HUMAN_COUNT", 8, 200);
+        const double mapTrafficDensityMultiplier =
+            nonnegativeEnvironmentDouble("OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER", 1.0, 100.0);
+        const std::size_t mapAiBusPoolCount = mapTrafficPopulationForTestDensity(
+            static_cast<std::size_t>(mapAiBusCount), 1.0, mapTrafficDensityMultiplier);
+        if (mapTrafficDensityMultiplier != 1.0) {
+            applicationLog.Log("Map traffic density multiplier is " +
+                               std::to_string(mapTrafficDensityMultiplier) + "x "
+                               "(OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER; population cap 200).");
+        }
         const double mapAiStartHour = openbus::map::mapTrafficHourAtElapsedSeconds(
             nonnegativeEnvironmentDouble("OPENBUS_MAP_AI_HOUR", 12.0, 24.0), 0.0);
         const int mapAiStartWeekdayIndex = currentMapAiStartWeekday();
@@ -642,18 +660,22 @@ int main() {
                 groupDensity.has_value() ? groupDensity
                                          : openbus::map::mapTrafficDensityAtHour(
                                                mapDefinition.aiTraffic.roadDensity, mapAiStartHour);
-            const double roadDensity = configuredDensity.value_or(1.0);
-            const std::size_t targetRoadVehicleCount = openbus::map::mapTrafficPopulationForDensity(
-                static_cast<std::size_t>(mapAiBaseCount), configuredDensity, 200);
+            const double roadDensity =
+                configuredDensity.value_or(1.0) * mapTrafficDensityMultiplier;
+            const std::size_t targetRoadVehicleCount = mapTrafficPopulationForTestDensity(
+                static_cast<std::size_t>(mapAiBaseCount), configuredDensity,
+                mapTrafficDensityMultiplier);
             const std::optional<double> maximumGroupDensity =
                 openbus::map::mapAiMaximumRoadTrafficDensity(mapDefinition.aiTraffic,
                                                              availableAiRoadVehicles);
             const std::size_t roadVehiclePoolCount =
                 maximumGroupDensity.has_value()
-                    ? openbus::map::mapTrafficPopulationForDensity(
-                          static_cast<std::size_t>(mapAiBaseCount), maximumGroupDensity, 200)
+                    ? mapTrafficPopulationForTestDensity(
+                          static_cast<std::size_t>(mapAiBaseCount), maximumGroupDensity,
+                          mapTrafficDensityMultiplier)
                     : maximumMapTrafficPopulation(static_cast<std::size_t>(mapAiBaseCount),
-                                                  mapDefinition.aiTraffic.roadDensity);
+                                                  mapDefinition.aiTraffic.roadDensity,
+                                                  mapTrafficDensityMultiplier);
             const std::vector<openbus::map::MapAiRoadVehicle> aiRoadVehicles =
                 openbus::map::mapAiRoadVehiclesForPool(mapDefinition.aiTraffic);
             const auto roadSpawnLanes = renderer.trafficSpawnLanes();
@@ -734,8 +756,8 @@ int main() {
             }
         }
 
-        if (mapAiBusCount == 0) {
-            applicationLog.Log("Map AI buses are disabled by OPENBUS_MAP_BUS_COUNT=0.");
+        if (mapAiBusPoolCount == 0) {
+            applicationLog.Log("Map AI buses have no active population.");
         } else {
             const std::vector<std::string> aiBusConfigurations =
                 openbus::map::mapAiBusAssetPaths(mapDefinition.aiTraffic);
@@ -814,7 +836,7 @@ int main() {
                     }
                 }
                 eligibleTimetableRoutes = matchedBusRoutes.size();
-                const std::size_t busPoolLimit = static_cast<std::size_t>(mapAiBusCount);
+                const std::size_t busPoolLimit = mapAiBusPoolCount;
                 std::vector<std::size_t> busesPerRoute(matchedBusRoutes.size(), 0);
                 std::size_t allocatedBuses = 0;
                 for (std::size_t index = 0;
@@ -934,7 +956,7 @@ int main() {
                 } else {
                     applicationLog.Log(
                         "Map AI buses queued at endpoint entries: " + std::to_string(addedBuses) +
-                        " of " + std::to_string(mapAiBusCount) + " requested across " +
+                        " of " + std::to_string(mapAiBusPoolCount) + " requested across " +
                         std::to_string(eligibleTimetableRoutes) +
                         " matched timetable routes with departures. Multiple buses on a route "
                         "receive disjoint departure subsets; models and scripts load "
@@ -950,11 +972,13 @@ int main() {
         } else {
             const std::optional<double> configuredDensity = openbus::map::mapTrafficDensityAtHour(
                 mapDefinition.aiTraffic.passengerDensity, mapAiStartHour);
-            const std::size_t targetHumanCount = openbus::map::mapTrafficPopulationForDensity(
-                static_cast<std::size_t>(mapHumanBaseCount), configuredDensity, 200);
+            const std::size_t targetHumanCount = mapTrafficPopulationForTestDensity(
+                static_cast<std::size_t>(mapHumanBaseCount), configuredDensity,
+                mapTrafficDensityMultiplier);
             const std::size_t humanPoolCount =
                 maximumMapTrafficPopulation(static_cast<std::size_t>(mapHumanBaseCount),
-                                            mapDefinition.aiTraffic.passengerDensity);
+                                            mapDefinition.aiTraffic.passengerDensity,
+                                            mapTrafficDensityMultiplier);
             const std::vector<int> humanSplineIds =
                 renderer.trafficSplineIds(openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN);
             struct HumanModel {
@@ -1042,7 +1066,8 @@ int main() {
                     "Map human traffic pool queued: " + std::to_string(addedHumans) + " of " +
                     std::to_string(humanPoolCount) +
                     " maximum scheduled, active at startup=" + std::to_string(targetHumanCount) +
-                    ", density=" + std::to_string(configuredDensity.value_or(1.0)) +
+                    ", density=" + std::to_string(configuredDensity.value_or(1.0) *
+                                                  mapTrafficDensityMultiplier) +
                     ", human paths=" + std::to_string(humanSplineIds.size()) +
                     ". Model meshes parse asynchronously; graphics upload occurs on the render "
                     "thread.");
@@ -1062,20 +1087,20 @@ int main() {
                                                mapDefinition.aiTraffic.roadDensity, trafficHour);
             const std::optional<double> passengerDensity = openbus::map::mapTrafficDensityAtHour(
                 mapDefinition.aiTraffic.passengerDensity, trafficHour);
+            const std::size_t targetRoadVehicleCount = mapTrafficPopulationForTestDensity(
+                static_cast<std::size_t>(mapAiBaseCount), roadDensity,
+                mapTrafficDensityMultiplier);
             renderer.SetMapTrafficPopulation(
-                openbus::map::mapTrafficPopulationForDensity(
-                    static_cast<std::size_t>(mapAiBaseCount), roadDensity, 200),
-                static_cast<std::size_t>(mapAiBusCount),
+                targetRoadVehicleCount, mapAiBusPoolCount,
                 groupDensity.has_value()
                     ? openbus::map::mapAiRoadTrafficPopulationByGroup(
-                          mapDefinition.aiTraffic,
-                          openbus::map::mapTrafficPopulationForDensity(
-                              static_cast<std::size_t>(mapAiBaseCount), roadDensity, 200),
+                          mapDefinition.aiTraffic, targetRoadVehicleCount,
                           trafficHour, trafficWeekdayMask)
                     : std::vector<openbus::map::MapAiRoadTrafficGroupPopulation>{},
                 groupDensity.has_value());
-            renderer.SetHumanTrafficPopulation(openbus::map::mapTrafficPopulationForDensity(
-                static_cast<std::size_t>(mapHumanBaseCount), passengerDensity, 200));
+            renderer.SetHumanTrafficPopulation(mapTrafficPopulationForTestDensity(
+                static_cast<std::size_t>(mapHumanBaseCount), passengerDensity,
+                mapTrafficDensityMultiplier));
         };
         applicationLog.Log("Map traffic clock starts at " + std::to_string(mapAiStartHour) +
                            "h and advances with simulation time; group schedules use the host "

@@ -453,6 +453,7 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
     const double previousLookYaw = viewLookYaw_;
     const double previousLookPitch = viewLookPitch_;
     bool reflectionTrianglesReset = false;
+    bool reflectionTrafficViewsReset = false;
     renderingReflection_ = true;
     openbus::rendering::setFrameTriangleCountReflectionPass(true);
     reflectionRenderer_->render(
@@ -470,8 +471,9 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
             }
             return result;
         },
-        [this, &reflectionTrianglesReset](const BusSimulation& reflectionSimulation,
-                                          std::size_t cameraIndex, int width, int height) {
+        [this, &reflectionTrianglesReset,
+         &reflectionTrafficViewsReset](const BusSimulation& reflectionSimulation,
+                                       std::size_t cameraIndex, int width, int height) {
             if (!reflectionTrianglesReset) {
                 openbus::rendering::resetFrameReflectionTriangleCount();
                 reflectionTrianglesReset = true;
@@ -485,6 +487,17 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
             setPerspective(static_cast<double>(width), static_cast<double>(height),
                            currentFieldOfView());
             draw(reflectionSimulation);
+            if (!reflectionTrafficViewsReset) {
+                trafficReflectionCameraViews_.clear();
+                reflectionTrafficViewsReset = true;
+            }
+            const auto& view = modelViewMatrix();
+            const std::array<double, 3> cameraPosition = {
+                -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]),
+                -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]),
+                -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14])};
+            trafficReflectionCameraViews_.push_back(
+                {cameraPosition, multiplyMatrix4(openbus::rendering::projectionMatrix(), view)});
         },
         [this, previousCameraView, previousFovOffset, previousLookYaw,
          previousLookPitch](int width, int height) {

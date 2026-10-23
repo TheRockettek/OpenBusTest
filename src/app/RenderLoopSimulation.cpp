@@ -160,15 +160,6 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                 {*pose, trafficVehicle.actor.lengthMeters, trafficVehicle.actor.widthMeters});
         }
     }
-    const auto humanFootprint = [](const HumanTrafficState& human) {
-        const auto pose = openbus::map::sampleMapTrafficRoute(
-            human.actor.route, human.actor.distanceMeters, human.actor.lateralOffsetMeters);
-        if (!pose) {
-            throw std::runtime_error("Cannot sample an active human traffic obstacle");
-        }
-        return openbus::map::MapTrafficObstacle{*pose, human.feetDistanceMeters * 1.25,
-                                                human.feetDistanceMeters * 2.1};
-    };
     {
         TraceScope pedestrianTrace("traffic",
                                    "RenderLoop::updatePlayerVariables.pedestrianAvoidance");
@@ -178,12 +169,6 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                 continue;
             }
             std::vector<openbus::map::MapTrafficObstacle> obstacles = vehicleObstacles;
-            for (std::size_t otherIndex = 0; otherIndex < humanTrafficActors_.size();
-                 ++otherIndex) {
-                if (otherIndex != index && humanTrafficActors_[otherIndex].populationEnabled) {
-                    obstacles.push_back(humanFootprint(humanTrafficActors_[otherIndex]));
-                }
-            }
             const double previousDistanceMeters = human.actor.distanceMeters;
             openbus::map::advanceMapTrafficActorLoopingAvoidingObstacles(
                 human.actor, obstacles, human.feetDistanceMeters * 1.25,
@@ -363,8 +348,10 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         }
         // Pad the sphere so queued traffic never pops in at the screen edge.
         const double radius = std::hypot(actor.lengthMeters, actor.widthMeters) * 0.5 + 2.0;
-        return mapTrafficEntryHiddenFromCamera(pose.position, radius, lastMainCameraPose_.position,
-                                               trafficCameraViewProjection_, 50.0);
+        const MapTrafficCameraView mainCamera{lastMainCameraPose_.position,
+                                              trafficCameraViewProjection_};
+        return mapTrafficEntryHiddenFromCameras(pose.position, radius, mainCamera,
+                                                trafficReflectionCameraViews_, 50.0);
     };
     const auto hidden = [&](const MapTrafficActor& actor, double distance) {
         const auto pose = sampleMapTrafficRoute(actor.route, distance, 0.0);

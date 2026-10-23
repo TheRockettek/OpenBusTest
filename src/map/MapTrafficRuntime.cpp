@@ -1952,6 +1952,18 @@ bool mapTrafficEntryHiddenFromCamera(const std::array<double, 3>& position, doub
     return false;
 }
 
+bool mapTrafficEntryHiddenFromCameras(
+    const std::array<double, 3>& position, double radiusMeters,
+    const MapTrafficCameraView& mainCamera,
+    const std::vector<MapTrafficCameraView>& additionalCameras, double minimumDistanceMeters) {
+    const auto hiddenFromCamera = [&](const MapTrafficCameraView& camera) {
+        return mapTrafficEntryHiddenFromCamera(position, radiusMeters, camera.position,
+                                               camera.viewProjection, minimumDistanceMeters);
+    };
+    return hiddenFromCamera(mainCamera) &&
+           std::all_of(additionalCameras.begin(), additionalCameras.end(), hiddenFromCamera);
+}
+
 double mapTrafficCurveSpeedLimit(const MapTrafficRoute& route, double distanceMeters,
                                  double cruiseSpeedMetersPerSecond,
                                  double minimumTurnRadiusMeters) {
@@ -2159,26 +2171,6 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             endIndex = next;
         }
     };
-    const auto junctionGroupStartIndex = [](const MapTrafficActor& candidate,
-                                            std::size_t segmentIndex) {
-        const auto& segments = candidate.route.segments;
-        const auto& ends = candidate.route.cumulativeEndDistances;
-        std::size_t startIndex = segmentIndex;
-        while (startIndex > 0) {
-            std::size_t previous = startIndex - 1;
-            const double startDistance = ends[previous];
-            while (segments[previous].points.empty()) {
-                const double previousStart = previous == 0 ? 0.0 : ends[previous - 1];
-                if (startDistance - previousStart >= candidate.lengthMeters + 4.0 ||
-                    previous == 0) {
-                    return startIndex;
-                }
-                --previous;
-            }
-            startIndex = previous;
-        }
-        return startIndex;
-    };
     const auto junctionClaimEnd = [&](const MapTrafficActor& candidate, std::size_t endIndex) {
         constexpr double junctionExitClearanceMeters = 1.0;
         return candidate.route.cumulativeEndDistances[endIndex] + candidate.lengthMeters * 0.5 +
@@ -2218,17 +2210,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                                               candidate.unscheduledGroupIndex, candidate.scheduled};
         const auto explicitPriority = [&](std::size_t index) -> std::optional<double> {
             const MapTrafficPathRules& rules = segments[index].pathRules;
-            if (vehicle.unscheduledGroupIndex.has_value()) {
-                const auto group = std::find_if(rules.groups.begin(), rules.groups.end(),
-                                                [&](const MapTrafficGroupRules& candidateGroup) {
-                                                    return candidateGroup.groupIndex ==
-                                                           *vehicle.unscheduledGroupIndex;
-                                                });
-                if (group != rules.groups.end() && group->priority.has_value()) {
-                    return group->priority;
-                }
-            }
-            return std::nullopt;
+            const double priority = mapTrafficPathPriorityForVehicle(rules, vehicle);
+            return priority != 128.0 ? std::optional<double>{priority} : std::nullopt;
         };
         const std::size_t current = currentSegmentIndex(candidate);
         if (const auto priority = explicitPriority(current)) {
@@ -2255,20 +2238,6 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             }
         }
         return mapTrafficPathPriorityForVehicle(segments[current].pathRules, vehicle);
-    };
-    const auto onCompactJunction = [&](const MapTrafficActor& candidate) {
-        const auto& segments = candidate.route.segments;
-        const auto& ends = candidate.route.cumulativeEndDistances;
-        const auto& segment = routeSegmentAtDistance(
-            candidate.route, candidate.distanceMeters + candidate.lengthMeters * 0.5);
-        const std::size_t index = static_cast<std::size_t>(&segment - segments.data());
-        if (segments[index].points.empty()) {
-            return false;
-        }
-        const std::size_t groupStart = junctionGroupStartIndex(candidate, index);
-        const double start = groupStart == 0 ? 0.0 : ends[groupStart - 1];
-        return junctionClaimEnd(candidate, junctionGroupEndIndex(candidate, index)) - start <=
-               candidate.lengthMeters * 2.0 + 15.0;
     };
     // Seconds to cover a distance accelerating towards cruise speed from the current speed.
     const auto travelSeconds = [&](double distance, double speed, double cruise) {
@@ -2683,23 +2652,15 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             }
             return nearestConflict;
         };
-        const auto claimsConflictWithActiveTraffic =
-            [&](const JunctionClaim& arrivingClaim, const MapTrafficActor& arrivingActor,
-                const JunctionClaim& existingClaim) -> std::optional<double> {
-            const MapTrafficActor& existingActor = *existingClaim.actor;
-            const bool existingActorMovingUnimpeded =
-                mapTrafficActorOnJunctionPath(existingActor, existingActor.distanceMeters) &&
-                existingActor.speedMetersPerSecond > 0.5 &&
-                existingActor.blockReason == MapTrafficBlockReason::None;
-            if (existingActorMovingUnimpeded) {
-                return firstConflictOnArrival(arrivingClaim, arrivingActor, existingClaim,
-                                              existingActor);
-            }
-            return claimsConflict(arrivingClaim, existingClaim);
-        };
         std::vector<double> priorities(actors.size());
+        std::vector<double> junctionArrivals(actors.size(),
+                                              std::numeric_limits<double>::infinity());
         for (std::size_t candidateIndex = 0; candidateIndex < actors.size(); ++candidateIndex) {
             priorities[candidateIndex] = approachPriority(*actors[candidateIndex]);
+            if (const auto range = nextJunctionRange(*actors[candidateIndex])) {
+                junctionArrivals[candidateIndex] =
+                    actorArrivalSeconds(*actors[candidateIndex], range->first);
+            }
         }
         // Compare local arrival windows even inside a long junction spline. A vehicle that
         // can still stop before the conflict yields; occupying a distant part of that spline
@@ -2711,9 +2672,6 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         std::vector<std::optional<JunctionClaim>> prioritySweeps(actors.size());
         for (std::size_t lowIndex = 0; lowIndex < actors.size(); ++lowIndex) {
             const MapTrafficActor& low = *actors[lowIndex];
-            if (onCompactJunction(low)) {
-                continue;
-            }
             std::optional<JunctionClaim> lowClaim;
             for (std::size_t highIndex = 0; highIndex < actors.size(); ++highIndex) {
                 const MapTrafficActor& high = *actors[highIndex];
@@ -2723,7 +2681,14 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                                         high.blockReason == MapTrafficBlockReason::Vehicle ||
                                         high.blockReason == MapTrafficBlockReason::Obstacle ||
                                         high.blockReason == MapTrafficBlockReason::Collision));
-                if (highIndex == lowIndex || priorities[highIndex] >= priorities[lowIndex] ||
+                const bool tieBreaksInFavorOfHigh =
+                    priorities[highIndex] == priorities[lowIndex] &&
+                    (junctionArrivals[highIndex] < junctionArrivals[lowIndex] - 1.0e-6 ||
+                     (std::abs(junctionArrivals[highIndex] - junctionArrivals[lowIndex]) <= 1.0e-6 &&
+                      highIndex < lowIndex));
+                if (highIndex == lowIndex ||
+                    (priorities[highIndex] >= priorities[lowIndex] &&
+                     !tieBreaksInFavorOfHigh) ||
                     highHeld || sameDirectedRoute(low, high) || queuedBehindInLane(low, high) ||
                     queuedBehindInLane(high, low)) {
                     continue;
@@ -2733,6 +2698,24 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 if (std::hypot(highPosition[0] - lowPosition[0], highPosition[1] - lowPosition[1]) >
                     250.0) {
                     continue;
+                }
+                // Opposing turns that share a non-passing connector need a single winner,
+                // even when their local arrival windows initially appear time-separated.
+                if (!mapTrafficActorOnJunctionPath(low, low.distanceMeters) &&
+                    opposingJunctionMovements(low, high)) {
+                    const auto lowJunction = nextJunctionRange(low);
+                    if (lowJunction.has_value()) {
+                        const double stopDistance =
+                            lowJunction->first - low.lengthMeters * 0.5 - 0.5;
+                        if (stopDistance - low.distanceMeters >=
+                            low.speedMetersPerSecond * low.speedMetersPerSecond / (2.0 * braking)) {
+                            canStillYield[lowIndex] = 1;
+                            priorityStopDistances[lowIndex] =
+                                std::min(priorityStopDistances[lowIndex], stopDistance);
+                            yieldsTo[lowIndex].push_back(highIndex);
+                            continue;
+                        }
+                    }
                 }
                 if (!lowClaim.has_value()) {
                     lowClaim =
@@ -2750,10 +2733,12 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         firstConflictOnArrival(*lowClaim, low, *prioritySweeps[highIndex], high);
                     conflict.has_value() &&
                     *conflict - low.distanceMeters >=
-                        low.speedMetersPerSecond * low.speedMetersPerSecond / (2.0 * braking)) {
+                        low.speedMetersPerSecond * low.speedMetersPerSecond / (2.0 * braking) +
+                            low.lengthMeters * 0.5) {
                     canStillYield[lowIndex] = 1;
                     priorityStopDistances[lowIndex] =
-                        std::min(priorityStopDistances[lowIndex], *conflict - 1.0);
+                        std::min(priorityStopDistances[lowIndex],
+                                 *conflict - low.lengthMeters * 0.5 - 1.0);
                     yieldsTo[lowIndex].push_back(highIndex);
                 }
             }
@@ -3141,6 +3126,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 limitTarget(std::sqrt(2.0 * signalApproachDeceleration * signalStopDistance),
                             MapTrafficBlockReason::Signal);
             }
+            double junctionAdmissionStopDistance = std::numeric_limits<double>::infinity();
             const double lookahead = std::max(
                 15.0, actor.speedMetersPerSecond * actor.speedMetersPerSecond / (2.0 * braking) +
                           actor.speedMetersPerSecond * headwaySeconds + actor.lengthMeters);
@@ -3158,6 +3144,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 const double stopDistance = compactJunction ? std::min(junctionEntryStopDistance,
                                                                        priorityStopDistances[index])
                                                             : priorityStopDistances[index];
+                junctionAdmissionStopDistance =
+                    std::min(junctionAdmissionStopDistance, stopDistance);
                 const double gap = std::max(0.0, stopDistance - actor.distanceMeters);
                 limitTarget(std::min(gap / headwaySeconds, std::sqrt(2.0 * braking * gap)),
                             MapTrafficBlockReason::JunctionTraffic, priorityTraffic);
@@ -3255,7 +3243,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     if (yieldsForPriority(claim.actorIndex, index)) {
                         continue;
                     }
-                    if (const auto conflict = claimsConflictWithActiveTraffic(wanted, actor, claim);
+                    if (const auto conflict = claimsConflict(wanted, claim);
                         conflict.has_value() && *conflict - 1.0 < conflictStopDistance) {
                         conflictingActor = claim.actor;
                         conflictStopDistance = *conflict - 1.0;
@@ -3267,6 +3255,10 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 }
                 if (conflictingActor != nullptr) {
                     blockedByJunctionTraffic = true;
+                    junctionAdmissionStopDistance = std::min(
+                        junctionAdmissionStopDistance,
+                        compactJunction ? std::min(junctionEntryStopDistance, conflictStopDistance)
+                                        : conflictStopDistance);
                     const double conflictGap = std::max(
                         0.0,
                         (compactJunction ? std::min(junctionEntryStopDistance, conflictStopDistance)
@@ -3305,7 +3297,12 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                                         ? std::max(target, oldSpeed - braking * step)
                                         : std::min(target, oldSpeed + acceleration * step);
             const double requestedTravel = (oldSpeed + newSpeed) * 0.5 * step;
-            const double travel = std::min(requestedTravel, signalStopDistance);
+            const double junctionStopGap =
+                !committedToJunction && std::isfinite(junctionAdmissionStopDistance)
+                    ? std::max(0.0, junctionAdmissionStopDistance - actor.distanceMeters)
+                    : std::numeric_limits<double>::infinity();
+            const double travel =
+                std::min({requestedTravel, signalStopDistance, junctionStopGap});
             double admitted = 0.0;
             bool blockedDuringMovement = false;
             // Sweep rather than testing just the final pose, including at low frame rates.

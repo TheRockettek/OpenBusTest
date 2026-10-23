@@ -538,6 +538,45 @@ void verifyDrivingBehavior() {
     require(advanceMapTrafficActorLoopingAvoidingObstacles(pedestrianWalker, {}, 0.5, 0.8, 1.0) &&
                 pedestrianWalker.distanceMeters > 2.4,
             "pedestrians resume along their route after the vehicle clears");
+    MapTrafficRouteSegment forwardPedestrianPath = straight(1198, 0.0, 0.0, 0.0, 30.0);
+    MapTrafficRouteSegment reversePedestrianPath = forwardPedestrianPath;
+    reversePedestrianPath.reversed = true;
+    auto pedestrianGoingForward = makeMapTrafficActor(
+        oneSegment(forwardPedestrianPath), "forward-walker.hum", 1.2, 0.0, false);
+    auto pedestrianGoingBackward = makeMapTrafficActor(
+        oneSegment(reversePedestrianPath), "backward-walker.hum", 1.2, 0.0, false);
+    pedestrianGoingForward.lengthMeters = pedestrianGoingBackward.lengthMeters = 0.25;
+    pedestrianGoingForward.widthMeters = pedestrianGoingBackward.widthMeters = 0.42;
+    pedestrianGoingForward.distanceMeters = 10.0;
+    pedestrianGoingBackward.distanceMeters = 10.0;
+    const auto pedestrianStartPose = sampleMapTrafficRoute(
+        pedestrianGoingForward.route, pedestrianGoingForward.distanceMeters, 0.0);
+    const auto pedestrianOppositeStartPose = sampleMapTrafficRoute(
+        pedestrianGoingBackward.route, pedestrianGoingBackward.distanceMeters, 0.0);
+    require(pedestrianStartPose && pedestrianOppositeStartPose &&
+                std::hypot(pedestrianStartPose->position[0] -
+                               pedestrianOppositeStartPose->position[0],
+                           pedestrianStartPose->position[1] -
+                               pedestrianOppositeStartPose->position[1]) > 5.0,
+            "opposing pedestrians start apart on the same path");
+    for (int frame = 0; frame < 50; ++frame) {
+        require(advanceMapTrafficActorLoopingAvoidingObstacles(
+                    pedestrianGoingForward, {}, 0.25, 0.42, 0.1) &&
+                    advanceMapTrafficActorLoopingAvoidingObstacles(
+                        pedestrianGoingBackward, {}, 0.25, 0.42, 0.1),
+                "opposing pedestrians are not blocked by one another");
+    }
+    const auto pedestrianEndPose = sampleMapTrafficRoute(
+        pedestrianGoingForward.route, pedestrianGoingForward.distanceMeters, 0.0);
+    const auto pedestrianOppositeEndPose = sampleMapTrafficRoute(
+        pedestrianGoingBackward.route, pedestrianGoingBackward.distanceMeters, 0.0);
+    require(pedestrianEndPose && pedestrianOppositeEndPose &&
+                pedestrianGoingForward.distanceMeters > 15.0 &&
+                pedestrianGoingBackward.distanceMeters > 15.0 &&
+                std::hypot(pedestrianEndPose->position[0] - pedestrianOppositeEndPose->position[0],
+                           pedestrianEndPose->position[1] -
+                               pedestrianOppositeEndPose->position[1]) < 5.0,
+            "opposing pedestrians pass through each other and keep moving");
     auto pedestrianSignalPath = straight(1199, 20.0, 0.0, 0.0, 20.0);
     MapTrafficSignalSchedule pedestrianRedThenGreen;
     pedestrianRedThenGreen.cycleDurationSeconds = 200.0;
@@ -1297,6 +1336,7 @@ void verifyDrivingBehavior() {
         sideApproach.pathRules.groups.push_back(sideRoadRules);
         auto sideTurn = straight(1364, 0.0, -6.0, 45.0, std::sqrt(72.0));
         sideTurn.points = {{0.0, -6.0, 0.0}, {6.0, 0.0, 0.0}};
+        sideTurn.pathRules.groups.push_back(mainRoadRules);
         sideRoute.segments = {sideApproach, sideTurn, straight(1365, 6.0, 0.0, 90.0, 60.0)};
         sideRoute.cumulativeEndDistances = {34.0, 34.0 + std::sqrt(72.0),
                                             94.0 + std::sqrt(72.0)};
@@ -1494,6 +1534,38 @@ void verifyDrivingBehavior() {
     }
     require(lowTurning.distanceMeters > 60.0 && highPriorityTurn.distanceMeters > 60.0,
             "committed low-priority turns clear before higher-priority approaches");
+    MapTrafficRoute globalPriorityTurnRoute;
+    auto globalPriorityTurnApproach = straight(1224, 0.0, -40.0, 0.0, 40.0);
+    globalPriorityTurnApproach.pathRules.priority = 200.0;
+    const double diagonalConnectorLength = 15.0 * std::sqrt(2.0);
+    auto globalPriorityTurnConnector =
+        straight(1225, 0.0, 0.0, 0.0, 15.0 + diagonalConnectorLength);
+    globalPriorityTurnConnector.points = {
+        {0.0, 0.0, 0.0}, {0.0, 15.0, 0.0}, {15.0, 30.0, 0.0}};
+    globalPriorityTurnRoute.segments = {
+        globalPriorityTurnApproach, globalPriorityTurnConnector,
+        straight(1226, 15.0, 30.0, 90.0, 50.0)};
+    globalPriorityTurnRoute.cumulativeEndDistances = {
+        40.0, 40.0 + 15.0 + diagonalConnectorLength,
+        90.0 + 15.0 + diagonalConnectorLength};
+    globalPriorityTurnRoute.totalLength = globalPriorityTurnRoute.cumulativeEndDistances.back();
+    auto defaultPriorityCrossingRoute =
+        oneSegment(straight(1227, -40.0, 15.0, 90.0, 100.0));
+    auto globalPriorityTurn =
+        makeMapTrafficActor(globalPriorityTurnRoute, "global-priority-turn.ovh", 4.0, 0.0, false);
+    auto defaultPriorityCrossing = makeMapTrafficActor(
+        defaultPriorityCrossingRoute, "default-priority-crossing.ovh", 8.0, 0.0, false);
+    globalPriorityTurn.distanceMeters = 45.0;
+    defaultPriorityCrossing.distanceMeters = 30.0;
+    globalPriorityTurn.speedMetersPerSecond = 4.0;
+    defaultPriorityCrossing.speedMetersPerSecond = 8.0;
+    for (int frame = 0; frame < 30; ++frame) {
+        advanceMapTrafficDriving({&globalPriorityTurn, &defaultPriorityCrossing}, {}, 0.1);
+    }
+    require(globalPriorityTurn.junctionWaitSeconds > 0.0 &&
+                defaultPriorityCrossing.distanceMeters > 30.0 &&
+                globalPriorityTurn.distanceMeters < 55.0,
+            "a turning vehicle keeps its incoming road priority while on a long junction path");
     MapTrafficRouteSegment northboundSegment = straight(1210, 1.2, -40.0, 0.0, 100.0);
     MapTrafficRouteSegment southboundSegment = straight(1211, -1.2, 60.0, 180.0, 100.0);
     MapTrafficRouteSegment eastboundSegment = straight(1212, -40.0, -1.2, 90.0, 100.0);
@@ -1757,6 +1829,132 @@ void verifyDrivingBehavior() {
     advanceMapTrafficDriving({&waitingRightTurn, &highPriorityCrossing}, {}, 0.1);
     require(waitingRightTurn.junctionWaitSeconds > 0.0,
             "a right-turning approach accrues wait time when lookahead sees crossing traffic");
+    auto shortConnectorRightTurn =
+        makeMapTrafficActor(rightTurnRoute, "short-connector-right-turn.ovh", 8.0, 0.0, false);
+    auto nearPriorityCrossing = makeMapTrafficActor(
+        highPriorityCrossingRoute, "near-priority-crossing.ovh", 8.0, 0.0, false);
+    shortConnectorRightTurn.unscheduledGroupIndex = 0;
+    nearPriorityCrossing.unscheduledGroupIndex = 0;
+    shortConnectorRightTurn.distanceMeters = 27.0;
+    nearPriorityCrossing.distanceMeters = 32.0;
+    shortConnectorRightTurn.speedMetersPerSecond = 6.0;
+    bool shortTurnYieldedBeforeEnteringConflict = false;
+    for (int frame = 0; frame < 100; ++frame) {
+        advanceMapTrafficDriving({&shortConnectorRightTurn, &nearPriorityCrossing}, {}, 0.1);
+        shortTurnYieldedBeforeEnteringConflict =
+            shortTurnYieldedBeforeEnteringConflict ||
+            ((shortConnectorRightTurn.blockReason == MapTrafficBlockReason::JunctionTraffic ||
+              shortConnectorRightTurn.blockReason == MapTrafficBlockReason::CrossingReservation) &&
+             shortConnectorRightTurn.blockingActor == &nearPriorityCrossing &&
+             shortConnectorRightTurn.junctionWaitSeconds > 0.0 &&
+             shortConnectorRightTurn.distanceMeters < 35.0);
+        require(mapTrafficHasClearance(footprint(shortConnectorRightTurn),
+                                       {footprint(nearPriorityCrossing)}, 0.49),
+                "a lower-priority turn remains clear of nearby priority traffic");
+    }
+    require(shortTurnYieldedBeforeEnteringConflict,
+            "a lower-priority short turn yields before entering the conflict");
+    require(shortConnectorRightTurn.distanceMeters > 50.0,
+            "the lower-priority turn eventually clears after yielding");
+    MapTrafficRoute secondRightTurnRoute;
+    auto secondRightTurnApproach = straight(1240, -40.0, 0.0, 90.0, 30.0);
+    auto secondRightTurnConnector = straight(1241, -10.0, 0.0, 135.0, std::sqrt(200.0));
+    for (int index = 0; index <= rightTurnSteps; ++index) {
+        const double angle =
+            quarterTurn * (1.0 - static_cast<double>(index) / rightTurnSteps);
+        secondRightTurnConnector.points.push_back(
+            {-10.0 + 10.0 * std::cos(angle), -10.0 + 10.0 * std::sin(angle), 0.0});
+    }
+    const double secondConnectorLength = [&] {
+        double length = 0.0;
+        for (std::size_t index = 1; index < secondRightTurnConnector.points.size(); ++index) {
+            const auto& from = secondRightTurnConnector.points[index - 1];
+            const auto& to = secondRightTurnConnector.points[index];
+            length += std::hypot(to[0] - from[0], to[1] - from[1]);
+        }
+        return length;
+    }();
+    secondRightTurnRoute.segments = {
+        secondRightTurnApproach, secondRightTurnConnector,
+        straight(1242, 0.0, -10.0, 180.0, 60.0)};
+    secondRightTurnRoute.cumulativeEndDistances = {
+        30.0, 30.0 + secondConnectorLength, 90.0 + secondConnectorLength};
+    secondRightTurnRoute.totalLength = secondRightTurnRoute.cumulativeEndDistances.back();
+    auto simultaneousFirstTurn =
+        makeMapTrafficActor(rightTurnRoute, "simultaneous-first-turn.ovh", 8.0, 0.0, false);
+    auto simultaneousSecondTurn =
+        makeMapTrafficActor(secondRightTurnRoute, "simultaneous-second-turn.ovh", 8.0, 0.0,
+                            false);
+    simultaneousFirstTurn.distanceMeters = 15.0;
+    simultaneousSecondTurn.distanceMeters = 15.0;
+    simultaneousFirstTurn.speedMetersPerSecond = 8.0;
+    simultaneousSecondTurn.speedMetersPerSecond = 8.0;
+    for (int frame = 0; frame < 500; ++frame) {
+        advanceMapTrafficDriving({&simultaneousFirstTurn, &simultaneousSecondTurn}, {}, 0.1);
+        require(mapTrafficHasClearance(footprint(simultaneousFirstTurn),
+                                       {footprint(simultaneousSecondTurn)}, 0.49),
+                "simultaneous turning vehicles retain physical clearance");
+    }
+    require(simultaneousFirstTurn.distanceMeters > 70.0 &&
+                simultaneousSecondTurn.distanceMeters > 70.0,
+            "simultaneous right turns clear the junction without deadlocking");
+    MapTrafficGroupRules mergePriorityRules;
+    mergePriorityRules.groupIndex = 0;
+    mergePriorityRules.priority = 64.0;
+    MapTrafficGroupRules mergeYieldRules;
+    mergeYieldRules.groupIndex = 0;
+    mergeYieldRules.priority = 192.0;
+    MapTrafficRoute priorityMergeRoute;
+    auto priorityMergeApproach = straight(1244, -40.0, 0.0, 90.0, 34.0);
+    priorityMergeApproach.pathRules.groups.push_back(mergePriorityRules);
+    auto priorityMergeConnector = straight(1245, -6.0, 0.0, 45.0, std::sqrt(72.0));
+    priorityMergeConnector.points = {{-6.0, 0.0, 0.0}, {0.0, 6.0, 0.0}};
+    priorityMergeRoute.segments = {priorityMergeApproach, priorityMergeConnector,
+                                   straight(1246, 0.0, 6.0, 0.0, 60.0)};
+    priorityMergeRoute.cumulativeEndDistances = {
+        34.0, 34.0 + std::sqrt(72.0), 94.0 + std::sqrt(72.0)};
+    priorityMergeRoute.totalLength = priorityMergeRoute.cumulativeEndDistances.back();
+    MapTrafficRoute yieldingMergeRoute;
+    auto yieldingMergeApproach = straight(1247, 0.0, -40.0, 0.0, 34.0);
+    yieldingMergeApproach.pathRules.groups.push_back(mergeYieldRules);
+    auto yieldingMergeConnector = straight(1248, 0.0, -6.0, 0.0, 12.0);
+    yieldingMergeConnector.points = {{0.0, -6.0, 0.0}, {0.0, 6.0, 0.0}};
+    yieldingMergeRoute.segments = {yieldingMergeApproach, yieldingMergeConnector,
+                                   straight(1249, 0.0, 6.0, 0.0, 60.0)};
+    yieldingMergeRoute.cumulativeEndDistances = {34.0, 46.0, 106.0};
+    yieldingMergeRoute.totalLength = 106.0;
+    auto priorityMergeVehicle =
+        makeMapTrafficActor(priorityMergeRoute, "priority-merge.ovh", 8.0, 0.0, false);
+    auto yieldingMergeVehicle =
+        makeMapTrafficActor(yieldingMergeRoute, "yielding-merge.ovh", 8.0, 0.0, false);
+    priorityMergeVehicle.unscheduledGroupIndex = 0;
+    yieldingMergeVehicle.unscheduledGroupIndex = 0;
+    priorityMergeVehicle.distanceMeters = 26.0;
+    yieldingMergeVehicle.distanceMeters = 26.0;
+    double firstMergePriorityDistance = -1.0;
+    double firstMergeYieldDistance = -1.0;
+    bool priorityMergeEnteredFirst = false;
+    for (int frame = 0; frame < 400; ++frame) {
+        advanceMapTrafficDriving({&yieldingMergeVehicle, &priorityMergeVehicle}, {}, 0.1);
+        require(mapTrafficHasClearance(footprint(priorityMergeVehicle),
+                                       {footprint(yieldingMergeVehicle)}, 0.49),
+                "priority arbitration keeps merging vehicles physically separated");
+        priorityMergeEnteredFirst =
+            priorityMergeEnteredFirst ||
+            (priorityMergeVehicle.distanceMeters > 42.0 &&
+             yieldingMergeVehicle.distanceMeters < 40.0);
+        if (firstMergePriorityDistance < 0.0 && priorityMergeVehicle.distanceMeters > 40.0) {
+            firstMergePriorityDistance = priorityMergeVehicle.distanceMeters;
+        }
+        if (firstMergeYieldDistance < 0.0 && yieldingMergeVehicle.distanceMeters > 40.0) {
+            firstMergeYieldDistance = yieldingMergeVehicle.distanceMeters;
+        }
+    }
+    require(priorityMergeEnteredFirst && firstMergePriorityDistance > 40.0 &&
+                firstMergeYieldDistance > 40.0 &&
+                priorityMergeVehicle.distanceMeters > 70.0 &&
+                yieldingMergeVehicle.distanceMeters > 70.0,
+            "the authored higher-priority spline claims a shared merge before the yielding spline");
     auto lateRightTurn =
         makeMapTrafficActor(rightTurnRoute, "late-right-turn.ovh", 8.0, 0.0, false);
     auto passedPriorityCrossing = makeMapTrafficActor(
@@ -1923,6 +2121,17 @@ void verifyDrivingBehavior() {
         require(
             mapTrafficEntryHiddenFromCamera({0.0, 1500.0, 0.0}, 3.0, camera, viewProjection, 50.0),
             "entries beyond the far plane are hidden");
+        auto mirrorViewProjection = viewProjection;
+        mirrorViewProjection[7] = -1.0;
+        mirrorViewProjection[6] = -viewProjection[6];
+        const MapTrafficCameraView mainCamera{camera, viewProjection};
+        const std::vector<MapTrafficCameraView> mirrorCameras = {
+            {camera, mirrorViewProjection}};
+        require(mapTrafficEntryHiddenFromCamera({0.0, -100.0, 0.0}, 3.0, camera, viewProjection,
+                                                50.0) &&
+                    !mapTrafficEntryHiddenFromCameras({0.0, -100.0, 0.0}, 3.0, mainCamera,
+                                                      mirrorCameras, 50.0),
+                "traffic hidden from the forward view remains visible to a mirror camera");
     }
     MapTrafficLaneNetwork twoWay;
     auto forward = straight(1300, 0.0, 0.0, 0.0, 20.0);
