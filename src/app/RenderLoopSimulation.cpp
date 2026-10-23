@@ -168,10 +168,9 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
             if (!human.populationEnabled) {
                 continue;
             }
-            std::vector<openbus::map::MapTrafficObstacle> obstacles = vehicleObstacles;
             const double previousDistanceMeters = human.actor.distanceMeters;
             openbus::map::advanceMapTrafficActorLoopingAvoidingObstacles(
-                human.actor, obstacles, human.feetDistanceMeters * 1.25,
+                human.actor, vehicleObstacles, human.feetDistanceMeters * 1.25,
                 human.feetDistanceMeters * 2.1, trafficTimeStep,
                 std::max(0.0, simulation.simulationTime() - trafficTimeStep));
             double distanceMovedMeters = human.actor.distanceMeters - previousDistanceMeters;

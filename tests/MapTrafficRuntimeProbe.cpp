@@ -2,13 +2,18 @@
 #include "map/MapSplineGeometry.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <numbers>
 #include <stdexcept>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 
 namespace {
@@ -2540,6 +2545,186 @@ void benchmarkDrivingLookahead() {
               << " distance_sum=" << distanceSum << " speed_sum=" << speedSum << '\n';
 }
 
+// Crossing traffic on a 3x3 junction grid, so arbitration, admission, and reservations run
+// together.
+std::vector<openbus::map::MapTrafficActor> makeJunctionGridActors() {
+    using namespace openbus::map;
+    constexpr double pi = std::numbers::pi;
+    constexpr double junctionHalfLength = 6.0;
+    constexpr double laneOffset = 1.75;
+    constexpr std::array<double, 3> crossings = {0.0, 80.0, 160.0};
+    int nextSplineId = 50000;
+    const auto laneRoute = [&](double startX, double startY, double headingDegrees) {
+        const double headingRadians = headingDegrees * pi / 180.0;
+        const double directionX = std::sin(headingRadians);
+        const double directionY = std::cos(headingRadians);
+        MapTrafficRoute route;
+        const auto addSpline = [&](double from, double to) {
+            for (double pieceStart = from; pieceStart < to - 1.0e-9;) {
+                const double pieceEnd = std::min(to, pieceStart + 17.0);
+                MapTrafficRouteSegment segment;
+                segment.spline.placement = makeSpline(nextSplineId++, 0, 0, 0.0);
+                segment.spline.placement.localX = startX + directionX * pieceStart;
+                segment.spline.placement.localY = startY + directionY * pieceStart;
+                segment.spline.placement.elevation = 0.0;
+                segment.spline.placement.rotationDegrees = headingDegrees;
+                segment.spline.placement.length = pieceEnd - pieceStart;
+                route.segments.push_back(segment);
+                route.totalLength += pieceEnd - pieceStart;
+                route.cumulativeEndDistances.push_back(route.totalLength);
+                pieceStart = pieceEnd;
+            }
+        };
+        double along = 0.0;
+        for (const double crossing : {40.0, 120.0, 200.0}) {
+            addSpline(along, crossing - junctionHalfLength);
+            MapTrafficRouteSegment junction;
+            junction.spline.placement = makeSpline(nextSplineId++, 0, 0, 0.0);
+            junction.spline.placement.length = junctionHalfLength * 2.0;
+            const double from = crossing - junctionHalfLength;
+            const double to = crossing + junctionHalfLength;
+            junction.points = {{startX + directionX * from, startY + directionY * from, 0.0},
+                               {startX + directionX * to, startY + directionY * to, 0.0}};
+            route.segments.push_back(junction);
+            route.totalLength += junctionHalfLength * 2.0;
+            route.cumulativeEndDistances.push_back(route.totalLength);
+            along = to;
+        }
+        addSpline(along, 240.0);
+        return route;
+    };
+    std::vector<MapTrafficRoute> lanes;
+    for (const double crossing : crossings) {
+        lanes.push_back(laneRoute(-40.0, crossing - laneOffset, 90.0));
+        lanes.push_back(laneRoute(200.0, crossing + laneOffset, 270.0));
+        lanes.push_back(laneRoute(crossing + laneOffset, -40.0, 0.0));
+        lanes.push_back(laneRoute(crossing - laneOffset, 200.0, 180.0));
+    }
+    std::vector<MapTrafficActor> actors;
+    actors.reserve(lanes.size() * 6);
+    for (std::size_t lane = 0; lane < lanes.size(); ++lane) {
+        for (int slot = 0; slot < 6; ++slot) {
+            MapTrafficActor actor;
+            actor.modelPath = "grid.ovh";
+            actor.route = lanes[lane];
+            actor.distanceMeters = 5.0 + slot * 18.0 + static_cast<double>(lane % 4) * 3.0;
+            actor.speedMetersPerSecond = 6.0;
+            actor.cruiseSpeedMetersPerSecond = 10.0 + static_cast<double>((lane + slot) % 3);
+            actors.push_back(std::move(actor));
+        }
+    }
+    return actors;
+}
+
+void benchmarkDrivingJunctionGrid() {
+    using namespace openbus::map;
+    std::vector<MapTrafficActor> actors = makeJunctionGridActors();
+    // Covers every actor's state after every update for before/after checks.
+    std::uint64_t stateHash = 1469598103934665603ULL;
+    const auto mix = [&](std::uint64_t value) {
+        stateHash ^= value;
+        stateHash *= 1099511628211ULL;
+    };
+    const auto mixDouble = [&](double value) {
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        mix(bits);
+    };
+    constexpr int updates = 600;
+    double movingMilliseconds = 0.0;
+    for (int update = 0; update < updates; ++update) {
+        std::vector<MapTrafficActor*> pointers;
+        for (auto& actor : actors) {
+            if (actor.distanceMeters < actor.route.totalLength) {
+                pointers.push_back(&actor);
+            } else {
+                actor.speedMetersPerSecond = 0.0;
+            }
+        }
+        const auto start = std::chrono::steady_clock::now();
+        advanceMapTrafficDriving(pointers, {}, 1.0 / 60.0, update / 60.0);
+        movingMilliseconds +=
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+                .count();
+        for (const auto& actor : actors) {
+            mixDouble(actor.distanceMeters);
+            mixDouble(actor.speedMetersPerSecond);
+            mixDouble(actor.junctionWaitSeconds);
+            mix(static_cast<std::uint64_t>(actor.blockReason));
+            mixDouble(actor.junctionClaimEndMeters.value_or(-1.0));
+        }
+    }
+    double distanceSum = 0.0;
+    std::size_t finished = 0;
+    for (const auto& actor : actors) {
+        distanceSum += actor.distanceMeters;
+        finished += actor.distanceMeters >= actor.route.totalLength ? 1U : 0U;
+    }
+    std::cout << std::setprecision(17) << "TRAFFIC_JUNCTION_BENCHMARK actors=" << actors.size()
+              << " updates=" << updates << " ms_per_update=" << movingMilliseconds / updates
+              << " finished=" << finished << " distance_sum=" << distanceSum
+              << " state_hash=" << std::hex << stateHash << std::dec << '\n';
+}
+
+// Deferred/skipped sampling queries are only allowed on routes that cannot fail to sample, so
+// malformed routes must still raise the same exception, from the same update, as eager evaluation.
+void verifyMalformedRouteErrors() {
+    using namespace openbus::map;
+    const auto drivingError = [](const std::vector<MapTrafficActor*>& actors, int updates,
+                                 double elapsedSeconds) -> std::pair<int, std::string> {
+        for (int update = 0; update < updates; ++update) {
+            std::vector<MapTrafficActor*> active;
+            for (MapTrafficActor* actor : actors) {
+                if (actor->distanceMeters < actor->route.totalLength) {
+                    active.push_back(actor);
+                }
+            }
+            try {
+                advanceMapTrafficDriving(active, {}, elapsedSeconds, update * elapsedSeconds);
+            } catch (const std::exception& error) {
+                return {update, error.what()};
+            }
+        }
+        return {updates, ""};
+    };
+    for (const double startMeters : {4.5, 10.0}) {
+        MapTrafficRouteSegment valid{{makeSpline(9001, 0, 9002, 0.0), 0, 0}};
+        valid.spline.placement.localX = 0.0;
+        valid.spline.placement.length = 20.0;
+        MapTrafficRouteSegment malformed{{makeSpline(9002, 9001, 0, 0.0), 0, 0}};
+        malformed.spline.placement.localX = 20.0;
+        malformed.spline.placement.length = 20.0;
+        malformed.spline.placement.geometryValid = false;
+        MapTrafficRoute route;
+        route.segments = {valid, malformed};
+        route.cumulativeEndDistances = {20.0, 40.0};
+        route.totalLength = 40.0;
+        // Slow enough that the lookahead curve query could be skipped on a well-formed route.
+        MapTrafficActor actor = makeMapTrafficActor(route, "malformed.ovh", 1.0, 0.0, false);
+        actor.distanceMeters = startMeters;
+        actor.speedMetersPerSecond = 1.0;
+        const auto [update, message] = drivingError({&actor}, 1, 0.05);
+        require(update == 0 && message == "Cannot sample traffic curve",
+                "slow traffic on a malformed route reports the curve sampling failure");
+    }
+    // Lane 0 segment 8 exercises the lookahead curve query; lane 2 segment 8 exercises the
+    // junction arrival-window queries (deferring them moves the failure to a later update).
+    for (const auto& [lane, segment, expectedUpdate] :
+         {std::tuple<std::size_t, std::size_t, int>{0, 8, 0}, {2, 8, 9}}) {
+        std::vector<MapTrafficActor> actors = makeJunctionGridActors();
+        for (std::size_t slot = 0; slot < 6; ++slot) {
+            actors[lane * 6 + slot].route.segments[segment].spline.placement.geometryValid = false;
+        }
+        std::vector<MapTrafficActor*> pointers;
+        for (MapTrafficActor& actor : actors) {
+            pointers.push_back(&actor);
+        }
+        const auto [update, message] = drivingError(pointers, 60, 1.0 / 60.0);
+        require(update == expectedUpdate && message == "Cannot sample traffic curve",
+                "malformed junction traffic fails at the same update with the same error");
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2552,9 +2737,14 @@ int main(int argc, char** argv) {
             benchmarkDrivingLookahead();
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-junctions") {
+            benchmarkDrivingJunctionGrid();
+            return 0;
+        }
         using namespace openbus::map;
         verifyDrivingBehavior();
         verifyTrafficRules();
+        verifyMalformedRouteErrors();
         const auto spawnPopulation = [](const MapTrafficRouteNetwork& routeNetwork,
                                         const std::vector<int>& splineIds,
                                         const std::string& modelPath, double speedMetersPerSecond,

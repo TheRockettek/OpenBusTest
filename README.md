@@ -763,6 +763,20 @@ reports average update time for 69 actors over 30 updates plus final distance an
 speed totals for before/after comparisons. This synthetic case stresses distant
 reservations; it is not a substitute for profiling a populated map.
 
+`--benchmark-junctions` runs 72 actors through a 3×3 grid of junctions for 600
+updates, so priority arbitration, junction admission and crossing reservations are
+exercised. Besides the average update time it prints a `state_hash` of every
+actor's distance, speed, junction wait, block reason and junction claim after every
+update. An optimization that must not change behaviour should leave that hash
+unchanged.
+
+Some traffic optimizations skip or defer route-sampling queries, for example curve
+limits that cannot lower the target speed, or lazily computed arrival windows. They
+are enabled only when every actor's route provably cannot fail to sample. Otherwise
+`advanceMapTrafficDriving` evaluates those queries eagerly in their original order,
+so a malformed route still raises the same exception at the same update. The probe's
+malformed-route checks guard this behaviour.
+
 ## Repeatable render benchmark
 
 Run `benchmark_rendering.bat` to build an isolated Release executable
