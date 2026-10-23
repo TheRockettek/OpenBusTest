@@ -135,10 +135,12 @@ void verifyDrivingBehavior() {
                 mapTrafficSignalStateAtTime(cycleSignal, 8.0) == 9 &&
                 mapTrafficSignalStateAtTime(cycleSignal, 10.0) == 0,
             "signal phase schedule wraps at the configured cycle duration");
-    require(!mapTrafficSignalStateAtTime(MapTrafficSignalSchedule{9.0, {{0, 3.0}, {6, 5.0}}, false},
-                                         0.0)
-                 .has_value(),
-            "signal schedules whose phases do not cover the cycle are rejected");
+    const MapTrafficSignalSchedule signalWithDarkRemainder{
+        10.0, {{0, 3.0}, {6, 5.0}}, false};
+    require(mapTrafficSignalStateAtTime(signalWithDarkRemainder, 7.9) == 6 &&
+                mapTrafficSignalStateAtTime(signalWithDarkRemainder, 8.0) == 12 &&
+                mapTrafficSignalStateAtTime(signalWithDarkRemainder, 10.0) == 0,
+            "unconfigured traffic-light cycle time is rendered as the OMSI off phase");
     MapTrafficRouteSegment signalWaitSegment = straight(1901, 0.0, 0.0, 0.0, 10.0);
     signalWaitSegment.trafficSignal = cycleSignal;
     MapTrafficActor signalWaiter;
@@ -219,6 +221,16 @@ void verifyDrivingBehavior() {
     const auto transitionRoute = splineTransitions.buildRoute(1020, 0, 0, 4.5);
     require(transitionRoute && transitionRoute->segments.size() == 2,
             "slightly misaligned but feasible spline endpoints remain connected");
+    MapTrafficLaneNetwork requiredSequence;
+    requiredSequence.addSegment(straight(1022, 0.0, 0.0, 0.0, 20.0));
+    requiredSequence.addSegment(straight(1023, 0.0, 20.0, 0.0, 20.0));
+    requiredSequence.finalize();
+    require(!requiredSequence.buildRoute(1022, 0, 0, 0.0, {}, {1022, 1023, 1024}),
+            "a required timetable path cannot succeed after reaching a shorter dead end");
+    const auto completeRequiredSequence =
+        requiredSequence.buildRoute(1022, 0, 0, 0.0, {}, {1022, 1023});
+    require(completeRequiredSequence && completeRequiredSequence->segments.size() == 2,
+            "an endpoint route succeeds when it completes the required timetable sequence");
     const auto beforeTransition = sampleMapTrafficRoute(*transitionRoute, 19.99, 0.0);
     const auto afterTransition = sampleMapTrafficRoute(*transitionRoute, 20.01, 0.0);
     require(beforeTransition && afterTransition &&
@@ -336,6 +348,7 @@ void verifyDrivingBehavior() {
         actor.speedMetersPerSecond = 0.0;
         bool sampledTurn = false;
         bool reachedExit = false;
+        double minimumTurnSpeed = std::numeric_limits<double>::infinity();
         for (int frame = 0; frame < 400; ++frame) {
             const double oldSpeed = actor.speedMetersPerSecond;
             advanceMapTrafficDriving({&actor}, {}, 0.1);
@@ -344,8 +357,10 @@ void verifyDrivingBehavior() {
                     "free driving respects acceleration and comfortable braking limits");
             if (actor.distanceMeters > 40.0 && actor.distanceMeters < 55.0) {
                 sampledTurn = true;
-                require(actor.speedMetersPerSecond <= 4.5,
-                        "10 m radius junction turns are traversed below 4.5 m/s");
+                minimumTurnSpeed =
+                    std::min(minimumTurnSpeed, actor.speedMetersPerSecond);
+                require(actor.speedMetersPerSecond <= 7.0,
+                        "10 m radius junction turns stay below the relaxed safe-speed limit");
             }
             if (actor.distanceMeters > 60.0) {
                 reachedExit = true;
@@ -354,6 +369,34 @@ void verifyDrivingBehavior() {
         }
         require(sampledTurn && reachedExit,
                 "vehicles actually traverse left/right scenery curves and enter their exit lane");
+        require(minimumTurnSpeed > 5.2,
+                "a moderate-radius turn does not impose the previous overly low speed cap");
+        const auto firstJunctionSegment =
+            std::find_if(route->segments.begin(), route->segments.end(),
+                         [](const MapTrafficRouteSegment& segment) {
+                             return !segment.points.empty();
+                         });
+        require(firstJunctionSegment != route->segments.end(),
+                "the sampled junction route contains its authored turn");
+        const std::size_t junctionSegmentIndex =
+            static_cast<std::size_t>(firstJunctionSegment - route->segments.begin());
+        const double junctionStartDistance =
+            junctionSegmentIndex == 0 ? 0.0 : route->cumulativeEndDistances[junctionSegmentIndex - 1];
+        const double junctionEndDistance = route->cumulativeEndDistances[junctionSegmentIndex];
+        double safeTurnDistance = junctionStartDistance;
+        while (safeTurnDistance < junctionEndDistance &&
+               mapTrafficCurveSpeedLimit(*route, safeTurnDistance, 12.0, 4.5) < 4.0) {
+            safeTurnDistance += 0.25;
+        }
+        require(safeTurnDistance < junctionEndDistance,
+                "the turn contains a curve section safe for a slow-moving vehicle");
+        auto slowTurningActor = makeMapTrafficActor(*route, "slow-turning-car.ovh", 12.0, 0.0,
+                                                    false);
+        slowTurningActor.distanceMeters = safeTurnDistance;
+        slowTurningActor.speedMetersPerSecond = 3.5;
+        advanceMapTrafficDriving({&slowTurningActor}, {}, 0.1);
+        require(slowTurningActor.speedMetersPerSecond >= 3.5,
+                "a turn does not slow a vehicle already below its curvature-based safe speed");
         const auto exitPose = sampleMapTrafficRoute(actor.route, actor.distanceMeters, 0.0);
         require(std::abs(std::abs(exitPose->headingRadians) - std::acos(-1.0) * 0.5) < 0.01,
                 "vehicles leave the turn aligned with the perpendicular exit lane");
@@ -537,6 +580,16 @@ void verifyDrivingBehavior() {
     require(mapTrafficHasClearance(footprint(pedestrianApproach), {pedestrian}, 0.0) &&
                 pedestrianApproach.speedMetersPerSecond == 0.0,
             "road AI yields to a pedestrian footprint instead of driving through it");
+    auto pedestrianBehindCar = makeMapTrafficActor(road, "car.ovh", 8.0, 0.0, false);
+    pedestrianBehindCar.distanceMeters = 20.0;
+    pedestrianBehindCar.speedMetersPerSecond = 8.0;
+    const MapTrafficObstacle pedestrianNearRear{{{0.0, 17.6, 0.0}, 0.0, 0}, 0.25, 0.42};
+    for (int frame = 0; frame < 30; ++frame) {
+        advanceMapTrafficDriving({&pedestrianBehindCar}, {pedestrianNearRear}, 0.1);
+    }
+    require(pedestrianBehindCar.distanceMeters > 24.0 &&
+                pedestrianBehindCar.speedMetersPerSecond > 5.0,
+            "a pedestrian behind a car does not force it to stop while it moves away");
     auto pedestrianWalker = makeMapTrafficActor(road, "walker.hum", 1.2, 0.0, false);
     const MapTrafficObstacle parkedVehicle{{{0.0, 5.0, 0.0}, 0.0, 0}, 4.5, 1.8};
     require(!advanceMapTrafficActorLoopingAvoidingObstacles(pedestrianWalker, {parkedVehicle}, 0.5,
@@ -1010,26 +1063,44 @@ void verifyDrivingBehavior() {
             {&committedPerpendicularNorth, &committedPerpendicularEast}, {}, 0.1);
         require(mapTrafficHasClearance(footprint(committedPerpendicularNorth),
                                        {footprint(committedPerpendicularEast)}, 0.49),
-                "committed perpendicular vehicles retain physical clearance");
+                "committed perpendicular vehicles retain crossing clearance");
     }
     require(committedPerpendicularNorth.distanceMeters > 60.0 &&
                 committedPerpendicularEast.distanceMeters > 60.0,
             "one committed perpendicular vehicle clears before the other proceeds");
     const auto junctionRouteFromPose = [&](int id, double x, double y, double headingDegrees) {
-        constexpr double routeLength = 30.0;
+        constexpr double approachLength = 20.0;
+        constexpr double connectorLength = 20.0;
+        constexpr double exitLength = 30.0;
         const double headingRadians = headingDegrees * std::acos(-1.0) / 180.0;
-        auto path = straight(id, x, y, headingDegrees, routeLength);
-        path.points = {{x, y, 0.0},
-                       {x + std::sin(headingRadians) * routeLength,
-                        y + std::cos(headingRadians) * routeLength, 0.0}};
-        return oneSegment(path);
+        auto approach = straight(
+            id, x - std::sin(headingRadians) * approachLength,
+            y - std::cos(headingRadians) * approachLength, headingDegrees, approachLength);
+        auto connector = straight(id + 1, x, y, headingDegrees, connectorLength);
+        connector.points = {
+            {x, y, 0.0},
+            {x + std::sin(headingRadians) * connectorLength,
+             y + std::cos(headingRadians) * connectorLength, 0.0}};
+        auto exit = straight(id + 2, x + std::sin(headingRadians) * connectorLength,
+                             y + std::cos(headingRadians) * connectorLength, headingDegrees,
+                             exitLength);
+        MapTrafficRoute route;
+        route.segments = {approach, connector, exit};
+        route.cumulativeEndDistances = {approachLength, approachLength + connectorLength,
+                                        approachLength + connectorLength + exitLength};
+        route.totalLength = route.cumulativeEndDistances.back();
+        return route;
     };
     auto collisionBlockedEast = makeMapTrafficActor(
         junctionRouteFromPose(1362, 0.0, 0.0, 90.0), "collision-blocked-east.ovh", 8.0, 0.0,
         false);
     auto collisionBlockedNorth = makeMapTrafficActor(
-        junctionRouteFromPose(1363, 3.2, -3.2, 0.0), "collision-blocked-north.ovh", 8.0, 0.0,
+        junctionRouteFromPose(1363, 5.0, -5.0, 0.0), "collision-blocked-north.ovh", 8.0, 0.0,
         false);
+    collisionBlockedEast.distanceMeters = 20.2;
+    collisionBlockedNorth.distanceMeters = 20.2;
+    collisionBlockedEast.speedMetersPerSecond = 8.0;
+    collisionBlockedNorth.speedMetersPerSecond = 8.0;
     collisionBlockedEast.junctionWaitSeconds = 18.0;
     collisionBlockedNorth.junctionWaitSeconds = 18.0;
     collisionBlockedEast.blockReason = MapTrafficBlockReason::Collision;
@@ -1038,15 +1109,51 @@ void verifyDrivingBehavior() {
     collisionBlockedNorth.blockingActor = &collisionBlockedEast;
     require(mapTrafficHasClearance(footprint(collisionBlockedEast),
                                    {footprint(collisionBlockedNorth)}, 0.0),
-            "deadlock recovery starts from non-overlapping vehicle bodies");
-    for (int frame = 0; frame < 200; ++frame) {
+            "collision recovery begins before overlapping vehicle bodies");
+    bool collisionPairCleared = false;
+    double previousEastDistance = collisionBlockedEast.distanceMeters;
+    double previousNorthDistance = collisionBlockedNorth.distanceMeters;
+    for (int frame = 0; frame < 600; ++frame) {
         advanceMapTrafficDriving({&collisionBlockedEast, &collisionBlockedNorth}, {}, 0.1);
-        require(mapTrafficHasClearance(footprint(collisionBlockedEast),
-                                       {footprint(collisionBlockedNorth)}, 0.0),
-                "junction collision recovery does not introduce body overlap");
+        const bool hasClearance =
+            mapTrafficHasClearance(footprint(collisionBlockedEast),
+                                   {footprint(collisionBlockedNorth)}, 0.0);
+        require(!collisionPairCleared || hasClearance,
+                "collision recovery preserves clearance after the vehicles separate");
+        require(collisionBlockedEast.distanceMeters + 1.0e-9 >= previousEastDistance &&
+                    collisionBlockedNorth.distanceMeters + 1.0e-9 >= previousNorthDistance,
+                "collision-blocked junction vehicles never retreat along their routes");
+        collisionPairCleared = collisionPairCleared || hasClearance;
+        previousEastDistance = collisionBlockedEast.distanceMeters;
+        previousNorthDistance = collisionBlockedNorth.distanceMeters;
     }
-    require(collisionBlockedEast.distanceMeters > 5.0,
-            "the collision-blocked vehicle with a clear perpendicular path continues");
+    require(collisionPairCleared && collisionBlockedEast.distanceMeters > 40.0 &&
+                collisionBlockedNorth.distanceMeters > 40.0,
+            "collision-blocked crossing vehicles break the deadlock and both clear");
+    const auto parallelJunctionRoute = [&](int splineId, double y) {
+        auto path = straight(splineId, 0.0, y, 90.0, 30.0);
+        path.points = {{0.0, y, 0.0}, {30.0, y, 0.0}};
+        return oneSegment(path);
+    };
+    auto closeTurningLaneA =
+        makeMapTrafficActor(parallelJunctionRoute(1365, 0.0), "close-turning-a.ovh", 8.0, 0.0,
+                            false);
+    auto closeTurningLaneB =
+        makeMapTrafficActor(parallelJunctionRoute(1366, 2.1), "close-turning-b.ovh", 8.0, 0.0,
+                            false);
+    closeTurningLaneA.distanceMeters = 5.0;
+    closeTurningLaneB.distanceMeters = 5.0;
+    for (int frame = 0; frame < 50; ++frame) {
+        advanceMapTrafficDriving({&closeTurningLaneA, &closeTurningLaneB}, {}, 0.1);
+        require(mapTrafficHasClearance(footprint(closeTurningLaneA),
+                                       {footprint(closeTurningLaneB)}, 0.0),
+                "relaxed in-junction collision checks never allow actual body overlap");
+        require(closeTurningLaneA.blockReason != MapTrafficBlockReason::Collision &&
+                    closeTurningLaneB.blockReason != MapTrafficBlockReason::Collision,
+                "vehicles with tight but physically clear turning paths are not collision-blocked");
+    }
+    require(closeTurningLaneA.distanceMeters > 10.0 && closeTurningLaneB.distanceMeters > 10.0,
+            "vehicles with physically clear paths continue through the junction");
     const auto makeShallowMergeRoute = [&](int approachId, double headingDegrees) {
         constexpr double approachLength = 18.0;
         const double headingRadians = headingDegrees * std::acos(-1.0) / 180.0;
@@ -1917,10 +2024,12 @@ void verifyDrivingBehavior() {
              yieldingRightTurn.distanceMeters < 30.0);
     }
     require(yieldingRightTurn.distanceMeters > 60.0 &&
-                approachingPriorityExit.distanceMeters > 60.0 &&
-                yieldingTurnWaitedBeforeEntry &&
-                yieldingTurnMinimumSpeed > 1.5,
-            "a lower-priority turn waits before entry and clears without stopping mid-turn");
+                approachingPriorityExit.distanceMeters > 60.0,
+            "a lower-priority turn and approaching exit vehicle eventually clear");
+    require(yieldingTurnWaitedBeforeEntry,
+            "a lower-priority turn waits before entering the junction");
+    require(yieldingTurnMinimumSpeed > 1.5,
+            "a lower-priority turn does not stop mid-turn after yielding");
     auto shortConnectorRightTurn =
         makeMapTrafficActor(rightTurnRoute, "short-connector-right-turn.ovh", 8.0, 0.0, false);
     auto nearPriorityCrossing = makeMapTrafficActor(
@@ -1931,7 +2040,7 @@ void verifyDrivingBehavior() {
     nearPriorityCrossing.distanceMeters = 32.0;
     shortConnectorRightTurn.speedMetersPerSecond = 6.0;
     bool shortTurnYieldedBeforeEnteringConflict = false;
-    for (int frame = 0; frame < 100; ++frame) {
+    for (int frame = 0; frame < 300; ++frame) {
         advanceMapTrafficDriving({&shortConnectorRightTurn, &nearPriorityCrossing}, {}, 0.1);
         shortTurnYieldedBeforeEnteringConflict =
             shortTurnYieldedBeforeEnteringConflict ||
@@ -2358,6 +2467,16 @@ void verifyDrivingBehavior() {
 
 void verifyTrafficRules() {
     using namespace openbus::map;
+    const MapTrafficPathRules unrestrictedRoad;
+    require(mapTrafficPathAllowsVehicle(unrestrictedRoad, {0, std::nullopt, false}) &&
+                mapTrafficPathAllowsVehicle(unrestrictedRoad, {1, std::nullopt, false}) &&
+                mapTrafficPathAllowsVehicle(unrestrictedRoad, {3, std::nullopt, false}),
+            "unmarked road paths admit cars, commercial vehicles and trucks by default");
+    MapTrafficPathRules truckRestrictedRoad;
+    truckRestrictedRoad.trucksAllowed = false;
+    require(!mapTrafficPathAllowsVehicle(truckRestrictedRoad, {3, std::nullopt, false}),
+            "an explicit truck restriction still excludes trucks");
+
     const std::vector<MapTileRule> authoredRules = {
         {false, {"0", "speedlimit", "36", "0"}},
         {false, {"0", "trafficdensity", "0.5", "0"}},
@@ -2725,6 +2844,241 @@ void verifyMalformedRouteErrors() {
     }
 }
 
+void verifyRealisticTrafficBehavior() {
+    using namespace openbus::map;
+    constexpr double frameSeconds = 1.0 / 60.0;
+    constexpr double carLengthMeters = 4.5;
+
+    MapTrafficRoute laneRoute;
+    for (int piece = 0; piece < 200; ++piece) {
+        MapTrafficRouteSegment segment{{makeSpline(70000 + piece, 0, 0, piece * 10.0), 0, 0}};
+        segment.spline.placement.localX = 0.0;
+        segment.spline.placement.elevation = 0.0;
+        laneRoute.segments.push_back(segment);
+        laneRoute.totalLength += 10.0;
+        laneRoute.cumulativeEndDistances.push_back(laneRoute.totalLength);
+    }
+    struct QueueResult {
+        std::vector<double> cruiseGaps;
+        std::vector<double> stoppedGaps;
+        std::vector<double> stoppedSpeeds;
+        double minimumGap = 1.0e9;
+    };
+    // A leader cruises at leaderCruise with five cars behind it, then stops.
+    const auto runQueue = [&](double leaderCruise) {
+        std::vector<MapTrafficActor> actors;
+        for (int car = 0; car < 6; ++car) {
+            MapTrafficActor actor;
+            actor.modelPath = "queue.ovh";
+            actor.route = laneRoute;
+            actor.distanceMeters = 150.0 - car * 25.0;
+            actor.cruiseSpeedMetersPerSecond = car == 0 ? leaderCruise : 13.0;
+            actor.speedMetersPerSecond = actor.cruiseSpeedMetersPerSecond;
+            actors.push_back(actor);
+        }
+        std::vector<MapTrafficActor*> pointers;
+        for (MapTrafficActor& actor : actors) {
+            pointers.push_back(&actor);
+        }
+        const auto gaps = [&] {
+            std::vector<double> result;
+            for (std::size_t car = 1; car < actors.size(); ++car) {
+                result.push_back(actors[car - 1].distanceMeters - actors[car].distanceMeters -
+                                 carLengthMeters);
+            }
+            return result;
+        };
+        QueueResult result;
+        for (int update = 0; update < 60 * 70; ++update) {
+            if (update == 60 * 25) {
+                result.cruiseGaps = gaps();
+                actors[0].cruiseSpeedMetersPerSecond = 0.0;
+            }
+            advanceMapTrafficDriving(pointers, {}, frameSeconds, update * frameSeconds);
+            if (update > 60 * 5) {
+                for (const double gap : gaps()) {
+                    result.minimumGap = std::min(result.minimumGap, gap);
+                }
+            }
+        }
+        result.stoppedGaps = gaps();
+        for (std::size_t car = 1; car < actors.size(); ++car) {
+            result.stoppedSpeeds.push_back(actors[car].speedMetersPerSecond);
+        }
+        return result;
+    };
+
+    const QueueResult crawling = runQueue(2.0);
+    require(crawling.cruiseGaps.front() > 2.8 && crawling.cruiseGaps.front() < 4.0,
+            "traffic following a 2 m/s leader closes up to a short urban gap");
+    const QueueResult fast = runQueue(13.0);
+    require(fast.cruiseGaps.front() > 18.0 && fast.cruiseGaps.front() < 23.0,
+            "traffic following a 13 m/s leader keeps a time-headway gap");
+    require(fast.minimumGap > 2.0, "a braking queue never closes inside the standstill gap");
+    for (std::size_t car = 0; car < fast.stoppedGaps.size(); ++car) {
+        require(fast.stoppedGaps[car] > 2.0 && fast.stoppedGaps[car] < 2.4 &&
+                    fast.stoppedSpeeds[car] < 0.01,
+                "a stopped queue settles bumper to bumper at the standstill gap");
+    }
+
+    // Equal authored priority: a car waiting at the line to turn left across oncoming traffic
+    // must let a 12 m/s straight-through car pass instead of forcing it to brake.
+    int nextId = 80000;
+    const auto spline = [&](double x, double y, double heading, double length) {
+        MapTrafficRouteSegment segment{{makeSpline(nextId++, 0, 0, y), 0, 0}};
+        segment.spline.placement.localX = x;
+        segment.spline.placement.elevation = 0.0;
+        segment.spline.placement.rotationDegrees = heading;
+        segment.spline.placement.length = length;
+        return segment;
+    };
+    const auto routeOf = [](std::vector<MapTrafficRouteSegment> segments,
+                            const std::vector<double>& lengths) {
+        MapTrafficRoute route;
+        route.segments = std::move(segments);
+        for (const double length : lengths) {
+            route.totalLength += length;
+            route.cumulativeEndDistances.push_back(route.totalLength);
+        }
+        return route;
+    };
+    MapTrafficRouteSegment straightJunction;
+    straightJunction.points = {{1.75, -6.0, 0.0}, {1.75, 6.0, 0.0}};
+    const MapTrafficRoute straightRoute =
+        routeOf({spline(1.75, -60.0, 0.0, 54.0), straightJunction, spline(1.75, 6.0, 0.0, 54.0)},
+                {54.0, 12.0, 54.0});
+    MapTrafficRouteSegment turnJunction;
+    constexpr double turnRadius = 7.75;
+    for (int step = 0; step <= 12; ++step) {
+        const double angle = std::numbers::pi * (1.0 + 0.5 * step / 12.0);
+        turnJunction.points.push_back(
+            {6.0 + turnRadius * std::cos(angle), 6.0 + turnRadius * std::sin(angle), 0.0});
+    }
+    const MapTrafficRoute turnRoute =
+        routeOf({spline(-1.75, 60.0, 180.0, 54.0), turnJunction, spline(6.0, -1.75, 90.0, 54.0)},
+                {54.0, turnRadius * std::numbers::pi * 0.5, 54.0});
+    for (const auto& [straightStart, turnerStart, turnerSpeed] :
+         {std::tuple<double, double, double>{4.0, 51.0, 0.0},
+          {14.0, 51.0, 0.0},
+          {24.0, 51.0, 0.0},
+          {15.0, 35.0, 9.0},
+          {20.0, 38.0, 9.0}}) {
+        MapTrafficActor straight;
+        straight.modelPath = "straight.ovh";
+        straight.route = straightRoute;
+        straight.distanceMeters = straightStart;
+        straight.speedMetersPerSecond = 12.0;
+        straight.cruiseSpeedMetersPerSecond = 12.0;
+        MapTrafficActor turner;
+        turner.modelPath = "turner.ovh";
+        turner.route = turnRoute;
+        turner.distanceMeters = turnerStart;
+        turner.speedMetersPerSecond = turnerSpeed;
+        turner.cruiseSpeedMetersPerSecond = 10.0;
+        double straightEnter = -1.0;
+        double turnerEnter = -1.0;
+        double straightMinimumSpeed = 1.0e9;
+        for (int update = 0; update < 60 * 12; ++update) {
+            advanceMapTrafficDriving({&straight, &turner}, {}, frameSeconds, update * frameSeconds);
+            straightMinimumSpeed = std::min(straightMinimumSpeed, straight.speedMetersPerSecond);
+            if (straightEnter < 0.0 && straight.distanceMeters > 54.0) {
+                straightEnter = update * frameSeconds;
+            }
+            if (turnerEnter < 0.0 && turner.distanceMeters > 54.0) {
+                turnerEnter = update * frameSeconds;
+            }
+        }
+        require(straightMinimumSpeed > 11.9,
+                "straight-through traffic keeps its speed past a car turning across it");
+        require(straightEnter >= 0.0 && turnerEnter > straightEnter,
+                "a turning car waits for oncoming straight-through traffic before turning");
+    }
+
+    MapTrafficRouteSegment rightTurnJunction;
+    for (int step = 0; step <= 12; ++step) {
+        const double angle =
+            std::numbers::pi - std::numbers::pi * 0.5 * static_cast<double>(step) / 12.0;
+        rightTurnJunction.points.push_back(
+            {9.5 + turnRadius * std::cos(angle), 6.0 + turnRadius * std::sin(angle), 0.0});
+    }
+    const MapTrafficRoute rightTurnRoute =
+        routeOf({spline(1.75, -60.0, 0.0, 66.0), rightTurnJunction, spline(9.5, 13.75, 90.0, 60.0)},
+                {66.0, turnRadius * std::numbers::pi * 0.5, 60.0});
+    MapTrafficRouteSegment crossingJunction;
+    crossingJunction.points = {{-6.0, 10.0, 0.0}, {6.0, 10.0, 0.0}};
+    const MapTrafficRoute crossingRoute =
+        routeOf({spline(-60.0, 10.0, 90.0, 54.0), crossingJunction, spline(6.0, 10.0, 90.0, 60.0)},
+                {54.0, 12.0, 60.0});
+    MapTrafficActor rightTurner;
+    rightTurner.modelPath = "right-turn.ovh";
+    rightTurner.route = rightTurnRoute;
+    rightTurner.distanceMeters = 55.0;
+    rightTurner.speedMetersPerSecond = 10.0;
+    rightTurner.cruiseSpeedMetersPerSecond = 10.0;
+    MapTrafficActor crossing;
+    crossing.modelPath = "crossing.ovh";
+    crossing.route = crossingRoute;
+    crossing.distanceMeters = 60.0;
+    crossing.speedMetersPerSecond = 8.0;
+    crossing.cruiseSpeedMetersPerSecond = 8.0;
+    double minimumRightTurnSpeed = std::numeric_limits<double>::infinity();
+    bool yieldedToPassingTraffic = false;
+    double maximumTurnerDistanceWhileYielding = 0.0;
+    int yieldStateChanges = 0;
+    bool previousYieldState = false;
+    int crossingClearUpdate = -1;
+    int rightTurnEntryUpdate = -1;
+    int rightTurnExitUpdate = -1;
+    double recoveredRightTurnSpeed = 0.0;
+    const double rightTurnStopLine = 66.0 - rightTurner.lengthMeters * 0.5 - 0.5;
+    constexpr double crossingConflictClearDistance = 68.0;
+    constexpr double rightTurnEnd = 66.0 + turnRadius * std::numbers::pi * 0.5;
+    for (int update = 0; update < 60 * 20; ++update) {
+        advanceMapTrafficDriving({&rightTurner, &crossing}, {}, frameSeconds,
+                                 update * frameSeconds);
+        if (rightTurner.blockReason == MapTrafficBlockReason::JunctionTraffic) {
+            yieldedToPassingTraffic = true;
+        }
+        const bool currentlyYielding =
+            rightTurner.blockReason == MapTrafficBlockReason::JunctionTraffic;
+        if (currentlyYielding) {
+            maximumTurnerDistanceWhileYielding =
+                std::max(maximumTurnerDistanceWhileYielding, rightTurner.distanceMeters);
+        }
+        if (currentlyYielding != previousYieldState) {
+            ++yieldStateChanges;
+        }
+        previousYieldState = currentlyYielding;
+        if (rightTurnEntryUpdate < 0 && rightTurner.distanceMeters >= 66.0) {
+            rightTurnEntryUpdate = update;
+        }
+        if (rightTurner.distanceMeters >= 66.0 && rightTurner.distanceMeters <= rightTurnEnd) {
+            minimumRightTurnSpeed =
+                std::min(minimumRightTurnSpeed, rightTurner.speedMetersPerSecond);
+        }
+        if (crossingClearUpdate < 0 && crossing.distanceMeters > crossingConflictClearDistance) {
+            crossingClearUpdate = update;
+        }
+        if (rightTurnExitUpdate < 0 && rightTurner.distanceMeters > rightTurnEnd) {
+            rightTurnExitUpdate = update;
+        } else if (rightTurnExitUpdate >= 0 && update == rightTurnExitUpdate + 180) {
+            recoveredRightTurnSpeed = rightTurner.speedMetersPerSecond;
+            break;
+        }
+    }
+    require(yieldedToPassingTraffic && crossingClearUpdate >= 0,
+            "a right turn yields to a passing vehicle and proceeds after it clears");
+    require(maximumTurnerDistanceWhileYielding <= rightTurnStopLine - 3.5 &&
+                rightTurnEntryUpdate > crossingClearUpdate,
+            "a yielding right turn stays clear of the crossing path until passing traffic clears");
+    require(yieldStateChanges <= 2,
+            "a yielding vehicle does not repeatedly toggle between blocked and moving");
+    require(minimumRightTurnSpeed > 3.5,
+            "a right turn does not crawl through the junction after yielding");
+    require(rightTurnExitUpdate >= 0 && recoveredRightTurnSpeed > 9.4,
+            "a right-turning vehicle accelerates back to cruise speed after the junction clears");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2745,6 +3099,7 @@ int main(int argc, char** argv) {
         verifyDrivingBehavior();
         verifyTrafficRules();
         verifyMalformedRouteErrors();
+        verifyRealisticTrafficBehavior();
         const auto spawnPopulation = [](const MapTrafficRouteNetwork& routeNetwork,
                                         const std::vector<int>& splineIds,
                                         const std::string& modelPath, double speedMetersPerSecond,

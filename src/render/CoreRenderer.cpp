@@ -203,18 +203,30 @@ out vec3 vNormal;
 out vec3 vViewPosition;
 void main() {
     vec3 position = aPosition;
-    if (uHumanGaitEnabled && uHumanGaitWeight > 0.0 && uHumanGaitHeight > 0.0) {
+    if (uHumanGaitEnabled && uHumanGaitHeight > 0.0) {
         const float pi = 3.14159265;
         float heightFraction = clamp(position.z / uHumanGaitHeight, 0.0, 1.0);
         float side = position.x < 0.0 ? -1.0 : 1.0;
         float lateralWeight = smoothstep(0.025, 0.09, abs(position.x));
         float legWeight = (1.0 - smoothstep(0.36, 0.58, heightFraction)) * lateralWeight;
-        float armWeight = smoothstep(0.56, 0.76, heightFraction) * lateralWeight;
+        float armWeight = smoothstep(0.62, 0.70, heightFraction) *
+                          (1.0 - smoothstep(0.88, 0.96, heightFraction)) *
+                          smoothstep(0.045, 0.11, abs(position.x));
         float sidePhase = uHumanGaitPhase + (side < 0.0 ? pi : 0.0);
         float legSwing = sin(sidePhase) * uHumanGaitWeight;
         position.y += legSwing * 0.12 * legWeight;
         position.z += max(0.0, cos(sidePhase)) * 0.045 * legWeight * uHumanGaitWeight;
-        position.y -= legSwing * 0.075 * armWeight;
+        float armAngle = (0.68 + sin(sidePhase) * 0.12 * uHumanGaitWeight) * armWeight;
+        float shoulderX = side * uHumanGaitHeight * 0.105;
+        float shoulderZ = uHumanGaitHeight * 0.76;
+        vec2 armOffset = vec2(position.x - shoulderX, position.z - shoulderZ);
+        float armCos = cos(side * armAngle);
+        float armSin = sin(side * armAngle);
+        vec2 loweredArm = vec2(armCos * armOffset.x + armSin * armOffset.y,
+                               -armSin * armOffset.x + armCos * armOffset.y);
+        position.x = mix(position.x, shoulderX + loweredArm.x, armWeight);
+        position.z = mix(position.z, shoulderZ + loweredArm.y, armWeight);
+        position.y -= sin(sidePhase) * 0.035 * armWeight * uHumanGaitWeight;
         position.z += 0.018 * (0.5 - 0.5 * cos(2.0 * uHumanGaitPhase)) *
                       smoothstep(0.08, 0.28, heightFraction) * uHumanGaitWeight;
     }
@@ -1114,8 +1126,7 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
     uploadMatrices(modelUniforms);
     uploadModelUniforms(material, color, alpha, alphaMode);
     pglUniform1i(modelUniforms.cullBackFaces, cullBackFaces && !modelViewReversesWinding() ? 1 : 0);
-    const bool animateHuman =
-        humanGait.has_value() && humanGait->weight > 0.0 && humanGait->heightMeters > 0.0;
+    const bool animateHuman = humanGait.has_value() && humanGait->heightMeters > 0.0;
     pglUniform1i(modelUniforms.humanGaitEnabled, animateHuman ? 1 : 0);
     if (animateHuman) {
         pglUniform1f(modelUniforms.humanGaitPhase, static_cast<GLfloat>(humanGait->phaseRadians));

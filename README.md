@@ -76,12 +76,16 @@ are excluded from this pool and spawned separately as scheduled AI buses using
 bus-type configurations and timetable routes. Other groups and legacy
 vehicle-list formats are not supported by this runtime. `OPENBUS_MAP_AI_COUNT` sets the
 density-scaled road-vehicle base population (default `200`, maximum `200`).
+Trucks are permitted on road paths by default unless the map's path rules
+explicitly prohibit them; configured group and path density rules still apply.
 `OPENBUS_MAP_AI_HOUR` sets the starting hour (default `12`); the in-game traffic
 clock advances from it using elapsed simulation time and wraps at midnight.
 Road and pedestrian populations follow their map density schedules as the
 clock advances. A pool sized for each schedule's maximum is queued at
 startup; vehicle instances are constructed and their scripts loaded on asset
 workers, while model mesh parsing is deferred to asynchronous requests.
+Active vehicle meshes use the per-frame upload budget in order of distance to
+the player, so nearby traffic is prioritized over farther vehicles.
 `OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER` scales the map's scheduled density
 factor for road vehicles, buses, and pedestrians (default `1.0`, maximum
 `100.0`; each population remains capped at `200`). Thus a multiplier of `10`
@@ -107,12 +111,18 @@ before endpoint admission, including midnight rollover, while retaining the
 off-screen and clearance checks. When multiple pooled buses serve a route, its
 departure list is partitioned so each bus gets a disjoint subset of departure
 times.
+Pedestrian model choices come from the map's `humans.txt`; `drivers.txt` is
+reserved for AI driver models and is not used as a pedestrian roster.
 Pedestrians follow the authored human-path offsets and heights, render the
 configured `.hum` model meshes and textures, and wait at scheduled pedestrian
 crossing paths while their assigned signal phase is not green (states 6-8).
-Skeletal walking animation and `[links]` behavior are not implemented. Active
-pedestrian traffic actors also occupy collision footprints, so road AI
-stops/yields rather than sweeping through them. Pedestrians likewise pause
+Procedural gait animation, including lowering outstretched arms, is applied to
+loaded pedestrian meshes; full skeletal skinning and `[links]` behavior are
+not implemented. OMSI `[setbone]` records,
+including signed pedestrian bone indices, are accepted without applying
+skeletal transforms. Active pedestrian traffic actors also occupy collision
+footprints, so road AI stops/yields rather than sweeping through them.
+Pedestrians likewise pause
 before occupied vehicle footprints and resume when clear; this is kinematic
 avoidance, not physical collision response.
 Vehicles follow the authored lane offsets, heights, and travel directions shown
@@ -123,21 +133,37 @@ among compatible straight, left, and right movements. Turns tighter than the
 vehicle's minimum turning radius are rejected; authored radius data is used
 when present, otherwise a conservative class/wheelbase estimate is used.
 Genuine loops continue forward without reversing. Conflicting junction paths
-use swept-footprint reservations; authored path/group priority takes precedence,
-with wait age breaking ties among equal priorities. Synthetic regressions verify
-that a waiting lower-priority movement yields to an approaching higher-priority
-vehicle, crossing movements remain clear, and both make progress. Complete
+use swept-footprint reservations; authored path/group priority takes precedence.
+Among equal priorities, movements under 45° are treated as straight-like,
+45–100° bends go next, and sharper turns go last. Faster approaches (under
+3 m/s, under 8 m/s, or more, based on cruise speed so braking does not reverse
+the ranking) go before slower ones, and only then does the earlier junction
+arrival win; yielding vehicles leave an additional 2 m before conflict points.
+Right turns yielding to straight-through traffic stop 4 m before the junction
+entry when needed, keeping the waiting vehicle clear of the crossing path so
+through traffic can pass instead of deadlocking against it. Synthetic
+regressions verify that a waiting lower-priority movement yields to an
+approaching higher-priority vehicle, crossing movements remain clear, and both
+make progress. Complete
 native OMSI right-of-way behavior remains unverified.
 
 Traffic accelerates at up to 1.6 m/s^2 and normally brakes at up to 3 m/s^2.
-Lookahead reduces speed before bends using a 1.8 m/s^2 lateral-acceleration
-limit. A 1.5-second following-headway target and a 2 m standstill buffer respond
-to vehicles ahead, including the player bus. Oriented vehicle footprints and
+Lookahead reduces speed before bends only when the current speed would exceed
+the curve's safe speed, estimated with a 4.0 m/s^2 lateral-acceleration limit.
+A speed-dependent following headway (0.5 s at walking pace rising to
+1.5 s at 13 m/s) plus a 2 m standstill buffer respond to vehicles ahead,
+including the player bus, so slow and stopped queues close up to about 2–3 m
+while faster traffic keeps a longer gap. Oriented vehicle footprints and
 small swept movement steps prevent AI from advancing through occupied space;
 an emergency stop can exceed comfortable braking when a blockage appears too
-close. Moving vehicles in the same lane are followed with a damped gap model
-instead of being treated as parked obstacles, so a queue keeps flowing through a
-junction behind a moving leader. Before entering a junction, a vehicle claims it
+close. A vehicle can continue when its next swept step increases separation
+from an external obstacle, so a pedestrian close behind does not hold it in
+place while it moves away. Once a vehicle is committed to a junction, the
+swept collision margin is reduced while still preventing physical footprint
+overlap, allowing close but clear turning paths to proceed. Vehicles in the
+same lane, moving or stopped, are followed with a damped
+gap model instead of being treated as parked obstacles, so a queue keeps flowing
+through a junction behind a moving leader and creeps up behind a stopped one. Before entering a junction, a vehicle claims it
 and waits at the entry line while any vehicle inside or already admitted would
 cross or merge into its path, so two approaches never lock each other inside
 the box. A vehicle approaching on a lower-priority spline gives way at its
@@ -146,8 +172,11 @@ junction movement and would arrive within the same conflict window (plus a
 0.75-second safety margin accounting for vehicle occupancy); traffic that has
 already cleared before the turn arrives does not hold it back;
 higher-priority vehicles do not wait for such a vehicle's unused claim. Waiting
-time only orders vehicles of equal priority. Crossing movements use
-time-aware three-second lookahead reservations; road-sign right-of-way rules
+time orders junction admission among vehicles of equal priority. If a collision
+cycle nevertheless traps two vehicles inside a junction, the lower-priority
+vehicle backs out to the approach when its swept path is clear, then waits for
+the other vehicle to exit. Crossing movements use time-aware three-second
+lookahead reservations; road-sign right-of-way rules
 beyond authored spline priority are not yet modeled.
 Queues, actual endpoint spawns, junction entry speeds, off-screen population
 unloads, route-end recycling, and lane-network statistics are logged.
@@ -182,9 +211,13 @@ cross-tile chains are not complete. `[attachObj]` children resolve their parent
 placement IDs across map tiles and use the indexed `[new_attachment]` point from
 the parent SCO/model config, including the authored anchor and child rotations.
 Missing parents/anchors and attachment cycles are skipped with diagnostics.
-`[varparent]` editor object numbers are retained separately from map placement
-IDs and checked against tile `Object Nr.` labels. Their scenery-script variable
-inheritance effect is not evaluated, and they are not spatial attachment links.
+`[varparent]` references are resolved against map placement IDs. Traffic-light
+models marked `[trafficlight]` inherit the signal phase schedule from their
+referenced parent so their scripts can drive the visible lamps. When a parent
+defines multiple signal groups, the numeric placement label selects the
+matching group; uncovered time at the end of a group's cycle is phase `12`
+(off). Other scenery-script variable inheritance is not evaluated, and
+`[varparent]` is not a spatial attachment link.
 `[spline_terrain_align]` currently tilts marked scenery so its local up axis
 follows the sampled terrain normal, without changing its position. OMSI's exact
 semantics for this marker have not been independently verified, so this is a
@@ -590,6 +623,9 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   scenery path endpoint within 0.5 m horizontally and vertically. Matching
   endpoints are joined in the overlay with a short colored connector when a
   visible gap remains; this does not change AI route connectivity.
+  The status overlay also reports active traffic-light models (`TL`), the
+  controller-driven subset (`C`), and counts by current `trafficlightphase`
+  value (`PH`); `?:N` marks models whose phase is unavailable.
 - Map-driven road vehicles use deterministic starts on authored road routes
   containing at least two linked splines. AI buses are further restricted to
   linked spline chains present in timetable trips with station data. Vehicles

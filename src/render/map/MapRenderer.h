@@ -31,6 +31,13 @@ struct MapRenderStats {
     std::size_t totalRoadBatches = 0;
 };
 
+struct TrafficSignalDebugStats {
+    std::size_t activeSignalModels = 0;
+    std::size_t controllerDrivenModels = 0;
+    std::size_t modelsWithoutPhase = 0;
+    std::array<std::size_t, 13> modelsByPhase = {};
+};
+
 struct TrafficPathDebugSegment {
     std::vector<std::array<double, 3>> points;
     double pathTypeCode = 0.0;
@@ -53,6 +60,7 @@ class MapRenderer {
     void updateStreaming(double worldX, double worldY);
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;
     MapRenderStats renderStats() const;
+    TrafficSignalDebugStats trafficSignalDebugStats() const;
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId) const;
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId,
                                                                    int pathTypeCode) const;

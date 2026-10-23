@@ -51,8 +51,6 @@ mapTrafficSignalPhaseAtTime(double cycleDurationSeconds,
     const double durationTolerance = std::max(1.0, cycleDurationSeconds) * 1.0e-9;
     const bool finalPhaseExtendsToCycle = phases.back().durationSeconds == 0.0;
     if (configuredDuration > cycleDurationSeconds + durationTolerance ||
-        (!finalPhaseExtendsToCycle &&
-         std::abs(configuredDuration - cycleDurationSeconds) > durationTolerance) ||
         (finalPhaseExtendsToCycle &&
          configuredDuration >= cycleDurationSeconds - durationTolerance)) {
         return std::nullopt;
@@ -71,7 +69,7 @@ mapTrafficSignalPhaseAtTime(double cycleDurationSeconds,
         }
         phaseStart = phaseEnd;
     }
-    return std::nullopt;
+    return 12;
 }
 
 inline bool mapTrafficSignalProgramValid(const MapTrafficSignalProgram& program) {

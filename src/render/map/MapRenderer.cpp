@@ -6,6 +6,8 @@
 #include "render/AssetRequestManager.h"
 #include "config/HumanConfigLoader.h"
 
+#include <cmath>
+
 namespace openbus::rendering {
 
 MapRenderer::Impl::~Impl() {
@@ -173,6 +175,29 @@ MapRenderStats MapRenderer::renderStats() const {
     return impl_->renderStats;
 }
 
+TrafficSignalDebugStats MapRenderer::trafficSignalDebugStats() const {
+    TrafficSignalDebugStats stats;
+    for (const std::size_t stateIndex : impl_->activeSceneryScriptStateIndices) {
+        const Impl::SceneryScriptState& scriptState = *impl_->sceneryScriptStates[stateIndex];
+        if (!scriptState.trafficSignal.has_value()) {
+            continue;
+        }
+        ++stats.activeSignalModels;
+        stats.controllerDrivenModels +=
+            scriptState.trafficSignal->hasConditionalOverrides ? 1U : 0U;
+        const auto phase =
+            scriptState.variables.numericValues().find("trafficlightphase");
+        if (phase == scriptState.variables.numericValues().end() || !std::isfinite(phase->second) ||
+            phase->second < 0.0F || phase->second > 12.0F ||
+            std::floor(phase->second) != phase->second) {
+            ++stats.modelsWithoutPhase;
+            continue;
+        }
+        ++stats.modelsByPhase[static_cast<std::size_t>(phase->second)];
+    }
+    return stats;
+}
+
 std::optional<openbus::map::MapTrafficRoute> MapRenderer::buildTrafficRoute(int splineId) const {
     return impl_->trafficRouteNetwork.buildRoute(splineId);
 }
@@ -311,8 +336,17 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
         ModelConfig configuration = loadModelConfig(modelConfigPath, modelConfigPath.parent_path(),
                                                     ModelConfigKind::SceneryObject, variables);
         if (configuration.diagnostics.hasErrors()) {
+            std::string diagnosticDetails;
+            for (const ConfigurationDiagnostic& diagnostic :
+                 configuration.diagnostics.entries) {
+                if (diagnostic.severity != ConfigurationDiagnostic::Severity::Error) {
+                    continue;
+                }
+                diagnosticDetails += " line=" + std::to_string(diagnostic.line) + " [" +
+                                     diagnostic.keyword + "] " + diagnostic.message;
+            }
             throw std::runtime_error("Human traffic model configuration is invalid: " +
-                                     modelConfigPath.string());
+                                     modelConfigPath.string() + diagnosticDetails);
         }
         const bool hasFirstLodMesh = std::any_of(
             configuration.parts.begin(), configuration.parts.end(),

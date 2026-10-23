@@ -132,7 +132,9 @@ struct MapAiTrafficData {
     std::vector<MapAiBusTypeDefinition> busTypes;
     std::vector<MapAiDepotDefinition> depots;
     std::vector<MapAiTimetableRoute> timetableRoutes;
+    // Human models come from humans.txt; driver models are for AI buses.
     // These paths are relative to the OMSI installation root.
+    std::vector<std::string> humanModelPaths;
     std::vector<std::string> driverModelPaths;
 };
 

@@ -124,6 +124,10 @@ void runFixtureProbe() {
                 writeUtf16Le(root / "drivers.txt",
                              "humans\\drivers\\driver_one.hum\n"
                              "humans\\custom map\\driver_two.hum\n");
+                writeUtf16Le(root / "humans.txt",
+                             "humans\\pedestrians\\walker_one.hum\n"
+                             "; ignored comment\n"
+                             "humans\\pedestrians\\walker_two.hum\n");
                 const std::filesystem::path timetableDirectory = root / "TTData";
                 std::filesystem::create_directories(timetableDirectory);
                 writeUtf16Le(timetableDirectory / "FixtureTrip.ttp",
@@ -390,6 +394,10 @@ void runFixtureProbe() {
                         std::vector<std::string>{"humans\\drivers\\driver_one.hum",
                                                  "humans\\custom map\\driver_two.hum"},
                 "depot/HOF association, bus models, raw assignments, and drivers are parsed");
+        require(definition.aiTraffic.humanModelPaths ==
+                    std::vector<std::string>{"humans\\pedestrians\\walker_one.hum",
+                                             "humans\\pedestrians\\walker_two.hum"},
+                "humans.txt pedestrian models are parsed separately from drivers.txt");
         require(definition.diagnostics.entries.size() == 2 &&
                 definition.diagnostics.entries[0].keyword == "unknown_global" &&
                 definition.diagnostics.entries[0].line > 0 &&

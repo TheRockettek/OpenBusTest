@@ -36,6 +36,11 @@ class MapSceneLoader {
         bool transformValid = false;
         bool splineTerrainAlign = false;
     };
+    enum class MapObjectRecordKind {
+        Scenery,
+        Attached,
+        SplineAttachment,
+    };
     struct ResolvedSceneryPlacement {
         std::string assetPath;
         openbus::map::MapSceneryPose pose;
@@ -46,6 +51,7 @@ class MapSceneLoader {
     void loadTerrainTiles();
     void indexMapContent();
     void buildTileContent();
+    void resolveTrafficLightVariableParents();
     void uploadRoadBatches();
 
     GLuint getTexture(const std::filesystem::path& path, bool repeat = true);
@@ -79,6 +85,10 @@ class MapSceneLoader {
     std::unordered_map<std::string, std::size_t> sceneryLodThresholdSetByAsset;
     std::unordered_map<std::string, std::vector<ModelAttachmentPoint>> sceneryAttachmentPoints;
     std::unordered_map<std::string, std::vector<SceneryObjectTrafficPath>> sceneryTrafficPaths;
+    std::unordered_map<
+        std::string,
+        std::vector<std::optional<openbus::map::MapTrafficSignalSchedule>>>
+        sceneryTrafficLightSchedules;
     std::unordered_map<std::string, VehicleConfig> sceneryScriptConfigurations;
     std::unordered_map<std::string, std::vector<ModelScriptTexture>> sceneryModelScriptTextures;
     std::unordered_map<std::string, std::vector<ModelTextTexture>> sceneryModelTextTextures;
@@ -88,6 +98,7 @@ class MapSceneLoader {
     std::unordered_map<std::string, std::shared_ptr<Impl::SceneryRuntimeDefinition>>
         sceneryRuntimeDefinitions;
     std::unordered_set<std::string> sceneryAssetsNeedingVariables;
+    std::unordered_set<std::string> sceneryTrafficLightAssets;
     std::unordered_set<std::string> editorOnlySceneryAssets;
     std::unordered_set<std::string> absoluteHeightSceneryAssets;
     bool verboseAlphaMaterials = false;
@@ -106,9 +117,10 @@ class MapSceneLoader {
     std::unordered_map<int, IndexedSceneryObject> sceneryObjectsById;
     std::unordered_map<int, IndexedAttachedObject> attachedObjectsById;
     std::unordered_map<int, std::size_t> splineAttachmentTileById;
+    std::unordered_map<int, MapObjectRecordKind> mapObjectRecordKindsById;
+    std::unordered_set<int> ambiguousMapObjectIds;
     std::unordered_map<int, openbus::map::MapSplinePlacementReference> mapSplinesById;
     std::unordered_set<int> ambiguousMapSplineIds;
-    std::unordered_map<std::uint64_t, std::unordered_set<int>> editorObjectNumbersByTile;
     openbus::map::MapRoadConnectionIndex roadConnections;
     openbus::map::MapSplineChainResolver mapSplineResolver;
     std::unordered_map<int, ResolvedSceneryPlacement> resolvedPlacements;

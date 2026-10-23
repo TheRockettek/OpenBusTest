@@ -964,11 +964,13 @@ int main() {
                 }
             }
         }
+        const std::vector<std::string>& configuredHumanModelPaths =
+            mapDefinition.aiTraffic.humanModelPaths;
         if (mapHumanBaseCount == 0) {
             applicationLog.Log("Map human traffic is disabled by OPENBUS_MAP_HUMAN_COUNT=0.");
-        } else if (mapDefinition.aiTraffic.driverModelPaths.empty()) {
+        } else if (configuredHumanModelPaths.empty()) {
             applicationLog.Log(
-                "Map human traffic not spawned: drivers.txt contains no .hum model paths.");
+                "Map human traffic not spawned: humans.txt contains no .hum model paths.");
         } else {
             const std::optional<double> configuredDensity = openbus::map::mapTrafficDensityAtHour(
                 mapDefinition.aiTraffic.passengerDensity, mapAiStartHour);
@@ -987,7 +989,7 @@ int main() {
                 double heightMeters = 0.0;
             };
             std::vector<HumanModel> humanModels;
-            for (const std::string& configuredPath : mapDefinition.aiTraffic.driverModelPaths) {
+            for (const std::string& configuredPath : configuredHumanModelPaths) {
                 std::string normalizedPath = configuredPath;
                 std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
                 const std::filesystem::path humanConfigPath =
@@ -1069,6 +1071,7 @@ int main() {
                     ", density=" + std::to_string(configuredDensity.value_or(1.0) *
                                                   mapTrafficDensityMultiplier) +
                     ", human paths=" + std::to_string(humanSplineIds.size()) +
+                    ", model roster=humans.txt" +
                     ". Model meshes parse asynchronously; graphics upload occurs on the render "
                     "thread.");
             }

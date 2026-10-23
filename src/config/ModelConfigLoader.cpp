@@ -593,16 +593,17 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
-        // [setbone]: bone name followed by its non-negative O3D bone index.
+        // OMSI pedestrian models may use negative bone indices. Skinning is not
+        // implemented, but these records do not invalidate an otherwise drawable mesh.
         if (keyword == "setbone") {
             ModelPart* current = requirePart();
             std::vector<std::string> values;
             if (current != nullptr &&
                 readValues(reader, line.number, keyword, 2, values, result.diagnostics)) {
                 int boneIndex = -1;
-                if (trim(values[0]).empty() || !parseInt(values[1], boneIndex) || boneIndex < 0) {
+                if (trim(values[0]).empty() || !parseInt(values[1], boneIndex)) {
                     result.diagnostics.error(line.number, keyword,
-                                             "expected a bone name and non-negative bone index");
+                                             "expected a bone name and integer bone index");
                 } else {
                     openbus::config::logUnhandledConfigurationTag(
                         "model.cfg", configPath, line.number, line.keyword(),

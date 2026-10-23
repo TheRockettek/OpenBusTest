@@ -647,6 +647,16 @@ void parseDriverListFile(const std::filesystem::path& path, MapAiTrafficData& ai
     }
 }
 
+void parseHumanListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraffic) {
+    const std::vector<std::string> lines = splitLines(decodeText(path));
+    for (const std::string& sourceLine : lines) {
+        const std::string line = trim(sourceLine);
+        if (!isIgnoredAiListLine(line) && hasExtension(line, ".hum")) {
+            aiTraffic.humanModelPaths.push_back(line);
+        }
+    }
+}
+
 std::uint32_t readU32(const std::vector<unsigned char>& bytes, std::size_t offset) {
     return static_cast<std::uint32_t>(bytes[offset]) |
            (static_cast<std::uint32_t>(bytes[offset + 1]) << 8U) |
@@ -1032,6 +1042,10 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     const std::filesystem::path driverListPath = mapDirectory / "drivers.txt";
     if (std::filesystem::is_regular_file(driverListPath)) {
         parseDriverListFile(driverListPath, definition.aiTraffic);
+    }
+    const std::filesystem::path humanListPath = mapDirectory / "humans.txt";
+    if (std::filesystem::is_regular_file(humanListPath)) {
+        parseHumanListFile(humanListPath, definition.aiTraffic);
     }
     return definition;
 }

@@ -4,6 +4,7 @@
 #include "map/MapSplineProfile.h"
 #include "render/WeatherEffects.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <numbers>
@@ -973,6 +974,32 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         const auto modelLoadDeadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(4);
         const auto drawVehicles = [&](VehicleRenderPass renderPass, bool playerVehicles) {
+            if (renderPass == VehicleRenderPass::Opaque) {
+                std::vector<std::pair<double, Vehicle*>> loadOrder;
+                loadOrder.reserve(vehicles_.size());
+                for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+                    if (vehicle->mapTrafficRouteFinished ||
+                        (vehicle->followsMapTrafficRoute && !vehicle->mapTrafficTileActive) ||
+                        (vehicle.get() == playerVehicle_) != playerVehicles) {
+                        continue;
+                    }
+                    const VehiclePlacement& placement = vehicle->placement;
+                    const double dx = placement.position[0] - chassis.position[0];
+                    const double dy = placement.position[1] - chassis.position[1];
+                    const double dz = placement.position[2] - chassis.position[2];
+                    loadOrder.emplace_back(dx * dx + dy * dy + dz * dz, vehicle.get());
+                }
+                std::sort(loadOrder.begin(), loadOrder.end(),
+                          [](const auto& left, const auto& right) {
+                              return left.first < right.first;
+                          });
+                for (const auto& [distanceSquared, vehicle] : loadOrder) {
+                    const RenderViewContext vehicleContext =
+                        vehicle == playerVehicle_ ? context : RenderViewContext::NonPlayer;
+                    vehicle->ensureLoaded(vehicleContext, std::sqrt(distanceSquared),
+                                          modelLoadDeadline);
+                }
+            }
             for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
                 if (vehicle->mapTrafficRouteFinished ||
                     (vehicle->followsMapTrafficRoute && !vehicle->mapTrafficTileActive) ||
@@ -982,13 +1009,6 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 const RenderViewContext vehicleContext =
                     vehicle.get() == playerVehicle_ ? context : RenderViewContext::NonPlayer;
                 VehiclePlacement placedVehicle = vehicle->placement;
-                const double dx = placedVehicle.position[0] - chassis.position[0];
-                const double dy = placedVehicle.position[1] - chassis.position[1];
-                const double dz = placedVehicle.position[2] - chassis.position[2];
-                if (renderPass == VehicleRenderPass::Opaque) {
-                    vehicle->ensureLoaded(vehicleContext, std::sqrt(dx * dx + dy * dy + dz * dz),
-                                          modelLoadDeadline);
-                }
                 if (!vehicle->loaded || vehicle->displayLists.empty()) {
                     continue;
                 }
@@ -1591,6 +1611,32 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                << std::fixed << std::setprecision(0)
                                << hottestBlock->actor.speedMetersPerSecond * 3.6 << "KMH T"
                                << hottestBlock->actor.targetSpeedMetersPerSecond * 3.6 << "KMH";
+                }
+            }
+            if (trafficSplineDebugOverlay_ && mapRenderer_ != nullptr) {
+                const openbus::rendering::TrafficSignalDebugStats signalStats =
+                    mapRenderer_->trafficSignalDebugStats();
+                statusText << '\n'
+                           << "TL " << signalStats.activeSignalModels << " C"
+                           << signalStats.controllerDrivenModels << " PH";
+                std::size_t shownPhases = 0;
+                std::size_t additionalPhases = 0;
+                for (std::size_t phase = 0; phase < signalStats.modelsByPhase.size(); ++phase) {
+                    if (signalStats.modelsByPhase[phase] == 0) {
+                        continue;
+                    }
+                    if (shownPhases == 6) {
+                        ++additionalPhases;
+                        continue;
+                    }
+                    statusText << ' ' << phase << ':' << signalStats.modelsByPhase[phase];
+                    ++shownPhases;
+                }
+                if (additionalPhases > 0) {
+                    statusText << " +";
+                }
+                if (signalStats.modelsWithoutPhase > 0) {
+                    statusText << " ?:" << signalStats.modelsWithoutPhase;
                 }
             }
             const std::string currentStatus = statusText.str();

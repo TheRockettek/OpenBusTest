@@ -374,7 +374,9 @@ for alignment is not mistaken for supporting it.
   `[constfile]` resources now feed per-placement `init`/`frame` runtimes, and
   scenery `[visible]` controllers are checked during map drawing. Script-driven
   animations, dynamic materials/textures, mouse-event dispatch, sound callbacks,
-  and `[varparent]` state inheritance remain incomplete.
+  and general `[varparent]` state inheritance remain incomplete. `[varparent]`
+  is used to associate `[trafficlight]` signal heads with a parent controller's
+  phase schedule; this does not provide general scenery-variable inheritance.
 - [ ] Complete passenger-cabin behavior for `[linkToNextVeh]`,
   `[linkToPrevVeh]`, and `[stamper]`; basic `[drivpos]`, `[passpos]`,
   `[entry]`, `[exit]`, and illumination records do not yet provide passenger
@@ -478,9 +480,11 @@ for the explicit boundary.
   `[variable_terrain]` and `[variable_terrainlightmap]` marker presence is
   parsed and reported, but dynamic terrain/lightmap rendering is unsupported.
   `[varparent]` editor ordinals are retained separately from placement IDs and
-  checked against tile `Object Nr.` labels; scenery-script variable inheritance
-  remains unsupported. Four raw fields from `[rule]`/`[kill_rule]` remain
-  unapplied. `[spline_terrain_align]` provisionally tilts marked ordinary,
+  checked against tile `Object Nr.` labels; only the traffic-signal parent
+  association is consumed at runtime. `[rule]`/`[kill_rule]` apply the supported
+  group-specific speed, density, priority, and vehicle-access fields; their
+  remaining native semantics are not implemented. `[spline_terrain_align]`
+  provisionally tilts marked ordinary,
   attached, and spline-row scenery to the sampled terrain normal without
   changing placement height; OMSI parity is not yet verified.
   `[spline_terrain_align_2]` spline data remains preserved but unsupported.
@@ -578,10 +582,13 @@ for the explicit boundary.
 - [~] Match timetable bus paths against complete ordered spline sequences in
   either direction of containment and try up to 16 feasible route seeds per
   endpoint using each bus model's minimum turning radius. Only routes with
-  parsed departures are eligible for scheduled dispatch. Cotterell still has
-  no eligible timetable endpoint: 476 feasible endpoint routes were checked,
-  130 distinct spline IDs overlapped, but the longest ordered contiguous
-  match was only 16 spline IDs. The latest diagnostic identifies the best
+  parsed departures are eligible for scheduled dispatch. Constrained route
+  searches now reject a dead-end route that fails to complete the required
+  timetable sequence instead of treating a two-spline partial route as success.
+  Cotterell still has no eligible timetable endpoint: the last captured
+  pre-fix diagnostic checked 476 feasible endpoint routes, found 130 distinct
+  overlapping spline IDs, and a longest ordered contiguous match of only 16
+  spline IDs. That diagnostic identified the best
   partial candidate as U28 to University (112 timetable splines versus a
   42-spline route from endpoint spline 129, lane 1, seed 5) and logs its
   contiguous shared spline IDs. The first divergence is timetable spline

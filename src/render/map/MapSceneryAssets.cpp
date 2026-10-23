@@ -32,7 +32,11 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
         const SceneryObjectConfig objectConfiguration = loadSceneryObjectFile(configPath);
         sceneryAttachmentPoints[cacheKey] = objectConfiguration.attachmentPoints;
         sceneryTrafficPaths[cacheKey] = objectConfiguration.trafficPaths;
+        sceneryTrafficLightSchedules[cacheKey] = objectConfiguration.trafficLightSchedules;
         sceneryScriptConfigurations[cacheKey] = objectConfiguration.scriptConfiguration;
+        if (objectConfiguration.trafficLight) {
+            sceneryTrafficLightAssets.insert(cacheKey);
+        }
         // Editor-only assets can still contribute path debug geometry.
         if (objectConfiguration.absoluteHeight) {
             absoluteHeightSceneryAssets.insert(cacheKey);

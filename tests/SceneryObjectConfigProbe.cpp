@@ -58,11 +58,18 @@ int main(int argc, char** argv) {
             return 1;
         }
         output << "[mesh]\nmesh.x\n"
+                  "[trafficlight]\n"
                   "[traffic_lights_group]\n10\n"
                   "[traffic_light]\nRoad\n"
                   "[phase]\n0\n3\n"
                   "[phase]\n6\n7\n"
                   "[approachdist]\n5\n"
+                  "[traffic_light]\nCrossing\n"
+                  "[phase]\n3\n5\n"
+                  "[phase]\n9\n5\n"
+                  "[traffic_light]\nUnlinked\n"
+                  "[phase]\n0\n4\n"
+                  "[phase]\n6\n4\n"
                   "[path]\n"
                   "1\n2\n3\n4\n5\n6\n7\n8\n0\n2.5\n0\n0\n"
                   "[use_traffic_light]\n0\n"
@@ -70,11 +77,14 @@ int main(int argc, char** argv) {
                   "[traffic_light_jump]\n0\n1\n2\n3\n"
                   "[path]\n"
                   "-1\n-2\n-3\n-4\n-5\n-6\n-7\n-8\n1\n1\n2\n0\n";
+        output << "[use_traffic_light]\n1\n";
     }
     const SceneryObjectConfig configuration = loadSceneryObjectFile(path);
     openbus::probe::removeProbeDirectory(directory);
 
     bool valid = require(configuration.trafficPaths.size() == 2, "path sections parsed");
+    valid &= require(configuration.trafficLight,
+                     "standalone [trafficlight] model marker is recognized");
     if (configuration.trafficPaths.size() == 2) {
         valid &= require(configuration.trafficPaths[0].startPosition ==
                              std::array<double, 3>{1.0, 2.0, 3.0},
@@ -90,12 +100,19 @@ int main(int argc, char** argv) {
                              configuration.trafficPaths[1].pathTypeCode == 1.0,
                          "path categories preserved");
         const bool hasExpectedSignal =
-            configuration.trafficLights.size() == 1 &&
+            configuration.trafficLights.size() == 3 &&
+            configuration.trafficLightSchedules.size() == 3 &&
+            configuration.trafficLightSchedules[1].has_value() &&
+            configuration.trafficLightSchedules[1]->lightIndex == 1 &&
+            configuration.trafficLightSchedules[2].has_value() &&
+            configuration.trafficLightSchedules[2]->lightIndex == 2 &&
             configuration.trafficPaths[0].trafficLightIndex == 0 &&
             configuration.trafficPaths[0].trafficSignal.has_value() &&
             configuration.trafficPaths[0].trafficSignal->cycleDurationSeconds == 10.0 &&
             configuration.trafficPaths[0].trafficSignal->phases.size() == 2 &&
             configuration.trafficPaths[0].trafficSignal->hasConditionalOverrides &&
+            configuration.trafficPaths[1].trafficSignal.has_value() &&
+            configuration.trafficPaths[1].trafficSignal->lightIndex == 1 &&
             configuration.trafficLights[0].approachDistanceMeters == 5.0;
         valid &= require(
             hasExpectedSignal,
@@ -121,6 +138,16 @@ int main(int argc, char** argv) {
                     openbus::map::mapTrafficSignalStateAtTime(
                         *configuration.trafficPaths[0].trafficSignal, 3.0) == 6,
                 "parsed traffic-light cycle returns the active phase");
+            valid &= require(
+                openbus::map::mapTrafficSignalStateAtTime(
+                    *configuration.trafficLightSchedules[1], 0.0) == 3 &&
+                    openbus::map::mapTrafficSignalStateAtTime(
+                        *configuration.trafficLightSchedules[1], 5.0) == 9,
+                "all traffic-light groups retain independent phase schedules");
+            valid &= require(
+                openbus::map::mapTrafficSignalStateAtTime(
+                    *configuration.trafficLightSchedules[2], 8.0) == 12,
+                "unlinked signal groups preserve their dark end-of-cycle interval");
         }
         valid &= require(configuration.diagnostics.entries.empty(),
                          "valid conditional signal timing is not reported unsupported");

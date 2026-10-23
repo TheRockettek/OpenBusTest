@@ -77,20 +77,29 @@ int main() {
         0.11F,  0.04F, 0.20F, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1};
     pglBindBuffer(GL_ARRAY_BUFFER, buffer);
     pglBufferData(GL_ARRAY_BUFFER, sizeof(humanVertices), humanVertices.data(), GL_STATIC_DRAW);
-    const auto drawHumanGaitFrame = [&](double phaseRadians) {
+    const auto drawHumanGaitFrame = [&](double phaseRadians, double gaitWeight,
+                                        const std::array<float, 39>& frameVertices,
+                                        double modelHeight, bool gaitEnabled = true,
+                                        double viewTranslation = -0.4) {
+        pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+        pglBufferData(GL_ARRAY_BUFFER, sizeof(frameVertices), frameVertices.data(), GL_STATIC_DRAW);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
-        setModelViewMatrix(translationMatrix({0, 0, -0.5}));
+        setModelViewMatrix(translationMatrix({0, 0, viewTranslation}));
         ModelMaterial humanMaterial;
         humanMaterial.emissionColor = {1, 1, 1};
-        drawModelBatch(buffer, 3, humanMaterial, {1, 1, 1}, 1.0, 0, false,
-                       HumanGaitParameters{phaseRadians, 1.0, 1.7});
+        if (gaitEnabled) {
+            drawModelBatch(buffer, 3, humanMaterial, {1, 1, 1}, 1.0, 0, false,
+                           HumanGaitParameters{phaseRadians, gaitWeight, modelHeight});
+        } else {
+            drawModelBatch(buffer, 3, humanMaterial, {1, 1, 1}, 1.0, 0, false);
+        }
         std::array<std::uint8_t, 32 * 32 * 4> image = {};
         glReadPixels(0, 0, 32, 32, GL_RGBA, GL_UNSIGNED_BYTE, image.data());
         return image;
     };
-    const auto gaitFrameA = drawHumanGaitFrame(0.0);
-    const auto gaitFrameB = drawHumanGaitFrame(std::numbers::pi / 2.0);
+    const auto gaitFrameA = drawHumanGaitFrame(0.0, 1.0, humanVertices, 1.7);
+    const auto gaitFrameB = drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, humanVertices, 1.7);
     const bool gaitFrameVisible =
         std::any_of(gaitFrameA.begin(), gaitFrameA.end(),
                     [](std::uint8_t channel) { return channel != 0; }) &&
@@ -98,6 +107,23 @@ int main() {
                     [](std::uint8_t channel) { return channel != 0; });
     if (!gaitFrameVisible || gaitFrameA == gaitFrameB) {
         std::cerr << "human gait shader did not visibly deform the pedestrian mesh\n";
+        passed = false;
+    }
+    constexpr std::array<float, 39> tPoseArmVertices = {
+        0.10F, -0.1F, 1.30F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.40F, -0.1F, 1.30F, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.25F, 0.1F, 1.30F, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1};
+    const auto undeformedArm =
+        drawHumanGaitFrame(0.0, 0.0, tPoseArmVertices, 1.7, false, -2.0);
+    const auto loweredArm = drawHumanGaitFrame(0.0, 0.0, tPoseArmVertices, 1.7, true, -2.0);
+    if (undeformedArm == loweredArm) {
+        std::cerr << "stationary pedestrian arms were not lowered from the T-pose\n";
+        passed = false;
+    }
+    const auto nonHumanFrameAfterGait =
+        drawHumanGaitFrame(0.0, 0.0, tPoseArmVertices, 1.7, false, -2.0);
+    if (undeformedArm != nonHumanFrameAfterGait) {
+        std::cerr << "pedestrian gait state leaked into the following non-human draw\n";
         passed = false;
     }
     setModelViewMatrix(identityMatrix());

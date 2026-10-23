@@ -43,6 +43,7 @@ void MapSceneLoader::load() {
     TraceScope sceneBuildPhase("map", "MapRenderer.buildSceneGeometryAndBatches");
     indexMapContent();
     buildTileContent();
+    resolveTrafficLightVariableParents();
     impl_->roadTrafficLaneNetwork.finalize();
     impl_->humanTrafficLaneNetwork.finalize();
     const openbus::map::MapTrafficLaneNetworkStats laneStats =
@@ -52,6 +53,68 @@ void MapSceneLoader::load() {
                 ", unconnected ends within 3 m of an aligned lane start=" +
                 std::to_string(laneStats.nearMissDeadEnds) + ".");
     uploadRoadBatches();
+}
+
+void MapSceneLoader::resolveTrafficLightVariableParents() {
+    std::unordered_map<int, const Impl::SceneryScriptState*> statesByObjectId;
+    std::unordered_set<int> ambiguousStateObjectIds = ambiguousMapObjectIds;
+    for (const std::unique_ptr<Impl::SceneryScriptState>& scriptState :
+         impl_->sceneryScriptStates) {
+        if (!scriptState->mapObjectId.has_value() ||
+            ambiguousStateObjectIds.contains(*scriptState->mapObjectId)) {
+            continue;
+        }
+        const auto [existing, inserted] =
+            statesByObjectId.try_emplace(*scriptState->mapObjectId, scriptState.get());
+        if (!inserted) {
+            statesByObjectId.erase(existing);
+            ambiguousStateObjectIds.insert(*scriptState->mapObjectId);
+        }
+    }
+
+    for (const std::unique_ptr<Impl::SceneryScriptState>& scriptState :
+         impl_->sceneryScriptStates) {
+        if (!scriptState->trafficLightModel || scriptState->trafficSignal.has_value() ||
+            !scriptState->variableParentId.has_value()) {
+            continue;
+        }
+        const auto parentState = statesByObjectId.find(*scriptState->variableParentId);
+        if (!ambiguousStateObjectIds.contains(*scriptState->variableParentId) &&
+            parentState != statesByObjectId.end()) {
+            const auto& parentSchedules = parentState->second->trafficSignalsByLightIndex;
+            if (parentSchedules.size() == 1) {
+                scriptState->trafficSignal = parentSchedules.begin()->second;
+                continue;
+            }
+            for (const std::string& label : scriptState->placementLabels) {
+                int lightIndex = -1;
+                const auto [end, error] =
+                    std::from_chars(label.data(), label.data() + label.size(), lightIndex);
+                if (error != std::errc{} || end != label.data() + label.size() ||
+                    lightIndex < 0) {
+                    continue;
+                }
+                const auto schedule = parentSchedules.find(static_cast<std::size_t>(lightIndex));
+                if (schedule != parentSchedules.end()) {
+                    scriptState->trafficSignal = schedule->second;
+                    break;
+                }
+            }
+        }
+        if (!scriptState->trafficSignal.has_value()) {
+            const std::string selection = scriptState->placementLabels.empty()
+                                              ? "no light-index label"
+                                              : "light-index labels=" +
+                                                    scriptState->placementLabels.front();
+            recordSkipped(skipped, "[trafficlight] variable parents without a matching schedule",
+                          "object ID=" +
+                              (scriptState->mapObjectId.has_value()
+                                   ? std::to_string(*scriptState->mapObjectId)
+                                   : std::string("unknown")) +
+                              " parentObjectId=" +
+                              std::to_string(*scriptState->variableParentId) + " " + selection);
+        }
+    }
 }
 
 void MapSceneLoader::loadGroundTextures() {
@@ -292,11 +355,22 @@ void MapSceneLoader::loadTerrainTiles() {
 }
 
 void MapSceneLoader::indexMapContent() {
+    const auto registerObjectId = [&](int objectId, MapObjectRecordKind kind,
+                                      const std::string& tileName) {
+        const auto [existing, inserted] = mapObjectRecordKindsById.try_emplace(objectId, kind);
+        if (!inserted) {
+            ambiguousMapObjectIds.insert(objectId);
+            if (existing->second != kind) {
+                recordSkipped(skipped, "map object IDs reused across record types",
+                              tileName + " object ID=" + std::to_string(objectId));
+            }
+        }
+    };
     for (std::size_t tileReferenceIndex = 0; tileReferenceIndex < map.tiles.size();
          ++tileReferenceIndex) {
         const openbus::map::MapTileReference& tileReference = map.tiles[tileReferenceIndex];
         const openbus::map::MapTileData tile = openbus::map::loadMapTile(tileReference);
-        const std::uint64_t currentTileKey = tileKey(tileReference.x, tileReference.y);
+        const std::string tileName = tileLabel(tileReference.x, tileReference.y);
         impl_->trafficRouteNetwork.addTileSplines(tile.splines, tileReference.x, tileReference.y);
         std::vector<openbus::map::MapSplinePlacement> roadTrafficSplines;
         std::vector<openbus::map::MapSplinePlacement> humanTrafficSplines;
@@ -370,6 +444,7 @@ void MapSceneLoader::indexMapContent() {
         impl_->humanTrafficRouteNetwork.addTileSplines(humanTrafficSplines, tileReference.x,
                                                        tileReference.y);
         for (const openbus::map::MapSceneryPlacement& object : tile.sceneryObjects) {
+            registerObjectId(object.id, MapObjectRecordKind::Scenery, tileName);
             IndexedSceneryObject indexed;
             indexed.assetPath = object.assetPath;
             indexed.transformValid = object.transformValid;
@@ -383,11 +458,9 @@ void MapSceneLoader::indexMapContent() {
                               tileLabel(tileReference.x, tileReference.y) +
                                   " object ID=" + std::to_string(object.id));
             }
-            if (object.editorObjectNumber.has_value()) {
-                editorObjectNumbersByTile[currentTileKey].insert(*object.editorObjectNumber);
-            }
         }
         for (const openbus::map::MapAttachedObject& object : tile.attachedObjects) {
+            registerObjectId(object.id, MapObjectRecordKind::Attached, tileName);
             IndexedAttachedObject indexed;
             indexed.assetPath = object.assetPath;
             indexed.parentId = object.attachedToObjectId;
@@ -400,18 +473,13 @@ void MapSceneLoader::indexMapContent() {
                               tileLabel(tileReference.x, tileReference.y) +
                                   " attached object ID=" + std::to_string(object.id));
             }
-            if (object.editorObjectNumber.has_value()) {
-                editorObjectNumbersByTile[currentTileKey].insert(*object.editorObjectNumber);
-            }
         }
         for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
+            registerObjectId(attachment.id, MapObjectRecordKind::SplineAttachment, tileName);
             if (!splineAttachmentTileById.try_emplace(attachment.id, tileReferenceIndex).second) {
                 recordSkipped(skipped, "map placements with duplicate object IDs",
                               tileLabel(tileReference.x, tileReference.y) +
                                   " spline attachment ID=" + std::to_string(attachment.id));
-            }
-            if (attachment.editorObjectNumber.has_value()) {
-                editorObjectNumbersByTile[currentTileKey].insert(*attachment.editorObjectNumber);
             }
         }
     }

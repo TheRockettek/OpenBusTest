@@ -52,6 +52,7 @@ struct SceneryObjectConfig {
     bool onlyEditor = false;
     bool absoluteHeight = false;
     bool helpArrow = false;
+    bool trafficLight = false;
     int renderType = 2;
     bool hasBoundingBox = false;
     std::array<double, 6> boundingBox = {};
@@ -64,6 +65,7 @@ struct SceneryObjectConfig {
     std::vector<SceneryObjectTrafficPath> trafficPaths;
     double trafficLightsGroupDurationSeconds = 0.0;
     std::vector<SceneryObjectTrafficLight> trafficLights;
+    std::vector<std::optional<openbus::map::MapTrafficSignalSchedule>> trafficLightSchedules;
     std::vector<std::array<double, 3>> trafficLightStops;
     std::vector<std::array<double, 4>> trafficLightJumps;
     std::vector<ModelAttachmentPoint> attachmentPoints;

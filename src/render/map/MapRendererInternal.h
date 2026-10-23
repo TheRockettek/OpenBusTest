@@ -300,6 +300,10 @@ struct MapRenderer::Impl {
         std::unique_ptr<ScriptRuntime> runtime;
         std::shared_ptr<SceneryRuntimeDefinition> definition;
         std::optional<openbus::map::MapTrafficSignalSchedule> trafficSignal;
+        std::map<std::size_t, openbus::map::MapTrafficSignalSchedule> trafficSignalsByLightIndex;
+        std::optional<int> mapObjectId;
+        std::optional<int> variableParentId;
+        bool trafficLightModel = false;
         std::map<std::pair<bool, int>, DynamicSceneryTexture> dynamicTextures;
         std::vector<std::string> placementLabels;
         int ownerTileX = 0;

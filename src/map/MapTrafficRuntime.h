@@ -30,7 +30,7 @@ struct MapTrafficPathRules {
     std::vector<MapTrafficGroupRules> groups;
     bool carsProhibited = false;
     bool busesAllowed = false;
-    bool trucksAllowed = false;
+    bool trucksAllowed = true;
     bool overtakingProhibited = false;
     // OMSI traffic priority: lower values have right-of-way.
     double priority = 128.0;

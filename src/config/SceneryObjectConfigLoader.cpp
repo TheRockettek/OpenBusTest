@@ -86,6 +86,10 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             result.helpArrow = true;
             continue;
         }
+        if (keyword == "trafficlight") {
+            result.trafficLight = true;
+            continue;
+        }
         if (keyword == "groups" || keyword == "friendlyname") {
             // These SCO metadata/editor fields do not affect static model rendering. Their
             // payload lines are intentionally left for the line-oriented parser to ignore.
@@ -435,6 +439,25 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                                    "conditional signal program is invalid and will be ignored");
     }
 
+    result.trafficLightSchedules.resize(result.trafficLights.size());
+    for (std::size_t lightIndex = 0; lightIndex < result.trafficLights.size(); ++lightIndex) {
+        if (result.trafficLightsGroupDurationSeconds <= 0.0) {
+            continue;
+        }
+        const SceneryObjectTrafficLight& light = result.trafficLights[lightIndex];
+        openbus::map::MapTrafficSignalSchedule schedule;
+        schedule.cycleDurationSeconds = result.trafficLightsGroupDurationSeconds;
+        schedule.phases = light.phases;
+        schedule.lightIndex = lightIndex;
+        schedule.approachDistanceMeters = light.approachDistanceMeters;
+        schedule.program = signalProgramValid ? signalProgram : nullptr;
+        schedule.hasConditionalOverrides =
+            signalProgramValid && !signalProgram->controlPoints.empty();
+        if (openbus::map::mapTrafficSignalStateAtTime(schedule, 0.0).has_value()) {
+            result.trafficLightSchedules[lightIndex] = std::move(schedule);
+        }
+    }
+
     for (SceneryObjectTrafficPath& path : result.trafficPaths) {
         if (path.trafficLightIndex < 0) {
             continue;
@@ -449,22 +472,14 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                                        "signalized path has no valid group cycle duration");
             continue;
         }
-        const SceneryObjectTrafficLight& light =
-            result.trafficLights[static_cast<std::size_t>(path.trafficLightIndex)];
-        openbus::map::MapTrafficSignalSchedule schedule;
-        schedule.cycleDurationSeconds = result.trafficLightsGroupDurationSeconds;
-        schedule.phases = light.phases;
-        schedule.lightIndex = static_cast<std::size_t>(path.trafficLightIndex);
-        schedule.approachDistanceMeters = light.approachDistanceMeters;
-        schedule.program = signalProgramValid ? signalProgram : nullptr;
-        schedule.hasConditionalOverrides =
-            signalProgramValid && !signalProgram->controlPoints.empty();
-        if (!openbus::map::mapTrafficSignalStateAtTime(schedule, 0.0).has_value()) {
+        const std::size_t lightIndex = static_cast<std::size_t>(path.trafficLightIndex);
+        if (lightIndex >= result.trafficLightSchedules.size() ||
+            !result.trafficLightSchedules[lightIndex].has_value()) {
             result.diagnostics.warning(0, "traffic_light",
                                        "signalized path has an invalid phase schedule");
             continue;
         }
-        path.trafficSignal = std::move(schedule);
+        path.trafficSignal = *result.trafficLightSchedules[lightIndex];
     }
 
     if (result.modelPath.empty() && !hasInlineModel && result.trees.empty()) {

@@ -135,6 +135,21 @@ int main() {
         std::cerr << "model texture address directives did not select their authored modes\n";
         return 1;
     }
+    const std::filesystem::path pedestrianConfigPath = root / "pedestrian.cfg";
+    std::ofstream pedestrianConfig(pedestrianConfigPath);
+    pedestrianConfig << "[LOD]\n0.4\n[mesh]\ndisplay.obj\n"
+                        "[setbone]\nOS_L\n-2\n"
+                        "[setbone]\nHip\n-10\n";
+    pedestrianConfig.close();
+    Variables pedestrianVariables(ScriptObjectKind::SceneryObject);
+    const ModelConfig pedestrianResult =
+        loadModelConfig(pedestrianConfigPath, root, ModelConfigKind::SceneryObject,
+                        pedestrianVariables);
+    if (pedestrianResult.diagnostics.hasErrors() || pedestrianResult.parts.size() != 1 ||
+        pedestrianResult.parts.front().lodIndex != 0) {
+        std::cerr << "negative pedestrian [setbone] indices invalidated the drawable mesh\n";
+        return 1;
+    }
     const std::filesystem::path freeTextureSCOPath = root / "free_texture.sco";
     std::ofstream freeTextureSCO(freeTextureSCOPath);
     freeTextureSCO << "[mesh]\ndisplay.obj\n[matl]\ndisplay.bmp\n0\n"
