@@ -105,7 +105,9 @@ class MapRenderer {
                                const openbus::map::MapTrafficPose& pose, double gaitPhaseRadians,
                                double gaitWeight) const;
     void updateTrafficSignalControllers(const std::vector<openbus::map::MapTrafficActor*>& actors,
-                                        double elapsedSeconds, double initialClockSeconds) const;
+                                        double elapsedSeconds, double initialClockSeconds,
+                                        std::optional<std::array<double, 2>> playerBusPosition =
+                                            std::nullopt) const;
     bool addTrafficActor(openbus::map::MapTrafficActor actor);
     std::size_t updateTrafficActors(double elapsedSeconds);
     const std::vector<openbus::map::MapTrafficActor>& trafficActors() const;

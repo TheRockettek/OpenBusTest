@@ -482,6 +482,8 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
     std::unordered_map<std::string, std::filesystem::path> trackFiles;
     std::vector<std::filesystem::path> tripFiles;
     std::vector<std::filesystem::path> lineFiles;
+    std::optional<std::filesystem::path> busStopsPath;
+    std::optional<std::filesystem::path> stationLinksPath;
     for (const std::filesystem::directory_entry& entry :
          std::filesystem::directory_iterator(directory)) {
         if (!entry.is_regular_file()) {
@@ -494,15 +496,149 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
             tripFiles.push_back(entry.path());
         } else if (extension == ".ttl") {
             lineFiles.push_back(entry.path());
+        } else if (lowerAscii(entry.path().filename().string()) == "busstops.cfg") {
+            busStopsPath = entry.path();
+        } else if (lowerAscii(entry.path().filename().string()) == "stnlinks.cfg") {
+            stationLinksPath = entry.path();
         }
     }
     std::sort(tripFiles.begin(), tripFiles.end());
     std::sort(lineFiles.begin(), lineFiles.end());
 
+    if (busStopsPath) {
+        const std::vector<std::string> lines = splitLines(decodeText(*busStopsPath));
+        for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+            if (lowerAscii(trim(lines[lineIndex])) != "[busstop]") {
+                continue;
+            }
+            std::array<std::string, 7> fields;
+            bool complete = true;
+            for (std::size_t fieldIndex = 0; fieldIndex < 6; ++fieldIndex) {
+                std::string& field = fields[fieldIndex];
+                if (++lineIndex >= lines.size()) {
+                    complete = false;
+                    break;
+                }
+                if (isSectionHeaderLine(trim(lines[lineIndex]))) {
+                    --lineIndex;
+                    complete = false;
+                    break;
+                }
+                field = trim(lines[lineIndex]);
+            }
+            if (complete && lineIndex + 1 < lines.size() &&
+                !isSectionHeaderLine(trim(lines[lineIndex + 1]))) {
+                fields[6] = trim(lines[++lineIndex]);
+            }
+            int tileIndex = 0;
+            int id = 0;
+            bool parametersValid = complete;
+            for (std::size_t fieldIndex = 3; parametersValid && fieldIndex < 6; ++fieldIndex) {
+                double value = 0.0;
+                parametersValid = parseReal(fields[fieldIndex], value);
+            }
+            if (complete && parametersValid && parseInteger(fields[1], tileIndex) &&
+                tileIndex >= 0 &&
+                parseInteger(fields[2], id) && id != 0 && !fields[0].empty()) {
+                MapAiBusStop stop;
+                stop.name = fields[0];
+                stop.tileIndex = tileIndex;
+                stop.id = id;
+                std::copy_n(fields.begin() + 3, stop.remainingFields.size(),
+                            stop.remainingFields.begin());
+                aiTraffic.busStops.push_back(std::move(stop));
+            } else {
+                diagnostics.warning(lineIndex + 1, "busstop",
+                                    "invalid or incomplete bus-stop record in " +
+                                        busStopsPath->filename().string());
+            }
+        }
+    }
+
+    if (stationLinksPath) {
+        const std::vector<std::string> lines = splitLines(decodeText(*stationLinksPath));
+        for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+            const std::string section = lowerAscii(trim(lines[lineIndex]));
+            if (section == "[stnlink]") {
+                std::array<std::string, 9> fields;
+                bool complete = true;
+                for (std::string& field : fields) {
+                    if (++lineIndex >= lines.size()) {
+                        complete = false;
+                        break;
+                    }
+                    if (isSectionHeaderLine(trim(lines[lineIndex]))) {
+                        --lineIndex;
+                        complete = false;
+                        break;
+                    }
+                    field = trim(lines[lineIndex]);
+                }
+                MapAiStationLink link;
+                bool numericFieldsValid = complete;
+                for (std::size_t fieldIndex = 0;
+                     numericFieldsValid && fieldIndex < fields.size(); ++fieldIndex) {
+                    if (fieldIndex == 1 || fieldIndex == 2) {
+                        continue;
+                    }
+                    double value = 0.0;
+                    numericFieldsValid = parseReal(fields[fieldIndex], value);
+                }
+                if (complete && numericFieldsValid && parseInteger(fields[1], link.fromStopId) &&
+                    link.fromStopId != 0 &&
+                    parseInteger(fields[2], link.toStopId) && link.toStopId != 0) {
+                    link.fields = fields;
+                    aiTraffic.stationLinks.push_back(std::move(link));
+                } else {
+                    diagnostics.warning(lineIndex + 1, "StnLink",
+                                        "invalid or incomplete station-link record in " +
+                                            stationLinksPath->filename().string());
+                }
+            } else if (section == "[stnlink_entry]") {
+                std::array<std::string, 7> entryValues;
+                bool complete = true;
+                for (std::string& value : entryValues) {
+                    if (++lineIndex >= lines.size()) {
+                        complete = false;
+                        break;
+                    }
+                    if (isSectionHeaderLine(trim(lines[lineIndex]))) {
+                        --lineIndex;
+                        complete = false;
+                        break;
+                    }
+                    value = trim(lines[lineIndex]);
+                }
+                MapAiStationLink::Entry entry;
+                bool numericEntryValid =
+                    complete && parseInteger(entryValues[0], entry.splineId) &&
+                    entry.splineId != 0 && parseInteger(entryValues[1], entry.pathIndex) &&
+                    entry.pathIndex >= 0 && parseInteger(entryValues[2], entry.tileIndex) &&
+                    entry.tileIndex >= 0 && parseReal(entryValues[3], entry.lengthMeters);
+                for (std::size_t index = 4; numericEntryValid && index < entryValues.size();
+                     ++index) {
+                    double number = 0.0;
+                    numericEntryValid = parseReal(entryValues[index], number);
+                }
+                if (complete && numericEntryValid && !aiTraffic.stationLinks.empty()) {
+                    std::copy(entryValues.begin() + 4, entryValues.end(),
+                              entry.remainingFields.begin());
+                    aiTraffic.stationLinks.back().entries.push_back(std::move(entry));
+                } else {
+                    diagnostics.warning(lineIndex + 1, "StnLink_entry",
+                                        "invalid or orphaned station-link path entry in " +
+                                            stationLinksPath->filename().string());
+                }
+            }
+        }
+    }
+
     for (const std::filesystem::path& tripPath : tripFiles) {
         const std::vector<std::string> tripLines = splitLines(decodeText(tripPath));
         MapAiTimetableRoute route;
+        MapAiPassengerTimetable passengerTimetable;
         route.timetableKey = lowerAscii(tripPath.stem().string());
+        passengerTimetable.timetableKey = route.timetableKey;
         std::size_t routeHeaderFields = 0;
         for (std::size_t lineIndex = 0; lineIndex < tripLines.size(); ++lineIndex) {
             const std::string section = lowerAscii(trim(tripLines[lineIndex]));
@@ -511,9 +647,6 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                                                       &route.lineName};
                 std::size_t next = lineIndex + 1;
                 for (std::string* field : fields) {
-                    while (next < tripLines.size() && trim(tripLines[next]).empty()) {
-                        ++next;
-                    }
                     if (next >= tripLines.size() || isSectionHeaderLine(trim(tripLines[next]))) {
                         break;
                     }
@@ -526,9 +659,6 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 std::size_t next = lineIndex + 1;
                 bool complete = true;
                 for (std::string& field : stationFields) {
-                    while (next < tripLines.size() && trim(tripLines[next]).empty()) {
-                        ++next;
-                    }
                     if (next >= tripLines.size() || isSectionHeaderLine(trim(tripLines[next]))) {
                         complete = false;
                         break;
@@ -536,27 +666,66 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                     field = trim(tripLines[next++]);
                 }
                 int stationId = 0;
+                int trackEntryIndex = 0;
+                int tileIndex = 0;
                 if (complete && parseInteger(stationFields[0], stationId) && stationId != 0 &&
-                    !stationFields[2].empty()) {
+                    parseInteger(stationFields[1], trackEntryIndex) && trackEntryIndex >= 0 &&
+                    !stationFields[2].empty() && parseInteger(stationFields[3], tileIndex) &&
+                    tileIndex >= 0) {
                     ++route.stationCount;
+                    MapAiTimetableRoute::Station station;
+                    station.id = stationId;
+                    station.trackEntryIndex = trackEntryIndex;
+                    station.name = stationFields[2];
+                    station.tileIndex = tileIndex;
+                    std::copy_n(stationFields.begin() + 4, station.opaqueFields.size(),
+                                station.opaqueFields.begin());
+                    route.stations.push_back(std::move(station));
+                    route.stationIds.push_back(stationId);
+                    passengerTimetable.stationIds.push_back(stationId);
                 } else {
                     diagnostics.warning(lineIndex + 1, "station",
                                         "invalid or truncated timetable station record in " +
                                             tripPath.filename().string());
                 }
                 lineIndex = next > 0 ? next - 1 : lineIndex;
+            } else if (section == "[station_typ2]") {
+                const std::size_t valueLine = lineIndex + 1;
+                int stationId = 0;
+                if (valueLine < tripLines.size() &&
+                    !isSectionHeaderLine(trim(tripLines[valueLine])) &&
+                    parseInteger(trim(tripLines[valueLine]), stationId) && stationId != 0) {
+                    ++route.stationCount;
+                    route.stationIds.push_back(stationId);
+                    passengerTimetable.stationIds.push_back(stationId);
+                    lineIndex = valueLine;
+                } else {
+                    diagnostics.warning(lineIndex + 1, "station_typ2",
+                                        "invalid or truncated timetable station ID in " +
+                                            tripPath.filename().string());
+                }
             }
         }
-        if (routeHeaderFields != 3 || route.tripName.empty() || route.destinationName.empty() ||
-            route.lineName.empty() || route.stationCount == 0) {
+        if (routeHeaderFields != 3 || route.destinationName.empty() || route.lineName.empty() ||
+            route.stationCount == 0) {
             continue;
         }
 
+        if (route.tripName.empty()) {
+            if (!passengerTimetable.stationIds.empty()) {
+                aiTraffic.passengerTimetables.push_back(std::move(passengerTimetable));
+            }
+            continue;
+        }
         const auto trackFile = trackFiles.find(lowerAscii(route.tripName));
         if (trackFile == trackFiles.end()) {
-            diagnostics.warning(0, "trip",
-                                "no matching timetable track file for " + route.tripName + " in " +
-                                    tripPath.filename().string());
+            if (!passengerTimetable.stationIds.empty()) {
+                aiTraffic.passengerTimetables.push_back(std::move(passengerTimetable));
+            } else {
+                diagnostics.warning(0, "trip",
+                                    "no matching timetable track file for " + route.tripName +
+                                        " in " + tripPath.filename().string());
+            }
             continue;
         }
         const std::vector<std::string> trackLines = splitLines(decodeText(trackFile->second));
@@ -579,28 +748,45 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                                         trackFile->second.filename().string());
                 continue;
             }
+            std::array<std::string, 5> remainingFields;
             std::size_t selectorLine = next + 1;
-            while (selectorLine < trackLines.size() && trim(trackLines[selectorLine]).empty()) {
-                ++selectorLine;
+            bool completeTrackEntry = true;
+            for (std::string& field : remainingFields) {
+                while (selectorLine < trackLines.size() &&
+                       trim(trackLines[selectorLine]).empty()) {
+                    ++selectorLine;
+                }
+                if (selectorLine >= trackLines.size() ||
+                    isSectionHeaderLine(trim(trackLines[selectorLine]))) {
+                    completeTrackEntry = false;
+                    break;
+                }
+                field = trim(trackLines[selectorLine++]);
             }
-            if (selectorLine >= trackLines.size() ||
-                isSectionHeaderLine(trim(trackLines[selectorLine])) ||
-                !parseInteger(trim(trackLines[selectorLine]), pathIndex)) {
+            int tileIndex = 0;
+            double lengthMeters = 0.0;
+            if (!completeTrackEntry || !parseInteger(remainingFields[0], pathIndex) ||
+                pathIndex < 0 || !parseInteger(remainingFields[1], tileIndex) || tileIndex < 0 ||
+                !parseReal(remainingFields[3], lengthMeters) || lengthMeters < 0.0) {
                 malformedTrackEntry = true;
                 diagnostics.warning(lineIndex + 1, "track_entry",
-                                    "invalid timetable path index in " +
+                                    "invalid or truncated timetable path entry in " +
                                         trackFile->second.filename().string());
                 continue;
             }
-            route.trackEntries.push_back({splineId, pathIndex});
+            route.trackEntries.push_back({splineId, pathIndex, tileIndex, lengthMeters});
             if (route.splineIds.empty() || route.splineIds.back() != splineId) {
                 route.splineIds.push_back(splineId);
             }
+            lineIndex = selectorLine - 1;
         }
         if (malformedTrackEntry || route.splineIds.size() < 2) {
             continue;
         }
         aiTraffic.timetableRoutes.push_back(std::move(route));
+        if (!passengerTimetable.stationIds.empty()) {
+            aiTraffic.passengerTimetables.push_back(std::move(passengerTimetable));
+        }
     }
 
     for (const std::filesystem::path& linePath : lineFiles) {
@@ -638,18 +824,101 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                              [&](const MapAiTimetableRoute& candidate) {
                                  return candidate.timetableKey == timetableKey;
                              });
-            if (route == aiTraffic.timetableRoutes.end()) {
+            auto passengerTimetable = std::find_if(
+                aiTraffic.passengerTimetables.begin(), aiTraffic.passengerTimetables.end(),
+                [&](const MapAiPassengerTimetable& candidate) {
+                    return candidate.timetableKey == timetableKey;
+                });
+            if (route == aiTraffic.timetableRoutes.end() &&
+                passengerTimetable == aiTraffic.passengerTimetables.end()) {
                 diagnostics.warning(lineIndex + 1, "addtrip",
                                     "departure references missing trip " + fields[0] + " in " +
                                         linePath.filename().string());
             } else {
-                route->scheduledDepartureMinutes.push_back(departureMinutes);
+                if (route != aiTraffic.timetableRoutes.end()) {
+                    route->scheduledDepartureMinutes.push_back(departureMinutes);
+                }
+                if (passengerTimetable != aiTraffic.passengerTimetables.end()) {
+                    passengerTimetable->scheduledDepartureMinutes.push_back(departureMinutes);
+                }
             }
             lineIndex = next > 0 ? next - 1 : lineIndex;
         }
     }
     for (MapAiTimetableRoute& route : aiTraffic.timetableRoutes) {
         std::sort(route.scheduledDepartureMinutes.begin(), route.scheduledDepartureMinutes.end());
+    }
+    for (MapAiPassengerTimetable& timetable : aiTraffic.passengerTimetables) {
+        std::sort(timetable.scheduledDepartureMinutes.begin(),
+                  timetable.scheduledDepartureMinutes.end());
+        if (!mapAiPassengerTimetableHasResolvedLinks(aiTraffic, timetable)) {
+            diagnostics.warning(
+                0, "passenger_timetable",
+                "timetable " + timetable.timetableKey +
+                    " has stop IDs without unique Busstops.cfg and directed StnLinks.cfg matches");
+            continue;
+        }
+        const bool hasDrivingRoute = std::any_of(
+            aiTraffic.timetableRoutes.begin(), aiTraffic.timetableRoutes.end(),
+            [&](const MapAiTimetableRoute& route) {
+                return route.timetableKey == timetable.timetableKey;
+            });
+        if (hasDrivingRoute || timetable.scheduledDepartureMinutes.empty()) {
+            continue;
+        }
+
+        const std::vector<MapAiPassengerStopCall> calls =
+            mapAiPassengerStopCalls(aiTraffic, timetable);
+        MapAiTimetableRoute route;
+        route.timetableKey = timetable.timetableKey;
+        route.tripName = timetable.timetableKey;
+        route.destinationName = timetable.timetableKey;
+        route.lineName = timetable.timetableKey;
+        route.stationCount = calls.size();
+        route.stationIds = timetable.stationIds;
+        route.scheduledDepartureMinutes = timetable.scheduledDepartureMinutes;
+        bool completeRoute = true;
+        for (std::size_t stationIndex = 0; stationIndex < calls.size(); ++stationIndex) {
+            const MapAiPassengerStopCall& call = calls[stationIndex];
+            const MapAiBusStop& busStop = aiTraffic.busStops[*call.busStopIndex];
+            MapAiTimetableRoute::Station station;
+            station.id = call.stationId;
+            station.name = busStop.name;
+            station.tileIndex = busStop.tileIndex;
+
+            if (stationIndex + 1 < calls.size()) {
+                const MapAiStationLink& link =
+                    aiTraffic.stationLinks[*call.outgoingStationLinkIndex];
+                if (link.entries.empty()) {
+                    completeRoute = false;
+                    break;
+                }
+                station.trackEntryIndex = static_cast<int>(route.trackEntries.size());
+                for (const MapAiStationLink::Entry& entry : link.entries) {
+                    route.trackEntries.push_back(
+                        {entry.splineId, entry.pathIndex, entry.tileIndex, entry.lengthMeters});
+                    if (route.splineIds.empty() || route.splineIds.back() != entry.splineId) {
+                        route.splineIds.push_back(entry.splineId);
+                    }
+                }
+            } else if (!route.trackEntries.empty()) {
+                station.trackEntryIndex = static_cast<int>(route.trackEntries.size() - 1);
+            } else {
+                completeRoute = false;
+                break;
+            }
+            route.stations.push_back(std::move(station));
+        }
+        if (!completeRoute || route.splineIds.size() < 2 ||
+            route.trackEntries.size() < 2) {
+            diagnostics.warning(
+                0, "passenger_timetable",
+                "timetable " + timetable.timetableKey +
+                    " has resolved stops but insufficient ordered station-link path entries "
+                    "for a scheduled driving route");
+            continue;
+        }
+        aiTraffic.timetableRoutes.push_back(std::move(route));
     }
 }
 
@@ -1257,6 +1526,66 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
         parseHumanListFile(humanListPath, definition.aiTraffic);
     }
     return definition;
+}
+
+std::vector<MapAiPassengerStopCall>
+mapAiPassengerStopCalls(const MapAiTrafficData& traffic, const MapAiPassengerTimetable& timetable) {
+    std::vector<MapAiPassengerStopCall> calls;
+    calls.reserve(timetable.stationIds.size());
+    for (std::size_t stationIndex = 0; stationIndex < timetable.stationIds.size(); ++stationIndex) {
+        MapAiPassengerStopCall call;
+        call.stationId = timetable.stationIds[stationIndex];
+        std::optional<std::size_t> matchingStop;
+        bool duplicateStop = false;
+        for (std::size_t stopIndex = 0; stopIndex < traffic.busStops.size(); ++stopIndex) {
+            if (traffic.busStops[stopIndex].id != call.stationId) {
+                continue;
+            }
+            if (matchingStop) {
+                duplicateStop = true;
+                break;
+            }
+            matchingStop = stopIndex;
+        }
+        if (!duplicateStop) {
+            call.busStopIndex = matchingStop;
+        }
+        if (stationIndex + 1 < timetable.stationIds.size()) {
+            std::optional<std::size_t> matchingLink;
+            bool duplicateLink = false;
+            for (std::size_t linkIndex = 0; linkIndex < traffic.stationLinks.size(); ++linkIndex) {
+                const MapAiStationLink& link = traffic.stationLinks[linkIndex];
+                if (link.fromStopId != call.stationId ||
+                    link.toStopId != timetable.stationIds[stationIndex + 1]) {
+                    continue;
+                }
+                if (matchingLink) {
+                    duplicateLink = true;
+                    break;
+                }
+                matchingLink = linkIndex;
+            }
+            if (!duplicateLink) {
+                call.outgoingStationLinkIndex = matchingLink;
+            }
+        }
+        calls.push_back(call);
+    }
+    return calls;
+}
+
+bool mapAiPassengerTimetableHasResolvedLinks(const MapAiTrafficData& traffic,
+                                             const MapAiPassengerTimetable& timetable) {
+    if (timetable.stationIds.empty()) {
+        return false;
+    }
+    const std::vector<MapAiPassengerStopCall> calls = mapAiPassengerStopCalls(traffic, timetable);
+    return std::all_of(
+               calls.begin(), calls.end(),
+               [](const MapAiPassengerStopCall& call) { return call.busStopIndex.has_value(); }) &&
+           std::all_of(calls.begin(), calls.end() - 1, [](const MapAiPassengerStopCall& call) {
+               return call.outgoingStationLinkIndex.has_value();
+           });
 }
 
 std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic) {

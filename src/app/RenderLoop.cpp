@@ -302,7 +302,8 @@ bool RenderLoop::AddTrafficVehicle(
     int defaultVehicleType, std::vector<int> requiredRouteSplineIds,
     std::vector<std::optional<std::size_t>> requiredSceneryPathSequence,
     bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired,
-    bool allowReverseTraversalForRequired) {
+    bool allowReverseTraversalForRequired,
+    std::vector<openbus::map::MapTrafficPassengerStop> passengerStops) {
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
     }
@@ -368,6 +369,7 @@ bool RenderLoop::AddTrafficVehicle(
     actor.vehicleType = vehicleType;
     actor.unscheduledGroupIndex = isBus ? std::nullopt : unscheduledGroupIndex;
     actor.scheduled = isBus;
+    actor.isBus = isBus;
     actor.lengthMeters =
         configuration.boundingBox[1] + 2.0 * std::abs(configuration.boundingBox[4]);
     actor.widthMeters = configuration.boundingBox[0] + 2.0 * std::abs(configuration.boundingBox[3]);
@@ -411,6 +413,39 @@ bool RenderLoop::AddTrafficVehicle(
     trafficState.actor = std::move(actor);
     trafficState.spawnCandidates = std::move(spawnCandidates);
     trafficState.scheduledDepartureMinutes = std::move(scheduledDepartureMinutes);
+    if (!isBus && !passengerStops.empty()) {
+        throw std::invalid_argument("Only scheduled map buses can service passenger stops");
+    }
+    std::size_t routeSegmentCursor = 0;
+    for (openbus::map::MapTrafficPassengerStop& stop : passengerStops) {
+        if (stop.stopId == 0 || stop.dwellSeconds < 0.0 ||
+            !std::isfinite(stop.dwellSeconds)) {
+            throw std::invalid_argument("Scheduled map bus passenger stop is invalid");
+        }
+        const auto segment = std::find_if(
+            actor.route.segments.begin() + static_cast<std::ptrdiff_t>(routeSegmentCursor),
+            actor.route.segments.end(), [&](const openbus::map::MapTrafficRouteSegment& candidate) {
+                return candidate.spline.placement.splineId == stop.splineId &&
+                       candidate.sceneryPathIndex == stop.pathIndex;
+            });
+        if (segment == actor.route.segments.end()) {
+            gameLog.Log("Scheduled passenger stop could not be matched to the bus route; "
+                        "stopId=" +
+                        std::to_string(stop.stopId) + " spline=" +
+                        std::to_string(stop.splineId) + " path=" +
+                        std::to_string(stop.pathIndex) + " bus=" + busConfigPath.string());
+            continue;
+        }
+        routeSegmentCursor = static_cast<std::size_t>(
+            std::distance(actor.route.segments.begin(), segment));
+        const std::size_t segmentIndex = routeSegmentCursor;
+        stop.routeDistanceMeters =
+            segmentIndex == 0 ? 0.0 : actor.route.cumulativeEndDistances[segmentIndex - 1];
+        trafficState.passengerStops.push_back(std::move(stop));
+    }
+    for (const openbus::map::MapTrafficPassengerStop& stop : trafficState.passengerStops) {
+        scheduledPassengerQueues_.try_emplace(stop.stopId, stop.waitingPassengers);
+    }
     trafficState.isBus = isBus;
     if (isBus) {
         trafficState.nextScheduledDepartureIndex = openbus::map::mapTrafficNextDepartureIndex(
@@ -491,6 +526,21 @@ bool RenderLoop::AddHumanTrafficActor(int splineId, const std::filesystem::path&
     actor->widthMeters = feetDistanceMeters * 2.1;
     humanTrafficActors_.push_back({std::move(*actor), feetDistanceMeters, heightMeters, {}, false});
     return true;
+}
+
+void RenderLoop::SetScheduledPassengerHumanModels(
+    std::vector<std::filesystem::path> humanConfigPaths) {
+    if (mapRenderer_ == nullptr) {
+        throw std::logic_error("Cannot load scheduled passenger models before loading a map");
+    }
+    scheduledPassengerHumanModels_.clear();
+    for (const std::filesystem::path& path : humanConfigPaths) {
+        if (path.empty() || !std::filesystem::is_regular_file(path)) {
+            continue;
+        }
+        mapRenderer_->loadHumanTrafficModel(path);
+        scheduledPassengerHumanModels_.push_back(path);
+    }
 }
 
 void RenderLoop::SetMapTrafficPopulation(

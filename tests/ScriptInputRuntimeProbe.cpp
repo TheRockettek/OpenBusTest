@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 
 
@@ -31,7 +32,24 @@ bool check(const VehicleConfig& configuration, const char* backend) {
     SimulationState simulation;
     auto& system = simulation.sharedVariables();
     system.updateFrame(0.125F, 10.0F, 100.0F, 200.0F);
+    local.set("ticket_value_0", 2.5F);
+    local.set("ticket_value_1", std::numeric_limits<float>::infinity());
+    local.setString("ticket_name_0", "Single Ride");
+    local.set("human_count_on_seat_2", 1.0F);
+    local.set("human_count_on_path_link_7", 3.0F);
     ScriptRuntime runtime(configuration, local, simulation);
+    runtime.invokeEntryPoint("trigger_passenger_ticketing");
+    if (local.get("ticket_value_result") != 2.5F ||
+        local.getString("ticket_name_result") != "Single Ride" ||
+        local.get("cash_dispensed_total") != 2.5F || local.get("cash_last_coin_value") != 2.5F ||
+        local.get("cash_dispensed_coin_count") != 1.0F || local.get("seat_human_count") != 1.0F ||
+        local.get("path_link_human_count") != 3.0F ||
+        local.get("nonfinite_ticket_value_result") != 0.0F ||
+        local.get("invalid_ticket_value_result") != 0.0F ||
+        !local.getString("invalid_ticket_name_result").empty()) {
+        std::cerr << backend << ": ticket lookup or change-coin state mismatch\n";
+        return false;
+    }
     bool previous = false;
     constexpr std::array<bool, 5> states = {false, true, true, false, false};
     for (bool pressed : states) {
@@ -40,7 +58,7 @@ bool check(const VehicleConfig& configuration, const char* backend) {
             runtime.invokeKeyBinding("edge", pressed);
         }
         if (openbus::input::shouldDispatchKeyBinding(openbus::input::kBindingHeld, pressed,
-                                                    previous)) {
+                                                     previous)) {
             runtime.invokeKeyBinding("held", pressed, changed);
         }
         previous = pressed;
@@ -179,6 +197,16 @@ int main() {
         std::ofstream source(script);
         source << "{trigger:edge}\n(L.L.edge_press) 1 + (S.L.edge_press)\n{end}\n"
                   "{trigger:edge_off}\n(L.L.edge_release) 1 + (S.L.edge_release)\n{end}\n"
+                  "{trigger:passenger_ticketing}\n"
+                  "0 (M.V.getticketvalue) (S.L.ticket_value_result)\n"
+                  "1 (M.V.getticketvalue) (S.L.nonfinite_ticket_value_result)\n"
+                  "0 (M.V.getticketname) (S.$.ticket_name_result)\n"
+                  "99 (M.V.getticketvalue) (S.L.invalid_ticket_value_result)\n"
+                  "-1 (M.V.getticketname) (S.$.invalid_ticket_name_result)\n"
+                  "2 (M.V.gethumancountonseat) (S.L.seat_human_count)\n"
+                  "7 (M.V.gethumancountonpathlink) (S.L.path_link_human_count)\n"
+                  "2.5 (M.V.givechangecoin)\n"
+                  "-1 (M.V.givechangecoin)\n{end}\n"
                   "{trigger:held}\n(L.L.held_press) 1 + (S.L.held_press)\n"
                   "(L.S.Timegap) (S.L.key_time)\n(L.S.mouse_x) (S.L.key_mouse)\n{end}\n"
                   "{trigger:held_off}\n(L.L.held_release) 1 + (S.L.held_release)\n{end}\n"

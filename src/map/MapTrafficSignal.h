@@ -3,12 +3,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <vector>
 
 namespace openbus::map {
+
+class MapTrafficSignalController;
 
 struct MapTrafficSignalPhase {
     int state = 0;
@@ -19,7 +22,13 @@ struct MapTrafficSignalControlPoint {
     std::size_t lightIndex = 0;
     double timeSeconds = 0.0;
     bool ifRequest = false;
-    std::optional<double> jumpToSeconds;
+};
+
+struct MapTrafficSignalBusPriorityRule {
+    int phaseToInterrupt = 0;
+    double triggerDistanceMeters = 0.0;
+    int targetPhase = 0;
+    double minimumGreenSeconds = 0.0;
 };
 
 struct MapTrafficSignalProgram {
@@ -27,6 +36,12 @@ struct MapTrafficSignalProgram {
     std::vector<std::vector<MapTrafficSignalPhase>> lights;
     std::vector<std::optional<double>> approachDistancesMeters;
     std::vector<MapTrafficSignalControlPoint> controlPoints;
+    std::vector<MapTrafficSignalBusPriorityRule> busPriorityRules;
+};
+
+struct MapTrafficSignalBusPriorityRequest {
+    std::shared_ptr<MapTrafficSignalController> controller;
+    std::size_t lightIndex = 0;
 };
 
 inline std::optional<int>
@@ -84,9 +99,15 @@ inline bool mapTrafficSignalProgramValid(const MapTrafficSignalProgram& program)
     }
     for (const MapTrafficSignalControlPoint& point : program.controlPoints) {
         if (point.lightIndex >= program.lights.size() || !std::isfinite(point.timeSeconds) ||
-            point.timeSeconds < 0.0 ||
-            (point.jumpToSeconds.has_value() &&
-             (!std::isfinite(*point.jumpToSeconds) || *point.jumpToSeconds < 0.0))) {
+            point.timeSeconds < 0.0) {
+            return false;
+        }
+    }
+    for (const MapTrafficSignalBusPriorityRule& rule : program.busPriorityRules) {
+        if (rule.phaseToInterrupt < 0 || rule.phaseToInterrupt > 12 ||
+            !std::isfinite(rule.triggerDistanceMeters) || rule.triggerDistanceMeters < 0.0 ||
+            rule.targetPhase < 6 || rule.targetPhase > 8 ||
+            !std::isfinite(rule.minimumGreenSeconds) || rule.minimumGreenSeconds < 0.0) {
             return false;
         }
     }
@@ -98,6 +119,8 @@ class MapTrafficSignalController {
     explicit MapTrafficSignalController(std::shared_ptr<const MapTrafficSignalProgram> program)
         : program_(std::move(program)),
           requests_(program_ == nullptr ? 0 : program_->lights.size(), false),
+          busPriorityRequests_(program_ == nullptr ? 0 : program_->lights.size(), false),
+          servedBusPriorityRequests_(program_ == nullptr ? 0 : program_->lights.size(), false),
           passed_(program_ == nullptr ? 0 : program_->controlPoints.size(), false) {
         if (program_ == nullptr || !mapTrafficSignalProgramValid(*program_)) {
             throw std::invalid_argument("Traffic signal program is invalid");
@@ -106,11 +129,18 @@ class MapTrafficSignalController {
 
     void clearRequests() noexcept {
         std::fill(requests_.begin(), requests_.end(), false);
+        std::fill(busPriorityRequests_.begin(), busPriorityRequests_.end(), false);
     }
 
     void request(std::size_t lightIndex) noexcept {
         if (lightIndex < requests_.size()) {
             requests_[lightIndex] = true;
+        }
+    }
+
+    void requestBusPriority(std::size_t lightIndex) noexcept {
+        if (lightIndex < busPriorityRequests_.size()) {
+            busPriorityRequests_[lightIndex] = true;
         }
     }
 
@@ -123,6 +153,22 @@ class MapTrafficSignalController {
         if (!started_) {
             clockSeconds_ = std::fmod(initialClockSeconds, cycle);
             started_ = true;
+        }
+
+        for (std::size_t index = 0; index < busPriorityRequests_.size(); ++index) {
+            if (!busPriorityRequests_[index]) {
+                servedBusPriorityRequests_[index] = false;
+            }
+        }
+        if (priorityOverrideLightIndex_.has_value()) {
+            priorityOverrideRemainingSeconds_ -= elapsedSeconds;
+            if (priorityOverrideRemainingSeconds_ <= 1.0e-9) {
+                priorityOverrideLightIndex_.reset();
+                priorityOverrideRemainingSeconds_ = 0.0;
+            }
+        }
+        if (!priorityOverrideLightIndex_.has_value()) {
+            activateBusPriorityIfSafe();
         }
 
         if (heldControl_.has_value()) {
@@ -139,9 +185,6 @@ class MapTrafficSignalController {
             std::optional<std::size_t> nextPoint;
             double distanceToPoint = remaining + 1.0e-9;
             for (std::size_t index = 0; index < program_->controlPoints.size(); ++index) {
-                if (rewoundControl_ == index) {
-                    continue;
-                }
                 const double pointTime = normalizedTime(program_->controlPoints[index].timeSeconds);
                 const double distance = normalizedTime(pointTime - clockSeconds_);
                 if (distance <= 1.0e-9 && passed_[index]) {
@@ -162,43 +205,17 @@ class MapTrafficSignalController {
                 remaining = std::max(0.0, remaining - distanceToPoint);
             }
             const std::size_t pointIndex = *nextPoint;
-            const MapTrafficSignalControlPoint& point = program_->controlPoints[pointIndex];
             if (!controlPointActive(pointIndex)) {
                 passed_[pointIndex] = true;
                 continue;
             }
 
-            if (!point.jumpToSeconds.has_value()) {
-                if (inRedYellowChangeover()) {
-                    passed_[pointIndex] = true;
-                    continue;
-                }
-                heldControl_ = pointIndex;
-                return;
-            }
-
-            const double sourceTime = normalizedTime(point.timeSeconds);
-            const double targetTime =
-                *point.jumpToSeconds < cycle ? normalizedTime(*point.jumpToSeconds) : 0.0;
-            const bool noProgress = normalizedTime(targetTime - sourceTime) <= 1.0e-9;
-            rewoundControl_ = targetTime > 1.0e-9 && targetTime < sourceTime - 1.0e-9
-                                  ? pointIndex
-                                  : std::optional<std::size_t>{};
-            clockSeconds_ = targetTime;
-            std::fill(passed_.begin(), passed_.end(), false);
-            for (std::size_t index = 0; index < program_->controlPoints.size(); ++index) {
-                if (index != pointIndex &&
-                    normalizedTime(normalizedTime(program_->controlPoints[index].timeSeconds) -
-                                   targetTime) <= 1.0e-9) {
-                    passed_[index] = true;
-                }
-            }
-            if (noProgress) {
+            if (inRedYellowChangeover()) {
                 passed_[pointIndex] = true;
+                continue;
             }
-            if (remaining <= 1.0e-9) {
-                return;
-            }
+            heldControl_ = pointIndex;
+            return;
         }
         advanceClock(remaining);
     }
@@ -206,6 +223,10 @@ class MapTrafficSignalController {
     std::optional<int> state(std::size_t lightIndex) const {
         if (lightIndex >= program_->lights.size()) {
             return std::nullopt;
+        }
+        if (priorityOverrideLightIndex_.has_value() &&
+            priorityOverrideRemainingSeconds_ > 1.0e-9) {
+            return lightIndex == *priorityOverrideLightIndex_ ? priorityOverrideState_ : 0;
         }
         return mapTrafficSignalPhaseAtTime(program_->cycleDurationSeconds,
                                            program_->lights[lightIndex], clockSeconds_);
@@ -216,6 +237,52 @@ class MapTrafficSignalController {
     }
 
   private:
+    void activateBusPriorityIfSafe() {
+        for (std::size_t requestedLight = 0; requestedLight < busPriorityRequests_.size();
+             ++requestedLight) {
+            if (!busPriorityRequests_[requestedLight] ||
+                servedBusPriorityRequests_[requestedLight]) {
+                continue;
+            }
+            const std::optional<int> currentState =
+                mapTrafficSignalPhaseAtTime(program_->cycleDurationSeconds,
+                                            program_->lights[requestedLight], clockSeconds_);
+            if (!currentState.has_value()) {
+                continue;
+            }
+            for (const MapTrafficSignalBusPriorityRule& rule : program_->busPriorityRules) {
+                if (*currentState != rule.phaseToInterrupt) {
+                    continue;
+                }
+                bool conflictingGreen = false;
+                for (std::size_t otherLight = 0; otherLight < program_->lights.size();
+                     ++otherLight) {
+                    if (otherLight == requestedLight) {
+                        continue;
+                    }
+                    const std::optional<int> otherState =
+                        mapTrafficSignalPhaseAtTime(program_->cycleDurationSeconds,
+                                                    program_->lights[otherLight], clockSeconds_);
+                    if (otherState.has_value() && *otherState >= 6 && *otherState <= 8) {
+                        conflictingGreen = true;
+                        break;
+                    }
+                }
+                if (conflictingGreen) {
+                    continue;
+                }
+                priorityOverrideLightIndex_ = requestedLight;
+                priorityOverrideState_ = rule.targetPhase;
+                priorityOverrideRemainingSeconds_ = rule.minimumGreenSeconds;
+                servedBusPriorityRequests_[requestedLight] = true;
+                if (priorityOverrideRemainingSeconds_ <= 1.0e-9) {
+                    priorityOverrideRemainingSeconds_ = std::numeric_limits<double>::epsilon();
+                }
+                return;
+            }
+        }
+    }
+
     double normalizedTime(double time) const noexcept {
         const double cycle = program_->cycleDurationSeconds;
         double normalized = std::fmod(time, cycle);
@@ -229,14 +296,6 @@ class MapTrafficSignalController {
         if (elapsedSeconds <= 1.0e-9) {
             return;
         }
-        if (rewoundControl_.has_value()) {
-            const double sourceTime =
-                normalizedTime(program_->controlPoints[*rewoundControl_].timeSeconds);
-            const double distanceToSource = normalizedTime(sourceTime - clockSeconds_);
-            if (distanceToSource <= elapsedSeconds + 1.0e-9) {
-                rewoundControl_.reset();
-            }
-        }
         clockSeconds_ = normalizedTime(clockSeconds_ + elapsedSeconds);
         std::fill(passed_.begin(), passed_.end(), false);
     }
@@ -247,7 +306,7 @@ class MapTrafficSignalController {
         if (point.ifRequest) {
             for (const MapTrafficSignalControlPoint& other : program_->controlPoints) {
                 if (other.ifRequest && other.timeSeconds == point.timeSeconds &&
-                    other.jumpToSeconds == point.jumpToSeconds && requests_[other.lightIndex]) {
+                    requests_[other.lightIndex]) {
                     requested = true;
                     break;
                 }
@@ -269,11 +328,15 @@ class MapTrafficSignalController {
 
     std::shared_ptr<const MapTrafficSignalProgram> program_;
     std::vector<bool> requests_;
+    std::vector<bool> busPriorityRequests_;
+    std::vector<bool> servedBusPriorityRequests_;
     std::vector<bool> passed_;
     double clockSeconds_ = 0.0;
+    double priorityOverrideRemainingSeconds_ = 0.0;
+    int priorityOverrideState_ = 0;
+    std::optional<std::size_t> priorityOverrideLightIndex_;
     bool started_ = false;
     std::optional<std::size_t> heldControl_;
-    std::optional<std::size_t> rewoundControl_;
 };
 
 struct MapTrafficSignalSchedule {
@@ -282,6 +345,7 @@ struct MapTrafficSignalSchedule {
     bool hasConditionalOverrides = false;
     std::size_t lightIndex = 0;
     std::optional<double> approachDistanceMeters;
+    bool hasBusPriority = false;
     std::shared_ptr<const MapTrafficSignalProgram> program;
     std::shared_ptr<MapTrafficSignalController> controller;
 };
@@ -292,7 +356,8 @@ inline std::optional<int> mapTrafficSignalStateAtTime(const MapTrafficSignalSche
     if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0) {
         return std::nullopt;
     }
-    if (schedule.controller != nullptr && schedule.hasConditionalOverrides) {
+    if (schedule.controller != nullptr &&
+        (schedule.hasConditionalOverrides || schedule.hasBusPriority)) {
         return schedule.controller->state(schedule.lightIndex);
     }
     return mapTrafficSignalPhaseAtTime(schedule.cycleDurationSeconds, schedule.phases,

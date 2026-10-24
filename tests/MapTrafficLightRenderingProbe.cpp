@@ -60,9 +60,10 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
               "(L.L.TrafficLightPhase) 6 = (S.L.lamp_green)\n{end}\n");
     writeText(root / "controller.sco",
               "[onlyeditor]\n[traffic_lights_group]\n6\n"
-              "[traffic_light]\nOther approach\n[phase]\n6\n6\n"
+              "[traffic_light]\nOther approach\n[phase]\n0\n6\n"
               "[traffic_light]\nSelected approach\n[phase]\n0\n2\n"
               "[phase]\n6\n2\n[phase]\n9\n2\n"
+              "[traffic_light_jump]\n0\n10\n6\n2\n"
               "[path]\n0\n0\n0\n0\n0\n20\n0\n0\n0\n3\n0\n0\n"
               "[use_traffic_light]\n1\n"
               "[mesh]\ngreen.x\n" +
@@ -124,7 +125,7 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
         const auto stats = renderer.trafficSignalDebugStats();
         check(stats.activeSignalModels == 2 && stats.modelsWithoutPhase == 0 &&
                   stats.modelsByPhase[phase] >= 1 &&
-                  stats.controllerDrivenModels == (conditional ? 2U : 0U),
+                  stats.controllerDrivenModels == 2,
               "Visible head did not inherit its labelled editor-only controller phase");
         glDepthMask(GL_TRUE);
         glClearColor(0, 0, 0, 0);
@@ -145,6 +146,21 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     drawPhase(2, 6, {0, 255, 0});
     drawPhase(4, 9, {255, 255, 0});
     drawPhase(6, 0, {255, 0, 0});
+    const auto& signalPath = paths.front().points;
+    check(signalPath.size() >= 2, "bus-priority signal path has direction geometry");
+    const double directionX = signalPath[1][0] - signalPath[0][0];
+    const double directionY = signalPath[1][1] - signalPath[0][1];
+    const double directionLength = std::hypot(directionX, directionY);
+    check(directionLength > 0.0, "bus-priority signal path has non-zero direction");
+    const std::array<double, 2> playerBusPosition = {
+        signalPath[0][0] - directionX / directionLength * 5.0,
+        signalPath[0][1] - directionY / directionLength * 5.0};
+    renderer.updateTrafficSignalControllers({}, 0.1, 6.1, playerBusPosition);
+    renderer.updateScripts();
+    const auto priorityStats = renderer.trafficSignalDebugStats();
+    check(priorityStats.modelsByPhase[6] >= 1 &&
+              priorityStats.controllerDrivenModels == 2,
+          "player bus approaching the stopline activates its configured green priority phase");
     check(glGetError() == GL_NO_ERROR, "Traffic-light rendering produced an OpenGL error");
 }
 

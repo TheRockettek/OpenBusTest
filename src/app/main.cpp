@@ -1062,6 +1062,8 @@ int main() {
         const int mapAiBaseCount = nonnegativeEnvironmentInt("OPENBUS_MAP_AI_COUNT", 200, 1000);
         const int mapAiBusCount = nonnegativeEnvironmentInt("OPENBUS_MAP_BUS_COUNT", 20, 200);
         const int mapHumanBaseCount = nonnegativeEnvironmentInt("OPENBUS_MAP_HUMAN_COUNT", 8, 200);
+        const double scheduledHumanScale =
+            nonnegativeEnvironmentDouble("OPENBUS_MAP_SCHEDULED_HUMAN_SCALE", 1.0, 100.0);
         const double mapTrafficDensityMultiplier =
             nonnegativeEnvironmentDouble("OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER", 1.0, 100.0);
         const std::size_t mapAiBusPoolCount = mapTrafficPopulationForTestDensity(
@@ -1445,6 +1447,34 @@ int main() {
                     const auto departurePartitions =
                         openbus::map::mapTrafficPartitionScheduledDepartures(
                             timetable.scheduledDepartureMinutes, busesPerRoute[routeIndex]);
+                    std::vector<openbus::map::MapTrafficPassengerStop> passengerStops;
+                    passengerStops.reserve(timetable.stations.size());
+                    for (const openbus::map::MapAiTimetableRoute::Station& station :
+                         timetable.stations) {
+                        if (station.trackEntryIndex < 0 ||
+                            static_cast<std::size_t>(station.trackEntryIndex) >=
+                                timetable.trackEntries.size()) {
+                            applicationLog.Log(
+                                "Skipping passenger stop outside the timetable track-entry list: " +
+                                station.name + " in " + timetable.timetableKey);
+                            continue;
+                        }
+                        const auto& trackEntry = timetable.trackEntries[
+                            static_cast<std::size_t>(station.trackEntryIndex)];
+                        if (trackEntry.pathIndex < 0) {
+                            continue;
+                        }
+                        passengerStops.push_back(
+                            {station.id,
+                             trackEntry.splineId,
+                             static_cast<std::size_t>(trackEntry.pathIndex),
+                             static_cast<std::size_t>(station.trackEntryIndex),
+                             openbus::map::mapScheduledPassengerQueueSize(4,
+                                                                         scheduledHumanScale),
+                             0,
+                             8.0,
+                             0.0});
+                    }
                     for (const auto& departures : departurePartitions) {
                         if (addedBuses >= busPoolLimit) {
                             break;
@@ -1469,7 +1499,8 @@ int main() {
                                     matchedRoute.routeStart.stopAtRequiredSequenceEnd,
                                     matchedRoute.routeStart
                                         .allowIntermediarySegmentsBetweenRequired,
-                                    matchedRoute.routeStart.allowReverseTraversalForRequired)) {
+                                    matchedRoute.routeStart.allowReverseTraversalForRequired,
+                                    passengerStops)) {
                                 ++addedBuses;
                             } else {
                                 applicationLog.Log(
@@ -1544,6 +1575,21 @@ int main() {
         }
         const std::vector<std::string>& configuredHumanModelPaths =
             mapDefinition.aiTraffic.humanModelPaths;
+        std::vector<std::filesystem::path> scheduledPassengerHumanModels;
+        for (const std::string& configuredPath : configuredHumanModelPaths) {
+            std::string normalizedPath = configuredPath;
+            std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+            const std::filesystem::path humanConfigPath =
+                openbus::assets::resolveCaseInsensitivePath(omsiRootPath() / normalizedPath);
+            if (std::filesystem::is_regular_file(humanConfigPath)) {
+                scheduledPassengerHumanModels.push_back(humanConfigPath);
+            } else {
+                applicationLog.Log("Skipping missing scheduled passenger human model "
+                                   "configuration '" +
+                                   humanConfigPath.generic_string() + "'.");
+            }
+        }
+        renderer.SetScheduledPassengerHumanModels(std::move(scheduledPassengerHumanModels));
         if (mapHumanBaseCount == 0) {
             applicationLog.Log("Map human traffic is disabled by OPENBUS_MAP_HUMAN_COUNT=0.");
         } else if (configuredHumanModelPaths.empty()) {

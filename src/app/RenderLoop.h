@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 struct GLFWwindow;
@@ -86,7 +87,8 @@ class RenderLoop {
                            std::vector<std::optional<std::size_t>> requiredSceneryPathSequence = {},
                            bool stopAtRequiredSequenceEnd = false,
                            bool allowIntermediarySegmentsBetweenRequired = false,
-                           bool allowReverseTraversalForRequired = false);
+                           bool allowReverseTraversalForRequired = false,
+                           std::vector<openbus::map::MapTrafficPassengerStop> passengerStops = {});
     int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -98,6 +100,8 @@ class RenderLoop {
                               double feetDistanceMeters, double heightMeters,
                               double speedMetersPerSecond, double startDistanceMeters,
                               double centerX, double centerY, double maximumDistanceMeters);
+    void SetScheduledPassengerHumanModels(
+        std::vector<std::filesystem::path> humanConfigPaths);
     void SetMapTrafficPopulation(
         std::size_t roadVehicleCount, std::size_t busCount,
         std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> roadGroupPopulations = {},
@@ -298,6 +302,9 @@ class RenderLoop {
         openbus::map::MapTrafficActor actor;
         std::vector<openbus::map::MapTrafficSpawnCandidate> spawnCandidates;
         std::vector<double> scheduledDepartureMinutes;
+        std::vector<openbus::map::MapTrafficPassengerStop> passengerStops;
+        std::size_t nextPassengerStopIndex = 0;
+        bool passengerStopArrived = false;
         double nextScheduledDepartureElapsedSeconds = 0.0;
         double lastScheduledDepartureMinutes = 0.0;
         std::size_t nextScheduledDepartureIndex = 0;
@@ -313,12 +320,16 @@ class RenderLoop {
         std::optional<std::size_t> activeSpawnCandidateIndex;
         std::vector<std::size_t> rejectedSpawnCandidateIndices;
         double spawnedAtDistanceMeters = 0.0;
+        double wheelTravelDistanceMeters = 0.0;
+        double previousWheelRouteDistanceMeters = 0.0;
+        bool wheelRouteDistanceInitialized = false;
         bool movedSinceSpawn = false;
         double lastProgressDistanceMeters = 0.0;
         double stoppedSecondsSinceProgress = 0.0;
         bool stuckDiagnosticLogged = false;
     };
     std::vector<TrafficVehicleState> trafficVehicles_;
+    std::unordered_map<int, std::size_t> scheduledPassengerQueues_;
     std::size_t targetRoadTrafficCount_ = 0;
     std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> targetRoadGroupPopulations_;
     bool useGroupRoadPopulation_ = false;
@@ -335,6 +346,7 @@ class RenderLoop {
         bool populationEnabled = false;
     };
     std::vector<HumanTrafficState> humanTrafficActors_;
+    std::vector<std::filesystem::path> scheduledPassengerHumanModels_;
     std::size_t targetHumanTrafficCount_ = 0;
     Vehicle* playerVehicle_ = nullptr;
     GLFWcursor* clickableCursor_ = nullptr;

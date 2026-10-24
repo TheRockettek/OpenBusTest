@@ -117,15 +117,64 @@ struct MapAiTimetableRoute {
     std::string destinationName;
     std::string lineName;
     std::size_t stationCount = 0;
+    struct Station {
+        int id = 0;
+        int trackEntryIndex = 0;
+        std::string name;
+        int tileIndex = 0;
+        // The four trailing [station] positions are retained verbatim. Their
+        // semantics are not needed to build a safe route-stop location.
+        std::array<std::string, 4> opaqueFields;
+        bool operator==(const Station&) const = default;
+    };
+    std::vector<Station> stations;
+    // OMSI bus trips may list only stop IDs and use StnLinks rather than a .ttr.
+    std::vector<int> stationIds;
     std::vector<int> splineIds;
     struct TrackEntry {
         int splineId = 0;
         int pathIndex = 0;
+        int tileIndex = 0;
+        double lengthMeters = 0.0;
         bool operator==(const TrackEntry&) const = default;
     };
     std::vector<TrackEntry> trackEntries;
     // Parsed schedule values are minutes after midnight; dispatch is handled separately.
     std::vector<double> scheduledDepartureMinutes;
+};
+
+struct MapAiBusStop {
+    std::string name;
+    int tileIndex = 0;
+    int id = 0;
+    std::array<std::string, 4> remainingFields;
+};
+
+struct MapAiStationLink {
+    struct Entry {
+        int splineId = 0;
+        int pathIndex = 0;
+        int tileIndex = 0;
+        double lengthMeters = 0.0;
+        std::array<std::string, 3> remainingFields;
+        bool operator==(const Entry&) const = default;
+    };
+    std::array<std::string, 9> fields;
+    int fromStopId = 0;
+    int toStopId = 0;
+    std::vector<Entry> entries;
+};
+
+struct MapAiPassengerTimetable {
+    std::string timetableKey;
+    std::vector<int> stationIds;
+    std::vector<double> scheduledDepartureMinutes;
+};
+
+struct MapAiPassengerStopCall {
+    int stationId = 0;
+    std::optional<std::size_t> busStopIndex;
+    std::optional<std::size_t> outgoingStationLinkIndex;
 };
 
 struct MapAiTrafficData {
@@ -138,6 +187,10 @@ struct MapAiTrafficData {
     std::vector<MapAiBusTypeDefinition> busTypes;
     std::vector<MapAiDepotDefinition> depots;
     std::vector<MapAiTimetableRoute> timetableRoutes;
+    std::vector<MapAiBusStop> busStops;
+    std::vector<MapAiStationLink> stationLinks;
+    // Contains station-based bus trips, including trips without a driving .ttr.
+    std::vector<MapAiPassengerTimetable> passengerTimetables;
     // Human models come from humans.txt; driver models are for AI buses.
     // These paths are relative to the OMSI installation root.
     std::vector<std::string> humanModelPaths;
@@ -157,6 +210,10 @@ struct MapAiRoadTrafficGroupPopulation {
     std::size_t populationCount = 0;
 };
 
+std::vector<MapAiPassengerStopCall>
+mapAiPassengerStopCalls(const MapAiTrafficData& traffic, const MapAiPassengerTimetable& timetable);
+bool mapAiPassengerTimetableHasResolvedLinks(const MapAiTrafficData& traffic,
+                                             const MapAiPassengerTimetable& timetable);
 std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic);
 std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic, double hour,
                                                 int dayOfWeekMask);

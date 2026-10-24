@@ -154,6 +154,111 @@ double mapTrafficHeadingToVehicleYawDegrees(double headingRadians) {
     return std::remainder(90.0 - headingRadians * 180.0 / std::numbers::pi, 360.0);
 }
 
+std::size_t mapScheduledPassengerQueueSize(std::size_t nominalCount, double humanScale,
+                                           std::size_t safetyLimit) noexcept {
+    if (nominalCount == 0 || safetyLimit == 0 || !std::isfinite(humanScale) || humanScale <= 0.0) {
+        return 0;
+    }
+    const long double scaled =
+        static_cast<long double>(nominalCount) * static_cast<long double>(humanScale);
+    if (scaled >= static_cast<long double>(safetyLimit)) {
+        return safetyLimit;
+    }
+    return static_cast<std::size_t>(std::floor(scaled + 0.5L));
+}
+
+MapPassengerServiceRuntime::MapPassengerServiceRuntime(std::size_t seatCount)
+    : seatDestinations_(seatCount) {}
+
+void MapPassengerServiceRuntime::setWaitingPassengers(int stopId, std::size_t count) {
+    if (stopId != 0) {
+        waitingByStop_[stopId] = count;
+    }
+}
+
+bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
+    if (dwelling_ || stop.stopId == 0 || !std::isfinite(stop.dwellSeconds) ||
+        stop.dwellSeconds < 0.0) {
+        return false;
+    }
+    currentStopId_ = stop.stopId;
+    nextStopId_ = stop.nextStopId;
+    for (std::optional<int>& destination : seatDestinations_) {
+        if (destination.has_value() && *destination == stop.stopId) {
+            destination.reset();
+        }
+    }
+    std::size_t remainingToAlight = stop.passengersAlighting;
+    for (std::size_t seat = seatDestinations_.size(); seat > 0 && remainingToAlight > 0; --seat) {
+        if (seatDestinations_[seat - 1].has_value()) {
+            seatDestinations_[seat - 1].reset();
+            --remainingToAlight;
+        }
+    }
+    std::size_t& waiting = waitingByStop_[stop.stopId];
+    const std::size_t available = (std::numeric_limits<std::size_t>::max)() - waiting;
+    waiting += std::min(stop.waitingPassengers, available);
+    dwellRemainingSeconds_ = stop.dwellSeconds;
+    boardingAccumulatorSeconds_ = 0.0;
+    dwelling_ = stop.dwellSeconds > 0.0;
+    return true;
+}
+
+void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
+    if (!dwelling_ || !std::isfinite(elapsedSeconds) || elapsedSeconds <= 0.0) {
+        return;
+    }
+    constexpr double boardingIntervalSeconds = 0.75;
+    const double activeSeconds = std::min(elapsedSeconds, dwellRemainingSeconds_);
+    dwellRemainingSeconds_ -= activeSeconds;
+    boardingAccumulatorSeconds_ += activeSeconds;
+    std::size_t& waiting = waitingByStop_[currentStopId_];
+    while (boardingAccumulatorSeconds_ + 1.0e-9 >= boardingIntervalSeconds && waiting > 0) {
+        const auto seat = std::find_if(seatDestinations_.begin(), seatDestinations_.end(),
+                                       [](const std::optional<int>& destination) {
+                                           return !destination.has_value();
+                                       });
+        if (seat == seatDestinations_.end()) {
+            break;
+        }
+        *seat = nextStopId_;
+        --waiting;
+        boardingAccumulatorSeconds_ -= boardingIntervalSeconds;
+    }
+    if (dwellRemainingSeconds_ <= 1.0e-9) {
+        dwellRemainingSeconds_ = 0.0;
+        dwelling_ = false;
+    }
+}
+
+bool MapPassengerServiceRuntime::dwelling() const noexcept {
+    return dwelling_;
+}
+
+int MapPassengerServiceRuntime::currentStopId() const noexcept {
+    return currentStopId_;
+}
+
+std::size_t MapPassengerServiceRuntime::waitingPassengers(int stopId) const noexcept {
+    const auto found = waitingByStop_.find(stopId);
+    return found == waitingByStop_.end() ? 0 : found->second;
+}
+
+std::size_t MapPassengerServiceRuntime::passengerCountOnSeat(std::size_t seatIndex) const noexcept {
+    return seatIndex < seatDestinations_.size() && seatDestinations_[seatIndex].has_value() ? 1
+                                                                                           : 0;
+}
+
+std::size_t MapPassengerServiceRuntime::onboardPassengerCount() const noexcept {
+    return static_cast<std::size_t>(std::count_if(
+        seatDestinations_.begin(), seatDestinations_.end(),
+        [](const std::optional<int>& destination) { return destination.has_value(); }));
+}
+
+std::size_t MapPassengerServiceRuntime::seatCount() const noexcept {
+    return seatDestinations_.size();
+}
+
 double mapTrafficHourAtElapsedSeconds(double startHour, double elapsedSeconds) {
     if (!std::isfinite(startHour) || !std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0) {
         throw std::invalid_argument(
@@ -356,12 +461,24 @@ double mapTrafficPathPriorityForVehicle(const MapTrafficPathRules& rules,
 
 bool mapTrafficPathAllowsVehicle(const MapTrafficPathRules& rules,
                                  const MapTrafficVehicleFilter& vehicle) {
-    if (vehicle.scheduled) {
+    if (!vehicle.scheduled) {
+        const double density = mapTrafficPathDensityForVehicle(rules, vehicle);
+        if (!std::isfinite(density) || density <= 0.0) {
+            return false;
+        }
+    } else if (vehicle.vehicleType == 2) {
+        bool hasBusAccessRule = false;
+        bool busesAllowed = false;
+        for (const MapTrafficGroupRules& group : rules.groups) {
+            if (group.busesAllowed.has_value()) {
+                hasBusAccessRule = true;
+                busesAllowed = busesAllowed || *group.busesAllowed;
+            }
+        }
+        if (hasBusAccessRule) {
+            return busesAllowed;
+        }
         return true;
-    }
-    const double density = mapTrafficPathDensityForVehicle(rules, vehicle);
-    if (!std::isfinite(density) || density <= 0.0) {
-        return false;
     }
     bool carsProhibited = rules.carsProhibited;
     bool busesAllowed = rules.busesAllowed;
@@ -487,6 +604,7 @@ void resetMapTrafficActorForEntry(MapTrafficActor& actor) noexcept {
     actor.speedMetersPerSecond = 0.0;
     actor.targetSpeedMetersPerSecond = 0.0;
     actor.junctionWaitSeconds = 0.0;
+    actor.scheduledStopDistanceMeters.reset();
     actor.blockReason = MapTrafficBlockReason::None;
     actor.blockingActor = nullptr;
     actor.blockingObstacleIndex.reset();
@@ -2806,7 +2924,8 @@ mapTrafficNextSignalStopDebugInfo(const MapTrafficActor& actor, double signalClo
 void advanceMapTrafficSignalControllers(
     const std::vector<std::shared_ptr<MapTrafficSignalController>>& controllers,
     const std::vector<MapTrafficActor*>& actors, double elapsedSeconds,
-    double initialClockSeconds) {
+    double initialClockSeconds,
+    const std::vector<MapTrafficSignalBusPriorityRequest>& busPriorityRequests) {
     if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
         !std::isfinite(initialClockSeconds) || initialClockSeconds < 0.0) {
         throw std::invalid_argument("Traffic signal controller update is invalid");
@@ -2834,6 +2953,21 @@ void advanceMapTrafficSignalControllers(
         if (stoppedAtLine ||
             (approachDistance > 0.0 && approach->distanceToStopMeters <= approachDistance)) {
             approach->schedule->controller->request(approach->schedule->lightIndex);
+        }
+        if (actor->isBus && approach->schedule->hasBusPriority &&
+            approach->schedule->program != nullptr &&
+            std::ranges::any_of(approach->schedule->program->busPriorityRules,
+                                [&](const MapTrafficSignalBusPriorityRule& rule) {
+                                    return approach->distanceToStopMeters <=
+                                           rule.triggerDistanceMeters;
+                                })) {
+            approach->schedule->controller->requestBusPriority(
+                approach->schedule->lightIndex);
+        }
+    }
+    for (const MapTrafficSignalBusPriorityRequest& request : busPriorityRequests) {
+        if (request.controller != nullptr) {
+            request.controller->requestBusPriority(request.lightIndex);
         }
     }
     for (const auto& controller : controllers) {
@@ -3019,7 +3153,10 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             actor->cruiseSpeedMetersPerSecond < 0.0 ||
             !std::isfinite(actor->minimumTurnRadiusMeters) ||
             actor->minimumTurnRadiusMeters < 0.0 || !std::isfinite(actor->junctionWaitSeconds) ||
-            actor->junctionWaitSeconds < 0.0) {
+            actor->junctionWaitSeconds < 0.0 ||
+            (actor->scheduledStopDistanceMeters.has_value() &&
+             (!std::isfinite(*actor->scheduledStopDistanceMeters) ||
+              *actor->scheduledStopDistanceMeters < actor->distanceMeters))) {
             throw std::invalid_argument("Traffic driving actor state is invalid");
         }
         validateFootprint(actorFootprint(*actor, actor->distanceMeters));
@@ -4769,6 +4906,13 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     }
                 }
             }
+            const double scheduledStopGap =
+                actor.scheduledStopDistanceMeters.has_value()
+                    ? std::max(0.0, *actor.scheduledStopDistanceMeters - actor.distanceMeters)
+                    : std::numeric_limits<double>::infinity();
+            if (std::isfinite(scheduledStopGap)) {
+                target = std::min(target, std::sqrt(2.0 * braking * scheduledStopGap));
+            }
             actor.targetSpeedMetersPerSecond = target;
             const double oldSpeed = actor.speedMetersPerSecond;
             const double newSpeed = target < oldSpeed
@@ -4779,7 +4923,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 !committedToJunction && std::isfinite(junctionAdmissionStopDistance)
                     ? std::max(0.0, junctionAdmissionStopDistance - actor.distanceMeters)
                     : std::numeric_limits<double>::infinity();
-            const double travel = std::min({requestedTravel, signalStopDistance, junctionStopGap});
+            const double travel = std::min(
+                {requestedTravel, signalStopDistance, junctionStopGap, scheduledStopGap});
             double admitted = 0.0;
             bool blockedDuringMovement = false;
             // Sweep rather than testing just the final pose, including at low frame rates.

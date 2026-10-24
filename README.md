@@ -269,8 +269,15 @@ models marked `[trafficlight]` inherit the signal phase schedule from their
 referenced parent so their scripts can drive the visible lamps. When a parent
 defines multiple signal groups, the numeric placement label selects the
 matching group; uncovered time at the end of a group's cycle is phase `12`
-(off). Other scenery-script variable inheritance is not evaluated, and
-`[varparent]` is not a spatial attachment link.
+(off). SCO `[traffic_light_jump]` entries are read as
+`phase_to_interrupt`, `trigger_distance`, `target_phase`, and `min_green_time`;
+the target uses OMSI green states `6`-`8`.
+An approaching player bus or AI bus requests pre-emption for its linked signal;
+the target phase is applied when the configured interrupt state is active and
+other signal groups are not green, held for the configured minimum, then the
+fixed cycle resumes. F2 path diagnostics show these entries as `BP...`.
+Other scenery-script variable inheritance is not evaluated, and `[varparent]`
+is not a spatial attachment link.
 `[spline_terrain_align]` currently tilts marked scenery so its local up axis
 follows the sampled terrain normal, without changing its position. OMSI's exact
 semantics for this marker have not been independently verified, so this is a
@@ -329,8 +336,9 @@ partial:
   The separate `unsched_trafficdens.txt` group/day schedule applies its hourly
   curves to the capped road-traffic population target, startup pool composition,
   and per-group active targets. The pool remains fixed at startup and can
-  constrain large changes in group proportions. The initial weekday comes from
-  the host calendar because no map simulation-date source is available.
+  constrain large changes in group proportions. Weekday schedules use the map
+  system calendar, initialized to the host local date and advanced by
+  simulation time.
 - Scheduled OMSI AI buses use matched timetable routes and departures; fixed
   SCO traffic-light schedules stop road traffic and pedestrians on linked
   paths. Signalized scenery instances expose the active phase through
@@ -339,10 +347,9 @@ partial:
   the junction controller is `[onlyeditor]`; its geometry remains hidden.
   The GPU traffic-light probe verifies red, green, yellow, and back to red for
   fixed-cycle and controller-driven schedules through the placement loader,
-  model script, visibility, and rendered pixels. Conditional stop/jump overrides
-  and `signalroutes.cfg` routing remain incomplete, and
-  model-specific lamp animation plus full in-game OMSI parity have not been
-  validated.
+  model script, visibility, and rendered pixels. Bus-priority rules are
+  supported, while `signalroutes.cfg` routing, model-specific lamp animation,
+  and full in-game OMSI parity have not been validated.
 
 The existing centerline probe validates linked endpoints and signed curve
 directions, but does not validate cross-section profile placement, sidewalks,
@@ -684,11 +691,11 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   Signalized road paths show a stopline across the authored path width, placed
   0.75 m before the controlled path entry (the AI stopping boundary). A nearby
   billboard lists junction/object ID (`J`), path (`P`), light (`L`), current
-  phase (`PH`), cycle and each phase/duration (`C`/`S`), plus every conditional
-  stop/jump control point (`CP`; `J` means jump, `H` means hold, `R` means
-  request-gated). Signal stoplines are red for stop phases, amber for changeover
-  phases, and green for permissive phases. Editor-only junction controller
-  records remain included in this diagnostic overlay.
+  phase (`PH`), controller clock (`T`), cycle and each phase/duration (`C`/`S`),
+  conditional stop control points (`CP`), and bus-priority rules (`BP`).
+  Signal stoplines are red for stop phases, amber for changeover phases, and
+  green for permissive phases. Editor-only junction controller records remain
+  included in this diagnostic overlay.
   The status overlay also reports active traffic-light models (`TL`), the
   controller-driven subset (`C`), and counts by current `trafficlightphase`
   value (`PH`); `?:N` marks models whose phase is unavailable.

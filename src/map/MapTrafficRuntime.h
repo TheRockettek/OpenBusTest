@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -112,9 +113,11 @@ struct MapTrafficActor {
     double widthMeters = 1.8;
     double minimumTurnRadiusMeters = 4.5;
     double junctionWaitSeconds = 0.0;
+    std::optional<double> scheduledStopDistanceMeters;
     int vehicleType = 0;
     std::optional<std::size_t> unscheduledGroupIndex;
     bool scheduled = false;
+    bool isBus = false;
     MapTrafficBlockReason blockReason = MapTrafficBlockReason::None;
     // What blockReason refers to: another driving actor, or an index into the obstacle list
     // passed to the last advanceMapTrafficDriving call. Identity only; never dereferenced here.
@@ -194,6 +197,54 @@ mapTrafficPartitionScheduledDepartures(const std::vector<double>& departureMinut
 std::vector<std::size_t>
 mapTrafficAllocateScheduledBuses(const std::vector<std::size_t>& departureCounts,
                                  std::size_t busPoolLimit);
+
+// Scheduled passengers are scaled independently from the ambient pedestrian cap.
+std::size_t mapScheduledPassengerQueueSize(std::size_t nominalCount, double humanScale,
+                                           std::size_t safetyLimit = 100000) noexcept;
+
+struct MapPassengerStopService {
+    int stopId = 0;
+    std::size_t waitingPassengers = 0;
+    std::size_t passengersAlighting = 0;
+    double dwellSeconds = 0.0;
+    int nextStopId = 0;
+};
+
+struct MapTrafficPassengerStop {
+    int stopId = 0;
+    int splineId = 0;
+    std::size_t pathIndex = 0;
+    std::size_t trackEntryIndex = 0;
+    std::size_t waitingPassengers = 0;
+    std::size_t passengersAlighting = 0;
+    double dwellSeconds = 0.0;
+    double routeDistanceMeters = 0.0;
+};
+
+class MapPassengerServiceRuntime {
+  public:
+    explicit MapPassengerServiceRuntime(std::size_t seatCount = 0);
+
+    void setWaitingPassengers(int stopId, std::size_t count);
+    bool arrive(const MapPassengerStopService& stop);
+    // Boards one passenger per interval until dwell ends or all seats are occupied.
+    void advance(double elapsedSeconds);
+    bool dwelling() const noexcept;
+    int currentStopId() const noexcept;
+    std::size_t waitingPassengers(int stopId) const noexcept;
+    std::size_t passengerCountOnSeat(std::size_t seatIndex) const noexcept;
+    std::size_t onboardPassengerCount() const noexcept;
+    std::size_t seatCount() const noexcept;
+
+  private:
+    std::vector<std::optional<int>> seatDestinations_;
+    std::unordered_map<int, std::size_t> waitingByStop_;
+    int currentStopId_ = 0;
+    int nextStopId_ = 0;
+    double dwellRemainingSeconds_ = 0.0;
+    double boardingAccumulatorSeconds_ = 0.0;
+    bool dwelling_ = false;
+};
 
 MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath,
                                     double speedMetersPerSecond, double laneOffsetMagnitudeMeters,
@@ -305,7 +356,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                               double elapsedSeconds, double signalClockSeconds = 0.0);
 void advanceMapTrafficSignalControllers(
     const std::vector<std::shared_ptr<MapTrafficSignalController>>& controllers,
-    const std::vector<MapTrafficActor*>& actors, double elapsedSeconds, double initialClockSeconds);
+    const std::vector<MapTrafficActor*>& actors, double elapsedSeconds, double initialClockSeconds,
+    const std::vector<MapTrafficSignalBusPriorityRequest>& busPriorityRequests = {});
 
 class MapTrafficRouteNetwork {
   public:

@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
                   "1\n2\n3\n4\n5\n6\n7\n8\n0\n2.5\n0\n0\n"
                   "[use_traffic_light]\n0\n"
                   "[traffic_light_stop]\n0\n1\n2\n"
-                  "[traffic_light_jump]\n0\n1\n2\n3\n"
+                  "[traffic_light_jump]\n0\n25\n6\n3\n"
                   "[path]\n"
                   "-1\n-2\n-3\n-4\n-5\n-6\n-7\n-8\n1\n1\n2\n0\n";
         output << "[use_traffic_light]\n1\n";
@@ -118,18 +118,20 @@ int main(int argc, char** argv) {
             hasExpectedSignal,
             "traffic-light phases and path association are retained");
         valid &= require(configuration.trafficLightStops.size() == 1 &&
-                             configuration.trafficLightJumps.size() == 1,
+                             configuration.trafficLightBusPriorityRules.size() == 1,
                          "conditional traffic-light records are parsed");
         if (hasExpectedSignal) {
             const auto& program = configuration.trafficPaths[0].trafficSignal->program;
-            valid &= require(
-                program != nullptr && program->controlPoints.size() == 2 &&
-                    program->controlPoints[0].lightIndex == 0 &&
-                    program->controlPoints[0].timeSeconds == 1.0 &&
-                    program->controlPoints[0].ifRequest &&
-                    !program->controlPoints[0].jumpToSeconds.has_value() &&
-                    program->controlPoints[1].jumpToSeconds == 3.0,
-                "SCO stop/jump records become indexed signal-clock control points");
+            valid &= require(program != nullptr && program->controlPoints.size() == 1 &&
+                                 program->controlPoints[0].lightIndex == 0 &&
+                                 program->controlPoints[0].timeSeconds == 1.0 &&
+                                 program->controlPoints[0].ifRequest &&
+                                 program->busPriorityRules.size() == 1 &&
+                                 program->busPriorityRules[0].phaseToInterrupt == 0 &&
+                                 program->busPriorityRules[0].triggerDistanceMeters == 25.0 &&
+                                 program->busPriorityRules[0].targetPhase == 6 &&
+                                 program->busPriorityRules[0].minimumGreenSeconds == 3.0,
+                             "SCO jump records become bus-preemption rules");
         }
         if (hasExpectedSignal) {
             valid &= require(

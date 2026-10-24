@@ -301,6 +301,12 @@ std::vector<std::string> trafficSignalDebugLabel(
     } else {
         heading << '-';
     }
+    if (schedule.controller != nullptr) {
+        heading << " T" << std::fixed << std::setprecision(2)
+                << schedule.controller->clockSeconds();
+    } else {
+        heading << " T" << std::fixed << std::setprecision(2) << signalClockSeconds;
+    }
     std::vector<std::string> lines = {heading.str()};
 
     const std::vector<openbus::map::MapTrafficSignalPhase>* phases = &schedule.phases;
@@ -319,7 +325,8 @@ std::vector<std::string> trafficSignalDebugLabel(
     }
     lines.push_back(phaseLine.str());
 
-    if (schedule.hasConditionalOverrides && schedule.program != nullptr) {
+    if ((schedule.hasConditionalOverrides || schedule.hasBusPriority) &&
+        schedule.program != nullptr) {
         for (const openbus::map::MapTrafficSignalControlPoint& point :
              schedule.program->controlPoints) {
             if (point.lightIndex != schedule.lightIndex) {
@@ -327,16 +334,19 @@ std::vector<std::string> trafficSignalDebugLabel(
             }
             std::ostringstream controlLine;
             controlLine << "CP" << std::fixed << std::setprecision(2) << point.timeSeconds;
-            if (point.jumpToSeconds.has_value()) {
-                controlLine << 'J' << std::fixed << std::setprecision(2)
-                            << *point.jumpToSeconds;
-            } else {
-                controlLine << 'H';
-            }
+            controlLine << 'H';
             if (point.ifRequest) {
                 controlLine << 'R';
             }
             lines.push_back(controlLine.str());
+        }
+        for (const openbus::map::MapTrafficSignalBusPriorityRule& rule :
+             schedule.program->busPriorityRules) {
+            std::ostringstream priorityLine;
+            priorityLine << "BP" << rule.phaseToInterrupt << "D" << std::fixed
+                         << std::setprecision(2) << rule.triggerDistanceMeters << "T"
+                         << rule.targetPhase << "G" << rule.minimumGreenSeconds;
+            lines.push_back(priorityLine.str());
         }
     }
     return lines;
@@ -1058,6 +1068,58 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 mapRenderer_->drawHumanTrafficActor(std::filesystem::path(human.actor.modelPath),
                                                     *pose, human.gait.phaseRadians,
                                                     human.gait.weight);
+            }
+            if (!scheduledPassengerHumanModels_.empty() && lastMainCameraPoseValid_) {
+                std::unordered_set<int> renderedScheduledStops;
+                for (const TrafficVehicleState& trafficVehicle : trafficVehicles_) {
+                    if (!trafficVehicle.isBus || !trafficVehicle.populationEnabled ||
+                        trafficVehicle.vehicle == nullptr) {
+                        continue;
+                    }
+                    for (const openbus::map::MapTrafficPassengerStop& stop :
+                         trafficVehicle.passengerStops) {
+                        const auto queue = scheduledPassengerQueues_.find(stop.stopId);
+                        if (queue == scheduledPassengerQueues_.end() || queue->second == 0) {
+                            continue;
+                        }
+                        const auto stopPose = openbus::map::sampleMapTrafficRoute(
+                            trafficVehicle.actor.route, stop.routeDistanceMeters, 0.0);
+                        if (!stopPose) {
+                            throw std::runtime_error(
+                                "Cannot sample a scheduled passenger stop for rendering");
+                        }
+                        const double cameraDistance = std::hypot(
+                            stopPose->position[0] - lastMainCameraPose_.position[0],
+                            stopPose->position[1] - lastMainCameraPose_.position[1]);
+                        if (cameraDistance > 75.0) {
+                            continue;
+                        }
+                        if (!renderedScheduledStops.insert(stop.stopId).second) {
+                            continue;
+                        }
+                        const double queueOffsetX = -std::sin(stopPose->headingRadians);
+                        const double queueOffsetY = std::cos(stopPose->headingRadians);
+                        const double lineOffsetX = std::cos(stopPose->headingRadians);
+                        const double lineOffsetY = std::sin(stopPose->headingRadians);
+                        for (std::size_t passenger = 0; passenger < queue->second; ++passenger) {
+                            openbus::map::MapTrafficPose passengerPose = *stopPose;
+                            const double row = static_cast<double>(passenger / 3);
+                            const double column = static_cast<double>(passenger % 3) - 1.0;
+                            passengerPose.position[0] += 2.0 * queueOffsetX -
+                                                         0.8 * row * lineOffsetX +
+                                                         0.65 * column * queueOffsetX;
+                            passengerPose.position[1] += 2.0 * queueOffsetY -
+                                                         0.8 * row * lineOffsetY +
+                                                         0.65 * column * queueOffsetY;
+                            const std::size_t modelIndex =
+                                (static_cast<std::size_t>(stop.stopId) + passenger) %
+                                scheduledPassengerHumanModels_.size();
+                            mapRenderer_->drawHumanTrafficActor(
+                                scheduledPassengerHumanModels_[modelIndex], passengerPose, 0.0,
+                                0.0);
+                        }
+                    }
+                }
             }
         } else if (!captureMode_) {
             glEnable(GL_DEPTH_TEST);

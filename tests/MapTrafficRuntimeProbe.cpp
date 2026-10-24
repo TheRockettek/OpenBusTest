@@ -44,6 +44,45 @@ void requireNear(double actual, double expected, const char* message) {
     }
 }
 
+void verifyPassengerServiceBehavior() {
+    using namespace openbus::map;
+    require(mapScheduledPassengerQueueSize(10, 0.5) == 5 &&
+                mapScheduledPassengerQueueSize(1, 0.5) == 1 &&
+                mapScheduledPassengerQueueSize(10, 0.0) == 0 &&
+                mapScheduledPassengerQueueSize(10, -1.0) == 0 &&
+                mapScheduledPassengerQueueSize(10, 2.0, 12) == 12 &&
+                mapScheduledPassengerQueueSize((std::numeric_limits<std::size_t>::max)(), 1.0e100,
+                                               50) == 50,
+            "scheduled queue scaling is independent, rounded and safety-capped");
+
+    MapPassengerServiceRuntime service(2);
+    require(service.seatCount() == 2, "vehicle passenger seats define service capacity");
+    service.setWaitingPassengers(100, 4);
+    require(service.arrive({.stopId = 100, .dwellSeconds = 2.0, .nextStopId = 200}) &&
+                service.dwelling() && service.currentStopId() == 100 &&
+                service.onboardPassengerCount() == 0,
+            "arrival opens a stop dwell and alights no more than occupied seats");
+    service.advance(0.75);
+    require(service.passengerCountOnSeat(0) == 1 && service.passengerCountOnSeat(1) == 0 &&
+                service.waitingPassengers(100) == 3,
+            "passengers board into seats at the configured dwell interval");
+    service.advance(1.25);
+    require(!service.dwelling() && service.onboardPassengerCount() == 2 &&
+                service.waitingPassengers(100) == 2,
+            "dwell closes after time and boarding stops at the seat capacity");
+    service.setWaitingPassengers(200, 2);
+    require(service.arrive({.stopId = 200, .dwellSeconds = 1.0, .nextStopId = 300}) &&
+                service.onboardPassengerCount() == 0,
+            "passengers alight at their assigned destination before the dwell");
+    service.advance(2.0);
+    require(!service.dwelling() && service.onboardPassengerCount() == 1 &&
+                service.waitingPassengers(200) == 1,
+            "boarding follows dwell time and station queues remain stop-local");
+    require(!service.arrive({.stopId = 0, .dwellSeconds = 1.0}) &&
+                !service.arrive({.stopId = 201, .dwellSeconds = -1.0}),
+            "invalid stops and dwell durations are rejected");
+}
+
 void verifyDrivingBehavior() {
     using namespace openbus::map;
     const auto straight = [](int id, double x, double y, double heading, double length) {
@@ -270,7 +309,7 @@ void verifyDrivingBehavior() {
     heldSignalProgram->cycleDurationSeconds = 10.0;
     heldSignalProgram->lights = {{{6, 5.0}, {0, 5.0}}};
     heldSignalProgram->approachDistancesMeters = {std::nullopt};
-    heldSignalProgram->controlPoints = {{0, 3.0, true, std::nullopt}};
+    heldSignalProgram->controlPoints = {{0, 3.0, true}};
     MapTrafficSignalController heldSignal(heldSignalProgram);
     heldSignal.advance(4.0, 0.0);
     requireNear(heldSignal.clockSeconds(), 3.0,
@@ -298,20 +337,92 @@ void verifyDrivingBehavior() {
     require(mapTrafficSignalStateAtTime(requestedSchedule, 4.0) == 6,
             "the active conditional phase is exposed for scenery signal rendering");
 
-    auto jumpedSignalProgram = std::make_shared<MapTrafficSignalProgram>();
-    jumpedSignalProgram->cycleDurationSeconds = 10.0;
-    jumpedSignalProgram->lights = {{{6, 9.0}, {0, 1.0}}};
-    jumpedSignalProgram->approachDistancesMeters = {std::nullopt};
-    jumpedSignalProgram->controlPoints = {{0, 4.0, true, 8.0}};
-    MapTrafficSignalController jumpedSignal(jumpedSignalProgram);
-    jumpedSignal.advance(5.0, 0.0);
-    requireNear(jumpedSignal.clockSeconds(), 9.0,
-                "a conditional jump skips to its target and consumes the remaining frame time");
-    MapTrafficSignalController requestedJump(jumpedSignalProgram);
-    requestedJump.request(0);
-    requestedJump.advance(5.0, 0.0);
-    requireNear(requestedJump.clockSeconds(), 5.0,
-                "an if-request jump is skipped while a vehicle requests its light");
+    auto busPriorityProgram = std::make_shared<MapTrafficSignalProgram>();
+    busPriorityProgram->cycleDurationSeconds = 20.0;
+    busPriorityProgram->lights = {{{0, 5.0}, {6, 15.0}}, {{0, 20.0}}};
+    busPriorityProgram->approachDistancesMeters = {std::nullopt, std::nullopt};
+    busPriorityProgram->busPriorityRules = {{0, 25.0, 6, 3.0}};
+    auto busPriorityController =
+        std::make_shared<MapTrafficSignalController>(busPriorityProgram);
+    MapTrafficSignalSchedule busPrioritySchedule;
+    busPrioritySchedule.cycleDurationSeconds = 20.0;
+    busPrioritySchedule.phases = busPriorityProgram->lights[0];
+    busPrioritySchedule.lightIndex = 0;
+    busPrioritySchedule.hasConditionalOverrides = true;
+    busPrioritySchedule.hasBusPriority = true;
+    busPrioritySchedule.program = busPriorityProgram;
+    busPrioritySchedule.controller = busPriorityController;
+    MapTrafficRouteSegment busPriorityPath = straight(1901, 0.0, 0.0, 0.0, 10.0);
+    busPriorityPath.trafficSignal = busPrioritySchedule;
+    MapTrafficRoute busPriorityRoute;
+    busPriorityRoute.segments = {straight(1902, 0.0, -30.0, 0.0, 30.0), busPriorityPath};
+    busPriorityRoute.cumulativeEndDistances = {30.0, 40.0};
+    busPriorityRoute.totalLength = 40.0;
+    auto priorityBus = makeMapTrafficActor(busPriorityRoute, "priority-bus.ovh", 0.0, 0.0, false);
+    priorityBus.isBus = true;
+    advanceMapTrafficSignalControllers({busPriorityController}, {&priorityBus}, 0.1, 0.0);
+    require(mapTrafficSignalStateAtTime(busPrioritySchedule, 0.1) == 0,
+            "bus-priority request does not trigger outside its configured approach distance");
+    priorityBus.distanceMeters = 3.0;
+    advanceMapTrafficSignalControllers({busPriorityController}, {&priorityBus}, 0.1, 0.1);
+    MapTrafficSignalSchedule conflictingSignalSchedule;
+    conflictingSignalSchedule.cycleDurationSeconds = 20.0;
+    conflictingSignalSchedule.phases = busPriorityProgram->lights[1];
+    conflictingSignalSchedule.lightIndex = 1;
+    conflictingSignalSchedule.hasConditionalOverrides = true;
+    conflictingSignalSchedule.program = busPriorityProgram;
+    conflictingSignalSchedule.controller = busPriorityController;
+    require(mapTrafficSignalStateAtTime(busPrioritySchedule, 0.2) == 6 &&
+                mapTrafficSignalStateAtTime(conflictingSignalSchedule, 0.2) == 0,
+            "an approaching bus receives minimum green while conflicting signals stay red");
+    advanceMapTrafficSignalControllers({busPriorityController}, {&priorityBus}, 1.0, 0.2);
+    require(mapTrafficSignalStateAtTime(busPrioritySchedule, 1.2) == 6,
+            "bus-priority green remains active for its configured minimum time");
+    advanceMapTrafficSignalControllers({busPriorityController}, {}, 2.1, 1.2);
+    require(mapTrafficSignalStateAtTime(busPrioritySchedule, 3.3) == 0,
+            "bus-priority override returns to the running fixed-cycle phase");
+
+    auto nonBusPriorityController =
+        std::make_shared<MapTrafficSignalController>(busPriorityProgram);
+    busPrioritySchedule.controller = nonBusPriorityController;
+    priorityBus.isBus = false;
+    priorityBus.distanceMeters = 3.0;
+    advanceMapTrafficSignalControllers({nonBusPriorityController}, {&priorityBus}, 0.1, 0.0);
+    require(mapTrafficSignalStateAtTime(busPrioritySchedule, 0.1) == 0,
+            "ordinary traffic does not activate bus pre-emption");
+
+    auto conflictingProgram = std::make_shared<MapTrafficSignalProgram>(*busPriorityProgram);
+    conflictingProgram->lights[1] = {{6, 5.0}, {0, 15.0}};
+    auto conflictSafeController =
+        std::make_shared<MapTrafficSignalController>(conflictingProgram);
+    MapTrafficSignalSchedule conflictSafeSchedule = busPrioritySchedule;
+    conflictSafeSchedule.program = conflictingProgram;
+    conflictSafeSchedule.controller = conflictSafeController;
+    MapTrafficRouteSegment conflictSafePath = straight(1903, 0.0, 0.0, 0.0, 10.0);
+    conflictSafePath.trafficSignal = conflictSafeSchedule;
+    MapTrafficRoute conflictSafeRoute;
+    conflictSafeRoute.segments = {straight(1904, 0.0, -30.0, 0.0, 30.0), conflictSafePath};
+    conflictSafeRoute.cumulativeEndDistances = {30.0, 40.0};
+    conflictSafeRoute.totalLength = 40.0;
+    auto conflictSafeBus =
+        makeMapTrafficActor(conflictSafeRoute, "conflict-safe-bus.ovh", 0.0, 0.0, false);
+    conflictSafeBus.isBus = true;
+    advanceMapTrafficSignalControllers({conflictSafeController}, {&conflictSafeBus}, 0.1, 0.0);
+    MapTrafficSignalSchedule opposingSchedule;
+    opposingSchedule.cycleDurationSeconds = 20.0;
+    opposingSchedule.phases = conflictingProgram->lights[1];
+    opposingSchedule.lightIndex = 1;
+    opposingSchedule.hasConditionalOverrides = true;
+    opposingSchedule.controller = conflictSafeController;
+    opposingSchedule.program = conflictingProgram;
+    require(mapTrafficSignalStateAtTime(conflictSafeSchedule, 0.1) == 0 &&
+                mapTrafficSignalStateAtTime(opposingSchedule, 0.1) == 6,
+            "bus priority waits instead of granting green against conflicting green");
+    advanceMapTrafficSignalControllers({conflictSafeController}, {&conflictSafeBus}, 5.1, 0.1);
+    advanceMapTrafficSignalControllers({conflictSafeController}, {&conflictSafeBus}, 0.1, 5.2);
+    require(mapTrafficSignalStateAtTime(conflictSafeSchedule, 5.3) == 6 &&
+                mapTrafficSignalStateAtTime(opposingSchedule, 5.3) == 0,
+            "waiting bus priority activates once conflicting green has cleared");
 
     MapTrafficLaneNetwork junction;
     junction.addSegment(straight(1001, 0.0, -40.0, 0.0, 40.0));
@@ -567,6 +678,20 @@ void verifyDrivingBehavior() {
     sharpCurveRoute.totalLength = sharpCurveLength;
     require(mapTrafficCurveSpeedLimit(sharpCurveRoute, sharpCurveLength * 0.5, 8.0, 4.5) >= 2.0,
             "tight-curve speed limits retain a 2 m/s floor rather than freezing traffic");
+    {
+        auto scheduledBus =
+            makeMapTrafficActor(oneSegment(straight(2299, 0.0, 0.0, 0.0, 100.0)),
+                                "scheduled.bus", 10.0, 0.0, false);
+        scheduledBus.isBus = true;
+        scheduledBus.scheduledStopDistanceMeters = 20.0;
+        for (int frame = 0; frame < 200 && scheduledBus.speedMetersPerSecond > 0.0; ++frame) {
+            advanceMapTrafficDriving({&scheduledBus}, {}, 0.1);
+        }
+        requireNear(scheduledBus.distanceMeters, 20.0,
+                    "scheduled bus reaches the configured passenger-stop position");
+        requireNear(scheduledBus.speedMetersPerSecond, 0.0,
+                    "scheduled bus holds safely at a passenger stop");
+    }
     for (const auto* route : {&*left, &*right}) {
         auto actor = makeMapTrafficActor(*route, "car.ovh", 12.0, 0.0, false);
         actor.minimumTurnRadiusMeters = 10.0;
@@ -2858,7 +2983,21 @@ void verifyTrafficRules() {
             mapTrafficPathAllowsVehicle(rules, {0, 2, false}) &&
             !mapTrafficPathAllowsVehicle(rules, {0, 3, false}) &&
             mapTrafficPathAllowsVehicle(rules, {2, std::nullopt, true}),
-        "path rules enforce access and density for unscheduled groups but preserve scheduled traffic");
+        "path rules enforce unscheduled access and density while preserving scheduled buses");
+    const MapTrafficPathRules scheduledBusRestrictedRoad = mapTrafficRulesForPath(
+        {{false, {"0", "bus", "0", "0"}},
+         {false, {"0", "trafficdensity", "0", "0"}},
+         {false, {"0", "no_unsched_traffic", "1", "0"}}},
+        0);
+    require(!mapTrafficPathAllowsVehicle(scheduledBusRestrictedRoad, {2, std::nullopt, true}),
+            "scheduled buses respect explicit bus access restrictions");
+    const MapTrafficPathRules scheduledBusAllowedRoad = mapTrafficRulesForPath(
+        {{false, {"0", "bus", "1", "0"}},
+         {false, {"0", "trafficdensity", "0", "0"}},
+         {false, {"0", "no_unsched_traffic", "1", "0"}}},
+        0);
+    require(mapTrafficPathAllowsVehicle(scheduledBusAllowedRoad, {2, std::nullopt, true}),
+            "scheduled buses ignore unscheduled density rules when explicitly permitted");
     const MapTrafficPathRules afterKill =
         mapTrafficRulesForPath({{false, {"0", "no_cars", "1", "0"}},
                                 {true, {"0", "no_cars", "1", "0"}},
@@ -2903,7 +3042,15 @@ void verifyTrafficRules() {
             !restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {3, 1, false}) &&
         !restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {0, 3, false}) &&
         restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {2, std::nullopt, true}),
-        "route construction rejects prohibited and unscheduled-traffic group lanes");
+        "route construction rejects prohibited lanes and preserves allowed scheduled bus lanes");
+    MapTrafficRouteSegment scheduledRestrictedSegment;
+    scheduledRestrictedSegment.spline = {makeSpline(1301, 0, 0, 0.0), 0, 0};
+    scheduledRestrictedSegment.pathRules = scheduledBusRestrictedRoad;
+    MapTrafficLaneNetwork scheduledRestrictedNetwork;
+    scheduledRestrictedNetwork.addSegment(scheduledRestrictedSegment);
+    scheduledRestrictedNetwork.finalize();
+    require(!scheduledRestrictedNetwork.buildRoute(1301, 0, 0, 0.0, {2, std::nullopt, true}),
+        "route construction rejects scheduled buses on explicitly prohibited paths");
 
     const auto straightSegment = [](int id, double x, double y) {
         MapTrafficRouteSegment segment{{makeSpline(id, 0, 0, y), 0, 0}};
@@ -3580,6 +3727,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         using namespace openbus::map;
+        verifyPassengerServiceBehavior();
         verifyDrivingBehavior();
         verifyTrafficRules();
         verifyMalformedRouteErrors();

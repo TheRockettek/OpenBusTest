@@ -44,6 +44,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -360,6 +361,7 @@ struct Vehicle {
     std::unordered_map<int, int> reflectionRequiredSizes;
     openbus::scripting::Vehicle variables;
     std::unique_ptr<ScriptRuntime> scripts;
+    openbus::map::MapPassengerServiceRuntime passengerService;
     SoundEngine* soundPlayback = nullptr;
     VehicleSoundBank soundBank;
     bool soundEventsEnabled = false;
@@ -379,6 +381,10 @@ struct Vehicle {
     double trafficLengthMeters = 0.0;
     double trafficWidthMeters = 0.0;
     double trafficHeightMeters = 0.0;
+    std::vector<BusAxle> trafficAxles;
+    std::vector<bool> trafficAxleSteerable;
+    double trafficWheelbaseMeters = 0.0;
+    double trafficWheelHalfWidthMeters = 0.0;
     double textureScale = 1;
     double odometerMetres = 0.0;
     std::array<double, 2> odometerPosition = {};
@@ -458,6 +464,9 @@ struct Vehicle {
     void updateSimulationVariables(const BusSimulation& simulation, double throttle,
                                    double steering, double brake);
 
+    void updateTrafficWheelAnimations(double traveledDistanceMeters, double routeCurvaturePerMeter,
+                                      double speedMetersPerSecond);
+
     void setOdeSimulation(const BusSimulation& simulation);
 
     bool clickablePartVisible(const DisplayPart& part, std::size_t partIndex,
@@ -521,6 +530,82 @@ struct Vehicle {
         }
 #endif
         VehicleConfig vehicleConfiguration = definition->vehicleConfiguration;
+        passengerService =
+            openbus::map::MapPassengerServiceRuntime(vehicleConfiguration.passengerPositions.size());
+        trafficAxles = vehicleConfiguration.axles;
+        trafficWheelHalfWidthMeters = vehicleConfiguration.wheelHalfWidth;
+        const auto axleIndexForVariable =
+            [](const std::string& variable, std::string_view prefix) -> std::optional<std::size_t> {
+            if (variable.rfind(prefix, 0) != 0) {
+                return std::nullopt;
+            }
+            const std::size_t sideSeparator = variable.find('_', prefix.size());
+            if (sideSeparator == std::string::npos || (variable.substr(sideSeparator + 1) != "l" &&
+                                                       variable.substr(sideSeparator + 1) != "r")) {
+                return std::nullopt;
+            }
+            std::size_t axleIndex = 0;
+            const char* const begin = variable.data() + prefix.size();
+            const char* const end = variable.data() + sideSeparator;
+            const auto [parsedEnd, error] = std::from_chars(begin, end, axleIndex);
+            if (error != std::errc{} || parsedEnd != end) {
+                return std::nullopt;
+            }
+            return axleIndex;
+        };
+        std::size_t modelAxleCount = trafficAxles.size();
+        for (const openbus::rendering::BusModelPart& part : definition->modelConfiguration.parts) {
+            const std::optional<std::size_t> rotationAxle =
+                axleIndexForVariable(part.wheelAnimation.rotationVariable, "wheel_rotation_");
+            const std::optional<std::size_t> steeringAxle =
+                axleIndexForVariable(part.wheelAnimation.steeringVariable, "axle_steering_");
+            if (rotationAxle.has_value()) {
+                modelAxleCount = std::max(modelAxleCount, *rotationAxle + 1);
+            }
+            if (steeringAxle.has_value()) {
+                modelAxleCount = std::max(modelAxleCount, *steeringAxle + 1);
+            }
+        }
+        const std::size_t configuredAxleCount = trafficAxles.size();
+        trafficAxles.resize(modelAxleCount);
+        const double fallbackWheelDiameter =
+            std::clamp(vehicleConfiguration.boundingBox[2] * 0.36, 0.4, 1.1);
+        const double fallbackTrackWidth = vehicleConfiguration.boundingBox[0] * 0.8;
+        const double fallbackWheelbase = vehicleConfiguration.boundingBox[1] * 0.6;
+        for (std::size_t axleIndex = configuredAxleCount; axleIndex < modelAxleCount; ++axleIndex) {
+            BusAxle& axle = trafficAxles[axleIndex];
+            axle.position =
+                modelAxleCount == 1
+                    ? 0.0
+                    : fallbackWheelbase * (0.5 - static_cast<double>(axleIndex) /
+                                                     static_cast<double>(modelAxleCount - 1));
+            axle.trackWidth = fallbackTrackWidth;
+            axle.maxWidth = fallbackTrackWidth;
+            axle.wheelDiameter = fallbackWheelDiameter;
+        }
+        trafficAxleSteerable.resize(trafficAxles.size(), false);
+        for (std::size_t axleIndex = 0; axleIndex < trafficAxles.size(); ++axleIndex) {
+            const std::string steeringPrefix = "axle_steering_" + std::to_string(axleIndex) + "_";
+            trafficAxleSteerable[axleIndex] =
+                std::any_of(definition->modelConfiguration.parts.begin(),
+                            definition->modelConfiguration.parts.end(),
+                            [&](const openbus::rendering::BusModelPart& part) {
+                                return axleIndexForVariable(part.wheelAnimation.steeringVariable,
+                                                            steeringPrefix)
+                                    .has_value();
+                            });
+        }
+        if (trafficAxles.size() > 1) {
+            const auto [rearAxle, frontAxle] =
+                std::minmax_element(trafficAxles.begin(), trafficAxles.end(),
+                                    [](const BusAxle& left, const BusAxle& right) {
+                                        return left.position < right.position;
+                                    });
+            trafficWheelbaseMeters = frontAxle->position - rearAxle->position;
+        }
+        if (!std::isfinite(trafficWheelbaseMeters) || trafficWheelbaseMeters <= 0.0) {
+            trafficWheelbaseMeters = vehicleConfiguration.boundingBox[1] * 0.6;
+        }
         trafficLengthMeters = vehicleConfiguration.boundingBox[1] +
                               2.0 * std::abs(vehicleConfiguration.boundingBox[4]);
         trafficWidthMeters = vehicleConfiguration.boundingBox[0] +

@@ -2,6 +2,8 @@
 
 #include "app/vehicle/Vehicle.h"
 
+#include <numbers>
+
 void Vehicle::updateFrameVariables(bool isAiVehicle, double timeStep) {
     TraceScope trace("frame", "Vehicle::updateFrameVariables");
     // Frame-scoped values are refreshed before simulation and rendering run.
@@ -12,6 +14,12 @@ void Vehicle::updateFrameVariables(bool isAiVehicle, double timeStep) {
 
 void Vehicle::updateScripts(bool isAiVehicle) {
     TraceScope trace("script", "Vehicle::updateScripts");
+    for (std::size_t seatIndex = 0; seatIndex < passengerService.seatCount(); ++seatIndex) {
+        variables.set("human_count_on_seat_" + std::to_string(seatIndex),
+                      static_cast<float>(passengerService.passengerCountOnSeat(seatIndex)));
+    }
+    variables.set("passengers_onboard",
+                  static_cast<float>(passengerService.onboardPassengerCount()));
     if (scripts) {
         const std::size_t scriptErrorCount = scripts->errors().size();
         scripts->update(isAiVehicle);
@@ -69,6 +77,37 @@ void Vehicle::updateSimulationVariables(const BusSimulation& simulation, double 
     odometerMetres = std::max(0.0, odometerMetres);
     variables.set("kmcounter_km", std::floor(odometerMetres / 1000.0));
     variables.set("kmcounter_m", std::fmod(odometerMetres, 1000.0));
+}
+
+void Vehicle::updateTrafficWheelAnimations(double traveledDistanceMeters,
+                                           double routeCurvaturePerMeter,
+                                           double speedMetersPerSecond) {
+    constexpr double radiansPerSecondToRpm = 60.0 / (2.0 * std::numbers::pi);
+    const double physicalCurvaturePerMeter = -routeCurvaturePerMeter;
+    for (std::size_t axleIndex = 0; axleIndex < trafficAxles.size(); ++axleIndex) {
+        const BusAxle& axle = trafficAxles[axleIndex];
+        const double wheelRadius = axle.wheelDiameter * 0.5;
+        if (!std::isfinite(wheelRadius) || wheelRadius <= 0.0) {
+            continue;
+        }
+        const double wheelRotation = -traveledDistanceMeters / wheelRadius;
+        const double wheelSpeedRpm = speedMetersPerSecond / wheelRadius * radiansPerSecondToRpm;
+        for (const char* side : {"l", "r"}) {
+            const std::string variableSuffix = "_" + std::to_string(axleIndex) + "_" + side;
+            variables.set("wheel_rotation" + variableSuffix, wheelRotation);
+            variables.set("wheel_rotationspeed" + variableSuffix, wheelSpeedRpm);
+            if (!trafficAxleSteerable[axleIndex]) {
+                continue;
+            }
+            const double sideOffset =
+                (side[0] == 'l' ? 1.0 : -1.0) *
+                std::max(0.0, axle.trackWidth * 0.5 - trafficWheelHalfWidthMeters);
+            const double steeringAngle =
+                std::atan2(trafficWheelbaseMeters * physicalCurvaturePerMeter,
+                           1.0 - physicalCurvaturePerMeter * sideOffset);
+            variables.set("axle_steering" + variableSuffix, std::clamp(steeringAngle, -0.65, 0.65));
+        }
+    }
 }
 
 void Vehicle::setOdeSimulation(const BusSimulation& simulation) {

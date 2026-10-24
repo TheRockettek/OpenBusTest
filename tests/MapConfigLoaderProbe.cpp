@@ -135,7 +135,25 @@ void runFixtureProbe() {
                 std::filesystem::create_directories(timetableDirectory);
                 writeUtf16Le(timetableDirectory / "FixtureTrip.ttp",
                              "[trip]\nFixtureLine\nTown End\n12\n"
-                             "[station]\n15479\n1\nMain Stop\n0\n0\n0\n0\n5\n");
+                             "[station]\n15479\n1\nMain Stop\n0\n0\n0\n0\n5\n"
+                             "[station]\n15480\n1\nInvalid Tile\n-1\n0\n0\n0\n5\n");
+                writeUtf16Le(timetableDirectory / "BusOnly.ttp",
+                             "[trip]\n\nTown End\n12\n"
+                             "[station_typ2]\n15479\n[station_typ2]\n15480\n");
+                writeUtf16Le(timetableDirectory / "BusOnly.ttl",
+                             "[newtour]\nBus\n1\nDep.: 8:15:0\n"
+                             "[addtrip]\nBusOnly\n0\n495.000\n");
+                writeUtf16Le(timetableDirectory / "Busstops.cfg",
+                             "[busstop]\nMain Stop\n0\n15479\n0\n0\n0\n"
+                             "[busstop]\nIncomplete Stop\n"
+                             "[busstop]\nTown End\n0\n15480\n0\n0\n0\n"
+                             "[busstop]\nInvalid Stop\n0\n15481\ninvalid\n0\n0\n");
+                writeUtf16Le(timetableDirectory / "StnLinks.cfg",
+                             "[StnLink]\n"
+                             "[StnLink]\n12.5\n15479\n15480\n0\n0\n0\n0\n0\n0\n"
+                             "[StnLink_entry]\n1\n2\n3\n4.5\n5\n6\n7\n"
+                             "[StnLink_entry]\n2\n3\n4\n5.5\n6\n7\n8\n"
+                             "[StnLink]\ninvalid-length\n15479\n15480\n0\n0\n0\n0\n0\n0\n");
                 writeUtf16Le(timetableDirectory / "FixtureLine.ttr",
                              "[track_entry]\n30273\n0\n1\n1\n10\n0\n"
                              "[track_entry]\n30273\n1\n1\n2\n10\n0\n"
@@ -528,30 +546,70 @@ void runFixtureProbe() {
         const std::vector<openbus::map::MapAiRoadVehicle> emptyDensityRoadVehicles =
             openbus::map::mapAiRoadVehicles(emptyDensityDefinition.aiTraffic);
         require(!emptyDensityDefinition.aiTraffic.hasUnscheduledTrafficDensityFile &&
-                    !openbus::map::mapAiRoadTrafficDensityAtHour(
-                         emptyDensityDefinition.aiTraffic, emptyDensityRoadVehicles, 12.0, 1)
+                    !openbus::map::mapAiRoadTrafficDensityAtHour(emptyDensityDefinition.aiTraffic,
+                                                                 emptyDensityRoadVehicles, 12.0, 1)
                          .has_value(),
                 "an empty unscheduled-density file preserves the global-density fallback");
-        require(definition.aiTraffic.timetableRoutes.size() == 1 &&
+        require(definition.aiTraffic.timetableRoutes.size() == 2 &&
                     definition.aiTraffic.timetableRoutes[0].timetableKey == "fixturetrip" &&
                     definition.aiTraffic.timetableRoutes[0].tripName == "FixtureLine" &&
                     definition.aiTraffic.timetableRoutes[0].destinationName == "Town End" &&
                     definition.aiTraffic.timetableRoutes[0].lineName == "12" &&
                     definition.aiTraffic.timetableRoutes[0].stationCount == 1 &&
+                    definition.aiTraffic.timetableRoutes[0].stations ==
+                        std::vector<openbus::map::MapAiTimetableRoute::Station>{
+                            {15479, 1, "Main Stop", 0, {"0", "0", "0", "5"}}} &&
                     definition.aiTraffic.timetableRoutes[0].splineIds ==
                         std::vector<int>{30273, 30274} &&
                     definition.aiTraffic.timetableRoutes[0].trackEntries ==
                         std::vector<openbus::map::MapAiTimetableRoute::TrackEntry>{
-                            {30273, 0}, {30273, 1}, {30274, 0}} &&
+                            {30273, 0, 1, 10.0}, {30273, 1, 1, 10.0},
+                            {30274, 0, 0, 10.0}} &&
                     definition.aiTraffic.timetableRoutes[0].scheduledDepartureMinutes ==
                         std::vector<double>{405.0, 495.0},
                 "timetable routes retain ordered path selectors, stations, and departures");
+        const auto busOnlyTimetable =
+            std::find_if(definition.aiTraffic.passengerTimetables.begin(),
+                         definition.aiTraffic.passengerTimetables.end(),
+                         [](const openbus::map::MapAiPassengerTimetable& timetable) {
+                             return timetable.timetableKey == "busonly";
+                         });
+        require(definition.aiTraffic.busStops.size() == 2 &&
+                    definition.aiTraffic.busStops[0].name == "Main Stop" &&
+        definition.aiTraffic.busStops[0].tileIndex == 0 &&
+                    definition.aiTraffic.busStops[0].id == 15479 &&
+                    definition.aiTraffic.stationLinks.size() == 1 &&
+                    definition.aiTraffic.stationLinks[0].fromStopId == 15479 &&
+                    definition.aiTraffic.stationLinks[0].toStopId == 15480 &&
+                    definition.aiTraffic.stationLinks[0].fields[0] == "12.5" &&
+                    definition.aiTraffic.stationLinks[0].fields[3] == "0" &&
+                    definition.aiTraffic.stationLinks[0].entries ==
+                        std::vector<openbus::map::MapAiStationLink::Entry>{
+                            {1, 2, 3, 4.5, {"5", "6", "7"}},
+                            {2, 3, 4, 5.5, {"6", "7", "8"}}} &&
+                    busOnlyTimetable != definition.aiTraffic.passengerTimetables.end() &&
+                    busOnlyTimetable->stationIds == std::vector<int>{15479, 15480} &&
+                    busOnlyTimetable->scheduledDepartureMinutes == std::vector<double>{495.0} &&
+                    definition.aiTraffic.timetableRoutes[1].timetableKey == "busonly" &&
+                    definition.aiTraffic.timetableRoutes[1].stations.size() == 2 &&
+                    definition.aiTraffic.timetableRoutes[1].stations[0].trackEntryIndex == 0 &&
+                    definition.aiTraffic.timetableRoutes[1].stations[1].trackEntryIndex == 1 &&
+                    definition.aiTraffic.timetableRoutes[1].splineIds ==
+                        std::vector<int>{1, 2} &&
+                    openbus::map::mapAiPassengerTimetableHasResolvedLinks(definition.aiTraffic,
+                                                                          *busOnlyTimetable),
+                "station-only trips build scheduled route checkpoints from ordered station links");
+        openbus::map::MapAiTrafficData ambiguousPassengerStops = definition.aiTraffic;
+        ambiguousPassengerStops.busStops.push_back(ambiguousPassengerStops.busStops.front());
+        require(
+            !openbus::map::mapAiPassengerTimetableHasResolvedLinks(ambiguousPassengerStops,
+                                                                   *busOnlyTimetable),
+            "duplicate stop IDs fail closed rather than binding a passenger station arbitrarily");
         require(definition.aiTraffic.busTypes.size() == 1 &&
                     definition.aiTraffic.busTypes[0].type == 2 &&
                     definition.aiTraffic.busTypes[0].assetPath == "vehicles\\city_bus.bus" &&
                     definition.aiTraffic.busTypes[0].rawLines ==
-                        std::vector<std::string>{"vehicles\\city_bus.bus",
-                                                 "1234\tBlue livery"} &&
+                        std::vector<std::string>{"vehicles\\city_bus.bus", "1234\tBlue livery"} &&
                     definition.aiTraffic.busTypes[0].depotIndex == 0 &&
                     definition.aiTraffic.depots.size() == 1 &&
                     definition.aiTraffic.depots[0].name == "Central Depot" &&

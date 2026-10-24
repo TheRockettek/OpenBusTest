@@ -184,7 +184,10 @@ TrafficSignalDebugStats MapRenderer::trafficSignalDebugStats() const {
         }
         ++stats.activeSignalModels;
         stats.controllerDrivenModels +=
-            scriptState.trafficSignal->hasConditionalOverrides ? 1U : 0U;
+            (scriptState.trafficSignal->hasConditionalOverrides ||
+             scriptState.trafficSignal->hasBusPriority)
+                ? 1U
+                : 0U;
         const auto phase = scriptState.variables.numericValues().find("trafficlightphase");
         if (phase == scriptState.variables.numericValues().end() || !std::isfinite(phase->second) ||
             phase->second < 0.0F || phase->second > 12.0F ||
@@ -688,9 +691,46 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
 
 void MapRenderer::updateTrafficSignalControllers(
     const std::vector<openbus::map::MapTrafficActor*>& actors, double elapsedSeconds,
-    double initialClockSeconds) const {
+    double initialClockSeconds,
+    std::optional<std::array<double, 2>> playerBusPosition) const {
+    std::vector<openbus::map::MapTrafficSignalBusPriorityRequest> playerBusRequests;
+    if (playerBusPosition.has_value()) {
+        for (const TrafficPathDebugSegment& segment : impl_->sceneryTrafficPathSegments) {
+            if (!segment.trafficSignal.has_value() ||
+                !segment.trafficSignal->hasBusPriority ||
+                segment.trafficSignal->controller == nullptr ||
+                segment.trafficSignal->program == nullptr || segment.points.size() < 2) {
+                continue;
+            }
+            const auto& start = segment.points.front();
+            const auto& next = segment.points[1];
+            const double directionX = next[0] - start[0];
+            const double directionY = next[1] - start[1];
+            const double directionLength = std::hypot(directionX, directionY);
+            if (directionLength <= 1.0e-9) {
+                continue;
+            }
+            double triggerDistance = 0.0;
+            for (const openbus::map::MapTrafficSignalBusPriorityRule& rule :
+                 segment.trafficSignal->program->busPriorityRules) {
+                triggerDistance = std::max(triggerDistance, rule.triggerDistanceMeters);
+            }
+            const double unitX = directionX / directionLength;
+            const double unitY = directionY / directionLength;
+            const double offsetX = (*playerBusPosition)[0] - start[0];
+            const double offsetY = (*playerBusPosition)[1] - start[1];
+            const double distanceToStart = -(offsetX * unitX + offsetY * unitY);
+            const double lateralDistance = -offsetX * unitY + offsetY * unitX;
+            if (distanceToStart >= -0.5 && distanceToStart <= triggerDistance &&
+                std::abs(lateralDistance) <= segment.widthMeters * 0.5 + 1.5) {
+                playerBusRequests.push_back(
+                    {segment.trafficSignal->controller, segment.trafficSignal->lightIndex});
+            }
+        }
+    }
     openbus::map::advanceMapTrafficSignalControllers(impl_->trafficSignalControllers, actors,
-                                                     elapsedSeconds, initialClockSeconds);
+                                                     elapsedSeconds, initialClockSeconds,
+                                                     playerBusRequests);
     const double signalClockSeconds = initialClockSeconds + elapsedSeconds;
     for (const std::size_t stateIndex : impl_->activeSceneryScriptStateIndices) {
         Impl::SceneryScriptState& scriptState = *impl_->sceneryScriptStates[stateIndex];

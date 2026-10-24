@@ -290,9 +290,23 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                     std::copy(values.begin(), values.end(), stop.begin());
                     result.trafficLightStops.push_back(stop);
                 } else {
-                    std::array<double, 4> jump{};
-                    std::copy(values.begin(), values.end(), jump.begin());
-                    result.trafficLightJumps.push_back(jump);
+                    const double interruptState = values[0];
+                    const double targetPhase = values[2];
+                    if (std::floor(interruptState) != interruptState || interruptState < 0.0 ||
+                        interruptState > 12.0 || !std::isfinite(values[1]) ||
+                        values[1] < 0.0 || std::floor(targetPhase) != targetPhase ||
+                        targetPhase < 6.0 || targetPhase > 8.0 ||
+                        !std::isfinite(values[3]) || values[3] < 0.0) {
+                        result.diagnostics.warning(
+                            line.number, keyword,
+                            "expected an interrupt phase in [0, 12], a green target phase in "
+                            "[6, 8], and non-negative "
+                            "trigger distance/minimum green time");
+                    } else {
+                        result.trafficLightBusPriorityRules.push_back(
+                            {static_cast<int>(interruptState), values[1],
+                             static_cast<int>(targetPhase), values[3]});
+                    }
                 }
             }
             continue;
@@ -413,31 +427,28 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         signalProgram->lights.push_back(light.phases);
         signalProgram->approachDistancesMeters.push_back(light.approachDistanceMeters);
     }
+    signalProgram->busPriorityRules = result.trafficLightBusPriorityRules;
     const auto addControlPoint = [&](double rawLightIndex, double timeSeconds, double ifRequest,
-                                     std::optional<double> jumpToSeconds, const char* keyword) {
+                                     const char* keyword) {
         if (!std::isfinite(rawLightIndex) || rawLightIndex < 0.0 ||
             std::floor(rawLightIndex) != rawLightIndex ||
             rawLightIndex >= static_cast<double>(result.trafficLights.size()) ||
-            !std::isfinite(timeSeconds) || timeSeconds < 0.0 || !std::isfinite(ifRequest) ||
-            (jumpToSeconds.has_value() &&
-             (!std::isfinite(*jumpToSeconds) || *jumpToSeconds < 0.0))) {
+            !std::isfinite(timeSeconds) || timeSeconds < 0.0 || !std::isfinite(ifRequest)) {
             result.diagnostics.warning(
                 0, keyword, "expected an existing light index and finite non-negative times");
             return;
         }
         signalProgram->controlPoints.push_back(
-            {static_cast<std::size_t>(rawLightIndex), timeSeconds, ifRequest > 0.5, jumpToSeconds});
+            {static_cast<std::size_t>(rawLightIndex), timeSeconds, ifRequest > 0.5});
     };
     for (const std::array<double, 3>& stop : result.trafficLightStops) {
-        addControlPoint(stop[0], stop[1], stop[2], std::nullopt, "traffic_light_stop");
-    }
-    for (const std::array<double, 4>& jump : result.trafficLightJumps) {
-        addControlPoint(jump[0], jump[1], jump[2], jump[3], "traffic_light_jump");
+        addControlPoint(stop[0], stop[1], stop[2], "traffic_light_stop");
     }
     const bool signalProgramValid =
         !result.trafficLights.empty() && openbus::map::mapTrafficSignalProgramValid(*signalProgram);
     if (!signalProgramValid &&
-        (!result.trafficLightStops.empty() || !result.trafficLightJumps.empty())) {
+        (!result.trafficLightStops.empty() ||
+         !result.trafficLightBusPriorityRules.empty())) {
         result.diagnostics.warning(0, "traffic_light_jump",
                                    "conditional signal program is invalid and will be ignored");
     }
@@ -455,7 +466,10 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         schedule.approachDistanceMeters = light.approachDistanceMeters;
         schedule.program = signalProgramValid ? signalProgram : nullptr;
         schedule.hasConditionalOverrides =
-            signalProgramValid && !signalProgram->controlPoints.empty();
+            signalProgramValid &&
+            (!signalProgram->controlPoints.empty() || !signalProgram->busPriorityRules.empty());
+        schedule.hasBusPriority =
+            signalProgramValid && !signalProgram->busPriorityRules.empty();
         if (openbus::map::mapTrafficSignalStateAtTime(schedule, 0.0).has_value()) {
             result.trafficLightSchedules[lightIndex] = std::move(schedule);
         }

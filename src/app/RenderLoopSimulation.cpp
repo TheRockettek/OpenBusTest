@@ -14,6 +14,28 @@ constexpr double MAP_TRAFFIC_STUCK_TIMEOUT_SECONDS = 15;
 constexpr double MAP_TRAFFIC_PROGRESS_THRESHOLD_METERS = 0.25;
 constexpr double MAP_TRAFFIC_STOPPED_SPEED_METERS_PER_SECOND = 0.1;
 
+double mapTrafficRouteCurvatureAtRearAxle(const openbus::map::MapTrafficActor& actor,
+                                          double wheelbaseMeters, double rearAxleOffsetMeters) {
+    const auto& route = actor.route;
+    const double sampleSpan = std::max(1.0, wheelbaseMeters);
+    const double rearAxleDistance = actor.distanceMeters + rearAxleOffsetMeters;
+    double fromDistance = rearAxleDistance - sampleSpan * 0.5;
+    double toDistance = rearAxleDistance + sampleSpan * 0.5;
+    if (!route.closed && !route.loopStartDistance) {
+        fromDistance = std::max(0.0, fromDistance);
+        toDistance = std::min(route.totalLength, toDistance);
+    }
+    const double distanceSpan = toDistance - fromDistance;
+    if (distanceSpan <= 1.0e-6) {
+        return 0.0;
+    }
+    const double fromHeading = openbus::map::mapTrafficRouteTravelHeadingRadians(
+        route, fromDistance, actor.lateralOffsetMeters);
+    const double toHeading = openbus::map::mapTrafficRouteTravelHeadingRadians(
+        route, toDistance, actor.lateralOffsetMeters);
+    return std::remainder(toHeading - fromHeading, 2.0 * std::numbers::pi) / distanceSpan;
+}
+
 void logVariableSet(const std::string& scope, const Variables& variables) {
     std::vector<std::string> numericNames;
     numericNames.reserve(variables.numericValues().size());
@@ -182,7 +204,31 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
                                                  trafficTimeStep);
         }
     }
+    {
+        const double passengerServiceTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
+        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+            vehicle->passengerService.advance(passengerServiceTimeStep);
+        }
+    }
     updateScripts();
+    for (TrafficVehicleState& trafficVehicle : trafficVehicles_) {
+        if (!trafficVehicle.populationEnabled || trafficVehicle.vehicle == nullptr) {
+            continue;
+        }
+        const auto rearAxle = std::min_element(trafficVehicle.vehicle->trafficAxles.begin(),
+                                               trafficVehicle.vehicle->trafficAxles.end(),
+                                               [](const BusAxle& left, const BusAxle& right) {
+                                                   return left.position < right.position;
+                                               });
+        const double rearAxleOffsetMeters =
+            rearAxle == trafficVehicle.vehicle->trafficAxles.end() ? 0.0 : rearAxle->position;
+        trafficVehicle.vehicle->updateTrafficWheelAnimations(
+            trafficVehicle.wheelTravelDistanceMeters,
+            mapTrafficRouteCurvatureAtRearAxle(trafficVehicle.actor,
+                                               trafficVehicle.vehicle->trafficWheelbaseMeters,
+                                               rearAxleOffsetMeters),
+            trafficVehicle.actor.speedMetersPerSecond);
+    }
     if (drivetrainDiagnosticsEnabled_) {
         const double now = glfwGetTime();
         if (lastDrivetrainDiagnosticTime_ < 0.0 || now - lastDrivetrainDiagnosticTime_ >= 1.0) {
@@ -275,6 +321,29 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             advanceScheduledDeparture(state, currentSimulationTime);
         }
     };
+    for (TrafficVehicleState& state : trafficVehicles_) {
+        if (!state.isBus || state.vehicle == nullptr || !state.populationEnabled) {
+            continue;
+        }
+        if (state.passengerStopArrived && !state.vehicle->passengerService.dwelling()) {
+            const int completedStopId =
+                state.vehicle->passengerService.currentStopId();
+            const auto queue = scheduledPassengerQueues_.find(completedStopId);
+            if (queue != scheduledPassengerQueues_.end()) {
+                queue->second = state.vehicle->passengerService.waitingPassengers(completedStopId);
+            }
+            state.passengerStopArrived = false;
+            ++state.nextPassengerStopIndex;
+        }
+        if (state.passengerStopArrived) {
+            state.actor.scheduledStopDistanceMeters = state.actor.distanceMeters;
+        } else if (state.nextPassengerStopIndex < state.passengerStops.size()) {
+            state.actor.scheduledStopDistanceMeters =
+                state.passengerStops[state.nextPassengerStopIndex].routeDistanceMeters;
+        } else {
+            state.actor.scheduledStopDistanceMeters.reset();
+        }
+    }
     std::vector<MapTrafficObstacle> external;
     std::size_t externalVehicleObstacleCount = 0;
     std::optional<std::size_t> playerBusObstacleIndex;
@@ -640,6 +709,9 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
             resetMapTrafficActorForEntry(state.actor);
             state.actor.distanceMeters = spawn->distanceMeters;
+            state.wheelTravelDistanceMeters = 0.0;
+            state.previousWheelRouteDistanceMeters = state.actor.distanceMeters;
+            state.wheelRouteDistanceInitialized = true;
             state.populationEnabled = true;
             state.lastProgressDistanceMeters = state.actor.distanceMeters;
             state.spawnedAtDistanceMeters = state.actor.distanceMeters;
@@ -653,6 +725,14 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             state.vehicle->mapTrafficRouteFinished = false;
             state.vehicle->mapTrafficTileActive = true;
             if (state.isBus) {
+                state.nextPassengerStopIndex = 0;
+                while (state.nextPassengerStopIndex < state.passengerStops.size() &&
+                       state.passengerStops[state.nextPassengerStopIndex].routeDistanceMeters +
+                               0.05 <
+                           state.actor.distanceMeters) {
+                    ++state.nextPassengerStopIndex;
+                }
+                state.passengerStopArrived = false;
                 state.lastScheduledDepartureMinutes =
                     state.scheduledDepartureMinutes[state.nextScheduledDepartureIndex];
                 state.scheduledTripActive = true;
@@ -685,7 +765,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
         }
         mapRenderer_->updateTrafficSignalControllers(
-            signalActors, elapsedSeconds, std::max(0.0, currentSimulationTime - elapsedSeconds));
+            signalActors, elapsedSeconds, std::max(0.0, currentSimulationTime - elapsedSeconds),
+            std::array<double, 2>{simulation.positionX(), simulation.positionY()});
     }
     {
         TraceScope movementTrace("traffic", "RenderLoop::updateTrafficDriving.vehicleMovement");
@@ -719,6 +800,40 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         for (TrafficVehicleState& trafficVehicle : trafficVehicles_) {
             if (!trafficVehicle.populationEnabled) {
                 continue;
+            }
+            if (trafficVehicle.isBus && trafficVehicle.vehicle != nullptr &&
+                !trafficVehicle.passengerStopArrived &&
+                trafficVehicle.nextPassengerStopIndex < trafficVehicle.passengerStops.size()) {
+                const MapTrafficPassengerStop& stop =
+                    trafficVehicle.passengerStops[trafficVehicle.nextPassengerStopIndex];
+                if (trafficVehicle.actor.distanceMeters + 0.05 >= stop.routeDistanceMeters &&
+                    trafficVehicle.actor.speedMetersPerSecond <=
+                        MAP_TRAFFIC_STOPPED_SPEED_METERS_PER_SECOND) {
+                        const int nextStopId =
+                            trafficVehicle.nextPassengerStopIndex + 1 <
+                                    trafficVehicle.passengerStops.size()
+                                ? trafficVehicle.passengerStops[
+                                      trafficVehicle.nextPassengerStopIndex + 1]
+                                      .stopId
+                                : 0;
+                        const auto queue = scheduledPassengerQueues_.find(stop.stopId);
+                        const std::size_t waitingPassengers =
+                            queue == scheduledPassengerQueues_.end() ? 0 : queue->second;
+                        trafficVehicle.vehicle->passengerService.setWaitingPassengers(
+                            stop.stopId, waitingPassengers);
+                        if (!trafficVehicle.vehicle->passengerService.arrive(
+                                {.stopId = stop.stopId,
+                                 .waitingPassengers = 0,
+                                 .passengersAlighting = stop.passengersAlighting,
+                                 .dwellSeconds = stop.dwellSeconds,
+                                 .nextStopId = nextStopId})) {
+                        throw std::logic_error(
+                            "Scheduled bus reached a passenger stop while already dwelling");
+                    }
+                    trafficVehicle.passengerStopArrived = true;
+                    trafficVehicle.actor.scheduledStopDistanceMeters =
+                        trafficVehicle.actor.distanceMeters;
+                }
             }
             const auto& route = trafficVehicle.actor.route;
             const bool atUnconnectedRouteEnd =
@@ -770,6 +885,26 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             const double speedKmh = trafficVehicle.actor.speedMetersPerSecond * 3.6;
             trafficVehicle.vehicle->variables.set("velocity", speedKmh);
             trafficVehicle.vehicle->variables.set("velocity_ground", speedKmh);
+            if (!trafficVehicle.wheelRouteDistanceInitialized) {
+                trafficVehicle.previousWheelRouteDistanceMeters =
+                    trafficVehicle.actor.distanceMeters;
+                trafficVehicle.wheelRouteDistanceInitialized = true;
+            } else {
+                double distanceDelta = trafficVehicle.actor.distanceMeters -
+                                       trafficVehicle.previousWheelRouteDistanceMeters;
+                if (distanceDelta < 0.0) {
+                    if (route.closed) {
+                        distanceDelta += route.totalLength;
+                    } else if (route.loopStartDistance.has_value()) {
+                        distanceDelta += route.totalLength - *route.loopStartDistance;
+                    } else {
+                        distanceDelta = 0.0;
+                    }
+                }
+                trafficVehicle.wheelTravelDistanceMeters += std::max(0.0, distanceDelta);
+                trafficVehicle.previousWheelRouteDistanceMeters =
+                    trafficVehicle.actor.distanceMeters;
+            }
             const openbus::map::MapTrafficTurnSignal turnSignal =
                 trafficVehicle.vehicle->mapTrafficTileActive
                     ? openbus::map::mapTrafficActorTurnSignal(trafficVehicle.actor)

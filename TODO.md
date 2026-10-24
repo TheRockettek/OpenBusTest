@@ -220,10 +220,14 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   model `[boundingbox]` overrides the BUS box, `[nocollision]` filters a
   mesh-scoped collider, and the BUS box remains the fallback. Scenery-object
   collision records are still parse-only because scenery has no runtime.
-- [~] Passenger-cabin CFG loading, driver/passenger positions, illumination
-  groups, entry/exit path points, and basic passenger path graph loading are
-  active. Boarding/alighting, passenger movement, passenger mass, route/path
-  selection, and HOF/timetable integration remain incomplete.
+- [~] Passenger-cabin CFG loading and a deterministic per-vehicle service
+  runtime now cover waiting counts, timed boarding/alighting, dwell state, and
+  seat occupancy. Legacy TTP station calls matched to scheduled AI-bus routes
+  now trigger braking, stops, dwell, and boarding; waiting queues render as
+  stationary humans near active calls using configured human models. Station-
+  link-only trips, player-bus stop service, shared destination-aware queues,
+  passenger movement/mass, seated-human rendering, and fare-pack integration
+  remain incomplete.
 - [ ] Complete registration persistence and full selection UI; implement or
   explicitly scope out AI/network sections, route/timetable/HOF data, and
   vehicle-specific view systems.
@@ -242,9 +246,11 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
 The following OMSI BUS/model features are currently absent or only represented
 by parser alignment and should not be described as supported:
 
-- Passenger-cabin connection records, boarding, alighting, passenger movement,
-  and passenger mass. Basic `[passengercabin]` positions, illumination groups,
-  and entries/exits are loaded and covered by `OpenBusVehicleConfigProbe`.
+- Actual passenger-cabin connection records, passenger movement, and passenger
+  mass. A standalone service runtime models timed boarding/alighting and seat
+  occupancy but is not connected to live stops; basic `[passengercabin]`
+  positions, illumination groups, and entries/exits are loaded and covered by
+  `OpenBusVehicleConfigProbe`.
 - Route/path selection, timetable/HOF lookup, stop announcements, and
   arrival-board data used by the script system. Basic `[paths]` point/link
   graphs and step metadata are loaded and covered by `OpenBusVehicleConfigProbe`.
@@ -612,7 +618,8 @@ for the explicit boundary.
   same-direction traffic on a curved shared path from conflicting movements.
   Fixed-cycle SCO signals linked to road paths hold AI traffic on non-permissive
   phases and release it on states 6-8; regressions cover route-start, loop-wrap,
-  and request-driven conditional stop/jump timing. Cycle origin, stop-line
+  conditional stop timing, and bus-priority phase/distance/minimum-green rules.
+  Cycle origin, stop-line
   fidelity, signs, native right-of-way and deadlock recovery at live junctions,
   overtaking, lane changing, articulated dynamics, and physical player-to-AI
   collision response are listed in the remaining-work checklist below.
@@ -770,9 +777,11 @@ constitute full OMSI parity or in-game visual validation:
   pool buses without assigning a trip twice.
 - [x] Parse fixed-cycle SCO traffic lights and attach them to linked paths.
   AI stops on non-green or invalid phases and resumes on states 6-8, including
-  signalized route starts and loop-wrap approaches. Conditional stop/jump
-  controls now advance from vehicle and pedestrian requests; cycle origin and
-  native stop-line fidelity remain open.
+  signalized route starts and loop-wrap approaches. Conditional stop controls
+  use vehicle/pedestrian requests; `[traffic_light_jump]` bus-priority rules
+  trigger from player/AI bus approaches, apply their target phase for the
+  configured minimum, and wait for conflicting green groups to clear. Cycle
+  origin and native stop-line fidelity remain open.
 - [x] Move pedestrian actors on type-1 human paths, use parsed `[humangeom]`
   dimensions for proxy sizing and collision footprints, and stop pedestrians
   around occupied vehicle/human footprints. Configured `.hum` first-LOD models

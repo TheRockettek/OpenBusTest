@@ -52,21 +52,59 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
     };
     const auto pushNumber = [this](float value) { floatStack.push_back(value); };
     const auto pushString = [this] { stringStack.emplace_back(); };
+    const auto indexedName = [](const char* prefix, int index) {
+        return std::string(prefix) + std::to_string(index);
+    };
 
-    if (name == "getterminusindex" || name == "getbusstopindex" || name == "getrouteindex") {
+    if (name == "getticketname") {
+        int ticketIndex = -1;
+        const bool validIndex = floatToInt(nativePopFloat(), ticketIndex) && ticketIndex >= 0;
+        stringStack.push_back(validIndex
+                                  ? localState.getString(indexedName("ticket_name_", ticketIndex))
+                                  : std::string());
+    } else if (name == "getticketvalue") {
+        int ticketIndex = -1;
+        const bool validIndex = floatToInt(nativePopFloat(), ticketIndex) && ticketIndex >= 0;
+        const float value =
+            validIndex ? localState.get(indexedName("ticket_value_", ticketIndex)) : 0.0F;
+        pushNumber(std::isfinite(value) ? value : 0.0F);
+    } else if (name == "givechangecoin") {
+        const float amount = nativePopFloat();
+        if (std::isfinite(amount) && amount > 0.0F) {
+            const double previousTotal = localState.get("cash_dispensed_total");
+            const double total = (std::isfinite(previousTotal) && previousTotal > 0.0
+                                      ? previousTotal
+                                      : 0.0) +
+                                 amount;
+            localState.set("cash_dispensed_total",
+                           static_cast<float>(std::min(
+                               total, static_cast<double>((std::numeric_limits<float>::max)()))));
+            localState.set("cash_last_coin_value", amount);
+            const float previousCount = localState.get("cash_dispensed_coin_count");
+            const float count = std::isfinite(previousCount) && previousCount > 0.0F
+                                    ? previousCount
+                                    : 0.0F;
+            localState.set("cash_dispensed_coin_count",
+                           std::min(count + 1.0F, (std::numeric_limits<float>::max)()));
+        }
+    } else if (name == "getterminusindex" || name == "getbusstopindex" || name == "getrouteindex") {
         popFloats(1);
         pushNumber(-1.0);
     } else if (name == "getterminusstring" || name == "getbusstopstring" ||
                name == "getroutebusstopident") {
         popFloats(2);
         pushString();
-    } else if (name == "getttbusstopname" || name == "getticketname" ||
-               name == "getdepotstringglobal" || name == "getarrbusline" ||
-               name == "getarrbusterminus") {
+    } else if (name == "gethumancountonpathlink" || name == "gethumancountonseat") {
+        int index = -1;
+        const bool validIndex = floatToInt(nativePopFloat(), index) && index >= 0;
+        const char* prefix = name == "gethumancountonseat" ? "human_count_on_seat_"
+                                                             : "human_count_on_path_link_";
+        const float count = validIndex ? localState.get(indexedName(prefix, index)) : 0.0F;
+        pushNumber(std::isfinite(count) ? count : 0.0F);
+    } else if (name == "getttbusstopname" || name == "getdepotstringglobal" ||
+               name == "getarrbusline" || name == "getarrbusterminus") {
         popFloats(1);
         pushString();
-    } else if (name == "givechangecoin") {
-        popFloats(1);
     } else if (name == "getheightabovepoint") {
         popFloats(3);
         pushNumber(0.0);
@@ -77,8 +115,7 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
     } else if (name == "getterminuscode" || name == "getrouteterminusindex" ||
                name == "getbusstopcount" || name == "getttlinestring" ||
                name == "getttterminusindex" || name == "getttbusstopcount" ||
-               name == "getttbusstopindex" || name == "getttdelay" || name == "getticketvalue" ||
-               name == "gethumancountonpathlink" || name == "gethumancountonseat" ||
+               name == "getttbusstopindex" || name == "getttdelay" ||
                name == "getarrbustimediff") {
         popFloats(1);
         pushNumber(0.0);
