@@ -101,6 +101,10 @@ struct Uniforms {
     GLint humanArmSwing = -1;
     GLint humanHipSway = -1;
     GLint humanWaistAnimation = -1;
+    GLint humanShoulderXFraction = -1;
+    GLint humanShoulderZFraction = -1;
+    GLint humanHipXFraction = -1;
+    GLint humanHipZFraction = -1;
     std::array<GLint, MAX_MATERIAL_TEXTURES> materialFlipTextureY = {};
     GLint useMaterialColors = -1;
     GLint materialColors = -1;
@@ -206,6 +210,10 @@ uniform float uHumanUpperArmBeta;
 uniform float uHumanArmSwing;
 uniform float uHumanHipSway;
 uniform float uHumanWaistAnimation;
+uniform float uHumanShoulderXFraction;
+uniform float uHumanShoulderZFraction;
+uniform float uHumanHipXFraction;
+uniform float uHumanHipZFraction;
 out vec3 vTexCoord;
 out vec3 vNormal;
 out vec3 vViewPosition;
@@ -224,16 +232,25 @@ void main() {
         float legSwing = sin(sidePhase) * uHumanGaitWeight;
         position.y += legSwing * 0.12 * legWeight;
         position.z += max(0.0, cos(sidePhase)) * 0.045 * legWeight * uHumanGaitWeight;
-        float hipWeight = smoothstep(0.25, 0.45, heightFraction) *
-                          (1.0 - smoothstep(0.75, 0.90, heightFraction));
-        position.x += sin(uHumanGaitPhase) * 0.02 * uHumanGaitWeight *
-                      uHumanHipSway * hipWeight;
+        float hipHeight = uHumanGaitHeight * uHumanHipZFraction;
+        float hipWeight = smoothstep(hipHeight - uHumanGaitHeight * 0.22,
+                                     hipHeight - uHumanGaitHeight * 0.08, position.z) *
+                          (1.0 - smoothstep(hipHeight + uHumanGaitHeight * 0.08,
+                                            hipHeight + uHumanGaitHeight * 0.24, position.z));
+        float hipX = side * uHumanGaitHeight * uHumanHipXFraction;
+        float hipAngle = sin(uHumanGaitPhase) * 0.12 * uHumanGaitWeight * uHumanHipSway;
+        vec2 hipOffset = vec2(position.x - hipX, position.z - hipHeight);
+        vec2 swungHipOffset =
+            vec2(cos(hipAngle) * hipOffset.x + sin(hipAngle) * hipOffset.y,
+                 -sin(hipAngle) * hipOffset.x + cos(hipAngle) * hipOffset.y);
+        position.x = mix(position.x, hipX + swungHipOffset.x, hipWeight);
+        position.z = mix(position.z, hipHeight + swungHipOffset.y, hipWeight);
         float armAngle =
             (radians(uHumanUpperArmBeta) +
              sin(sidePhase) * 0.12 * uHumanGaitWeight * uHumanArmSwing) *
             armWeight;
-        float shoulderX = side * uHumanGaitHeight * 0.105;
-        float shoulderZ = uHumanGaitHeight * 0.76;
+        float shoulderX = side * uHumanGaitHeight * uHumanShoulderXFraction;
+        float shoulderZ = uHumanGaitHeight * uHumanShoulderZFraction;
         vec2 armOffset = vec2(position.x - shoulderX, position.z - shoulderZ);
         float armCos = cos(side * armAngle);
         float armSin = sin(side * armAngle);
@@ -664,6 +681,10 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.humanArmSwing = pglGetUniformLocation(program, "uHumanArmSwing");
         uniforms.humanHipSway = pglGetUniformLocation(program, "uHumanHipSway");
         uniforms.humanWaistAnimation = pglGetUniformLocation(program, "uHumanWaistAnimation");
+        uniforms.humanShoulderXFraction = pglGetUniformLocation(program, "uHumanShoulderXFraction");
+        uniforms.humanShoulderZFraction = pglGetUniformLocation(program, "uHumanShoulderZFraction");
+        uniforms.humanHipXFraction = pglGetUniformLocation(program, "uHumanHipXFraction");
+        uniforms.humanHipZFraction = pglGetUniformLocation(program, "uHumanHipZFraction");
         uniforms.useMaterialColors = pglGetUniformLocation(program, "uUseMaterialColors");
         uniforms.materialColors = pglGetUniformLocation(program, "uMaterialColors");
         uniforms.useMaterialTextures = pglGetUniformLocation(program, "uUseMaterialTextures");
@@ -1157,6 +1178,14 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
         pglUniform1f(modelUniforms.humanHipSway, static_cast<GLfloat>(humanGait->hipSway));
         pglUniform1f(modelUniforms.humanWaistAnimation,
                      static_cast<GLfloat>(humanGait->waistAnimation));
+        pglUniform1f(modelUniforms.humanShoulderXFraction,
+                     static_cast<GLfloat>(humanGait->shoulderXHeightFraction));
+        pglUniform1f(modelUniforms.humanShoulderZFraction,
+                     static_cast<GLfloat>(humanGait->shoulderZHeightFraction));
+        pglUniform1f(modelUniforms.humanHipXFraction,
+                     static_cast<GLfloat>(humanGait->hipXHeightFraction));
+        pglUniform1f(modelUniforms.humanHipZFraction,
+                     static_cast<GLfloat>(humanGait->hipZHeightFraction));
     }
     selectTextureUnit(GL_TEXTURE0);
     if (material.textureArray) {

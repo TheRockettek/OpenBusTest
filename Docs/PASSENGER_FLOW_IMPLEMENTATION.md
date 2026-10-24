@@ -110,9 +110,12 @@ component has deterministic probe coverage and is owned by each vehicle using
 the configured passenger seats.
 Human gait phase, resting upper-arm pose, arm swing, hip sway, and torso bob
 use the `.hum` `[walk_param]` step length, upper-arm beta, arm-swing multiplier,
-hip setting, and waist-animation setting. These controls drive approximate
-mesh deformations, not authored skeletal joints; `[links]` geometry, seat
-height, mass, voice, and native limb animation are not yet applied.
+hip setting, and waist-animation setting. The right-shoulder coordinates in
+`[links]` set the approximate arm pivot and are mirrored for the other side;
+the right-hip coordinates likewise set the hip-sway pivot. These controls
+drive approximate mesh deformations, not authored skeletal joints; remaining
+`[links]` geometry, seat height, mass, voice, and native limb animation are
+not yet applied.
 Scheduled AI buses stop at mapped timetable calls and board waiting
 passengers into available seats during an eight-second dwell. Queue consumption
 is serialized each update against the shared remaining count, preventing two

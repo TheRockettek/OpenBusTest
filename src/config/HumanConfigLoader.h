@@ -2,6 +2,7 @@
 
 #include "config/ConfigurationTypes.h"
 
+#include <array>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -24,6 +25,8 @@ struct HumanConfig {
     double walkArmSwing = 1.0;
     double walkHipSway = 1.0;
     double walkWaistAnimation = 0.0;
+    std::optional<std::array<double, 2>> rightHipHeightFractions;
+    std::optional<std::array<double, 2>> rightShoulderHeightFractions;
     std::optional<double> mass;
     std::string voice;
     std::vector<HumanNumericRecord> numericRecords;

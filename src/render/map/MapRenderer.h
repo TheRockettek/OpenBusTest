@@ -125,7 +125,9 @@ class MapRenderer {
                                   const std::filesystem::path& modelConfigPath,
                                   const ModelConfig& configuration, double heightMeters,
                                   double upperArmBetaDegrees, double armSwing, double hipSway,
-                                  double waistAnimation) const;
+                                  double waistAnimation, double shoulderXHeightFraction,
+                                  double shoulderZHeightFraction, double hipXHeightFraction,
+                                  double hipZHeightFraction) const;
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

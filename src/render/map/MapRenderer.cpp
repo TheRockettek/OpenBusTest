@@ -369,7 +369,19 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
                                              humanConfig.walkUpperArmBetaDegrees,
                                              humanConfig.walkArmSwing,
                                              humanConfig.walkHipSway,
-                                             humanConfig.walkWaistAnimation};
+                                             humanConfig.walkWaistAnimation,
+                                             humanConfig.rightShoulderHeightFractions
+                                                 ? (*humanConfig.rightShoulderHeightFractions)[0]
+                                                 : 0.105,
+                                             humanConfig.rightShoulderHeightFractions
+                                                 ? (*humanConfig.rightShoulderHeightFractions)[1]
+                                                 : 0.76,
+                                             humanConfig.rightHipHeightFractions
+                                                 ? (*humanConfig.rightHipHeightFractions)[0]
+                                                 : 0.06,
+                                             humanConfig.rightHipHeightFractions
+                                                 ? (*humanConfig.rightHipHeightFractions)[1]
+                                                 : 0.5};
     });
     impl_->pendingHumanTrafficModels.emplace(cacheKey, std::move(pending));
 }
@@ -411,10 +423,12 @@ bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey) const
     const std::filesystem::path humanConfigPath = pendingModel.humanConfigPath;
     Impl::HumanModelConfiguration configuration = std::move(*pendingModel.configuration);
     impl_->pendingHumanTrafficModels.erase(pending);
-    loadHumanTrafficModelNow(humanConfigPath, configuration.modelConfigPath,
-                             configuration.configuration, configuration.heightMeters,
-                             configuration.upperArmBetaDegrees, configuration.armSwing,
-                             configuration.hipSway, configuration.waistAnimation);
+    loadHumanTrafficModelNow(
+        humanConfigPath, configuration.modelConfigPath, configuration.configuration,
+        configuration.heightMeters, configuration.upperArmBetaDegrees, configuration.armSwing,
+        configuration.hipSway, configuration.waistAnimation, configuration.shoulderXHeightFraction,
+        configuration.shoulderZHeightFraction, configuration.hipXHeightFraction,
+        configuration.hipZHeightFraction);
     return impl_->humanTrafficModels.contains(cacheKey);
 }
 
@@ -422,7 +436,11 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
                                            const std::filesystem::path& modelConfigPath,
                                            const ModelConfig& configuration, double heightMeters,
                                            double upperArmBetaDegrees, double armSwing,
-                                           double hipSway, double waistAnimation) const {
+                                           double hipSway, double waistAnimation,
+                                           double shoulderXHeightFraction,
+                                           double shoulderZHeightFraction,
+                                           double hipXHeightFraction,
+                                           double hipZHeightFraction) const {
     const std::string cacheKey = humanConfigPath.lexically_normal().generic_string();
     if (impl_->humanTrafficModels.contains(cacheKey)) {
         return;
@@ -700,6 +718,10 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
     asset.armSwing = armSwing;
     asset.hipSway = hipSway;
     asset.waistAnimation = waistAnimation;
+    asset.shoulderXHeightFraction = shoulderXHeightFraction;
+    asset.shoulderZHeightFraction = shoulderZHeightFraction;
+    asset.hipXHeightFraction = hipXHeightFraction;
+    asset.hipZHeightFraction = hipZHeightFraction;
     impl_->sceneryBatches.reserve(impl_->sceneryBatches.size() + batches.size());
     for (Impl::ModelBatch& batch : batches) {
         asset.batchIndexes.push_back(impl_->sceneryBatches.size());

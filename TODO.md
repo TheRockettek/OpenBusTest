@@ -759,10 +759,12 @@ for the explicit boundary.
   ambient-human gait phase uses the authored `[walk_param]` step length,
   upper-arm beta angle, arm-swing multiplier, hip-sway setting, and
   waist-animation setting; focused GPU regressions verify each animation
-  control. These are approximate mesh deformations, not native joint
-  animation. Applying validated geometry and link-driven joint positions,
-  seat height, mass, and voice data to human actors remains incomplete;
-  parsing alone is not runtime support.
+  control. The authored right-shoulder coordinates in `[links]` also set the
+  arm pivot, mirrored for the other side, when valid; the right-hip coordinates
+  similarly locate the approximate hip-sway pivot. These are approximate mesh
+  deformations, not native joint animation. Applying other link-driven joint
+  positions, seat height, mass, and voice data to human actors remains
+  incomplete; parsing alone is not runtime support.
 - [ ] Validate human path field meanings, route continuity, density behavior,
   and actor placement against representative OMSI maps.
 

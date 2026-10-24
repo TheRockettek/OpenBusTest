@@ -51,6 +51,18 @@ int main(int argc, char** argv) {
                 "human hip sway setting is retained from walk_param");
         require(configuration.walkWaistAnimation == 0.0,
                 "human waist animation setting is retained from walk_param");
+        require(configuration.rightShoulderHeightFractions.has_value() &&
+                    std::abs((*configuration.rightShoulderHeightFractions)[0] -
+                             (0.17 / 1.75)) < 1.0e-9 &&
+                    std::abs((*configuration.rightShoulderHeightFractions)[1] -
+                             (1.39 / 1.75)) < 1.0e-9,
+                "right shoulder pivot is derived from authored links and normalized height");
+        require(configuration.rightHipHeightFractions.has_value() &&
+                    std::abs((*configuration.rightHipHeightFractions)[0] -
+                             (0.10 / 1.75)) < 1.0e-9 &&
+                    std::abs((*configuration.rightHipHeightFractions)[1] -
+                             (0.84 / 1.75)) < 1.0e-9,
+                "right hip pivot is derived from authored links and normalized height");
         require(configuration.voice == "M2" && configuration.mass.has_value() &&
                     std::abs(*configuration.mass - 0.07) < 1.0e-9,
                 "human [voice] and [mass] fields are parsed");

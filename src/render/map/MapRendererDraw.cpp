@@ -102,7 +102,11 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
                 batch.alphaMode, batch.cullBackFaces,
                 HumanGaitParameters{gaitPhaseRadians, gaitWeight, model->second.heightMeters,
                                     model->second.upperArmBetaDegrees, model->second.armSwing,
-                                    model->second.hipSway, model->second.waistAnimation});
+                                    model->second.hipSway, model->second.waistAnimation,
+                                    model->second.shoulderXHeightFraction,
+                                    model->second.shoulderZHeightFraction,
+                                    model->second.hipXHeightFraction,
+                                    model->second.hipZHeightFraction});
         }
     };
     drawBatches(false);

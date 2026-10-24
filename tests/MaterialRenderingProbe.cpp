@@ -87,7 +87,11 @@ int main() {
                                         double upperArmBetaDegrees = 66.0,
                                         double armSwing = 1.0,
                                         double hipSway = 1.0,
-                                        double waistAnimation = 0.0) {
+                                        double waistAnimation = 0.0,
+                                        double shoulderXHeightFraction = 0.105,
+                                        double shoulderZHeightFraction = 0.76,
+                                        double hipXHeightFraction = 0.06,
+                                        double hipZHeightFraction = 0.5) {
         pglBindBuffer(GL_ARRAY_BUFFER, buffer);
         pglBufferData(GL_ARRAY_BUFFER, sizeof(frameVertices), frameVertices.data(), GL_STATIC_DRAW);
         glClearColor(0, 0, 0, 0);
@@ -99,7 +103,9 @@ int main() {
             drawModelBatch(buffer, 3, humanMaterial, {1, 1, 1}, 1.0, 0, false,
                            HumanGaitParameters{phaseRadians, gaitWeight, modelHeight,
                                                upperArmBetaDegrees, armSwing, hipSway,
-                                               waistAnimation});
+                                               waistAnimation, shoulderXHeightFraction,
+                                               shoulderZHeightFraction, hipXHeightFraction,
+                                               hipZHeightFraction});
         } else {
             drawModelBatch(buffer, 3, humanMaterial, {1, 1, 1}, 1.0, 0, false);
         }
@@ -147,6 +153,16 @@ int main() {
         std::cerr << "authored upper-arm beta did not change the resting arm pose\n";
         passed = false;
     }
+    const auto estimatedShoulder =
+        drawHumanGaitFrame(0.0, 0.0, tPoseArmVertices, 1.7, true, -2.0, 66.0, 1.0, 1.0,
+                           0.0, 0.105, 0.76);
+    const auto authoredShoulder =
+        drawHumanGaitFrame(0.0, 0.0, tPoseArmVertices, 1.7, true, -2.0, 66.0, 1.0, 1.0,
+                           0.0, 0.10, 0.82);
+    if (estimatedShoulder == authoredShoulder) {
+        std::cerr << "authored human shoulder link did not change the arm pivot\n";
+        passed = false;
+    }
     constexpr std::array<float, 39> torsoVertices = {
         0.10F, -0.1F, 1.00F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
         0.40F, -0.1F, 1.00F, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,
@@ -156,16 +172,26 @@ int main() {
                            1.0, 0.0);
     const auto configuredHipSway =
         drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, torsoVertices, 1.7, true, -2.0, 66.0,
-                           1.0, 1.0);
+                           1.0, 10.0);
     if (noHipSway == configuredHipSway) {
         std::cerr << "authored human hip sway did not move the torso\n";
         passed = false;
     }
+    const auto estimatedHip =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, torsoVertices, 1.7, true, -2.0, 66.0,
+                           1.0, 10.0, 0.0, 0.105, 0.76, 0.06, 0.5);
+    const auto authoredHip =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, torsoVertices, 1.7, true, -2.0, 66.0,
+                           1.0, 10.0, 0.0, 0.105, 0.76, 0.10, 0.75);
+    if (estimatedHip == authoredHip) {
+        std::cerr << "authored human hip link did not change the hip sway pivot\n";
+        passed = false;
+    }
     const auto noWaistAnimation =
-        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, tPoseArmVertices, 1.7, true, -2.0,
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, torsoVertices, 1.7, true, -2.0,
                            66.0, 1.0, 1.0, 0.0);
     const auto configuredWaistAnimation =
-        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, tPoseArmVertices, 1.7, true, -2.0,
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, torsoVertices, 1.7, true, -2.0,
                            66.0, 1.0, 1.0, 10.0);
     if (noWaistAnimation == configuredWaistAnimation) {
         std::cerr << "authored human waist animation did not affect torso gait\n";

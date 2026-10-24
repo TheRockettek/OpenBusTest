@@ -3,6 +3,8 @@
 #include "config/ConfigurationParser.h"
 #include "core/PerfTrace.h"
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace openbus::config {
@@ -118,6 +120,39 @@ HumanConfig loadHumanConfig(const std::filesystem::path& configPath) {
 
     if (configuration.modelConfigPath.empty()) {
         configuration.diagnostics.error(0, "model", "required model reference is missing");
+    }
+    const auto geometry =
+        std::find_if(configuration.numericRecords.begin(), configuration.numericRecords.end(),
+                     [](const HumanNumericRecord& record) {
+                         return record.keyword == "humangeom" && record.valid &&
+                                record.values.size() == 2 && record.values[1] > 0.0;
+                     });
+    const auto links = std::find_if(
+        configuration.numericRecords.begin(), configuration.numericRecords.end(),
+        [](const HumanNumericRecord& record) {
+            return record.keyword == "links" && record.valid && record.values.size() == 22;
+        });
+    if (geometry != configuration.numericRecords.end() &&
+        links != configuration.numericRecords.end()) {
+        const double height = geometry->values[1];
+        const double hipX = std::abs(links->values[0]);
+        const double hipZ = links->values[2];
+        if (hipX <= height * 0.5 && hipZ > 0.0 && hipZ <= height) {
+            configuration.rightHipHeightFractions =
+                std::array<double, 2>{hipX / height, hipZ / height};
+        } else {
+            configuration.diagnostics.warning(
+                0, "links", "right-hip coordinates are outside the human geometry");
+        }
+        const double shoulderX = std::abs(links->values[8]);
+        const double shoulderZ = links->values[10];
+        if (shoulderX <= height * 0.5 && shoulderZ > 0.0 && shoulderZ <= height) {
+            configuration.rightShoulderHeightFractions =
+                std::array<double, 2>{shoulderX / height, shoulderZ / height};
+        } else {
+            configuration.diagnostics.warning(
+                0, "links", "right-shoulder coordinates are outside the human geometry");
+        }
     }
     return configuration;
 }

@@ -85,6 +85,10 @@ struct HumanGaitParameters {
     double armSwing = 1.0;
     double hipSway = 1.0;
     double waistAnimation = 0.0;
+    double shoulderXHeightFraction = 0.105;
+    double shoulderZHeightFraction = 0.76;
+    double hipXHeightFraction = 0.06;
+    double hipZHeightFraction = 0.5;
 };
 
 bool initializeCoreRenderer();
