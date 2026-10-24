@@ -50,6 +50,7 @@ int main(int argc, char** argv) {
     const std::filesystem::path directory =
         openbus::probe::makeProbeDirectory("openbus-scenery-object-config-probe");
     const std::filesystem::path path = directory / "paths.sco";
+    const std::filesystem::path singleStopPath = directory / "single-stop.sco";
     {
         std::ofstream output(path);
         if (!output) {
@@ -74,15 +75,44 @@ int main(int argc, char** argv) {
                   "1\n2\n3\n4\n5\n6\n7\n8\n0\n2.5\n0\n0\n"
                   "[use_traffic_light]\n0\n"
                   "[traffic_light_stop]\n0\n1\n2\n"
+                  "[traffic_light_stop]\n1\n2\n2\n"
                   "[traffic_light_jump]\n0\n25\n6\n3\n"
                   "[path]\n"
                   "-1\n-2\n-3\n-4\n-5\n-6\n-7\n-8\n1\n1\n2\n0\n";
         output << "[use_traffic_light]\n1\n";
     }
+    {
+        std::ofstream output(singleStopPath);
+        if (!output) {
+            std::cerr << "failed: create single-stop scenery object fixture\n";
+            openbus::probe::removeProbeDirectory(directory);
+            return 1;
+        }
+        output << "[mesh]\nmesh.x\n"
+                  "[trafficlight]\n"
+                  "[traffic_lights_group]\n10\n"
+                  "[traffic_light]\nRoad\n"
+                  "[phase]\n0\n3\n"
+                  "[phase]\n6\n7\n"
+                  "[path]\n"
+                  "1\n2\n3\n4\n5\n6\n7\n8\n0\n2.5\n0\n0\n"
+                  "[use_traffic_light]\n0\n"
+                  "[traffic_light_stop]\n0\n1\n2\n";
+    }
     const SceneryObjectConfig configuration = loadSceneryObjectFile(path);
+    const SceneryObjectConfig singleStopConfiguration = loadSceneryObjectFile(singleStopPath);
     openbus::probe::removeProbeDirectory(directory);
 
     bool valid = require(configuration.trafficPaths.size() == 2, "path sections parsed");
+    valid &= require(singleStopConfiguration.trafficLightSchedules.size() == 1 &&
+                         singleStopConfiguration.trafficLightSchedules.front().has_value() &&
+                         !singleStopConfiguration.trafficLightSchedules.front()
+                              ->hasConditionalOverrides &&
+                         !singleStopConfiguration.trafficLightSchedules.front()->hasBusPriority &&
+                         singleStopConfiguration.trafficLightSchedules.front()->program == nullptr &&
+                         openbus::map::mapTrafficSignalStateAtTime(
+                             *singleStopConfiguration.trafficLightSchedules.front(), 3.0) == 6,
+                     "a traffic-light group with one stop ignores its conditional program");
     valid &= require(configuration.trafficLight,
                      "standalone [trafficlight] model marker is recognized");
     if (configuration.trafficPaths.size() == 2) {
@@ -117,15 +147,18 @@ int main(int argc, char** argv) {
         valid &= require(
             hasExpectedSignal,
             "traffic-light phases and path association are retained");
-        valid &= require(configuration.trafficLightStops.size() == 1 &&
+        valid &= require(configuration.trafficLightStops.size() == 2 &&
                              configuration.trafficLightBusPriorityRules.size() == 1,
                          "conditional traffic-light records are parsed");
         if (hasExpectedSignal) {
             const auto& program = configuration.trafficPaths[0].trafficSignal->program;
-            valid &= require(program != nullptr && program->controlPoints.size() == 1 &&
+            valid &= require(program != nullptr && program->controlPoints.size() == 2 &&
                                  program->controlPoints[0].lightIndex == 0 &&
                                  program->controlPoints[0].timeSeconds == 1.0 &&
                                  program->controlPoints[0].ifRequest &&
+                                 program->controlPoints[1].lightIndex == 1 &&
+                                 program->controlPoints[1].timeSeconds == 2.0 &&
+                                 program->controlPoints[1].ifRequest &&
                                  program->busPriorityRules.size() == 1 &&
                                  program->busPriorityRules[0].phaseToInterrupt == 0 &&
                                  program->busPriorityRules[0].triggerDistanceMeters == 25.0 &&

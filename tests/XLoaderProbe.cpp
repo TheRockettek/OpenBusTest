@@ -255,7 +255,9 @@ int main(int argc, char** argv) {
     openbus::probe::removeProbeFile(zeroMaterialIndexMesh);
     if (!parsedZeroMaterialIndex || parsedZeroMaterialIndex->triangles.size() != 1 ||
         !parsedZeroMaterialIndex->materials.contains("matl_0") ||
-        parsedZeroMaterialIndex->triangles.front().material != "matl_0") {
+        parsedZeroMaterialIndex->triangles.front().material != "matl_0" ||
+        parsedZeroMaterialIndex->materials.at("matl_0").color !=
+            std::array<double, 3>{1.0, 1.0, 1.0}) {
         std::cerr << "zero material count did not use the default X material\n";
         return 1;
     }

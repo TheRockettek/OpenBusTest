@@ -33,7 +33,7 @@ struct BusModelPart {
     std::string bundleEntry;
     std::filesystem::path texturePath;
     std::string textureName;
-    std::array<double, 3> color = {0.65, 0.65, 0.65};
+    std::array<double, 3> color = {1.0, 1.0, 1.0};
     int viewpoint = 0;
     int renderType = 2;
     bool fixed = false;

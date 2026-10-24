@@ -443,8 +443,9 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
     for (const std::array<double, 3>& stop : result.trafficLightStops) {
         addControlPoint(stop[0], stop[1], stop[2], "traffic_light_stop");
     }
-    const bool signalProgramValid =
-        !result.trafficLights.empty() && openbus::map::mapTrafficSignalProgramValid(*signalProgram);
+    const bool signalProgramValid = !result.trafficLights.empty() &&
+                                    signalProgram->controlPoints.size() != 1 &&
+                                    openbus::map::mapTrafficSignalProgramValid(*signalProgram);
     if (!signalProgramValid &&
         (!result.trafficLightStops.empty() || !result.trafficLightBusPriorityRules.empty())) {
         result.diagnostics.warning(0, "traffic_light_jump",

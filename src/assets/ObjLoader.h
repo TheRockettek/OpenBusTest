@@ -39,7 +39,7 @@ struct ObjMaterial {
     int materialIndex = -1;
     std::filesystem::path texturePath;
     std::string textureName;
-    std::array<double, 3> color = {0.65, 0.65, 0.65};
+    std::array<double, 3> color = {1.0, 1.0, 1.0};
     std::array<double, 3> specular = {};
     std::array<double, 3> emission = {};
     double specularPower = 8.0;

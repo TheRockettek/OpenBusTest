@@ -30,7 +30,9 @@ int main() {
                         definition->modelRoot == root / "model" &&
                         !definition->modelConfiguration.diagnostics.hasErrors() &&
                         definition->modelConfiguration.parts.size() == 1 &&
-                        definition->modelConfiguration.parts[0].objPath == root / "model/car.o3d";
+                        definition->modelConfiguration.parts[0].objPath == root / "model/car.o3d" &&
+                        definition->modelConfiguration.parts[0].color ==
+                            std::array<double, 3>{1.0, 1.0, 1.0};
     openbus::probe::removeProbeDirectory(root);
 
     if (!loaded) {
