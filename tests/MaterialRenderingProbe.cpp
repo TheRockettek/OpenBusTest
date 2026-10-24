@@ -1,6 +1,8 @@
 #include "render/CoreRenderer.h"
 #include "render/MatrixMath.h"
 #include "render/OpenGLFunctions.h"
+#include "render/RendererReflection.h"
+#include "physics/BusSimulation.h"
 
 #include <GLFW/glfw3.h>
 
@@ -71,6 +73,7 @@ int main() {
     };
     const auto close = [](int actual, int expected) { return std::abs(actual - expected) <= 2; };
     bool passed = true;
+    StaticPrimitiveBuffer staticOverlay;
     constexpr std::array<float, 39> humanVertices = {
         0.08F, -0.03F, 0.20F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
         0.14F, -0.03F, 0.20F, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,
@@ -181,15 +184,18 @@ int main() {
         passed = false;
     }
 
-    material.texture = blue;
-    material.textured = true;
-    const auto texturedPixel = draw(material, {1, 1, 1}, 1.0);
     material = {};
     material.useTextTexture = true;
     material.textTexture = blue;
     auto pixel = draw(material, {1, 1, 1}, 1.0);
-    if (pixel != texturedPixel || pixel[2] >= 112) {
-        std::cerr << "text texture was not shaded like the material texture it replaces\n";
+    if (!close(pixel[0], 65) || !close(pixel[1], 85) || !close(pixel[2], 112)) {
+        std::cerr << "text texture did not preserve its authored colour\n";
+        passed = false;
+    }
+    material.textTexture = white;
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    if (!close(pixel[0], 255) || !close(pixel[1], 255) || !close(pixel[2], 255)) {
+        std::cerr << "white text texture was dimmed by surface lighting\n";
         passed = false;
     }
     material = {};
@@ -213,13 +219,18 @@ int main() {
     material = {};
     material.texture = blue;
     material.textured = true;
-    const auto basePixel = draw(material, {1, 1, 1}, 1.0);
     material.textured = false;
     material.freeTexture = blue;
     material.useFreeTexture = true;
     pixel = draw(material, {1, 1, 1}, 1.0);
-    if (pixel != basePixel || pixel[2] >= 112) {
-        std::cerr << "file-selected free texture bypassed normal surface lighting\n";
+    if (!close(pixel[0], 65) || !close(pixel[1], 85) || !close(pixel[2], 112)) {
+        std::cerr << "free texture did not preserve its authored colour\n";
+        passed = false;
+    }
+    material.freeTexture = white;
+    pixel = draw(material, {1, 1, 1}, 1.0);
+    if (!close(pixel[0], 255) || !close(pixel[1], 255) || !close(pixel[2], 255)) {
+        std::cerr << "white free texture was dimmed by surface lighting\n";
         passed = false;
     }
     material = {};
@@ -393,7 +404,7 @@ int main() {
     material.textTexture = blue;
     material.useTextTexture = true;
     pixel = draw(material, {1, 1, 1}, 1.0);
-    if (pixel != texturedPixel) {
+    if (!close(pixel[0], 65) || !close(pixel[1], 85) || !close(pixel[2], 112)) {
         std::cerr << "text texture RGB was not preserved\n";
         passed = false;
     }
@@ -401,7 +412,7 @@ int main() {
     material.freeTexture = blue;
     material.useFreeTexture = true;
     pixel = draw(material, {1, 1, 1}, 1.0);
-    if (pixel != texturedPixel) {
+    if (!close(pixel[0], 65) || !close(pixel[1], 85) || !close(pixel[2], 112)) {
         std::cerr << "free texture RGB was not preserved\n";
         passed = false;
     }
@@ -569,6 +580,118 @@ int main() {
     if (draw(interiorLightMaterial, interiorSurfaceColor, 1.0) != unlitInteriorPixel) {
         std::cerr << "zero interior-light strength changed the surface\n";
         passed = false;
+    }
+    const auto unanimatedIndexedBaseline =
+        drawHumanGaitFrame(0.0, 0.0, humanVertices, 1.7, false);
+    static_cast<void>(
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, humanVertices, 1.7, true));
+    ModelMaterial indexedSceneMaterial;
+    indexedSceneMaterial.emissionColor = {1, 1, 1};
+    glClear(GL_COLOR_BUFFER_BIT);
+    setModelViewMatrix(translationMatrix({0, 0, -0.4}));
+    drawIndexedModelBatch(buffer, indexBuffer, 3, indexedSceneMaterial, {1, 1, 1}, 1.0, 0);
+    std::array<std::uint8_t, 32 * 32 * 4> indexedSceneAfterPedestrian = {};
+    glReadPixels(0, 0, 32, 32, GL_RGBA, GL_UNSIGNED_BYTE, indexedSceneAfterPedestrian.data());
+    if (indexedSceneAfterPedestrian != unanimatedIndexedBaseline) {
+        std::cerr << "indexed scene geometry inherited the previous pedestrian gait animation\n";
+        passed = false;
+    }
+    {
+        const auto drawHud = [&]() {
+            glClear(GL_COLOR_BUFFER_BIT);
+            drawTextureQuad(blue, -1, -1, 2, 2);
+            std::array<std::uint8_t, 4> pixel = {};
+            glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+            return pixel;
+        };
+        const auto hudBeforeReflections = drawHud();
+        VehicleCamera camera;
+        camera.kind = VehicleCameraKind::Reflexion;
+        const std::vector<VehicleCamera> cameras = {camera};
+        ReflectionRenderer reflections;
+        reflections.initialize(cameras);
+        if (drawHud() != hudBeforeReflections) {
+            std::cerr << "reflection initialization invalidated the HUD texture binding\n";
+            passed = false;
+        }
+        BusConfiguration configuration{};
+        configuration.mass = 12000;
+        configuration.length = configuration.collisionLength = 10;
+        configuration.width = configuration.collisionWidth = 2.5;
+        configuration.bodyHalfLength = 5;
+        configuration.bodyHalfWidth = 1.25;
+        configuration.bodyHalfHeight = 1.5;
+        configuration.collisionHeight = 3;
+        configuration.wheelRadius = 0.5;
+        configuration.wheelHalfWidth = 0.15;
+        configuration.centerOfGravityHeight = 1;
+        configuration.axles = {{3, 2, 2, 1.5, 1, 240000, 90000, 20000, true, false},
+                                {-3, 2, 2, 1.5, 1, 240000, 90000, 20000, false, true}};
+        BusSimulation simulation(configuration, VehiclePlacement{{0, 0, 0}, 0});
+        ModelMaterial sceneMaterial;
+        sceneMaterial.texture = blue;
+        sceneMaterial.textured = true;
+        const std::vector<PrimitiveVertex> overlay = {
+            {-2, -2, -1, 1, 0, 0}, {2, -2, -1, 1, 0, 0}, {0, 2, -1, 1, 0, 0}};
+        GLuint streamedBuffer = 0;
+        pglGenBuffers(1, &streamedBuffer);
+        for (const int size : {64, 128, 64}) {
+            for (const bool hud : {true, false}) {
+                const auto drawSurface = [&]() {
+                    return hud ? drawHud() : draw(sceneMaterial, {1, 1, 1}, 1.0);
+                };
+                const int targetSize = hud ? size : size * 2;
+                invalidateTextureBindings();
+                const auto beforeResize = drawSurface();
+                bool rendered = false;
+                reflections.render(
+                    simulation, cameras, {0, 0, 32, 32},
+                    [targetSize](std::size_t) {
+                        return ReflectionRequirement{true, targetSize};
+                    },
+                    [&](const BusSimulation&, std::size_t, int, int) { rendered = true; },
+                    [](int, int) {});
+                if (!rendered || drawSurface() != beforeResize) {
+                    std::cerr << "reflection resize changed " << (hud ? "HUD" : "scene")
+                              << " rendering; size=" << targetSize << '\n';
+                    passed = false;
+                }
+            }
+        }
+        if (pglGetBufferSubData != nullptr) {
+            drawPrimitives(overlay, GL_TRIANGLES);
+            pglBindBuffer(GL_ARRAY_BUFFER, streamedBuffer);
+            pglBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
+            drawPrimitives(overlay, GL_TRIANGLES);
+            std::array<float, 39> afterOverlay = {};
+            pglBindBuffer(GL_ARRAY_BUFFER, streamedBuffer);
+            pglGetBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(afterOverlay), afterOverlay.data());
+            if (afterOverlay != vertices) {
+                std::cerr << "overlay upload overwrote streamed scene geometry\n";
+                passed = false;
+            }
+            drawStaticPrimitives(staticOverlay, overlay, GL_TRIANGLES);
+            for (const std::uint64_t revision : {0U, 1U, 1U}) {
+                pglBindBuffer(GL_ARRAY_BUFFER, streamedBuffer);
+                pglBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
+                glClear(GL_COLOR_BUFFER_BIT);
+                drawStaticPrimitives(staticOverlay, overlay, GL_TRIANGLES, 1.0F, revision);
+                std::array<std::uint8_t, 4> pixel = {};
+                glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+                pglBindBuffer(GL_ARRAY_BUFFER, streamedBuffer);
+                pglGetBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(afterOverlay), afterOverlay.data());
+                if (afterOverlay != vertices || pixel[0] < 250 || pixel[1] != 0 ||
+                    pixel[2] != 0) {
+                    std::cerr << "cached overlay used or overwrote streamed scene geometry; "
+                              << "revision=" << revision << '\n';
+                    passed = false;
+                }
+            }
+        } else {
+            std::cerr << "OpenGL buffer readback is unavailable for the state regression\n";
+            passed = false;
+        }
+        pglDeleteBuffers(1, &streamedBuffer);
     }
     if (glGetError() != GL_NO_ERROR) {
         std::cerr << "OpenGL material probe failed\n";

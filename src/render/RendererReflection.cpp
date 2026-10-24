@@ -90,6 +90,7 @@ struct ReflectionRenderer::Impl {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, size, size, 0, GL_DEPTH_COMPONENT,
                      GL_FLOAT, nullptr);
         glBindTexture(GL_TEXTURE_2D, 0);
+        invalidateTextureBindings();
     }
 };
 
@@ -157,6 +158,7 @@ void ReflectionRenderer::initialize(const std::vector<VehicleCamera>& cameras) {
     }
     pglBindFramebuffer(GL_FRAMEBUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
+    invalidateTextureBindings();
 }
 
 void ReflectionRenderer::destroy() {

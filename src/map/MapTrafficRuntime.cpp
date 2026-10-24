@@ -32,6 +32,8 @@ bool mapTrafficPoseOnActiveTile(const MapTrafficPose& pose,
 
 namespace {
 
+constexpr double trafficBrakingDeceleration = 3.0;
+
 std::string_view trimRuleField(std::string_view field) {
     const auto whitespace = [](char value) {
         return value == ' ' || value == '\t' || value == '\r' || value == '\n';
@@ -222,7 +224,8 @@ MapTrafficPathRules mapTrafficRulesForPath(const std::vector<MapTileRule>& rules
         }
         const std::string kind = lowerRuleField(rule.fields[1]);
         if (kind != "speedlimit" && kind != "trafficdensity" && kind != "priority" &&
-            kind != "no_cars" && kind != "bus" && kind != "trucks" && kind != "overtaking_prohib") {
+            kind != "no_cars" && kind != "no_unsched_traffic" && kind != "bus" &&
+            kind != "trucks" && kind != "overtaking_prohib") {
             continue;
         }
         const long long groupIndex = parseRuleNumber<long long>(rule.fields[3], "AI group index");
@@ -251,6 +254,8 @@ MapTrafficPathRules mapTrafficRulesForPath(const std::vector<MapTileRule>& rules
                 groupRules->priority.reset();
             } else if (kind == "no_cars") {
                 groupRules->carsProhibited.reset();
+            } else if (kind == "no_unsched_traffic") {
+                groupRules->unscheduledTrafficProhibited.reset();
             } else if (kind == "bus") {
                 groupRules->busesAllowed.reset();
             } else if (kind == "trucks") {
@@ -275,6 +280,8 @@ MapTrafficPathRules mapTrafficRulesForPath(const std::vector<MapTileRule>& rules
             groupRules->priority = value;
         } else if (kind == "no_cars") {
             groupRules->carsProhibited = value != 0.0;
+        } else if (kind == "no_unsched_traffic") {
+            groupRules->unscheduledTrafficProhibited = value != 0.0;
         } else if (kind == "bus") {
             groupRules->busesAllowed = value != 0.0;
         } else if (kind == "trucks") {
@@ -293,8 +300,13 @@ double mapTrafficPathDensityForVehicle(const MapTrafficPathRules& rules,
             rules.groups.begin(), rules.groups.end(), [&](const MapTrafficGroupRules& candidate) {
                 return candidate.groupIndex == *vehicle.unscheduledGroupIndex;
             });
-        if (group != rules.groups.end() && group->density.has_value()) {
-            return *group->density;
+        if (group != rules.groups.end()) {
+            if (group->unscheduledTrafficProhibited.value_or(false)) {
+                return 0.0;
+            }
+            if (group->density.has_value()) {
+                return *group->density;
+            }
         }
     }
     return rules.density.value_or(1.0);
@@ -404,6 +416,23 @@ MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath
     return actor;
 }
 
+MapTrafficRouteSegment reverseMapTrafficRouteSegment(MapTrafficRouteSegment segment,
+                                                     double segmentLengthMeters) {
+    if (!std::isfinite(segmentLengthMeters) || segmentLengthMeters <= 0.0) {
+        throw std::invalid_argument("Reversed traffic segment length must be positive and finite");
+    }
+    if (!segment.points.empty()) {
+        std::reverse(segment.points.begin(), segment.points.end());
+    } else {
+        const double startDistance = segment.splineDistanceAtRouteStartMeters.value_or(
+            segment.reversed ? segment.spline.placement.length : 0.0);
+        segment.splineDistanceAtRouteStartMeters =
+            startDistance + (segment.reversed ? -segmentLengthMeters : segmentLengthMeters);
+        segment.reversed = !segment.reversed;
+    }
+    return segment;
+}
+
 void resetMapTrafficActorForEntry(MapTrafficActor& actor) noexcept {
     actor.distanceMeters = 0.0;
     actor.speedMetersPerSecond = 0.0;
@@ -413,6 +442,7 @@ void resetMapTrafficActorForEntry(MapTrafficActor& actor) noexcept {
     actor.blockingActor = nullptr;
     actor.blockingObstacleIndex.reset();
     actor.junctionClaimEndMeters.reset();
+    actor.committedSignalSegmentIndex.reset();
 }
 
 const char* mapTrafficBlockReasonName(MapTrafficBlockReason reason) noexcept {
@@ -849,11 +879,16 @@ std::optional<MapTrafficPose> sampleMapTrafficRouteRaw(const MapTrafficRoute& ro
                     fromHeading + fraction * std::remainder(vertexHeading(index) - fromHeading,
                                                             2.0 * std::numbers::pi);
                 const auto offset = mapSplineRightOffset(heading, lateralOffsetMeters);
+                const double horizontalLength = std::hypot(dx, dy);
+                const double pitch =
+                    std::atan2(dz, horizontalLength > 1.0e-9 ? horizontalLength : length);
                 return MapTrafficPose{{from[0] + dx * fraction + offset[0],
                                        from[1] + dy * fraction + offset[1],
                                        from[2] + dz * fraction},
                                       heading,
-                                      spline.splineId};
+                                      spline.splineId,
+                                      pitch,
+                                      0.0};
             }
             remaining -= length;
         }
@@ -896,11 +931,51 @@ std::optional<MapTrafficPose> sampleMapTrafficRouteRaw(const MapTrafficRoute& ro
         spline.elevated ? std::optional<double>(spline.heightDelta) : std::nullopt,
         boundedSplineDistance);
 
+    const auto sampleSurface = [&](double distance) -> std::optional<std::array<double, 3>> {
+        const auto surfaceCenter = sampleMapSpline(
+            tileOriginX + spline.localX, tileOriginY + spline.localY, spline.rotationDegrees,
+            spline.length, spline.radius, distance);
+        if (!surfaceCenter.has_value()) {
+            return std::nullopt;
+        }
+        const double surfaceProgress = distance / spline.length;
+        const double surfaceCant =
+            spline.cantStart + (spline.cantEnd - spline.cantStart) * surfaceProgress;
+        const double surfaceElevation = mapSplineElevation(
+            spline.elevation, spline.length, spline.gradientStart, spline.gradientEnd,
+            spline.elevated ? std::optional<double>(spline.heightDelta) : std::nullopt,
+            distance);
+        const auto surfaceOffset =
+            mapSplineRightOffset(surfaceCenter->headingRadians, splineLateral);
+        return std::array<double, 3>{
+            surfaceCenter->x + surfaceOffset[0], surfaceCenter->y + surfaceOffset[1],
+            surfaceElevation + mapSplineCantHeightOffset(splineLateral, surfaceCant) +
+                routeSegment.pathHeightMeters};
+    };
+    const double routeDirection = routeSegment.reversed ? -1.0 : 1.0;
+    const double beforeDistance =
+        std::clamp(boundedSplineDistance - routeDirection * 0.5, 0.0, spline.length);
+    const double afterDistance =
+        std::clamp(boundedSplineDistance + routeDirection * 0.5, 0.0, spline.length);
+    const auto beforeSurface = sampleSurface(beforeDistance);
+    const auto afterSurface = sampleSurface(afterDistance);
+    double pitch = 0.0;
+    if (beforeSurface.has_value() && afterSurface.has_value()) {
+        const double horizontal =
+            std::hypot((*afterSurface)[0] - (*beforeSurface)[0],
+                       (*afterSurface)[1] - (*beforeSurface)[1]);
+        pitch = std::atan2((*afterSurface)[2] - (*beforeSurface)[2], horizontal);
+    }
+    const double bank = mapSplineCantBankRadians(splineLateral, cant);
+    const double roll = routeSegment.reversed ? bank : -bank;
+
     return MapTrafficPose{{center->x + offset[0], center->y + offset[1],
                            elevation + mapSplineCantHeightOffset(splineLateral, cant) +
                                routeSegment.pathHeightMeters},
                           std::remainder(heading, 2.0 * std::numbers::pi),
-                          spline.splineId};
+                          spline.splineId,
+                          pitch,
+                          roll};
 }
 
 } // namespace
@@ -1057,6 +1132,174 @@ std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route
                                2.0 * std::numbers::pi);
     }
     return result;
+}
+
+double mapTrafficRouteTravelHeadingRadians(const MapTrafficRoute& route, double distanceMeters,
+                                           double lateralOffsetMeters) {
+    if (!std::isfinite(distanceMeters) || !std::isfinite(lateralOffsetMeters) ||
+        route.segments.empty() || !std::isfinite(route.totalLength) || route.totalLength <= 0.0) {
+        throw std::invalid_argument("Map traffic travel heading inputs are invalid");
+    }
+    const auto current = sampleMapTrafficRoute(route, distanceMeters, lateralOffsetMeters);
+    if (!current.has_value()) {
+        throw std::invalid_argument("Cannot sample map traffic travel heading");
+    }
+    constexpr double sampleOffsetMeters = 0.5;
+    double fromDistance = distanceMeters - sampleOffsetMeters;
+    double toDistance = distanceMeters + sampleOffsetMeters;
+    if (!route.closed && !route.loopStartDistance.has_value()) {
+        fromDistance = std::max(0.0, fromDistance);
+        toDistance = std::min(route.totalLength, toDistance);
+    }
+    const auto from = sampleMapTrafficRoute(route, fromDistance, lateralOffsetMeters);
+    const auto to = sampleMapTrafficRoute(route, toDistance, lateralOffsetMeters);
+    if (!from.has_value() || !to.has_value()) {
+        return current->headingRadians;
+    }
+    const double dx = to->position[0] - from->position[0];
+    const double dy = to->position[1] - from->position[1];
+    if (std::hypot(dx, dy) <= 1.0e-6) {
+        return current->headingRadians;
+    }
+    return std::atan2(dx, dy);
+}
+
+MapTrafficTurnSignal mapTrafficActorTurnSignal(const MapTrafficActor& actor,
+                                               double activationDistanceMeters) {
+    if (!std::isfinite(activationDistanceMeters) || activationDistanceMeters < 0.0) {
+        throw std::invalid_argument("Traffic turn-signal lookahead must be finite and non-negative");
+    }
+    const MapTrafficRoute& route = actor.route;
+    if (route.segments.empty() || route.segments.size() != route.cumulativeEndDistances.size() ||
+        !std::isfinite(route.totalLength) || route.totalLength <= 0.0 ||
+        !std::isfinite(actor.distanceMeters) || actor.distanceMeters < 0.0 ||
+        (route.loopStartDistance.has_value() &&
+         (!std::isfinite(*route.loopStartDistance) || *route.loopStartDistance < 0.0 ||
+          *route.loopStartDistance >= route.totalLength))) {
+        return MapTrafficTurnSignal::None;
+    }
+    double previousEnd = 0.0;
+    for (const double segmentEnd : route.cumulativeEndDistances) {
+        if (!std::isfinite(segmentEnd) || segmentEnd <= previousEnd ||
+            segmentEnd > route.totalLength) {
+            return MapTrafficTurnSignal::None;
+        }
+        previousEnd = segmentEnd;
+    }
+    if (std::abs(previousEnd - route.totalLength) > 1.0e-6) {
+        return MapTrafficTurnSignal::None;
+    }
+
+    double currentDistance = actor.distanceMeters;
+    const double loopStart = route.loopStartDistance.value_or(0.0);
+    const double loopLength = route.totalLength - loopStart;
+    if (route.closed) {
+        currentDistance = std::fmod(currentDistance, route.totalLength);
+    } else if (route.loopStartDistance.has_value() && currentDistance >= route.totalLength) {
+        currentDistance = loopStart + std::fmod(currentDistance - loopStart, loopLength);
+    } else if (currentDistance > route.totalLength) {
+        return MapTrafficTurnSignal::None;
+    }
+
+    double nearestDistanceAhead = std::numeric_limits<double>::infinity();
+    MapTrafficTurnSignal nearestSignal = MapTrafficTurnSignal::None;
+    const auto considerDecision = [&](double decisionStart, double decisionEnd,
+                                      MapTrafficTurnSignal signal) {
+        if (signal == MapTrafficTurnSignal::None) {
+            return;
+        }
+        double distanceAhead = decisionStart - currentDistance;
+        const double clearDistance = std::max(0.0, actor.lengthMeters * 0.5);
+        if (distanceAhead < 0.0 && currentDistance <= decisionEnd + clearDistance) {
+            distanceAhead = 0.0;
+        } else if (distanceAhead < 0.0 && (route.closed || route.loopStartDistance)) {
+            distanceAhead += route.closed ? route.totalLength : loopLength;
+        }
+        if (distanceAhead >= 0.0 && distanceAhead <= activationDistanceMeters &&
+            distanceAhead < nearestDistanceAhead) {
+            nearestDistanceAhead = distanceAhead;
+            nearestSignal = signal;
+        }
+    };
+    const auto turnForHeadingChange = [](double from, double to,
+                                         double minimumAngle) {
+        const double difference = std::remainder(to - from, 2.0 * std::numbers::pi);
+        if (std::abs(difference) < minimumAngle) {
+            return MapTrafficTurnSignal::None;
+        }
+        return difference > 0.0 ? MapTrafficTurnSignal::Right : MapTrafficTurnSignal::Left;
+    };
+    const auto segmentStart = [&](std::size_t index) {
+        return index == 0 ? 0.0 : route.cumulativeEndDistances[index - 1];
+    };
+    const auto directionAt = [&](double distance) -> std::optional<MapTrafficPose> {
+        return sampleMapTrafficRouteRaw(route, distance, actor.lateralOffsetMeters);
+    };
+    constexpr double junctionMinimumTurnRadians = 5.0 * std::numbers::pi / 180.0;
+    constexpr double roadTurnThresholdRadians = 30.0 * std::numbers::pi / 180.0;
+    constexpr double sampleOffsetMeters = 0.01;
+
+    for (std::size_t index = 0; index < route.segments.size();) {
+        if (route.segments[index].points.empty()) {
+            ++index;
+            continue;
+        }
+        std::size_t lastJunctionSegment = index;
+        while (lastJunctionSegment + 1 < route.segments.size() &&
+               !route.segments[lastJunctionSegment + 1].points.empty()) {
+            ++lastJunctionSegment;
+        }
+        if (index > 0 && lastJunctionSegment + 1 < route.segments.size()) {
+            const double junctionStart = segmentStart(index);
+            const double junctionEnd = route.cumulativeEndDistances[lastJunctionSegment];
+            const auto incoming = directionAt(junctionStart - sampleOffsetMeters);
+            const auto outgoing = directionAt(junctionEnd + sampleOffsetMeters);
+            if (incoming && outgoing) {
+                considerDecision(
+                    junctionStart, junctionEnd,
+                    turnForHeadingChange(incoming->headingRadians, outgoing->headingRadians,
+                                         junctionMinimumTurnRadians));
+            }
+        }
+        index = lastJunctionSegment + 1;
+    }
+
+    for (std::size_t index = 0; index + 1 < route.segments.size(); ++index) {
+        const MapTrafficRouteSegment& incomingSegment = route.segments[index];
+        const MapTrafficRouteSegment& outgoingSegment = route.segments[index + 1];
+        if (!incomingSegment.points.empty() || !outgoingSegment.points.empty()) {
+            continue;
+        }
+        const double boundary = route.cumulativeEndDistances[index];
+        const double lateralChange =
+            outgoingSegment.pathLateralMeters - incomingSegment.pathLateralMeters;
+        if (incomingSegment.spline.placement.splineId ==
+                outgoingSegment.spline.placement.splineId &&
+            incomingSegment.spline.tileX == outgoingSegment.spline.tileX &&
+            incomingSegment.spline.tileY == outgoingSegment.spline.tileY &&
+            incomingSegment.reversed == outgoingSegment.reversed &&
+            std::abs(lateralChange) >= 1.0) {
+            const double travelRelativeLateralChange =
+                incomingSegment.reversed ? -lateralChange : lateralChange;
+            considerDecision(boundary, boundary,
+                             travelRelativeLateralChange > 0.0 ? MapTrafficTurnSignal::Right
+                                                               : MapTrafficTurnSignal::Left);
+            continue;
+        }
+        const double incomingLength = route.cumulativeEndDistances[index] - segmentStart(index);
+        if (segmentsAreContinuousOnSameSpline(incomingSegment, incomingLength, outgoingSegment)) {
+            continue;
+        }
+        const auto incoming = directionAt(boundary - sampleOffsetMeters);
+        const auto outgoing = directionAt(boundary + sampleOffsetMeters);
+        if (incoming && outgoing) {
+            considerDecision(boundary, boundary,
+                             turnForHeadingChange(incoming->headingRadians,
+                                                  outgoing->headingRadians,
+                                                  roadTurnThresholdRadians));
+        }
+    }
+    return nearestSignal;
 }
 
 std::vector<MapTrafficSpawnCandidate> mapTrafficRouteSpawnCandidates(const MapTrafficRoute& route,
@@ -1415,6 +1658,58 @@ void MapTrafficLaneNetwork::finalize() {
                                     std::cos(end.headingRadians - laneStarts_[b].headingRadians);
                          });
     }
+    const std::size_t laneCount = segments_.size();
+    const auto orientedStart = [&](std::size_t orientedLane) {
+        if (orientedLane < laneCount) {
+            return laneStarts_[orientedLane];
+        }
+        MapTrafficPose pose = laneEnds_[orientedLane - laneCount];
+        pose.headingRadians += std::numbers::pi;
+        return pose;
+    };
+    const auto orientedEnd = [&](std::size_t orientedLane) {
+        if (orientedLane < laneCount) {
+            return laneEnds_[orientedLane];
+        }
+        MapTrafficPose pose = laneStarts_[orientedLane - laneCount];
+        pose.headingRadians += std::numbers::pi;
+        return pose;
+    };
+    std::map<Cell, std::vector<std::size_t>> timetableStarts;
+    timetableNext_.resize(laneCount * 2);
+    for (std::size_t orientedLane = 0; orientedLane < laneCount * 2; ++orientedLane) {
+        timetableStarts[cellFor(orientedStart(orientedLane).position)].push_back(orientedLane);
+    }
+    for (std::size_t orientedLane = 0; orientedLane < laneCount * 2; ++orientedLane) {
+        const MapTrafficPose end = orientedEnd(orientedLane);
+        const Cell cell = cellFor(end.position);
+        for (long long x = -1; x <= 1; ++x) {
+            for (long long y = -1; y <= 1; ++y) {
+                const auto bucket = timetableStarts.find({cell.first + x, cell.second + y});
+                if (bucket == timetableStarts.end()) {
+                    continue;
+                }
+                for (const std::size_t candidate : bucket->second) {
+                    const MapTrafficPose start = orientedStart(candidate);
+                    const double horizontal =
+                        std::hypot(end.position[0] - start.position[0],
+                                   end.position[1] - start.position[1]);
+                    if (horizontal > tolerance ||
+                        std::abs(end.position[2] - start.position[2]) > tolerance ||
+                        std::cos(end.headingRadians - start.headingRadians) < -0.01) {
+                        continue;
+                    }
+                    timetableNext_[orientedLane].push_back(candidate);
+                }
+            }
+        }
+        std::stable_sort(timetableNext_[orientedLane].begin(),
+                         timetableNext_[orientedLane].end(),
+                         [&](std::size_t a, std::size_t b) {
+                             return std::cos(end.headingRadians - orientedStart(a).headingRadians) >
+                                    std::cos(end.headingRadians - orientedStart(b).headingRadians);
+                         });
+    }
     // Report open ends that nearly meet an aligned lane start. These usually indicate
     // authoring gaps or height mismatches rather than intentional dead ends.
     constexpr double nearMissMeters = 3.0;
@@ -1470,7 +1765,8 @@ std::optional<MapTrafficRoute> MapTrafficLaneNetwork::buildRoute(
     int splineId, std::size_t laneSelector, std::size_t routeSeed, double minimumTurnRadiusMeters,
     MapTrafficVehicleFilter vehicle, const std::vector<int>& requiredSplineSequence,
     const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence,
-    bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired) const {
+    bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired,
+    bool allowReverseTraversalForRequired) const {
     if (!finalized_) {
         throw std::logic_error("Traffic lane network must be finalized before route lookup");
     }
@@ -1672,6 +1968,105 @@ std::optional<MapTrafficRoute> MapTrafficLaneNetwork::buildRoute(
         }
     };
     if (allowIntermediarySegmentsBetweenRequired && !effectiveRequiredSplineSequence.empty()) {
+        const std::size_t laneCount = segments_.size();
+        const auto baseLaneFor = [&](std::size_t orientedLane) {
+            return orientedLane < laneCount ? orientedLane : orientedLane - laneCount;
+        };
+        const auto orientedSegment = [&](std::size_t orientedLane) {
+            MapTrafficRouteSegment segment = segments_[baseLaneFor(orientedLane)];
+            if (orientedLane >= laneCount) {
+                segment = reverseMapTrafficRouteSegment(std::move(segment),
+                                                        lengths_[baseLaneFor(orientedLane)]);
+            }
+            return segment;
+        };
+        const auto timetableChoicesFor = [&](const SearchState& state) {
+            if (!allowReverseTraversalForRequired) {
+                return choicesFor(state.lane, state.nextRequiredIndex);
+            }
+            std::vector<std::size_t> possibleCandidates = timetableNext_[state.lane];
+            if (state.nextRequiredIndex < effectiveRequiredSplineSequence.size() &&
+                !effectiveRequiredSceneryPathSequence.empty() &&
+                effectiveRequiredSceneryPathSequence[state.nextRequiredIndex].has_value()) {
+                const int requiredSplineId =
+                    effectiveRequiredSplineSequence[state.nextRequiredIndex];
+                const std::optional<std::size_t> requiredPathIndex =
+                    effectiveRequiredSceneryPathSequence[state.nextRequiredIndex];
+                const auto requiredLanes = lanesBySpline_.find(requiredSplineId);
+                if (requiredLanes != lanesBySpline_.end()) {
+                    const auto directedStart = [&](std::size_t orientedLane) {
+                        if (orientedLane < laneCount) {
+                            return laneStarts_[orientedLane];
+                        }
+                        MapTrafficPose pose = laneEnds_[orientedLane - laneCount];
+                        pose.headingRadians += std::numbers::pi;
+                        return pose;
+                    };
+                    const auto directedEnd = [&](std::size_t orientedLane) {
+                        if (orientedLane < laneCount) {
+                            return laneEnds_[orientedLane];
+                        }
+                        MapTrafficPose pose = laneStarts_[orientedLane - laneCount];
+                        pose.headingRadians += std::numbers::pi;
+                        return pose;
+                    };
+                    const MapTrafficPose from = directedEnd(state.lane);
+                    for (const std::size_t requiredLane : requiredLanes->second) {
+                        if (segments_[requiredLane].sceneryPathIndex != requiredPathIndex) {
+                            continue;
+                        }
+                        for (const std::size_t candidate : {requiredLane,
+                                                            requiredLane + laneCount}) {
+                            if (std::find(possibleCandidates.begin(), possibleCandidates.end(),
+                                          candidate) != possibleCandidates.end()) {
+                                continue;
+                            }
+                            const MapTrafficPose to = directedStart(candidate);
+                            if (std::hypot(from.position[0] - to.position[0],
+                                           from.position[1] - to.position[1]) <= 0.5 &&
+                                std::abs(from.position[2] - to.position[2]) <= 2.5 &&
+                                std::cos(from.headingRadians - to.headingRadians) >= -0.01) {
+                                possibleCandidates.push_back(candidate);
+                            }
+                        }
+                    }
+                }
+            }
+            std::vector<std::size_t> choices;
+            for (const std::size_t candidate : possibleCandidates) {
+                const std::size_t candidateLane = baseLaneFor(candidate);
+                const int candidateSplineId =
+                    segments_[candidateLane].spline.placement.splineId;
+                if (state.nextRequiredIndex < effectiveRequiredSplineSequence.size() &&
+                    candidateSplineId ==
+                        effectiveRequiredSplineSequence[state.nextRequiredIndex] &&
+                    !matchesRequiredLane(candidateLane, state.nextRequiredIndex)) {
+                    continue;
+                }
+                if (!mapTrafficPathAllowsVehicle(segments_[candidateLane].pathRules, vehicle)) {
+                    continue;
+                }
+                if (minimumTurnRadiusMeters > 0.0) {
+                    if (maximumCurvatures_[candidateLane] >
+                        1.05 / minimumTurnRadiusMeters) {
+                        continue;
+                    }
+                    MapTrafficRoute join;
+                    join.segments = {orientedSegment(state.lane), orientedSegment(candidate)};
+                    join.cumulativeEndDistances = {
+                        lengths_[baseLaneFor(state.lane)],
+                        lengths_[baseLaneFor(state.lane)] + lengths_[candidateLane]};
+                    join.totalLength = join.cumulativeEndDistances.back();
+                    if (!mapTrafficCurveFitsMinimumTurnRadius(
+                            subdivideMapTrafficRoute(join), lengths_[baseLaneFor(state.lane)],
+                            minimumTurnRadiusMeters)) {
+                        continue;
+                    }
+                }
+                choices.push_back(candidate);
+            }
+            return choices;
+        };
         const SearchState startState{current, advanceRequiredIndex(current, 0)};
         std::queue<SearchState> pending;
         std::unordered_map<SearchState, SearchState, SearchStateHash> predecessors;
@@ -1685,9 +2080,10 @@ std::optional<MapTrafficRoute> MapTrafficLaneNetwork::buildRoute(
                 completedState = state;
                 break;
             }
-            for (const std::size_t candidate : choicesFor(state.lane, state.nextRequiredIndex)) {
+            for (const std::size_t candidate : timetableChoicesFor(state)) {
+                const std::size_t candidateLane = baseLaneFor(candidate);
                 const std::size_t nextRequiredIndex =
-                    advanceRequiredIndex(candidate, state.nextRequiredIndex);
+                    advanceRequiredIndex(candidateLane, state.nextRequiredIndex);
                 const SearchState nextState{candidate, nextRequiredIndex};
                 if (predecessors.contains(nextState)) {
                     continue;
@@ -1707,8 +2103,9 @@ std::optional<MapTrafficRoute> MapTrafficLaneNetwork::buildRoute(
             }
         }
         std::reverse(routeLaneIndexes.begin(), routeLaneIndexes.end());
-        for (const std::size_t lane : routeLaneIndexes) {
-            MapTrafficRouteSegment segment = segments_[lane];
+        for (const std::size_t orientedLane : routeLaneIndexes) {
+            const std::size_t lane = baseLaneFor(orientedLane);
+            MapTrafficRouteSegment segment = orientedSegment(orientedLane);
             if (!route.segments.empty() && !route.segments.back().points.empty() &&
                 !segment.points.empty()) {
                 const std::array<double, 3>& previousEnd = route.segments.back().points.back();
@@ -2206,6 +2603,8 @@ namespace {
 struct TrafficSignalApproach {
     const MapTrafficSignalSchedule* schedule = nullptr;
     double distanceToStopMeters = 0.0;
+    std::size_t segmentIndex = 0;
+    double distanceToEntryMeters = 0.0;
 };
 
 std::optional<TrafficSignalApproach> nextTrafficSignalApproach(const MapTrafficActor& actor) {
@@ -2256,7 +2655,8 @@ std::optional<TrafficSignalApproach> nextTrafficSignalApproach(const MapTrafficA
         const double stopOffset = actor.lengthMeters * 0.5 + 0.75;
         const double distanceToStop = std::max(0.0, distanceToSegmentStart - stopOffset);
         if (!nearest.has_value() || distanceToStop < nearest->distanceToStopMeters) {
-            nearest = TrafficSignalApproach{&*segment.trafficSignal, distanceToStop};
+            nearest = TrafficSignalApproach{&*segment.trafficSignal, distanceToStop, index,
+                                             distanceToSegmentStart};
         }
         segmentStart = segmentEnd;
     }
@@ -2266,6 +2666,46 @@ std::optional<TrafficSignalApproach> nextTrafficSignalApproach(const MapTrafficA
 std::optional<int> trafficSignalStateAtTime(const MapTrafficSignalSchedule& schedule,
                                             double elapsedSeconds) {
     return mapTrafficSignalStateAtTime(schedule, elapsedSeconds);
+}
+
+bool trafficSignalBlocksActor(const MapTrafficActor& actor, const TrafficSignalApproach& approach,
+                              double signalClockSeconds) {
+    const auto state = trafficSignalStateAtTime(*approach.schedule, signalClockSeconds);
+    if (!state.has_value()) {
+        return true;
+    }
+    return (*state < 6 || *state > 8) &&
+           actor.committedSignalSegmentIndex != approach.segmentIndex;
+}
+
+bool updateTrafficSignalStopDecision(MapTrafficActor& actor,
+                                     const std::optional<TrafficSignalApproach>& approach,
+                                     double signalClockSeconds) {
+    if (!approach.has_value()) {
+        actor.committedSignalSegmentIndex.reset();
+        return false;
+    }
+    if (actor.committedSignalSegmentIndex != approach->segmentIndex) {
+        actor.committedSignalSegmentIndex.reset();
+    }
+    const auto state = trafficSignalStateAtTime(*approach->schedule, signalClockSeconds);
+    if (!state.has_value()) {
+        return true;
+    }
+    if (*state >= 6 && *state <= 8) {
+        actor.committedSignalSegmentIndex.reset();
+        return false;
+    }
+    const double stoppingDistance =
+        actor.speedMetersPerSecond * actor.speedMetersPerSecond /
+        (2.0 * trafficBrakingDeceleration);
+    // Do not hard-clamp a moving vehicle at a newly blocking signal it cannot brake for.
+    // Once committed, slowing for another vehicle must not revoke the entry decision.
+    if (approach->distanceToEntryMeters > 0.0 && actor.speedMetersPerSecond > 0.5 &&
+        approach->distanceToStopMeters + 1.0e-9 < stoppingDistance) {
+        actor.committedSignalSegmentIndex = approach->segmentIndex;
+    }
+    return actor.committedSignalSegmentIndex != approach->segmentIndex;
 }
 
 } // namespace
@@ -2278,9 +2718,7 @@ bool mapTrafficActorWaitingAtSignal(const MapTrafficActor& actor, double signalC
     if (!approach.has_value() || approach->distanceToStopMeters > 1.0) {
         return false;
     }
-    const std::optional<int> state =
-        trafficSignalStateAtTime(*approach->schedule, signalClockSeconds);
-    return !state.has_value() || *state < 6 || *state > 8;
+    return trafficSignalBlocksActor(actor, *approach, signalClockSeconds);
 }
 
 std::optional<MapTrafficSignalStopDebugInfo>
@@ -2292,16 +2730,16 @@ mapTrafficNextSignalStopDebugInfo(const MapTrafficActor& actor, double signalClo
     if (!approach.has_value()) {
         return std::nullopt;
     }
-    const std::optional<MapTrafficPose> pose =
-        sampleMapTrafficRoute(actor.route, actor.distanceMeters + approach->distanceToStopMeters,
-                              actor.lateralOffsetMeters);
+    const std::optional<MapTrafficPose> pose = sampleMapTrafficRoute(
+        actor.route,
+        actor.distanceMeters + approach->distanceToStopMeters + actor.lengthMeters * 0.5,
+        actor.lateralOffsetMeters);
     if (!pose.has_value()) {
         return std::nullopt;
     }
-    const std::optional<int> state =
-        trafficSignalStateAtTime(*approach->schedule, signalClockSeconds);
     return MapTrafficSignalStopDebugInfo{*pose, approach->distanceToStopMeters,
-                                         !state.has_value() || *state < 6 || *state > 8};
+                                         trafficSignalBlocksActor(actor, *approach,
+                                                                  signalClockSeconds)};
 }
 
 void advanceMapTrafficSignalControllers(
@@ -2541,7 +2979,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         validateFootprint(obstacle);
     }
     constexpr double acceleration = 1.6;
-    constexpr double braking = 3.0;
+    constexpr double braking = trafficBrakingDeceleration;
     constexpr double headwaySeconds = 1.5;
     // Drivers keep a shorter time gap at crawling speeds, reaching the full headway at
     // urban cruising speed.
@@ -4041,12 +4479,9 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             double signalStopDistance = std::numeric_limits<double>::infinity();
             const std::optional<TrafficSignalApproach> signalApproach =
                 nextTrafficSignalApproach(actor);
-            if (signalApproach.has_value()) {
-                const std::optional<int> signalState =
-                    trafficSignalStateAtTime(*signalApproach->schedule, currentSignalClockSeconds);
-                if (!signalState.has_value() || *signalState < 6 || *signalState > 8) {
-                    signalStopDistance = signalApproach->distanceToStopMeters;
-                }
+            if (updateTrafficSignalStopDecision(actor, signalApproach,
+                                                 currentSignalClockSeconds)) {
+                signalStopDistance = signalApproach->distanceToStopMeters;
             }
             if (std::isfinite(signalStopDistance)) {
                 limitTarget(std::sqrt(2.0 * signalApproachDeceleration * signalStopDistance),
@@ -4343,6 +4778,11 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             updateOccupiedFootprint(own, actorFootprint(actor, actor.distanceMeters));
             if (actor.distanceMeters < distanceBeforeMovement) {
                 actor.junctionClaimEndMeters.reset();
+            }
+            if (signalApproach.has_value() &&
+                actor.committedSignalSegmentIndex == signalApproach->segmentIndex &&
+                admitted + 1.0e-9 >= signalApproach->distanceToEntryMeters) {
+                actor.committedSignalSegmentIndex.reset();
             }
             if (const auto claimRange = activeJunctionClaimRange(actor)) {
                 // Hold the claim until the tail has cleared the junction group.

@@ -82,6 +82,8 @@ struct BodyPose {
 struct VehiclePlacement {
     std::array<double, 3> position;
     double yawDegrees;
+    double pitchDegrees = 0.0;
+    double rollDegrees = 0.0;
 };
 
 struct TerrainCollisionGrid {

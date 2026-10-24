@@ -161,7 +161,8 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         const std::vector<std::uint8_t> initialPixels =
-            makeStatusHudPixels("X 0.0 Y 0.0 Z 0.0\nCHUNKS 0/0 TERRAIN 0/0 OBJECTS 0/0\n"
+            makeStatusHudPixels("TIME 12:00 X 0.0 Y 0.0 Z 0.0\n"
+                                "CHUNKS 0/0 TERRAIN 0/0 OBJECTS 0/0\n"
                                 "ROADS 0/0 COLLISION TILES 0 AI VEHICLES 0");
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, STATUS_HUD_TEXTURE_WIDTH, STATUS_HUD_TEXTURE_HEIGHT,
                      0, GL_RGBA, GL_UNSIGNED_BYTE, initialPixels.data());
@@ -300,7 +301,8 @@ bool RenderLoop::AddTrafficVehicle(
     std::vector<double> scheduledDepartureMinutes, std::optional<std::size_t> unscheduledGroupIndex,
     int defaultVehicleType, std::vector<int> requiredRouteSplineIds,
     std::vector<std::optional<std::size_t>> requiredSceneryPathSequence,
-    bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired) {
+    bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired,
+    bool allowReverseTraversalForRequired) {
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
     }
@@ -341,7 +343,7 @@ bool RenderLoop::AddTrafficVehicle(
     auto route = mapRenderer_->buildDrivingRoute(
         splineId, laneSelector, routeSeed, routeSearchTurnRadius, vehicleFilter,
         requiredRouteSplineIds, requiredSceneryPathSequence, stopAtRequiredSequenceEnd,
-        allowIntermediarySegmentsBetweenRequired);
+        allowIntermediarySegmentsBetweenRequired, allowReverseTraversalForRequired);
     if (!route) {
         return false;
     }
@@ -385,7 +387,11 @@ bool RenderLoop::AddTrafficVehicle(
     }
     VehiclePlacement placement;
     placement.position = pose->position;
-    placement.yawDegrees = openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians);
+    placement.yawDegrees = openbus::map::mapTrafficHeadingToVehicleYawDegrees(
+        openbus::map::mapTrafficRouteTravelHeadingRadians(actor.route, 0.0,
+                                                          actor.lateralOffsetMeters));
+    placement.pitchDegrees = pose->pitchRadians * 180.0 / std::numbers::pi;
+    placement.rollDegrees = pose->rollRadians * 180.0 / std::numbers::pi;
     const VehiclePlacement configuredPlacement =
         placementForVehicle(configuration, placement, true);
     const double modelOffsetZ = -configuration.centerOfGravityHeight;
@@ -434,6 +440,10 @@ void RenderLoop::SetMapTrafficStartHour(double startHour) {
         throw std::invalid_argument("Map traffic start hour must be between 0 and 24");
     }
     mapTrafficStartHour_ = startHour;
+}
+
+void RenderLoop::SetMapTrafficSpawnInView(bool enabled) {
+    mapTrafficSpawnInView_ = enabled;
 }
 
 double RenderLoop::trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -547,7 +557,8 @@ std::vector<openbus::map::MapTrafficRouteRequirement> RenderLoop::trafficRouteSe
     std::size_t routeSeed, const std::vector<int>& requiredSplineSequence,
     openbus::map::MapTrafficVehicleFilter vehicle,
     const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence,
-    bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired) const {
+    bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired,
+    bool allowReverseTraversalForRequired) const {
     if (mapRenderer_ == nullptr) {
         return {};
     }
@@ -556,7 +567,7 @@ std::vector<openbus::map::MapTrafficRouteRequirement> RenderLoop::trafficRouteSe
             ? mapRenderer_->buildDrivingRoute(
                   splineId, laneSelector, routeSeed, minimumTurnRadiusMeters, vehicle,
                   requiredSplineSequence, requiredSceneryPathSequence, stopAtRequiredSequenceEnd,
-                  allowIntermediarySegmentsBetweenRequired)
+                  allowIntermediarySegmentsBetweenRequired, allowReverseTraversalForRequired)
             : mapRenderer_->buildTrafficRoute(splineId, pathTypeCode);
     if (!route.has_value()) {
         return {};

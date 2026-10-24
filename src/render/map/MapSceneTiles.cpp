@@ -375,6 +375,9 @@ void MapSceneLoader::buildTileContent() {
                             segment.points.push_back(toWorldPosition({sample.x, sample.y, localZ}));
                         }
                         segment.pathTypeCode = path.pathTypeCode;
+                        segment.widthMeters = path.widthMeters;
+                        segment.mapObjectId = mapObjectId;
+                        segment.pathIndex = path.pathIndex;
                         segment.tileX = tileX;
                         segment.tileY = tileY;
                         const std::optional<openbus::map::MapTrafficSignalSchedule> pathSignal =
@@ -382,6 +385,7 @@ void MapSceneLoader::buildTileContent() {
                                 ? std::optional<openbus::map::MapTrafficSignalSchedule>(
                                       attachController(*path.trafficSignal))
                                 : std::nullopt;
+                        segment.trafficSignal = pathSignal;
                         if (pathSignal.has_value()) {
                             sceneryTrafficSignalsByLightIndex.try_emplace(pathSignal->lightIndex,
                                                                           *pathSignal);
@@ -413,12 +417,6 @@ void MapSceneLoader::buildTileContent() {
                 }
                 if (signalController) {
                     impl_->trafficSignalControllers.push_back(std::move(signalController));
-                }
-                if (editorOnlySceneryAssets.contains(
-                        configPath.lexically_normal().generic_string())) {
-                    recordSkipped(skipped, "map scenery placements marked [onlyeditor]",
-                                  description + " config=" + configPath.filename().string());
-                    return;
                 }
                 auto lodSet = sceneryLodThresholdSetByAsset.find(assetKey);
                 if (lodSet == sceneryLodThresholdSetByAsset.end()) {
@@ -470,6 +468,12 @@ void MapSceneLoader::buildTileContent() {
                     scriptState->trafficLightModel = trafficLightModel;
                     scriptStateIndex = impl_->sceneryScriptStates.size();
                     impl_->sceneryScriptStates.push_back(std::move(scriptState));
+                }
+                // Editor-only junctions still own the schedules referenced by visible heads.
+                if (editorOnlySceneryAssets.contains(assetKey)) {
+                    recordSkipped(skipped, "map scenery placements marked [onlyeditor]",
+                                  description + " config=" + configPath.filename().string());
+                    return;
                 }
                 if (batchIndexes.empty()) {
                     recordSkipped(skipped, "scenery placements with no renderable asset batches",

@@ -41,6 +41,10 @@ struct TrafficSignalDebugStats {
 struct TrafficPathDebugSegment {
     std::vector<std::array<double, 3>> points;
     double pathTypeCode = 0.0;
+    double widthMeters = 0.0;
+    std::optional<int> mapObjectId;
+    std::size_t pathIndex = 0;
+    std::optional<openbus::map::MapTrafficSignalSchedule> trafficSignal;
     int tileX = 0;
     int tileY = 0;
 };
@@ -70,7 +74,8 @@ class MapRenderer {
         const std::vector<int>& requiredSplineSequence = {},
         const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence = {},
         bool stopAtRequiredSequenceEnd = false,
-        bool allowIntermediarySegmentsBetweenRequired = false) const;
+        bool allowIntermediarySegmentsBetweenRequired = false,
+        bool allowReverseTraversalForRequired = false) const;
     std::vector<openbus::map::MapTrafficLaneStart>
     lanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
     std::optional<openbus::map::MapTrafficLaneConnectionGap>

@@ -89,6 +89,8 @@ sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
 
 void applyVehiclePlacement(const VehiclePlacement& placement) {
     translate(placement.position[0], placement.position[1], placement.position[2]);
+    rotate(placement.rollDegrees, 1.0, 0.0, 0.0);
+    rotate(-placement.pitchDegrees, 0.0, 1.0, 0.0);
     rotate(placement.yawDegrees, 0.0, 0.0, 1.0);
 }
 

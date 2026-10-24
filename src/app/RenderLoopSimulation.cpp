@@ -532,7 +532,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 if (!pose) {
                     throw std::runtime_error("Could not sample a road traffic spawn position");
                 }
-                if (!poseOnActiveTile(*pose) || !hiddenAtPose(state.actor, *pose)) {
+                if (!poseOnActiveTile(*pose) ||
+                    (!mapTrafficSpawnInView_ && !hiddenAtPose(state.actor, *pose))) {
                     continue;
                 }
                 const MapTrafficObstacle candidate{*pose, state.actor.lengthMeters,
@@ -593,7 +594,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                                                      state.nextScheduledDepartureElapsedSeconds)) {
                     continue;
                 }
-                const bool entryHidden = hiddenAtPose(state.actor, *entryPose);
+                const bool entryHidden =
+                    mapTrafficSpawnInView_ || hiddenAtPose(state.actor, *entryPose);
                 const bool entryClear = canSpawnMapTrafficEntry(state.actor, true, occupied);
                 const bool entryOnActiveTile = poseOnActiveTile(*entryPose);
                 if (!entryHidden || !entryClear || !entryOnActiveTile) {
@@ -733,6 +735,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 }
                 trafficVehicle.vehicle->mapTrafficRouteFinished = true;
                 trafficVehicle.vehicle->mapTrafficTileActive = false;
+                trafficVehicle.vehicle->variables.set("ai_blinker_l", 0.0);
+                trafficVehicle.vehicle->variables.set("ai_blinker_r", 0.0);
                 trafficVehicle.populationEnabled = false;
                 finishScheduledTrip(trafficVehicle);
                 trafficVehicle.stoppedSecondsSinceProgress = 0.0;
@@ -751,7 +755,14 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             trafficPosition[2] += trafficVehicle.vehicle->aiDeltaHeight;
             trafficVehicle.vehicle->placement.position = trafficPosition;
             trafficVehicle.vehicle->placement.yawDegrees =
-                openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians);
+                openbus::map::mapTrafficHeadingToVehicleYawDegrees(
+                    openbus::map::mapTrafficRouteTravelHeadingRadians(
+                        trafficVehicle.actor.route, trafficVehicle.actor.distanceMeters,
+                        trafficVehicle.actor.lateralOffsetMeters));
+            trafficVehicle.vehicle->placement.pitchDegrees =
+                pose->pitchRadians * 180.0 / std::numbers::pi;
+            trafficVehicle.vehicle->placement.rollDegrees =
+                pose->rollRadians * 180.0 / std::numbers::pi;
             trafficVehicle.vehicle->mapTrafficTileActive = poseOnActiveTile(*pose);
             if (!trafficVehicle.vehicle->mapTrafficTileActive) {
                 trafficVehicle.actor.speedMetersPerSecond = 0.0;
@@ -759,6 +770,15 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             const double speedKmh = trafficVehicle.actor.speedMetersPerSecond * 3.6;
             trafficVehicle.vehicle->variables.set("velocity", speedKmh);
             trafficVehicle.vehicle->variables.set("velocity_ground", speedKmh);
+            const openbus::map::MapTrafficTurnSignal turnSignal =
+                trafficVehicle.vehicle->mapTrafficTileActive
+                    ? openbus::map::mapTrafficActorTurnSignal(trafficVehicle.actor)
+                    : openbus::map::MapTrafficTurnSignal::None;
+            trafficVehicle.vehicle->variables.set(
+                "ai_blinker_l", turnSignal == openbus::map::MapTrafficTurnSignal::Left ? 1.0 : 0.0);
+            trafficVehicle.vehicle->variables.set(
+                "ai_blinker_r",
+                turnSignal == openbus::map::MapTrafficTurnSignal::Right ? 1.0 : 0.0);
             if (!trafficVehicle.vehicle->mapTrafficTileActive || atUnconnectedRouteEnd) {
                 trafficVehicle.lastProgressDistanceMeters = trafficVehicle.actor.distanceMeters;
                 trafficVehicle.stoppedSecondsSinceProgress = 0.0;

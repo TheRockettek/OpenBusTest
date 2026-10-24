@@ -1,13 +1,16 @@
 // Frame rendering: reflections, scene draw, HUD overlay and capture.
 
 #include "app/RenderLoopInternal.h"
+#include "app/vehicle/VehiclePartLoading.h"
 #include "map/MapSplineProfile.h"
 #include "render/WeatherEffects.h"
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <map>
 #include <numbers>
+#include <sstream>
 
 namespace {
 
@@ -236,6 +239,107 @@ void appendTrafficBehaviorLine(std::vector<openbus::rendering::PrimitiveVertex>&
         vertices.push_back({static_cast<float>(point[0]), static_cast<float>(point[1]),
                             static_cast<float>(point[2]), color[0], color[1], color[2]});
     }
+}
+
+void appendTrafficDebugText(std::vector<openbus::rendering::PrimitiveVertex>& vertices,
+                            const std::array<double, 3>& anchor,
+                            const std::vector<std::string>& lines, double cameraYawRadians,
+                            double cameraPitchRadians,
+                            const std::array<float, 3>& color) {
+    constexpr double pixelSize = 0.055;
+    constexpr int glyphAdvance = 6;
+    constexpr int lineAdvance = 9;
+    const std::array<double, 3> right = {std::sin(cameraYawRadians),
+                                         -std::cos(cameraYawRadians), 0.0};
+    const std::array<double, 3> up = {std::sin(cameraYawRadians) * std::sin(cameraPitchRadians),
+                                      -std::cos(cameraYawRadians) * std::sin(cameraPitchRadians),
+                                      std::cos(cameraPitchRadians)};
+    for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
+        const std::string& text = lines[lineIndex];
+        for (std::size_t characterIndex = 0; characterIndex < text.size(); ++characterIndex) {
+            const auto glyph = openbus::app::statusHudGlyphRows(text[characterIndex]);
+            for (std::size_t row = 0; row < glyph.size(); ++row) {
+                for (int column = 0; column < 5; ++column) {
+                    if ((glyph[row] & (1U << (4 - column))) == 0) {
+                        continue;
+                    }
+                    const double horizontal =
+                        (static_cast<double>(characterIndex) * glyphAdvance + column) * pixelSize;
+                    const double vertical =
+                        (static_cast<double>(lines.size() - 1 - lineIndex) * lineAdvance +
+                         static_cast<double>(6 - row)) *
+                        pixelSize;
+                    std::array<double, 3> from = anchor;
+                    for (std::size_t axis = 0; axis < 3; ++axis) {
+                        from[axis] += right[axis] * horizontal + up[axis] * vertical;
+                    }
+                    std::array<double, 3> to = from;
+                    for (std::size_t axis = 0; axis < 3; ++axis) {
+                        to[axis] += right[axis] * pixelSize * 0.85;
+                    }
+                    appendTrafficBehaviorLine(vertices, from, to, color);
+                }
+            }
+        }
+    }
+}
+
+std::vector<std::string> trafficSignalDebugLabel(
+    const openbus::rendering::TrafficPathDebugSegment& segment, std::size_t fallbackId,
+    double signalClockSeconds) {
+    if (!segment.trafficSignal.has_value()) {
+        return {};
+    }
+    const openbus::map::MapTrafficSignalSchedule& schedule = *segment.trafficSignal;
+    const std::optional<int> currentState =
+        openbus::map::mapTrafficSignalStateAtTime(schedule, signalClockSeconds);
+    std::ostringstream heading;
+    heading << 'J' << segment.mapObjectId.value_or(static_cast<int>(fallbackId)) << " P"
+            << segment.pathIndex << " L" << schedule.lightIndex << " PH";
+    if (currentState.has_value()) {
+        heading << *currentState;
+    } else {
+        heading << '-';
+    }
+    std::vector<std::string> lines = {heading.str()};
+
+    const std::vector<openbus::map::MapTrafficSignalPhase>* phases = &schedule.phases;
+    if (schedule.program != nullptr && schedule.lightIndex < schedule.program->lights.size()) {
+        phases = &schedule.program->lights[schedule.lightIndex];
+    }
+    std::ostringstream phaseLine;
+    phaseLine << 'C' << std::fixed << std::setprecision(2) << schedule.cycleDurationSeconds
+              << " S";
+    for (std::size_t index = 0; index < phases->size(); ++index) {
+        if (index > 0) {
+            phaseLine << ' ';
+        }
+        phaseLine << (*phases)[index].state << '/'
+                  << std::fixed << std::setprecision(2) << (*phases)[index].durationSeconds;
+    }
+    lines.push_back(phaseLine.str());
+
+    if (schedule.hasConditionalOverrides && schedule.program != nullptr) {
+        for (const openbus::map::MapTrafficSignalControlPoint& point :
+             schedule.program->controlPoints) {
+            if (point.lightIndex != schedule.lightIndex) {
+                continue;
+            }
+            std::ostringstream controlLine;
+            controlLine << "CP" << std::fixed << std::setprecision(2) << point.timeSeconds;
+            if (point.jumpToSeconds.has_value()) {
+                controlLine << 'J' << std::fixed << std::setprecision(2)
+                            << *point.jumpToSeconds;
+            } else {
+                controlLine << 'H';
+            }
+            if (point.ifRequest) {
+                controlLine << 'R';
+            }
+            lines.push_back(controlLine.str());
+        }
+    }
+    return lines;
 }
 
 void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& mapRenderer,
@@ -975,6 +1079,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             std::chrono::steady_clock::now() + std::chrono::milliseconds(4);
         const auto drawVehicles = [&](VehicleRenderPass renderPass, bool playerVehicles) {
             if (renderPass == VehicleRenderPass::Opaque) {
+                // Draw picks LODs from eye distance, so loading must use the same viewpoint.
+                const std::array<double, 3> eye =
+                    openbus::app::vehicle::cameraEyeFromModelView(modelViewMatrix());
                 std::vector<std::pair<double, Vehicle*>> loadOrder;
                 loadOrder.reserve(vehicles_.size());
                 for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
@@ -983,10 +1090,12 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                         (vehicle.get() == playerVehicle_) != playerVehicles) {
                         continue;
                     }
-                    const VehiclePlacement& placement = vehicle->placement;
-                    const double dx = placement.position[0] - chassis.position[0];
-                    const double dy = placement.position[1] - chassis.position[1];
-                    const double dz = placement.position[2] - chassis.position[2];
+                    const std::array<double, 3>& position = vehicle.get() == playerVehicle_
+                                                                ? chassis.position
+                                                                : vehicle->placement.position;
+                    const double dx = position[0] - eye[0];
+                    const double dy = position[1] - eye[1];
+                    const double dz = position[2] - eye[2];
                     loadOrder.emplace_back(dx * dx + dy * dy + dz * dz, vehicle.get());
                 }
                 std::sort(
@@ -1192,6 +1301,59 @@ void RenderLoop::draw(const BusSimulation& simulation) {
         std::vector<openbus::rendering::PrimitiveVertex> behaviorVertices;
         std::vector<openbus::rendering::PrimitiveVertex> vehicleBodyVertices;
         std::vector<openbus::map::MapTrafficPose> renderedSignalStops;
+        std::size_t signalPathIndex = 0;
+        for (const openbus::rendering::TrafficPathDebugSegment& segment :
+             mapRenderer_->sceneryTrafficPathSegments()) {
+            const std::size_t fallbackId = signalPathIndex + 1;
+            ++signalPathIndex;
+            if (!segment.trafficSignal.has_value() ||
+                segment.pathTypeCode != openbus::map::MAP_SPLINE_PATH_TYPE_ROAD ||
+                segment.points.size() < 2 ||
+                std::find(activeTiles.begin(), activeTiles.end(),
+                          std::pair{segment.tileX, segment.tileY}) == activeTiles.end()) {
+                continue;
+            }
+            const auto& start = segment.points.front();
+            const auto& next = segment.points[1];
+            const double dx = next[0] - start[0];
+            const double dy = next[1] - start[1];
+            const double tangentLength = std::hypot(dx, dy);
+            if (!std::isfinite(tangentLength) || tangentLength <= 1.0e-6 ||
+                !std::isfinite(segment.widthMeters) || segment.widthMeters <= 0.0) {
+                continue;
+            }
+            const double forwardX = dx / tangentLength;
+            const double forwardY = dy / tangentLength;
+            const double lateralX = forwardY;
+            const double lateralY = -forwardX;
+            const std::array<double, 3> stopCenter = {
+                start[0] - forwardX * 0.75, start[1] - forwardY * 0.75, start[2] + 0.16};
+            const std::optional<int> phase = openbus::map::mapTrafficSignalStateAtTime(
+                *segment.trafficSignal, simulation.simulationTime());
+            const std::array<float, 3> stopColor =
+                !phase.has_value() || *phase < 6 || *phase > 8
+                    ? std::array<float, 3>{1.0F, 0.12F, 0.08F}
+                    : (*phase >= 9 && *phase <= 11
+                           ? std::array<float, 3>{1.0F, 0.72F, 0.05F}
+                           : std::array<float, 3>{0.08F, 1.0F, 0.18F});
+            std::array<double, 3> lineStart = stopCenter;
+            std::array<double, 3> lineEnd = stopCenter;
+            for (std::size_t axis = 0; axis < 2; ++axis) {
+                const double lateral = axis == 0 ? lateralX : lateralY;
+                lineStart[axis] -= lateral * segment.widthMeters * 0.5;
+                lineEnd[axis] += lateral * segment.widthMeters * 0.5;
+            }
+            appendTrafficBehaviorLine(behaviorVertices, lineStart, lineEnd, stopColor);
+            std::array<double, 3> labelAnchor = stopCenter;
+            labelAnchor[2] += 1.4;
+            labelAnchor[0] += lateralX * (segment.widthMeters * 0.5 + 0.35);
+            labelAnchor[1] += lateralY * (segment.widthMeters * 0.5 + 0.35);
+            appendTrafficDebugText(
+                behaviorVertices, labelAnchor,
+                trafficSignalDebugLabel(segment, fallbackId, simulation.simulationTime()),
+                lastMainCameraPose_.yawRadians, lastMainCameraPose_.pitchRadians,
+                {1.0F, 0.95F, 0.58F});
+        }
         const auto appendSignalStopBox = [&](const openbus::map::MapTrafficActor& actor) {
             const auto stop =
                 openbus::map::mapTrafficNextSignalStopDebugInfo(actor, simulation.simulationTime());
@@ -1215,8 +1377,18 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             const std::array<float, 3> color = stop->blocked
                                                    ? std::array<float, 3>{1.0F, 0.12F, 0.08F}
                                                    : std::array<float, 3>{0.1F, 1.0F, 0.2F};
-            appendTrafficBehaviorBox(behaviorVertices, stop->pose, 0.35,
-                                     std::max(actor.widthMeters + 1.0, 2.5), 0.12, color);
+            const double halfWidth = std::max(actor.widthMeters + 1.0, 2.5) * 0.5;
+            const double rightX = std::cos(stop->pose.headingRadians);
+            const double rightY = -std::sin(stop->pose.headingRadians);
+            std::array<double, 3> lineStart = stop->pose.position;
+            std::array<double, 3> lineEnd = stop->pose.position;
+            lineStart[2] += 0.16;
+            lineEnd[2] += 0.16;
+            lineStart[0] -= rightX * halfWidth;
+            lineStart[1] -= rightY * halfWidth;
+            lineEnd[0] += rightX * halfWidth;
+            lineEnd[1] += rightY * halfWidth;
+            appendTrafficBehaviorLine(behaviorVertices, lineStart, lineEnd, color);
         };
         const auto behaviorColor = [](openbus::map::MapTrafficBlockReason reason, bool onJunction,
                                       bool deadlocked) {
@@ -1514,9 +1686,16 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 mapRenderer_ != nullptr ? mapRenderer_->renderStats()
                                         : openbus::rendering::MapRenderStats{};
             const std::size_t spawnedAiVehicleCount = trafficVehicleCount();
+            const double trafficHour = openbus::map::mapTrafficHourAtElapsedSeconds(
+                mapTrafficStartHour_, simulation.simulationTime());
+            const int minutesSinceMidnight =
+                static_cast<int>(std::floor(trafficHour * 60.0)) % (24 * 60);
             std::ostringstream statusText;
-            statusText << "X " << std::fixed << std::setprecision(1) << simulation.positionX()
-                       << " Y " << simulation.positionY() << " Z " << simulation.positionZ() << '\n'
+            statusText << "TIME " << std::setfill('0') << std::setw(2)
+                       << minutesSinceMidnight / 60 << ':' << std::setw(2)
+                       << minutesSinceMidnight % 60 << std::setfill(' ') << " X " << std::fixed
+                       << std::setprecision(1) << simulation.positionX() << " Y "
+                       << simulation.positionY() << " Z " << simulation.positionZ() << '\n'
                        << "CHUNKS " << mapStats.activeTiles << '/' << mapStats.totalTiles
                        << " TERRAIN " << mapStats.activeTerrainTiles << '/'
                        << mapStats.totalTerrainTiles << " OBJECTS " << mapStats.activeSceneryObjects

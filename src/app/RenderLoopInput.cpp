@@ -308,7 +308,9 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                        "crossing reservation, red=signal/obstacle, blue=in junction, "
                        "bright red=deadlocked; x-ray footprints show occupied areas, "
                        "cyan shows 3s route, teal shows junction claim, and lines link "
-                       "blockers; red/green bars show signal stops; HUD C=clear F=following "
+                       "blockers; red/green bars show signal stops; signalized junction paths "
+                       "show exact stoplines and J/P/L/PH phase, S schedule, CP control labels; "
+                       "HUD C=clear F=following "
                        "Y=yield R=reservation S=signal B=blocked J=junction L=claim; "
                        "HOT=slowest blocked vehicle with spline, reason, current/target speed)"
                      : "disabled"));

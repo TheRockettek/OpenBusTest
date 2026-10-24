@@ -321,15 +321,15 @@ void main() {
     }
     vec3 diffuseReflectance = color.rgb;
     vec3 unlitColor = color.rgb;
-    // OMSI text textures replace the material texture and are shaded like any
-    // other surface; leaving them unlit makes road markings and signs glow.
-    {
+    // Script and text textures contain authored surface colours that must not
+    // be dimmed like a mesh's base material.
+    if (!uUseTextTexture && !uUseFreeTexture) {
         vec3 surfaceNormal = normalize(vNormal);
         vec3 lightDirection = normalize(uLightDirection);
         float diffuse = max(dot(surfaceNormal, lightDirection), 0.0);
         color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
     }
-    if (uUseLightmap) {
+    if (!uUseTextTexture && uUseLightmap) {
         vec4 lightmap = texture(uLightmap, vTexCoord.xy);
         // A lightmap masks self-illumination of the authored surface. White
         // restores its unlit colour, not a white rectangle; black leaves the
@@ -395,7 +395,7 @@ void main() {
             }
         }
     }
-    if (uUseInteriorLight) {
+    if (!uUseTextTexture && uUseInteriorLight) {
         vec3 surfaceNormal = normalize(vNormal);
         for (int index = 0; index < 4; ++index) {
             if (index >= uInteriorLightCount) {
@@ -718,10 +718,8 @@ void bindModelVertexBuffer(GLuint buffer, GLuint vertexArray) {
     if (!vertexArrayChanged && currentArrayBuffer == buffer) {
         return;
     }
-    if (currentArrayBuffer != buffer) {
-        pglBindBuffer(GL_ARRAY_BUFFER, buffer);
-        currentArrayBuffer = buffer;
-    }
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    currentArrayBuffer = buffer;
     pglVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, MODEL_VERTEX_STRIDE, nullptr);
     pglVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, MODEL_VERTEX_STRIDE,
                            reinterpret_cast<const void*>(3 * sizeof(float)));
@@ -1182,6 +1180,7 @@ void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexC
     uploadMatrices(modelUniforms);
     uploadModelUniforms(material, color, alpha, alphaMode);
     pglUniform1i(modelUniforms.cullBackFaces, cullBackFaces && !modelViewReversesWinding() ? 1 : 0);
+    pglUniform1i(modelUniforms.humanGaitEnabled, GL_FALSE);
     selectTextureUnit(GL_TEXTURE0);
     if (material.textureArray) {
         selectTextureUnit(GL_TEXTURE0 + 7);
@@ -1283,10 +1282,9 @@ void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primiti
         pglBindVertexArray(primitiveVertexArray);
         currentVertexArray = primitiveVertexArray;
     }
-    if (currentArrayBuffer != primitiveBuffer) {
-        pglBindBuffer(GL_ARRAY_BUFFER, primitiveBuffer);
-        currentArrayBuffer = primitiveBuffer;
-    }
+    // Asset uploads also bind GL_ARRAY_BUFFER outside this renderer's cache.
+    pglBindBuffer(GL_ARRAY_BUFFER, primitiveBuffer);
+    currentArrayBuffer = primitiveBuffer;
     {
         TraceScope phase("render", "CoreRenderer::drawPrimitives.upload");
         pglBufferData(GL_ARRAY_BUFFER,
@@ -1313,51 +1311,29 @@ void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
     }
     useProgram(primitiveProgram);
     uploadMatrices(primitiveUniforms);
+    const bool needsUpload = cache.requiresUpload(vertices.size(), contentRevision);
     if (cache.buffer == 0) {
         pglGenBuffers(1, &cache.buffer);
         if (cache.buffer == 0) {
             return;
         }
         staticPrimitiveBuffers.push_back(&cache);
-        cache.vertexCount = vertices.size();
-        cache.contentRevision = contentRevision;
-        if (currentVertexArray != primitiveVertexArray) {
-            pglBindVertexArray(primitiveVertexArray);
-            currentVertexArray = primitiveVertexArray;
-        }
-        pglBindBuffer(GL_ARRAY_BUFFER, cache.buffer);
-        currentArrayBuffer = cache.buffer;
-        {
-            TraceScope phase("render", "CoreRenderer::drawStaticPrimitives.upload");
-            pglBufferData(GL_ARRAY_BUFFER,
-                          static_cast<std::ptrdiff_t>(vertices.size() * sizeof(PrimitiveVertex)),
-                          vertices.data(), GL_STATIC_DRAW);
-        }
-    } else if (cache.requiresUpload(vertices.size(), contentRevision)) {
-        cache.vertexCount = vertices.size();
-        cache.contentRevision = contentRevision;
-        if (currentVertexArray != primitiveVertexArray) {
-            pglBindVertexArray(primitiveVertexArray);
-            currentVertexArray = primitiveVertexArray;
-        }
-        if (currentArrayBuffer != cache.buffer) {
-            pglBindBuffer(GL_ARRAY_BUFFER, cache.buffer);
-            currentArrayBuffer = cache.buffer;
-        }
-        {
-            TraceScope phase("render", "CoreRenderer::drawStaticPrimitives.upload");
-            pglBufferData(GL_ARRAY_BUFFER,
-                          static_cast<std::ptrdiff_t>(vertices.size() * sizeof(PrimitiveVertex)),
-                          vertices.data(), GL_STATIC_DRAW);
-        }
     }
     if (currentVertexArray != primitiveVertexArray) {
         pglBindVertexArray(primitiveVertexArray);
         currentVertexArray = primitiveVertexArray;
     }
-    if (currentArrayBuffer != cache.buffer) {
-        pglBindBuffer(GL_ARRAY_BUFFER, cache.buffer);
-        currentArrayBuffer = cache.buffer;
+    pglBindBuffer(GL_ARRAY_BUFFER, cache.buffer);
+    currentArrayBuffer = cache.buffer;
+    if (needsUpload) {
+        cache.vertexCount = vertices.size();
+        cache.contentRevision = contentRevision;
+        {
+            TraceScope phase("render", "CoreRenderer::drawStaticPrimitives.upload");
+            pglBufferData(GL_ARRAY_BUFFER,
+                          static_cast<std::ptrdiff_t>(vertices.size() * sizeof(PrimitiveVertex)),
+                          vertices.data(), GL_STATIC_DRAW);
+        }
     }
     pglVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), nullptr);
     pglVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex),

@@ -396,9 +396,12 @@ void MapSceneLoader::indexMapContent() {
                                 openbus::map::mapTrafficRulesForPath(spline.rules, lane.pathIndex);
                             if (lane.bidirectional) {
                                 impl_->roadTrafficLaneNetwork.addSegment(segment);
-                                segment.reversed = true;
+                                impl_->roadTrafficLaneNetwork.addSegment(
+                                    openbus::map::reverseMapTrafficRouteSegment(
+                                        segment, spline.length));
+                            } else {
+                                impl_->roadTrafficLaneNetwork.addSegment(std::move(segment));
                             }
-                            impl_->roadTrafficLaneNetwork.addSegment(std::move(segment));
                         }
                     }
                 }
@@ -418,8 +421,9 @@ void MapSceneLoader::indexMapContent() {
                             segment.pathHeightMeters = pathOffset.heightMeters;
                             impl_->humanTrafficLaneNetwork.addSegment(segment);
                             if (pathOffset.bidirectional) {
-                                segment.reversed = !segment.reversed;
-                                impl_->humanTrafficLaneNetwork.addSegment(std::move(segment));
+                                impl_->humanTrafficLaneNetwork.addSegment(
+                                    openbus::map::reverseMapTrafficRouteSegment(
+                                        std::move(segment), spline.length));
                             }
                         }
                     }

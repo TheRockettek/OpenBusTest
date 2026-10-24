@@ -91,6 +91,8 @@ openbus_add_probe(OpenBusMapSplineProfileProbe MapSplineProfileProbe.cpp LIBS op
         "${OPENBUS_FIXTURES}/map_spline_profile_explicit_cant_width.sli"
         "${OPENBUS_FIXTURES}/map_spline_profile_no_collision.sli")
 openbus_add_probe(OpenBusMapTrafficRuntimeProbe MapTrafficRuntimeProbe.cpp LIBS openbus_map)
+add_test(NAME OpenBusMapTrafficTJunctionProbe
+    COMMAND OpenBusMapTrafficRuntimeProbe --t-junction)
 
 # Audio
 openbus_add_probe(OpenBusSoundEngineProbe SoundEngineProbe.cpp LIBS openbus_audio)
@@ -117,8 +119,20 @@ add_test(NAME OpenBusComputeCullingGpuProbe COMMAND OpenBusComputeCullingProbe -
 set_tests_properties(OpenBusComputeCullingGpuProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusViewpointProbe ViewpointProbe.cpp LIBS openbus_core)
 openbus_add_probe(OpenBusMaterialRenderingProbe MaterialRenderingProbe.cpp LIBS openbus_render)
-set_tests_properties(OpenBusMaterialRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
+openbus_add_probe(OpenBusMapTrafficLightRenderingProbe MapTrafficLightRenderingProbe.cpp
+    LIBS openbus_render)
+add_test(NAME OpenBusMapTrafficLightRenderingProbe.conditional
+    COMMAND OpenBusMapTrafficLightRenderingProbe --conditional)
+set_tests_properties(OpenBusMapTrafficLightRenderingProbe
+    OpenBusMapTrafficLightRenderingProbe.conditional PROPERTIES
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_SCRIPT_BACKEND=native;OPENBUS_CULLING_BACKEND=cpu")
+set_tests_properties(OpenBusMaterialRenderingProbe PROPERTIES
+    SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_REFLECTION_SIZE=1024;OPENBUS_REFLECTION_INTERVAL=1;OPENBUS_REFLECTION_MAX_FPS=0")
 openbus_add_probe(OpenBusVehicleDrawSortingProbe VehicleDrawSortingProbe.cpp
+    LIBS openbus_render)
+openbus_add_probe(OpenBusVehiclePartLoadingProbe VehiclePartLoadingProbe.cpp
     LIBS openbus_render)
 openbus_add_probe(OpenBusVehicleMaterialSelectionProbe VehicleMaterialSelectionProbe.cpp
     LIBS openbus_render)

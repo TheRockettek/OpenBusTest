@@ -19,6 +19,7 @@ struct MapTrafficGroupRules {
     std::optional<double> density;
     std::optional<double> priority;
     std::optional<bool> carsProhibited;
+    std::optional<bool> unscheduledTrafficProhibited;
     std::optional<bool> busesAllowed;
     std::optional<bool> trucksAllowed;
     std::optional<bool> overtakingProhibited;
@@ -66,6 +67,9 @@ struct MapTrafficRouteSegment {
     // Route-local start position on the original spline for safely subdivided segments.
     std::optional<double> splineDistanceAtRouteStartMeters;
 };
+
+MapTrafficRouteSegment reverseMapTrafficRouteSegment(MapTrafficRouteSegment segment,
+                                                     double segmentLengthMeters);
 
 struct MapTrafficRoute {
     std::vector<MapTrafficRouteSegment> segments;
@@ -119,12 +123,22 @@ struct MapTrafficActor {
     // End of the rolling local junction reservation (also used by the F2 overlay).
     // This does not imply ownership of the entire remaining authored spline.
     std::optional<double> junctionClaimEndMeters;
+    // Keep a too-late-to-brake signal decision until this signal entry is passed.
+    std::optional<std::size_t> committedSignalSegmentIndex;
 };
 
 struct MapTrafficPose {
     std::array<double, 3> position = {};
     double headingRadians = 0.0;
     int splineId = 0;
+    double pitchRadians = 0.0;
+    double rollRadians = 0.0;
+};
+
+enum class MapTrafficTurnSignal {
+    None,
+    Left,
+    Right,
 };
 
 struct MapTrafficCameraView {
@@ -133,7 +147,9 @@ struct MapTrafficCameraView {
 };
 
 struct MapTrafficSignalStopDebugInfo {
+    // Center of the physical stopline, not the vehicle-center stopping position.
     MapTrafficPose pose;
+    // Distance the vehicle center must travel to reach its safe stopping position.
     double distanceAheadMeters = 0.0;
     bool blocked = false;
 };
@@ -149,6 +165,8 @@ bool mapTrafficPoseOnActiveTile(const MapTrafficPose& pose,
 // Returns a signed lateral offset relative to travel direction: positive is right, negative
 // is left. The supplied distance is a non-negative magnitude.
 double mapTrafficLaneOffsetMeters(bool leftHandTraffic, double distanceMeters);
+double mapTrafficRouteTravelHeadingRadians(const MapTrafficRoute& route, double distanceMeters,
+                                           double lateralOffsetMeters);
 double mapTrafficHeadingToVehicleYawDegrees(double headingRadians);
 double mapTrafficHourAtElapsedSeconds(double startHour, double elapsedSeconds);
 double mapTrafficNextDepartureElapsedSeconds(double startHour, double elapsedSeconds,
@@ -224,6 +242,8 @@ MapTrafficRoute subdivideMapTrafficRoute(const MapTrafficRoute& route);
 std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route,
                                                     double distanceMeters,
                                                     double lateralOffsetMeters);
+MapTrafficTurnSignal mapTrafficActorTurnSignal(const MapTrafficActor& actor,
+                                               double activationDistanceMeters = 35.0);
 std::vector<MapTrafficSpawnCandidate> mapTrafficRouteSpawnCandidates(const MapTrafficRoute& route,
                                                                      double vehicleLengthMeters);
 
@@ -330,7 +350,8 @@ class MapTrafficLaneNetwork {
                const std::vector<int>& requiredSplineSequence = {},
                const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence = {},
                bool stopAtRequiredSequenceEnd = false,
-               bool allowIntermediarySegmentsBetweenRequired = false) const;
+               bool allowIntermediarySegmentsBetweenRequired = false,
+               bool allowReverseTraversalForRequired = false) const;
     std::size_t laneCount(int splineId) const;
     std::vector<MapTrafficLaneStart>
     lanesForTimetableEntry(int splineId, std::optional<std::size_t> sceneryPathIndex) const;
@@ -353,6 +374,7 @@ class MapTrafficLaneNetwork {
     std::vector<MapTrafficRouteSegment> segments_;
     std::vector<double> lengths_;
     std::vector<std::vector<std::size_t>> next_;
+    std::vector<std::vector<std::size_t>> timetableNext_;
     std::unordered_map<int, std::vector<std::size_t>> lanesBySpline_;
     std::vector<MapTrafficPose> laneStarts_;
     std::vector<MapTrafficPose> laneEnds_;

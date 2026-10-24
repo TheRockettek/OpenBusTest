@@ -38,6 +38,24 @@ std::string environmentValue(const char* name) {
     return value == nullptr ? std::string{} : std::string(value);
 }
 
+bool booleanEnvironmentValue(const char* name, bool fallback) {
+    std::string value = environmentValue(name);
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    if (value.empty()) {
+        return fallback;
+    }
+    if (value == "1" || value == "true" || value == "yes" || value == "on") {
+        return true;
+    }
+    if (value == "0" || value == "false" || value == "no" || value == "off") {
+        return false;
+    }
+    throw std::runtime_error(std::string(name) +
+                             " must be one of 1/0, true/false, yes/no, or on/off");
+}
+
 std::pair<int, double> weatherSettingsFromEnvironment() {
     std::string weather = environmentValue("OPENBUS_WEATHER");
     std::transform(weather.begin(), weather.end(), weather.begin(), [](unsigned char character) {
@@ -176,6 +194,7 @@ struct MapBusLineRouteStart {
     bool endpointRouteFallback = false;
     bool stopAtRequiredSequenceEnd = false;
     bool allowIntermediarySegmentsBetweenRequired = false;
+    bool allowReverseTraversalForRequired = false;
     bool graphConnectedWithMissingCheckpoints = false;
 };
 
@@ -523,7 +542,7 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
                 const auto routeSegments = renderer.trafficRouteSegments(
                     origin.splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, origin.laneSelector,
                     0.0, routeSeed, requiredSplineSequence, {2, std::nullopt, true},
-                    requiredPathSequence, true, true);
+                    requiredPathSequence, true, true, true);
                 if (!openbus::map::mapTrafficTimetablePathContainedInRouteInOrder(
                         representedRequirements, routeSegments)) {
                     continue;
@@ -536,6 +555,7 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
                 routeStart.requiredSceneryPathSequence = requiredPathSequence;
                 routeStart.stopAtRequiredSequenceEnd = true;
                 routeStart.allowIntermediarySegmentsBetweenRequired = true;
+                routeStart.allowReverseTraversalForRequired = true;
                 routeStart.graphConnectedWithMissingCheckpoints = true;
                 routeStart.missingTimetableCheckpointCount = missingCheckpointCount;
                 result.starts.push_back(std::move(routeStart));
@@ -622,7 +642,7 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
                 const auto routeSegments = renderer.trafficRouteSegments(
                     origin.splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, origin.laneSelector,
                     0.0, 0, requiredSplineSequence, {2, std::nullopt, true}, requiredPathSequence,
-                    true, true);
+                    true, true, true);
                 const std::vector<openbus::map::MapTrafficRouteRequirement> prefix(
                     representedRequirements.begin(),
                     representedRequirements.begin() + static_cast<std::ptrdiff_t>(middle));
@@ -675,7 +695,7 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
                     const auto routeSegments = renderer.trafficRouteSegments(
                         lane.splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, lane.laneSelector,
                         turnRadius, 0, pairSplineSequence, {2, std::nullopt, true},
-                        pairPathSequence, true, true);
+                        pairPathSequence, true, true, true);
                     return openbus::map::mapTrafficTimetablePathContainedInRouteInOrder(
                         {previous, next}, routeSegments);
                 };
@@ -695,7 +715,7 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
                     const auto routeSegments = renderer.trafficRouteSegments(
                         lane.splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, lane.laneSelector,
                         0.0, 0, bridgeSplineSequence, {2, std::nullopt, true}, bridgePathSequence,
-                        true, true);
+                        true, true, true);
                     if (openbus::map::mapTrafficTimetablePathContainedInRouteInOrder(
                             {previous, nextRepresented}, routeSegments)) {
                         graphBridgesUnrepresentedCheckpoints = true;
@@ -1040,10 +1060,19 @@ int main() {
         }
         const double mapAiStartHour = openbus::map::mapTrafficHourAtElapsedSeconds(
             nonnegativeEnvironmentDouble("OPENBUS_MAP_AI_HOUR", 12.0, 24.0), 0.0);
+        const bool mapTrafficSpawnInView =
+            booleanEnvironmentValue("OPENBUS_MAP_AI_SPAWN_VISIBLE", false);
         const int mapAiStartWeekdayIndex = currentMapAiStartWeekday();
         const std::vector<openbus::map::MapAiRoadVehicle> availableAiRoadVehicles =
             openbus::map::mapAiRoadVehicles(mapDefinition.aiTraffic);
         renderer.SetMapTrafficStartHour(mapAiStartHour);
+        renderer.SetMapTrafficSpawnInView(mapTrafficSpawnInView);
+        if (mapTrafficSpawnInView) {
+            applicationLog.Log(
+                "Map AI traffic may spawn in camera view "
+                "(OPENBUS_MAP_AI_SPAWN_VISIBLE=1); active-tile and collision-clearance checks "
+                "remain enabled.");
+        }
         if (mapAiBaseCount == 0) {
             applicationLog.Log("Map-driven AI traffic is disabled by OPENBUS_MAP_AI_COUNT=0.");
         } else {
@@ -1399,7 +1428,8 @@ int main() {
                                     matchedRoute.routeStart.requiredSceneryPathSequence,
                                     matchedRoute.routeStart.stopAtRequiredSequenceEnd,
                                     matchedRoute.routeStart
-                                        .allowIntermediarySegmentsBetweenRequired)) {
+                                        .allowIntermediarySegmentsBetweenRequired,
+                                    matchedRoute.routeStart.allowReverseTraversalForRequired)) {
                                 ++addedBuses;
                             } else {
                                 applicationLog.Log(

@@ -37,6 +37,8 @@ std::array<std::uint8_t, 7> statusHudGlyph(char character) {
         return {0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001};
     case 'O':
         return {0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110};
+    case 'P':
+        return {0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000};
     case 'R':
         return {0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001};
     case 'S':
@@ -83,12 +85,18 @@ std::array<std::uint8_t, 7> statusHudGlyph(char character) {
         return {0, 0, 0, 0, 0, 0b00100, 0b00100};
     case '/':
         return {0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000};
+    case ':':
+        return {0, 0b00100, 0b00100, 0, 0b00100, 0b00100, 0};
     default:
         return {};
     }
 }
 
 } // namespace
+
+std::array<std::uint8_t, 7> statusHudGlyphRows(char character) {
+    return statusHudGlyph(character);
+}
 
 std::vector<std::uint8_t> makeStatusHudPixels(std::string_view text) {
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(STATUS_HUD_TEXTURE_WIDTH) *

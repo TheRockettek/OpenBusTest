@@ -1,6 +1,7 @@
 // Mesh parsing, display-list construction and the shared display cache.
 
 #include "app/vehicle/Vehicle.h"
+#include "app/vehicle/VehiclePartLoading.h"
 #include "config/ScriptTextureLimits.h"
 
 bool Vehicle::areObjectsLoaded() const {
@@ -705,19 +706,35 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance,
         }
     }
 
-    for (Part& part : pendingParts) {
-        const bool viewpointMatches = openbus::rendering::viewpointMatches(part.viewpoint, context);
-        const bool lodMatches = selectedLod < 0 || part.lodIndex == selectedLod;
-        const bool visiblePart = viewpointMatches && lodMatches;
-        if (part.objRequest || (immediateLoad ? visiblePart : !visiblePart)) {
-            continue;
+    using openbus::app::vehicle::VehiclePartLoadPriority;
+    const auto loadPriority = [&](const Part& candidate) {
+        return openbus::app::vehicle::vehiclePartLoadPriority(
+            openbus::rendering::viewpointMatches(candidate.viewpoint, context), candidate.lodIndex,
+            selectedLod);
+    };
+    // Eager loads parse required parts synchronously, so only the rest are queued; deferred
+    // loads queue required parts before prefetching the other LODs of this view.
+    const auto requestParts = [&](auto shouldRequest) {
+        for (Part& part : pendingParts) {
+            if (part.objRequest || activeObjWorkers >= maxObjWorkers || !shouldRequest(part)) {
+                continue;
+            }
+            part.objRequest = std::make_shared<ObjRequest>();
+            part.objRequest->future = parsedObjFuture(part.objPath, part.bundleEntry);
+            ++activeObjWorkers;
         }
-        if (activeObjWorkers >= maxObjWorkers) {
-            continue;
-        }
-        part.objRequest = std::make_shared<ObjRequest>();
-        part.objRequest->future = parsedObjFuture(part.objPath, part.bundleEntry);
-        ++activeObjWorkers;
+    };
+    if (immediateLoad) {
+        requestParts([&](const Part& part) {
+            return loadPriority(part) != VehiclePartLoadPriority::Required;
+        });
+    } else {
+        requestParts([&](const Part& part) {
+            return loadPriority(part) == VehiclePartLoadPriority::Required;
+        });
+        requestParts([&](const Part& part) {
+            return loadPriority(part) == VehiclePartLoadPriority::Prefetch;
+        });
     }
 
     std::size_t loadedThisFrame = 0;
@@ -726,11 +743,7 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance,
         if (budgetReached()) {
             break;
         }
-        const bool viewpointMatches =
-            openbus::rendering::viewpointMatches(part->viewpoint, context);
-        const bool shouldLoad =
-            viewpointMatches && (selectedLod < 0 || part->lodIndex == selectedLod);
-        if (!shouldLoad) {
+        if (loadPriority(*part) != VehiclePartLoadPriority::Required) {
             ++part;
             continue;
         }
@@ -759,10 +772,8 @@ void Vehicle::ensureLoaded(RenderViewContext context, double viewDistance,
         if (budgetReached()) {
             break;
         }
-        const bool viewpointMatches =
-            openbus::rendering::viewpointMatches(backgroundPart->viewpoint, context);
-        const bool lodMatches = selectedLod < 0 || backgroundPart->lodIndex == selectedLod;
-        if ((viewpointMatches && lodMatches) || !backgroundPart->objRequest ||
+        if (loadPriority(*backgroundPart) == VehiclePartLoadPriority::Required ||
+            !backgroundPart->objRequest ||
             backgroundPart->objRequest->future.wait_for(std::chrono::milliseconds(0)) !=
                 std::future_status::ready) {
             ++backgroundPart;

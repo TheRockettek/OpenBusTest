@@ -152,6 +152,16 @@ it.
   not reproduce it and the affected light source (interior, nightmap, exterior,
   or scenery) is not identified. Diagnose against the installed model/map
   assets before changing light-controller timing or shader behavior.
+- [x] Fix reproduced graphics-binding leaks: mirror target initialization and
+  resizing now invalidate the texture cache, and primitive uploads explicitly
+  bind their destination buffer after asset streaming. Reset the human-gait
+  shader uniform before indexed scene draws so terrain and other indexed
+  geometry cannot inherit pedestrian motion. GPU regressions verify that
+  repeated mirror resizes preserve HUD/scene pixels, dynamic and cached
+  overlays neither use nor overwrite streamed mesh geometry, and indexed scene
+  geometry remains static after an animated human draw. These regressions do
+  not establish that every reported in-game disappearance has the same cause;
+  keep the separate lighting-flicker investigation open.
 
 Done when a configured display changes from script input and interior lights
 change from their controlling variables without manual texture replacement.
@@ -996,6 +1006,11 @@ the outstanding implementation and validation tasks:
 - [x] OpenGL 3.3 renderer, VBO model path, cameras, mirrors, frustum culling,
   LOD selection, texture cache, crash reports, tracing, and profiling hooks
   are present.
+- [x] Load deferred vehicle LODs from the camera eye (matching draw-time LOD
+  selection), prefetch other LODs of the current view, and always load parts
+  outside any `[LOD]` section. AI cars far from the bus but near the camera
+  previously loaded only their far LOD and drew nothing while still blocking
+  traffic; covered by `OpenBusVehiclePartLoadingProbe`.
 - [~] Reflection, async loading, texture scaling, and material batching are
   opt-in/performance-sensitive paths and need repeatable comparison runs.
 - [ ] Compare the vehicle draw-list/material-selection reuse and static

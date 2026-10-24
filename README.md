@@ -20,7 +20,7 @@ prove end-to-end rendering or runtime semantics.
 | Scripts and dynamic displays | Vehicle script/text textures and scenery per-placement script/text texture surfaces, `init`/`frame`, and `[visible]` control are active; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/scripting/ScriptRuntime.cpp), [`MapRenderer.cpp`](src/render/map/MapRenderer.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
 | Weather | Partial first slice: configurable exterior rain/snow particles use the shared `PrecipType` and `PrecipRate` system variables; map weather schedules, fog, windshield effects, and accumulation are not implemented. | [`WeatherEffects.cpp`](src/render/WeatherEffects.cpp), [`RenderLoopDraw.cpp`](src/app/RenderLoopDraw.cpp) | [`WeatherEffectsProbe.cpp`](tests/WeatherEffectsProbe.cpp); rain and snow visually validated in app captures |
 | Sound | Player sound runtime is active; AI vehicles select `[sound_ai]` when configured and otherwise fall back to `[sound]`. Full OMSI sound and AI event coverage remain incomplete. | [`VehicleSoundBank.cpp`](src/audio/VehicleSoundBank.cpp), [`VehicleConfigLoader.cpp`](src/config/VehicleConfigLoader.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp), [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp) |
-| AI traffic, pedestrians, and routes | Partial runtime: asynchronous `.ovh` vehicle construction and model/script loading, asynchronous pedestrian `.hum`/model CFG and mesh loading, scheduled map buses, group-scoped path traffic rules, route-end retirement, sidewalk pedestrians, fixed-cycle plus request-aware SCO signal timing, and `unsched_trafficdens.txt` group/day curves for group-specific active targets are active. Group quotas change over time with safe off-screen admission/retirement; the startup pool remains fixed and may constrain extreme group shifts. AI driver models, overtaking, and full OMSI parity remain incomplete. | [traffic runtime](src/map/MapTrafficRuntime.cpp), [map configuration](src/map/MapConfigLoader.cpp), [render loop](src/app/RenderLoop.cpp) | [MapTrafficRuntimeProbe.cpp](tests/MapTrafficRuntimeProbe.cpp), [MapConfigLoaderProbe.cpp](tests/MapConfigLoaderProbe.cpp), [AssetRequestManagerProbe.cpp](tests/AssetRequestManagerProbe.cpp); see the [completion TODO](TODO.md) |
+| AI traffic, pedestrians, and routes | Partial runtime: asynchronous `.ovh` vehicle construction and model/script loading, asynchronous pedestrian `.hum`/model CFG and mesh loading, scheduled map buses, group-scoped path traffic rules (including `no_unsched_traffic`) for unscheduled road vehicles, route-end retirement, sidewalk pedestrians, fixed-cycle plus request-aware SCO signal timing, route-based AI turn indicators, and `unsched_trafficdens.txt` group/day curves for group-specific active targets are active. Pedestrian populations use passenger-density schedules on human paths; vehicle `[rule]` restrictions target unscheduled groups and do not apply to scheduled buses or pedestrians. Group quotas change over time with safe off-screen admission/retirement; the startup pool remains fixed and may constrain extreme group shifts. AI driver models, lane changing/overtaking, and full OMSI parity remain incomplete. | [traffic runtime](src/map/MapTrafficRuntime.cpp), [map configuration](src/map/MapConfigLoader.cpp), [render loop](src/app/RenderLoop.cpp) | [MapTrafficRuntimeProbe.cpp](tests/MapTrafficRuntimeProbe.cpp), [MapConfigLoaderProbe.cpp](tests/MapConfigLoaderProbe.cpp), [AssetRequestManagerProbe.cpp](tests/AssetRequestManagerProbe.cpp); see the [completion TODO](TODO.md) |
 
 ### Map runtime scope
 
@@ -80,6 +80,7 @@ Trucks are permitted on road paths by default unless the map's path rules
 explicitly prohibit them; configured group and path density rules still apply.
 `OPENBUS_MAP_AI_HOUR` sets the starting hour (default `12`); the in-game traffic
 clock advances from it using elapsed simulation time and wraps at midnight.
+The current traffic clock is previewed as `TIME HH:MM` in the status HUD.
 Road and pedestrian populations follow their map density schedules as the
 clock advances. A pool sized for each schedule's maximum is queued at
 startup; vehicle instances are constructed and their scripts loaded on asset
@@ -106,6 +107,10 @@ clear vehicle footprint, an entry outside the main camera frustum, and at least
 remove surplus vehicles only off-screen. Vehicles are retired when they reach
 an open route end; subsequent spawns still obey the off-screen and clearance
 checks.
+For visual debugging, set `OPENBUS_MAP_AI_SPAWN_VISIBLE=1` to allow road AI
+vehicles and scheduled buses to spawn while the camera can see their entry
+positions. Active-tile and vehicle-clearance checks still apply; the default
+remains off-screen-only.
 `.ttl` timetable departure times are
 parsed and linked to `.ttp` trips. Matched buses wait for their next departure
 at or after the configured starting hour before endpoint admission, including
@@ -169,6 +174,12 @@ make progress. Complete
 native OMSI right-of-way behavior remains unverified.
 
 Traffic accelerates at up to 1.6 m/s^2 and normally brakes at up to 3 m/s^2.
+If a signal becomes blocking inside a moving vehicle's braking distance
+(`speed^2 / (2 * 3 m/s^2)`, measured to the front-clearance stop point),
+the vehicle commits to passing that signal rather than stopping instantly.
+The decision lasts until it enters the signalized path; following, junction
+priority, and collision checks still apply. Vehicles with enough room to stop,
+and vehicles already waiting at red, continue to obey the signal.
 Lookahead reduces speed before bends only when the current speed would exceed
 the curve's safe speed, estimated with a 4.0 m/s^2 lateral-acceleration limit.
 A speed-dependent following headway (0.5 s at walking pace rising to
@@ -305,8 +316,13 @@ partial:
 - Scheduled OMSI AI buses use matched timetable routes and departures; fixed
   SCO traffic-light schedules stop road traffic and pedestrians on linked
   paths. Signalized scenery instances expose the active phase through
-  `trafficlightphase` for model scripts/visibility variables. Conditional
-  stop/jump overrides and `signalroutes.cfg` routing remain incomplete, and
+  `trafficlightphase` for model scripts/visibility variables. Visible light heads
+  linked by `[varparent]` retain their selected controller schedule even when
+  the junction controller is `[onlyeditor]`; its geometry remains hidden.
+  The GPU traffic-light probe verifies red, green, yellow, and back to red for
+  fixed-cycle and controller-driven schedules through the placement loader,
+  model script, visibility, and rendered pixels. Conditional stop/jump overrides
+  and `signalroutes.cfg` routing remain incomplete, and
   model-specific lamp animation plus full in-game OMSI parity have not been
   validated.
 
@@ -647,6 +663,14 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   scenery path endpoint within 0.5 m horizontally and vertically. Matching
   endpoints are joined in the overlay with a short colored connector when a
   visible gap remains; this does not change AI route connectivity.
+  Signalized road paths show a stopline across the authored path width, placed
+  0.75 m before the controlled path entry (the AI stopping boundary). A nearby
+  billboard lists junction/object ID (`J`), path (`P`), light (`L`), current
+  phase (`PH`), cycle and each phase/duration (`C`/`S`), plus every conditional
+  stop/jump control point (`CP`; `J` means jump, `H` means hold, `R` means
+  request-gated). Signal stoplines are red for stop phases, amber for changeover
+  phases, and green for permissive phases. Editor-only junction controller
+  records remain included in this diagnostic overlay.
   The status overlay also reports active traffic-light models (`TL`), the
   controller-driven subset (`C`), and counts by current `trafficlightphase`
   value (`PH`); `?:N` marks models whose phase is unavailable.
@@ -668,9 +692,13 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Set `OPENBUS_REFLECTION_MAX_FPS=60` to cap mirror refreshes at 60 FPS without
   limiting the main game. The cap is unset by default; when both reflection
   controls are configured, the interval and time-based cap both apply.
-- Mirror transparency is rendered by default. Set
+- Mirror transparency is rendered by default, including in the run/profile
+  launchers, which preserve an explicitly supplied value. Set
   `OPENBUS_REFLECTION_TRANSPARENT=0` to render opaque geometry only and reduce
-  mirror workload when transparent details are not needed. This setting is
+  mirror workload. This also removes alpha-tested and alpha-blended vehicle
+  bodywork, not just glass: some AI vehicles will show only their wheels.
+  Leave it enabled for complete vehicles in mirrors. The render benchmark
+  explicitly disables it for its opaque-only workload. This setting is
   read once on the first mirror draw and retained for the process lifetime.
 - Set `OPENBUS_MATERIAL_BATCHING=1` to use the experimental material-table
   shader path. It combines compatible opaque geometry and supports up to 8
@@ -829,6 +857,13 @@ exercised. Besides the average update time it prints a `state_hash` of every
 actor's distance, speed, junction wait, block reason and junction claim after every
 update. An optimization that must not change behaviour should leave that hash
 unchanged.
+
+The focused T-junction regression simulates major-road through traffic and a
+vehicle turning onto the minor road for 30 simulated seconds in 300 updates. It
+checks vehicle clearance throughout and requires every vehicle to clear the
+junction without stalling. Run it with
+`build-release-ninja\OpenBusMapTrafficRuntimeProbe.exe --t-junction`, or select
+the `OpenBusMapTrafficTJunctionProbe` CTest test.
 
 Some traffic optimizations skip or defer route-sampling queries, for example curve
 limits that cannot lower the target speed, or lazily computed arrival windows. They

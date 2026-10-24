@@ -85,12 +85,14 @@ class RenderLoop {
                            int defaultVehicleType = 0, std::vector<int> requiredRouteSplineIds = {},
                            std::vector<std::optional<std::size_t>> requiredSceneryPathSequence = {},
                            bool stopAtRequiredSequenceEnd = false,
-                           bool allowIntermediarySegmentsBetweenRequired = false);
+                           bool allowIntermediarySegmentsBetweenRequired = false,
+                           bool allowReverseTraversalForRequired = false);
     int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
                                     bool isBus) const;
     void SetMapTrafficStartHour(double startHour);
+    void SetMapTrafficSpawnInView(bool enabled);
     bool AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,
                               double feetDistanceMeters, double heightMeters,
                               double speedMetersPerSecond, double startDistanceMeters,
@@ -122,7 +124,8 @@ class RenderLoop {
         openbus::map::MapTrafficVehicleFilter vehicle = {},
         const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence = {},
         bool stopAtRequiredSequenceEnd = false,
-        bool allowIntermediarySegmentsBetweenRequired = false) const;
+        bool allowIntermediarySegmentsBetweenRequired = false,
+        bool allowReverseTraversalForRequired = false) const;
     std::size_t trafficVehicleCount() const;
     void SetWeather(int precipitationType, double precipitationRate);
 
@@ -320,6 +323,7 @@ class RenderLoop {
     bool useGroupRoadPopulation_ = false;
     std::size_t targetBusTrafficCount_ = 0;
     double mapTrafficStartHour_ = 12.0;
+    bool mapTrafficSpawnInView_ = false;
     void finishPendingTrafficVehicleLoads();
     void updateTrafficDriving(const BusSimulation& simulation, double elapsedSeconds);
     struct HumanTrafficState {
