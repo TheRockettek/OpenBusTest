@@ -216,6 +216,10 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                 double maximumHeight = -std::numeric_limits<double>::infinity();
                 double heightSum = 0.0;
                 std::size_t heightCount = 0;
+                const double tileOriginX =
+                    static_cast<double>(tileX) * openbus::map::OMSI_TILE_SIZE_METERS;
+                const double tileOriginY =
+                    static_cast<double>(tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
                 for (const openbus::map::WaterSurface& surface : water.surfaces) {
                     const auto corners =
                         openbus::map::buildMapWaterSurfaceVertices(tileX, tileY, surface);
@@ -223,7 +227,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                     for (std::size_t corner = 0; corner < corners.size(); ++corner) {
                         const openbus::map::MapWaterVertex& vertex = corners[corner];
                         vertices.push_back(
-                            {static_cast<float>(vertex.x), static_cast<float>(vertex.y),
+                            {static_cast<float>(vertex.x - tileOriginX),
+                             static_cast<float>(vertex.y - tileOriginY),
                              static_cast<float>(vertex.z), corner == 1 || corner == 2 ? 1.0F : 0.0F,
                              corner >= 2 ? 1.0F : 0.0F, 0.0F, 0.0F, 0.0F, 1.0F});
                         minimumHeight = (std::min)(minimumHeight, vertex.z);

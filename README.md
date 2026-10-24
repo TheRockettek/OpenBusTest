@@ -31,15 +31,27 @@ tile completions include elapsed milliseconds. If loading appears stuck after an
 unhandled-configuration-tag warning, check the subsequent progress messages for
 the active stage or tile. These logs do not require performance tracing.
 
-The current map path loads `global.cfg` and uses its first entrypoint by default.
-When `OPENBUS_MAP_SPAWN` is unset, startup prints all spawn points with their
-zero-based indexes, names, world coordinates, and yaw. Set it to an index (for
-example, `OPENBUS_MAP_SPAWN=1`) to spawn at that entrypoint's parsed position
-and rotation. The older `OPENBUS_MAP_ENTRY` index/name selector remains
-supported when `OPENBUS_MAP_SPAWN` is unset. Startup parses tile text once and
-caches the parsed tile records/global placement-attachment index, then constructs
-render geometry only for listed tiles in a two-tile Chebyshev window around the
-bus (up to 5×5 tiles).
+Interactive startup opens an ImGui setup screen. It lists maps with a
+`global.cfg` under the configured OMSI root, lets the player choose a map and
+one of that map's entrypoints, and defaults the date/time to the host's current
+local date and time. The session starts on foot at the selected location.
+Use **WASD** to walk relative to your view and **Space** to jump while grounded.
+**F4** toggles mouse look and releases the cursor again to use the on-foot panel.
+Walking uses gravity and a collision capsule against terrain, roads, and static
+scenery; it is not the bus's flying debug camera. Map and collision streaming
+follow the walker. The hidden bus's collision outline is not drawn on foot.
+Use the in-game **Spawn configured bus** button to enter the bus at the selected
+entrypoint, configured by `OPENBUS_BUS_CONFIG` and `OPENBUS_MODEL_CONFIG`. Benchmark mode
+bypasses the interactive menu and continues to honor the environment-selected
+map, spawn, and `OPENBUS_MAP_AI_HOUR` values.
+ImGui manages the cursor during setup and on foot; after a bus is spawned,
+the game manages the steering crosshair and clickable-control cursors.
+Bus physics stays frozen while on foot and resumes when the bus is spawned.
+
+Startup parses tile text once and caches the parsed tile records/global
+placement-attachment index, then constructs render geometry only for listed
+tiles in a two-tile Chebyshev window around the selected spawn point (up to 5×5
+tiles).
 It uses the first `[groundtex]` entry as the
 base and applies numeric per-tile `.map.<index>.dds` alpha masks to subsequent
 `[groundtex]` layers. Set `OPENBUS_MAP_GROUNDTEX` to a zero-based
@@ -85,19 +97,16 @@ vehicle-list formats are not supported by this runtime. `OPENBUS_MAP_AI_COUNT` s
 density-scaled road-vehicle base population (default `200`, maximum `200`).
 Trucks are permitted on road paths by default unless the map's path rules
 explicitly prohibit them; configured group and path density rules still apply.
-`OPENBUS_MAP_AI_HOUR` sets the starting hour (default `12`); the in-game traffic
-clock's `Time` system variable advances from it using elapsed simulation time.
-The starting date comes from the system variables `Day`, `Month`, and `Year`;
+The selected start date/time drives the in-game traffic clock's `Time` system
+variable, which advances using elapsed simulation time. The selected date sets
+the system variables `Day`, `Month`, and `Year`;
 `DayOfYear` is validated against that date. Traffic weekday schedules derive
 their starting weekday from this same calendar (Sunday `0` through Saturday
 `6`), and the date advances with simulation time across midnight and year
-boundaries. Chrono map-tile variants use that same startup calendar date and
-are selected using inclusive
-`[startdate]`/`[enddate]` ranges from `Chrono/**/Chrono.cfg`. The default date
-is initialized from the host local calendar date. If multiple active scenarios
-contain the same tile, the case-insensitive lexically later Chrono.cfg path
-wins. The selected date is
-fixed for the session; changing the simulation date and selector-based
+boundaries. Chrono tile overrides are currently disabled; the base map tile
+files are used regardless of the selected date. The setup screen defaults to
+the host's local date and time. The selected date is fixed for the session;
+changing the simulation date and selector-based
 `[selobject]`/`[selspline]` edits are not yet applied.
 The current traffic clock is previewed as `TIME HH:MM` in the status HUD.
 Road and pedestrian populations follow their map density schedules as the
@@ -184,7 +193,9 @@ Genuine loops continue forward without reversing. Conflicting junction paths
 use swept-footprint reservations; authored path/group priority takes precedence.
 AI vehicle bodies follow the sampled road surface in all three rotations: yaw
 tracks travel direction, pitch follows the authored grade, and roll follows
-road cant. Lane positions include the authored road skew and height offsets.
+road cant. Pitch and roll use the vehicle's heading-relative axes so uphill
+travel raises the nose regardless of compass direction. Lane positions include
+the authored road skew and height offsets.
 Among equal priorities, movements under 45° are treated as straight-like,
 45–100° bends go next, and sharper turns go last. Faster approaches (under
 3 m/s, under 8 m/s, or more, based on cruise speed so braking does not reverse
@@ -467,6 +478,27 @@ chmod +x run.sh profile.sh screenshot.sh convert.sh
 
 The helpers use `build-linux` by default. Set `BUILD_DIR` to choose another
 build directory, and set `OPENBUS_VEHICLE=e400` to run the E400 model.
+
+## Running all test probes
+
+Probe executables are excluded from the default build. Run and profile helpers
+build only `OpenBus` and its dependencies.
+
+On Windows, run `test.bat`, or select **Tasks: Run Test Task** in VS Code and
+choose **Build and run all probes**. The helper configures the
+`windows-clang-ninja` preset, builds all test probes, and runs the full CTest
+suite with failure output. Build or test failures return a nonzero exit code.
+
+For any configured build directory, the equivalent cross-platform command is:
+
+```sh
+cmake --build <build-directory> --target check-probes --parallel 12
+```
+
+The target builds probe dependencies before running tests, including probe
+variants registered with CTest. GPU probes may be reported as skipped when
+their required graphics context is unavailable. The opt-in bgfx lighting
+preview is a developer tool, not part of the automated test suite.
 
 ## Linting
 

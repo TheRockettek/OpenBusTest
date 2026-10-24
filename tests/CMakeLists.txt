@@ -66,6 +66,7 @@ openbus_add_probe(OpenBusXLoaderProbe XLoaderProbe.cpp LIBS openbus_assets ZLIB:
     ARGS "${OPENBUS_FIXTURES}/scenery_text_mesh.x")
 
 # Physics
+openbus_add_probe(OpenBusOnFootMovementProbe OnFootMovementProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusPhysicsProbe BusSimulationSteeringProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusStabilityProbe BusSimulationStabilityProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusPhysicsStressProbe BusSimulationStressProbe.cpp LIBS openbus_physics)
@@ -111,6 +112,10 @@ foreach(probe IN ITEMS ScriptTextureRuntimeProbe MapPlacementLabelProbe ScriptIn
 endforeach()
 
 # Render (header-only probes need only the include root)
+openbus_add_probe(OpenBusImGuiLayerProbe ImGuiLayerProbe.cpp LIBS openbus_imgui)
+target_sources(OpenBusImGuiLayerProbe PRIVATE "${OPENBUS_SOURCE_ROOT}/app/ImGuiLayer.cpp")
+target_include_directories(OpenBusImGuiLayerProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
+set_tests_properties(OpenBusImGuiLayerProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusCameraMathProbe CameraMathProbe.cpp LIBS openbus_render)
 openbus_add_probe(OpenBusHumanGaitProbe HumanGaitProbe.cpp LIBS openbus_render)
 openbus_add_probe(OpenBusAssetRequestManagerProbe AssetRequestManagerProbe.cpp LIBS openbus_render)
@@ -147,3 +152,12 @@ openbus_add_probe(OpenBusTextureAddressModeProbe TextureAddressModeProbe.cpp
     LIBS openbus_render)
 openbus_add_probe(OpenBusStaticPrimitiveBufferProbe StaticPrimitiveBufferProbe.cpp)
 target_include_directories(OpenBusStaticPrimitiveBufferProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
+
+get_property(probeTargets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+add_custom_target(check-probes
+    COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${PROJECT_BINARY_DIR}"
+        -C "$<CONFIG>" --output-on-failure
+    DEPENDS ${probeTargets}
+    USES_TERMINAL
+    VERBATIM
+)

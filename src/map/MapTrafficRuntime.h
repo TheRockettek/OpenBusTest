@@ -140,6 +140,9 @@ struct MapTrafficActor {
     std::optional<std::size_t> committedSignalSegmentIndex;
 };
 
+double mapTrafficSpawnSpeedMetersPerSecond(const MapTrafficActor& actor,
+                                           double distanceMeters);
+
 struct MapTrafficPose {
     std::array<double, 3> position = {};
     double headingRadians = 0.0;

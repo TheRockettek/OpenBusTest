@@ -165,10 +165,12 @@ openbus_add_module(openbus_render
 
 add_executable(OpenBus
     app/CrashHandler.cpp
+    app/ImGuiLayer.cpp
     app/RenderLoop.cpp
     app/RenderLoopDraw.cpp
     app/RenderLoopInput.cpp
     app/RenderLoopSimulation.cpp
+    app/RenderLoopSetup.cpp
     app/StatusHud.cpp
     app/main.cpp
     app/vehicle/Vehicle.cpp
@@ -189,6 +191,7 @@ target_link_libraries(OpenBus PRIVATE
     openbus_physics
     openbus_render
     openbus_scripting
+    openbus_imgui
 )
 openbus_copy_lua_runtime(OpenBus)
 

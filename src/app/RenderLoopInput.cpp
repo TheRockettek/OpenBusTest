@@ -1,6 +1,9 @@
 // Per-frame input polling, camera control and driver input accessors.
 
 #include "app/RenderLoopInternal.h"
+#include "app/ImGuiLayer.h"
+
+#include <imgui.h>
 
 void RenderLoop::scrollCallback(GLFWwindow* window, double, double yOffset) {
     auto* renderer = static_cast<RenderLoop*>(glfwGetWindowUserPointer(window));
@@ -94,6 +97,9 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         TraceScope phase("frame", "RenderLoop::beginFrame.pollEvents");
         glfwPollEvents();
     }
+    if (imguiEnabled_) {
+        imguiLayer_->beginFrame(playerVehicle_ == nullptr);
+    }
     const double currentTime = glfwGetTime();
     const double wallTimegap =
         hasPreviousVariableTime_ ? std::max(0.0, currentTime - previousVariableTime_) : 0.0;
@@ -138,7 +144,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             const bool trafficSplineDebugToggle = binding.key == GLFW_KEY_F2;
             if (changed) {
                 keyEvents_.push_back({binding.action, pressed, glfwGetTime()});
-                if (mouseControlToggle && pressed) {
+                if (mouseControlToggle && pressed && playerVehicle_ != nullptr) {
                     mouseControlEnabled_ = !mouseControlEnabled_;
                     if (mouseControlEnabled_) {
                         pendingMouseClick_ = false;
@@ -164,7 +170,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             previousVehicleKeyStates_[index] = pressed;
         }
         const bool freeCameraTogglePressed = glfwGetKey(window_, GLFW_KEY_F3) == GLFW_PRESS;
-        if (freeCameraTogglePressed && !previousFreeCameraToggleState_) {
+        if (freeCameraTogglePressed && !previousFreeCameraToggleState_ &&
+            playerVehicle_ != nullptr) {
             setFreeCameraEnabled(!freeCameraEnabled_);
         }
         previousFreeCameraToggleState_ = freeCameraTogglePressed;
@@ -222,6 +229,9 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             glfwSetInputMode(window_, GLFW_CURSOR,
                              mouseLookEnabled_ ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
             if (mouseLookEnabled_) {
+                if (playerVehicle_ == nullptr && imguiEnabled_) {
+                    ImGui::SetWindowFocus(nullptr);
+                }
                 if (mouseControlEnabled_) {
                     mouseControlEnabled_ = false;
                     gameLog.Log("Mouse bus control disabled (mouse camera look enabled)");
@@ -250,7 +260,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     {
         TraceScope phase("frame", "RenderLoop::beginFrame.freeCameraMovement");
-        if (freeCameraEnabled_) {
+        if (freeCameraEnabled_ && playerVehicle_ != nullptr) {
             const double forward =
                 static_cast<double>(glfwGetKey(window_, GLFW_KEY_UP) == GLFW_PRESS) -
                 static_cast<double>(glfwGetKey(window_, GLFW_KEY_DOWN) == GLFW_PRESS);
@@ -421,6 +431,9 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
 }
 
 double RenderLoop::throttle() const {
+    if (playerVehicle_ == nullptr) {
+        return 0.0;
+    }
     if (mouseControlEnabled_) {
         return mouseThrottle_;
     }
@@ -429,6 +442,9 @@ double RenderLoop::throttle() const {
 }
 
 double RenderLoop::steering() const {
+    if (playerVehicle_ == nullptr) {
+        return 0.0;
+    }
     if (mouseControlEnabled_) {
         return mouseSteering_;
     }
@@ -440,6 +456,9 @@ double RenderLoop::steering() const {
 }
 
 double RenderLoop::brake() const {
+    if (playerVehicle_ == nullptr) {
+        return 0.0;
+    }
     if (mouseControlEnabled_) {
         return mouseBrake_;
     }

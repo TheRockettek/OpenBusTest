@@ -258,14 +258,11 @@ void MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
             const double step = openbus::map::OMSI_TILE_SIZE_METERS / grid.intervals;
             std::vector<TerrainVertex> vertices;
             vertices.reserve(side * side);
+            // Preserve sub-meter precision by keeping GPU vertices tile-local.
             for (std::size_t row = 0; row < side; ++row) {
                 for (std::size_t column = 0; column < side; ++column) {
-                    const double x =
-                        static_cast<double>(tile.x) * openbus::map::OMSI_TILE_SIZE_METERS +
-                        static_cast<double>(column) * step;
-                    const double y =
-                        static_cast<double>(tile.y) * openbus::map::OMSI_TILE_SIZE_METERS +
-                        static_cast<double>(row) * step;
+                    const double x = static_cast<double>(column) * step;
+                    const double y = static_cast<double>(row) * step;
                     vertices.push_back({static_cast<float>(x), static_cast<float>(y),
                                         grid.heights[row * side + column],
                                         static_cast<float>(column), static_cast<float>(row), 0.0F,

@@ -91,7 +91,20 @@ int main() {
                                         double shoulderXHeightFraction = 0.105,
                                         double shoulderZHeightFraction = 0.76,
                                         double hipXHeightFraction = 0.06,
-                                        double hipZHeightFraction = 0.5) {
+                                        double hipZHeightFraction = 0.5,
+                                        double kneeXHeightFraction = 0.08,
+                                        double kneeYHeightFraction = 0.0,
+                                        double kneeZHeightFraction = 0.25,
+                                        double elbowXHeightFraction = 0.25,
+                                        double elbowZHeightFraction = 0.76,
+                                        double handXHeightFraction = 0.40,
+                                        double handZHeightFraction = 0.76,
+                                        double fingerXHeightFraction = 0.5,
+                                        double fingerZHeightFraction = 0.76,
+                                        double neckYHeightFraction = 0.0,
+                                        double neckZHeightFraction = 0.85,
+                                        double waistYHeightFraction = 0.0,
+                                        double waistZHeightFraction = 0.6) {
         pglBindBuffer(GL_ARRAY_BUFFER, buffer);
         pglBufferData(GL_ARRAY_BUFFER, sizeof(frameVertices), frameVertices.data(), GL_STATIC_DRAW);
         glClearColor(0, 0, 0, 0);
@@ -105,7 +118,13 @@ int main() {
                                                upperArmBetaDegrees, armSwing, hipSway,
                                                waistAnimation, shoulderXHeightFraction,
                                                shoulderZHeightFraction, hipXHeightFraction,
-                                               hipZHeightFraction});
+                                               hipZHeightFraction, kneeXHeightFraction,
+                                               kneeYHeightFraction, kneeZHeightFraction,
+                                               elbowXHeightFraction, elbowZHeightFraction,
+                                               handXHeightFraction, handZHeightFraction,
+                                               fingerXHeightFraction, fingerZHeightFraction,
+                                               neckYHeightFraction, neckZHeightFraction,
+                                               waistYHeightFraction, waistZHeightFraction});
         } else {
             drawModelBatch(buffer, 3, humanMaterial, {1, 1, 1}, 1.0, 0, false);
         }
@@ -195,6 +214,94 @@ int main() {
                            66.0, 1.0, 1.0, 10.0);
     if (noWaistAnimation == configuredWaistAnimation) {
         std::cerr << "authored human waist animation did not affect torso gait\n";
+        passed = false;
+    }
+    constexpr std::array<float, 39> lowerLegVertices = {
+        0.10F, 0.02F, 0.18F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.19F, 0.02F, 0.18F, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.14F, 0.08F, 0.38F, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1};
+    const auto estimatedKnee =
+        drawHumanGaitFrame(0.0, 1.0, lowerLegVertices, 1.7, true, -2.0, 66.0, 1.0, 1.0,
+                           0.0, 0.105, 0.76, 0.06, 0.5, 0.08, 0.0, 0.25);
+    const auto authoredKnee =
+        drawHumanGaitFrame(0.0, 1.0, lowerLegVertices, 1.7, true, -2.0, 66.0, 1.0, 1.0,
+                           0.0, 0.105, 0.76, 0.06, 0.5, 0.12, -0.02, 0.30);
+    if (estimatedKnee == authoredKnee) {
+        std::cerr << "authored human knee links did not change the lower-leg gait pivot\n";
+        passed = false;
+    }
+    constexpr std::array<float, 39> forearmVertices = {
+        0.70F, -0.08F, 1.10F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        1.10F, -0.08F, 1.10F, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.90F, 0.02F, 1.30F, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1};
+    const auto estimatedElbow =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, forearmVertices, 1.7, true, -2.0,
+                           66.0, 1.0, 1.0, 0.0, 0.105, 0.76, 0.06, 0.5, 0.08, 0.0,
+                           0.25, 0.08, 0.45);
+    const auto authoredElbow =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, forearmVertices, 1.7, true, -2.0,
+                           66.0, 1.0, 1.0, 0.0, 0.105, 0.76, 0.06, 0.5, 0.08, 0.0,
+                           0.25, 0.40, 0.75);
+    if (estimatedElbow == authoredElbow) {
+        std::cerr << "authored human elbow links did not change the forearm gait pivot\n";
+        passed = false;
+    }
+    constexpr std::array<float, 39> handVertices = {
+        0.70F, -0.08F, 1.10F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        1.10F, -0.08F, 1.10F, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.90F, 0.02F, 1.30F, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1};
+    const auto estimatedHand =
+        drawHumanGaitFrame(std::numbers::pi / 4.0, 1.0, handVertices, 1.7, true, -2.0,
+                           0.0, 1.0, 1.0, 0.0, 0.105, 0.76, 0.06, 0.5, 0.08, 0.0,
+                           0.25, 0.25, 0.76, 0.20, 0.45);
+    const auto authoredHand =
+        drawHumanGaitFrame(std::numbers::pi / 4.0, 1.0, handVertices, 1.7, true, -2.0,
+                           0.0, 1.0, 1.0, 0.0, 0.105, 0.76, 0.06, 0.5, 0.08, 0.0,
+                           0.25, 0.25, 0.76, 0.50, 0.75);
+    if (estimatedHand == authoredHand) {
+        std::cerr << "authored human hand links did not change the wrist pivot\n";
+        passed = false;
+    }
+    const auto estimatedFinger =
+        drawHumanGaitFrame(std::numbers::pi / 4.0, 1.0, handVertices, 1.7, true, -2.0,
+                           0.0, 1.0, 1.0, 0.0, 0.105, 0.76, 0.06, 0.5, 0.08, 0.0,
+                           0.25, 0.25, 0.76, 0.40, 0.76, 0.45, 0.76);
+    const auto authoredFinger =
+        drawHumanGaitFrame(std::numbers::pi / 4.0, 1.0, handVertices, 1.7, true, -2.0,
+                           0.0, 1.0, 1.0, 0.0, 0.105, 0.76, 0.06, 0.5, 0.08, 0.0,
+                           0.25, 0.25, 0.76, 0.40, 0.76, 0.65, 0.82);
+    if (estimatedFinger == authoredFinger) {
+        std::cerr << "authored human finger links did not change the fingertip gait pivot\n";
+        passed = false;
+    }
+    constexpr std::array<float, 39> headVertices = {
+        0.03F, -0.10F, 1.60F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.16F, -0.10F, 1.60F, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.095F, 0.03F, 1.70F, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1};
+    const auto estimatedNeck =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, headVertices, 1.75, true, -2.0,
+                           66.0, 1.0, 1.0, 0.0, 0.105, 0.76, 0.06, 0.5, 0.08, 0.0,
+                           0.25, 0.25, 0.76, 0.40, 0.76, 0.5, 0.76, 0.0, 0.85);
+    const auto authoredNeck =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, headVertices, 1.75, true, -2.0,
+                           66.0, 1.0, 1.0, 0.0, 0.105, 0.76, 0.06, 0.5, 0.08, 0.0,
+                           0.25, 0.25, 0.76, 0.40, 0.76, 0.5, 0.76, -0.08, 0.91);
+    if (estimatedNeck == authoredNeck) {
+        std::cerr << "authored human neck links did not change the head gait pivot\n";
+        passed = false;
+    }
+    const auto estimatedWaist =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, torsoVertices, 1.7, true, -2.0,
+                           66.0, 1.0, 1.0, 10.0, 0.105, 0.76, 0.06, 0.5, 0.08, 0.0,
+                           0.25, 0.25, 0.76, 0.40, 0.76, 0.5, 0.76, 0.0, 0.85, 0.0,
+                           0.55);
+    const auto authoredWaist =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, torsoVertices, 1.7, true, -2.0,
+                           66.0, 1.0, 1.0, 10.0, 0.105, 0.76, 0.06, 0.5, 0.08, 0.0,
+                           0.25, 0.25, 0.76, 0.40, 0.76, 0.5, 0.76, 0.0, 0.85, -0.02,
+                           0.72);
+    if (estimatedWaist == authoredWaist) {
+        std::cerr << "authored human waist links did not change the torso pivot\n";
         passed = false;
     }
     const auto nonHumanFrameAfterGait =

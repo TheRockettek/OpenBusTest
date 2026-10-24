@@ -381,7 +381,46 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
                                                  : 0.06,
                                              humanConfig.rightHipHeightFractions
                                                  ? (*humanConfig.rightHipHeightFractions)[1]
-                                                 : 0.5};
+                                                 : 0.5,
+                                             humanConfig.rightKneePositionFractions
+                                                 ? (*humanConfig.rightKneePositionFractions)[0]
+                                                 : 0.08,
+                                             humanConfig.rightKneePositionFractions
+                                                 ? (*humanConfig.rightKneePositionFractions)[1]
+                                                 : 0.0,
+                                             humanConfig.rightKneePositionFractions
+                                                 ? (*humanConfig.rightKneePositionFractions)[2]
+                                                 : 0.25,
+                                             humanConfig.rightElbowHeightFractions
+                                                 ? (*humanConfig.rightElbowHeightFractions)[0]
+                                                 : 0.25,
+                                             humanConfig.rightElbowHeightFractions
+                                                 ? (*humanConfig.rightElbowHeightFractions)[1]
+                                                 : 0.76,
+                                             humanConfig.rightHandHeightFractions
+                                                 ? (*humanConfig.rightHandHeightFractions)[0]
+                                                 : 0.40,
+                                             humanConfig.rightHandHeightFractions
+                                                 ? (*humanConfig.rightHandHeightFractions)[1]
+                                                 : 0.76,
+                                             humanConfig.rightFingerHeightFractions
+                                                 ? (*humanConfig.rightFingerHeightFractions)[0]
+                                                 : 0.5,
+                                             humanConfig.rightFingerHeightFractions
+                                                 ? (*humanConfig.rightFingerHeightFractions)[1]
+                                                 : 0.76,
+                                             humanConfig.neckHeightFractions
+                                                 ? (*humanConfig.neckHeightFractions)[0]
+                                                 : 0.0,
+                                             humanConfig.neckHeightFractions
+                                                 ? (*humanConfig.neckHeightFractions)[1]
+                                                 : 0.85,
+                                             humanConfig.waistHeightFractions
+                                                 ? (*humanConfig.waistHeightFractions)[0]
+                                                 : 0.0,
+                                             humanConfig.waistHeightFractions
+                                                 ? (*humanConfig.waistHeightFractions)[1]
+                                                 : 0.6};
     });
     impl_->pendingHumanTrafficModels.emplace(cacheKey, std::move(pending));
 }
@@ -428,7 +467,13 @@ bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey) const
         configuration.heightMeters, configuration.upperArmBetaDegrees, configuration.armSwing,
         configuration.hipSway, configuration.waistAnimation, configuration.shoulderXHeightFraction,
         configuration.shoulderZHeightFraction, configuration.hipXHeightFraction,
-        configuration.hipZHeightFraction);
+        configuration.hipZHeightFraction, configuration.kneeXHeightFraction,
+        configuration.kneeYHeightFraction, configuration.kneeZHeightFraction,
+        configuration.elbowXHeightFraction, configuration.elbowZHeightFraction,
+        configuration.handXHeightFraction, configuration.handZHeightFraction,
+        configuration.neckYHeightFraction, configuration.neckZHeightFraction,
+        configuration.waistYHeightFraction, configuration.waistZHeightFraction,
+        configuration.fingerXHeightFraction, configuration.fingerZHeightFraction);
     return impl_->humanTrafficModels.contains(cacheKey);
 }
 
@@ -440,7 +485,20 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
                                            double shoulderXHeightFraction,
                                            double shoulderZHeightFraction,
                                            double hipXHeightFraction,
-                                           double hipZHeightFraction) const {
+                                           double hipZHeightFraction,
+                                           double kneeXHeightFraction,
+                                           double kneeYHeightFraction,
+                                           double kneeZHeightFraction,
+                                           double elbowXHeightFraction,
+                                           double elbowZHeightFraction,
+                                           double handXHeightFraction,
+                                           double handZHeightFraction,
+                                           double neckYHeightFraction,
+                                           double neckZHeightFraction,
+                                           double waistYHeightFraction,
+                                           double waistZHeightFraction,
+                                           double fingerXHeightFraction,
+                                           double fingerZHeightFraction) const {
     const std::string cacheKey = humanConfigPath.lexically_normal().generic_string();
     if (impl_->humanTrafficModels.contains(cacheKey)) {
         return;
@@ -722,6 +780,19 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
     asset.shoulderZHeightFraction = shoulderZHeightFraction;
     asset.hipXHeightFraction = hipXHeightFraction;
     asset.hipZHeightFraction = hipZHeightFraction;
+    asset.kneeXHeightFraction = kneeXHeightFraction;
+    asset.kneeYHeightFraction = kneeYHeightFraction;
+    asset.kneeZHeightFraction = kneeZHeightFraction;
+    asset.elbowXHeightFraction = elbowXHeightFraction;
+    asset.elbowZHeightFraction = elbowZHeightFraction;
+    asset.handXHeightFraction = handXHeightFraction;
+    asset.handZHeightFraction = handZHeightFraction;
+    asset.neckYHeightFraction = neckYHeightFraction;
+    asset.neckZHeightFraction = neckZHeightFraction;
+    asset.waistYHeightFraction = waistYHeightFraction;
+    asset.waistZHeightFraction = waistZHeightFraction;
+    asset.fingerXHeightFraction = fingerXHeightFraction;
+    asset.fingerZHeightFraction = fingerZHeightFraction;
     impl_->sceneryBatches.reserve(impl_->sceneryBatches.size() + batches.size());
     for (Impl::ModelBatch& batch : batches) {
         asset.batchIndexes.push_back(impl_->sceneryBatches.size());

@@ -112,10 +112,13 @@ Human gait phase, resting upper-arm pose, arm swing, hip sway, and torso bob
 use the `.hum` `[walk_param]` step length, upper-arm beta, arm-swing multiplier,
 hip setting, and waist-animation setting. The right-shoulder coordinates in
 `[links]` set the approximate arm pivot and are mirrored for the other side;
-the right-hip coordinates likewise set the hip-sway pivot. These controls
-drive approximate mesh deformations, not authored skeletal joints; remaining
-`[links]` geometry, seat height, mass, voice, and native limb animation are
-not yet applied.
+the right-hip coordinates likewise set the hip-sway pivot, and the right-knee
+coordinates set the lower-leg gait pivot. Right-elbow and right-hand
+coordinates set approximate forearm and wrist flex pivots while walking; neck
+Y/Z coordinates set an approximate head-stabilization pivot, and waist Y/Z
+coordinates anchor gait-linked torso lean. These controls drive approximate
+mesh deformations, not authored skeletal joints; remaining `[links]` geometry,
+seat height, mass, voice, and native limb animation are not yet applied.
 Scheduled AI buses stop at mapped timetable calls and board waiting
 passengers into available seats during an eight-second dwell. Queue consumption
 is serialized each update against the shared remaining count, preventing two

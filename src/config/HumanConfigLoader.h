@@ -26,6 +26,12 @@ struct HumanConfig {
     double walkHipSway = 1.0;
     double walkWaistAnimation = 0.0;
     std::optional<std::array<double, 2>> rightHipHeightFractions;
+    std::optional<std::array<double, 3>> rightKneePositionFractions;
+    std::optional<std::array<double, 2>> rightElbowHeightFractions;
+    std::optional<std::array<double, 2>> rightHandHeightFractions;
+    std::optional<std::array<double, 2>> rightFingerHeightFractions;
+    std::optional<std::array<double, 2>> neckHeightFractions;
+    std::optional<std::array<double, 2>> waistHeightFractions;
     std::optional<std::array<double, 2>> rightShoulderHeightFractions;
     std::optional<double> mass;
     std::string voice;

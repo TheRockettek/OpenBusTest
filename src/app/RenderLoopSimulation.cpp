@@ -318,6 +318,9 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
             if (!state.populationEnabled) {
                 state.vehicle->mapTrafficTileActive = false;
+                state.vehicle->variables.set("ai_blinker_l", 0.0);
+                state.vehicle->variables.set("ai_blinker_r", 0.0);
+                state.vehicle->variables.set("ai_brakelight", 0.0);
                 state.lastProgressDistanceMeters = state.actor.distanceMeters;
                 state.stoppedSecondsSinceProgress = 0.0;
                 state.deadlocked = false;
@@ -747,6 +750,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
             resetMapTrafficActorForEntry(state.actor);
             state.actor.distanceMeters = spawn->distanceMeters;
+            state.actor.speedMetersPerSecond =
+                mapTrafficSpawnSpeedMetersPerSecond(state.actor, state.actor.distanceMeters);
             state.wheelTravelDistanceMeters = 0.0;
             state.previousWheelRouteDistanceMeters = state.actor.distanceMeters;
             state.wheelRouteDistanceInitialized = true;
@@ -813,9 +818,10 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 signalActors.push_back(&human.actor);
             }
         }
+        const auto playerPosition = streamingPosition(simulation);
         mapRenderer_->updateTrafficSignalControllers(
             signalActors, elapsedSeconds, std::max(0.0, currentSimulationTime - elapsedSeconds),
-            std::array<double, 2>{simulation.positionX(), simulation.positionY()});
+            std::array<double, 2>{playerPosition[0], playerPosition[1]});
     }
     {
         TraceScope movementTrace("traffic", "RenderLoop::updateTrafficDriving.vehicleMovement");
@@ -905,6 +911,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 trafficVehicle.vehicle->mapTrafficTileActive = false;
                 trafficVehicle.vehicle->variables.set("ai_blinker_l", 0.0);
                 trafficVehicle.vehicle->variables.set("ai_blinker_r", 0.0);
+                trafficVehicle.vehicle->variables.set("ai_brakelight", 0.0);
                 trafficVehicle.populationEnabled = false;
                 finishScheduledTrip(trafficVehicle);
                 trafficVehicle.stoppedSecondsSinceProgress = 0.0;
@@ -962,11 +969,21 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 trafficVehicle.vehicle->mapTrafficTileActive
                     ? openbus::map::mapTrafficActorTurnSignal(trafficVehicle.actor)
                     : openbus::map::MapTrafficTurnSignal::None;
+            const bool indicatorBlinkOn = std::fmod(currentSimulationTime, 1.0) < 0.5;
             trafficVehicle.vehicle->variables.set(
-                "ai_blinker_l", turnSignal == openbus::map::MapTrafficTurnSignal::Left ? 1.0 : 0.0);
+                "ai_blinker_l",
+                turnSignal == openbus::map::MapTrafficTurnSignal::Left && indicatorBlinkOn ? 1.0
+                                                                                           : 0.0);
             trafficVehicle.vehicle->variables.set(
                 "ai_blinker_r",
-                turnSignal == openbus::map::MapTrafficTurnSignal::Right ? 1.0 : 0.0);
+                turnSignal == openbus::map::MapTrafficTurnSignal::Right && indicatorBlinkOn ? 1.0
+                                                                                             : 0.0);
+            trafficVehicle.vehicle->variables.set(
+                "ai_brakelight",
+                trafficVehicle.actor.targetSpeedMetersPerSecond + 0.05 <
+                        trafficVehicle.actor.speedMetersPerSecond
+                    ? 1.0
+                    : 0.0);
             if (!trafficVehicle.vehicle->mapTrafficTileActive || atUnconnectedRouteEnd) {
                 trafficVehicle.lastProgressDistanceMeters = trafficVehicle.actor.distanceMeters;
                 trafficVehicle.stoppedSecondsSinceProgress = 0.0;

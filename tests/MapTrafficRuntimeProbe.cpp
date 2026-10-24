@@ -3206,6 +3206,25 @@ void verifyTrafficRules() {
                 "the last matching group density rule takes effect");
     requireNear(mapTrafficPathDensityForVehicle(rules, {0, 0, false, 3}), 0.0,
                 "no_unsched_traffic removes the matching group's effective path density");
+    MapTrafficRoute spawnSpeedRoute;
+    MapTrafficRouteSegment spawnSpeedSegment;
+    spawnSpeedSegment.points = {{0.0, 0.0, 0.0}, {0.0, 100.0, 0.0}};
+    spawnSpeedRoute.segments.push_back(std::move(spawnSpeedSegment));
+    spawnSpeedRoute.cumulativeEndDistances = {100.0};
+    spawnSpeedRoute.totalLength = 100.0;
+    auto spawnSpeedActor =
+        makeMapTrafficActor(std::move(spawnSpeedRoute), "car.ovh", 12.0, 0.0, false);
+    spawnSpeedActor.vehicleType = 0;
+    spawnSpeedActor.trafficRuleGroupIndex = 0;
+    spawnSpeedActor.route.segments.front().pathRules.speedLimitKmh = 30.0;
+    requireNear(mapTrafficSpawnSpeedMetersPerSecond(spawnSpeedActor, 0.0), 30.0 / 3.6,
+                "traffic actors spawn at the posted speed limit when it is below cruise speed");
+    spawnSpeedActor.route.segments.front().pathRules.speedLimitKmh = 60.0;
+    requireNear(mapTrafficSpawnSpeedMetersPerSecond(spawnSpeedActor, 0.0), 12.0,
+                "traffic spawn speed never exceeds the configured cruise speed");
+    spawnSpeedActor.route.segments.front().pathRules.speedLimitKmh.reset();
+    requireNear(mapTrafficSpawnSpeedMetersPerSecond(spawnSpeedActor, 0.0), 12.0,
+                "traffic without a posted limit uses its configured cruise speed");
     require(
         mapTrafficPathAllowsVehicle(rules, {1, 1, false, 0}) &&
             mapTrafficPathAllowsVehicle(rules, {2, 1, false, 0}) &&

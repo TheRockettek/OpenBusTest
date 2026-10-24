@@ -92,7 +92,7 @@ void Vehicle::updateTrafficWheelAnimations(double traveledDistanceMeters,
         if (!std::isfinite(wheelRadius) || wheelRadius <= 0.0) {
             continue;
         }
-        const double wheelRotation = -traveledDistanceMeters / wheelRadius;
+        const double wheelRotation = traveledDistanceMeters / wheelRadius;
         const double wheelSpeedRpm = speedMetersPerSecond / wheelRadius * radiansPerSecondToRpm;
         for (const char* side : {"l", "r"}) {
             const std::string variableSuffix = "_" + std::to_string(axleIndex) + "_" + side;

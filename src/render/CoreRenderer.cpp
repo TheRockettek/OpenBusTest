@@ -105,6 +105,19 @@ struct Uniforms {
     GLint humanShoulderZFraction = -1;
     GLint humanHipXFraction = -1;
     GLint humanHipZFraction = -1;
+    GLint humanKneeXFraction = -1;
+    GLint humanKneeYFraction = -1;
+    GLint humanKneeZFraction = -1;
+    GLint humanElbowXFraction = -1;
+    GLint humanElbowZFraction = -1;
+    GLint humanHandXFraction = -1;
+    GLint humanHandZFraction = -1;
+    GLint humanFingerXFraction = -1;
+    GLint humanFingerZFraction = -1;
+    GLint humanNeckYFraction = -1;
+    GLint humanNeckZFraction = -1;
+    GLint humanWaistYFraction = -1;
+    GLint humanWaistZFraction = -1;
     std::array<GLint, MAX_MATERIAL_TEXTURES> materialFlipTextureY = {};
     GLint useMaterialColors = -1;
     GLint materialColors = -1;
@@ -214,6 +227,19 @@ uniform float uHumanShoulderXFraction;
 uniform float uHumanShoulderZFraction;
 uniform float uHumanHipXFraction;
 uniform float uHumanHipZFraction;
+uniform float uHumanKneeXFraction;
+uniform float uHumanKneeYFraction;
+uniform float uHumanKneeZFraction;
+uniform float uHumanElbowXFraction;
+uniform float uHumanElbowZFraction;
+uniform float uHumanHandXFraction;
+uniform float uHumanHandZFraction;
+uniform float uHumanFingerXFraction;
+uniform float uHumanFingerZFraction;
+uniform float uHumanNeckYFraction;
+uniform float uHumanNeckZFraction;
+uniform float uHumanWaistYFraction;
+uniform float uHumanWaistZFraction;
 out vec3 vTexCoord;
 out vec3 vNormal;
 out vec3 vViewPosition;
@@ -232,6 +258,21 @@ void main() {
         float legSwing = sin(sidePhase) * uHumanGaitWeight;
         position.y += legSwing * 0.12 * legWeight;
         position.z += max(0.0, cos(sidePhase)) * 0.045 * legWeight * uHumanGaitWeight;
+        float kneeX = side * uHumanGaitHeight * uHumanKneeXFraction;
+        float kneeY = uHumanGaitHeight * uHumanKneeYFraction;
+        float kneeZ = uHumanGaitHeight * uHumanKneeZFraction;
+        float lowerLegWeight =
+            (1.0 - smoothstep(kneeZ - uHumanGaitHeight * 0.035,
+                              kneeZ + uHumanGaitHeight * 0.035, position.z)) *
+            smoothstep(abs(kneeX) - uHumanGaitHeight * 0.045,
+                       abs(kneeX) + uHumanGaitHeight * 0.045, abs(position.x));
+        float kneeAngle = -max(0.0, cos(sidePhase)) * 0.28 * uHumanGaitWeight;
+        vec2 lowerLegOffset = vec2(position.y - kneeY, position.z - kneeZ);
+        vec2 flexedLowerLeg =
+            vec2(cos(kneeAngle) * lowerLegOffset.x - sin(kneeAngle) * lowerLegOffset.y,
+                 sin(kneeAngle) * lowerLegOffset.x + cos(kneeAngle) * lowerLegOffset.y);
+        position.y = mix(position.y, kneeY + flexedLowerLeg.x, lowerLegWeight);
+        position.z = mix(position.z, kneeZ + flexedLowerLeg.y, lowerLegWeight);
         float hipHeight = uHumanGaitHeight * uHumanHipZFraction;
         float hipWeight = smoothstep(hipHeight - uHumanGaitHeight * 0.22,
                                      hipHeight - uHumanGaitHeight * 0.08, position.z) *
@@ -258,6 +299,108 @@ void main() {
                                -armSin * armOffset.x + armCos * armOffset.y);
         position.x = mix(position.x, shoulderX + loweredArm.x, armWeight);
         position.z = mix(position.z, shoulderZ + loweredArm.y, armWeight);
+        float elbowX = side * uHumanGaitHeight * uHumanElbowXFraction;
+        float elbowZ = uHumanGaitHeight * uHumanElbowZFraction;
+        vec2 elbowOffset = vec2(elbowX - shoulderX, elbowZ - shoulderZ);
+        vec2 loweredElbow =
+            vec2(armCos * elbowOffset.x + armSin * elbowOffset.y,
+                 -armSin * elbowOffset.x + armCos * elbowOffset.y);
+        float swungElbowX = shoulderX + loweredElbow.x;
+        float swungElbowZ = shoulderZ + loweredElbow.y;
+        float forearmWeight =
+            armWeight * smoothstep(side * swungElbowX - uHumanGaitHeight * 0.035,
+                                   side * swungElbowX + uHumanGaitHeight * 0.035,
+                                   side * position.x);
+        float elbowAngle = side * sin(uHumanGaitPhase) * 0.24 * uHumanGaitWeight *
+                           uHumanArmSwing;
+        vec2 forearmOffset = vec2(position.x - swungElbowX, position.z - swungElbowZ);
+        vec2 flexedForearm =
+            vec2(cos(elbowAngle) * forearmOffset.x + sin(elbowAngle) * forearmOffset.y,
+                 -sin(elbowAngle) * forearmOffset.x + cos(elbowAngle) * forearmOffset.y);
+        position.x = mix(position.x, swungElbowX + flexedForearm.x, forearmWeight);
+        position.z = mix(position.z, swungElbowZ + flexedForearm.y, forearmWeight);
+        float handX = side * uHumanGaitHeight * uHumanHandXFraction;
+        float handZ = uHumanGaitHeight * uHumanHandZFraction;
+        vec2 handUpperOffset = vec2(handX - shoulderX, handZ - shoulderZ);
+        vec2 handLowerOffset =
+            vec2(armCos * handUpperOffset.x + armSin * handUpperOffset.y,
+                 -armSin * handUpperOffset.x + armCos * handUpperOffset.y);
+        float swungHandUpperX = shoulderX + handLowerOffset.x;
+        float swungHandUpperZ = shoulderZ + handLowerOffset.y;
+        vec2 handElbowOffset =
+            vec2(swungHandUpperX - swungElbowX, swungHandUpperZ - swungElbowZ);
+        vec2 swungHandOffset =
+            vec2(cos(elbowAngle) * handElbowOffset.x + sin(elbowAngle) * handElbowOffset.y,
+                 -sin(elbowAngle) * handElbowOffset.x + cos(elbowAngle) * handElbowOffset.y);
+        float swungHandX = swungElbowX + swungHandOffset.x;
+        float swungHandZ = swungElbowZ + swungHandOffset.y;
+        float handWeight =
+            armWeight * smoothstep(side * swungHandX - uHumanGaitHeight * 0.025,
+                                   side * swungHandX + uHumanGaitHeight * 0.025,
+                                   side * position.x);
+        float wristAngle = cos(sidePhase) * 0.30 * uHumanGaitWeight * uHumanArmSwing;
+        vec2 handOffset = vec2(position.x - swungHandX, position.z - swungHandZ);
+        vec2 swungHand =
+            vec2(cos(wristAngle) * handOffset.x + sin(wristAngle) * handOffset.y,
+                 -sin(wristAngle) * handOffset.x + cos(wristAngle) * handOffset.y);
+        position.x = mix(position.x, swungHandX + swungHand.x, handWeight);
+        position.z = mix(position.z, swungHandZ + swungHand.y, handWeight);
+        float fingerX = side * uHumanGaitHeight * uHumanFingerXFraction;
+        float fingerZ = uHumanGaitHeight * uHumanFingerZFraction;
+        vec2 fingerUpperOffset = vec2(fingerX - shoulderX, fingerZ - shoulderZ);
+        vec2 fingerShoulderOffset =
+            vec2(armCos * fingerUpperOffset.x + armSin * fingerUpperOffset.y,
+                 -armSin * fingerUpperOffset.x + armCos * fingerUpperOffset.y);
+        float swungFingerUpperX = shoulderX + fingerShoulderOffset.x;
+        float swungFingerUpperZ = shoulderZ + fingerShoulderOffset.y;
+        vec2 fingerElbowOffset =
+            vec2(swungFingerUpperX - swungElbowX, swungFingerUpperZ - swungElbowZ);
+        vec2 swungFingerForearmOffset =
+            vec2(cos(elbowAngle) * fingerElbowOffset.x + sin(elbowAngle) * fingerElbowOffset.y,
+                 -sin(elbowAngle) * fingerElbowOffset.x + cos(elbowAngle) * fingerElbowOffset.y);
+        float swungFingerX = swungElbowX + swungFingerForearmOffset.x;
+        float swungFingerZ = swungElbowZ + swungFingerForearmOffset.y;
+        vec2 fingerHandOffset = vec2(swungFingerX - swungHandX, swungFingerZ - swungHandZ);
+        vec2 swungFingerHandOffset =
+            vec2(cos(wristAngle) * fingerHandOffset.x + sin(wristAngle) * fingerHandOffset.y,
+                 -sin(wristAngle) * fingerHandOffset.x + cos(wristAngle) * fingerHandOffset.y);
+        float swungFingerTipX = swungHandX + swungFingerHandOffset.x;
+        float swungFingerTipZ = swungHandZ + swungFingerHandOffset.y;
+        float fingerWeight =
+            handWeight * smoothstep(side * swungFingerTipX - uHumanGaitHeight * 0.012,
+                                    side * swungFingerTipX + uHumanGaitHeight * 0.012,
+                                    side * position.x);
+        float fingerAngle = sin(uHumanGaitPhase * 2.0) * 0.10 * uHumanGaitWeight *
+                            uHumanArmSwing;
+        vec2 fingerOffset = vec2(position.x - swungFingerTipX, position.z - swungFingerTipZ);
+        vec2 flexedFinger =
+            vec2(cos(fingerAngle) * fingerOffset.x + sin(fingerAngle) * fingerOffset.y,
+                 -sin(fingerAngle) * fingerOffset.x + cos(fingerAngle) * fingerOffset.y);
+        position.x = mix(position.x, swungFingerTipX + flexedFinger.x, fingerWeight);
+        position.z = mix(position.z, swungFingerTipZ + flexedFinger.y, fingerWeight);
+        float neckY = uHumanGaitHeight * uHumanNeckYFraction;
+        float neckZ = uHumanGaitHeight * uHumanNeckZFraction;
+        float headWeight = smoothstep(neckZ + uHumanGaitHeight * 0.015,
+                                      neckZ + uHumanGaitHeight * 0.065, position.z);
+        float headAngle = -sin(uHumanGaitPhase) * 0.045 * uHumanGaitWeight;
+        vec2 headOffset = vec2(position.y - neckY, position.z - neckZ);
+        vec2 tiltedHead =
+            vec2(cos(headAngle) * headOffset.x - sin(headAngle) * headOffset.y,
+                 sin(headAngle) * headOffset.x + cos(headAngle) * headOffset.y);
+        position.y = mix(position.y, neckY + tiltedHead.x, headWeight);
+        position.z = mix(position.z, neckZ + tiltedHead.y, headWeight);
+        float waistY = uHumanGaitHeight * uHumanWaistYFraction;
+        float waistZ = uHumanGaitHeight * uHumanWaistZFraction;
+        float torsoWeight = smoothstep(waistZ - uHumanGaitHeight * 0.035,
+                                       waistZ + uHumanGaitHeight * 0.08, position.z);
+        float torsoAngle =
+            sin(uHumanGaitPhase) * 0.012 * uHumanGaitWeight * uHumanWaistAnimation;
+        vec2 torsoOffset = vec2(position.y - waistY, position.z - waistZ);
+        vec2 leanedTorso =
+            vec2(cos(torsoAngle) * torsoOffset.x - sin(torsoAngle) * torsoOffset.y,
+                 sin(torsoAngle) * torsoOffset.x + cos(torsoAngle) * torsoOffset.y);
+        position.y = mix(position.y, waistY + leanedTorso.x, torsoWeight);
+        position.z = mix(position.z, waistZ + leanedTorso.y, torsoWeight);
         position.y -= sin(sidePhase) * 0.035 * armWeight * uHumanGaitWeight;
         position.z += 0.018 * (0.5 - 0.5 * cos(2.0 * uHumanGaitPhase)) *
                       smoothstep(0.08, 0.28, heightFraction) * uHumanGaitWeight *
@@ -685,6 +828,19 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.humanShoulderZFraction = pglGetUniformLocation(program, "uHumanShoulderZFraction");
         uniforms.humanHipXFraction = pglGetUniformLocation(program, "uHumanHipXFraction");
         uniforms.humanHipZFraction = pglGetUniformLocation(program, "uHumanHipZFraction");
+        uniforms.humanKneeXFraction = pglGetUniformLocation(program, "uHumanKneeXFraction");
+        uniforms.humanKneeYFraction = pglGetUniformLocation(program, "uHumanKneeYFraction");
+        uniforms.humanKneeZFraction = pglGetUniformLocation(program, "uHumanKneeZFraction");
+        uniforms.humanElbowXFraction = pglGetUniformLocation(program, "uHumanElbowXFraction");
+        uniforms.humanElbowZFraction = pglGetUniformLocation(program, "uHumanElbowZFraction");
+        uniforms.humanHandXFraction = pglGetUniformLocation(program, "uHumanHandXFraction");
+        uniforms.humanHandZFraction = pglGetUniformLocation(program, "uHumanHandZFraction");
+        uniforms.humanFingerXFraction = pglGetUniformLocation(program, "uHumanFingerXFraction");
+        uniforms.humanFingerZFraction = pglGetUniformLocation(program, "uHumanFingerZFraction");
+        uniforms.humanNeckYFraction = pglGetUniformLocation(program, "uHumanNeckYFraction");
+        uniforms.humanNeckZFraction = pglGetUniformLocation(program, "uHumanNeckZFraction");
+        uniforms.humanWaistYFraction = pglGetUniformLocation(program, "uHumanWaistYFraction");
+        uniforms.humanWaistZFraction = pglGetUniformLocation(program, "uHumanWaistZFraction");
         uniforms.useMaterialColors = pglGetUniformLocation(program, "uUseMaterialColors");
         uniforms.materialColors = pglGetUniformLocation(program, "uMaterialColors");
         uniforms.useMaterialTextures = pglGetUniformLocation(program, "uUseMaterialTextures");
@@ -1186,6 +1342,32 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
                      static_cast<GLfloat>(humanGait->hipXHeightFraction));
         pglUniform1f(modelUniforms.humanHipZFraction,
                      static_cast<GLfloat>(humanGait->hipZHeightFraction));
+        pglUniform1f(modelUniforms.humanKneeXFraction,
+                     static_cast<GLfloat>(humanGait->kneeXHeightFraction));
+        pglUniform1f(modelUniforms.humanKneeYFraction,
+                     static_cast<GLfloat>(humanGait->kneeYHeightFraction));
+        pglUniform1f(modelUniforms.humanKneeZFraction,
+                     static_cast<GLfloat>(humanGait->kneeZHeightFraction));
+        pglUniform1f(modelUniforms.humanElbowXFraction,
+                     static_cast<GLfloat>(humanGait->elbowXHeightFraction));
+        pglUniform1f(modelUniforms.humanElbowZFraction,
+                     static_cast<GLfloat>(humanGait->elbowZHeightFraction));
+        pglUniform1f(modelUniforms.humanHandXFraction,
+                     static_cast<GLfloat>(humanGait->handXHeightFraction));
+        pglUniform1f(modelUniforms.humanHandZFraction,
+                     static_cast<GLfloat>(humanGait->handZHeightFraction));
+        pglUniform1f(modelUniforms.humanFingerXFraction,
+                     static_cast<GLfloat>(humanGait->fingerXHeightFraction));
+        pglUniform1f(modelUniforms.humanFingerZFraction,
+                     static_cast<GLfloat>(humanGait->fingerZHeightFraction));
+        pglUniform1f(modelUniforms.humanNeckYFraction,
+                     static_cast<GLfloat>(humanGait->neckYHeightFraction));
+        pglUniform1f(modelUniforms.humanNeckZFraction,
+                     static_cast<GLfloat>(humanGait->neckZHeightFraction));
+        pglUniform1f(modelUniforms.humanWaistYFraction,
+                     static_cast<GLfloat>(humanGait->waistYHeightFraction));
+        pglUniform1f(modelUniforms.humanWaistZFraction,
+                     static_cast<GLfloat>(humanGait->waistZHeightFraction));
     }
     selectTextureUnit(GL_TEXTURE0);
     if (material.textureArray) {

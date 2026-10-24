@@ -272,11 +272,16 @@ void appendRoadProfile(RoadMeshGeometry& road, const openbus::map::MapSplinePlac
     const std::vector<std::array<double, 3>> normals =
         openbus::map::computeMapRoadVertexNormals(geometry);
     const std::uint32_t baseVertex = static_cast<std::uint32_t>(road.vertices.size());
+    const double tileOriginX =
+        static_cast<double>(road.tileX) * openbus::map::OMSI_TILE_SIZE_METERS;
+    const double tileOriginY =
+        static_cast<double>(road.tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
     for (std::size_t vertexIndex = 0; vertexIndex < geometry.vertices.size(); ++vertexIndex) {
         const openbus::map::MapRoadVertex& vertex = geometry.vertices[vertexIndex];
         const std::array<double, 3>& normal = normals[vertexIndex];
         const ModelVertex generated{
-            static_cast<float>(vertex.x),        static_cast<float>(vertex.y),
+            static_cast<float>(vertex.x - tileOriginX),
+            static_cast<float>(vertex.y - tileOriginY),
             static_cast<float>(vertex.z),        static_cast<float>(vertex.textureU),
             static_cast<float>(vertex.textureV), 0.0F,
             static_cast<float>(normal[0]),       static_cast<float>(normal[1]),

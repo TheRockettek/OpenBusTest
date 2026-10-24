@@ -106,7 +106,20 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
                                     model->second.shoulderXHeightFraction,
                                     model->second.shoulderZHeightFraction,
                                     model->second.hipXHeightFraction,
-                                    model->second.hipZHeightFraction});
+                                    model->second.hipZHeightFraction,
+                                    model->second.kneeXHeightFraction,
+                                    model->second.kneeYHeightFraction,
+                                    model->second.kneeZHeightFraction,
+                                    model->second.elbowXHeightFraction,
+                                    model->second.elbowZHeightFraction,
+                                    model->second.handXHeightFraction,
+                                    model->second.handZHeightFraction,
+                                    model->second.neckYHeightFraction,
+                                    model->second.neckZHeightFraction,
+                                    model->second.waistYHeightFraction,
+                                    model->second.waistZHeightFraction,
+                                    model->second.fingerXHeightFraction,
+                                    model->second.fingerZHeightFraction});
         }
     };
     drawBatches(false);
@@ -373,6 +386,8 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             material.textureScale = tile.baseTextureScale;
             material.detailTextureScale = tile.baseDetailTextureScale;
             selectIndirect(&tile);
+            pushMatrix();
+            multiplyMatrix(translationMatrix({minX, minY, 0.0}));
             drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, material,
                                   {1.0, 1.0, 1.0}, 1.0, 0);
             if (!tile.groundTextureLayers.empty()) {
@@ -388,6 +403,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                 glDepthFunc(GL_LESS);
                 glDisable(GL_BLEND);
             }
+            popMatrix();
         }
     };
     const auto drawWater = [&]() {
@@ -431,8 +447,13 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         for (const auto& [water, depth] : visibleWater) {
             static_cast<void>(depth);
             selectIndirect(water);
+            pushMatrix();
+            multiplyMatrix(translationMatrix(
+                {static_cast<double>(water->tileX) * openbus::map::OMSI_TILE_SIZE_METERS,
+                 static_cast<double>(water->tileY) * openbus::map::OMSI_TILE_SIZE_METERS, 0.0}));
             drawIndexedModelBatch(water->buffer, water->indexBuffer, water->indexCount, material,
                                   waterColor, 0.62, 0);
+            popMatrix();
         }
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);
@@ -456,8 +477,13 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                 continue;
             }
             selectIndirect(&road);
+            pushMatrix();
+            multiplyMatrix(translationMatrix(
+                {static_cast<double>(road.tileX) * openbus::map::OMSI_TILE_SIZE_METERS,
+                 static_cast<double>(road.tileY) * openbus::map::OMSI_TILE_SIZE_METERS, 0.0}));
             drawIndexedModelBatch(road.buffer, road.indexBuffer, road.indexCount, road.material,
                                   road.color, 1.0, road.alphaMode, road.cullBackFaces);
+            popMatrix();
         }
     };
     std::vector<Impl::SceneryDraw>& sceneryDraws = impl_->sceneryDrawScratch;

@@ -634,6 +634,22 @@ mapTrafficPathSpeedLimitForVehicle(const MapTrafficPathRules& rules,
     return rules.speedLimitKmh;
 }
 
+double mapTrafficSpawnSpeedMetersPerSecond(const MapTrafficActor& actor, double distanceMeters) {
+    if (!std::isfinite(distanceMeters) || !std::isfinite(actor.cruiseSpeedMetersPerSecond) ||
+        actor.cruiseSpeedMetersPerSecond < 0.0 || actor.route.segments.empty() ||
+        actor.route.cumulativeEndDistances.size() != actor.route.segments.size()) {
+        throw std::invalid_argument("Traffic spawn speed requires a valid actor and route position");
+    }
+    const MapTrafficVehicleFilter vehicle{actor.vehicleType, actor.unscheduledGroupIndex,
+                                          actor.scheduled, actor.trafficRuleGroupIndex};
+    const auto speedLimitKmh = mapTrafficPathSpeedLimitForVehicle(
+        routeSegmentAtDistance(actor.route, distanceMeters).pathRules, vehicle);
+    if (!speedLimitKmh.has_value()) {
+        return actor.cruiseSpeedMetersPerSecond;
+    }
+    return std::min(actor.cruiseSpeedMetersPerSecond, std::max(0.0, *speedLimitKmh / 3.6));
+}
+
 double mapTrafficPathPriorityForVehicle(const MapTrafficPathRules& rules,
                                         const MapTrafficVehicleFilter& vehicle) noexcept {
     if (const MapTrafficGroupRules* group = mapTrafficRulesForVehicleGroup(rules, vehicle);
@@ -4844,9 +4860,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         // Sustained junction blocks may move only when separation improves.
                         const bool collisionDeadlockRecovery =
                             actor.junctionWaitSeconds >= 1.0 &&
-                            otherActor->junctionWaitSeconds >= 1.0 &&
-                            onJunctionPath(actor, actor.distanceMeters) &&
-                            onJunctionPath(*otherActor, otherActor->distanceMeters);
+                            (onJunctionPath(actor, actor.distanceMeters) ||
+                             onJunctionPath(*otherActor, otherActor->distanceMeters));
                         if (collisionDeadlockRecovery &&
                             footprintSeparation(physicalFootprint, occupied[other], pairClearance) +
                                     1.0e-6 >=

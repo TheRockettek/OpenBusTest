@@ -127,7 +127,14 @@ class MapRenderer {
                                   double upperArmBetaDegrees, double armSwing, double hipSway,
                                   double waistAnimation, double shoulderXHeightFraction,
                                   double shoulderZHeightFraction, double hipXHeightFraction,
-                                  double hipZHeightFraction) const;
+                                  double hipZHeightFraction, double kneeXHeightFraction,
+                                  double kneeYHeightFraction, double kneeZHeightFraction,
+                                  double elbowXHeightFraction,
+                                  double elbowZHeightFraction, double handXHeightFraction,
+                                  double handZHeightFraction, double neckYHeightFraction,
+                                  double neckZHeightFraction, double waistYHeightFraction,
+                                  double waistZHeightFraction, double fingerXHeightFraction,
+                                  double fingerZHeightFraction) const;
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

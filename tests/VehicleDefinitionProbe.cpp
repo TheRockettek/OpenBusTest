@@ -1,11 +1,60 @@
 #include "app/vehicle/VehicleDefinition.h"
+#include "map/MapTrafficRuntime.h"
+#include "render/MatrixMath.h"
 #include "ProbeTempDirectory.h"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <numbers>
 
 int main() {
+    using namespace openbus::rendering;
+    for (const double heading : {0.0, 0.5, std::numbers::pi / 2.0, std::numbers::pi,
+                                 -std::numbers::pi / 2.0}) {
+        for (const double rise : {-1.0, 0.0, 1.0}) {
+            for (const double rollDegrees : {-8.0, 0.0, 8.0}) {
+                openbus::map::MapTrafficRouteSegment segment;
+                segment.points = {{0.0, 0.0, 0.0},
+                                  {10.0 * std::sin(heading), 10.0 * std::cos(heading), rise}};
+                openbus::map::MapTrafficRoute route;
+                route.segments = {segment};
+                route.totalLength = std::hypot(10.0, rise);
+                route.cumulativeEndDistances = {route.totalLength};
+                const auto pose = openbus::map::sampleMapTrafficRoute(route, 5.0, 0.0);
+                if (!pose) {
+                    std::cerr << "Could not sample graded traffic route\n";
+                    return 1;
+                }
+                const VehiclePlacement placement{
+                    pose->position,
+                    openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians),
+                    pose->pitchRadians * 180.0 / std::numbers::pi, rollDegrees};
+                setModelViewMatrix(identityMatrix());
+                applyVehiclePlacement(placement);
+                const auto forward = transformPoint(modelViewMatrix(), {1.0, 0.0, 0.0, 0.0});
+                const std::array<double, 3> expectedForward = {
+                    10.0 * std::sin(heading) / route.totalLength,
+                    10.0 * std::cos(heading) / route.totalLength, rise / route.totalLength};
+                for (std::size_t axis = 0; axis < expectedForward.size(); ++axis) {
+                    if (std::abs(forward[axis] - expectedForward[axis]) > 1.0e-8) {
+                        std::cerr << "Rendered vehicle forward does not follow road grade: heading="
+                                  << heading << " rise=" << rise << " roll=" << rollDegrees << '\n';
+                        return 1;
+                    }
+                }
+                const auto left = transformPoint(modelViewMatrix(), {0.0, 1.0, 0.0, 0.0});
+                const double expectedLeftZ =
+                    std::cos(pose->pitchRadians) *
+                    std::sin(rollDegrees * std::numbers::pi / 180.0);
+                if (std::abs(left[2] - expectedLeftZ) > 1.0e-8) {
+                    std::cerr << "Rendered vehicle bank is not relative to its travel direction\n";
+                    return 1;
+                }
+            }
+        }
+    }
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_vehicle_definition_probe");
     std::filesystem::create_directories(root / "model");

@@ -150,6 +150,26 @@ int main(int argc, char** argv) {
         }
     }
 
+    BusSimulation frozenSimulation(caetanoConfiguration(true),
+                                   VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    const BodyPose frozenStartPose = frozenSimulation.chassisPose();
+    frozenSimulation.setFrozen(true);
+    for (int step = 0; step < 120; ++step) {
+        frozenSimulation.step(0.0, 0.0, 0.0);
+    }
+    const BodyPose frozenEndPose = frozenSimulation.chassisPose();
+    if (std::abs(frozenSimulation.simulationTime() - 2.0) > 1e-9 ||
+        frozenEndPose.position != frozenStartPose.position) {
+        std::cerr << "Frozen simulation advanced physics or failed to advance simulation time\n";
+        return 1;
+    }
+    frozenSimulation.setFrozen(false);
+    frozenSimulation.step(0.0, 0.0, 0.0);
+    if (!(frozenSimulation.chassisPose().position[2] < frozenEndPose.position[2])) {
+        std::cerr << "Unfreezing simulation did not resume physics\n";
+        return 1;
+    }
+
     const bool useConfiguredInertia = argc <= 1 || std::string(argv[1]) != "box";
     const int steeringArgument = useConfiguredInertia ? 1 : 2;
     const double steeringCommand =
@@ -159,11 +179,24 @@ int main(int argc, char** argv) {
     BusSimulation scriptTorqueSimulation(caetanoConfiguration(useConfiguredInertia),
                                           VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
     const double scriptTorqueStartX = scriptTorqueSimulation.positionX();
+    scriptTorqueSimulation.setFrozen(true);
+    for (int step = 0; step < 120; ++step) {
+        scriptTorqueSimulation.updateWithWheelTorqueAndBrakeForces(
+            1.0 / 60.0, 25000.0, 0.0,
+            std::vector<double>(scriptTorqueSimulation.wheelCount(), 0.0), {});
+    }
+    if (scriptTorqueSimulation.positionX() != scriptTorqueStartX) {
+        std::cerr << "On-foot frozen simulation moved under wheel torque\n";
+        return 1;
+    }
+    scriptTorqueSimulation.setFrozen(false);
     for (int step = 0; step < 600; ++step) {
-        scriptTorqueSimulation.stepWithWheelTorque(25000.0, 0.0, 0.0);
+        scriptTorqueSimulation.updateWithWheelTorqueAndBrakeForces(
+            1.0 / 60.0, 25000.0, 0.0,
+            std::vector<double>(scriptTorqueSimulation.wheelCount(), 0.0), {});
     }
     if (scriptTorqueSimulation.positionX() - scriptTorqueStartX < 0.5) {
-        std::cerr << "Script-produced wheel torque did not move the vehicle\n";
+        std::cerr << "Script-produced wheel torque did not move the vehicle after unfreezing\n";
         return 1;
     }
     double settledRoll = 0.0;

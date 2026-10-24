@@ -144,8 +144,71 @@ HumanConfig loadHumanConfig(const std::filesystem::path& configPath) {
             configuration.diagnostics.warning(
                 0, "links", "right-hip coordinates are outside the human geometry");
         }
+        const double kneeX = std::abs(links->values[3]);
+        const double kneeY = links->values[4];
+        const double kneeZ = links->values[5];
+        if (kneeX <= height * 0.5 && std::abs(kneeY) <= height * 0.5 && kneeZ > 0.0 &&
+            kneeZ < hipZ && kneeZ <= height) {
+            configuration.rightKneePositionFractions =
+                std::array<double, 3>{kneeX / height, kneeY / height, kneeZ / height};
+        } else {
+            configuration.diagnostics.warning(
+                0, "links", "right-knee coordinates are outside the human geometry");
+        }
         const double shoulderX = std::abs(links->values[8]);
         const double shoulderZ = links->values[10];
+        const double elbowX = std::abs(links->values[11]);
+        const double elbowY = links->values[12];
+        const double elbowZ = links->values[13];
+        if (elbowX <= height * 0.5 && std::abs(elbowY) <= height * 0.5 && elbowZ > 0.0 &&
+            elbowZ < shoulderZ && elbowZ <= height) {
+            configuration.rightElbowHeightFractions =
+                std::array<double, 2>{elbowX / height, elbowZ / height};
+        } else {
+            configuration.diagnostics.warning(
+                0, "links", "right-elbow coordinates are outside the human geometry");
+        }
+        const double handX = std::abs(links->values[16]);
+        const double handY = links->values[17];
+        const double handZ = links->values[18];
+        if (handX <= height * 0.75 && std::abs(handY) <= height * 0.5 && handZ > 0.0 &&
+            handZ <= height) {
+            configuration.rightHandHeightFractions =
+                std::array<double, 2>{handX / height, handZ / height};
+        } else {
+            configuration.diagnostics.warning(
+                0, "links", "right-hand coordinates are outside the human geometry");
+        }
+        const double fingerX = std::abs(links->values[19]);
+        const double fingerY = links->values[20];
+        const double fingerZ = links->values[21];
+        if (fingerX <= height && std::abs(fingerY) <= height * 0.5 && fingerZ > 0.0 &&
+            fingerZ <= height) {
+            configuration.rightFingerHeightFractions =
+                std::array<double, 2>{fingerX / height, fingerZ / height};
+        } else {
+            configuration.diagnostics.warning(
+                0, "links", "right-finger coordinates are outside the human geometry");
+        }
+        const double neckY = links->values[14];
+        const double neckZ = links->values[15];
+        if (std::abs(neckY) <= height * 0.5 && neckZ > shoulderZ && neckZ <= height) {
+            configuration.neckHeightFractions =
+                std::array<double, 2>{neckY / height, neckZ / height};
+        } else {
+            configuration.diagnostics.warning(
+                0, "links", "neck coordinates are outside the human geometry");
+        }
+        const double waistY = links->values[6];
+        const double waistZ = links->values[7];
+        if (std::abs(waistY) <= height * 0.5 && waistZ > hipZ && waistZ < shoulderZ &&
+            waistZ <= height) {
+            configuration.waistHeightFractions =
+                std::array<double, 2>{waistY / height, waistZ / height};
+        } else {
+            configuration.diagnostics.warning(
+                0, "links", "waist coordinates are outside the human geometry");
+        }
         if (shoulderX <= height * 0.5 && shoulderZ > 0.0 && shoulderZ <= height) {
             configuration.rightShoulderHeightFractions =
                 std::array<double, 2>{shoulderX / height, shoulderZ / height};

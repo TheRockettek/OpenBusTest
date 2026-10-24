@@ -63,6 +63,44 @@ int main(int argc, char** argv) {
                     std::abs((*configuration.rightHipHeightFractions)[1] -
                              (0.84 / 1.75)) < 1.0e-9,
                 "right hip pivot is derived from authored links and normalized height");
+        require(configuration.rightKneePositionFractions.has_value() &&
+                    std::abs((*configuration.rightKneePositionFractions)[0] -
+                             (0.14 / 1.75)) < 1.0e-9 &&
+                    std::abs((*configuration.rightKneePositionFractions)[1] -
+                             (-0.02 / 1.75)) < 1.0e-9 &&
+                    std::abs((*configuration.rightKneePositionFractions)[2] -
+                             (0.43 / 1.75)) < 1.0e-9,
+                "right knee pivot is derived from authored links and normalized height");
+        require(configuration.rightElbowHeightFractions.has_value() &&
+                    std::abs((*configuration.rightElbowHeightFractions)[0] -
+                             (0.43 / 1.75)) < 1.0e-9 &&
+                    std::abs((*configuration.rightElbowHeightFractions)[1] -
+                             (1.34 / 1.75)) < 1.0e-9,
+                "right elbow pivot is derived from authored links and normalized height");
+        require(configuration.rightHandHeightFractions.has_value() &&
+                    std::abs((*configuration.rightHandHeightFractions)[0] -
+                             (0.69 / 1.75)) < 1.0e-9 &&
+                    std::abs((*configuration.rightHandHeightFractions)[1] -
+                             (1.34 / 1.75)) < 1.0e-9,
+                "right hand pivot is derived from authored links and normalized height");
+        require(configuration.rightFingerHeightFractions.has_value() &&
+                    std::abs((*configuration.rightFingerHeightFractions)[0] -
+                             (0.89 / 1.75)) < 1.0e-9 &&
+                    std::abs((*configuration.rightFingerHeightFractions)[1] -
+                             (1.34 / 1.75)) < 1.0e-9,
+                "right finger pivot is derived from authored links and normalized height");
+        require(configuration.neckHeightFractions.has_value() &&
+                    std::abs((*configuration.neckHeightFractions)[0] -
+                             (-0.05 / 1.75)) < 1.0e-9 &&
+                    std::abs((*configuration.neckHeightFractions)[1] -
+                             (1.49 / 1.75)) < 1.0e-9,
+                "neck pivot is derived from authored links and normalized height");
+        require(configuration.waistHeightFractions.has_value() &&
+                    std::abs((*configuration.waistHeightFractions)[0] -
+                             (-0.01 / 1.75)) < 1.0e-9 &&
+                    std::abs((*configuration.waistHeightFractions)[1] -
+                             (1.05 / 1.75)) < 1.0e-9,
+                "waist pivot is derived from authored links and normalized height");
         require(configuration.voice == "M2" && configuration.mass.has_value() &&
                     std::abs(*configuration.mass - 0.07) < 1.0e-9,
                 "human [voice] and [mass] fields are parsed");

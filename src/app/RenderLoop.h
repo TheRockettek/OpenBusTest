@@ -11,12 +11,14 @@
 #include "config/VehicleConfigLoader.h"
 #include "core/Viewpoint.h"
 #include "core/Variables.h"
+#include "physics/BusSimulation.h"
 
 #include <array>
 #include <cstdint>
 #include <filesystem>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <unordered_map>
@@ -24,8 +26,8 @@
 
 struct GLFWwindow;
 struct GLFWcursor;
+class ImGuiLayer;
 struct Vehicle;
-class BusSimulation;
 
 namespace openbus::rendering {
 class AssetRequestManager;
@@ -57,6 +59,16 @@ struct RenderBenchmarkInput {
     double brake = 0.0;
 };
 
+struct StartupSelection {
+    std::filesystem::path mapDirectory;
+    openbus::map::MapDefinition mapDefinition;
+    std::size_t spawnEntryPoint = 0;
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    double timeSeconds = 0.0;
+};
+
 struct TrafficSplinePriorityLabel {
     std::array<double, 3> anchor = {};
     std::vector<std::string> lines;
@@ -71,6 +83,8 @@ class RenderLoop {
     RenderLoop& operator=(const RenderLoop&) = delete;
 
     bool shouldClose() const;
+    void updateOnFoot(const BusSimulation& simulation, double elapsedSeconds);
+    std::array<double, 3> streamingPosition(const BusSimulation& simulation) const;
     void requestClose();
     std::array<int, 2> windowSize() const;
     std::array<int, 2> framebufferSize() const;
@@ -146,6 +160,9 @@ class RenderLoop {
     void SetWeather(int precipitationType, double precipitationRate);
 
     void SetPlayerVehicle(Vehicle* vehicle);
+    bool runStartupMenu(const std::filesystem::path& omsiRoot, StartupSelection& selection);
+    void SetNoBusSpawnPoint(const VehiclePlacement& placement);
+    bool consumeSpawnBusRequest();
     void SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
                 std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot);
     void updateMapStreaming(double worldX, double worldY);
@@ -183,8 +200,12 @@ class RenderLoop {
     void logDrivetrainDiagnosticVariables() const;
     double currentFieldOfView() const;
     void renderReflectionViews(const BusSimulation& simulation);
+    void drawOnFootUi();
 
     GLFWwindow* window_;
+    std::unique_ptr<ImGuiLayer> imguiLayer_;
+    bool imguiEnabled_ = false;
+    bool spawnBusRequestPending_ = false;
     double cameraYaw_ = -2.3;
     double cameraPitch_ = 0.45;
     double fieldOfViewOffset_ = 0.0;
@@ -197,6 +218,8 @@ class RenderLoop {
     bool fpsSampleInitialized_ = false;
     double cameraDistance_ = 24.0;
     openbus::rendering::FreeCameraPose freeCameraPose_{};
+    OnFootState onFootState_{};
+    bool previousJumpKeyState_ = false;
     openbus::rendering::FreeCameraPose lastMainCameraPose_{};
     double freeCameraSpeed_ = 12.0;
     double previousVariableTime_ = 0.0;
@@ -239,6 +262,8 @@ class RenderLoop {
     bool previousTrafficSplineDebugKeyState_ = false;
     bool trafficSplineDebugOverlay_ = false;
     bool trafficSplineDebugBuilt_ = false;
+    double trafficSplineDebugOriginX_ = 0.0;
+    double trafficSplineDebugOriginY_ = 0.0;
     std::vector<std::pair<int, int>> trafficSplineDebugTiles_;
     std::vector<TrafficSplinePriorityLabel> trafficSplinePriorityLabels_;
     std::uint64_t trafficSplineDebugRevision_ = 0;

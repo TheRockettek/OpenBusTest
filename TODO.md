@@ -761,12 +761,25 @@ for the explicit boundary.
   waist-animation setting; focused GPU regressions verify each animation
   control. The authored right-shoulder coordinates in `[links]` also set the
   arm pivot, mirrored for the other side, when valid; the right-hip coordinates
-  similarly locate the approximate hip-sway pivot. These are approximate mesh
-  deformations, not native joint animation. Applying other link-driven joint
-  positions, seat height, mass, and voice data to human actors remains
-  incomplete; parsing alone is not runtime support.
-- [ ] Validate human path field meanings, route continuity, density behavior,
-  and actor placement against representative OMSI maps.
+  similarly locate the approximate hip-sway pivot, and right-knee coordinates
+  set the approximate lower-leg gait pivot. Right-elbow coordinates set an
+  approximate forearm flex pivot during walking; right-hand coordinates
+  similarly set an approximate wrist pivot for hand flex; neck Y/Z coordinates
+  set an approximate head-stabilization pivot; and waist Y/Z coordinates anchor
+  the gait-linked torso lean. Focused parser and GPU regressions cover the knee,
+  elbow, hand, neck, and waist pivots. These are approximate mesh deformations,
+  not native joint animation. Applying other link-driven joint positions, seat
+  height, mass, and voice data to human actors remains incomplete; parsing
+  alone is not runtime support.
+- [~] Real-map benchmark smoke checks load type-1 human paths and spawn the
+  configured population on installed Bad Karlstein and Cotterell maps. Bad
+  Karlstein exposed 166 human-path splines and queued two actors, with one
+  active at its sampled density of 0.68; Cotterell exposed 168 paths and
+  activated both queued actors at density 1.0. Spawn logs confirmed placement
+  on human splines at clear off-screen positions. These checks do not establish
+  the meaning of every path field, continuity at every authored spline join,
+  density interpolation parity, or representative in-game visual quality;
+  those validations remain open.
 
 - [~] Apply road and passenger traffic-density schedules to their respective
   capped populations using provisional linear interpolation and endpoint

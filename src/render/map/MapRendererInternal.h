@@ -265,6 +265,19 @@ struct MapRenderer::Impl {
         double shoulderZHeightFraction = 0.76;
         double hipXHeightFraction = 0.06;
         double hipZHeightFraction = 0.5;
+        double kneeXHeightFraction = 0.08;
+        double kneeYHeightFraction = 0.0;
+        double kneeZHeightFraction = 0.25;
+        double elbowXHeightFraction = 0.25;
+        double elbowZHeightFraction = 0.76;
+        double handXHeightFraction = 0.40;
+        double handZHeightFraction = 0.76;
+        double fingerXHeightFraction = 0.5;
+        double fingerZHeightFraction = 0.76;
+        double neckYHeightFraction = 0.0;
+        double neckZHeightFraction = 0.85;
+        double waistYHeightFraction = 0.0;
+        double waistZHeightFraction = 0.6;
     };
 
     struct HumanModelConfiguration {
@@ -279,6 +292,19 @@ struct MapRenderer::Impl {
         double shoulderZHeightFraction = 0.76;
         double hipXHeightFraction = 0.06;
         double hipZHeightFraction = 0.5;
+        double kneeXHeightFraction = 0.08;
+        double kneeYHeightFraction = 0.0;
+        double kneeZHeightFraction = 0.25;
+        double elbowXHeightFraction = 0.25;
+        double elbowZHeightFraction = 0.76;
+        double handXHeightFraction = 0.40;
+        double handZHeightFraction = 0.76;
+        double fingerXHeightFraction = 0.5;
+        double fingerZHeightFraction = 0.76;
+        double neckYHeightFraction = 0.0;
+        double neckZHeightFraction = 0.85;
+        double waistYHeightFraction = 0.0;
+        double waistZHeightFraction = 0.6;
     };
 
     struct PendingHumanModel {

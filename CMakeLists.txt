@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.20)
 
 project(OpenBus VERSION 0.1.0 LANGUAGES CXX)
 
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+
 enable_testing()
 
 set(OPENBUS_CXX_STANDARD 23)
@@ -117,6 +121,34 @@ if(NOT stb_POPULATED)
     cmake_policy(POP)
 endif()
 
+FetchContent_Declare(imgui
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.9b.tar.gz
+)
+FetchContent_GetProperties(imgui)
+if(NOT imgui_POPULATED)
+    cmake_policy(PUSH)
+    if(POLICY CMP0169)
+        cmake_policy(SET CMP0169 OLD)
+    endif()
+    FetchContent_Populate(imgui)
+    cmake_policy(POP)
+endif()
+
+add_library(openbus_imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(openbus_imgui PUBLIC
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
+)
+target_compile_definitions(openbus_imgui PRIVATE GLFW_INCLUDE_NONE)
+target_link_libraries(openbus_imgui PUBLIC OpenBus::GLFW OpenGL::GL)
+
 if(NOT TARGET glfw)
     message(FATAL_ERROR
         "GLFW was not found and could not be fetched automatically. "
@@ -215,5 +247,5 @@ function(openbus_apply_project_settings target)
 endfunction()
 
 add_subdirectory(src)
-add_subdirectory(tests)
+add_subdirectory(tests EXCLUDE_FROM_ALL)
 add_subdirectory(tools)

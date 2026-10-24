@@ -1,6 +1,7 @@
 // Window lifecycle, vehicle/map registration and simple accessors.
 
 #include "app/RenderLoopInternal.h"
+#include "app/ImGuiLayer.h"
 #include "app/vehicle/VehicleDefinition.h"
 #include "core/AssetPath.h"
 #include "render/map/MapRenderer.h"
@@ -153,6 +154,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         glfwTerminate();
         throw std::runtime_error("Failed to initialize core OpenGL renderer");
     }
+    imguiLayer_ = std::make_unique<ImGuiLayer>(window_);
     pglActiveTexture(GL_TEXTURE0);
     glGenTextures(1, &statusHudTexture_);
     if (statusHudTexture_ != 0) {
@@ -183,6 +185,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
 
 RenderLoop::~RenderLoop() {
     gameLog.Log("RenderLoop shutting down");
+    imguiLayer_.reset();
     for (TrafficVehicleState& state : trafficVehicles_) {
         if (!state.pendingVehicle.valid()) {
             continue;
@@ -731,6 +734,11 @@ void RenderLoop::SetWeather(int precipitationType, double precipitationRate) {
 void RenderLoop::SetPlayerVehicle(Vehicle* model) {
     playerVehicle_ = model;
     if (playerVehicle_ != nullptr) {
+        freeCameraEnabled_ = false;
+        if (mouseLookEnabled_) {
+            glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+            glfwGetCursorPos(window_, &previousCursorX_, &previousCursorY_);
+        }
         playerVehicle_->initializePlayerSystems();
     }
 }

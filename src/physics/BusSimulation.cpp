@@ -209,6 +209,7 @@ struct BusSimulation::Impl {
     int lastSteps = 0;
     bool dropped = false;
     bool dropReported = false;
+    bool frozen = false;
     double simulationTime = 0.0;
 
     dReal suspensionAnchorZ(std::size_t index) const {
@@ -1123,12 +1124,14 @@ struct BusSimulation::Impl {
                      const std::vector<double>& wheelBrakeForces,
                      const std::vector<double>& wheelSpringFactors, bool scriptDriven) {
         openbus::rendering::TraceScope trace("physics", "BusSimulation::fixedUpdate");
-        applyCornerForces(driveCommand, steering, wheelBrakeForces, wheelSpringFactors,
-                          scriptDriven);
-        dSpaceCollide(ode.space, this, &nearCallback);
-        dWorldStep(ode.world, fixedStep);
-        dJointGroupEmpty(ode.contacts);
-        refreshWheelTelemetry();
+        if (!frozen) {
+            applyCornerForces(driveCommand, steering, wheelBrakeForces, wheelSpringFactors,
+                              scriptDriven);
+            dSpaceCollide(ode.space, this, &nearCallback);
+            dWorldStep(ode.world, fixedStep);
+            dJointGroupEmpty(ode.contacts);
+            refreshWheelTelemetry();
+        }
         simulationTime += fixedStep;
     }
 
@@ -1213,6 +1216,94 @@ void BusSimulation::stepWithWheelTorqueAndBrakeForces(
     double wheelTorque, double steering, const std::vector<double>& wheelBrakeForces,
     const std::vector<double>& wheelSpringFactors) {
     impl_->fixedUpdate(wheelTorque, steering, wheelBrakeForces, wheelSpringFactors, true);
+}
+
+void BusSimulation::setFrozen(bool frozen) {
+    if (impl_->frozen == frozen) {
+        return;
+    }
+    impl_->frozen = frozen;
+    impl_->accumulator = 0.0;
+}
+
+void BusSimulation::updateOnFoot(OnFootState& state, double elapsedSeconds, double yawRadians,
+                                  double forward, double right, bool jump) const {
+    if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
+        !std::isfinite(yawRadians) || !std::isfinite(forward) || !std::isfinite(right) ||
+        !std::isfinite(state.verticalVelocity) ||
+        !std::all_of(state.feetPosition.begin(), state.feetPosition.end(),
+                     [](double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument("On-foot movement contains non-finite or invalid values");
+    }
+    constexpr double radius = 0.3;
+    constexpr double height = 1.8;
+    constexpr double speed = 1.5;
+    const double duration = std::min(elapsedSeconds, 0.1);
+    if (duration == 0.0) {
+        return;
+    }
+    const double inputLength = std::max(1.0, std::hypot(forward, right));
+    const double velocityX =
+        speed * (std::cos(yawRadians) * forward + std::sin(yawRadians) * right) / inputLength;
+    const double velocityY =
+        speed * (std::sin(yawRadians) * forward - std::cos(yawRadians) * right) / inputLength;
+    if (jump && state.grounded) {
+        state.verticalVelocity = 5.0;
+        state.grounded = false;
+    }
+    const int steps = static_cast<int>(std::ceil(duration * 120.0));
+    const double dt = duration / steps;
+    const dGeomID capsule = dCreateCapsule(nullptr, radius, height - 2.0 * radius);
+    if (capsule == nullptr) {
+        throw std::runtime_error("Could not create on-foot collision capsule");
+    }
+    struct ContactQuery {
+        dGeomID capsule;
+        dContactGeom deepest = {};
+        bool hit = false;
+    };
+    const auto callback = +[](void* data, dGeomID first, dGeomID second) {
+        auto& query = *static_cast<ContactQuery*>(data);
+        const dGeomID other = first == query.capsule ? second : first;
+        if (dGeomGetBody(other) != nullptr) {
+            return;
+        }
+        dContactGeom contacts[16] = {};
+        const int count = dCollide(query.capsule, other, 16, contacts, sizeof(dContactGeom));
+        for (int index = 0; index < count; ++index) {
+            if (!query.hit || contacts[index].depth > query.deepest.depth) {
+                query.deepest = contacts[index];
+                query.hit = true;
+            }
+        }
+    };
+    for (int step = 0; step < steps; ++step) {
+        state.verticalVelocity += GRAVITY * dt;
+        state.feetPosition[0] += velocityX * dt;
+        state.feetPosition[1] += velocityY * dt;
+        state.feetPosition[2] += state.verticalVelocity * dt;
+        state.grounded = false;
+        for (int iteration = 0; iteration < 12; ++iteration) {
+            dGeomSetPosition(capsule, state.feetPosition[0], state.feetPosition[1],
+                             state.feetPosition[2] + height * 0.5);
+            ContactQuery query{capsule};
+            dSpaceCollide2(capsule, reinterpret_cast<dGeomID>(impl_->ode.space), &query, callback);
+            if (!query.hit) {
+                break;
+            }
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                state.feetPosition[axis] +=
+                    query.deepest.normal[axis] * (query.deepest.depth + 1.0e-6);
+            }
+            if (query.deepest.normal[2] > 0.5 && state.verticalVelocity <= 0.0) {
+                state.grounded = true;
+                state.verticalVelocity = 0.0;
+            } else if (query.deepest.normal[2] < -0.5 && state.verticalVelocity > 0.0) {
+                state.verticalVelocity = 0.0;
+            }
+        }
+    }
+    dGeomDestroy(capsule);
 }
 
 void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, double throttle,

@@ -2,6 +2,19 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
+			"label": "Build and run all probes",
+			"type": "shell",
+			"command": "${workspaceFolder}\\test.bat",
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			},
+			"problemMatcher": []
+		},
+		{
 			"label": "Run wheel contact comparison probe",
 			"type": "shell",
 			"command": "build-ninja\\OpenBusPhysicsContactProbe.exe",

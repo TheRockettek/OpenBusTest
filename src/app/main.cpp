@@ -831,6 +831,46 @@ int main() {
         applicationLog.Log("Performance tracing instrumentation is not compiled in.");
 #endif
 
+        const bool benchmarkMode =
+            openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
+        const int windowWidth =
+            benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_WIDTH", 1280, 16384) : 1920;
+        const int windowHeight =
+            benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384) : 1080;
+        applicationLog.Log("Loading: initializing renderer and OpenGL window.");
+        RenderLoop renderer(windowWidth, windowHeight, "OpenBus");
+
+        const std::filesystem::path omsiRoot = omsiRootPath();
+        StartupSelection startupSelection;
+        if (benchmarkMode) {
+            const std::string configuredMap = environmentValue("OPENBUS_MAP_PATH");
+            startupSelection.mapDirectory =
+                omsiRoot / "maps" / (configuredMap.empty() ? "Cotterell" : configuredMap);
+            startupSelection.mapDefinition =
+                openbus::map::loadMapDefinition(startupSelection.mapDirectory);
+            SystemVariables currentCalendar;
+            startupSelection.year = static_cast<int>(currentCalendar.get("year"));
+            startupSelection.month = static_cast<int>(currentCalendar.get("month"));
+            startupSelection.day = static_cast<int>(currentCalendar.get("day"));
+            const double configuredHour =
+                nonnegativeEnvironmentDouble("OPENBUS_MAP_AI_HOUR", 12.0, 24.0);
+            const double normalizedHour = std::fmod(configuredHour, 24.0);
+            startupSelection.timeSeconds = normalizedHour * 3600.0;
+            const std::string configuredSpawn = environmentValue("OPENBUS_MAP_SPAWN");
+            const std::string configuredEntryPoint = environmentValue("OPENBUS_MAP_ENTRY");
+            startupSelection.spawnEntryPoint =
+                !configuredSpawn.empty()
+                    ? openbus::map::selectMapSpawnPoint(startupSelection.mapDefinition,
+                                                        configuredSpawn)
+                    : (!configuredEntryPoint.empty()
+                           ? openbus::map::selectMapEntryPoint(startupSelection.mapDefinition,
+                                                               configuredEntryPoint)
+                           : openbus::map::selectMapSpawnPoint(startupSelection.mapDefinition, {}));
+        } else if (!renderer.runStartupMenu(omsiRoot, startupSelection)) {
+            applicationLog.Log("Startup menu cancelled.");
+            return 0;
+        }
+
         // Resolve configuration paths for the bus and model.
         std::filesystem::path busConfigPath;
         std::filesystem::path modelConfigPath;
@@ -857,26 +897,16 @@ int main() {
                     modelConfigurationPathForBus(aiBusConfigPath, configuredAiModelPath);
                 aiVehicleCount = positiveEnvironmentInt("OPENBUS_AI_COUNT", 1, 200);
             }
-            const std::string configuredMapPath = environmentValue("OPENBUS_MAP_PATH");
-            mapDirectory = omsiRootPath() / "maps" /
-                           (configuredMapPath.empty() ? "Cotterell" : configuredMapPath);
-            if (mapDirectory.is_relative()) {
-                mapDirectory = omsiRootPath() / mapDirectory;
-            }
+            mapDirectory = startupSelection.mapDirectory;
         }
 
-        openbus::map::MapDefinition mapDefinition;
-        {
-            applicationLog.Log("Loading map manifest: " + mapDirectory.string());
-            openbus::rendering::TraceScope trace("map", "main.loadMapDefinition");
-            mapDefinition = openbus::map::loadMapDefinition(mapDirectory);
-        }
+        applicationLog.Log("Using selected map manifest: " + mapDirectory.string());
+        openbus::map::MapDefinition mapDefinition = std::move(startupSelection.mapDefinition);
         SystemVariables mapCalendar;
-        const double mapAiStartHour = openbus::map::mapTrafficHourAtElapsedSeconds(
-            nonnegativeEnvironmentDouble("OPENBUS_MAP_AI_HOUR", 12.0, 24.0), 0.0);
+        const double mapAiStartHour = startupSelection.timeSeconds / 3600.0;
         mapCalendar.configureSimulationClock(
-            static_cast<int>(mapCalendar.get("year")), static_cast<int>(mapCalendar.get("month")),
-            static_cast<int>(mapCalendar.get("day")), mapAiStartHour * 3600.0);
+            startupSelection.year, startupSelection.month, startupSelection.day,
+            startupSelection.timeSeconds);
         const int mapCalendarYear = static_cast<int>(mapCalendar.get("year"));
         const int mapCalendarMonth = static_cast<int>(mapCalendar.get("month"));
         const int mapCalendarDay = static_cast<int>(mapCalendar.get("day"));
@@ -895,12 +925,7 @@ int main() {
         const int mapAiStartWeekdayIndex = static_cast<int>(std::chrono::weekday{
             firstDayOfYear +
             std::chrono::days{mapCalendarDayOfYear}}.c_encoding());
-        const int mapChronoDate = mapCalendarYear * 10000 + mapCalendarMonth * 100 + mapCalendarDay;
-        const std::size_t chronoTileCount =
-            openbus::map::applyMapChronoTiles(mapDefinition, mapChronoDate);
-        applicationLog.Log("Map Chrono date selected: " + std::to_string(mapChronoDate) +
-                           ", alternative tile files applied=" + std::to_string(chronoTileCount) +
-                           ".");
+        applicationLog.Log("Chrono map tile overrides are disabled; using base map tile files.");
         const std::size_t terrainSidecars = static_cast<std::size_t>(std::count_if(
             mapDefinition.tiles.begin(), mapDefinition.tiles.end(),
             [](const openbus::map::MapTileReference& tile) { return tile.hasTerrainFile; }));
@@ -924,34 +949,13 @@ int main() {
             applicationLog.Log("Map global.cfg line " + std::to_string(diagnostic.line) + " [" +
                                diagnostic.keyword + "]: " + diagnostic.message);
         }
-        const std::string configuredSpawn = environmentValue("OPENBUS_MAP_SPAWN");
-        const std::string configuredEntryPoint = environmentValue("OPENBUS_MAP_ENTRY");
-        if (configuredSpawn.empty()) {
-            applicationLog.Log("Map spawn points (set OPENBUS_MAP_SPAWN to a zero-based index):");
-            if (mapDefinition.entryPoints.empty()) {
-                applicationLog.Log("  (no spawn points in global.cfg)");
-            }
-            for (std::size_t index = 0; index < mapDefinition.entryPoints.size(); ++index) {
-                const openbus::map::MapEntryPoint& entryPoint = mapDefinition.entryPoints[index];
-                const openbus::map::MapTileReference& tile =
-                    mapDefinition.tiles[static_cast<std::size_t>(entryPoint.tileIndex)];
-                applicationLog.Log(
-                    "  [" + std::to_string(index) + "] " +
-                    (entryPoint.name.empty() ? std::string("(unnamed)") : entryPoint.name) +
-                    " - tile (" + std::to_string(tile.x) + ", " + std::to_string(tile.y) +
-                    "), position " + formatPlacement(entryPoint.placement) + " m, yaw " +
-                    std::to_string(entryPoint.placement.yawDegrees) + " deg");
-            }
-        }
-        const std::size_t spawnEntryPoint =
-            !configuredSpawn.empty()
-                ? openbus::map::selectMapSpawnPoint(mapDefinition, configuredSpawn)
-                : (!configuredEntryPoint.empty()
-                       ? openbus::map::selectMapEntryPoint(mapDefinition, configuredEntryPoint)
-                       : openbus::map::selectMapSpawnPoint(mapDefinition, {}));
+        const std::size_t spawnEntryPoint = startupSelection.spawnEntryPoint;
         const std::size_t groundTextureIndex = openbus::map::selectMapGroundTextureIndex(
             mapDefinition, environmentValue("OPENBUS_MAP_GROUNDTEX"));
         const VehiclePlacement busPlacement = mapDefinition.entryPoints[spawnEntryPoint].placement;
+        if (!benchmarkMode) {
+            renderer.SetNoBusSpawnPoint(busPlacement);
+        }
         applicationLog.Log("Map " + mapDirectory.string() + " spawn: [" +
                            std::to_string(spawnEntryPoint) + "] " +
                            mapDefinition.entryPoints[spawnEntryPoint].name + " at " +
@@ -1027,17 +1031,10 @@ int main() {
         applicationLog.Log("Loading: initializing bus simulation and collision streaming.");
         BusSimulation simulation(configuration, busPlacement, 60.0, 8, busPlacement.position[2],
                                  std::move(spawnTerrain), {}, false);
+        simulation.setFrozen(!benchmarkMode);
         openbus::map::MapCollisionStreamer collisionStreamer(
             mapDefinition, omsiRootPath(), simulation, 2, 2, std::move(preloadedTerrainTiles));
 
-        const bool benchmarkMode =
-            openbus::rendering::parseEnabledFlag(openbus::getEnvironment("OPENBUS_BENCHMARK"));
-        const int windowWidth =
-            benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_WIDTH", 1280, 16384) : 1920;
-        const int windowHeight =
-            benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384) : 1080;
-        applicationLog.Log("Loading: initializing renderer and OpenGL window.");
-        RenderLoop renderer(windowWidth, windowHeight, "OpenBus");
         const auto [precipitationType, precipitationRate] = weatherSettingsFromEnvironment();
         renderer.SetWeather(precipitationType, precipitationRate);
         const char* weatherName = precipitationType == 1   ? "rain"
@@ -1058,12 +1055,18 @@ int main() {
                            "; map manifest tiles=" + std::to_string(mapDefinition.tiles.size()) +
                            ".");
         std::size_t reportedCollisionTileCount = collisionStreamer.loadedTileCount();
-        applicationLog.Log("Loading player vehicle: " + busConfigPath.string());
-        Vehicle* playerVehicle =
-            renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
-                                {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
-        renderer.SetPlayerVehicle(playerVehicle);
-        applicationLog.Log("Player vehicle initialized; preparing AI traffic and pedestrians.");
+        Vehicle* playerVehicle = nullptr;
+        if (benchmarkMode) {
+            applicationLog.Log("Loading player vehicle: " + busConfigPath.string());
+            playerVehicle = renderer.AddVehicle(
+                busConfigPath, modelConfigPath, busPlacement,
+                {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+            simulation.setFrozen(false);
+            renderer.SetPlayerVehicle(playerVehicle);
+            applicationLog.Log("Player vehicle initialized; preparing AI traffic and pedestrians.");
+        } else {
+            applicationLog.Log("Starting on foot; use the in-game panel to spawn a bus.");
+        }
         if (!aiBusConfigPath.empty()) {
             std::cout << "AI_VEHICLES=" << aiVehicleCount << '\n';
             for (int index = 0; index < aiVehicleCount; ++index) {
@@ -1899,6 +1902,16 @@ int main() {
                 previousTime = currentTime;
 
                 renderer.beginFrame();
+                renderer.updateOnFoot(simulation, elapsed);
+                if (renderer.consumeSpawnBusRequest() && playerVehicle == nullptr) {
+                    applicationLog.Log("Spawning player bus: " + busConfigPath.string());
+                    playerVehicle = renderer.AddVehicle(
+                        busConfigPath, modelConfigPath, busPlacement,
+                        {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+                    renderer.SetPlayerVehicle(playerVehicle);
+                    simulation.setFrozen(false);
+                    applicationLog.Log("Player bus spawned; physics simulation resumed.");
+                }
                 if (renderer.consumeRaisePlayerRequest()) {
                     simulation.translateVertically(5.0);
                     applicationLog.Log("Raised player vehicle 5 m above its current location");
@@ -1915,8 +1928,9 @@ int main() {
                     renderer.physicsAxleSpringFactors(simulation.axleCount()));
                 updateMapTrafficPopulation();
                 renderer.updatePostPhysicsVariables(simulation);
-                renderer.updateMapStreaming(simulation.positionX(), simulation.positionY());
-                collisionStreamer.update(simulation.positionX(), simulation.positionY(),
+                const auto streamingPosition = renderer.streamingPosition(simulation);
+                renderer.updateMapStreaming(streamingPosition[0], streamingPosition[1]);
+                collisionStreamer.update(streamingPosition[0], streamingPosition[1],
                                          renderer.loadedMapTiles());
                 const std::size_t collisionTileCount = collisionStreamer.loadedTileCount();
                 if (collisionTileCount != reportedCollisionTileCount) {
