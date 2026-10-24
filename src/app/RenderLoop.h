@@ -96,7 +96,10 @@ class RenderLoop {
                            std::vector<openbus::map::MapTrafficPassengerStop> passengerStops = {},
                            std::string timetableLineName = {},
                            std::string timetableDestinationName = {},
-                           std::optional<std::size_t> trafficRuleGroupIndex = std::nullopt);
+                           std::optional<std::size_t> trafficRuleGroupIndex = std::nullopt,
+                           bool registerPassengerRouteOnly = false,
+                           std::optional<std::size_t> passengerRouteIndex = std::nullopt,
+                           std::size_t* registeredPassengerRouteIndex = nullptr);
     int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -106,8 +109,9 @@ class RenderLoop {
     void SetMapTrafficSpawnInView(bool enabled);
     bool AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,
                               double feetDistanceMeters, double heightMeters,
-                              double speedMetersPerSecond, double startDistanceMeters,
-                              double centerX, double centerY, double maximumDistanceMeters);
+                              double walkStrideLengthMeters, double speedMetersPerSecond,
+                              double startDistanceMeters, double centerX, double centerY,
+                              double maximumDistanceMeters);
     void SetScheduledPassengerHumanModels(std::vector<std::filesystem::path> humanConfigPaths);
     void SetMapTrafficPopulation(
         std::size_t roadVehicleCount, std::size_t busCount,
@@ -311,6 +315,7 @@ class RenderLoop {
         std::vector<openbus::map::MapTrafficSpawnCandidate> spawnCandidates;
         std::vector<double> scheduledDepartureMinutes;
         std::vector<openbus::map::MapTrafficPassengerStop> passengerStops;
+        std::optional<std::size_t> passengerRouteIndex;
         std::string timetableLineName;
         std::string timetableDestinationName;
         std::size_t nextPassengerStopIndex = 0;
@@ -338,9 +343,15 @@ class RenderLoop {
         double stoppedSecondsSinceProgress = 0.0;
         bool stuckDiagnosticLogged = false;
     };
+    struct PassengerStopRouteState {
+        openbus::map::MapTrafficActor actor;
+        std::vector<openbus::map::MapTrafficPassengerStop> stops;
+    };
     std::vector<TrafficVehicleState> trafficVehicles_;
+    std::vector<PassengerStopRouteState> passengerStopRoutes_;
     std::unordered_map<int, std::size_t> scheduledPassengerQueues_;
     std::unordered_map<int, std::size_t> scheduledPassengerInitialQueues_;
+    std::size_t passengerServiceUpdateOffset_ = 0;
     std::optional<int> playerPassengerStopLatch_;
     std::optional<std::size_t> playerPassengerStopLatchRouteIndex_;
     std::optional<std::size_t> playerPassengerStopLatchIndex_;
@@ -359,6 +370,7 @@ class RenderLoop {
         openbus::map::MapTrafficActor actor;
         double feetDistanceMeters = 0.2;
         double heightMeters = 1.7;
+        double walkStrideLengthMeters = 1.4;
         openbus::rendering::HumanGaitState gait;
         bool populationEnabled = false;
     };

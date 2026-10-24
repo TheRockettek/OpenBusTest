@@ -448,8 +448,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         if (!referencedTrafficLights[lightIndex]) {
             return;
         }
-        signalProgram->controlPoints.push_back(
-            {lightIndex, timeSeconds, ifRequest > 0.5});
+        signalProgram->controlPoints.push_back({lightIndex, timeSeconds, ifRequest > 0.5});
     };
     for (const std::array<double, 3>& stop : result.trafficLightStops) {
         addControlPoint(stop[0], stop[1], stop[2], "traffic_light_stop");

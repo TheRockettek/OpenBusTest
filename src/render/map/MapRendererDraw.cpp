@@ -100,7 +100,9 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             drawModelBatch(
                 batch.buffer, batch.vertexCount, batch.material, batch.color, batch.alpha,
                 batch.alphaMode, batch.cullBackFaces,
-                HumanGaitParameters{gaitPhaseRadians, gaitWeight, model->second.heightMeters});
+                HumanGaitParameters{gaitPhaseRadians, gaitWeight, model->second.heightMeters,
+                                    model->second.upperArmBetaDegrees, model->second.armSwing,
+                                    model->second.hipSway, model->second.waistAnimation});
         }
     };
     drawBatches(false);

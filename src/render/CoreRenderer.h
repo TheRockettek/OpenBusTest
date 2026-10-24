@@ -81,6 +81,10 @@ struct HumanGaitParameters {
     double phaseRadians = 0.0;
     double weight = 0.0;
     double heightMeters = 0.0;
+    double upperArmBetaDegrees = 66.0;
+    double armSwing = 1.0;
+    double hipSway = 1.0;
+    double waistAnimation = 0.0;
 };
 
 bool initializeCoreRenderer();

@@ -34,12 +34,23 @@ int main(int argc, char** argv) {
                         std::vector<double>{0.2, 1.75} &&
                     configuration.numericRecords[1].keyword == "links" &&
                     configuration.numericRecords[1].valid &&
-                    configuration.numericRecords[1].values.size() == 21 &&
+                    configuration.numericRecords[1].values.size() == 22 &&
+                    std::abs(configuration.numericRecords[1].values.back() - 1.34) < 1.0e-9 &&
                     configuration.numericRecords[2].keyword == "walk_param" &&
                     configuration.numericRecords[2].valid &&
                     configuration.numericRecords[2].values ==
                         std::vector<double>{1.4, 70.0, 0.7, 1.0, 0.0},
                 "human geometry, link, and walk parameter records are parsed");
+        require(std::abs(configuration.walkStrideLengthMeters - 1.4) < 1.0e-9,
+                "human walking stride length is retained from walk_param");
+        require(std::abs(configuration.walkUpperArmBetaDegrees - 70.0) < 1.0e-9,
+                "human upper-arm beta angle is retained from walk_param");
+        require(std::abs(configuration.walkArmSwing - 0.7) < 1.0e-9,
+                "human arm swing multiplier is retained from walk_param");
+        require(configuration.walkHipSway == 1.0,
+                "human hip sway setting is retained from walk_param");
+        require(configuration.walkWaistAnimation == 0.0,
+                "human waist animation setting is retained from walk_param");
         require(configuration.voice == "M2" && configuration.mass.has_value() &&
                     std::abs(*configuration.mass - 0.07) < 1.0e-9,
                 "human [voice] and [mass] fields are parsed");

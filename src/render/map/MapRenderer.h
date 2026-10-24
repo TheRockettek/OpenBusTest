@@ -63,6 +63,7 @@ class MapRenderer {
 
     void updateScripts();
     void updateStreaming(double worldX, double worldY);
+    bool leftHandTraffic() const noexcept;
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;
     MapRenderStats renderStats() const;
     TrafficSignalDebugStats trafficSignalDebugStats() const;
@@ -122,7 +123,9 @@ class MapRenderer {
     bool finishHumanTrafficModelLoad(const std::string& cacheKey) const;
     void loadHumanTrafficModelNow(const std::filesystem::path& humanConfigPath,
                                   const std::filesystem::path& modelConfigPath,
-                                  const ModelConfig& configuration, double heightMeters) const;
+                                  const ModelConfig& configuration, double heightMeters,
+                                  double upperArmBetaDegrees, double armSwing, double hipSway,
+                                  double waistAnimation) const;
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

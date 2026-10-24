@@ -55,6 +55,10 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
 
 MapRenderer::~MapRenderer() = default;
 
+bool MapRenderer::leftHandTraffic() const noexcept {
+    return impl_->leftHandTraffic;
+}
+
 void MapRenderer::updateScripts() {
     TraceScope trace("script", "MapRenderer::updateScripts");
     initializeActiveScripts();
@@ -359,8 +363,13 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
             throw std::runtime_error("Human traffic model has no first-LOD meshes: " +
                                      modelConfigPath.string());
         }
-        return Impl::HumanModelConfiguration{modelConfigPath, std::move(configuration),
-                                             geometry->values[1]};
+        return Impl::HumanModelConfiguration{modelConfigPath,
+                                             std::move(configuration),
+                                             geometry->values[1],
+                                             humanConfig.walkUpperArmBetaDegrees,
+                                             humanConfig.walkArmSwing,
+                                             humanConfig.walkHipSway,
+                                             humanConfig.walkWaistAnimation};
     });
     impl_->pendingHumanTrafficModels.emplace(cacheKey, std::move(pending));
 }
@@ -403,14 +412,17 @@ bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey) const
     Impl::HumanModelConfiguration configuration = std::move(*pendingModel.configuration);
     impl_->pendingHumanTrafficModels.erase(pending);
     loadHumanTrafficModelNow(humanConfigPath, configuration.modelConfigPath,
-                             configuration.configuration, configuration.heightMeters);
+                             configuration.configuration, configuration.heightMeters,
+                             configuration.upperArmBetaDegrees, configuration.armSwing,
+                             configuration.hipSway, configuration.waistAnimation);
     return impl_->humanTrafficModels.contains(cacheKey);
 }
 
 void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanConfigPath,
                                            const std::filesystem::path& modelConfigPath,
-                                           const ModelConfig& configuration,
-                                           double heightMeters) const {
+                                           const ModelConfig& configuration, double heightMeters,
+                                           double upperArmBetaDegrees, double armSwing,
+                                           double hipSway, double waistAnimation) const {
     const std::string cacheKey = humanConfigPath.lexically_normal().generic_string();
     if (impl_->humanTrafficModels.contains(cacheKey)) {
         return;
@@ -684,6 +696,10 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
     asset.texturePaths = std::move(texturePaths);
     asset.textureImages = std::move(textureImages);
     asset.heightMeters = heightMeters;
+    asset.upperArmBetaDegrees = upperArmBetaDegrees;
+    asset.armSwing = armSwing;
+    asset.hipSway = hipSway;
+    asset.waistAnimation = waistAnimation;
     impl_->sceneryBatches.reserve(impl_->sceneryBatches.size() + batches.size());
     for (Impl::ModelBatch& batch : batches) {
         asset.batchIndexes.push_back(impl_->sceneryBatches.size());

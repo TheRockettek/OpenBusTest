@@ -44,8 +44,60 @@ void requireNear(double actual, double expected, const char* message) {
     }
 }
 
+void verifyPassengerSideOffsets() {
+    using namespace openbus::map;
+    requireNear(mapTrafficPassengerSideSign(false), 1.0,
+                "right-hand traffic boards on the right side of travel");
+    requireNear(mapTrafficPassengerSideSign(true), -1.0,
+                "left-hand traffic boards on the left side of travel");
+    requireNear(mapTrafficPassengerCurbOffsetMeters(false, 0.2, 2.0, 0.35), 1.55,
+                "right-hand passenger curb offset includes lane and vehicle width");
+    requireNear(mapTrafficPassengerCurbOffsetMeters(true, -0.2, 2.0, 0.35), -1.55,
+                "left-hand passenger curb offset includes lane and vehicle width");
+    const auto northboundRight = mapSplineRightOffset(0.0, 1.0);
+    requireNear(northboundRight[0], 1.0,
+                "northbound passenger curb offset points east on map coordinates");
+    requireNear(northboundRight[1], 0.0,
+                "northbound passenger curb offset does not shift along the road");
+    const auto eastboundRight = mapSplineRightOffset(std::numbers::pi / 2.0, 1.0);
+    requireNear(eastboundRight[0], 0.0,
+                "eastbound passenger curb offset does not shift along the road");
+    requireNear(eastboundRight[1], -1.0,
+                "eastbound passenger curb offset points south on map coordinates");
+    const auto northboundQueue =
+        mapTrafficPassengerWorldOffset(false, 0.0, 2.0, -1.0);
+    requireNear(northboundQueue[0], 2.0,
+                "northbound waiting queue is placed east of the stop");
+    requireNear(northboundQueue[1], -1.0,
+                "northbound waiting queue extends back along the road");
+    const auto leftHandEastboundQueue =
+        mapTrafficPassengerWorldOffset(true, std::numbers::pi / 2.0, 2.0, -1.0);
+    requireNear(leftHandEastboundQueue[0], -1.0,
+                "left-hand eastbound queue extends back toward the west");
+    requireNear(leftHandEastboundQueue[1], 2.0,
+                "left-hand eastbound queue is placed north of the road");
+}
+
 void verifyPassengerServiceBehavior() {
     using namespace openbus::map;
+    require(mapScheduledPassengerModelIdentity(400, 0) == 400 &&
+                mapScheduledPassengerModelIdentity(400, 1) == 401,
+            "visible passenger model identities follow deterministic queue positions");
+    bool rejectedInvalidPassengerStop = false;
+    try {
+        (void)mapScheduledPassengerModelIdentity(0, 0);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidPassengerStop = true;
+    }
+    bool rejectedPassengerIdentityOverflow = false;
+    try {
+        (void)mapScheduledPassengerModelIdentity(
+            1, (std::numeric_limits<std::size_t>::max)());
+    } catch (const std::overflow_error&) {
+        rejectedPassengerIdentityOverflow = true;
+    }
+    require(rejectedInvalidPassengerStop && rejectedPassengerIdentityOverflow,
+            "passenger identity rejects invalid stop IDs and overflowing queue positions");
     require(mapScheduledPassengerQueueSize(10, 0.5) == 5 &&
                 mapScheduledPassengerQueueSize(1, 0.5) == 1 &&
                 mapScheduledPassengerQueueSize(10, 0.0) == 0 &&
@@ -55,8 +107,21 @@ void verifyPassengerServiceBehavior() {
                                                50) == 50 &&
                 mapScheduledPassengerQueueAfterDeparture(1, 4) == 4 &&
                 mapScheduledPassengerQueueAfterDeparture(5, 4) == 5 &&
-                mapScheduledPassengerQueueAfterDeparture(0, 0) == 0,
-            "scheduled queues scale safely and replenish to their initial level per departure");
+                mapScheduledPassengerQueueAfterDeparture(0, 0) == 0 &&
+                mapPassengerServiceUpdateOrder({0, 40, 0, 40}, 0) ==
+                    std::vector<std::size_t>{1, 3, 0, 2} &&
+                mapPassengerServiceUpdateOrder({0, 40, 0, 40}, 1) ==
+                    std::vector<std::size_t>{3, 1, 0, 2} &&
+                mapPassengerServiceUpdateOrder({0, 40, 0, 40}, 2) ==
+                    std::vector<std::size_t>{1, 3, 0, 2} &&
+                mapPassengerServiceUpdateOrder({0, 60, 60, 40, 40}, 1) ==
+                    std::vector<std::size_t>{4, 3, 2, 1, 0} &&
+                mapPassengerServiceUpdateOrder({0, 60, 60, 40, 40}, 2) ==
+                    std::vector<std::size_t>{3, 4, 1, 2, 0} &&
+                mapPassengerServiceUpdateOrder({0, 0}, 5) ==
+                    std::vector<std::size_t>{0, 1} &&
+                mapPassengerServiceUpdateOrder({}, 5).empty(),
+            "passenger-service priority rotates independently for each shared stop queue");
 
     MapPassengerServiceRuntime service(2);
     require(service.seatCount() == 2, "vehicle passenger seats define service capacity");
@@ -142,8 +207,10 @@ void verifyPassengerServiceBehavior() {
     advanceMapPassengerServiceWithSharedQueue(firstBus, 400, sharedWaitingPassengers, 0.375);
     advanceMapPassengerServiceWithSharedQueue(secondBus, 400, sharedWaitingPassengers, 0.375);
     require(sharedWaitingPassengers == 0 &&
-                firstBus.boardingPassengerModelIndex() == 401 &&
-                secondBus.boardingPassengerModelIndex() == 400,
+                firstBus.boardingPassengerModelIndex() ==
+                    mapScheduledPassengerModelIdentity(400, 1) &&
+                secondBus.boardingPassengerModelIndex() ==
+                    mapScheduledPassengerModelIdentity(400, 0),
             "buses at a shared stop reserve different passengers from the visible queue");
     advanceMapPassengerServiceWithSharedQueue(firstBus, 400, sharedWaitingPassengers, 0.375);
     advanceMapPassengerServiceWithSharedQueue(secondBus, 400, sharedWaitingPassengers, 0.375);
@@ -4079,6 +4146,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--passenger-service") {
+            verifyPassengerSideOffsets();
             verifyPassengerServiceBehavior();
             return 0;
         }
@@ -4087,6 +4155,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         using namespace openbus::map;
+        verifyPassengerSideOffsets();
         verifyPassengerServiceBehavior();
         verifyDrivingBehavior();
         verifyTrafficRules();

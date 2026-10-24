@@ -97,6 +97,10 @@ struct Uniforms {
     GLint humanGaitPhase = -1;
     GLint humanGaitWeight = -1;
     GLint humanGaitHeight = -1;
+    GLint humanUpperArmBeta = -1;
+    GLint humanArmSwing = -1;
+    GLint humanHipSway = -1;
+    GLint humanWaistAnimation = -1;
     std::array<GLint, MAX_MATERIAL_TEXTURES> materialFlipTextureY = {};
     GLint useMaterialColors = -1;
     GLint materialColors = -1;
@@ -198,6 +202,10 @@ uniform bool uHumanGaitEnabled;
 uniform float uHumanGaitPhase;
 uniform float uHumanGaitWeight;
 uniform float uHumanGaitHeight;
+uniform float uHumanUpperArmBeta;
+uniform float uHumanArmSwing;
+uniform float uHumanHipSway;
+uniform float uHumanWaistAnimation;
 out vec3 vTexCoord;
 out vec3 vNormal;
 out vec3 vViewPosition;
@@ -216,7 +224,14 @@ void main() {
         float legSwing = sin(sidePhase) * uHumanGaitWeight;
         position.y += legSwing * 0.12 * legWeight;
         position.z += max(0.0, cos(sidePhase)) * 0.045 * legWeight * uHumanGaitWeight;
-        float armAngle = (0.68 + sin(sidePhase) * 0.12 * uHumanGaitWeight) * armWeight;
+        float hipWeight = smoothstep(0.25, 0.45, heightFraction) *
+                          (1.0 - smoothstep(0.75, 0.90, heightFraction));
+        position.x += sin(uHumanGaitPhase) * 0.02 * uHumanGaitWeight *
+                      uHumanHipSway * hipWeight;
+        float armAngle =
+            (radians(uHumanUpperArmBeta) +
+             sin(sidePhase) * 0.12 * uHumanGaitWeight * uHumanArmSwing) *
+            armWeight;
         float shoulderX = side * uHumanGaitHeight * 0.105;
         float shoulderZ = uHumanGaitHeight * 0.76;
         vec2 armOffset = vec2(position.x - shoulderX, position.z - shoulderZ);
@@ -228,7 +243,8 @@ void main() {
         position.z = mix(position.z, shoulderZ + loweredArm.y, armWeight);
         position.y -= sin(sidePhase) * 0.035 * armWeight * uHumanGaitWeight;
         position.z += 0.018 * (0.5 - 0.5 * cos(2.0 * uHumanGaitPhase)) *
-                      smoothstep(0.08, 0.28, heightFraction) * uHumanGaitWeight;
+                      smoothstep(0.08, 0.28, heightFraction) * uHumanGaitWeight *
+                      uHumanWaistAnimation;
     }
     vec4 viewPosition = uModelView * vec4(position, 1.0);
     float textureY = uFlipModelTextureY ? 1.0 - aTexCoord.y : aTexCoord.y;
@@ -644,6 +660,10 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.humanGaitPhase = pglGetUniformLocation(program, "uHumanGaitPhase");
         uniforms.humanGaitWeight = pglGetUniformLocation(program, "uHumanGaitWeight");
         uniforms.humanGaitHeight = pglGetUniformLocation(program, "uHumanGaitHeight");
+        uniforms.humanUpperArmBeta = pglGetUniformLocation(program, "uHumanUpperArmBeta");
+        uniforms.humanArmSwing = pglGetUniformLocation(program, "uHumanArmSwing");
+        uniforms.humanHipSway = pglGetUniformLocation(program, "uHumanHipSway");
+        uniforms.humanWaistAnimation = pglGetUniformLocation(program, "uHumanWaistAnimation");
         uniforms.useMaterialColors = pglGetUniformLocation(program, "uUseMaterialColors");
         uniforms.materialColors = pglGetUniformLocation(program, "uMaterialColors");
         uniforms.useMaterialTextures = pglGetUniformLocation(program, "uUseMaterialTextures");
@@ -1131,6 +1151,12 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
         pglUniform1f(modelUniforms.humanGaitWeight,
                      static_cast<GLfloat>(std::clamp(humanGait->weight, 0.0, 1.0)));
         pglUniform1f(modelUniforms.humanGaitHeight, static_cast<GLfloat>(humanGait->heightMeters));
+        pglUniform1f(modelUniforms.humanUpperArmBeta,
+                     static_cast<GLfloat>(humanGait->upperArmBetaDegrees));
+        pglUniform1f(modelUniforms.humanArmSwing, static_cast<GLfloat>(humanGait->armSwing));
+        pglUniform1f(modelUniforms.humanHipSway, static_cast<GLfloat>(humanGait->hipSway));
+        pglUniform1f(modelUniforms.humanWaistAnimation,
+                     static_cast<GLfloat>(humanGait->waistAnimation));
     }
     selectTextureUnit(GL_TEXTURE0);
     if (material.textureArray) {

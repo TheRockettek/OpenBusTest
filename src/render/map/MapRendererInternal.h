@@ -257,12 +257,20 @@ struct MapRenderer::Impl {
         std::vector<std::filesystem::path> texturePaths;
         std::vector<std::shared_future<std::shared_ptr<Image>>> textureImages;
         double heightMeters = 0.0;
+        double upperArmBetaDegrees = 66.0;
+        double armSwing = 1.0;
+        double hipSway = 1.0;
+        double waistAnimation = 0.0;
     };
 
     struct HumanModelConfiguration {
         std::filesystem::path modelConfigPath;
         ModelConfig configuration;
         double heightMeters = 0.0;
+        double upperArmBetaDegrees = 66.0;
+        double armSwing = 1.0;
+        double hipSway = 1.0;
+        double waistAnimation = 0.0;
     };
 
     struct PendingHumanModel {

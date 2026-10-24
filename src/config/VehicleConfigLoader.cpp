@@ -896,10 +896,10 @@ std::vector<int> passengerPathRoute(const std::vector<PassengerPathPoint>& point
                                     const std::vector<PassengerPathLink>& links, int fromPoint,
                                     int toPoint) {
     const auto pointIndex = [&](int pointId) -> std::optional<std::size_t> {
-        const auto point = std::find_if(points.begin(), points.end(),
-                                        [&](const PassengerPathPoint& candidate) {
-                                            return candidate.index == pointId;
-                                        });
+        const auto point =
+            std::find_if(points.begin(), points.end(), [&](const PassengerPathPoint& candidate) {
+                return candidate.index == pointId;
+            });
         if (point == points.end()) {
             return std::nullopt;
         }

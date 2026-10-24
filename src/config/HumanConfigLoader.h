@@ -19,6 +19,11 @@ struct HumanNumericRecord {
 struct HumanConfig {
     std::string modelConfigPath;
     std::optional<double> seatHeight;
+    double walkStrideLengthMeters = 1.4;
+    double walkUpperArmBetaDegrees = 66.0;
+    double walkArmSwing = 1.0;
+    double walkHipSway = 1.0;
+    double walkWaistAnimation = 0.0;
     std::optional<double> mass;
     std::string voice;
     std::vector<HumanNumericRecord> numericRecords;

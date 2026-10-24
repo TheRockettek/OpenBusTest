@@ -83,7 +83,11 @@ int main() {
     const auto drawHumanGaitFrame = [&](double phaseRadians, double gaitWeight,
                                         const std::array<float, 39>& frameVertices,
                                         double modelHeight, bool gaitEnabled = true,
-                                        double viewTranslation = -0.4) {
+                                        double viewTranslation = -0.4,
+                                        double upperArmBetaDegrees = 66.0,
+                                        double armSwing = 1.0,
+                                        double hipSway = 1.0,
+                                        double waistAnimation = 0.0) {
         pglBindBuffer(GL_ARRAY_BUFFER, buffer);
         pglBufferData(GL_ARRAY_BUFFER, sizeof(frameVertices), frameVertices.data(), GL_STATIC_DRAW);
         glClearColor(0, 0, 0, 0);
@@ -93,7 +97,9 @@ int main() {
         humanMaterial.emissionColor = {1, 1, 1};
         if (gaitEnabled) {
             drawModelBatch(buffer, 3, humanMaterial, {1, 1, 1}, 1.0, 0, false,
-                           HumanGaitParameters{phaseRadians, gaitWeight, modelHeight});
+                           HumanGaitParameters{phaseRadians, gaitWeight, modelHeight,
+                                               upperArmBetaDegrees, armSwing, hipSway,
+                                               waistAnimation});
         } else {
             drawModelBatch(buffer, 3, humanMaterial, {1, 1, 1}, 1.0, 0, false);
         }
@@ -121,6 +127,48 @@ int main() {
     const auto loweredArm = drawHumanGaitFrame(0.0, 0.0, tPoseArmVertices, 1.7, true, -2.0);
     if (undeformedArm == loweredArm) {
         std::cerr << "stationary pedestrian arms were not lowered from the T-pose\n";
+        passed = false;
+    }
+    const auto noArmSwing =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, tPoseArmVertices, 1.7, true, -2.0,
+                           66.0, 0.0);
+    const auto configuredArmSwing =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, tPoseArmVertices, 1.7, true, -2.0,
+                           66.0, 1.0);
+    if (noArmSwing == configuredArmSwing) {
+        std::cerr << "authored human arm swing did not deform the T-pose\n";
+        passed = false;
+    }
+    const auto armBetaLow =
+        drawHumanGaitFrame(0.0, 0.0, tPoseArmVertices, 1.7, true, -2.0, 30.0, 1.0);
+    const auto armBetaHigh =
+        drawHumanGaitFrame(0.0, 0.0, tPoseArmVertices, 1.7, true, -2.0, 75.0, 1.0);
+    if (armBetaLow == armBetaHigh) {
+        std::cerr << "authored upper-arm beta did not change the resting arm pose\n";
+        passed = false;
+    }
+    constexpr std::array<float, 39> torsoVertices = {
+        0.10F, -0.1F, 1.00F, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.40F, -0.1F, 1.00F, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1,
+        0.25F, 0.1F, 1.00F, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1};
+    const auto noHipSway =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, torsoVertices, 1.7, true, -2.0, 66.0,
+                           1.0, 0.0);
+    const auto configuredHipSway =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, torsoVertices, 1.7, true, -2.0, 66.0,
+                           1.0, 1.0);
+    if (noHipSway == configuredHipSway) {
+        std::cerr << "authored human hip sway did not move the torso\n";
+        passed = false;
+    }
+    const auto noWaistAnimation =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, tPoseArmVertices, 1.7, true, -2.0,
+                           66.0, 1.0, 1.0, 0.0);
+    const auto configuredWaistAnimation =
+        drawHumanGaitFrame(std::numbers::pi / 2.0, 1.0, tPoseArmVertices, 1.7, true, -2.0,
+                           66.0, 1.0, 1.0, 10.0);
+    if (noWaistAnimation == configuredWaistAnimation) {
+        std::cerr << "authored human waist animation did not affect torso gait\n";
         passed = false;
     }
     const auto nonHumanFrameAfterGait =

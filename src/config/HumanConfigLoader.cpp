@@ -69,9 +69,25 @@ HumanConfig loadHumanConfig(const std::filesystem::path& configPath) {
         } else if (keyword == "humangeom") {
             readNumericRecord(line.number, keyword, 2);
         } else if (keyword == "links") {
-            readNumericRecord(line.number, keyword, 21);
+            readNumericRecord(line.number, keyword, 22);
         } else if (keyword == "walk_param") {
             readNumericRecord(line.number, keyword, 5);
+            const HumanNumericRecord& record = configuration.numericRecords.back();
+            if (record.valid) {
+                if (record.values[0] <= 0.0) {
+                    configuration.diagnostics.error(line.number, keyword,
+                                                    "step length must be greater than zero");
+                } else if (record.values[1] < 0.0 || record.values[1] > 180.0) {
+                    configuration.diagnostics.error(line.number, keyword,
+                                                    "upper-arm beta must be in [0, 180] degrees");
+                } else {
+                    configuration.walkStrideLengthMeters = record.values[0];
+                    configuration.walkUpperArmBetaDegrees = record.values[1];
+                    configuration.walkArmSwing = record.values[2];
+                    configuration.walkHipSway = record.values[3];
+                    configuration.walkWaistAnimation = record.values[4];
+                }
+            }
         } else if (keyword == "mass") {
             Line value;
             if (!reader.readPayload(value, configuration.diagnostics, keyword)) {

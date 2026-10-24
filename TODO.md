@@ -227,11 +227,14 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   passengers are assigned their next stop as a destination. Scheduled queues
   are shared by stop ID and render as scheduled humans independently of the
   ambient AI pedestrian cap. Scheduled AI departures replenish depleted
-  queues to their initial size, while preserving larger queues when demand
-  remains. Reserved boarders animate from the roadside flank
+  queues to their initial size, and player buses replenish the served stop
+  after departing; both preserve larger queues when demand remains. Reserved
+  boarders animate from the roadside flank
   queue position through the configured cabin path into their assigned seat on
   both scheduled AI and player buses; the same passenger model identity is
   retained from the queue through boarding, the occupied seat, and alighting.
+  Queue display and service reservation share one stop/queue-position identity
+  mapping so the nearest visible rider is the one reserved to board.
   Terminal calls without an onward stop do not board riders or consume the
   shared stop queue.
   At destination stops, seated
@@ -239,19 +242,33 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   seat is freed; when cabin path links are connected, boarders and alighters
   follow the directed passenger-path graph between the configured entry/exit
   and their seat. Shared queue consumption gives simultaneous buses distinct
-  passengers and preserves each rider identity through seating; update order
-  determines which bus boards first. A scheduled AI bus now remains in service
-  at its route end until its final-stop passenger alighting completes.
+  passengers and preserves each rider identity through seating; first boarding
+  priority rotates independently among vehicles sharing each stop queue. A
+  scheduled AI bus now remains in service at its route end until its final-stop
+  passenger alighting completes.
   Boarding animations retain the exact timetable call index, avoiding a
   mismatched stop position when a route repeats a stop ID or shares it with
   another route. The player-bus retrigger latch also follows that exact route
   call rather than a stop ID shared by unrelated calls.
   TTP station offsets project onto the correct preceding spline entry, including
   subdivided and reversed runtime route segments.
+  Waiting queues shared by stop ID render at the currently served timetable
+  call when a bus is boarding, or otherwise at the nearest visible call,
+  independently of asynchronous AI bus model loading. Waiting passengers have
+  a subtle idle gait before boarding; active boarders and alighters use the
+  full movement animation.
   Disconnected
   or incomplete cabin graphs fall back to direct seat-to-curb animation.
+  Walking passengers now face the active path segment during cabin movement
+  and use the authored endpoint orientation when movement completes.
+  Waiting queues and boarding/alighting positions use the correct passenger
+  side for left- and right-hand traffic maps, using the map's north-zero road
+  heading for curb and queue offsets.
   Player buses board and alight at nearby mapped calls when stopped and
-  direction-aligned. Passenger mass, passenger ticket purchase, fare
+  direction-aligned. Player stop discovery is registered from matched
+  timetable routes independently of the scheduled AI bus population; it still
+  requires a loadable bus configuration and routable route. Passenger mass,
+  passenger ticket purchase, fare
   transactions, and physical/audible coin output remain incomplete. Map
   ticket-pack/currency records now feed ticket and
   change-coin script macros for player and AI buses.
@@ -507,9 +524,11 @@ arrival-board data:
   `PrecipType`, `PrecipRate`, `coll_pos_*`, `coll_energy`,
   `Weather_Temperature`, `Weather_AbsHum`, `AutoClutch`, `SunAlt`, and
   `wearlifespan`.
-- [ ] Replace default-only values for documented variable families whose
-  producers are absent: `AI_*`, `AI_Scheduled_*`, `PAX_Entry#_*`,
-  `PAX_Exit#_*`, `GivenTicket`, `humans_count`, `FF_Vib_*`, `Snd_*`,
+- [~] `humans_count` now reports the passenger service's occupied-seat count,
+  matching `passengers_onboard` for player and AI vehicles. Replace default-only
+  values for documented variable families whose producers are absent:
+  `AI_*`, `AI_Scheduled_*`, `PAX_Entry#_*`, `PAX_Exit#_*`, `GivenTicket`,
+  `FF_Vib_*`, `Snd_*`,
   `Cabinair_*`, `Dirt_*`, `TrafficPriority*`, `Axle_Brakeforce_*`,
   `Axle_SurfaceID_*`, `articulation_*`, `boogie_*`, and
   `contactshoe_*`.
@@ -736,9 +755,14 @@ for the explicit boundary.
 - [~] Load and render `.hum`-referenced pedestrian models. Configuration,
   mesh parsing, and texture decoding run asynchronously, with OpenGL upload on
   the render thread; AI driver models and native animation remain unimplemented.
-- [ ] Apply validated `.hum` geometry, links, walk parameters, seat height,
-  mass, and voice to human actors; parsing these values alone is not runtime
-  support.
+- [~] The `.hum` loader reads all 22 numeric coordinates in `[links]`;
+  ambient-human gait phase uses the authored `[walk_param]` step length,
+  upper-arm beta angle, arm-swing multiplier, hip-sway setting, and
+  waist-animation setting; focused GPU regressions verify each animation
+  control. These are approximate mesh deformations, not native joint
+  animation. Applying validated geometry and link-driven joint positions,
+  seat height, mass, and voice data to human actors remains incomplete;
+  parsing alone is not runtime support.
 - [ ] Validate human path field meanings, route continuity, density behavior,
   and actor placement against representative OMSI maps.
 

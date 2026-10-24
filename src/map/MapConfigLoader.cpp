@@ -698,8 +698,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                     std::copy_n(stationFields.begin() + 4, station.opaqueFields.size(),
                                 station.opaqueFields.begin());
                     double positionOnPreviousTrackEntryMeters = 0.0;
-                    if (parseReal(station.opaqueFields[2],
-                                  positionOnPreviousTrackEntryMeters) &&
+                    if (parseReal(station.opaqueFields[2], positionOnPreviousTrackEntryMeters) &&
                         positionOnPreviousTrackEntryMeters >= 0.0) {
                         station.positionOnPreviousTrackEntryMeters =
                             positionOnPreviousTrackEntryMeters;
@@ -926,8 +925,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 }
             } else if (!route.trackEntries.empty()) {
                 station.trackEntryIndex = static_cast<int>(route.trackEntries.size());
-                station.positionOnPreviousTrackEntryMeters =
-                    route.trackEntries.back().lengthMeters;
+                station.positionOnPreviousTrackEntryMeters = route.trackEntries.back().lengthMeters;
             } else {
                 completeRoute = false;
                 break;
@@ -1667,8 +1665,7 @@ mapAiTimetableStationPosition(const MapAiTimetableRoute& route,
         if (trackEntryIndex > route.trackEntries.size()) {
             return std::nullopt;
         }
-        const std::size_t previousEntryIndex =
-            trackEntryIndex == 0 ? 0 : trackEntryIndex - 1;
+        const std::size_t previousEntryIndex = trackEntryIndex == 0 ? 0 : trackEntryIndex - 1;
         const double offsetMeters = *station.positionOnPreviousTrackEntryMeters;
         const double previousEntryLength = route.trackEntries[previousEntryIndex].lengthMeters;
         if (!std::isfinite(offsetMeters) || offsetMeters < 0.0 ||

@@ -306,7 +306,8 @@ bool RenderLoop::AddTrafficVehicle(
     bool allowReverseTraversalForRequired,
     std::vector<openbus::map::MapTrafficPassengerStop> passengerStops,
     std::string timetableLineName, std::string timetableDestinationName,
-    std::optional<std::size_t> trafficRuleGroupIndex) {
+    std::optional<std::size_t> trafficRuleGroupIndex, bool registerPassengerRouteOnly,
+    std::optional<std::size_t> passengerRouteIndex, std::size_t* registeredPassengerRouteIndex) {
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
     }
@@ -360,7 +361,7 @@ bool RenderLoop::AddTrafficVehicle(
     auto actor = openbus::map::makeMapTrafficActor(std::move(*route), busConfigPath.string(),
                                                    speedMetersPerSecond, 0.0, false,
                                                    std::move(driverModelPath));
-    if (isBus) {
+    if (isBus && !registerPassengerRouteOnly) {
         if (scheduledDepartureMinutes.empty()) {
             throw std::invalid_argument("Scheduled map buses require timetable departures");
         }
@@ -406,19 +407,7 @@ bool RenderLoop::AddTrafficVehicle(
     const VehiclePlacement configuredPlacement =
         placementForVehicle(configuration, placement, true);
     const double modelOffsetZ = -configuration.centerOfGravityHeight;
-    AssetRequestManager* const assetRequests = assetRequestManager_.get();
-    SimulationState* const simulationState = &simulationState_;
-    SoundEngine* const soundEngine = &soundEngine_;
-    openbus::rendering::ViewpointContext* const soundViewpoint = &soundViewpoint_;
-    std::future<std::unique_ptr<Vehicle>> pendingVehicle =
-        assetRequests->submit([definition, configuredPlacement, modelOffsetZ, loadingPolicy,
-                               assetRequests, simulationState, soundEngine, soundViewpoint] {
-            return std::make_unique<Vehicle>(definition, configuredPlacement, modelOffsetZ,
-                                             loadingPolicy, *assetRequests, *simulationState,
-                                             *soundEngine, *soundViewpoint, true, true);
-        });
     TrafficVehicleState trafficState;
-    trafficState.pendingVehicle = std::move(pendingVehicle);
     trafficState.actor = std::move(actor);
     trafficState.spawnCandidates = std::move(spawnCandidates);
     trafficState.scheduledDepartureMinutes = std::move(scheduledDepartureMinutes);
@@ -443,7 +432,7 @@ bool RenderLoop::AddTrafficVehicle(
         };
         if (stop.splinePositionMeters) {
             const auto routePosition = openbus::map::mapTrafficRoutePositionOnSpline(
-                actor.route, stop.splineId, stop.pathIndex, *stop.splinePositionMeters,
+                trafficState.actor.route, stop.splineId, stop.pathIndex, *stop.splinePositionMeters,
                 routeSegmentCursor);
             if (!routePosition) {
                 logUnmatchedStop();
@@ -454,26 +443,61 @@ bool RenderLoop::AddTrafficVehicle(
             trafficState.passengerStops.push_back(std::move(stop));
             continue;
         }
-        const auto segment = std::find_if(
-            actor.route.segments.begin() + static_cast<std::ptrdiff_t>(routeSegmentCursor),
-            actor.route.segments.end(), [&](const openbus::map::MapTrafficRouteSegment& candidate) {
-                return candidate.spline.placement.splineId == stop.splineId &&
-                       candidate.sceneryPathIndex == stop.pathIndex;
-            });
-        if (segment == actor.route.segments.end()) {
+        const auto segment =
+            std::find_if(trafficState.actor.route.segments.begin() +
+                             static_cast<std::ptrdiff_t>(routeSegmentCursor),
+                         trafficState.actor.route.segments.end(),
+                         [&](const openbus::map::MapTrafficRouteSegment& candidate) {
+                             return candidate.spline.placement.splineId == stop.splineId &&
+                                    candidate.sceneryPathIndex == stop.pathIndex;
+                         });
+        if (segment == trafficState.actor.route.segments.end()) {
             logUnmatchedStop();
             continue;
         }
-        routeSegmentCursor =
-            static_cast<std::size_t>(std::distance(actor.route.segments.begin(), segment));
+        routeSegmentCursor = static_cast<std::size_t>(
+            std::distance(trafficState.actor.route.segments.begin(), segment));
         const std::size_t segmentIndex = routeSegmentCursor;
         stop.routeDistanceMeters =
-            segmentIndex == 0 ? 0.0 : actor.route.cumulativeEndDistances[segmentIndex - 1];
+            segmentIndex == 0 ? 0.0
+                              : trafficState.actor.route.cumulativeEndDistances[segmentIndex - 1];
         trafficState.passengerStops.push_back(std::move(stop));
     }
     if (!trafficState.passengerStops.empty()) {
         trafficState.passengerStops.back().passengersAlighting =
             (std::numeric_limits<std::size_t>::max)();
+    }
+    if (registerPassengerRouteOnly) {
+        if (!isBus || trafficState.passengerStops.empty()) {
+            throw std::invalid_argument(
+                "Passenger-route-only registration requires a bus route with stops and no "
+                "scheduled vehicle departures");
+        }
+        const std::size_t routeIndex = passengerStopRoutes_.size();
+        passengerStopRoutes_.push_back({trafficState.actor, trafficState.passengerStops});
+        if (registeredPassengerRouteIndex != nullptr) {
+            *registeredPassengerRouteIndex = routeIndex;
+        }
+        trafficState.passengerRouteIndex = routeIndex;
+        for (const openbus::map::MapTrafficPassengerStop& stop : trafficState.passengerStops) {
+            const auto [queue, inserted] =
+                scheduledPassengerQueues_.try_emplace(stop.stopId, stop.waitingPassengers);
+            if (inserted) {
+                scheduledPassengerInitialQueues_.emplace(stop.stopId, queue->second);
+            }
+        }
+        return true;
+    }
+    if (isBus && !trafficState.passengerStops.empty()) {
+        if (passengerRouteIndex) {
+            if (*passengerRouteIndex >= passengerStopRoutes_.size()) {
+                throw std::invalid_argument("Passenger route catalog index is out of range");
+            }
+            trafficState.passengerRouteIndex = passengerRouteIndex;
+        } else {
+            trafficState.passengerRouteIndex = passengerStopRoutes_.size();
+            passengerStopRoutes_.push_back({trafficState.actor, trafficState.passengerStops});
+        }
     }
     for (const openbus::map::MapTrafficPassengerStop& stop : trafficState.passengerStops) {
         const auto [queue, inserted] =
@@ -491,6 +515,18 @@ bool RenderLoop::AddTrafficVehicle(
                 mapTrafficStartHour_, 0.0,
                 trafficState.scheduledDepartureMinutes[trafficState.nextScheduledDepartureIndex]);
     }
+    AssetRequestManager* const assetRequests = assetRequestManager_.get();
+    SimulationState* const simulationState = &simulationState_;
+    SoundEngine* const soundEngine = &soundEngine_;
+    openbus::rendering::ViewpointContext* const soundViewpoint = &soundViewpoint_;
+    std::future<std::unique_ptr<Vehicle>> pendingVehicle =
+        assetRequests->submit([definition, configuredPlacement, modelOffsetZ, loadingPolicy,
+                               assetRequests, simulationState, soundEngine, soundViewpoint] {
+            return std::make_unique<Vehicle>(definition, configuredPlacement, modelOffsetZ,
+                                             loadingPolicy, *assetRequests, *simulationState,
+                                             *soundEngine, *soundViewpoint, true, true);
+        });
+    trafficState.pendingVehicle = std::move(pendingVehicle);
     trafficVehicles_.push_back(std::move(trafficState));
     return true;
 }
@@ -536,14 +572,15 @@ double RenderLoop::trafficMinimumTurnRadius(const std::filesystem::path& vehicle
 
 bool RenderLoop::AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,
                                       double feetDistanceMeters, double heightMeters,
-                                      double speedMetersPerSecond, double startDistanceMeters,
-                                      double centerX, double centerY,
+                                      double walkStrideLengthMeters, double speedMetersPerSecond,
+                                      double startDistanceMeters, double centerX, double centerY,
                                       double maximumDistanceMeters) {
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add human traffic before loading a map");
     }
     if (humanConfigPath.empty() || !std::isfinite(feetDistanceMeters) ||
-        feetDistanceMeters <= 0.0 || !std::isfinite(heightMeters) || heightMeters <= 0.0) {
+        feetDistanceMeters <= 0.0 || !std::isfinite(heightMeters) || heightMeters <= 0.0 ||
+        !std::isfinite(walkStrideLengthMeters) || walkStrideLengthMeters <= 0.0) {
         throw std::invalid_argument("Human traffic spawn configuration is invalid");
     }
 
@@ -560,7 +597,8 @@ bool RenderLoop::AddHumanTrafficActor(int splineId, const std::filesystem::path&
     }
     actor->lengthMeters = feetDistanceMeters * 1.25;
     actor->widthMeters = feetDistanceMeters * 2.1;
-    humanTrafficActors_.push_back({std::move(*actor), feetDistanceMeters, heightMeters, {}, false});
+    humanTrafficActors_.push_back(
+        {std::move(*actor), feetDistanceMeters, heightMeters, walkStrideLengthMeters, {}, false});
     return true;
 }
 

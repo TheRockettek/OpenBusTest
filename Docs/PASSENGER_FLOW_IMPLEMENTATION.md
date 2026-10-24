@@ -3,15 +3,28 @@
 Passenger service is represented by timetable stop/link data and a deterministic
 service runtime. Legacy timetable `[station]` calls that match a scheduled AI
 bus route now constrain its speed, stop the bus, and run the service dwell and
-boarding flow. Waiting passengers are rendered as stationary humans near an
-active scheduled stop, using the configured human models and the vehicle's
-remaining shared queue count. Station-ID-only trips can form scheduled bus
-routes when every directed station link has a complete ordered path. Player
-buses can board and alight at mapped stops when stationary and aligned with
-their approach direction. Passengers board with the next stop as their
-destination and alight there; any riders remaining at a route's final mapped
-call alight before the scheduled bus ends its trip. Ambient map pedestrians
-remain a separate population.
+boarding flow. Station-ID-only trips can form scheduled bus routes when every
+directed station link has a complete ordered path. Player buses can board and
+alight at mapped calls when stationary and aligned with their approach
+direction. Passengers board with the next stop as their destination and alight
+there; any riders remaining at a route's final mapped call alight before the
+scheduled bus ends its trip. Waiting queues and boarding/alighting positions
+use the correct passenger side for left- and right-hand traffic maps, with
+curb-side and queue offsets derived from the map's north-zero road heading.
+Ambient map pedestrians remain a separate population.
+Player stop discovery uses a timetable-route catalog registered independently
+of scheduled AI bus instances, so setting the AI bus population to zero does
+not disable player boarding. The catalog still requires a loadable bus
+configuration and a routable, matched timetable route.
+
+Waiting passengers render as stationary humans using the configured models.
+Queues are shared by stop ID across registered scheduled routes and replenished
+to at least their initial size when a scheduled AI bus departs or the player bus
+leaves a served stop. When multiple calls share an ID, their queue renders at
+the active boarding call or otherwise at the nearest visible call. Queue
+rendering depends on the registered timetable route, not on the AI bus model
+finishing its asynchronous load, so passengers remain visible and available to
+the player during loading.
 
 ## Timetable station data
 
@@ -23,8 +36,10 @@ reads stop IDs from `Busstops.cfg` and directed endpoint IDs and path-entry
 values from `StnLinks.cfg`. Trip station IDs are matched against unique stop
 IDs; consecutive IDs are considered linked only when exactly one directed
 station link joins them. Station-link path entries retain the source spline,
-path index, tile index, and length fields, but they are not yet projected onto
-the renderer's map-space route geometry.
+path index, tile index, and length fields. Legacy TTP station offsets project
+to the corresponding position on their track entry, including reversed and
+subdivided runtime route segments. Station-ID-only calls use the end of their
+incoming station-link path.
 
 The eight-position `[station]` record layout is documented in
 [`OMSI2_MAP_FORMAT_REFERENCE.md`](OMSI2_MAP_FORMAT_REFERENCE.md). An invalid ID,
@@ -41,8 +56,8 @@ Bus-stop numeric parameters, station-link length/parameters, and all seven
 station-link entry values are validated before a record is accepted. The first
 four station-link entry fields are typed as spline ID, path index, tile index,
 and length, based on the openOMSI format reader; the last three values remain
-verbatim. The entry does not itself provide a pedestrian-world position, so no
-coordinates are fabricated from these values.
+verbatim. Station-link path entries do not themselves provide a
+pedestrian-world position, so no coordinates are fabricated from those values.
 
 ## Script ticket and cash macros
 
@@ -81,31 +96,37 @@ remain unimplemented.
 `MapPassengerServiceRuntime` maintains per-stop waiting queues, fixed seat
 occupancy, alighting, a dwell timer, and boarding at a bounded rate. A
 passenger is reserved from the shared queue while the boarding interval runs,
-then assigned to a seat on completion. During that interval, a human model is
-drawn walking from the stop queue toward the bus's roadside flank. This is a
-visual approach approximation, not yet a path through the authored cabin
-entry/path-link graph. Its queue scale helper is separate from the ambient
+then assigned to a seat on completion. Queue model identities derive from the
+stop ID and queue position, so the nearest displayed rider keeps the same
+identity when reserved, seated, and later alighted. During boarding and alighting, the
+configured human model animates between the roadside and seat. If the authored
+cabin entry/exit points and directed path-link graph connect the endpoints,
+movement follows that graph; otherwise it uses a direct fallback path. Seated
+passengers render at their configured cabin positions. Walking passengers face
+the active path segment and retain the authored endpoint orientation when
+movement completes. The queue scale helper is separate from the ambient
 pedestrian population target and applies only to scheduled queue sizes. The
 component has deterministic probe coverage and is owned by each vehicle using
 the configured passenger seats.
+Human gait phase, resting upper-arm pose, arm swing, hip sway, and torso bob
+use the `.hum` `[walk_param]` step length, upper-arm beta, arm-swing multiplier,
+hip setting, and waist-animation setting. These controls drive approximate
+mesh deformations, not authored skeletal joints; `[links]` geometry, seat
+height, mass, voice, and native limb animation are not yet applied.
 Scheduled AI buses stop at mapped timetable calls and board waiting
 passengers into available seats during an eight-second dwell. Queue consumption
 is serialized each update against the shared remaining count, preventing two
-dwelling buses from boarding the same passenger. Bus iteration order currently
-determines which bus boards first. Queues for registered scheduled AI-bus
-routes' mapped stops are rendered within 75 meters of the main camera,
+dwelling buses from boarding the same passenger. First boarding priority
+rotates independently within each shared stop queue, so buses serving other
+stops do not affect their order. Queues for registered timetable routes'
+mapped stops are rendered within 75 meters of the main camera,
 independent of the ambient AI pedestrian population cap. The waiting count is
 a fixed nominal demand per mapped stop multiplied by the scheduled-human
 scale; it is not a shared map-wide demand model.
 
 ## Remaining work
 
-Station-link stop locations currently use the beginning of each matched
-route-entry segment; accurate within-spline stop projection still needs
-verification against map geometry. Queues are shared by stop ID across the
-registered scheduled routes, but demand is still a fixed nominal count and bus
-iteration order decides boarding priority. Waiting people remain stationary
-until their boarding transition; boarded passengers do not yet traverse cabin
-path links, and occupied seats are exposed to scripts but are not rendered as
-seated humans. Ticket selection, payment transactions, and audible or physical
-coin output remain incomplete.
+Queue demand is a fixed nominal count per mapped stop rather than a shared
+map-wide demand model. Waiting people use a subtle idle gait before boarding;
+boarding and alighting use the full movement animation. Ticket selection,
+payment transactions, and audible or physical coin output remain incomplete.

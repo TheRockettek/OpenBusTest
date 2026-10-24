@@ -178,6 +178,9 @@ bool mapTrafficPoseOnActiveTile(const MapTrafficPose& pose,
 // Returns a signed lateral offset relative to travel direction: positive is right, negative
 // is left. The supplied distance is a non-negative magnitude.
 double mapTrafficLaneOffsetMeters(bool leftHandTraffic, double distanceMeters);
+double mapTrafficPassengerSideSign(bool leftHandTraffic) noexcept;
+double mapTrafficPassengerCurbOffsetMeters(bool leftHandTraffic, double laneOffsetMeters,
+                                           double vehicleWidthMeters, double clearanceMeters);
 double mapTrafficRouteTravelHeadingRadians(const MapTrafficRoute& route, double distanceMeters,
                                            double lateralOffsetMeters);
 double mapTrafficHeadingToVehicleYawDegrees(double headingRadians);
@@ -213,6 +216,12 @@ std::size_t mapScheduledPassengerQueueSize(std::size_t nominalCount, double huma
                                            std::size_t safetyLimit = 100000) noexcept;
 std::size_t mapScheduledPassengerQueueAfterDeparture(std::size_t waitingPassengers,
                                                      std::size_t initialPassengers) noexcept;
+std::size_t mapScheduledPassengerModelIdentity(int stopId, std::size_t queuePosition);
+std::array<double, 2> mapTrafficPassengerWorldOffset(bool leftHandTraffic, double headingRadians,
+                                                     double lateralOffsetMeters,
+                                                     double longitudinalOffsetMeters);
+std::vector<std::size_t> mapPassengerServiceUpdateOrder(const std::vector<int>& serviceStopIds,
+                                                        std::size_t rotation);
 
 struct MapPassengerStopService {
     int stopId = 0;

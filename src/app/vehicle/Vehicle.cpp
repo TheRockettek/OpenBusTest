@@ -18,8 +18,10 @@ void Vehicle::updateScripts(bool isAiVehicle) {
         variables.set("human_count_on_seat_" + std::to_string(seatIndex),
                       static_cast<float>(passengerService.passengerCountOnSeat(seatIndex)));
     }
-    variables.set("passengers_onboard",
-                  static_cast<float>(passengerService.onboardPassengerCount()));
+    const float onboardPassengerCount =
+        static_cast<float>(passengerService.onboardPassengerCount());
+    variables.set("passengers_onboard", onboardPassengerCount);
+    variables.set("humans_count", onboardPassengerCount);
     if (scripts) {
         const std::size_t scriptErrorCount = scripts->errors().size();
         scripts->update(isAiVehicle);

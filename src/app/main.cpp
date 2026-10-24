@@ -1261,7 +1261,8 @@ int main() {
 
         if (mapAiBusPoolCount == 0) {
             applicationLog.Log("Map AI buses have no active population.");
-        } else {
+        }
+        {
             const std::vector<std::string> aiBusConfigurations =
                 openbus::map::mapAiBusAssetPaths(mapDefinition.aiTraffic);
             if (aiBusConfigurations.empty()) {
@@ -1450,19 +1451,12 @@ int main() {
                 }
                 const std::vector<std::size_t> busesPerRoute =
                     openbus::map::mapTrafficAllocateScheduledBuses(departureCounts, busPoolLimit);
-                for (std::size_t routeIndex = 0;
-                     routeIndex < matchedBusRoutes.size() && addedBuses < busPoolLimit;
+                for (std::size_t routeIndex = 0; routeIndex < matchedBusRoutes.size();
                      ++routeIndex) {
                     const MatchedBusRoute& matchedRoute = matchedBusRoutes[routeIndex];
                     const auto& timetable =
                         mapDefinition.aiTraffic
                             .timetableRoutes[matchedRoute.routeStart.timetableRouteIndex];
-                    if (busesPerRoute[routeIndex] == 0) {
-                        continue;
-                    }
-                    const auto departurePartitions =
-                        openbus::map::mapTrafficPartitionScheduledDepartures(
-                            timetable.scheduledDepartureMinutes, busesPerRoute[routeIndex]);
                     std::vector<openbus::map::MapTrafficPassengerStop> passengerStops;
                     passengerStops.reserve(timetable.stations.size());
                     for (const openbus::map::MapAiTimetableRoute::Station& station :
@@ -1470,14 +1464,13 @@ int main() {
                         const auto stationPosition =
                             openbus::map::mapAiTimetableStationPosition(timetable, station);
                         if (!stationPosition) {
-                            applicationLog.Log(
-                                "Skipping passenger stop with an invalid timetable track position: " +
-                                station.name + " in " + timetable.timetableKey);
+                            applicationLog.Log("Skipping passenger stop with an invalid timetable "
+                                               "track position: " +
+                                               station.name + " in " + timetable.timetableKey);
                             continue;
                         }
                         const auto& trackEntry =
-                            timetable
-                                .trackEntries[stationPosition->trackEntryIndex];
+                            timetable.trackEntries[stationPosition->trackEntryIndex];
                         if (trackEntry.pathIndex < 0) {
                             continue;
                         }
@@ -1491,6 +1484,41 @@ int main() {
                                  ? std::optional<double>(stationPosition->offsetMeters)
                                  : std::nullopt});
                     }
+                    std::size_t passengerRouteIndex = 0;
+                    try {
+                        if (!renderer.AddTrafficVehicle(
+                                matchedRoute.routeStart.entry.splineId,
+                                openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, matchedRoute.busPath,
+                                std::nullopt, busTrafficSpeedMetersPerSecond,
+                                {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred}, true,
+                                matchedRoute.routeStart.entry.laneSelector,
+                                matchedRoute.routeStart.routeSeed, {}, std::nullopt, 0,
+                                matchedRoute.routeStart.requiredSplineSequence,
+                                matchedRoute.routeStart.requiredSceneryPathSequence,
+                                matchedRoute.routeStart.stopAtRequiredSequenceEnd,
+                                matchedRoute.routeStart.allowIntermediarySegmentsBetweenRequired,
+                                matchedRoute.routeStart.allowReverseTraversalForRequired,
+                                passengerStops, timetable.lineName, timetable.destinationName,
+                                std::nullopt, true, std::nullopt, &passengerRouteIndex)) {
+                            applicationLog.Log(
+                                "Player passenger stops are unavailable for timetable route " +
+                                timetable.lineName +
+                                " because its mapped road route could not "
+                                "be registered.");
+                            continue;
+                        }
+                    } catch (const std::exception& error) {
+                        applicationLog.Log(
+                            "Player passenger stops are unavailable for timetable route " +
+                            timetable.lineName + ": " + error.what());
+                        continue;
+                    }
+                    if (busesPerRoute[routeIndex] == 0) {
+                        continue;
+                    }
+                    const auto departurePartitions =
+                        openbus::map::mapTrafficPartitionScheduledDepartures(
+                            timetable.scheduledDepartureMinutes, busesPerRoute[routeIndex]);
                     for (const auto& departures : departurePartitions) {
                         if (addedBuses >= busPoolLimit) {
                             break;
@@ -1516,8 +1544,8 @@ int main() {
                                     matchedRoute.routeStart
                                         .allowIntermediarySegmentsBetweenRequired,
                                     matchedRoute.routeStart.allowReverseTraversalForRequired,
-                                    passengerStops, timetable.lineName,
-                                    timetable.destinationName)) {
+                                    passengerStops, timetable.lineName, timetable.destinationName,
+                                    std::nullopt, false, passengerRouteIndex)) {
                                 ++addedBuses;
                             } else {
                                 applicationLog.Log(
@@ -1627,6 +1655,7 @@ int main() {
                 std::filesystem::path configPath;
                 double feetDistanceMeters = 0.0;
                 double heightMeters = 0.0;
+                double walkStrideLengthMeters = 1.4;
             };
             std::vector<HumanModel> humanModels;
             for (const std::string& configuredPath : configuredHumanModelPaths) {
@@ -1661,8 +1690,9 @@ int main() {
                                            humanConfigPath.generic_string() + ".");
                         continue;
                     }
-                    humanModels.push_back(
-                        {humanConfigPath, geometry->values[0], geometry->values[1]});
+                    humanModels.push_back({humanConfigPath, geometry->values[0],
+                                           geometry->values[1],
+                                           humanConfig.walkStrideLengthMeters});
                 } catch (const std::exception& error) {
                     applicationLog.Log("Skipping human configuration '" +
                                        humanConfigPath.generic_string() + "': " + error.what());
@@ -1692,7 +1722,8 @@ int main() {
                         if (renderer.AddHumanTrafficActor(
                                 humanSplineIds[candidate % humanSplineIds.size()],
                                 humanModel.configPath, humanModel.feetDistanceMeters,
-                                humanModel.heightMeters, humanSpeedMetersPerSecond,
+                                humanModel.heightMeters, humanModel.walkStrideLengthMeters,
+                                humanSpeedMetersPerSecond,
                                 static_cast<double>(candidate) * humanSpacingMeters,
                                 busPlacement.position[0], busPlacement.position[1],
                                 trafficRadiusMeters)) {

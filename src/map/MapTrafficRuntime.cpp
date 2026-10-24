@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <numbers>
 #include <map>
 #include <limits>
@@ -147,6 +148,20 @@ double mapTrafficLaneOffsetMeters(bool leftHandTraffic, double distanceMeters) {
     return leftHandTraffic ? -distanceMeters : distanceMeters;
 }
 
+double mapTrafficPassengerSideSign(bool leftHandTraffic) noexcept {
+    return leftHandTraffic ? -1.0 : 1.0;
+}
+
+double mapTrafficPassengerCurbOffsetMeters(bool leftHandTraffic, double laneOffsetMeters,
+                                           double vehicleWidthMeters, double clearanceMeters) {
+    if (!std::isfinite(laneOffsetMeters) || !std::isfinite(vehicleWidthMeters) ||
+        vehicleWidthMeters <= 0.0 || !std::isfinite(clearanceMeters) || clearanceMeters < 0.0) {
+        throw std::invalid_argument("Passenger curb offset inputs are invalid");
+    }
+    return laneOffsetMeters + mapTrafficPassengerSideSign(leftHandTraffic) *
+                                  (vehicleWidthMeters * 0.5 + clearanceMeters);
+}
+
 double mapTrafficHeadingToVehicleYawDegrees(double headingRadians) {
     if (!std::isfinite(headingRadians)) {
         throw std::invalid_argument("Map traffic heading must be finite");
@@ -170,6 +185,57 @@ std::size_t mapScheduledPassengerQueueSize(std::size_t nominalCount, double huma
 std::size_t mapScheduledPassengerQueueAfterDeparture(std::size_t waitingPassengers,
                                                      std::size_t initialPassengers) noexcept {
     return std::max(waitingPassengers, initialPassengers);
+}
+
+std::size_t mapScheduledPassengerModelIdentity(int stopId, std::size_t queuePosition) {
+    if (stopId <= 0) {
+        throw std::invalid_argument("Passenger model identity requires a positive stop ID");
+    }
+    const std::size_t stopIdentity = static_cast<std::size_t>(stopId);
+    if (queuePosition > (std::numeric_limits<std::size_t>::max)() - stopIdentity) {
+        throw std::overflow_error("Passenger model identity exceeds its supported range");
+    }
+    return stopIdentity + queuePosition;
+}
+
+std::array<double, 2> mapTrafficPassengerWorldOffset(bool leftHandTraffic, double headingRadians,
+                                                     double lateralOffsetMeters,
+                                                     double longitudinalOffsetMeters) {
+    if (!std::isfinite(headingRadians) || !std::isfinite(lateralOffsetMeters) ||
+        !std::isfinite(longitudinalOffsetMeters)) {
+        throw std::invalid_argument("Passenger world offset inputs must be finite");
+    }
+    const double sideOffset = lateralOffsetMeters * mapTrafficPassengerSideSign(leftHandTraffic);
+    return {sideOffset * std::cos(headingRadians) +
+                longitudinalOffsetMeters * std::sin(headingRadians),
+            -sideOffset * std::sin(headingRadians) +
+                longitudinalOffsetMeters * std::cos(headingRadians)};
+}
+
+std::vector<std::size_t> mapPassengerServiceUpdateOrder(const std::vector<int>& serviceStopIds,
+                                                        std::size_t rotation) {
+    std::map<int, std::vector<std::size_t>> activeIndicesByStop;
+    std::vector<std::size_t> inactiveIndices;
+    inactiveIndices.reserve(serviceStopIds.size());
+    for (std::size_t index = 0; index < serviceStopIds.size(); ++index) {
+        if (serviceStopIds[index] == 0) {
+            inactiveIndices.push_back(index);
+        } else {
+            activeIndicesByStop[serviceStopIds[index]].push_back(index);
+        }
+    }
+    std::vector<std::size_t> order;
+    order.reserve(serviceStopIds.size());
+    for (const auto& [stopId, activeIndices] : activeIndicesByStop) {
+        (void)stopId;
+        const std::size_t startIndex = rotation % activeIndices.size();
+        order.insert(order.end(), activeIndices.begin() + static_cast<std::ptrdiff_t>(startIndex),
+                     activeIndices.end());
+        order.insert(order.end(), activeIndices.begin(),
+                     activeIndices.begin() + static_cast<std::ptrdiff_t>(startIndex));
+    }
+    order.insert(order.end(), inactiveIndices.begin(), inactiveIndices.end());
+    return order;
 }
 
 MapPassengerServiceRuntime::MapPassengerServiceRuntime(std::size_t seatCount)
@@ -198,10 +264,9 @@ bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
             selectedSeats[seat] = true;
         }
     }
-    std::size_t remainingToAlight =
-        stop.passengersAlighting > queuedAlightingSeats_.size()
-            ? stop.passengersAlighting - queuedAlightingSeats_.size()
-            : 0;
+    std::size_t remainingToAlight = stop.passengersAlighting > queuedAlightingSeats_.size()
+                                        ? stop.passengersAlighting - queuedAlightingSeats_.size()
+                                        : 0;
     for (std::size_t seat = seatDestinations_.size(); seat > 0 && remainingToAlight > 0; --seat) {
         const std::size_t seatIndex = seat - 1;
         if (seatDestinations_[seatIndex] && !selectedSeats[seatIndex]) {
@@ -252,9 +317,8 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
 
     const double dwellAfterAlightingSeconds =
         std::max(0.0, dwellAtStartSeconds - elapsedForAlightingSeconds);
-    double activeSeconds =
-        std::min(std::max(0.0, elapsedSeconds - elapsedForAlightingSeconds),
-                 dwellAfterAlightingSeconds);
+    double activeSeconds = std::min(std::max(0.0, elapsedSeconds - elapsedForAlightingSeconds),
+                                    dwellAfterAlightingSeconds);
     std::size_t& waiting = waitingByStop_[currentStopId_];
     while (activeSeconds > 1.0e-9) {
         if (!boardingSeat_) {
@@ -271,7 +335,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
                 static_cast<std::size_t>(std::distance(seatDestinations_.begin(), seat));
             --waiting;
             boardingPassengerModelIndex_ =
-                static_cast<std::size_t>(currentStopId_) + waiting;
+                mapScheduledPassengerModelIdentity(currentStopId_, waiting);
             boardingAccumulatorSeconds_ = 0.0;
         }
         const double timeToBoard = boardingIntervalSeconds - boardingAccumulatorSeconds_;
@@ -353,9 +417,8 @@ std::size_t MapPassengerServiceRuntime::passengerCountOnSeat(std::size_t seatInd
 
 std::optional<std::size_t>
 MapPassengerServiceRuntime::passengerModelIndexOnSeat(std::size_t seatIndex) const noexcept {
-    return seatIndex < seatPassengerModelIndices_.size()
-               ? seatPassengerModelIndices_[seatIndex]
-               : std::nullopt;
+    return seatIndex < seatPassengerModelIndices_.size() ? seatPassengerModelIndices_[seatIndex]
+                                                         : std::nullopt;
 }
 
 std::size_t MapPassengerServiceRuntime::onboardPassengerCount() const noexcept {
@@ -1444,15 +1507,13 @@ mapTrafficRoutePositionOnSpline(const MapTrafficRoute& route, int splineId,
         const double routeSegmentStartMeters =
             segmentIndex == 0 ? 0.0 : route.cumulativeEndDistances[segmentIndex - 1];
         const double routeSegmentEndMeters = route.cumulativeEndDistances[segmentIndex];
-        const double routeSegmentLengthMeters =
-            routeSegmentEndMeters - routeSegmentStartMeters;
+        const double routeSegmentLengthMeters = routeSegmentEndMeters - routeSegmentStartMeters;
         const double splinePositionAtRouteStartMeters =
             segment.splineDistanceAtRouteStartMeters.value_or(
                 segment.reversed ? segment.spline.placement.length : 0.0);
         const double routeOffsetMeters =
-            segment.reversed
-                ? splinePositionAtRouteStartMeters - splinePositionMeters
-                : splinePositionMeters - splinePositionAtRouteStartMeters;
+            segment.reversed ? splinePositionAtRouteStartMeters - splinePositionMeters
+                             : splinePositionMeters - splinePositionAtRouteStartMeters;
         if (routeSegmentLengthMeters < 0.0 || !std::isfinite(routeSegmentLengthMeters) ||
             !std::isfinite(splinePositionAtRouteStartMeters) ||
             routeOffsetMeters < -positionToleranceMeters ||
@@ -1461,8 +1522,7 @@ mapTrafficRoutePositionOnSpline(const MapTrafficRoute& route, int splineId,
         }
         return MapTrafficRoutePosition{
             segmentIndex,
-            routeSegmentStartMeters +
-                std::clamp(routeOffsetMeters, 0.0, routeSegmentLengthMeters)};
+            routeSegmentStartMeters + std::clamp(routeOffsetMeters, 0.0, routeSegmentLengthMeters)};
     }
     return std::nullopt;
 }
