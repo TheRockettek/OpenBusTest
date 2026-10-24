@@ -167,8 +167,13 @@ std::size_t mapScheduledPassengerQueueSize(std::size_t nominalCount, double huma
     return static_cast<std::size_t>(std::floor(scaled + 0.5L));
 }
 
+std::size_t mapScheduledPassengerQueueAfterDeparture(std::size_t waitingPassengers,
+                                                     std::size_t initialPassengers) noexcept {
+    return std::max(waitingPassengers, initialPassengers);
+}
+
 MapPassengerServiceRuntime::MapPassengerServiceRuntime(std::size_t seatCount)
-    : seatDestinations_(seatCount) {}
+    : seatDestinations_(seatCount), seatPassengerModelIndices_(seatCount) {}
 
 void MapPassengerServiceRuntime::setWaitingPassengers(int stopId, std::size_t count) {
     if (stopId != 0) {
@@ -183,24 +188,38 @@ bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
     }
     currentStopId_ = stop.stopId;
     nextStopId_ = stop.nextStopId;
-    for (std::optional<int>& destination : seatDestinations_) {
-        if (destination.has_value() && *destination == stop.stopId) {
-            destination.reset();
+    queuedAlightingSeats_.clear();
+    alightingSeat_.reset();
+    alightingAccumulatorSeconds_ = 0.0;
+    std::vector<bool> selectedSeats(seatDestinations_.size(), false);
+    for (std::size_t seat = 0; seat < seatDestinations_.size(); ++seat) {
+        if (seatDestinations_[seat] && *seatDestinations_[seat] == stop.stopId) {
+            queuedAlightingSeats_.push_back(seat);
+            selectedSeats[seat] = true;
         }
     }
-    std::size_t remainingToAlight = stop.passengersAlighting;
+    std::size_t remainingToAlight =
+        stop.passengersAlighting > queuedAlightingSeats_.size()
+            ? stop.passengersAlighting - queuedAlightingSeats_.size()
+            : 0;
     for (std::size_t seat = seatDestinations_.size(); seat > 0 && remainingToAlight > 0; --seat) {
-        if (seatDestinations_[seat - 1].has_value()) {
-            seatDestinations_[seat - 1].reset();
+        const std::size_t seatIndex = seat - 1;
+        if (seatDestinations_[seatIndex] && !selectedSeats[seatIndex]) {
+            queuedAlightingSeats_.push_back(seatIndex);
+            selectedSeats[seatIndex] = true;
             --remainingToAlight;
         }
+    }
+    if (!queuedAlightingSeats_.empty()) {
+        alightingSeat_ = queuedAlightingSeats_.front();
+        queuedAlightingSeats_.erase(queuedAlightingSeats_.begin());
     }
     std::size_t& waiting = waitingByStop_[stop.stopId];
     const std::size_t available = (std::numeric_limits<std::size_t>::max)() - waiting;
     waiting += std::min(stop.waitingPassengers, available);
     dwellRemainingSeconds_ = stop.dwellSeconds;
     boardingAccumulatorSeconds_ = 0.0;
-    dwelling_ = stop.dwellSeconds > 0.0;
+    dwelling_ = stop.dwellSeconds > 0.0 || alightingSeat_.has_value();
     return true;
 }
 
@@ -209,13 +228,37 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
         return;
     }
     constexpr double boardingIntervalSeconds = 0.75;
+    constexpr double passengerAnimationSeconds = 0.75;
     const double dwellAtStartSeconds = dwellRemainingSeconds_;
-    double activeSeconds = std::min(elapsedSeconds, dwellAtStartSeconds);
-    double dwellAvailableSeconds = dwellAtStartSeconds;
+    double elapsedForAlightingSeconds = 0.0;
+    double alightingSeconds = elapsedSeconds;
+    while (alightingSeconds > 1.0e-9 && alightingSeat_) {
+        const double timeToAlight = passengerAnimationSeconds - alightingAccumulatorSeconds_;
+        const double alightingTime = std::min(alightingSeconds, timeToAlight);
+        alightingAccumulatorSeconds_ += alightingTime;
+        alightingSeconds -= alightingTime;
+        elapsedForAlightingSeconds += alightingTime;
+        if (alightingAccumulatorSeconds_ + 1.0e-9 >= passengerAnimationSeconds) {
+            seatDestinations_[*alightingSeat_].reset();
+            seatPassengerModelIndices_[*alightingSeat_].reset();
+            alightingSeat_.reset();
+            alightingAccumulatorSeconds_ = 0.0;
+            if (!queuedAlightingSeats_.empty()) {
+                alightingSeat_ = queuedAlightingSeats_.front();
+                queuedAlightingSeats_.erase(queuedAlightingSeats_.begin());
+            }
+        }
+    }
+
+    const double dwellAfterAlightingSeconds =
+        std::max(0.0, dwellAtStartSeconds - elapsedForAlightingSeconds);
+    double activeSeconds =
+        std::min(std::max(0.0, elapsedSeconds - elapsedForAlightingSeconds),
+                 dwellAfterAlightingSeconds);
     std::size_t& waiting = waitingByStop_[currentStopId_];
     while (activeSeconds > 1.0e-9) {
         if (!boardingSeat_) {
-            if (waiting == 0 || dwellAvailableSeconds < boardingIntervalSeconds) {
+            if (nextStopId_ == 0 || waiting == 0) {
                 break;
             }
             const auto seat = std::find_if(
@@ -227,16 +270,19 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
             boardingSeat_ =
                 static_cast<std::size_t>(std::distance(seatDestinations_.begin(), seat));
             --waiting;
+            boardingPassengerModelIndex_ =
+                static_cast<std::size_t>(currentStopId_) + waiting;
             boardingAccumulatorSeconds_ = 0.0;
         }
         const double timeToBoard = boardingIntervalSeconds - boardingAccumulatorSeconds_;
         const double boardingTime = std::min(activeSeconds, timeToBoard);
         boardingAccumulatorSeconds_ += boardingTime;
         activeSeconds -= boardingTime;
-        dwellAvailableSeconds -= boardingTime;
         if (boardingAccumulatorSeconds_ + 1.0e-9 >= boardingIntervalSeconds) {
             seatDestinations_[*boardingSeat_] = nextStopId_;
+            seatPassengerModelIndices_[*boardingSeat_] = boardingPassengerModelIndex_;
             boardingSeat_.reset();
+            boardingPassengerModelIndex_.reset();
             boardingAccumulatorSeconds_ = 0.0;
         }
     }
@@ -247,11 +293,13 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
         boardingAccumulatorSeconds_ += overrunSeconds;
         if (boardingAccumulatorSeconds_ + 1.0e-9 >= boardingIntervalSeconds) {
             seatDestinations_[*boardingSeat_] = nextStopId_;
+            seatPassengerModelIndices_[*boardingSeat_] = boardingPassengerModelIndex_;
             boardingSeat_.reset();
+            boardingPassengerModelIndex_.reset();
             boardingAccumulatorSeconds_ = 0.0;
         }
     }
-    if (dwellRemainingSeconds_ <= 1.0e-9 && !boardingSeat_) {
+    if (dwellRemainingSeconds_ <= 1.0e-9 && !boardingSeat_ && !alightingSeat_) {
         dwellRemainingSeconds_ = 0.0;
         dwelling_ = false;
     }
@@ -273,6 +321,27 @@ double MapPassengerServiceRuntime::boardingProgress() const noexcept {
     return boardingSeat_ ? std::clamp(boardingAccumulatorSeconds_ / 0.75, 0.0, 1.0) : 0.0;
 }
 
+std::optional<std::size_t> MapPassengerServiceRuntime::boardingSeatIndex() const noexcept {
+    return boardingSeat_;
+}
+
+bool MapPassengerServiceRuntime::alightingPassenger() const noexcept {
+    return alightingSeat_.has_value();
+}
+
+double MapPassengerServiceRuntime::alightingProgress() const noexcept {
+    return alightingSeat_ ? std::clamp(alightingAccumulatorSeconds_ / 0.75, 0.0, 1.0) : 0.0;
+}
+
+std::optional<std::size_t> MapPassengerServiceRuntime::alightingSeatIndex() const noexcept {
+    return alightingSeat_;
+}
+
+std::optional<std::size_t>
+MapPassengerServiceRuntime::boardingPassengerModelIndex() const noexcept {
+    return boardingPassengerModelIndex_;
+}
+
 std::size_t MapPassengerServiceRuntime::waitingPassengers(int stopId) const noexcept {
     const auto found = waitingByStop_.find(stopId);
     return found == waitingByStop_.end() ? 0 : found->second;
@@ -280,6 +349,13 @@ std::size_t MapPassengerServiceRuntime::waitingPassengers(int stopId) const noex
 
 std::size_t MapPassengerServiceRuntime::passengerCountOnSeat(std::size_t seatIndex) const noexcept {
     return seatIndex < seatDestinations_.size() && seatDestinations_[seatIndex].has_value() ? 1 : 0;
+}
+
+std::optional<std::size_t>
+MapPassengerServiceRuntime::passengerModelIndexOnSeat(std::size_t seatIndex) const noexcept {
+    return seatIndex < seatPassengerModelIndices_.size()
+               ? seatPassengerModelIndices_[seatIndex]
+               : std::nullopt;
 }
 
 std::size_t MapPassengerServiceRuntime::onboardPassengerCount() const noexcept {
@@ -453,8 +529,8 @@ MapTrafficPathRules mapTrafficRulesForPath(const std::vector<MapTileRule>& rules
             }
             groupRules->density = value;
         } else if (kind == "priority") {
-            if (value < 0.0 || value > 255.0) {
-                throw std::invalid_argument("Map traffic priority must be in [0, 255]");
+            if (value < 0.0 || value > 256.0) {
+                throw std::invalid_argument("Map traffic priority must be in [0, 256]");
             }
             groupRules->priority = value;
         } else if (kind == "no_cars") {
@@ -1348,6 +1424,49 @@ std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route
     return result;
 }
 
+std::optional<MapTrafficRoutePosition>
+mapTrafficRoutePositionOnSpline(const MapTrafficRoute& route, int splineId,
+                                std::size_t sceneryPathIndex, double splinePositionMeters,
+                                std::size_t firstSegmentIndex) {
+    if (splineId == 0 || !std::isfinite(splinePositionMeters) || splinePositionMeters < 0.0 ||
+        firstSegmentIndex > route.segments.size() ||
+        route.cumulativeEndDistances.size() != route.segments.size()) {
+        throw std::invalid_argument("Map traffic spline-position inputs are invalid");
+    }
+    constexpr double positionToleranceMeters = 1.0e-6;
+    for (std::size_t segmentIndex = firstSegmentIndex; segmentIndex < route.segments.size();
+         ++segmentIndex) {
+        const MapTrafficRouteSegment& segment = route.segments[segmentIndex];
+        if (segment.spline.placement.splineId != splineId ||
+            segment.sceneryPathIndex != sceneryPathIndex) {
+            continue;
+        }
+        const double routeSegmentStartMeters =
+            segmentIndex == 0 ? 0.0 : route.cumulativeEndDistances[segmentIndex - 1];
+        const double routeSegmentEndMeters = route.cumulativeEndDistances[segmentIndex];
+        const double routeSegmentLengthMeters =
+            routeSegmentEndMeters - routeSegmentStartMeters;
+        const double splinePositionAtRouteStartMeters =
+            segment.splineDistanceAtRouteStartMeters.value_or(
+                segment.reversed ? segment.spline.placement.length : 0.0);
+        const double routeOffsetMeters =
+            segment.reversed
+                ? splinePositionAtRouteStartMeters - splinePositionMeters
+                : splinePositionMeters - splinePositionAtRouteStartMeters;
+        if (routeSegmentLengthMeters < 0.0 || !std::isfinite(routeSegmentLengthMeters) ||
+            !std::isfinite(splinePositionAtRouteStartMeters) ||
+            routeOffsetMeters < -positionToleranceMeters ||
+            routeOffsetMeters > routeSegmentLengthMeters + positionToleranceMeters) {
+            continue;
+        }
+        return MapTrafficRoutePosition{
+            segmentIndex,
+            routeSegmentStartMeters +
+                std::clamp(routeOffsetMeters, 0.0, routeSegmentLengthMeters)};
+    }
+    return std::nullopt;
+}
+
 double mapTrafficRouteTravelHeadingRadians(const MapTrafficRoute& route, double distanceMeters,
                                            double lateralOffsetMeters) {
     if (!std::isfinite(distanceMeters) || !std::isfinite(lateralOffsetMeters) ||
@@ -1762,9 +1881,6 @@ MapTrafficRouteNetwork::endpointStatus(int splineId) const {
 }
 
 void MapTrafficLaneNetwork::addSegment(MapTrafficRouteSegment segment) {
-    if (finalized_) {
-        throw std::logic_error("Cannot add lanes to a finalized traffic network");
-    }
     double length = segment.spline.placement.length;
     if (segment.points.empty() && !segment.spline.placement.geometryValid) {
         throw std::invalid_argument("Traffic lane has invalid spline geometry");
@@ -1788,13 +1904,17 @@ void MapTrafficLaneNetwork::addSegment(MapTrafficRouteSegment segment) {
     }
     lengths_.push_back(length);
     segments_.push_back(std::move(segment));
+    finalized_ = false;
 }
 
 void MapTrafficLaneNetwork::finalize() {
     if (finalized_) {
         throw std::logic_error("Traffic lane network is already finalized");
     }
-    using Cell = std::pair<long long, long long>;
+    if (finalizedSegmentCount_ != 0) {
+        finalizeAppendedSegments();
+        return;
+    }
     constexpr double tolerance = 0.5;
     const auto cellFor = [](const std::array<double, 3>& position) -> Cell {
         return {static_cast<long long>(std::floor(position[0] / tolerance)),
@@ -1833,6 +1953,10 @@ void MapTrafficLaneNetwork::finalize() {
         if (segments_[index].spline.placement.splineId != 0) {
             lanesBySpline_[segments_[index].spline.placement.splineId].push_back(index);
         }
+    }
+    laneStartCells_ = starts;
+    for (std::size_t index = 0; index < laneEnds_.size(); ++index) {
+        laneEndCells_[cellFor(laneEnds_[index].position)].push_back(index);
     }
     next_.resize(segments_.size());
     incoming_.resize(segments_.size());
@@ -1894,6 +2018,7 @@ void MapTrafficLaneNetwork::finalize() {
     for (std::size_t orientedLane = 0; orientedLane < laneCount * 2; ++orientedLane) {
         timetableStarts[cellFor(orientedStart(orientedLane).position)].push_back(orientedLane);
     }
+    timetableStartCells_ = timetableStarts;
     for (std::size_t orientedLane = 0; orientedLane < laneCount * 2; ++orientedLane) {
         const MapTrafficPose end = orientedEnd(orientedLane);
         const Cell cell = cellFor(end.position);
@@ -1926,22 +2051,38 @@ void MapTrafficLaneNetwork::finalize() {
     // authoring gaps or height mismatches rather than intentional dead ends.
     constexpr double nearMissMeters = 3.0;
     stats_ = {segments_.size(), 0, 0};
+    nearMissByLane_.assign(segments_.size(), false);
     for (std::size_t index = 0; index < segments_.size(); ++index) {
         if (!next_[index].empty()) {
             continue;
         }
         ++stats_.deadEnds;
         const auto& end = laneEnds_[index];
-        for (std::size_t candidate = 0; candidate < segments_.size(); ++candidate) {
-            const auto& start = laneStarts_[candidate];
-            if (candidate != index &&
-                std::hypot(end.position[0] - start.position[0],
-                           end.position[1] - start.position[1]) <= nearMissMeters &&
-                std::abs(end.position[2] - start.position[2]) <= nearMissMeters &&
-                std::cos(end.headingRadians - start.headingRadians) > 0.5) {
-                ++stats_.nearMissDeadEnds;
-                break;
+        const Cell cell = cellFor(end.position);
+        bool hasNearMiss = false;
+        constexpr long long searchCells = static_cast<long long>(nearMissMeters / tolerance) + 1;
+        for (long long x = -searchCells; x <= searchCells && !hasNearMiss; ++x) {
+            for (long long y = -searchCells; y <= searchCells && !hasNearMiss; ++y) {
+                const auto bucket = laneStartCells_.find({cell.first + x, cell.second + y});
+                if (bucket == laneStartCells_.end()) {
+                    continue;
+                }
+                for (const std::size_t candidate : bucket->second) {
+                    const auto& start = laneStarts_[candidate];
+                    if (candidate != index &&
+                        std::hypot(end.position[0] - start.position[0],
+                                   end.position[1] - start.position[1]) <= nearMissMeters &&
+                        std::abs(end.position[2] - start.position[2]) <= nearMissMeters &&
+                        std::cos(end.headingRadians - start.headingRadians) > 0.5) {
+                        hasNearMiss = true;
+                        break;
+                    }
+                }
             }
+        }
+        if (hasNearMiss) {
+            nearMissByLane_[index] = true;
+            ++stats_.nearMissDeadEnds;
         }
     }
     for (const auto& [splineId, indexes] : lanesBySpline_) {
@@ -1955,6 +2096,250 @@ void MapTrafficLaneNetwork::finalize() {
     std::sort(spawnLanes_.begin(), spawnLanes_.end(), [](const auto& a, const auto& b) {
         return std::pair{a.splineId, a.laneSelector} < std::pair{b.splineId, b.laneSelector};
     });
+    finalizedSegmentCount_ = segments_.size();
+    finalized_ = true;
+}
+
+void MapTrafficLaneNetwork::finalizeAppendedSegments() {
+    constexpr double tolerance = 0.5;
+    constexpr double nearMissMeters = 3.0;
+    constexpr long long nearMissSearchCells =
+        static_cast<long long>(nearMissMeters / tolerance) + 1;
+    const auto cellFor = [](const std::array<double, 3>& position) -> Cell {
+        return {static_cast<long long>(std::floor(position[0] / tolerance)),
+                static_cast<long long>(std::floor(position[1] / tolerance))};
+    };
+    const std::size_t firstNewSegment = finalizedSegmentCount_;
+    const std::size_t segmentCount = segments_.size();
+    const std::size_t orientedLaneCount = segmentCount * 2;
+    next_.resize(segmentCount);
+    incoming_.resize(segmentCount, 0);
+    timetableNext_.assign(orientedLaneCount, {});
+    std::vector<bool> touchedOutgoing(segmentCount, false);
+    std::vector<bool> touchedTimetableOutgoing(orientedLaneCount, false);
+
+    for (std::size_t index = firstNewSegment; index < segmentCount; ++index) {
+        MapTrafficRoute single;
+        single.segments.push_back(segments_[index]);
+        single.totalLength = lengths_[index];
+        single.cumulativeEndDistances.push_back(single.totalLength);
+        const auto start = sampleMapTrafficRoute(single, 0.0, 0.0);
+        const auto end = sampleMapTrafficRoute(single, single.totalLength, 0.0);
+        if (!start || !end) {
+            throw std::runtime_error("Cannot sample traffic lane endpoints");
+        }
+        laneStarts_.push_back(*start);
+        laneEnds_.push_back(*end);
+        double maximumCurvature = 0.0;
+        for (double distance = 0.0; distance < single.totalLength; distance += 1.0) {
+            const double endDistance = std::min(distance + 2.0, single.totalLength);
+            const auto from = sampleMapTrafficRoute(single, distance, 0.0);
+            const auto to = sampleMapTrafficRoute(single, endDistance, 0.0);
+            const double span = std::hypot(to->position[0] - from->position[0],
+                                           to->position[1] - from->position[1]);
+            if (span > 1.0e-6) {
+                maximumCurvature =
+                    std::max(maximumCurvature,
+                             std::abs(std::remainder(to->headingRadians - from->headingRadians,
+                                                     2.0 * std::numbers::pi)) /
+                                 span);
+            }
+        }
+        maximumCurvatures_.push_back(maximumCurvature);
+        laneStartCells_[cellFor(start->position)].push_back(index);
+        laneEndCells_[cellFor(end->position)].push_back(index);
+        if (segments_[index].spline.placement.splineId != 0) {
+            lanesBySpline_[segments_[index].spline.placement.splineId].push_back(index);
+        }
+    }
+
+    const auto addConnection = [&](std::size_t from, std::size_t to) {
+        const MapTrafficPose& end = laneEnds_[from];
+        const MapTrafficPose& start = laneStarts_[to];
+        const double horizontal =
+            std::hypot(end.position[0] - start.position[0], end.position[1] - start.position[1]);
+        if ((from == to &&
+             (horizontal > 1.0e-6 || std::abs(end.position[2] - start.position[2]) > 1.0e-6)) ||
+            horizontal > tolerance || std::abs(end.position[2] - start.position[2]) > tolerance ||
+            std::cos(end.headingRadians - start.headingRadians) < -0.01) {
+            return;
+        }
+        next_[from].push_back(to);
+        ++incoming_[to];
+        touchedOutgoing[from] = true;
+    };
+    const auto forNearbyCells = [](const Cell& cell, long long radius, const auto& callback) {
+        for (long long x = -radius; x <= radius; ++x) {
+            for (long long y = -radius; y <= radius; ++y) {
+                callback(Cell{cell.first + x, cell.second + y});
+            }
+        }
+    };
+    for (std::size_t from = firstNewSegment; from < segmentCount; ++from) {
+        forNearbyCells(cellFor(laneEnds_[from].position), 1, [&](const Cell& cell) {
+            const auto bucket = laneStartCells_.find(cell);
+            if (bucket == laneStartCells_.end()) {
+                return;
+            }
+            for (const std::size_t to : bucket->second) {
+                addConnection(from, to);
+            }
+        });
+    }
+    for (std::size_t to = firstNewSegment; to < segmentCount; ++to) {
+        forNearbyCells(cellFor(laneStarts_[to].position), 1, [&](const Cell& cell) {
+            const auto bucket = laneEndCells_.find(cell);
+            if (bucket == laneEndCells_.end()) {
+                return;
+            }
+            for (const std::size_t from : bucket->second) {
+                if (from < firstNewSegment) {
+                    addConnection(from, to);
+                }
+            }
+        });
+    }
+    for (std::size_t from = 0; from < segmentCount; ++from) {
+        if (!touchedOutgoing[from]) {
+            continue;
+        }
+        const MapTrafficPose& end = laneEnds_[from];
+        std::stable_sort(
+            next_[from].begin(), next_[from].end(), [&](std::size_t first, std::size_t second) {
+                return std::cos(end.headingRadians - laneStarts_[first].headingRadians) >
+                       std::cos(end.headingRadians - laneStarts_[second].headingRadians);
+            });
+    }
+
+    const auto orientedStart = [&](std::size_t orientedLane) {
+        if (orientedLane < segmentCount) {
+            return laneStarts_[orientedLane];
+        }
+        MapTrafficPose pose = laneEnds_[orientedLane - segmentCount];
+        pose.headingRadians += std::numbers::pi;
+        return pose;
+    };
+    const auto orientedEnd = [&](std::size_t orientedLane) {
+        if (orientedLane < segmentCount) {
+            return laneEnds_[orientedLane];
+        }
+        MapTrafficPose pose = laneStarts_[orientedLane - segmentCount];
+        pose.headingRadians += std::numbers::pi;
+        return pose;
+    };
+    timetableStartCells_.clear();
+    for (std::size_t orientedLane = 0; orientedLane < orientedLaneCount; ++orientedLane) {
+        timetableStartCells_[cellFor(orientedStart(orientedLane).position)].push_back(orientedLane);
+    }
+    const auto addTimetableConnection = [&](std::size_t from, std::size_t to) {
+        const MapTrafficPose end = orientedEnd(from);
+        const MapTrafficPose start = orientedStart(to);
+        const double horizontal =
+            std::hypot(end.position[0] - start.position[0], end.position[1] - start.position[1]);
+        if (horizontal > tolerance || std::abs(end.position[2] - start.position[2]) > tolerance ||
+            std::cos(end.headingRadians - start.headingRadians) < -0.01) {
+            return;
+        }
+        timetableNext_[from].push_back(to);
+        touchedTimetableOutgoing[from] = true;
+    };
+    for (std::size_t from = 0; from < orientedLaneCount; ++from) {
+        const MapTrafficPose end = orientedEnd(from);
+        forNearbyCells(cellFor(end.position), 1, [&](const Cell& cell) {
+            const auto bucket = timetableStartCells_.find(cell);
+            if (bucket == timetableStartCells_.end()) {
+                return;
+            }
+            for (const std::size_t to : bucket->second) {
+                addTimetableConnection(from, to);
+            }
+        });
+    }
+    for (std::size_t from = 0; from < orientedLaneCount; ++from) {
+        if (!touchedTimetableOutgoing[from]) {
+            continue;
+        }
+        const MapTrafficPose end = orientedEnd(from);
+        std::stable_sort(
+            timetableNext_[from].begin(), timetableNext_[from].end(),
+            [&](std::size_t first, std::size_t second) {
+                return std::cos(end.headingRadians - orientedStart(first).headingRadians) >
+                       std::cos(end.headingRadians - orientedStart(second).headingRadians);
+            });
+    }
+
+    std::vector<bool> nearMissCandidates(segmentCount, false);
+    for (std::size_t index = firstNewSegment; index < segmentCount; ++index) {
+        nearMissCandidates[index] = true;
+        forNearbyCells(cellFor(laneStarts_[index].position), nearMissSearchCells,
+                       [&](const Cell& cell) {
+                           const auto bucket = laneEndCells_.find(cell);
+                           if (bucket == laneEndCells_.end()) {
+                               return;
+                           }
+                           for (const std::size_t from : bucket->second) {
+                               if (from < firstNewSegment) {
+                                   nearMissCandidates[from] = true;
+                               }
+                           }
+                       });
+    }
+    for (std::size_t index = 0; index < segmentCount; ++index) {
+        if (touchedOutgoing[index]) {
+            nearMissCandidates[index] = true;
+        }
+    }
+    nearMissByLane_.resize(segmentCount, false);
+    for (std::size_t index = 0; index < segmentCount; ++index) {
+        if (!nearMissCandidates[index]) {
+            continue;
+        }
+        nearMissByLane_[index] = false;
+        if (!next_[index].empty()) {
+            continue;
+        }
+        const MapTrafficPose& end = laneEnds_[index];
+        forNearbyCells(cellFor(end.position), nearMissSearchCells, [&](const Cell& cell) {
+            if (nearMissByLane_[index]) {
+                return;
+            }
+            const auto bucket = laneStartCells_.find(cell);
+            if (bucket == laneStartCells_.end()) {
+                return;
+            }
+            for (const std::size_t candidate : bucket->second) {
+                const MapTrafficPose& start = laneStarts_[candidate];
+                if (candidate != index &&
+                    std::hypot(end.position[0] - start.position[0],
+                               end.position[1] - start.position[1]) <= nearMissMeters &&
+                    std::abs(end.position[2] - start.position[2]) <= nearMissMeters &&
+                    std::cos(end.headingRadians - start.headingRadians) > 0.5) {
+                    nearMissByLane_[index] = true;
+                    break;
+                }
+            }
+        });
+    }
+    stats_ = {segmentCount, 0, 0};
+    for (std::size_t index = 0; index < segmentCount; ++index) {
+        if (next_[index].empty()) {
+            ++stats_.deadEnds;
+            stats_.nearMissDeadEnds += nearMissByLane_[index] ? 1U : 0U;
+        }
+    }
+    spawnLanes_.clear();
+    for (const auto& [splineId, indexes] : lanesBySpline_) {
+        for (std::size_t laneSelector = 0; laneSelector < indexes.size(); ++laneSelector) {
+            const std::size_t index = indexes[laneSelector];
+            if (segments_[index].points.empty() && !next_[index].empty()) {
+                spawnLanes_.push_back({splineId, laneSelector});
+            }
+        }
+    }
+    std::sort(spawnLanes_.begin(), spawnLanes_.end(), [](const auto& a, const auto& b) {
+        return std::pair{a.splineId, a.laneSelector} < std::pair{b.splineId, b.laneSelector};
+    });
+    finalizedSegmentCount_ = segmentCount;
     finalized_ = true;
 }
 
@@ -4215,16 +4600,13 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                          (junctionArrivals[highIndex] == junctionArrivals[lowIndex] &&
                           highIndex < lowIndex))))));
                 const bool highHasAuthoredPriority =
-                    priorities[highIndex] < priorities[lowIndex] || tieBreaksInFavorOfHigh;
+                    priorities[highIndex] > priorities[lowIndex] || tieBreaksInFavorOfHigh;
                 const bool committedTurnPrecedenceDiffers =
-                    committedTurningInJunction[highIndex] !=
-                    committedTurningInJunction[lowIndex];
-                const bool highHasPriority =
-                    committedTurnPrecedenceDiffers
-                        ? committedTurningInJunction[highIndex] != 0
-                        : highHasAuthoredPriority;
-                if (highIndex == lowIndex ||
-                    !highHasPriority || highHeld) {
+                    committedTurningInJunction[highIndex] != committedTurningInJunction[lowIndex];
+                const bool highHasPriority = committedTurnPrecedenceDiffers
+                                                 ? committedTurningInJunction[highIndex] != 0
+                                                 : highHasAuthoredPriority;
+                if (highIndex == lowIndex || !highHasPriority || highHeld) {
                     continue;
                 }
                 const auto& lowPosition = occupied[obstacles.size() + lowIndex].pose.position;
@@ -4299,9 +4681,9 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     actors[first]->junctionWaitSeconds != actors[second]->junctionWaitSeconds) {
                     return actors[first]->junctionWaitSeconds > actors[second]->junctionWaitSeconds;
                 }
-                // OMSI assigns higher priority to lower values; waiting time only orders ties.
+                // Higher authored priority wins; waiting time only orders priority ties.
                 if (priorities[first] != priorities[second]) {
-                    return priorities[first] < priorities[second];
+                    return priorities[first] > priorities[second];
                 }
                 if (deferrableSamplingQueries) {
                     if (movementTurnClass[first] != movementTurnClass[second]) {

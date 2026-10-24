@@ -1467,26 +1467,29 @@ int main() {
                     passengerStops.reserve(timetable.stations.size());
                     for (const openbus::map::MapAiTimetableRoute::Station& station :
                          timetable.stations) {
-                        if (station.trackEntryIndex < 0 ||
-                            static_cast<std::size_t>(station.trackEntryIndex) >=
-                                timetable.trackEntries.size()) {
+                        const auto stationPosition =
+                            openbus::map::mapAiTimetableStationPosition(timetable, station);
+                        if (!stationPosition) {
                             applicationLog.Log(
-                                "Skipping passenger stop outside the timetable track-entry list: " +
+                                "Skipping passenger stop with an invalid timetable track position: " +
                                 station.name + " in " + timetable.timetableKey);
                             continue;
                         }
                         const auto& trackEntry =
                             timetable
-                                .trackEntries[static_cast<std::size_t>(station.trackEntryIndex)];
+                                .trackEntries[stationPosition->trackEntryIndex];
                         if (trackEntry.pathIndex < 0) {
                             continue;
                         }
                         passengerStops.push_back(
                             {station.id, trackEntry.splineId,
                              static_cast<std::size_t>(trackEntry.pathIndex),
-                             static_cast<std::size_t>(station.trackEntryIndex),
+                             stationPosition->trackEntryIndex,
                              openbus::map::mapScheduledPassengerQueueSize(4, scheduledHumanScale),
-                             0, 8.0, 0.0});
+                             0, 8.0, 0.0,
+                             station.positionOnPreviousTrackEntryMeters
+                                 ? std::optional<double>(stationPosition->offsetMeters)
+                                 : std::nullopt});
                     }
                     for (const auto& departures : departurePartitions) {
                         if (addedBuses >= busPoolLimit) {

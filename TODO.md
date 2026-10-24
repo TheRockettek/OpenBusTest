@@ -226,15 +226,34 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   directed StnLink paths can trigger scheduled AI-bus stops and boarding;
   passengers are assigned their next stop as a destination. Scheduled queues
   are shared by stop ID and render as scheduled humans independently of the
-  ambient AI pedestrian cap. Reserved boarders animate from the waiting queue
-  toward the bus's roadside flank for the boarding interval; authored cabin
-  path-link traversal is not connected yet. Player buses board and alight at
-  nearby mapped calls when stopped and direction-aligned. Accurate
-  within-spline stop projection, passenger mass, seated-human rendering,
-  passenger ticket purchase, fare transactions, and physical/audible coin
-  output remain incomplete. Shared queue consumption now
-  prevents simultaneous buses from boarding the same passenger; update order
-  determines priority. Map ticket-pack/currency records now feed ticket and
+  ambient AI pedestrian cap. Scheduled AI departures replenish depleted
+  queues to their initial size, while preserving larger queues when demand
+  remains. Reserved boarders animate from the roadside flank
+  queue position through the configured cabin path into their assigned seat on
+  both scheduled AI and player buses; the same passenger model identity is
+  retained from the queue through boarding, the occupied seat, and alighting.
+  Terminal calls without an onward stop do not board riders or consume the
+  shared stop queue.
+  At destination stops, seated
+  passengers now animate from their assigned seat to the roadside before the
+  seat is freed; when cabin path links are connected, boarders and alighters
+  follow the directed passenger-path graph between the configured entry/exit
+  and their seat. Shared queue consumption gives simultaneous buses distinct
+  passengers and preserves each rider identity through seating; update order
+  determines which bus boards first. A scheduled AI bus now remains in service
+  at its route end until its final-stop passenger alighting completes.
+  Boarding animations retain the exact timetable call index, avoiding a
+  mismatched stop position when a route repeats a stop ID or shares it with
+  another route. The player-bus retrigger latch also follows that exact route
+  call rather than a stop ID shared by unrelated calls.
+  TTP station offsets project onto the correct preceding spline entry, including
+  subdivided and reversed runtime route segments.
+  Disconnected
+  or incomplete cabin graphs fall back to direct seat-to-curb animation.
+  Player buses board and alight at nearby mapped calls when stopped and
+  direction-aligned. Passenger mass, passenger ticket purchase, fare
+  transactions, and physical/audible coin output remain incomplete. Map
+  ticket-pack/currency records now feed ticket and
   change-coin script macros for player and AI buses.
 - [ ] Complete registration persistence and full selection UI; implement or
   explicitly scope out AI/network sections, route/timetable/HOF data, and
@@ -254,11 +273,17 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
 The following OMSI BUS/model features are currently absent or only represented
 by parser alignment and should not be described as supported:
 
-- Actual passenger-cabin connection records, passenger movement, and passenger
-  mass. A standalone service runtime models timed boarding/alighting and seat
-  occupancy but is not connected to live stops; basic `[passengercabin]`
-  positions, illumination groups, and entries/exits are loaded and covered by
-  `OpenBusVehicleConfigProbe`.
+- Passenger mass and native cabin/door semantics. Timed boarding/alighting is
+  connected to live scheduled
+  AI/player bus stops, with movement following configured entry/exit path links
+  when a connected cabin graph is available, fallback boarding/alighting
+  animations between the roadside and assigned cabin seats, and occupied seats
+  rendered. Basic   `[passengercabin]` seat positions, illumination groups, entries/exits, and
+  path links are loaded and covered by `OpenBusVehicleConfigProbe`. When a
+  connected graph exists, pathfinding follows one-way and bidirectional cabin
+  links, and timetable offsets position stops within their mapped spline
+  segments; detailed native door/aisle semantics and passenger mass remain
+  unverified.
 - Route/path selection, timetable/HOF lookup, stop announcements, and
   arrival-board data used by the script system. Basic `[paths]` point/link
   graphs and step metadata are loaded and covered by `OpenBusVehicleConfigProbe`.
@@ -405,11 +430,13 @@ for alignment is not mistaken for supporting it.
   phase schedule; this does not provide general scenery-variable inheritance.
 - [ ] Complete passenger-cabin behavior for `[linkToNextVeh]`,
   `[linkToPrevVeh]`, and `[stamper]`; basic `[drivpos]`, `[passpos]`,
-  `[entry]`, `[exit]`, and illumination records do not yet provide passenger
-  movement, boarding, or ticket interaction.
+  `[entry]`, `[exit]`, and illumination records support stop-service seating
+  and boarding animation, and connected authored cabin path links are used for
+  passenger movement. Linked-vehicle cabin traversal, stamper behavior, and
+  ticket interaction are not yet implemented.
 - [~] Load `[pathlink_oneway]` and preserve its directed-link flag alongside
   ordinary `[pathlink]` records; `OpenBusVehicleConfigProbe` distinguishes both
-  forms. Passenger movement does not yet consume the graph, and extended
+  forms. Passenger movement follows connected directed cabin paths; extended
   `[pathpnt]` records and `[stepsoundpack]` runtime use remain incomplete.
 - [~] Player sound CFG runs untriggered `[sound]` records with `[volcurve]`
   controls as ambient loops and applies their configured base gain. This

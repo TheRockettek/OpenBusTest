@@ -6,10 +6,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace openbus::map {
@@ -35,7 +37,7 @@ struct MapTrafficPathRules {
     bool busesAllowed = false;
     bool trucksAllowed = true;
     bool overtakingProhibited = false;
-    // OMSI traffic priority: lower values have right-of-way.
+    // Higher authored traffic-priority values have right-of-way.
     double priority = 128.0;
 };
 
@@ -80,6 +82,11 @@ struct MapTrafficRoute {
     double totalLength = 0.0;
     bool closed = false;
     std::optional<double> loopStartDistance;
+};
+
+struct MapTrafficRoutePosition {
+    std::size_t segmentIndex = 0;
+    double distanceMeters = 0.0;
 };
 
 struct MapTrafficSpawnCandidate {
@@ -204,6 +211,8 @@ mapTrafficAllocateScheduledBuses(const std::vector<std::size_t>& departureCounts
 // Scheduled passengers are scaled independently from the ambient pedestrian cap.
 std::size_t mapScheduledPassengerQueueSize(std::size_t nominalCount, double humanScale,
                                            std::size_t safetyLimit = 100000) noexcept;
+std::size_t mapScheduledPassengerQueueAfterDeparture(std::size_t waitingPassengers,
+                                                     std::size_t initialPassengers) noexcept;
 
 struct MapPassengerStopService {
     int stopId = 0;
@@ -222,6 +231,7 @@ struct MapTrafficPassengerStop {
     std::size_t passengersAlighting = 0;
     double dwellSeconds = 0.0;
     double routeDistanceMeters = 0.0;
+    std::optional<double> splinePositionMeters;
 };
 
 class MapPassengerServiceRuntime {
@@ -237,19 +247,30 @@ class MapPassengerServiceRuntime {
     int currentStopId() const noexcept;
     bool boardingPassenger() const noexcept;
     double boardingProgress() const noexcept;
+    std::optional<std::size_t> boardingSeatIndex() const noexcept;
+    bool alightingPassenger() const noexcept;
+    double alightingProgress() const noexcept;
+    std::optional<std::size_t> alightingSeatIndex() const noexcept;
+    std::optional<std::size_t> boardingPassengerModelIndex() const noexcept;
     std::size_t waitingPassengers(int stopId) const noexcept;
     std::size_t passengerCountOnSeat(std::size_t seatIndex) const noexcept;
+    std::optional<std::size_t> passengerModelIndexOnSeat(std::size_t seatIndex) const noexcept;
     std::size_t onboardPassengerCount() const noexcept;
     std::size_t seatCount() const noexcept;
 
   private:
     std::vector<std::optional<int>> seatDestinations_;
+    std::vector<std::optional<std::size_t>> seatPassengerModelIndices_;
     std::unordered_map<int, std::size_t> waitingByStop_;
     int currentStopId_ = 0;
     int nextStopId_ = 0;
     double dwellRemainingSeconds_ = 0.0;
     double boardingAccumulatorSeconds_ = 0.0;
     std::optional<std::size_t> boardingSeat_;
+    std::optional<std::size_t> boardingPassengerModelIndex_;
+    std::vector<std::size_t> queuedAlightingSeats_;
+    std::optional<std::size_t> alightingSeat_;
+    double alightingAccumulatorSeconds_ = 0.0;
     bool dwelling_ = false;
 };
 
@@ -308,6 +329,10 @@ MapTrafficRoute subdivideMapTrafficRoute(const MapTrafficRoute& route);
 std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route,
                                                     double distanceMeters,
                                                     double lateralOffsetMeters);
+std::optional<MapTrafficRoutePosition>
+mapTrafficRoutePositionOnSpline(const MapTrafficRoute& route, int splineId,
+                                std::size_t sceneryPathIndex, double splinePositionMeters,
+                                std::size_t firstSegmentIndex = 0);
 MapTrafficTurnSignal mapTrafficActorTurnSignal(const MapTrafficActor& actor,
                                                double activationDistanceMeters = 35.0);
 std::vector<MapTrafficSpawnCandidate> mapTrafficRouteSpawnCandidates(const MapTrafficRoute& route,
@@ -434,6 +459,8 @@ class MapTrafficLaneNetwork {
                                                        std::size_t selectionSeed) const;
 
   private:
+    using Cell = std::pair<long long, long long>;
+
     std::optional<MapTrafficLaneStart>
     selectLane(MapTrafficVehicleFilter vehicle, std::size_t selectionSeed,
                const std::vector<MapTrafficLaneStart>& candidates) const;
@@ -449,7 +476,14 @@ class MapTrafficLaneNetwork {
     std::vector<std::size_t> incoming_;
     std::vector<double> maximumCurvatures_;
     MapTrafficLaneNetworkStats stats_;
+    std::map<Cell, std::vector<std::size_t>> laneStartCells_;
+    std::map<Cell, std::vector<std::size_t>> laneEndCells_;
+    std::map<Cell, std::vector<std::size_t>> timetableStartCells_;
+    std::vector<bool> nearMissByLane_;
+    std::size_t finalizedSegmentCount_ = 0;
     bool finalized_ = false;
+
+    void finalizeAppendedSegments();
 };
 
 } // namespace openbus::map

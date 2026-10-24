@@ -342,7 +342,11 @@ class RenderLoop {
     std::unordered_map<int, std::size_t> scheduledPassengerQueues_;
     std::unordered_map<int, std::size_t> scheduledPassengerInitialQueues_;
     std::optional<int> playerPassengerStopLatch_;
+    std::optional<std::size_t> playerPassengerStopLatchRouteIndex_;
+    std::optional<std::size_t> playerPassengerStopLatchIndex_;
     std::optional<int> activePlayerPassengerStop_;
+    std::optional<std::size_t> activePlayerPassengerStopRouteIndex_;
+    std::optional<std::size_t> activePlayerPassengerStopIndex_;
     std::size_t targetRoadTrafficCount_ = 0;
     std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> targetRoadGroupPopulations_;
     bool useGroupRoadPopulation_ = false;

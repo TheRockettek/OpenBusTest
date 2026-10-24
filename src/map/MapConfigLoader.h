@@ -146,9 +146,10 @@ struct MapAiTimetableRoute {
         int trackEntryIndex = 0;
         std::string name;
         int tileIndex = 0;
-        // The four trailing [station] positions are retained verbatim. Their
-        // semantics are not needed to build a safe route-stop location.
+        // The four trailing [station] positions are retained verbatim; the
+        // third is the station offset within its associated TTR track entry.
         std::array<std::string, 4> opaqueFields;
+        std::optional<double> positionOnPreviousTrackEntryMeters;
         bool operator==(const Station&) const = default;
     };
     std::vector<Station> stations;
@@ -166,6 +167,15 @@ struct MapAiTimetableRoute {
     // Parsed schedule values are minutes after midnight; dispatch is handled separately.
     std::vector<double> scheduledDepartureMinutes;
 };
+
+struct MapAiTimetableStationPosition {
+    std::size_t trackEntryIndex = 0;
+    double offsetMeters = 0.0;
+};
+
+std::optional<MapAiTimetableStationPosition>
+mapAiTimetableStationPosition(const MapAiTimetableRoute& route,
+                              const MapAiTimetableRoute::Station& station);
 
 struct MapAiBusStop {
     std::string name;

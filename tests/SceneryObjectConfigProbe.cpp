@@ -76,6 +76,7 @@ int main(int argc, char** argv) {
                   "[use_traffic_light]\n0\n"
                   "[traffic_light_stop]\n0\n1\n2\n"
                   "[traffic_light_stop]\n1\n2\n2\n"
+                  "[traffic_light_stop]\n2\n3\n2\n"
                   "[traffic_light_jump]\n0\n25\n6\n3\n"
                   "[path]\n"
                   "-1\n-2\n-3\n-4\n-5\n-6\n-7\n-8\n1\n1\n2\n0\n";
@@ -147,7 +148,7 @@ int main(int argc, char** argv) {
         valid &= require(
             hasExpectedSignal,
             "traffic-light phases and path association are retained");
-        valid &= require(configuration.trafficLightStops.size() == 2 &&
+        valid &= require(configuration.trafficLightStops.size() == 3 &&
                              configuration.trafficLightBusPriorityRules.size() == 1,
                          "conditional traffic-light records are parsed");
         if (hasExpectedSignal) {
@@ -159,12 +160,13 @@ int main(int argc, char** argv) {
                                  program->controlPoints[1].lightIndex == 1 &&
                                  program->controlPoints[1].timeSeconds == 2.0 &&
                                  program->controlPoints[1].ifRequest &&
+                                 configuration.trafficLightSchedules[2]->program == program &&
                                  program->busPriorityRules.size() == 1 &&
                                  program->busPriorityRules[0].phaseToInterrupt == 0 &&
                                  program->busPriorityRules[0].triggerDistanceMeters == 25.0 &&
                                  program->busPriorityRules[0].targetPhase == 6 &&
                                  program->busPriorityRules[0].minimumGreenSeconds == 3.0,
-                             "SCO jump records become bus-preemption rules");
+                             "unreferenced signal stop points are ignored while bus-preemption rules remain");
         }
         if (hasExpectedSignal) {
             valid &= require(

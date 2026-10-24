@@ -697,6 +697,13 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                     station.tileIndex = tileIndex;
                     std::copy_n(stationFields.begin() + 4, station.opaqueFields.size(),
                                 station.opaqueFields.begin());
+                    double positionOnPreviousTrackEntryMeters = 0.0;
+                    if (parseReal(station.opaqueFields[2],
+                                  positionOnPreviousTrackEntryMeters) &&
+                        positionOnPreviousTrackEntryMeters >= 0.0) {
+                        station.positionOnPreviousTrackEntryMeters =
+                            positionOnPreviousTrackEntryMeters;
+                    }
                     route.stations.push_back(std::move(station));
                     route.stationIds.push_back(stationId);
                     passengerTimetable.stationIds.push_back(stationId);
@@ -918,7 +925,9 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                     }
                 }
             } else if (!route.trackEntries.empty()) {
-                station.trackEntryIndex = static_cast<int>(route.trackEntries.size() - 1);
+                station.trackEntryIndex = static_cast<int>(route.trackEntries.size());
+                station.positionOnPreviousTrackEntryMeters =
+                    route.trackEntries.back().lengthMeters;
             } else {
                 completeRoute = false;
                 break;
@@ -1645,6 +1654,33 @@ MapCurrencyDefinition loadMapCurrencyDefinition(const std::filesystem::path& cur
         }
     }
     return definition;
+}
+
+std::optional<MapAiTimetableStationPosition>
+mapAiTimetableStationPosition(const MapAiTimetableRoute& route,
+                              const MapAiTimetableRoute::Station& station) {
+    if (station.trackEntryIndex < 0 || route.trackEntries.empty()) {
+        return std::nullopt;
+    }
+    const std::size_t trackEntryIndex = static_cast<std::size_t>(station.trackEntryIndex);
+    if (station.positionOnPreviousTrackEntryMeters) {
+        if (trackEntryIndex > route.trackEntries.size()) {
+            return std::nullopt;
+        }
+        const std::size_t previousEntryIndex =
+            trackEntryIndex == 0 ? 0 : trackEntryIndex - 1;
+        const double offsetMeters = *station.positionOnPreviousTrackEntryMeters;
+        const double previousEntryLength = route.trackEntries[previousEntryIndex].lengthMeters;
+        if (!std::isfinite(offsetMeters) || offsetMeters < 0.0 ||
+            !std::isfinite(previousEntryLength) || offsetMeters > previousEntryLength) {
+            return std::nullopt;
+        }
+        return MapAiTimetableStationPosition{previousEntryIndex, offsetMeters};
+    }
+    if (trackEntryIndex >= route.trackEntries.size()) {
+        return std::nullopt;
+    }
+    return MapAiTimetableStationPosition{trackEntryIndex, 0.0};
 }
 
 std::vector<MapAiPassengerStopCall>

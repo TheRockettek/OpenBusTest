@@ -138,7 +138,7 @@ void runFixtureProbe() {
         std::filesystem::create_directories(timetableDirectory);
         writeUtf16Le(timetableDirectory / "FixtureTrip.ttp",
                      "[trip]\nFixtureLine\nTown End\n12\n"
-                     "[station]\n15479\n1\nMain Stop\n0\n0\n0\n0\n5\n"
+                     "[station]\n15479\n1\nMain Stop\n0\n0\n0\n3.5\n5\n"
                      "[station]\n15480\n1\nInvalid Tile\n-1\n0\n0\n0\n5\n");
         writeUtf16Le(timetableDirectory / "BusOnly.ttp",
                      "[trip]\n\nTown End\n12\n"
@@ -577,7 +577,7 @@ void runFixtureProbe() {
                     definition.aiTraffic.timetableRoutes[0].stationCount == 1 &&
                     definition.aiTraffic.timetableRoutes[0].stations ==
                         std::vector<openbus::map::MapAiTimetableRoute::Station>{
-                            {15479, 1, "Main Stop", 0, {"0", "0", "0", "5"}}} &&
+                            {15479, 1, "Main Stop", 0, {"0", "0", "3.5", "5"}, 3.5}} &&
                     definition.aiTraffic.timetableRoutes[0].splineIds ==
                         std::vector<int>{30273, 30274} &&
                     definition.aiTraffic.timetableRoutes[0].trackEntries ==
@@ -587,6 +587,25 @@ void runFixtureProbe() {
                     definition.aiTraffic.timetableRoutes[0].scheduledDepartureMinutes ==
                         std::vector<double>{405.0, 495.0},
                 "timetable routes retain ordered path selectors, stations, and departures");
+        const auto preciseStationPosition = openbus::map::mapAiTimetableStationPosition(
+            definition.aiTraffic.timetableRoutes[0],
+            definition.aiTraffic.timetableRoutes[0].stations[0]);
+        require(preciseStationPosition && preciseStationPosition->trackEntryIndex == 0 &&
+                    preciseStationPosition->offsetMeters == 3.5,
+                "timetable stop positions map to the offset on their preceding track entry");
+        auto firstStationPosition = definition.aiTraffic.timetableRoutes[0].stations[0];
+        firstStationPosition.trackEntryIndex = 0;
+        firstStationPosition.positionOnPreviousTrackEntryMeters = 2.0;
+        const auto firstTrackPosition = openbus::map::mapAiTimetableStationPosition(
+            definition.aiTraffic.timetableRoutes[0], firstStationPosition);
+        require(firstTrackPosition && firstTrackPosition->trackEntryIndex == 0 &&
+                    firstTrackPosition->offsetMeters == 2.0,
+                "the first timetable station can be positioned within the first track entry");
+        auto invalidStationPosition = definition.aiTraffic.timetableRoutes[0].stations[0];
+        invalidStationPosition.positionOnPreviousTrackEntryMeters = 10.5;
+        require(!openbus::map::mapAiTimetableStationPosition(
+                    definition.aiTraffic.timetableRoutes[0], invalidStationPosition),
+                "timetable stop offsets outside their track entry are rejected");
         const auto busOnlyTimetable =
             std::find_if(definition.aiTraffic.passengerTimetables.begin(),
                          definition.aiTraffic.passengerTimetables.end(),
@@ -612,12 +631,18 @@ void runFixtureProbe() {
                     definition.aiTraffic.timetableRoutes[1].timetableKey == "busonly" &&
                     definition.aiTraffic.timetableRoutes[1].stations.size() == 2 &&
                     definition.aiTraffic.timetableRoutes[1].stations[0].trackEntryIndex == 0 &&
-                    definition.aiTraffic.timetableRoutes[1].stations[1].trackEntryIndex == 1 &&
+                    definition.aiTraffic.timetableRoutes[1].stations[1].trackEntryIndex == 2 &&
                     definition.aiTraffic.timetableRoutes[1].splineIds ==
                         std::vector<int>{1, 2} &&
                     openbus::map::mapAiPassengerTimetableHasResolvedLinks(definition.aiTraffic,
                                                                           *busOnlyTimetable),
                 "station-only trips build scheduled route checkpoints from ordered station links");
+        const auto stationOnlyFinalPosition = openbus::map::mapAiTimetableStationPosition(
+            definition.aiTraffic.timetableRoutes[1],
+            definition.aiTraffic.timetableRoutes[1].stations[1]);
+        require(stationOnlyFinalPosition && stationOnlyFinalPosition->trackEntryIndex == 1 &&
+                    stationOnlyFinalPosition->offsetMeters == 5.5,
+                "station-only final calls are positioned at the end of their incoming link");
         openbus::map::MapAiTrafficData ambiguousPassengerStops = definition.aiTraffic;
         ambiguousPassengerStops.busStops.push_back(ambiguousPassengerStops.busStops.front());
         require(

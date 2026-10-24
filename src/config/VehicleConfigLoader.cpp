@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cctype>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -889,6 +890,96 @@ void selectRegistrationAtIndex(VehicleConfig& configuration, std::size_t index) 
     configuration.selectedRegistration = index < configuration.registrationNumbers.size()
                                              ? configuration.registrationNumbers[index]
                                              : configuration.selectedVehicleNumber;
+}
+
+std::vector<int> passengerPathRoute(const std::vector<PassengerPathPoint>& points,
+                                    const std::vector<PassengerPathLink>& links, int fromPoint,
+                                    int toPoint) {
+    const auto pointIndex = [&](int pointId) -> std::optional<std::size_t> {
+        const auto point = std::find_if(points.begin(), points.end(),
+                                        [&](const PassengerPathPoint& candidate) {
+                                            return candidate.index == pointId;
+                                        });
+        if (point == points.end()) {
+            return std::nullopt;
+        }
+        return static_cast<std::size_t>(std::distance(points.begin(), point));
+    };
+    const auto start = pointIndex(fromPoint);
+    const auto finish = pointIndex(toPoint);
+    if (!start || !finish) {
+        return {};
+    }
+    if (fromPoint == toPoint) {
+        return {fromPoint};
+    }
+
+    struct Edge {
+        std::size_t destination;
+        double length;
+    };
+    std::vector<std::vector<Edge>> graph(points.size());
+    const auto addEdge = [&](std::size_t from, std::size_t to) {
+        const auto& first = points[from].position;
+        const auto& second = points[to].position;
+        const double length = std::hypot(std::hypot(second[0] - first[0], second[1] - first[1]),
+                                         second[2] - first[2]);
+        graph[from].push_back({to, length});
+    };
+    for (const PassengerPathLink& link : links) {
+        const auto from = pointIndex(link.from);
+        const auto to = pointIndex(link.to);
+        if (!from || !to || *from == *to) {
+            continue;
+        }
+        addEdge(*from, *to);
+        if (!link.oneWay) {
+            addEdge(*to, *from);
+        }
+    }
+
+    std::vector<double> distances(points.size(), std::numeric_limits<double>::infinity());
+    std::vector<std::size_t> previous(points.size(), points.size());
+    std::vector<bool> visited(points.size(), false);
+    distances[*start] = 0.0;
+    for (std::size_t iteration = 0; iteration < points.size(); ++iteration) {
+        std::size_t current = points.size();
+        for (std::size_t index = 0; index < points.size(); ++index) {
+            if (!visited[index] &&
+                (current == points.size() || distances[index] < distances[current])) {
+                current = index;
+            }
+        }
+        if (current == points.size() || !std::isfinite(distances[current])) {
+            break;
+        }
+        if (current == *finish) {
+            break;
+        }
+        visited[current] = true;
+        for (const Edge& edge : graph[current]) {
+            const double candidate = distances[current] + edge.length;
+            if (candidate < distances[edge.destination]) {
+                distances[edge.destination] = candidate;
+                previous[edge.destination] = current;
+            }
+        }
+    }
+    if (!std::isfinite(distances[*finish])) {
+        return {};
+    }
+    std::vector<int> route;
+    for (std::size_t current = *finish;; current = previous[current]) {
+        route.push_back(points[current].index);
+        if (current == *start) {
+            break;
+        }
+        if (previous[current] >= points.size()) {
+            return {};
+        }
+    }
+    std::reverse(route.begin(), route.end());
+    return route;
 }
 
 std::filesystem::path soundConfigPathForVehicle(const VehicleConfig& configuration,

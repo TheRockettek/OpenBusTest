@@ -52,8 +52,11 @@ void verifyPassengerServiceBehavior() {
                 mapScheduledPassengerQueueSize(10, -1.0) == 0 &&
                 mapScheduledPassengerQueueSize(10, 2.0, 12) == 12 &&
                 mapScheduledPassengerQueueSize((std::numeric_limits<std::size_t>::max)(), 1.0e100,
-                                               50) == 50,
-            "scheduled queue scaling is independent, rounded and safety-capped");
+                                               50) == 50 &&
+                mapScheduledPassengerQueueAfterDeparture(1, 4) == 4 &&
+                mapScheduledPassengerQueueAfterDeparture(5, 4) == 5 &&
+                mapScheduledPassengerQueueAfterDeparture(0, 0) == 0,
+            "scheduled queues scale safely and replenish to their initial level per departure");
 
     MapPassengerServiceRuntime service(2);
     require(service.seatCount() == 2, "vehicle passenger seats define service capacity");
@@ -72,43 +75,122 @@ void verifyPassengerServiceBehavior() {
             "dwell closes after time and boarding stops at the seat capacity");
     service.setWaitingPassengers(200, 2);
     require(service.arrive({.stopId = 200, .dwellSeconds = 1.0, .nextStopId = 300}) &&
-                service.onboardPassengerCount() == 0,
-            "passengers alight at their assigned destination before the dwell");
+                service.onboardPassengerCount() == 2 && service.alightingPassenger(),
+            "passengers reserve a timed alighting animation at their assigned destination");
     service.advance(2.0);
-    require(!service.dwelling() && service.onboardPassengerCount() == 1 &&
-                service.waitingPassengers(200) == 1,
-            "boarding follows dwell time and station queues remain stop-local");
+    require(!service.dwelling() && service.onboardPassengerCount() == 0 &&
+                !service.boardingPassenger() && service.waitingPassengers(200) == 2,
+            "alighting that outlasts the dwell does not start new boarding");
     require(!service.arrive({.stopId = 0, .dwellSeconds = 1.0}) &&
                 !service.arrive({.stopId = 201, .dwellSeconds = -1.0}),
             "invalid stops and dwell durations are rejected");
+
+    MapPassengerServiceRuntime finalStopService(2);
+    finalStopService.setWaitingPassengers(850, 2);
+    require(finalStopService.arrive(
+                {.stopId = 850, .dwellSeconds = 2.0, .nextStopId = 900}),
+            "final-stop passenger fixture boards its passengers");
+    finalStopService.advance(1.5);
+    require(finalStopService.onboardPassengerCount() == 2,
+            "final-stop passenger fixture has two seated riders");
+    finalStopService.advance(0.5);
+    require(!finalStopService.dwelling(),
+            "final-stop passenger fixture completes the prior stop dwell");
+    require(finalStopService.arrive({.stopId = 900, .dwellSeconds = 0.75}),
+            "final stop starts its configured dwell and passenger exit");
+    finalStopService.advance(0.75);
+    require(finalStopService.dwelling() && finalStopService.onboardPassengerCount() == 1 &&
+                finalStopService.alightingPassenger(),
+            "final-stop service remains active when the configured dwell ends before all riders exit");
+    finalStopService.advance(0.75);
+    require(!finalStopService.dwelling() && finalStopService.onboardPassengerCount() == 0,
+            "final-stop service completes after the last passenger has exited");
+
+    MapPassengerServiceRuntime alightingService(1);
+    alightingService.setWaitingPassengers(800, 1);
+    require(alightingService.arrive(
+                {.stopId = 800, .dwellSeconds = 2.0, .nextStopId = 900}),
+            "alighting animation fixture starts at a valid stop");
+    alightingService.advance(0.75);
+    alightingService.advance(1.25);
+    alightingService.setWaitingPassengers(900, 1);
+    require(alightingService.passengerCountOnSeat(0) == 1 &&
+                alightingService.arrive(
+                    {.stopId = 900, .dwellSeconds = 2.0, .nextStopId = 1000}),
+            "a seated passenger arrives at their assigned destination");
+    alightingService.advance(0.375);
+    require(alightingService.alightingPassenger() &&
+                alightingService.alightingSeatIndex() == 0 &&
+                std::abs(alightingService.alightingProgress() - 0.5) < 1.0e-9 &&
+                alightingService.passengerCountOnSeat(0) == 1 &&
+                !alightingService.boardingPassenger() &&
+                alightingService.waitingPassengers(900) == 1,
+            "alighting starts first and prevents boarding through the same cabin exit");
+    alightingService.advance(0.5);
+    require(!alightingService.alightingPassenger() &&
+                alightingService.passengerCountOnSeat(0) == 0 &&
+                alightingService.boardingPassenger() &&
+                std::abs(alightingService.boardingProgress() - (1.0 / 6.0)) < 1.0e-9,
+            "boarding begins only after alighting clears the shared exit");
 
     MapPassengerServiceRuntime firstBus(1);
     MapPassengerServiceRuntime secondBus(1);
     require(firstBus.arrive({.stopId = 400, .dwellSeconds = 2.0, .nextStopId = 500}) &&
                 secondBus.arrive({.stopId = 400, .dwellSeconds = 2.0, .nextStopId = 500}),
             "multiple buses can dwell at a shared stop");
-    std::size_t sharedWaitingPassengers = 1;
-    advanceMapPassengerServiceWithSharedQueue(firstBus, 400, sharedWaitingPassengers, 0.75);
-    advanceMapPassengerServiceWithSharedQueue(secondBus, 400, sharedWaitingPassengers, 0.75);
+    std::size_t sharedWaitingPassengers = 2;
+    advanceMapPassengerServiceWithSharedQueue(firstBus, 400, sharedWaitingPassengers, 0.375);
+    advanceMapPassengerServiceWithSharedQueue(secondBus, 400, sharedWaitingPassengers, 0.375);
     require(sharedWaitingPassengers == 0 &&
-                firstBus.onboardPassengerCount() + secondBus.onboardPassengerCount() == 1,
-            "shared queue updates prevent simultaneous buses from boarding the same passenger");
+                firstBus.boardingPassengerModelIndex() == 401 &&
+                secondBus.boardingPassengerModelIndex() == 400,
+            "buses at a shared stop reserve different passengers from the visible queue");
+    advanceMapPassengerServiceWithSharedQueue(firstBus, 400, sharedWaitingPassengers, 0.375);
+    advanceMapPassengerServiceWithSharedQueue(secondBus, 400, sharedWaitingPassengers, 0.375);
+    require(firstBus.passengerModelIndexOnSeat(0) == 401 &&
+                secondBus.passengerModelIndexOnSeat(0) == 400,
+            "shared queue passenger identities persist into each bus seat");
+
+    MapPassengerServiceRuntime terminalBus(1);
+    require(terminalBus.arrive({.stopId = 450, .dwellSeconds = 0.75, .nextStopId = 0}),
+            "terminal bus opens a stop dwell without an onward passenger destination");
+    std::size_t terminalStopQueue = 3;
+    advanceMapPassengerServiceWithSharedQueue(terminalBus, 450, terminalStopQueue, 0.75);
+    require(terminalStopQueue == 3 && terminalBus.onboardPassengerCount() == 0 &&
+                !terminalBus.boardingPassenger(),
+            "terminal calls preserve shared waiting passengers and do not board riders without a destination");
 
     MapPassengerServiceRuntime boardingService(1);
-    boardingService.setWaitingPassengers(600, 1);
+    boardingService.setWaitingPassengers(600, 3);
     require(boardingService.arrive(
-                {.stopId = 600, .dwellSeconds = 1.0, .nextStopId = 700}),
+                {.stopId = 600, .dwellSeconds = 0.75, .nextStopId = 700}),
             "boarding animation service starts at a valid stop");
     boardingService.advance(0.375);
     require(boardingService.boardingPassenger() &&
                 std::abs(boardingService.boardingProgress() - 0.5) < 1.0e-9 &&
+                boardingService.boardingSeatIndex() == 0 &&
+                boardingService.boardingPassengerModelIndex() == 602 &&
                 boardingService.passengerCountOnSeat(0) == 0 &&
-                boardingService.waitingPassengers(600) == 0,
+                boardingService.waitingPassengers(600) == 2,
             "a reserved passenger has visible intermediate boarding progress");
     boardingService.advance(0.375);
     require(!boardingService.boardingPassenger() &&
-                boardingService.passengerCountOnSeat(0) == 1,
-            "boarding completes into the assigned seat after its animation interval");
+                !boardingService.boardingSeatIndex() &&
+                boardingService.passengerCountOnSeat(0) == 1 &&
+                boardingService.passengerModelIndexOnSeat(0) == 602,
+            "boarding preserves the passenger identity when they take their seat");
+    require(boardingService.arrive(
+                {.stopId = 700, .dwellSeconds = 0.75, .nextStopId = 0}),
+            "passenger destination opens an alighting animation");
+    boardingService.advance(0.375);
+    require(boardingService.alightingPassenger() &&
+                boardingService.passengerModelIndexOnSeat(0) == 602,
+            "alighting preserves the seated passenger identity in motion");
+    boardingService.advance(0.375);
+    require(!boardingService.alightingPassenger() &&
+                !boardingService.passengerModelIndexOnSeat(0),
+            "passenger identity is released when alighting completes");
+
 }
 
 void verifyDrivingBehavior() {
@@ -214,6 +296,7 @@ void verifyDrivingBehavior() {
                 "crossing into an adjacent route lane signals even without a heading change");
     }
     MapTrafficRouteSegment longStraight = straight(1899, 12.0, -7.0, 23.0, 35.0);
+    longStraight.sceneryPathIndex = 0;
     longStraight.trafficSignal = MapTrafficSignalSchedule{10.0, {{0, 5.0}, {6, 5.0}}};
     const MapTrafficRoute unsplitStraightRoute = oneSegment(longStraight);
     const MapTrafficRoute splitStraightRoute = subdivideMapTrafficRoute(unsplitStraightRoute);
@@ -224,6 +307,22 @@ void verifyDrivingBehavior() {
                 !splitStraightRoute.segments[1].trafficSignal.has_value() &&
                 !splitStraightRoute.segments[2].trafficSignal.has_value(),
             "long straight splines split at 10 m intervals with signals kept at the route start");
+    const auto splitStopPosition =
+        mapTrafficRoutePositionOnSpline(splitStraightRoute, 1899, 0, 15.0);
+    require(splitStopPosition && splitStopPosition->segmentIndex == 1,
+            "passenger stops project onto the correct subdivided spline segment");
+    requireNear(splitStopPosition->distanceMeters, 15.0,
+                "passenger stop route distance includes its within-spline offset");
+    MapTrafficRouteSegment reversedSpline = longStraight;
+    reversedSpline.reversed = true;
+    const auto reversedStopPosition =
+        mapTrafficRoutePositionOnSpline(oneSegment(reversedSpline), 1899, 0, 15.0);
+    require(reversedStopPosition && reversedStopPosition->segmentIndex == 0,
+            "passenger stops project onto reversed route segments");
+    requireNear(reversedStopPosition->distanceMeters, 20.0,
+                "reversed passenger stop offsets follow route travel direction");
+    require(!mapTrafficRoutePositionOnSpline(splitStraightRoute, 1899, 0, 36.0),
+            "passenger stop projection rejects positions outside the spline");
     for (const double distance : {0.0, 3.0, 10.0, 20.0, 28.0, 35.0}) {
         const auto originalPose = sampleMapTrafficRoute(unsplitStraightRoute, distance, 0.75);
         const auto splitPose = sampleMapTrafficRoute(splitStraightRoute, distance, 0.75);
@@ -1093,10 +1192,10 @@ void verifyDrivingBehavior() {
     }
     MapTrafficGroupRules committedPathRules;
     committedPathRules.groupIndex = 0;
-    committedPathRules.priority = 192.0;
+    committedPathRules.priority = 64.0;
     MapTrafficGroupRules approachingPathRules;
     approachingPathRules.groupIndex = 0;
-    approachingPathRules.priority = 64.0;
+    approachingPathRules.priority = 192.0;
     MapTrafficRoute committedJunctionRoute = oneSegment(straight(1204, 0.0, -40.0, 0.0, 100.0));
     committedJunctionRoute.segments.front().points = {{0.0, 0.0, 0.0}, {0.0, 10.0, 0.0}};
     MapTrafficRoute junctionClassificationRoute;
@@ -1191,11 +1290,11 @@ void verifyDrivingBehavior() {
             "a stopped vehicle does not reserve a distant crossing on its remaining spline");
     auto longPathPriorityRoute = longJunctionRoute;
     for (auto& segment : longPathPriorityRoute.segments) {
-        segment.pathRules.priority = 200.0;
+        segment.pathRules.priority = 1.0;
     }
     auto priorityCrossingRoute = throughJunction(1620, -40.0, 80.0, 90.0, 1.0, 0.0);
     for (auto& segment : priorityCrossingRoute.segments) {
-        segment.pathRules.priority = 1.0;
+        segment.pathRules.priority = 200.0;
     }
     auto lowOnLongPath = makeMapTrafficActor(
         longPathPriorityRoute, "low-on-long-path.ovh", 8.0, 0.0, false);
@@ -1871,10 +1970,10 @@ void verifyDrivingBehavior() {
             "a queue whose vehicles take different junction movements clears in order");
     MapTrafficGroupRules mainRoadRules;
     mainRoadRules.groupIndex = 0;
-    mainRoadRules.priority = 64.0;
+    mainRoadRules.priority = 192.0;
     MapTrafficGroupRules sideRoadRules;
     sideRoadRules.groupIndex = 0;
-    sideRoadRules.priority = 192.0;
+    sideRoadRules.priority = 64.0;
     for (const bool mainRoadUsesJunctionPath : {true, false}) {
         // Main road runs east through x=-6..6 at y=0; the side road joins from the south.
         MapTrafficRoute mainRoute;
@@ -2100,7 +2199,7 @@ void verifyDrivingBehavior() {
             "committed low-priority turns clear before higher-priority approaches");
     MapTrafficRoute globalPriorityTurnRoute;
     auto globalPriorityTurnApproach = straight(1224, 0.0, -40.0, 0.0, 40.0);
-    globalPriorityTurnApproach.pathRules.priority = 200.0;
+    globalPriorityTurnApproach.pathRules.priority = 64.0;
     const double diagonalConnectorLength = 15.0 * std::sqrt(2.0);
     auto globalPriorityTurnConnector =
         straight(1225, 0.0, 0.0, 0.0, 15.0 + diagonalConnectorLength);
@@ -2162,9 +2261,9 @@ void verifyDrivingBehavior() {
     MapTrafficRoute lowPriorityRoute = oneSegment(straight(1202, 0.0, -40.0, 0.0, 100.0));
     MapTrafficRoute highPriorityRoute = oneSegment(straight(1203, -40.0, 0.0, 90.0, 100.0));
     lowPriorityRoute.segments.front().pathRules = mapTrafficRulesForPath(
-        {{false, {"0", "priority", "192", "0"}}}, 0);
-    highPriorityRoute.segments.front().pathRules = mapTrafficRulesForPath(
         {{false, {"0", "priority", "64", "0"}}}, 0);
+    highPriorityRoute.segments.front().pathRules = mapTrafficRulesForPath(
+        {{false, {"0", "priority", "256", "0"}}}, 0);
     auto lowPriority = makeMapTrafficActor(std::move(lowPriorityRoute), "low.ovh", 8.0, 0.0, false);
     auto highPriority =
         makeMapTrafficActor(std::move(highPriorityRoute), "high.ovh", 8.0, 0.0, false);
@@ -2187,7 +2286,7 @@ void verifyDrivingBehavior() {
     }
     require(lowPriorityYielded && highPriorityWasServedFirst && lowPriority.distanceMeters > 60.0 &&
                 highPriority.distanceMeters > 60.0,
-            "lower-valued authored priority wins before wait aging closes the priority gap");
+            "priority 256 wins over priority 64 before wait aging closes the priority gap");
     MapTrafficRoute lowPriorityTurningRoute = oneSegment(straight(1208, 0.0, -40.0, 0.0, 100.0));
     lowPriorityTurningRoute.segments.front().points = {{0.0, -40.0, 0.0}, {0.0, 60.0, 0.0}};
     lowPriorityTurningRoute.segments.front().pathRules.groups.push_back(committedPathRules);
@@ -2511,10 +2610,10 @@ void verifyDrivingBehavior() {
             "simultaneous right turns clear the junction without deadlocking");
     MapTrafficGroupRules mergePriorityRules;
     mergePriorityRules.groupIndex = 0;
-    mergePriorityRules.priority = 64.0;
+    mergePriorityRules.priority = 192.0;
     MapTrafficGroupRules mergeYieldRules;
     mergeYieldRules.groupIndex = 0;
-    mergeYieldRules.priority = 192.0;
+    mergeYieldRules.priority = 64.0;
     MapTrafficRoute priorityMergeRoute;
     auto priorityMergeApproach = straight(1244, -40.0, 0.0, 90.0, 34.0);
     priorityMergeApproach.pathRules.groups.push_back(mergePriorityRules);
@@ -3870,6 +3969,87 @@ void verifyTJunctionTraffic() {
               << " vehicles=" << actors.size() << " all_clear=1\n";
 }
 
+void verifyIncrementalLaneNetwork() {
+    using namespace openbus::map;
+    const auto straight = [](int id, double y) {
+        MapTrafficRouteSegment segment;
+        segment.spline.placement = makeSpline(id, 0, 0, y);
+        segment.spline.placement.length = 20.0;
+        segment.spline.placement.elevation = 0.0;
+        return segment;
+    };
+
+    MapTrafficLaneNetwork network;
+    const MapTrafficRouteSegment first = straight(1024, -20.0);
+    const MapTrafficRouteSegment second = straight(1025, 0.0);
+    network.addSegment(first);
+    network.finalize();
+    network.addSegment(second);
+    network.finalize();
+    const auto route = network.buildRoute(1024);
+    require(route && route->segments.size() == 2,
+            "lane networks can be extended and finalized as map tiles load");
+    MapTrafficLaneNetwork batchNetwork;
+    batchNetwork.addSegment(first);
+    batchNetwork.addSegment(second);
+    batchNetwork.finalize();
+    const MapTrafficLaneNetworkStats incrementalStats = network.stats();
+    const MapTrafficLaneNetworkStats batchStats = batchNetwork.stats();
+    require(incrementalStats.lanes == batchStats.lanes &&
+                incrementalStats.deadEnds == batchStats.deadEnds &&
+                incrementalStats.nearMissDeadEnds == batchStats.nearMissDeadEnds &&
+                network.spawnLanes() == batchNetwork.spawnLanes(),
+            "incremental lane finalization matches a batch-built network");
+}
+
+void verifyAuthoredPriorityOrder() {
+    using namespace openbus::map;
+    const auto straight = [](int id, double x, double y, double heading, double length) {
+        MapTrafficRouteSegment segment{{makeSpline(id, 0, 0, y), 0, 0}};
+        segment.spline.placement.localX = x;
+        segment.spline.placement.elevation = 0.0;
+        segment.spline.placement.rotationDegrees = heading;
+        segment.spline.placement.length = length;
+        return segment;
+    };
+    const auto oneSegment = [](const MapTrafficRouteSegment& segment) {
+        MapTrafficRoute route;
+        route.segments = {segment};
+        route.totalLength = segment.spline.placement.length;
+        route.cumulativeEndDistances = {route.totalLength};
+        return route;
+    };
+    MapTrafficRoute lowPriorityRoute = oneSegment(straight(1202, 0.0, -40.0, 0.0, 100.0));
+    MapTrafficRoute highPriorityRoute = oneSegment(straight(1203, -40.0, 0.0, 90.0, 100.0));
+    lowPriorityRoute.segments.front().pathRules = mapTrafficRulesForPath(
+        {{false, {"0", "priority", "64", "0"}}}, 0);
+    highPriorityRoute.segments.front().pathRules = mapTrafficRulesForPath(
+        {{false, {"0", "priority", "256", "0"}}}, 0);
+    auto lowPriority = makeMapTrafficActor(std::move(lowPriorityRoute), "low.ovh", 8.0, 0.0, false);
+    auto highPriority =
+        makeMapTrafficActor(std::move(highPriorityRoute), "high.ovh", 8.0, 0.0, false);
+    lowPriority.unscheduledGroupIndex = 0;
+    highPriority.unscheduledGroupIndex = 0;
+    lowPriority.trafficRuleGroupIndex = 0;
+    highPriority.trafficRuleGroupIndex = 0;
+    lowPriority.distanceMeters = 35.0;
+    highPriority.distanceMeters = 35.0;
+    lowPriority.junctionWaitSeconds = 5.0;
+    bool lowPriorityYielded = false;
+    bool highPriorityWasServedFirst = false;
+    for (int frame = 0; frame < 300; ++frame) {
+        advanceMapTrafficDriving({&lowPriority, &highPriority}, {}, 0.1);
+        if (lowPriority.junctionWaitSeconds > 0.0) {
+            lowPriorityYielded = true;
+            highPriorityWasServedFirst = highPriorityWasServedFirst ||
+                                         highPriority.distanceMeters > lowPriority.distanceMeters;
+        }
+    }
+    require(lowPriorityYielded && highPriorityWasServedFirst && lowPriority.distanceMeters > 60.0 &&
+                highPriority.distanceMeters > 60.0,
+            "priority 256 wins over priority 64 before wait aging closes the priority gap");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -3888,6 +4068,18 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--t-junction") {
             verifyTJunctionTraffic();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--incremental-lane-network") {
+            verifyIncrementalLaneNetwork();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--authored-priority-order") {
+            verifyAuthoredPriorityOrder();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--passenger-service") {
+            verifyPassengerServiceBehavior();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--committed-left-turn") {

@@ -126,6 +126,7 @@ class MapRenderer {
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    std::unique_ptr<MapSceneLoader> sceneLoader_;
     AssetRequestManager* assetRequests_ = nullptr;
 };
 

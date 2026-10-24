@@ -362,6 +362,11 @@ struct Vehicle {
     openbus::scripting::Vehicle variables;
     std::unique_ptr<ScriptRuntime> scripts;
     openbus::map::MapPassengerServiceRuntime passengerService;
+    std::vector<PassengerCabinPosition> passengerPositions;
+    std::vector<PassengerPathPoint> passengerPathPoints;
+    std::vector<PassengerPathLink> passengerPathLinks;
+    std::vector<int> passengerEntryPathPoints;
+    std::vector<int> passengerExitPathPoints;
     SoundEngine* soundPlayback = nullptr;
     VehicleSoundBank soundBank;
     bool soundEventsEnabled = false;
@@ -532,6 +537,11 @@ struct Vehicle {
         VehicleConfig vehicleConfiguration = definition->vehicleConfiguration;
         passengerService = openbus::map::MapPassengerServiceRuntime(
             vehicleConfiguration.passengerPositions.size());
+        passengerPositions = vehicleConfiguration.passengerPositions;
+        passengerPathPoints = vehicleConfiguration.passengerPathPoints;
+        passengerPathLinks = vehicleConfiguration.passengerPathLinks;
+        passengerEntryPathPoints = vehicleConfiguration.passengerEntryPathPoints;
+        passengerExitPathPoints = vehicleConfiguration.passengerExitPathPoints;
         trafficAxles = vehicleConfiguration.axles;
         trafficWheelHalfWidthMeters = vehicleConfiguration.wheelHalfWidth;
         const auto axleIndexForVariable =

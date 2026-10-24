@@ -151,563 +151,548 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
     return resolved;
 }
 
-void MapSceneLoader::buildTileContent() {
-    for (const openbus::map::MapTileReference& tileReference : map.tiles) {
-        const auto tileStart = std::chrono::steady_clock::now();
-        gameLog.Log("Map content tile " + std::to_string(tilesProcessed + 1) + "/" +
-                    std::to_string(map.tiles.size()) + ": " + tileReference.textPath.string());
-        const int tileX = tileReference.x;
-        const int tileY = tileReference.y;
-        TraceScope tileTrace("map", "MapRenderer.processTile");
-        const openbus::map::MapTileData tile = openbus::map::loadMapTile(tileReference);
-        ++tilesProcessed;
-        sceneryPlacementsParsed += tile.sceneryObjects.size() + tile.attachedObjects.size() +
-                                   tile.splineAttachments.size();
-        splinePlacementsParsed += tile.splines.size();
-        const std::string tileName = tileLabel(tileX, tileY);
-        for (const ConfigurationDiagnostic& diagnostic : tile.diagnostics.entries) {
-            recordSkipped(skipped, "unimplemented map tile sections [" + diagnostic.keyword + "]",
-                          tileName + " line=" + std::to_string(diagnostic.line));
-        }
-        const auto reportVariableParent = [&](int objectId, const std::optional<int>& parentId) {
-            if (parentId.has_value()) {
-                const bool resolved = sceneryObjectsById.contains(*parentId) ||
-                                      attachedObjectsById.contains(*parentId) ||
-                                      splineAttachmentTileById.contains(*parentId);
-                if (ambiguousMapObjectIds.contains(*parentId)) {
-                    recordSkipped(skipped, "[varparent] references ambiguous map object IDs",
-                                  tileName + " id=" + std::to_string(objectId) +
-                                      " parentObjectId=" + std::to_string(*parentId));
-                } else if (!resolved) {
-                    recordSkipped(skipped, "[varparent] references to missing map object IDs",
-                                  tileName + " id=" + std::to_string(objectId) +
-                                      " parentObjectId=" + std::to_string(*parentId));
-                }
-            }
-        };
-        for (const openbus::map::MapSceneryPlacement& object : tile.sceneryObjects) {
-            reportVariableParent(object.id, object.variableParentId);
-        }
-        for (const openbus::map::MapAttachedObject& object : tile.attachedObjects) {
-            reportVariableParent(object.id, object.variableParentId);
-        }
-        for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
-            reportVariableParent(attachment.id, attachment.variableParentId);
-        }
-        for (const openbus::map::MapSplinePlacement& spline : tile.splines) {
-            if (spline.splineTerrainAlign2.has_value()) {
-                recordSkipped(skipped,
-                              "[spline_terrain_align_2] values parsed but alignment not applied",
-                              tileName + " spline=" + std::to_string(spline.splineId));
+void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tileReference) {
+    const auto tileStart = std::chrono::steady_clock::now();
+    const int tileX = tileReference.x;
+    const int tileY = tileReference.y;
+    gameLog.Log("Map content tile " + tileLabel(tileX, tileY) + ": " +
+                tileReference.textPath.string());
+    TraceScope tileTrace("map", "MapRenderer.processTile");
+    const openbus::map::MapTileData tile = openbus::map::loadMapTile(tileReference);
+    ++tilesProcessed;
+    sceneryPlacementsParsed +=
+        tile.sceneryObjects.size() + tile.attachedObjects.size() + tile.splineAttachments.size();
+    splinePlacementsParsed += tile.splines.size();
+    const std::string tileName = tileLabel(tileX, tileY);
+    for (const ConfigurationDiagnostic& diagnostic : tile.diagnostics.entries) {
+        recordSkipped(skipped, "unimplemented map tile sections [" + diagnostic.keyword + "]",
+                      tileName + " line=" + std::to_string(diagnostic.line));
+    }
+    const auto reportVariableParent = [&](int objectId, const std::optional<int>& parentId) {
+        if (parentId.has_value()) {
+            const bool resolved = sceneryObjectsById.contains(*parentId) ||
+                                  attachedObjectsById.contains(*parentId) ||
+                                  splineAttachmentTileById.contains(*parentId);
+            if (ambiguousMapObjectIds.contains(*parentId)) {
+                recordSkipped(skipped, "[varparent] references ambiguous map object IDs",
+                              tileName + " id=" + std::to_string(objectId) +
+                                  " parentObjectId=" + std::to_string(*parentId));
+            } else if (!resolved) {
+                recordSkipped(skipped, "[varparent] references to missing map object IDs",
+                              tileName + " id=" + std::to_string(objectId) +
+                                  " parentObjectId=" + std::to_string(*parentId));
             }
         }
-        if (tile.hasWaterMarker) {
-            if (!tileReference.hasWaterFile) {
-                recordSkipped(skipped, "[water] markers without a .map.water sidecar",
-                              tileName + " " + tileReference.textPath.filename().string());
-            } else {
-                try {
-                    const openbus::map::WaterData water =
-                        openbus::map::loadWaterData(tileReference.waterPath);
-                    std::vector<ModelVertex> vertices;
-                    std::vector<std::uint32_t> indices;
-                    vertices.reserve(water.surfaces.size() * 4);
-                    indices.reserve(water.surfaces.size() * 6);
-                    double minimumHeight = std::numeric_limits<double>::infinity();
-                    double maximumHeight = -std::numeric_limits<double>::infinity();
-                    double heightSum = 0.0;
-                    std::size_t heightCount = 0;
-                    for (const openbus::map::WaterSurface& surface : water.surfaces) {
-                        const auto corners =
-                            openbus::map::buildMapWaterSurfaceVertices(tileX, tileY, surface);
-                        const std::uint32_t base = static_cast<std::uint32_t>(vertices.size());
-                        for (std::size_t corner = 0; corner < corners.size(); ++corner) {
-                            const openbus::map::MapWaterVertex& vertex = corners[corner];
-                            vertices.push_back({static_cast<float>(vertex.x),
-                                                static_cast<float>(vertex.y),
-                                                static_cast<float>(vertex.z),
-                                                corner == 1 || corner == 2 ? 1.0F : 0.0F,
-                                                corner >= 2 ? 1.0F : 0.0F, 0.0F, 0.0F, 0.0F, 1.0F});
-                            minimumHeight = (std::min)(minimumHeight, vertex.z);
-                            maximumHeight = (std::max)(maximumHeight, vertex.z);
-                            heightSum += vertex.z;
-                            ++heightCount;
-                        }
-                        // SW, SE, NE, NW gives upward-facing triangles in the map XY plane.
-                        indices.insert(indices.end(),
-                                       {base, base + 1, base + 2, base, base + 2, base + 3});
-                    }
-                    if (!vertices.empty()) {
-                        Impl::WaterBatch batch;
-                        batch.indexCount = indices.size();
-                        batch.tileX = tileX;
-                        batch.tileY = tileY;
-                        batch.minZ = minimumHeight;
-                        batch.maxZ = maximumHeight;
-                        batch.meanZ = heightSum / static_cast<double>(heightCount);
-                        pglGenBuffers(1, &batch.buffer);
-                        pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-                        pglBufferData(
-                            GL_ARRAY_BUFFER,
-                            static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
-                            vertices.data(), GL_STATIC_DRAW);
-                        pglGenBuffers(1, &batch.indexBuffer);
-                        pglBindBuffer(GL_ARRAY_BUFFER, batch.indexBuffer);
-                        pglBufferData(
-                            GL_ARRAY_BUFFER,
-                            static_cast<std::ptrdiff_t>(indices.size() * sizeof(std::uint32_t)),
-                            indices.data(), GL_STATIC_DRAW);
-                        if (batch.buffer == 0 || batch.indexBuffer == 0 ||
-                            glGetError() != GL_NO_ERROR) {
-                            if (batch.buffer != 0) {
-                                pglDeleteBuffers(1, &batch.buffer);
-                            }
-                            if (batch.indexBuffer != 0) {
-                                pglDeleteBuffers(1, &batch.indexBuffer);
-                            }
-                            recordSkipped(skipped, "water surfaces rejected by OpenGL upload",
-                                          tileName);
-                        } else {
-                            impl_->waterBatches.push_back(batch);
-                        }
-                    }
-                } catch (const std::exception& error) {
-                    recordSkipped(skipped, "invalid .map.water sidecars",
-                                  tileName + ": " + error.what());
-                }
-            }
+    };
+    for (const openbus::map::MapSceneryPlacement& object : tile.sceneryObjects) {
+        reportVariableParent(object.id, object.variableParentId);
+    }
+    for (const openbus::map::MapAttachedObject& object : tile.attachedObjects) {
+        reportVariableParent(object.id, object.variableParentId);
+    }
+    for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
+        reportVariableParent(attachment.id, attachment.variableParentId);
+    }
+    for (const openbus::map::MapSplinePlacement& spline : tile.splines) {
+        if (spline.splineTerrainAlign2.has_value()) {
+            recordSkipped(skipped,
+                          "[spline_terrain_align_2] values parsed but alignment not applied",
+                          tileName + " spline=" + std::to_string(spline.splineId));
         }
-        if (tile.hasVariableTerrainMarker) {
-            recordSkipped(skipped, "[variable_terrain] tiles (dynamic terrain not rendered)",
+    }
+    if (tile.hasWaterMarker) {
+        if (!tileReference.hasWaterFile) {
+            recordSkipped(skipped, "[water] markers without a .map.water sidecar",
                           tileName + " " + tileReference.textPath.filename().string());
+        } else {
+            try {
+                const openbus::map::WaterData water =
+                    openbus::map::loadWaterData(tileReference.waterPath);
+                std::vector<ModelVertex> vertices;
+                std::vector<std::uint32_t> indices;
+                vertices.reserve(water.surfaces.size() * 4);
+                indices.reserve(water.surfaces.size() * 6);
+                double minimumHeight = std::numeric_limits<double>::infinity();
+                double maximumHeight = -std::numeric_limits<double>::infinity();
+                double heightSum = 0.0;
+                std::size_t heightCount = 0;
+                for (const openbus::map::WaterSurface& surface : water.surfaces) {
+                    const auto corners =
+                        openbus::map::buildMapWaterSurfaceVertices(tileX, tileY, surface);
+                    const std::uint32_t base = static_cast<std::uint32_t>(vertices.size());
+                    for (std::size_t corner = 0; corner < corners.size(); ++corner) {
+                        const openbus::map::MapWaterVertex& vertex = corners[corner];
+                        vertices.push_back(
+                            {static_cast<float>(vertex.x), static_cast<float>(vertex.y),
+                             static_cast<float>(vertex.z), corner == 1 || corner == 2 ? 1.0F : 0.0F,
+                             corner >= 2 ? 1.0F : 0.0F, 0.0F, 0.0F, 0.0F, 1.0F});
+                        minimumHeight = (std::min)(minimumHeight, vertex.z);
+                        maximumHeight = (std::max)(maximumHeight, vertex.z);
+                        heightSum += vertex.z;
+                        ++heightCount;
+                    }
+                    // SW, SE, NE, NW gives upward-facing triangles in the map XY plane.
+                    indices.insert(indices.end(),
+                                   {base, base + 1, base + 2, base, base + 2, base + 3});
+                }
+                if (!vertices.empty()) {
+                    Impl::WaterBatch batch;
+                    batch.indexCount = indices.size();
+                    batch.tileX = tileX;
+                    batch.tileY = tileY;
+                    batch.minZ = minimumHeight;
+                    batch.maxZ = maximumHeight;
+                    batch.meanZ = heightSum / static_cast<double>(heightCount);
+                    pglGenBuffers(1, &batch.buffer);
+                    pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+                    pglBufferData(
+                        GL_ARRAY_BUFFER,
+                        static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
+                        vertices.data(), GL_STATIC_DRAW);
+                    pglGenBuffers(1, &batch.indexBuffer);
+                    pglBindBuffer(GL_ARRAY_BUFFER, batch.indexBuffer);
+                    pglBufferData(
+                        GL_ARRAY_BUFFER,
+                        static_cast<std::ptrdiff_t>(indices.size() * sizeof(std::uint32_t)),
+                        indices.data(), GL_STATIC_DRAW);
+                    if (batch.buffer == 0 || batch.indexBuffer == 0 ||
+                        glGetError() != GL_NO_ERROR) {
+                        if (batch.buffer != 0) {
+                            pglDeleteBuffers(1, &batch.buffer);
+                        }
+                        if (batch.indexBuffer != 0) {
+                            pglDeleteBuffers(1, &batch.indexBuffer);
+                        }
+                        recordSkipped(skipped, "water surfaces rejected by OpenGL upload",
+                                      tileName);
+                    } else {
+                        impl_->waterBatches.push_back(batch);
+                    }
+                }
+            } catch (const std::exception& error) {
+                recordSkipped(skipped, "invalid .map.water sidecars",
+                              tileName + ": " + error.what());
+            }
         }
-        if (tile.hasVariableTerrainLightmapMarker) {
-            recordSkipped(
-                skipped,
-                "[variable_terrainlightmap] tiles (dynamic terrain lightmaps not rendered)",
-                tileName + " " + tileReference.textPath.filename().string());
+    }
+    if (tile.hasVariableTerrainMarker) {
+        recordSkipped(skipped, "[variable_terrain] tiles (dynamic terrain not rendered)",
+                      tileName + " " + tileReference.textPath.filename().string());
+    }
+    if (tile.hasVariableTerrainLightmapMarker) {
+        recordSkipped(skipped,
+                      "[variable_terrainlightmap] tiles (dynamic terrain lightmaps not rendered)",
+                      tileName + " " + tileReference.textPath.filename().string());
+    }
+    const auto addSceneryInstance = [&](const std::string& assetPath,
+                                        const std::string& description, double worldX,
+                                        double worldY, double localZ, double terrainHeightOffset,
+                                        const std::array<double, 6>& rotationDegrees,
+                                        std::size_t rotationCount,
+                                        const std::array<double, 9>* orientationMatrix = nullptr,
+                                        std::vector<std::string> placementLabels = {},
+                                        const std::vector<openbus::map::MapTileRule>*
+                                            placementRules = nullptr,
+                                        std::optional<int> mapObjectId = std::nullopt,
+                                        std::optional<int> variableParentId = std::nullopt) {
+        const std::filesystem::path configPath = resolveSceneryConfigPath(assetPath);
+        if (configPath.empty()) {
+            recordSkipped(skipped, "scenery placements whose .sco config was not found",
+                          description);
+            return;
         }
-        const auto addSceneryInstance =
-            [&](const std::string& assetPath, const std::string& description, double worldX,
-                double worldY, double localZ, double terrainHeightOffset,
-                const std::array<double, 6>& rotationDegrees, std::size_t rotationCount,
-                const std::array<double, 9>* orientationMatrix = nullptr,
-                std::vector<std::string> placementLabels = {},
-                const std::vector<openbus::map::MapTileRule>* placementRules = nullptr,
-                std::optional<int> mapObjectId = std::nullopt,
-                std::optional<int> variableParentId = std::nullopt) {
-                const std::filesystem::path configPath = resolveSceneryConfigPath(assetPath);
-                if (configPath.empty()) {
-                    recordSkipped(skipped, "scenery placements whose .sco config was not found",
-                                  description);
-                    return;
+        const std::vector<std::size_t>& batchIndexes = loadSceneryAsset(configPath);
+        const std::string assetKey = configPath.lexically_normal().generic_string();
+        const bool absoluteHeight = absoluteHeightSceneryAssets.contains(assetKey);
+        const double worldZ =
+            openbus::map::mapSceneryWorldHeight(localZ, terrainHeightOffset, absoluteHeight);
+        const auto trafficPaths = sceneryTrafficPaths.find(assetKey);
+        const bool trafficLightModel = sceneryTrafficLightAssets.contains(assetKey);
+        std::optional<openbus::map::MapTrafficSignalSchedule> sceneryTrafficSignal;
+        std::map<std::size_t, openbus::map::MapTrafficSignalSchedule>
+            sceneryTrafficSignalsByLightIndex;
+        std::shared_ptr<openbus::map::MapTrafficSignalController> signalController;
+        const auto attachController = [&](openbus::map::MapTrafficSignalSchedule schedule) {
+            if ((schedule.hasConditionalOverrides || schedule.hasBusPriority) &&
+                schedule.program != nullptr) {
+                if (!signalController) {
+                    signalController = std::make_shared<openbus::map::MapTrafficSignalController>(
+                        schedule.program);
                 }
-                const std::vector<std::size_t>& batchIndexes = loadSceneryAsset(configPath);
-                const std::string assetKey = configPath.lexically_normal().generic_string();
-                const bool absoluteHeight = absoluteHeightSceneryAssets.contains(assetKey);
-                const double worldZ = openbus::map::mapSceneryWorldHeight(
-                    localZ, terrainHeightOffset, absoluteHeight);
-                const auto trafficPaths = sceneryTrafficPaths.find(assetKey);
-                const bool trafficLightModel = sceneryTrafficLightAssets.contains(assetKey);
-                std::optional<openbus::map::MapTrafficSignalSchedule> sceneryTrafficSignal;
-                std::map<std::size_t, openbus::map::MapTrafficSignalSchedule>
-                    sceneryTrafficSignalsByLightIndex;
-                std::shared_ptr<openbus::map::MapTrafficSignalController> signalController;
-                const auto attachController = [&](openbus::map::MapTrafficSignalSchedule schedule) {
-                    if ((schedule.hasConditionalOverrides || schedule.hasBusPriority) &&
-                        schedule.program != nullptr) {
-                        if (!signalController) {
-                            signalController =
-                                std::make_shared<openbus::map::MapTrafficSignalController>(
-                                    schedule.program);
-                        }
-                        schedule.controller = signalController;
-                    }
-                    return schedule;
-                };
-                const auto configuredSignals = sceneryTrafficLightSchedules.find(assetKey);
-                if (configuredSignals != sceneryTrafficLightSchedules.end()) {
-                    for (const auto& configuredSignal : configuredSignals->second) {
-                        if (!configuredSignal.has_value()) {
-                            continue;
-                        }
-                        const auto schedule = attachController(*configuredSignal);
-                        sceneryTrafficSignalsByLightIndex.try_emplace(schedule.lightIndex,
-                                                                      schedule);
-                        if (!sceneryTrafficSignal.has_value()) {
-                            sceneryTrafficSignal = schedule;
-                        }
-                    }
+                schedule.controller = signalController;
+            }
+            return schedule;
+        };
+        const auto configuredSignals = sceneryTrafficLightSchedules.find(assetKey);
+        if (configuredSignals != sceneryTrafficLightSchedules.end()) {
+            for (const auto& configuredSignal : configuredSignals->second) {
+                if (!configuredSignal.has_value()) {
+                    continue;
                 }
-                if (trafficPaths != sceneryTrafficPaths.end() && !trafficPaths->second.empty()) {
-                    openbus::map::MapSceneryPose pathPose;
-                    pathPose.x = worldX;
-                    pathPose.y = worldY;
-                    pathPose.z = worldZ;
-                    pathPose.rotationDegrees = rotationDegrees;
-                    pathPose.rotationCount = rotationCount;
-                    if (orientationMatrix != nullptr) {
-                        std::copy(orientationMatrix->begin(), orientationMatrix->end(),
-                                  pathPose.orientationMatrix.begin());
-                        pathPose.hasOrientationMatrix = true;
-                    }
-                    const auto toWorldPosition = [&](const std::array<double, 3>& localPosition) {
-                        std::array<double, 3> position =
-                            openbus::map::transformMapSceneryVector(pathPose, localPosition);
-                        position[0] += worldX;
-                        position[1] += worldY;
-                        position[2] += worldZ;
-                        return position;
-                    };
-                    for (const SceneryObjectTrafficPath& path : trafficPaths->second) {
-                        const std::vector<openbus::map::MapSplineSample> samples =
-                            openbus::map::tessellateMapSpline(
-                                path.startPosition[0], path.startPosition[1], path.headingDegrees,
-                                path.length, path.radius);
-                        if (samples.size() < 2) {
-                            recordSkipped(skipped, "scenery traffic paths with invalid geometry",
-                                          description +
-                                              " config=" + configPath.filename().string());
-                            continue;
-                        }
-                        TrafficPathDebugSegment segment;
-                        segment.points.reserve(samples.size());
-                        for (const openbus::map::MapSplineSample& sample : samples) {
-                            const double localZ = openbus::map::mapSplineElevation(
-                                path.startPosition[2], path.length, path.gradientStartPercent,
-                                path.gradientEndPercent, std::nullopt, sample.distance);
-                            segment.points.push_back(toWorldPosition({sample.x, sample.y, localZ}));
-                        }
-                        segment.pathTypeCode = path.pathTypeCode;
-                        segment.widthMeters = path.widthMeters;
-                        segment.mapObjectId = mapObjectId;
-                        segment.pathIndex = path.pathIndex;
-                        segment.tileX = tileX;
-                        segment.tileY = tileY;
-                        const std::optional<openbus::map::MapTrafficSignalSchedule> pathSignal =
-                            path.trafficSignal.has_value()
-                                ? std::optional<openbus::map::MapTrafficSignalSchedule>(
-                                      attachController(*path.trafficSignal))
-                                : std::nullopt;
-                        segment.trafficSignal = pathSignal;
-                        if (pathSignal.has_value()) {
-                            sceneryTrafficSignalsByLightIndex.try_emplace(pathSignal->lightIndex,
-                                                                          *pathSignal);
-                        }
-                        if (pathSignal.has_value() && !sceneryTrafficSignal.has_value()) {
-                            sceneryTrafficSignal = pathSignal;
-                        }
-                        if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
-                            openbus::map::MapTrafficRouteSegment lane;
-                            lane.points = segment.points;
-                            if (mapObjectId.has_value()) {
-                                lane.spline.placement.splineId = *mapObjectId;
-                                lane.sceneryPathIndex = path.pathIndex;
-                            }
-                            lane.trafficSignal = pathSignal;
-                            if (placementRules != nullptr) {
-                                lane.pathRules = openbus::map::mapTrafficRulesForPath(
-                                    *placementRules, path.pathIndex);
-                            }
-                            segment.pathRules = lane.pathRules;
-                            impl_->roadTrafficLaneNetwork.addSegment(std::move(lane));
-                        } else if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
-                            openbus::map::MapTrafficRouteSegment lane;
-                            lane.points = segment.points;
-                            lane.trafficSignal = pathSignal;
-                            impl_->humanTrafficLaneNetwork.addSegment(std::move(lane));
-                        }
-                        impl_->sceneryTrafficPathSegments.push_back(segment);
-                    }
+                const auto schedule = attachController(*configuredSignal);
+                sceneryTrafficSignalsByLightIndex.try_emplace(schedule.lightIndex, schedule);
+                if (!sceneryTrafficSignal.has_value()) {
+                    sceneryTrafficSignal = schedule;
                 }
-                if (signalController) {
-                    impl_->trafficSignalControllers.push_back(std::move(signalController));
-                }
-                auto lodSet = sceneryLodThresholdSetByAsset.find(assetKey);
-                if (lodSet == sceneryLodThresholdSetByAsset.end()) {
-                    const std::size_t index = impl_->sceneryLodThresholdSets.size();
-                    impl_->sceneryLodThresholdSets.emplace_back();
-                    lodSet = sceneryLodThresholdSetByAsset.emplace(assetKey, index).first;
-                }
-                const std::size_t lodThresholdSetIndex = lodSet->second;
-                std::size_t scriptStateIndex = std::numeric_limits<std::size_t>::max();
-                if (sceneryAssetsNeedingVariables.contains(assetKey) || trafficLightModel ||
-                    sceneryTrafficSignal.has_value()) {
-                    auto scriptState = std::make_unique<Impl::SceneryScriptState>();
-                    scriptState->ownerTileX = tileX;
-                    scriptState->ownerTileY = tileY;
-                    scriptState->placementLabels = std::move(placementLabels);
-                    for (const std::string& variable : sceneryModelFloatVariables[assetKey]) {
-                        scriptState->variables.declare(variable);
-                    }
-                    for (const std::string& variable : sceneryModelStringVariables[assetKey]) {
-                        scriptState->variables.declareString(variable);
-                    }
-                    const auto scriptConfiguration = sceneryScriptConfigurations.find(assetKey);
-                    auto definition = sceneryRuntimeDefinitions.find(assetKey);
-                    if (definition == sceneryRuntimeDefinitions.end()) {
-                        auto sharedDefinition = std::make_shared<Impl::SceneryRuntimeDefinition>();
-                        if (scriptConfiguration != sceneryScriptConfigurations.end()) {
-                            sharedDefinition->configuration = scriptConfiguration->second;
-                        }
-                        sharedDefinition->scriptTextures = sceneryModelScriptTextures[assetKey];
-                        sharedDefinition->textTextures = sceneryModelTextTextures[assetKey];
-                        sharedDefinition->floatVariables = sceneryModelFloatVariables[assetKey];
-                        sharedDefinition->stringVariables = sceneryModelStringVariables[assetKey];
-                        sharedDefinition->hasRuntime =
-                            (scriptConfiguration != sceneryScriptConfigurations.end() &&
-                             !scriptConfiguration->second.scripts.empty()) ||
-                            !sharedDefinition->scriptTextures.empty() ||
-                            !sharedDefinition->textTextures.empty() ||
-                            !sceneryFreeTextureVariables[assetKey].empty();
-                        definition =
-                            sceneryRuntimeDefinitions.emplace(assetKey, std::move(sharedDefinition))
-                                .first;
-                    }
-                    scriptState->definition = definition->second;
-                    scriptState->trafficSignal = std::move(sceneryTrafficSignal);
-                    scriptState->trafficSignalsByLightIndex =
-                        std::move(sceneryTrafficSignalsByLightIndex);
-                    scriptState->mapObjectId = mapObjectId;
-                    scriptState->variableParentId = variableParentId;
-                    scriptState->trafficLightModel = trafficLightModel;
-                    scriptStateIndex = impl_->sceneryScriptStates.size();
-                    impl_->sceneryScriptStates.push_back(std::move(scriptState));
-                }
-                // Editor-only junctions still own the schedules referenced by visible heads.
-                if (editorOnlySceneryAssets.contains(assetKey)) {
-                    recordSkipped(skipped, "map scenery placements marked [onlyeditor]",
-                                  description + " config=" + configPath.filename().string());
-                    return;
-                }
-                if (batchIndexes.empty()) {
-                    recordSkipped(skipped, "scenery placements with no renderable asset batches",
-                                  description + " config=" + configPath.filename().string());
-                } else {
-                    ++impl_->sceneryObjectCount;
-                    ++impl_->sceneryObjectsByTile[tileKey(tileX, tileY)];
-                }
-                for (const std::size_t batchIndex : batchIndexes) {
-                    if (batchIndex >= impl_->sceneryBatches.size()) {
-                        continue;
-                    }
-                    const double radius = impl_->sceneryBatches[batchIndex].boundingRadius;
-                    Impl::SceneryInstance instance;
-                    instance.batchIndex = batchIndex;
-                    instance.x = worldX;
-                    instance.y = worldY;
-                    instance.z = worldZ;
-                    instance.boundingRadius = radius;
-                    instance.transform = makeSceneryInstanceTransform(
-                        worldX, worldY, worldZ, rotationDegrees, rotationCount, orientationMatrix);
-                    instance.scriptStateIndex = scriptStateIndex;
-                    instance.lodThresholdSetIndex = lodThresholdSetIndex;
-                    instance.sourceTileX = tileX;
-                    instance.sourceTileY = tileY;
-                    const int chunkX =
-                        static_cast<int>(std::floor(worldX / openbus::map::OMSI_TILE_SIZE_METERS));
-                    const int chunkY =
-                        static_cast<int>(std::floor(worldY / openbus::map::OMSI_TILE_SIZE_METERS));
-                    Impl::SceneryChunk& chunk = impl_->sceneryChunks[tileKey(chunkX, chunkY)];
-                    chunk.instances.push_back(instance);
-                    chunk.minX = std::min(chunk.minX, worldX - radius);
-                    chunk.minY = std::min(chunk.minY, worldY - radius);
-                    chunk.minZ = std::min(chunk.minZ, worldZ - radius);
-                    chunk.maxX = std::max(chunk.maxX, worldX + radius);
-                    chunk.maxY = std::max(chunk.maxY, worldY + radius);
-                    chunk.maxZ = std::max(chunk.maxZ, worldZ + radius);
-                    ++impl_->sceneryInstanceCount;
-                }
+            }
+        }
+        if (trafficPaths != sceneryTrafficPaths.end() && !trafficPaths->second.empty()) {
+            openbus::map::MapSceneryPose pathPose;
+            pathPose.x = worldX;
+            pathPose.y = worldY;
+            pathPose.z = worldZ;
+            pathPose.rotationDegrees = rotationDegrees;
+            pathPose.rotationCount = rotationCount;
+            if (orientationMatrix != nullptr) {
+                std::copy(orientationMatrix->begin(), orientationMatrix->end(),
+                          pathPose.orientationMatrix.begin());
+                pathPose.hasOrientationMatrix = true;
+            }
+            const auto toWorldPosition = [&](const std::array<double, 3>& localPosition) {
+                std::array<double, 3> position =
+                    openbus::map::transformMapSceneryVector(pathPose, localPosition);
+                position[0] += worldX;
+                position[1] += worldY;
+                position[2] += worldZ;
+                return position;
             };
-
-        for (const openbus::map::MapSceneryPlacement& object : tile.sceneryObjects) {
-            const std::string objectDescription = tileName + " object=" + object.label +
-                                                  " asset=" + object.assetPath + " rotationDeg=(" +
-                                                  std::to_string(object.rotationDegrees[0]) + "," +
-                                                  std::to_string(object.rotationDegrees[1]) + "," +
-                                                  std::to_string(object.rotationDegrees[2]) + ")";
-            if (!object.transformValid) {
-                recordSkipped(
-                    skipped, "[object] sections with invalid transforms",
-                    objectDescription + " rawTransform=(" + object.rawTransformFields[0] + "," +
-                        object.rawTransformFields[1] + "," + object.rawTransformFields[2] + "," +
-                        object.rawTransformFields[3] + "," + object.rawTransformFields[4] + "," +
-                        object.rawTransformFields[5] + ")");
-                continue;
-            }
-            const std::optional<ResolvedSceneryPlacement> placement =
-                resolveMapSceneryPlacement(object.id);
-            if (!placement.has_value()) {
-                recordSkipped(skipped, "[object] sections with invalid world placement",
-                              objectDescription);
-                continue;
-            }
-            const openbus::map::MapSceneryPose& pose = placement->pose;
-            addSceneryInstance(placement->assetPath, objectDescription, pose.x, pose.y, pose.z, 0.0,
-                               pose.rotationDegrees, pose.rotationCount,
-                               pose.hasOrientationMatrix ? &pose.orientationMatrix : nullptr,
-                               object.labels, &object.rules, object.id, object.variableParentId);
-        }
-        for (const openbus::map::MapAttachedObject& object : tile.attachedObjects) {
-            const std::string description = tileName +
-                                            " [attachObj] id=" + std::to_string(object.id) +
-                                            " parent=" + std::to_string(object.attachedToObjectId) +
-                                            " asset=" + object.assetPath;
-            if (!object.transformValid) {
-                recordSkipped(skipped, "[attachObj] records with invalid rotation or anchor index",
-                              description);
-                continue;
-            }
-            const std::optional<ResolvedSceneryPlacement> placement =
-                resolveMapSceneryPlacement(object.id);
-            if (!placement.has_value()) {
-                recordSkipped(
-                    skipped,
-                    "[attachObj] records with missing parents, attachment points, or cycles",
-                    description + " anchor=" + std::to_string(object.attachPointIndexValue));
-                continue;
-            }
-            addSceneryInstance(placement->assetPath, description, placement->pose.x,
-                               placement->pose.y, placement->pose.z, 0.0,
-                               placement->pose.rotationDegrees, placement->pose.rotationCount,
-                               &placement->pose.orientationMatrix, object.labels, &object.rules,
-                               object.id, object.variableParentId);
-        }
-        for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
-            const std::string description =
-                tileName + (attachment.repeater ? " splineRepeater=" : " splineAttachment=") +
-                attachment.label + " asset=" + attachment.assetPath +
-                " splineIndex=" + std::to_string(attachment.splineIndex);
-            if (!attachment.transformValid) {
-                recordSkipped(skipped, "spline attachment records with invalid transforms",
-                              description);
-                continue;
-            }
-            const std::vector<openbus::map::MapSceneryPose> poses =
-                openbus::map::placeMapSplineAttachment(attachment, tile.splines, tileX, tileY,
-                                                       mapSplineResolver, splineCantWidth);
-            if (poses.empty()) {
-                recordSkipped(skipped, "spline attachment records with no local placement",
-                              description);
-                continue;
-            }
-            for (const openbus::map::MapSceneryPose& pose : poses) {
-                openbus::map::MapSceneryPose renderedPose = pose;
-                applyTerrainAlignment(renderedPose, attachment.splineTerrainAlign, description);
-                addSceneryInstance(
-                    attachment.assetPath, description, renderedPose.x, renderedPose.y,
-                    renderedPose.z, 0.0, renderedPose.rotationDegrees, renderedPose.rotationCount,
-                    renderedPose.hasOrientationMatrix ? &renderedPose.orientationMatrix : nullptr,
-                    {}, &attachment.rules, attachment.id, attachment.variableParentId);
-            }
-        }
-        for (const openbus::map::MapSplinePlacement& spline : tile.splines) {
-            const std::string splineDescription =
-                tileName + (spline.elevated ? " [spline_h] asset=" : " [spline] asset=") +
-                spline.assetPath;
-            if (!spline.geometryValid) {
-                recordSkipped(skipped, "[spline] sections with invalid numeric geometry",
-                              splineDescription);
-                continue;
-            }
-            const std::filesystem::path profilePath =
-                resolveSplineProfile(map, omsiRoot, spline.assetPath);
-            if (profilePath.empty()) {
-                recordSkipped(skipped, "spline profile files not found", splineDescription);
-                continue;
-            }
-            const std::string profileKey = profilePath.lexically_normal().generic_string();
-            const auto* loadedProfile = cachedSplineProfile(profilePath);
-            if (loadedProfile == nullptr) {
-                continue;
-            }
-            const openbus::map::MapSplineProfile& profile = *loadedProfile;
-            if (profile.editorOnly) {
-                if (editorOnlySplineProfiles.insert(profileKey).second) {
-                    recordSkipped(skipped, "editor-only spline profiles",
-                                  profilePath.filename().string());
+            for (const SceneryObjectTrafficPath& path : trafficPaths->second) {
+                const std::vector<openbus::map::MapSplineSample> samples =
+                    openbus::map::tessellateMapSpline(path.startPosition[0], path.startPosition[1],
+                                                      path.headingDegrees, path.length,
+                                                      path.radius);
+                if (samples.size() < 2) {
+                    recordSkipped(skipped, "scenery traffic paths with invalid geometry",
+                                  description + " config=" + configPath.filename().string());
+                    continue;
                 }
+                TrafficPathDebugSegment segment;
+                segment.points.reserve(samples.size());
+                for (const openbus::map::MapSplineSample& sample : samples) {
+                    const double localZ = openbus::map::mapSplineElevation(
+                        path.startPosition[2], path.length, path.gradientStartPercent,
+                        path.gradientEndPercent, std::nullopt, sample.distance);
+                    segment.points.push_back(toWorldPosition({sample.x, sample.y, localZ}));
+                }
+                segment.pathTypeCode = path.pathTypeCode;
+                segment.widthMeters = path.widthMeters;
+                segment.mapObjectId = mapObjectId;
+                segment.pathIndex = path.pathIndex;
+                segment.tileX = tileX;
+                segment.tileY = tileY;
+                const std::optional<openbus::map::MapTrafficSignalSchedule> pathSignal =
+                    path.trafficSignal.has_value()
+                        ? std::optional<openbus::map::MapTrafficSignalSchedule>(
+                              attachController(*path.trafficSignal))
+                        : std::nullopt;
+                segment.trafficSignal = pathSignal;
+                if (pathSignal.has_value()) {
+                    sceneryTrafficSignalsByLightIndex.try_emplace(pathSignal->lightIndex,
+                                                                  *pathSignal);
+                }
+                if (pathSignal.has_value() && !sceneryTrafficSignal.has_value()) {
+                    sceneryTrafficSignal = pathSignal;
+                }
+                if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
+                    openbus::map::MapTrafficRouteSegment lane;
+                    lane.points = segment.points;
+                    if (mapObjectId.has_value()) {
+                        lane.spline.placement.splineId = *mapObjectId;
+                        lane.sceneryPathIndex = path.pathIndex;
+                    }
+                    lane.trafficSignal = pathSignal;
+                    if (placementRules != nullptr) {
+                        lane.pathRules =
+                            openbus::map::mapTrafficRulesForPath(*placementRules, path.pathIndex);
+                    }
+                    segment.pathRules = lane.pathRules;
+                    roadTrafficLaneNetworkDirty = true;
+                    impl_->roadTrafficLaneNetwork.addSegment(std::move(lane));
+                } else if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
+                    openbus::map::MapTrafficRouteSegment lane;
+                    lane.points = segment.points;
+                    lane.trafficSignal = pathSignal;
+                    humanTrafficLaneNetworkDirty = true;
+                    impl_->humanTrafficLaneNetwork.addSegment(std::move(lane));
+                }
+                impl_->sceneryTrafficPathSegments.push_back(segment);
+            }
+        }
+        if (signalController) {
+            impl_->trafficSignalControllers.push_back(std::move(signalController));
+        }
+        auto lodSet = sceneryLodThresholdSetByAsset.find(assetKey);
+        if (lodSet == sceneryLodThresholdSetByAsset.end()) {
+            const std::size_t index = impl_->sceneryLodThresholdSets.size();
+            impl_->sceneryLodThresholdSets.emplace_back();
+            lodSet = sceneryLodThresholdSetByAsset.emplace(assetKey, index).first;
+        }
+        const std::size_t lodThresholdSetIndex = lodSet->second;
+        std::size_t scriptStateIndex = std::numeric_limits<std::size_t>::max();
+        if (sceneryAssetsNeedingVariables.contains(assetKey) || trafficLightModel ||
+            sceneryTrafficSignal.has_value()) {
+            auto scriptState = std::make_unique<Impl::SceneryScriptState>();
+            scriptState->ownerTileX = tileX;
+            scriptState->ownerTileY = tileY;
+            scriptState->placementLabels = std::move(placementLabels);
+            for (const std::string& variable : sceneryModelFloatVariables[assetKey]) {
+                scriptState->variables.declare(variable);
+            }
+            for (const std::string& variable : sceneryModelStringVariables[assetKey]) {
+                scriptState->variables.declareString(variable);
+            }
+            const auto scriptConfiguration = sceneryScriptConfigurations.find(assetKey);
+            auto definition = sceneryRuntimeDefinitions.find(assetKey);
+            if (definition == sceneryRuntimeDefinitions.end()) {
+                auto sharedDefinition = std::make_shared<Impl::SceneryRuntimeDefinition>();
+                if (scriptConfiguration != sceneryScriptConfigurations.end()) {
+                    sharedDefinition->configuration = scriptConfiguration->second;
+                }
+                sharedDefinition->scriptTextures = sceneryModelScriptTextures[assetKey];
+                sharedDefinition->textTextures = sceneryModelTextTextures[assetKey];
+                sharedDefinition->floatVariables = sceneryModelFloatVariables[assetKey];
+                sharedDefinition->stringVariables = sceneryModelStringVariables[assetKey];
+                sharedDefinition->hasRuntime =
+                    (scriptConfiguration != sceneryScriptConfigurations.end() &&
+                     !scriptConfiguration->second.scripts.empty()) ||
+                    !sharedDefinition->scriptTextures.empty() ||
+                    !sharedDefinition->textTextures.empty() ||
+                    !sceneryFreeTextureVariables[assetKey].empty();
+                definition =
+                    sceneryRuntimeDefinitions.emplace(assetKey, std::move(sharedDefinition)).first;
+            }
+            scriptState->definition = definition->second;
+            scriptState->trafficSignal = std::move(sceneryTrafficSignal);
+            scriptState->trafficSignalsByLightIndex = std::move(sceneryTrafficSignalsByLightIndex);
+            scriptState->mapObjectId = mapObjectId;
+            scriptState->variableParentId = variableParentId;
+            scriptState->trafficLightModel = trafficLightModel;
+            scriptStateIndex = impl_->sceneryScriptStates.size();
+            impl_->sceneryScriptStates.push_back(std::move(scriptState));
+        }
+        // Editor-only junctions still own the schedules referenced by visible heads.
+        if (editorOnlySceneryAssets.contains(assetKey)) {
+            recordSkipped(skipped, "map scenery placements marked [onlyeditor]",
+                          description + " config=" + configPath.filename().string());
+            return;
+        }
+        if (batchIndexes.empty()) {
+            recordSkipped(skipped, "scenery placements with no renderable asset batches",
+                          description + " config=" + configPath.filename().string());
+        } else {
+            ++impl_->sceneryObjectCount;
+            ++impl_->sceneryObjectsByTile[tileKey(tileX, tileY)];
+        }
+        for (const std::size_t batchIndex : batchIndexes) {
+            if (batchIndex >= impl_->sceneryBatches.size()) {
                 continue;
             }
-            if (profile.sections.empty()) {
-                recordSkipped(skipped, "spline profiles with no graphical cross-section strips",
+            const double radius = impl_->sceneryBatches[batchIndex].boundingRadius;
+            Impl::SceneryInstance instance;
+            instance.batchIndex = batchIndex;
+            instance.x = worldX;
+            instance.y = worldY;
+            instance.z = worldZ;
+            instance.boundingRadius = radius;
+            instance.transform = makeSceneryInstanceTransform(
+                worldX, worldY, worldZ, rotationDegrees, rotationCount, orientationMatrix);
+            instance.scriptStateIndex = scriptStateIndex;
+            instance.lodThresholdSetIndex = lodThresholdSetIndex;
+            instance.sourceTileX = tileX;
+            instance.sourceTileY = tileY;
+            const int chunkX =
+                static_cast<int>(std::floor(worldX / openbus::map::OMSI_TILE_SIZE_METERS));
+            const int chunkY =
+                static_cast<int>(std::floor(worldY / openbus::map::OMSI_TILE_SIZE_METERS));
+            Impl::SceneryChunk& chunk = impl_->sceneryChunks[tileKey(chunkX, chunkY)];
+            chunk.instances.push_back(instance);
+            chunk.minX = std::min(chunk.minX, worldX - radius);
+            chunk.minY = std::min(chunk.minY, worldY - radius);
+            chunk.minZ = std::min(chunk.minZ, worldZ - radius);
+            chunk.maxX = std::max(chunk.maxX, worldX + radius);
+            chunk.maxY = std::max(chunk.maxY, worldY + radius);
+            chunk.maxZ = std::max(chunk.maxZ, worldZ + radius);
+            ++impl_->sceneryInstanceCount;
+        }
+    };
+
+    for (const openbus::map::MapSceneryPlacement& object : tile.sceneryObjects) {
+        const std::string objectDescription = tileName + " object=" + object.label +
+                                              " asset=" + object.assetPath + " rotationDeg=(" +
+                                              std::to_string(object.rotationDegrees[0]) + "," +
+                                              std::to_string(object.rotationDegrees[1]) + "," +
+                                              std::to_string(object.rotationDegrees[2]) + ")";
+        if (!object.transformValid) {
+            recordSkipped(skipped, "[object] sections with invalid transforms",
+                          objectDescription + " rawTransform=(" + object.rawTransformFields[0] +
+                              "," + object.rawTransformFields[1] + "," +
+                              object.rawTransformFields[2] + "," + object.rawTransformFields[3] +
+                              "," + object.rawTransformFields[4] + "," +
+                              object.rawTransformFields[5] + ")");
+            continue;
+        }
+        const std::optional<ResolvedSceneryPlacement> placement =
+            resolveMapSceneryPlacement(object.id);
+        if (!placement.has_value()) {
+            recordSkipped(skipped, "[object] sections with invalid world placement",
+                          objectDescription);
+            continue;
+        }
+        const openbus::map::MapSceneryPose& pose = placement->pose;
+        addSceneryInstance(placement->assetPath, objectDescription, pose.x, pose.y, pose.z, 0.0,
+                           pose.rotationDegrees, pose.rotationCount,
+                           pose.hasOrientationMatrix ? &pose.orientationMatrix : nullptr,
+                           object.labels, &object.rules, object.id, object.variableParentId);
+    }
+    for (const openbus::map::MapAttachedObject& object : tile.attachedObjects) {
+        const std::string description = tileName + " [attachObj] id=" + std::to_string(object.id) +
+                                        " parent=" + std::to_string(object.attachedToObjectId) +
+                                        " asset=" + object.assetPath;
+        if (!object.transformValid) {
+            recordSkipped(skipped, "[attachObj] records with invalid rotation or anchor index",
+                          description);
+            continue;
+        }
+        const std::optional<ResolvedSceneryPlacement> placement =
+            resolveMapSceneryPlacement(object.id);
+        if (!placement.has_value()) {
+            recordSkipped(skipped,
+                          "[attachObj] records with missing parents, attachment points, or cycles",
+                          description + " anchor=" + std::to_string(object.attachPointIndexValue));
+            continue;
+        }
+        addSceneryInstance(placement->assetPath, description, placement->pose.x, placement->pose.y,
+                           placement->pose.z, 0.0, placement->pose.rotationDegrees,
+                           placement->pose.rotationCount, &placement->pose.orientationMatrix,
+                           object.labels, &object.rules, object.id, object.variableParentId);
+    }
+    for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
+        const std::string description =
+            tileName + (attachment.repeater ? " splineRepeater=" : " splineAttachment=") +
+            attachment.label + " asset=" + attachment.assetPath +
+            " splineIndex=" + std::to_string(attachment.splineIndex);
+        if (!attachment.transformValid) {
+            recordSkipped(skipped, "spline attachment records with invalid transforms",
+                          description);
+            continue;
+        }
+        const std::vector<openbus::map::MapSceneryPose> poses =
+            openbus::map::placeMapSplineAttachment(attachment, tile.splines, tileX, tileY,
+                                                   mapSplineResolver, splineCantWidth);
+        if (poses.empty()) {
+            recordSkipped(skipped, "spline attachment records with no local placement",
+                          description);
+            continue;
+        }
+        for (const openbus::map::MapSceneryPose& pose : poses) {
+            openbus::map::MapSceneryPose renderedPose = pose;
+            applyTerrainAlignment(renderedPose, attachment.splineTerrainAlign, description);
+            addSceneryInstance(
+                attachment.assetPath, description, renderedPose.x, renderedPose.y, renderedPose.z,
+                0.0, renderedPose.rotationDegrees, renderedPose.rotationCount,
+                renderedPose.hasOrientationMatrix ? &renderedPose.orientationMatrix : nullptr, {},
+                &attachment.rules, attachment.id, attachment.variableParentId);
+        }
+    }
+    for (const openbus::map::MapSplinePlacement& spline : tile.splines) {
+        const std::string splineDescription =
+            tileName + (spline.elevated ? " [spline_h] asset=" : " [spline] asset=") +
+            spline.assetPath;
+        if (!spline.geometryValid) {
+            recordSkipped(skipped, "[spline] sections with invalid numeric geometry",
+                          splineDescription);
+            continue;
+        }
+        const std::filesystem::path profilePath =
+            resolveSplineProfile(map, omsiRoot, spline.assetPath);
+        if (profilePath.empty()) {
+            recordSkipped(skipped, "spline profile files not found", splineDescription);
+            continue;
+        }
+        const std::string profileKey = profilePath.lexically_normal().generic_string();
+        const auto* loadedProfile = cachedSplineProfile(profilePath);
+        if (loadedProfile == nullptr) {
+            continue;
+        }
+        const openbus::map::MapSplineProfile& profile = *loadedProfile;
+        if (profile.editorOnly) {
+            if (editorOnlySplineProfiles.insert(profileKey).second) {
+                recordSkipped(skipped, "editor-only spline profiles",
+                              profilePath.filename().string());
+            }
+            continue;
+        }
+        if (profile.sections.empty()) {
+            recordSkipped(skipped, "spline profiles with no graphical cross-section strips",
+                          profilePath.filename().string());
+            continue;
+        }
+        const double startX =
+            static_cast<double>(tileX) * openbus::map::OMSI_TILE_SIZE_METERS + spline.localX;
+        const double startY =
+            static_cast<double>(tileY) * openbus::map::OMSI_TILE_SIZE_METERS + spline.localY;
+        const std::vector<openbus::map::MapSplineSample> centerline =
+            openbus::map::tessellateMapSpline(startX, startY, spline.rotationDegrees, spline.length,
+                                              spline.radius);
+        if (centerline.size() < 2) {
+            recordSkipped(skipped, "[spline] sections that failed geometry tessellation",
+                          splineDescription);
+            continue;
+        }
+        const std::optional<double> cantHalfWidth =
+            openbus::map::mapSplineProfileCantHalfWidth(profile);
+        for (const openbus::map::MapSplineProfileSection& section : profile.sections) {
+            if (section.points.size() < 2) {
+                recordSkipped(skipped, "spline profile strips with fewer than two points",
                               profilePath.filename().string());
                 continue;
             }
-            const double startX =
-                static_cast<double>(tileX) * openbus::map::OMSI_TILE_SIZE_METERS + spline.localX;
-            const double startY =
-                static_cast<double>(tileY) * openbus::map::OMSI_TILE_SIZE_METERS + spline.localY;
-            const std::vector<openbus::map::MapSplineSample> centerline =
-                openbus::map::tessellateMapSpline(startX, startY, spline.rotationDegrees,
-                                                  spline.length, spline.radius);
-            if (centerline.size() < 2) {
-                recordSkipped(skipped, "[spline] sections that failed geometry tessellation",
-                              splineDescription);
+            if (section.textureIndex < 0 ||
+                static_cast<std::size_t>(section.textureIndex) >= profile.textures.size()) {
+                recordSkipped(skipped, "spline profile strips with invalid texture indices",
+                              profilePath.filename().string() +
+                                  " index=" + std::to_string(section.textureIndex));
                 continue;
             }
-            const std::optional<double> cantHalfWidth =
-                openbus::map::mapSplineProfileCantHalfWidth(profile);
-            for (const openbus::map::MapSplineProfileSection& section : profile.sections) {
-                if (section.points.size() < 2) {
-                    recordSkipped(skipped, "spline profile strips with fewer than two points",
-                                  profilePath.filename().string());
-                    continue;
-                }
-                if (section.textureIndex < 0 ||
-                    static_cast<std::size_t>(section.textureIndex) >= profile.textures.size()) {
-                    recordSkipped(skipped, "spline profile strips with invalid texture indices",
-                                  profilePath.filename().string() +
-                                      " index=" + std::to_string(section.textureIndex));
-                    continue;
-                }
-                const std::string& textureName =
-                    profile.textures[static_cast<std::size_t>(section.textureIndex)];
-                const std::filesystem::path roadTexture =
-                    findSplineTexture(profilePath, omsiRoot, textureName);
-                const int alphaMode =
-                    static_cast<std::size_t>(section.textureIndex) <
-                            profile.textureAlphaModes.size()
-                        ? profile.textureAlphaModes[static_cast<std::size_t>(section.textureIndex)]
-                        : 0;
-                const bool textured = !roadTexture.empty();
-                if (!textured) {
-                    recordSkipped(
-                        skipped, "spline profile textures not found (geometry rendered untextured)",
-                        profilePath.filename().string() + " texture=" + textureName);
-                }
-                const std::string tileBatchPrefix =
-                    std::to_string(tileX) + "," + std::to_string(tileY) + "|";
-                const std::string batchKey =
-                    tileBatchPrefix +
-                    (textured ? roadTexture.lexically_normal().generic_string()
-                              : "untextured:" + profileKey + "#" +
-                                    std::to_string(section.textureIndex)) +
-                    "|alpha:" + std::to_string(alphaMode);
-                RoadMeshGeometry& road = roadVertices[batchKey];
-                if (road.vertices.empty()) {
-                    road.texturePath = roadTexture;
-                    road.textured = textured;
-                    road.tileX = tileX;
-                    road.tileY = tileY;
-                    road.alphaMode = alphaMode;
-                }
-                appendRoadProfile(road, spline, centerline, section,
-                                  roadConnections.joinsFor(spline, tileX, tileY), cantHalfWidth);
+            const std::string& textureName =
+                profile.textures[static_cast<std::size_t>(section.textureIndex)];
+            const std::filesystem::path roadTexture =
+                findSplineTexture(profilePath, omsiRoot, textureName);
+            const int alphaMode =
+                static_cast<std::size_t>(section.textureIndex) < profile.textureAlphaModes.size()
+                    ? profile.textureAlphaModes[static_cast<std::size_t>(section.textureIndex)]
+                    : 0;
+            const bool textured = !roadTexture.empty();
+            if (!textured) {
+                recordSkipped(skipped,
+                              "spline profile textures not found (geometry rendered untextured)",
+                              profilePath.filename().string() + " texture=" + textureName);
             }
+            const std::string tileBatchPrefix =
+                std::to_string(tileX) + "," + std::to_string(tileY) + "|";
+            const std::string batchKey = tileBatchPrefix +
+                                         (textured ? roadTexture.lexically_normal().generic_string()
+                                                   : "untextured:" + profileKey + "#" +
+                                                         std::to_string(section.textureIndex)) +
+                                         "|alpha:" + std::to_string(alphaMode);
+            RoadMeshGeometry& road = roadVertices[batchKey];
+            if (road.vertices.empty()) {
+                road.texturePath = roadTexture;
+                road.textured = textured;
+                road.tileX = tileX;
+                road.tileY = tileY;
+                road.alphaMode = alphaMode;
+            }
+            appendRoadProfile(road, spline, centerline, section,
+                              roadConnections.joinsFor(spline, tileX, tileY), cantHalfWidth);
         }
-        gameLog.Log("Map content progress: " + std::to_string(tilesProcessed) + "/" +
-                    std::to_string(map.tiles.size()) +
-                    " tiles processed; scenery=" + std::to_string(sceneryPlacementsParsed) +
-                    ", splines=" + std::to_string(splinePlacementsParsed) +
-                    ", cached spline profiles=" + std::to_string(splineProfiles.size()) +
-                    "; tile took " + std::to_string(elapsedMilliseconds(tileStart)) + " ms.");
     }
-    gameLog.Log("Map content phase complete: " + std::to_string(tilesProcessed) + " tiles, " +
-                std::to_string(sceneryPlacementsParsed) + " scenery placements, " +
-                std::to_string(splinePlacementsParsed) + " splines, " +
-                std::to_string(splineProfiles.size()) + " unique profiles in " +
-                std::to_string(elapsedMilliseconds(mapContentStart)) + " ms.");
+    gameLog.Log("Map content tile loaded: " + tileName +
+                "; loaded tiles=" + std::to_string(tilesProcessed) +
+                ", scenery=" + std::to_string(sceneryPlacementsParsed) +
+                ", splines=" + std::to_string(splinePlacementsParsed) +
+                ", cached spline profiles=" + std::to_string(splineProfiles.size()) + "; took " +
+                std::to_string(elapsedMilliseconds(tileStart)) + " ms.");
 }
 
 } // namespace openbus::rendering

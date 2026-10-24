@@ -427,6 +427,13 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         signalProgram->approachDistancesMeters.push_back(light.approachDistanceMeters);
     }
     signalProgram->busPriorityRules = result.trafficLightBusPriorityRules;
+    std::vector<bool> referencedTrafficLights(result.trafficLights.size(), false);
+    for (const SceneryObjectTrafficPath& path : result.trafficPaths) {
+        if (path.trafficLightIndex >= 0 &&
+            static_cast<std::size_t>(path.trafficLightIndex) < referencedTrafficLights.size()) {
+            referencedTrafficLights[static_cast<std::size_t>(path.trafficLightIndex)] = true;
+        }
+    }
     const auto addControlPoint = [&](double rawLightIndex, double timeSeconds, double ifRequest,
                                      const char* keyword) {
         if (!std::isfinite(rawLightIndex) || rawLightIndex < 0.0 ||
@@ -437,8 +444,12 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                 0, keyword, "expected an existing light index and finite non-negative times");
             return;
         }
+        const std::size_t lightIndex = static_cast<std::size_t>(rawLightIndex);
+        if (!referencedTrafficLights[lightIndex]) {
+            return;
+        }
         signalProgram->controlPoints.push_back(
-            {static_cast<std::size_t>(rawLightIndex), timeSeconds, ifRequest > 0.5});
+            {lightIndex, timeSeconds, ifRequest > 0.5});
     };
     for (const std::array<double, 3>& stop : result.trafficLightStops) {
         addControlPoint(stop[0], stop[1], stop[2], "traffic_light_stop");

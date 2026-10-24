@@ -429,8 +429,30 @@ bool RenderLoop::AddTrafficVehicle(
     }
     std::size_t routeSegmentCursor = 0;
     for (openbus::map::MapTrafficPassengerStop& stop : passengerStops) {
-        if (stop.stopId == 0 || stop.dwellSeconds < 0.0 || !std::isfinite(stop.dwellSeconds)) {
+        if (stop.stopId == 0 || stop.dwellSeconds < 0.0 || !std::isfinite(stop.dwellSeconds) ||
+            (stop.splinePositionMeters &&
+             (!std::isfinite(*stop.splinePositionMeters) || *stop.splinePositionMeters < 0.0))) {
             throw std::invalid_argument("Scheduled map bus passenger stop is invalid");
+        }
+        const auto logUnmatchedStop = [&] {
+            gameLog.Log("Scheduled passenger stop could not be matched to the bus route; "
+                        "stopId=" +
+                        std::to_string(stop.stopId) + " spline=" + std::to_string(stop.splineId) +
+                        " path=" + std::to_string(stop.pathIndex) +
+                        " bus=" + busConfigPath.string());
+        };
+        if (stop.splinePositionMeters) {
+            const auto routePosition = openbus::map::mapTrafficRoutePositionOnSpline(
+                actor.route, stop.splineId, stop.pathIndex, *stop.splinePositionMeters,
+                routeSegmentCursor);
+            if (!routePosition) {
+                logUnmatchedStop();
+                continue;
+            }
+            routeSegmentCursor = routePosition->segmentIndex;
+            stop.routeDistanceMeters = routePosition->distanceMeters;
+            trafficState.passengerStops.push_back(std::move(stop));
+            continue;
         }
         const auto segment = std::find_if(
             actor.route.segments.begin() + static_cast<std::ptrdiff_t>(routeSegmentCursor),
@@ -439,11 +461,7 @@ bool RenderLoop::AddTrafficVehicle(
                        candidate.sceneryPathIndex == stop.pathIndex;
             });
         if (segment == actor.route.segments.end()) {
-            gameLog.Log("Scheduled passenger stop could not be matched to the bus route; "
-                        "stopId=" +
-                        std::to_string(stop.stopId) + " spline=" + std::to_string(stop.splineId) +
-                        " path=" + std::to_string(stop.pathIndex) +
-                        " bus=" + busConfigPath.string());
+            logUnmatchedStop();
             continue;
         }
         routeSegmentCursor =

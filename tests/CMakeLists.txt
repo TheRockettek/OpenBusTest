@@ -91,8 +91,14 @@ openbus_add_probe(OpenBusMapSplineProfileProbe MapSplineProfileProbe.cpp LIBS op
         "${OPENBUS_FIXTURES}/map_spline_profile_explicit_cant_width.sli"
         "${OPENBUS_FIXTURES}/map_spline_profile_no_collision.sli")
 openbus_add_probe(OpenBusMapTrafficRuntimeProbe MapTrafficRuntimeProbe.cpp LIBS openbus_map)
+add_test(NAME OpenBusMapTrafficIncrementalLaneNetworkProbe
+    COMMAND OpenBusMapTrafficRuntimeProbe --incremental-lane-network)
 add_test(NAME OpenBusMapTrafficTJunctionProbe
     COMMAND OpenBusMapTrafficRuntimeProbe --t-junction)
+add_test(NAME OpenBusMapTrafficPriorityOrderProbe
+    COMMAND OpenBusMapTrafficRuntimeProbe --authored-priority-order)
+add_test(NAME OpenBusMapPassengerServiceProbe
+    COMMAND OpenBusMapTrafficRuntimeProbe --passenger-service)
 
 # Audio
 openbus_add_probe(OpenBusSoundEngineProbe SoundEngineProbe.cpp LIBS openbus_audio)

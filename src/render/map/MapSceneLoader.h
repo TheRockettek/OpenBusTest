@@ -1,8 +1,7 @@
 #pragma once
 
-// Builds all static map content (terrain, scenery, splines/roads) into a
-// MapRenderer::Impl. The loader's members hold intermediate caches and indexes
-// that are shared between load phases; it is discarded once loading finishes.
+// Builds static map content into a MapRenderer::Impl, loading render assets as
+// their tiles enter the active window.
 
 #include "render/map/MapRendererInternal.h"
 
@@ -14,8 +13,10 @@ class MapSceneLoader {
                    std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot,
                    MapRenderer::Impl& impl);
 
-    // Runs every load phase. Throws std::runtime_error when the map is unusable.
+    // Loads map-wide indexes and shared textures.
     void load();
+    // Loads render assets for active tiles that have not been loaded yet.
+    void loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoordinates);
     // Logs totals and skip summaries; call after the initial streaming update.
     void logSummary() const;
 
@@ -48,9 +49,9 @@ class MapSceneLoader {
 
     // Phases, in execution order.
     void loadGroundTextures();
-    void loadTerrainTiles();
+    void loadTerrainTiles(const std::unordered_set<std::uint64_t>& tileKeys);
     void indexMapContent();
-    void buildTileContent();
+    void buildTileContent(const openbus::map::MapTileReference& tileReference);
     void resolveTrafficLightVariableParents();
     void uploadRoadBatches();
 
@@ -70,7 +71,7 @@ class MapSceneLoader {
     const openbus::map::MapDefinition& map;
     std::size_t centerTileIndex;
     std::size_t groundTextureIndex;
-    const std::filesystem::path& omsiRoot;
+    std::filesystem::path omsiRoot;
     Impl* impl_;
     std::unordered_map<std::uint64_t, openbus::map::TerrainGrid>& terrainByCoordinate;
 
@@ -109,15 +110,17 @@ class MapSceneLoader {
     std::unordered_map<std::string, std::optional<double>> splineCantWidths;
     openbus::map::MapSplineCantWidthResolver splineCantWidth;
 
-    std::chrono::steady_clock::time_point mapContentStart;
     std::size_t tilesProcessed = 0;
     std::size_t sceneryPlacementsParsed = 0;
     std::size_t splinePlacementsParsed = 0;
+    bool roadTrafficLaneNetworkDirty = false;
+    bool humanTrafficLaneNetworkDirty = false;
     std::unordered_map<int, IndexedSceneryObject> sceneryObjectsById;
     std::unordered_map<int, IndexedAttachedObject> attachedObjectsById;
     std::unordered_map<int, std::size_t> splineAttachmentTileById;
     std::unordered_map<int, MapObjectRecordKind> mapObjectRecordKindsById;
     std::unordered_set<int> ambiguousMapObjectIds;
+    std::unordered_map<int, std::uint64_t> mapObjectTileKeysById;
     std::unordered_map<int, openbus::map::MapSplinePlacementReference> mapSplinesById;
     std::unordered_set<int> ambiguousMapSplineIds;
     openbus::map::MapRoadConnectionIndex roadConnections;
@@ -125,6 +128,8 @@ class MapSceneLoader {
     std::unordered_map<int, ResolvedSceneryPlacement> resolvedPlacements;
     std::unordered_map<std::size_t, openbus::map::MapTileData> splineAttachmentParentTiles;
     std::unordered_set<int> resolvingPlacementIds;
+    std::unordered_set<std::uint64_t> loadedTerrainTileKeys;
+    std::unordered_set<std::uint64_t> loadedContentTileKeys;
 };
 
 } // namespace openbus::rendering

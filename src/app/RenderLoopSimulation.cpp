@@ -759,6 +759,17 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 state.lastScheduledDepartureMinutes =
                     state.scheduledDepartureMinutes[state.nextScheduledDepartureIndex];
                 state.scheduledTripActive = true;
+                for (const MapTrafficPassengerStop& stop : state.passengerStops) {
+                    const auto queue = scheduledPassengerQueues_.find(stop.stopId);
+                    const auto initialQueue = scheduledPassengerInitialQueues_.find(stop.stopId);
+                    if (queue == scheduledPassengerQueues_.end() ||
+                        initialQueue == scheduledPassengerInitialQueues_.end()) {
+                        throw std::logic_error(
+                            "Scheduled bus passenger stop has no initialized waiting queue");
+                    }
+                    queue->second = mapScheduledPassengerQueueAfterDeparture(
+                        queue->second, initialQueue->second);
+                }
                 advanceScheduledDeparture(state, state.nextScheduledDepartureElapsedSeconds);
                 gameLog.Log("Scheduled map AI bus departed from endpoint spline=" +
                             std::to_string(spawn->pose.splineId) + " at timetable minute=" +
@@ -863,7 +874,11 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             const bool atUnconnectedRouteEnd =
                 !route.closed && !route.loopStartDistance &&
                 trafficVehicle.actor.distanceMeters >= route.totalLength;
-            if (atUnconnectedRouteEnd && mapTrafficRouteEndReadyForUnload(trafficVehicle.actor)) {
+            const bool passengerServiceComplete =
+                !trafficVehicle.isBus ||
+                !trafficVehicle.vehicle->passengerService.dwelling();
+            if (atUnconnectedRouteEnd && passengerServiceComplete &&
+                mapTrafficRouteEndReadyForUnload(trafficVehicle.actor)) {
                 if (trafficVehicle.isBus && trafficVehicle.scheduledTripActive) {
                     gameLog.Log("Scheduled map AI bus reached route end after travelling " +
                                 std::to_string(trafficVehicle.actor.distanceMeters -
@@ -1070,10 +1085,13 @@ void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
         }
         if (activePlayerPassengerStop_ && !playerVehicle_->passengerService.dwelling()) {
             activePlayerPassengerStop_.reset();
+            activePlayerPassengerStopRouteIndex_.reset();
+            activePlayerPassengerStopIndex_.reset();
         }
 
         struct NearbyPassengerStop {
             const TrafficVehicleState* vehicle = nullptr;
+            std::size_t vehicleIndex = 0;
             std::size_t stopIndex = 0;
             double distanceMeters = std::numeric_limits<double>::infinity();
         };
@@ -1081,7 +1099,28 @@ void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
         const auto chassis = simulation.chassisPose();
         const double chassisHeading = std::atan2(chassis.rotation[0], chassis.rotation[3]);
         double latchedStopDistance = std::numeric_limits<double>::infinity();
-        for (const TrafficVehicleState& trafficVehicle : trafficVehicles_) {
+        if (playerPassengerStopLatchRouteIndex_ && playerPassengerStopLatchIndex_ &&
+            *playerPassengerStopLatchRouteIndex_ < trafficVehicles_.size()) {
+            const TrafficVehicleState& latchedRoute =
+                trafficVehicles_[*playerPassengerStopLatchRouteIndex_];
+            if (*playerPassengerStopLatchIndex_ < latchedRoute.passengerStops.size()) {
+                const auto latchedPose = openbus::map::sampleMapTrafficRoute(
+                    latchedRoute.actor.route,
+                    latchedRoute
+                        .passengerStops[*playerPassengerStopLatchIndex_]
+                        .routeDistanceMeters,
+                    0.0);
+                if (!latchedPose) {
+                    throw std::runtime_error("Cannot sample the latched player passenger stop");
+                }
+                latchedStopDistance =
+                    std::hypot(latchedPose->position[0] - chassis.position[0],
+                               latchedPose->position[1] - chassis.position[1]);
+            }
+        }
+        for (std::size_t vehicleIndex = 0; vehicleIndex < trafficVehicles_.size();
+             ++vehicleIndex) {
+            const TrafficVehicleState& trafficVehicle = trafficVehicles_[vehicleIndex];
             if (!trafficVehicle.isBus) {
                 continue;
             }
@@ -1097,21 +1136,20 @@ void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
                 }
                 const double distance = std::hypot(pose->position[0] - chassis.position[0],
                                                    pose->position[1] - chassis.position[1]);
-                if (playerPassengerStopLatch_ && stop.stopId == *playerPassengerStopLatch_) {
-                    latchedStopDistance = std::min(latchedStopDistance, distance);
-                }
                 const double headingDifference =
                     std::remainder(chassisHeading - pose->headingRadians, 2.0 * std::numbers::pi);
                 if (std::abs(headingDifference) > std::numbers::pi / 3.0) {
                     continue;
                 }
                 if (distance < nearestStop.distanceMeters) {
-                    nearestStop = {&trafficVehicle, stopIndex, distance};
+                    nearestStop = {&trafficVehicle, vehicleIndex, stopIndex, distance};
                 }
             }
         }
         if (playerPassengerStopLatch_ && latchedStopDistance > 5.0) {
             playerPassengerStopLatch_.reset();
+            playerPassengerStopLatchRouteIndex_.reset();
+            playerPassengerStopLatchIndex_.reset();
         }
         if (!activePlayerPassengerStop_ && !playerPassengerStopLatch_ &&
             nearestStop.vehicle != nullptr && nearestStop.distanceMeters <= 2.5 &&
@@ -1137,7 +1175,11 @@ void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
                                            "dwelling");
                 }
                 activePlayerPassengerStop_ = stop.stopId;
+                activePlayerPassengerStopRouteIndex_ = nearestStop.vehicleIndex;
+                activePlayerPassengerStopIndex_ = nearestStop.stopIndex;
                 playerPassengerStopLatch_ = stop.stopId;
+                playerPassengerStopLatchRouteIndex_ = nearestStop.vehicleIndex;
+                playerPassengerStopLatchIndex_ = nearestStop.stopIndex;
             }
         }
         playerVehicle_->soundBank.updateAmbient(soundEngine_, playerVehicle_->variables,

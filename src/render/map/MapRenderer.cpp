@@ -46,10 +46,11 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     impl_->simulationState = &simulationState;
     impl_->omsiRoot = omsiRoot;
     impl_->leftHandTraffic = map.metadata.hasLeftHandTraffic;
-    MapSceneLoader loader(map, centerTileIndex, groundTextureIndex, omsiRoot, *impl_);
-    loader.load();
+    sceneLoader_ = std::make_unique<MapSceneLoader>(map, centerTileIndex, groundTextureIndex,
+                                                    omsiRoot, *impl_);
+    sceneLoader_->load();
     updateStreaming(spawnWorldX, spawnWorldY);
-    loader.logSummary();
+    sceneLoader_->logSummary();
 }
 
 MapRenderer::~MapRenderer() = default;
@@ -107,11 +108,15 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
     if (impl_->activeCenterTile == center) {
         return;
     }
-    impl_->activeCenterTile = center;
     impl_->activeTileCoordinates = openbus::map::selectMapTilesWithinRadius(
         impl_->mapTileCoordinates, worldX, worldY, MAP_ACTIVE_TILE_RADIUS);
     impl_->activeTileKeys.clear();
     impl_->activeTileKeys.reserve(impl_->activeTileCoordinates.size());
+    for (const auto& [tileX, tileY] : impl_->activeTileCoordinates) {
+        impl_->activeTileKeys.insert(tileKey(tileX, tileY));
+    }
+    sceneLoader_->loadActiveTiles(impl_->activeTileCoordinates);
+    impl_->activeCenterTile = center;
     MapRenderStats stats;
     stats.activeTiles = impl_->activeTileCoordinates.size();
     stats.totalTiles = impl_->mapTileCoordinates.size();
@@ -124,7 +129,6 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
     };
     for (const auto& [tileX, tileY] : impl_->activeTileCoordinates) {
         const std::uint64_t key = tileKey(tileX, tileY);
-        impl_->activeTileKeys.insert(key);
         stats.activeTerrainTiles += countForTile(impl_->terrainTilesByTile, key);
         stats.activeSceneryObjects += countForTile(impl_->sceneryObjectsByTile, key);
         stats.activeRoadBatches += countForTile(impl_->roadBatchesByTile, key);

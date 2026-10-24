@@ -132,6 +132,9 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                                 bool convertScripts = true);
 // Loads a configuration's referenced variable/constant files and prepares its OSC script paths.
 void prepareScriptConfiguration(VehicleConfig& configuration, bool convertScripts = true);
+std::vector<int> passengerPathRoute(const std::vector<PassengerPathPoint>& points,
+                                    const std::vector<PassengerPathLink>& links, int fromPoint,
+                                    int toPoint);
 std::size_t registrationOptionCount(const VehicleConfig& configuration);
 // Selects the parallel number/plate entry, wrapping within their paired range.
 void selectRegistrationAtIndex(VehicleConfig& configuration, std::size_t index);

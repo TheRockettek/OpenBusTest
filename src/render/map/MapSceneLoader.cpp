@@ -41,26 +41,62 @@ void MapSceneLoader::load() {
                 ", tiles=" + std::to_string(map.tiles.size()) + ".");
     gameLog.Log("Map phase: loading ground textures.");
     loadGroundTextures();
-    gameLog.Log("Map phase: loading terrain.");
-    loadTerrainTiles();
-    mapContentStart = std::chrono::steady_clock::now();
-    TraceScope sceneBuildPhase("map", "MapRenderer.buildSceneGeometryAndBatches");
+    if (std::none_of(
+            map.tiles.begin(), map.tiles.end(),
+            [](const openbus::map::MapTileReference& tile) { return tile.hasTerrainFile; })) {
+        throw std::runtime_error("No terrain files found in the selected map");
+    }
     gameLog.Log("Map phase: indexing tile placements and traffic paths.");
     indexMapContent();
-    gameLog.Log("Map phase: building scenery, splines and water.");
-    buildTileContent();
-    gameLog.Log("Map phase: resolving traffic-light parents and finalizing lane networks.");
+}
+
+void MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoordinates) {
+    std::unordered_set<std::uint64_t> activeTileKeys;
+    activeTileKeys.reserve(tileCoordinates.size());
+    for (const auto& [tileX, tileY] : tileCoordinates) {
+        activeTileKeys.insert(tileKey(tileX, tileY));
+    }
+
+    std::unordered_set<std::uint64_t> terrainTileKeys = activeTileKeys;
+    for (const auto& [tileX, tileY] : tileCoordinates) {
+        for (int offsetY = -1; offsetY <= 1; ++offsetY) {
+            for (int offsetX = -1; offsetX <= 1; ++offsetX) {
+                terrainTileKeys.insert(tileKey(tileX + offsetX, tileY + offsetY));
+            }
+        }
+    }
+
+    gameLog.Log("Map phase: loading terrain for the active tile window.");
+    loadTerrainTiles(terrainTileKeys);
+    for (const openbus::map::MapTileReference& tileReference : map.tiles) {
+        const std::uint64_t key = tileKey(tileReference.x, tileReference.y);
+        if (!activeTileKeys.contains(key) || loadedContentTileKeys.contains(key)) {
+            continue;
+        }
+        gameLog.Log("Map phase: loading active tile " +
+                    tileLabel(tileReference.x, tileReference.y) + ".");
+        buildTileContent(tileReference);
+        loadedContentTileKeys.insert(key);
+        uploadRoadBatches();
+    }
+    if (roadTrafficLaneNetworkDirty || humanTrafficLaneNetworkDirty) {
+        gameLog.Log("Map phase: finalizing traffic lane networks.");
+        if (roadTrafficLaneNetworkDirty) {
+            impl_->roadTrafficLaneNetwork.finalize();
+            roadTrafficLaneNetworkDirty = false;
+        }
+        if (humanTrafficLaneNetworkDirty) {
+            impl_->humanTrafficLaneNetwork.finalize();
+            humanTrafficLaneNetworkDirty = false;
+        }
+        const openbus::map::MapTrafficLaneNetworkStats laneStats =
+            impl_->roadTrafficLaneNetwork.stats();
+        gameLog.Log("Map road lane network: lanes=" + std::to_string(laneStats.lanes) +
+                    ", unconnected lane ends=" + std::to_string(laneStats.deadEnds) +
+                    ", unconnected ends within 3 m of an aligned lane start=" +
+                    std::to_string(laneStats.nearMissDeadEnds) + ".");
+    }
     resolveTrafficLightVariableParents();
-    impl_->roadTrafficLaneNetwork.finalize();
-    impl_->humanTrafficLaneNetwork.finalize();
-    const openbus::map::MapTrafficLaneNetworkStats laneStats =
-        impl_->roadTrafficLaneNetwork.stats();
-    gameLog.Log("Map road lane network: lanes=" + std::to_string(laneStats.lanes) +
-                ", unconnected lane ends=" + std::to_string(laneStats.deadEnds) +
-                ", unconnected ends within 3 m of an aligned lane start=" +
-                std::to_string(laneStats.nearMissDeadEnds) + ".");
-    gameLog.Log("Map phase: uploading road geometry.");
-    uploadRoadBatches();
 }
 
 void MapSceneLoader::resolveTrafficLightVariableParents() {
@@ -109,6 +145,12 @@ void MapSceneLoader::resolveTrafficLightVariableParents() {
             }
         }
         if (!scriptState->trafficSignal.has_value()) {
+            const auto parentTile = mapObjectTileKeysById.find(*scriptState->variableParentId);
+            if (parentTile != mapObjectTileKeysById.end() &&
+                !ambiguousStateObjectIds.contains(*scriptState->variableParentId) &&
+                !loadedContentTileKeys.contains(parentTile->second)) {
+                continue;
+            }
             const std::string selection =
                 scriptState->placementLabels.empty()
                     ? "no light-index label"
@@ -183,29 +225,33 @@ void MapSceneLoader::loadGroundTextures() {
     const openbus::map::MapTileReference& center = map.tiles[centerTileIndex];
     gameLog.Log("Map loading started: root=" + map.rootPath.generic_string() +
                 ", tiles=" + std::to_string(map.tiles.size()) +
-                ", full-map loading enabled, render visibility=" +
+                ", render tiles load on demand, render visibility=" +
                 std::to_string(static_cast<int>(MAP_VISIBILITY_RADIUS_METERS)) +
                 " m, spawn=" + tileLabel(center.x, center.y) + ".");
 }
 
-void MapSceneLoader::loadTerrainTiles() {
+void MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& tileKeys) {
     const auto terrainLoadStart = std::chrono::steady_clock::now();
     std::size_t terrainTilesVisited = 0;
     {
-        TraceScope phase("map", "MapRenderer.loadAllTerrainTiles");
+        TraceScope phase("map", "MapRenderer.loadActiveTerrainTiles");
         for (const openbus::map::MapTileReference& tile : map.tiles) {
+            const std::uint64_t key = tileKey(tile.x, tile.y);
+            if (!tileKeys.contains(key) || loadedTerrainTileKeys.contains(key)) {
+                continue;
+            }
             ++terrainTilesVisited;
-            gameLog.Log("Map terrain tile " + std::to_string(terrainTilesVisited) + "/" +
-                        std::to_string(map.tiles.size()) + ": " + tile.terrainPath.string() +
+            gameLog.Log("Map terrain tile " + std::to_string(terrainTilesVisited) + ": " +
+                        tile.terrainPath.string() +
                         "; meshes uploaded=" + std::to_string(impl_->terrainBuffers.size()) +
                         ", elapsed=" + std::to_string(elapsedMilliseconds(terrainLoadStart)) +
                         " ms.");
             if (!tile.hasTerrainFile) {
+                loadedTerrainTileKeys.insert(key);
                 recordSkipped(skipped, "listed map tiles without a .terrain sidecar",
                               tileLabel(tile.x, tile.y) + " " + tile.textPath.filename().string());
                 continue;
             }
-            const std::uint64_t key = tileKey(tile.x, tile.y);
             const openbus::map::TerrainGrid grid = openbus::map::loadTerrainGrid(tile.terrainPath);
             terrainByCoordinate.emplace(key, grid);
             const std::size_t side = grid.intervals + 1;
@@ -349,21 +395,20 @@ void MapSceneLoader::loadTerrainTiles() {
             }
             impl_->terrainBuffers.push_back(buffer);
             ++impl_->terrainTilesByTile[tileKey(buffer.tileX, buffer.tileY)];
+            loadedTerrainTileKeys.insert(key);
         }
     }
-    gameLog.Log("Map terrain phase complete: " + std::to_string(impl_->terrainBuffers.size()) +
-                " meshes from " + std::to_string(map.tiles.size()) + " map tiles in " +
-                std::to_string(elapsedMilliseconds(terrainLoadStart)) + " ms.");
-    if (impl_->terrainBuffers.empty()) {
-        logSkipped(skipped);
-        throw std::runtime_error("No terrain files found in the selected map");
-    }
+    gameLog.Log("Map active terrain load complete: " + std::to_string(terrainTilesVisited) +
+                " tiles visited, " + std::to_string(impl_->terrainBuffers.size()) +
+                " total meshes in " + std::to_string(elapsedMilliseconds(terrainLoadStart)) +
+                " ms.");
 }
 
 void MapSceneLoader::indexMapContent() {
     const auto indexStart = std::chrono::steady_clock::now();
     const auto registerObjectId = [&](int objectId, MapObjectRecordKind kind,
-                                      const std::string& tileName) {
+                                      const std::string& tileName, int tileX, int tileY) {
+        mapObjectTileKeysById.try_emplace(objectId, tileKey(tileX, tileY));
         const auto [existing, inserted] = mapObjectRecordKindsById.try_emplace(objectId, kind);
         if (!inserted) {
             ambiguousMapObjectIds.insert(objectId);
@@ -458,7 +503,8 @@ void MapSceneLoader::indexMapContent() {
         impl_->humanTrafficRouteNetwork.addTileSplines(humanTrafficSplines, tileReference.x,
                                                        tileReference.y);
         for (const openbus::map::MapSceneryPlacement& object : tile.sceneryObjects) {
-            registerObjectId(object.id, MapObjectRecordKind::Scenery, tileName);
+            registerObjectId(object.id, MapObjectRecordKind::Scenery, tileName, tileReference.x,
+                             tileReference.y);
             IndexedSceneryObject indexed;
             indexed.assetPath = object.assetPath;
             indexed.transformValid = object.transformValid;
@@ -474,7 +520,8 @@ void MapSceneLoader::indexMapContent() {
             }
         }
         for (const openbus::map::MapAttachedObject& object : tile.attachedObjects) {
-            registerObjectId(object.id, MapObjectRecordKind::Attached, tileName);
+            registerObjectId(object.id, MapObjectRecordKind::Attached, tileName, tileReference.x,
+                             tileReference.y);
             IndexedAttachedObject indexed;
             indexed.assetPath = object.assetPath;
             indexed.parentId = object.attachedToObjectId;
@@ -489,7 +536,8 @@ void MapSceneLoader::indexMapContent() {
             }
         }
         for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
-            registerObjectId(attachment.id, MapObjectRecordKind::SplineAttachment, tileName);
+            registerObjectId(attachment.id, MapObjectRecordKind::SplineAttachment, tileName,
+                             tileReference.x, tileReference.y);
             if (!splineAttachmentTileById.try_emplace(attachment.id, tileReferenceIndex).second) {
                 recordSkipped(skipped, "map placements with duplicate object IDs",
                               tileLabel(tileReference.x, tileReference.y) +
@@ -502,6 +550,8 @@ void MapSceneLoader::indexMapContent() {
     impl_->trafficRouteNetwork.finalize();
     impl_->roadTrafficRouteNetwork.finalize();
     impl_->humanTrafficRouteNetwork.finalize();
+    roadTrafficLaneNetworkDirty = true;
+    humanTrafficLaneNetworkDirty = true;
     gameLog.Log("Map index phase complete: " + std::to_string(map.tiles.size()) + " tiles in " +
                 std::to_string(elapsedMilliseconds(indexStart)) + " ms.");
 }
@@ -565,6 +615,7 @@ void MapSceneLoader::uploadRoadBatches() {
     gameLog.Log("Map road upload complete: geometry groups=" + std::to_string(roadVertices.size()) +
                 ", uploaded batches=" + std::to_string(impl_->roadBatches.size()) + " in " +
                 std::to_string(elapsedMilliseconds(roadUploadStart)) + " ms.");
+    roadVertices.clear();
 }
 
 void MapSceneLoader::logSummary() const {

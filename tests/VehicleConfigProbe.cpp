@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <vector>
 
 int main() {
     const std::filesystem::path root =
@@ -227,6 +228,17 @@ int main() {
     if (blinkOn == result.constants.end() || blinkOn->second != 0.6F ||
         blinkOff == result.constants.end() || blinkOff->second != 0.4F) {
         std::cerr << "BOM-prefixed constant file did not retain its first constant\n";
+        return 1;
+    }
+    const std::vector<PassengerPathPoint> cabinPoints = {
+        {10, {0.0, 0.0, 0.0}}, {20, {1.0, 0.0, 0.0}}, {30, {2.0, 0.0, 0.0}}};
+    const std::vector<PassengerPathLink> cabinLinks = {
+        {10, 20, true}, {20, 30, false}};
+    if (passengerPathRoute(cabinPoints, cabinLinks, 10, 30) !=
+            std::vector<int>{10, 20, 30} ||
+        !passengerPathRoute(cabinPoints, cabinLinks, 30, 10).empty() ||
+        passengerPathRoute(cabinPoints, cabinLinks, 20, 20) != std::vector<int>{20}) {
+        std::cerr << "Passenger cabin path routing did not preserve link direction\n";
         return 1;
     }
     return 0;
