@@ -63,6 +63,30 @@ struct MapGlobalMetadata {
     bool hasLeftHandTraffic = false;
 };
 
+struct MapTicketDefinition {
+    std::string name;
+    std::string displayValue;
+    double value = 0.0;
+    int type = 0;
+};
+
+struct MapTicketPackDefinition {
+    std::vector<MapTicketDefinition> tickets;
+    ConfigurationDiagnostics diagnostics;
+};
+
+struct MapCurrencyCoinDefinition {
+    std::string modelPath;
+    double value = 0.0;
+};
+
+struct MapCurrencyDefinition {
+    std::string name;
+    std::string mode;
+    std::vector<MapCurrencyCoinDefinition> coins;
+    ConfigurationDiagnostics diagnostics;
+};
+
 struct MapTrafficDensityPoint {
     double hour = 0.0;
     double density = 0.0;
@@ -200,6 +224,8 @@ struct MapAiTrafficData {
 struct MapAiRoadVehicle {
     std::string assetPath;
     std::size_t groupIndex = 0;
+    // Fixed OMSI traffic-rule group, independent of the population group index above.
+    std::size_t trafficRuleGroupIndex = 0;
     int defaultVehicleType = 0;
     std::string groupName;
     double selectionWeight = 1.0;
@@ -223,11 +249,9 @@ std::optional<std::size_t> selectMapAiRoadVehicle(const std::vector<MapAiRoadVeh
 std::vector<MapAiRoadTrafficGroupPopulation>
 mapAiRoadTrafficPopulationByGroup(const MapAiTrafficData& traffic, std::size_t populationCount,
                                   double hour, int dayOfWeekMask);
-std::vector<MapAiRoadTrafficGroupPopulation>
-mapAiMaximumRoadTrafficPoolByGroup(const MapAiTrafficData& traffic,
-                                   const std::vector<MapAiRoadVehicle>& vehicles,
-                                   std::size_t basePopulation, double densityMultiplier,
-                                   std::size_t activePopulationCap);
+std::vector<MapAiRoadTrafficGroupPopulation> mapAiMaximumRoadTrafficPoolByGroup(
+    const MapAiTrafficData& traffic, const std::vector<MapAiRoadVehicle>& vehicles,
+    std::size_t basePopulation, double densityMultiplier, std::size_t activePopulationCap);
 std::optional<double> mapAiRoadTrafficDensityAtHour(const MapAiTrafficData& traffic,
                                                     const std::vector<MapAiRoadVehicle>& vehicles,
                                                     double hour, int dayOfWeekMask);
@@ -431,6 +455,8 @@ struct WaterData {
 };
 
 MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory);
+MapTicketPackDefinition loadMapTicketPackDefinition(const std::filesystem::path& ticketPackPath);
+MapCurrencyDefinition loadMapCurrencyDefinition(const std::filesystem::path& currencyPath);
 std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd);
 std::size_t selectMapSpawnPoint(const MapDefinition& map, std::string_view selector);
 std::size_t selectMapEntryPoint(const MapDefinition& map, std::string_view selector);

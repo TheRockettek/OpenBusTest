@@ -81,6 +81,34 @@ void verifyPassengerServiceBehavior() {
     require(!service.arrive({.stopId = 0, .dwellSeconds = 1.0}) &&
                 !service.arrive({.stopId = 201, .dwellSeconds = -1.0}),
             "invalid stops and dwell durations are rejected");
+
+    MapPassengerServiceRuntime firstBus(1);
+    MapPassengerServiceRuntime secondBus(1);
+    require(firstBus.arrive({.stopId = 400, .dwellSeconds = 2.0, .nextStopId = 500}) &&
+                secondBus.arrive({.stopId = 400, .dwellSeconds = 2.0, .nextStopId = 500}),
+            "multiple buses can dwell at a shared stop");
+    std::size_t sharedWaitingPassengers = 1;
+    advanceMapPassengerServiceWithSharedQueue(firstBus, 400, sharedWaitingPassengers, 0.75);
+    advanceMapPassengerServiceWithSharedQueue(secondBus, 400, sharedWaitingPassengers, 0.75);
+    require(sharedWaitingPassengers == 0 &&
+                firstBus.onboardPassengerCount() + secondBus.onboardPassengerCount() == 1,
+            "shared queue updates prevent simultaneous buses from boarding the same passenger");
+
+    MapPassengerServiceRuntime boardingService(1);
+    boardingService.setWaitingPassengers(600, 1);
+    require(boardingService.arrive(
+                {.stopId = 600, .dwellSeconds = 1.0, .nextStopId = 700}),
+            "boarding animation service starts at a valid stop");
+    boardingService.advance(0.375);
+    require(boardingService.boardingPassenger() &&
+                std::abs(boardingService.boardingProgress() - 0.5) < 1.0e-9 &&
+                boardingService.passengerCountOnSeat(0) == 0 &&
+                boardingService.waitingPassengers(600) == 0,
+            "a reserved passenger has visible intermediate boarding progress");
+    boardingService.advance(0.375);
+    require(!boardingService.boardingPassenger() &&
+                boardingService.passengerCountOnSeat(0) == 1,
+            "boarding completes into the assigned seat after its animation interval");
 }
 
 void verifyDrivingBehavior() {
@@ -1088,6 +1116,8 @@ void verifyDrivingBehavior() {
                                                     "approaching.ovh", 8.0, 0.0, false);
     committedJunctionActor.unscheduledGroupIndex = 0;
     highPriorityApproach.unscheduledGroupIndex = 0;
+    committedJunctionActor.trafficRuleGroupIndex = 0;
+    highPriorityApproach.trafficRuleGroupIndex = 0;
     committedJunctionActor.distanceMeters = 45.0;
     highPriorityApproach.distanceMeters = 35.0;
     for (int frame = 0; frame < 300; ++frame) {
@@ -1861,6 +1891,8 @@ void verifyDrivingBehavior() {
                                                false);
         mainRoadCar.unscheduledGroupIndex = 0;
         sideRoadCar.unscheduledGroupIndex = 0;
+        mainRoadCar.trafficRuleGroupIndex = 0;
+        sideRoadCar.trafficRuleGroupIndex = 0;
         // The side-road car reaches its entry line first, with the main-road car a few
         // seconds away, and has already been waiting long enough to have aged.
         mainRoadCar.distanceMeters = 40.0;
@@ -1953,6 +1985,9 @@ void verifyDrivingBehavior() {
     queuedMainLeader.unscheduledGroupIndex = 0;
     queuedMainFollower.unscheduledGroupIndex = 0;
     queuedTTurn.unscheduledGroupIndex = 0;
+    queuedMainLeader.trafficRuleGroupIndex = 0;
+    queuedMainFollower.trafficRuleGroupIndex = 0;
+    queuedTTurn.trafficRuleGroupIndex = 0;
     queuedMainLeader.distanceMeters = 28.0;
     queuedMainFollower.distanceMeters = 14.0;
     queuedTTurn.distanceMeters = 26.0;
@@ -2023,6 +2058,8 @@ void verifyDrivingBehavior() {
         makeMapTrafficActor(std::move(highPriorityTurnApproach), "high-turn.ovh", 8.0, 0.0, false);
     lowTurning.unscheduledGroupIndex = 0;
     highPriorityTurn.unscheduledGroupIndex = 0;
+    lowTurning.trafficRuleGroupIndex = 0;
+    highPriorityTurn.trafficRuleGroupIndex = 0;
     lowTurning.distanceMeters = 39.0;
     highPriorityTurn.distanceMeters = 35.0;
     lowTurning.speedMetersPerSecond = 0.0;
@@ -2120,6 +2157,8 @@ void verifyDrivingBehavior() {
         makeMapTrafficActor(std::move(highPriorityRoute), "high.ovh", 8.0, 0.0, false);
     lowPriority.unscheduledGroupIndex = 0;
     highPriority.unscheduledGroupIndex = 0;
+    lowPriority.trafficRuleGroupIndex = 0;
+    highPriority.trafficRuleGroupIndex = 0;
     lowPriority.distanceMeters = 35.0;
     highPriority.distanceMeters = 35.0;
     lowPriority.junctionWaitSeconds = 5.0;
@@ -2148,6 +2187,8 @@ void verifyDrivingBehavior() {
         std::move(highPriorityJunctionRoute), "high-priority-junction.ovh", 8.0, 0.0, false);
     lowPriorityTurning.unscheduledGroupIndex = 0;
     highPriorityInJunction.unscheduledGroupIndex = 0;
+    lowPriorityTurning.trafficRuleGroupIndex = 0;
+    highPriorityInJunction.trafficRuleGroupIndex = 0;
     lowPriorityTurning.distanceMeters = 35.0;
     highPriorityInJunction.distanceMeters = 35.0;
     lowPriorityTurning.speedMetersPerSecond = 8.0;
@@ -2338,6 +2379,8 @@ void verifyDrivingBehavior() {
                                                     "high-priority-crossing.ovh", 8.0, 0.0, false);
     waitingRightTurn.unscheduledGroupIndex = 0;
     highPriorityCrossing.unscheduledGroupIndex = 0;
+    waitingRightTurn.trafficRuleGroupIndex = 0;
+    highPriorityCrossing.trafficRuleGroupIndex = 0;
     waitingRightTurn.distanceMeters = 25.0;
     highPriorityCrossing.distanceMeters = 25.0;
     advanceMapTrafficDriving({&waitingRightTurn, &highPriorityCrossing}, {}, 0.1);
@@ -2352,6 +2395,8 @@ void verifyDrivingBehavior() {
         priorityTurnExitRoute, "approaching-priority-exit.ovh", 8.0, 0.0, false);
     yieldingRightTurn.unscheduledGroupIndex = 0;
     approachingPriorityExit.unscheduledGroupIndex = 0;
+    yieldingRightTurn.trafficRuleGroupIndex = 0;
+    approachingPriorityExit.trafficRuleGroupIndex = 0;
     yieldingRightTurn.distanceMeters = 15.0;
     approachingPriorityExit.distanceMeters = 20.0;
     yieldingRightTurn.speedMetersPerSecond = 8.0;
@@ -2386,6 +2431,8 @@ void verifyDrivingBehavior() {
         highPriorityCrossingRoute, "near-priority-crossing.ovh", 8.0, 0.0, false);
     shortConnectorRightTurn.unscheduledGroupIndex = 0;
     nearPriorityCrossing.unscheduledGroupIndex = 0;
+    shortConnectorRightTurn.trafficRuleGroupIndex = 0;
+    nearPriorityCrossing.trafficRuleGroupIndex = 0;
     shortConnectorRightTurn.distanceMeters = 27.0;
     nearPriorityCrossing.distanceMeters = 32.0;
     shortConnectorRightTurn.speedMetersPerSecond = 6.0;
@@ -2480,6 +2527,8 @@ void verifyDrivingBehavior() {
         makeMapTrafficActor(yieldingMergeRoute, "yielding-merge.ovh", 8.0, 0.0, false);
     priorityMergeVehicle.unscheduledGroupIndex = 0;
     yieldingMergeVehicle.unscheduledGroupIndex = 0;
+    priorityMergeVehicle.trafficRuleGroupIndex = 0;
+    yieldingMergeVehicle.trafficRuleGroupIndex = 0;
     priorityMergeVehicle.distanceMeters = 26.0;
     yieldingMergeVehicle.distanceMeters = 26.0;
     double firstMergePriorityDistance = -1.0;
@@ -2512,6 +2561,8 @@ void verifyDrivingBehavior() {
         highPriorityCrossingRoute, "passed-priority-crossing.ovh", 30.0, 0.0, false);
     lateRightTurn.unscheduledGroupIndex = 0;
     passedPriorityCrossing.unscheduledGroupIndex = 0;
+    lateRightTurn.trafficRuleGroupIndex = 0;
+    passedPriorityCrossing.trafficRuleGroupIndex = 0;
     passedPriorityCrossing.distanceMeters = 20.0;
     passedPriorityCrossing.speedMetersPerSecond = 30.0;
     double lateTurnMinimumSpeed = std::numeric_limits<double>::infinity();
@@ -2589,6 +2640,8 @@ void verifyDrivingBehavior() {
         makeMapTrafficActor(highPriorityCrossingRoute, "aged-crossing.ovh", 8.0, 0.0, false);
     agedRightTurn.unscheduledGroupIndex = 0;
     agedCrossing.unscheduledGroupIndex = 0;
+    agedRightTurn.trafficRuleGroupIndex = 0;
+    agedCrossing.trafficRuleGroupIndex = 0;
     agedRightTurn.distanceMeters = 25.0;
     agedCrossing.distanceMeters = 25.0;
     agedRightTurn.speedMetersPerSecond = 8.0;
@@ -2957,31 +3010,31 @@ void verifyTrafficRules() {
         {false, {"1", "speedlimit", "not-a-number", "0"}},
     };
     const MapTrafficPathRules rules = mapTrafficRulesForPath(authoredRules, 0);
-    require(mapTrafficPathSpeedLimitForVehicle(rules, {0, 0, false}) == 36.0 &&
-                mapTrafficPathPriorityForVehicle(rules, {0, 0, false}) == 192.0 &&
-                !mapTrafficPathSpeedLimitForVehicle(rules, {0, 1, false}).has_value() &&
-                mapTrafficPathPriorityForVehicle(rules, {0, 1, false}) == 128.0,
-            "speed and priority rules are scoped to their authored AI group");
+    require(mapTrafficPathSpeedLimitForVehicle(rules, {0, 1, false, 0}) == 36.0 &&
+                mapTrafficPathPriorityForVehicle(rules, {0, 1, false, 0}) == 192.0 &&
+                !mapTrafficPathSpeedLimitForVehicle(rules, {0, 0, false, 1}).has_value() &&
+                mapTrafficPathPriorityForVehicle(rules, {0, 0, false, 1}) == 128.0,
+            "rules use the fixed vehicle group rather than the unscheduled population index");
     require(rules.groups.size() == 3 && rules.groups[0].carsProhibited == true &&
                 rules.groups[0].busesAllowed == true && rules.groups[0].trucksAllowed == true &&
                 rules.groups[0].overtakingProhibited == true &&
                 rules.groups[2].groupIndex == 3 &&
                 rules.groups[2].unscheduledTrafficProhibited == true,
             "access, overtaking and no-unscheduled-traffic rules decode as group overrides");
-    requireNear(mapTrafficPathDensityForVehicle(rules, {0, 0, false}), 0.5,
-                "traffic density resolves for its matching unscheduled group");
-    requireNear(mapTrafficPathDensityForVehicle(rules, {0, 1, false}), 0.0,
+    requireNear(mapTrafficPathDensityForVehicle(rules, {0, 1, false, 0}), 0.5,
+                "traffic density resolves for its matching vehicle group");
+    requireNear(mapTrafficPathDensityForVehicle(rules, {0, 0, false, 1}), 0.0,
                 "the last matching group density rule takes effect");
-    requireNear(mapTrafficPathDensityForVehicle(rules, {0, 3, false}), 0.0,
+    requireNear(mapTrafficPathDensityForVehicle(rules, {0, 0, false, 3}), 0.0,
                 "no_unsched_traffic removes the matching group's effective path density");
     require(
-        mapTrafficPathAllowsVehicle(rules, {1, 0, false}) &&
-            mapTrafficPathAllowsVehicle(rules, {2, 0, false}) &&
-            mapTrafficPathAllowsVehicle(rules, {3, 0, false}) &&
-            !mapTrafficPathAllowsVehicle(rules, {0, 0, false}) &&
-            !mapTrafficPathAllowsVehicle(rules, {3, 1, false}) &&
-            mapTrafficPathAllowsVehicle(rules, {0, 2, false}) &&
-            !mapTrafficPathAllowsVehicle(rules, {0, 3, false}) &&
+        mapTrafficPathAllowsVehicle(rules, {1, 1, false, 0}) &&
+            mapTrafficPathAllowsVehicle(rules, {2, 1, false, 0}) &&
+            mapTrafficPathAllowsVehicle(rules, {3, 1, false, 0}) &&
+            !mapTrafficPathAllowsVehicle(rules, {0, 1, false, 0}) &&
+            !mapTrafficPathAllowsVehicle(rules, {3, 0, false, 1}) &&
+            mapTrafficPathAllowsVehicle(rules, {0, 1, false, 2}) &&
+            !mapTrafficPathAllowsVehicle(rules, {0, 0, false, 3}) &&
             mapTrafficPathAllowsVehicle(rules, {2, std::nullopt, true}),
         "path rules enforce unscheduled access and density while preserving scheduled buses");
     const MapTrafficPathRules scheduledBusRestrictedRoad = mapTrafficRulesForPath(
@@ -3007,9 +3060,9 @@ void verifyTrafficRules() {
                                 {true, {"0", "no_unsched_traffic", "1", "2"}}},
                                0);
     require(!afterKill.groups[0].carsProhibited.has_value() &&
-                mapTrafficPathDensityForVehicle(afterKill, {0, 1, false}) == 1.0 &&
+                mapTrafficPathDensityForVehicle(afterKill, {0, 0, false, 1}) == 1.0 &&
                 !afterKill.groups[1].unscheduledTrafficProhibited.has_value() &&
-                mapTrafficPathAllowsVehicle(afterKill, {0, 2, false}),
+                mapTrafficPathAllowsVehicle(afterKill, {0, 0, false, 2}),
             "kill rules remove their matching path restrictions and group density override");
 
     bool malformedRuleRejected = false;
@@ -3029,6 +3082,15 @@ void verifyTrafficRules() {
         malformedPathRejected = true;
     }
     require(malformedPathRejected, "malformed path indices fail explicitly");
+    bool invalidVehicleGroupRejected = false;
+    try {
+        static_cast<void>(mapTrafficRulesForPath(
+            std::vector<MapTileRule>{{false, {"0", "trafficdensity", "1", "4"}}}, 0));
+    } catch (const std::invalid_argument&) {
+        invalidVehicleGroupRejected = true;
+    }
+    require(invalidVehicleGroupRejected,
+            "traffic rule vehicle groups outside the defined 0-3 range are rejected");
 
     MapTrafficRouteSegment restrictedSegment;
     restrictedSegment.spline = {makeSpline(1300, 0, 0, 0.0), 0, 0};
@@ -3037,10 +3099,10 @@ void verifyTrafficRules() {
     restrictedNetwork.addSegment(restrictedSegment);
     restrictedNetwork.finalize();
     require(
-        !restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {0, 0, false}) &&
-            restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {2, 0, false}) &&
-            !restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {3, 1, false}) &&
-        !restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {0, 3, false}) &&
+        !restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {0, 1, false, 0}) &&
+            restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {2, 1, false, 0}) &&
+            !restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {3, 1, false, 1}) &&
+        !restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {0, 1, false, 3}) &&
         restrictedNetwork.buildRoute(1300, 0, 0, 0.0, {2, std::nullopt, true}),
         "route construction rejects prohibited lanes and preserves allowed scheduled bus lanes");
     MapTrafficRouteSegment scheduledRestrictedSegment;
@@ -3085,7 +3147,7 @@ void verifyTrafficRules() {
     std::size_t lowDensitySelections = 0;
     std::size_t highDensitySelections = 0;
     for (std::size_t seed = 1; seed <= 1000; ++seed) {
-        const auto entry = densityNetwork.selectEntryLane({0, 0, false}, seed);
+        const auto entry = densityNetwork.selectEntryLane({0, 7, false, 0}, seed);
         require(entry.has_value() && entry->splineId != 1314,
                 "zero-density paths are excluded from unscheduled entry selection");
         if (entry->splineId == 1310) {
@@ -3096,6 +3158,27 @@ void verifyTrafficRules() {
     }
     require(highDensitySelections > lowDensitySelections * 5,
             "positive path density scales the relative selection frequency for its AI group");
+    require(!densityNetwork.buildRoute(1314, 0, 0, 0.0, {0, 7, false, 0}),
+            "an unscheduled vehicle cannot start a route on a zero-density path");
+    for (std::size_t seed = 1; seed <= 1000; ++seed) {
+        const auto spawn = densityNetwork.selectSpawnLane({0, 7, false, 0}, seed);
+        require(spawn.has_value() && spawn->splineId != 1314,
+                "zero-density paths are excluded from unscheduled spawn selection");
+    }
+
+    MapTrafficLaneNetwork zeroDensityContinuation;
+    zeroDensityContinuation.addSegment(straightSegment(1320, 0.0, 0.0));
+    auto zeroDensityPath = straightSegment(1321, 0.0, 10.0);
+    MapTrafficGroupRules zeroDensityPathRules;
+    zeroDensityPathRules.groupIndex = 0;
+    zeroDensityPathRules.density = 0.0;
+    zeroDensityPath.pathRules.groups.push_back(zeroDensityPathRules);
+    zeroDensityContinuation.addSegment(zeroDensityPath);
+    zeroDensityContinuation.finalize();
+    const auto routeBeforeZeroDensityPath =
+        zeroDensityContinuation.buildRoute(1320, 0, 0, 0.0, {0, 7, false, 0});
+    require(!routeBeforeZeroDensityPath,
+            "an unscheduled route with only a zero-density continuation cannot be built");
 
     MapTrafficRouteSegment speedSegment;
     speedSegment.spline = {makeSpline(1301, 0, 0, 0.0), 0, 0};
@@ -3112,6 +3195,7 @@ void verifyTrafficRules() {
         makeMapTrafficActor(std::move(speedRoute), "speed.ovh", 15.0, 0.0, false);
     speedCapped.speedMetersPerSecond = 0.0;
     speedCapped.unscheduledGroupIndex = 0;
+    speedCapped.trafficRuleGroupIndex = 0;
     advanceMapTrafficDriving({&speedCapped}, {}, 4.0);
     require(speedCapped.speedMetersPerSecond <= 5.0 + 1.0e-8,
             "authored speed limits cap vehicle speed in km/h converted to m/s");

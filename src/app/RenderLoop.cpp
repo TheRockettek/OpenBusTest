@@ -2,6 +2,7 @@
 
 #include "app/RenderLoopInternal.h"
 #include "app/vehicle/VehicleDefinition.h"
+#include "core/AssetPath.h"
 #include "render/map/MapRenderer.h"
 #include "map/MapSplineProfile.h"
 
@@ -303,7 +304,9 @@ bool RenderLoop::AddTrafficVehicle(
     std::vector<std::optional<std::size_t>> requiredSceneryPathSequence,
     bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired,
     bool allowReverseTraversalForRequired,
-    std::vector<openbus::map::MapTrafficPassengerStop> passengerStops) {
+    std::vector<openbus::map::MapTrafficPassengerStop> passengerStops,
+    std::string timetableLineName, std::string timetableDestinationName,
+    std::optional<std::size_t> trafficRuleGroupIndex) {
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
     }
@@ -337,8 +340,13 @@ bool RenderLoop::AddTrafficVehicle(
     }
     const double turnRadius = calculateTrafficMinimumTurnRadius(configuration, isBus);
     const int vehicleType = isBus ? 2 : configuration.vehicleType.value_or(defaultVehicleType);
+    if (!isBus && (!trafficRuleGroupIndex.has_value() || *trafficRuleGroupIndex > 3)) {
+        throw std::invalid_argument(
+            "Unscheduled map traffic requires a vehicle-rule group in [0, 3]");
+    }
     const openbus::map::MapTrafficVehicleFilter vehicleFilter{
-        vehicleType, isBus ? std::nullopt : unscheduledGroupIndex, isBus};
+        vehicleType, isBus ? std::nullopt : unscheduledGroupIndex, isBus,
+        isBus ? std::nullopt : trafficRuleGroupIndex};
     const double routeSearchTurnRadius =
         isBus && !requiredRouteSplineIds.empty() ? 0.0 : turnRadius;
     auto route = mapRenderer_->buildDrivingRoute(
@@ -368,6 +376,7 @@ bool RenderLoop::AddTrafficVehicle(
     actor.minimumTurnRadiusMeters = turnRadius;
     actor.vehicleType = vehicleType;
     actor.unscheduledGroupIndex = isBus ? std::nullopt : unscheduledGroupIndex;
+    actor.trafficRuleGroupIndex = isBus ? std::nullopt : trafficRuleGroupIndex;
     actor.scheduled = isBus;
     actor.isBus = isBus;
     actor.lengthMeters =
@@ -413,13 +422,14 @@ bool RenderLoop::AddTrafficVehicle(
     trafficState.actor = std::move(actor);
     trafficState.spawnCandidates = std::move(spawnCandidates);
     trafficState.scheduledDepartureMinutes = std::move(scheduledDepartureMinutes);
+    trafficState.timetableLineName = std::move(timetableLineName);
+    trafficState.timetableDestinationName = std::move(timetableDestinationName);
     if (!isBus && !passengerStops.empty()) {
         throw std::invalid_argument("Only scheduled map buses can service passenger stops");
     }
     std::size_t routeSegmentCursor = 0;
     for (openbus::map::MapTrafficPassengerStop& stop : passengerStops) {
-        if (stop.stopId == 0 || stop.dwellSeconds < 0.0 ||
-            !std::isfinite(stop.dwellSeconds)) {
+        if (stop.stopId == 0 || stop.dwellSeconds < 0.0 || !std::isfinite(stop.dwellSeconds)) {
             throw std::invalid_argument("Scheduled map bus passenger stop is invalid");
         }
         const auto segment = std::find_if(
@@ -431,20 +441,28 @@ bool RenderLoop::AddTrafficVehicle(
         if (segment == actor.route.segments.end()) {
             gameLog.Log("Scheduled passenger stop could not be matched to the bus route; "
                         "stopId=" +
-                        std::to_string(stop.stopId) + " spline=" +
-                        std::to_string(stop.splineId) + " path=" +
-                        std::to_string(stop.pathIndex) + " bus=" + busConfigPath.string());
+                        std::to_string(stop.stopId) + " spline=" + std::to_string(stop.splineId) +
+                        " path=" + std::to_string(stop.pathIndex) +
+                        " bus=" + busConfigPath.string());
             continue;
         }
-        routeSegmentCursor = static_cast<std::size_t>(
-            std::distance(actor.route.segments.begin(), segment));
+        routeSegmentCursor =
+            static_cast<std::size_t>(std::distance(actor.route.segments.begin(), segment));
         const std::size_t segmentIndex = routeSegmentCursor;
         stop.routeDistanceMeters =
             segmentIndex == 0 ? 0.0 : actor.route.cumulativeEndDistances[segmentIndex - 1];
         trafficState.passengerStops.push_back(std::move(stop));
     }
+    if (!trafficState.passengerStops.empty()) {
+        trafficState.passengerStops.back().passengersAlighting =
+            (std::numeric_limits<std::size_t>::max)();
+    }
     for (const openbus::map::MapTrafficPassengerStop& stop : trafficState.passengerStops) {
-        scheduledPassengerQueues_.try_emplace(stop.stopId, stop.waitingPassengers);
+        const auto [queue, inserted] =
+            scheduledPassengerQueues_.try_emplace(stop.stopId, stop.waitingPassengers);
+        if (inserted) {
+            scheduledPassengerInitialQueues_.emplace(stop.stopId, queue->second);
+        }
     }
     trafficState.isBus = isBus;
     if (isBus) {
@@ -672,6 +690,51 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
         map.entryPoints[spawnEntryPointIndex].placement.position[0],
         map.entryPoints[spawnEntryPointIndex].placement.position[1], groundTextureIndex, omsiRoot,
         simulationState_, *assetRequestManager_);
+    const auto resolveMapAsset =
+        [&](const std::string& configuredPath,
+            std::string_view assetName) -> std::optional<std::filesystem::path> {
+        if (configuredPath.empty()) {
+            return std::nullopt;
+        }
+        std::string normalizedPath = configuredPath;
+        std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
+        const std::filesystem::path resolvedPath =
+            openbus::assets::resolveCaseInsensitivePath(omsiRoot / normalizedPath);
+        if (!std::filesystem::is_regular_file(resolvedPath)) {
+            gameLog.Log("Map " + std::string(assetName) +
+                        " configuration is missing: " + resolvedPath.generic_string());
+            return std::nullopt;
+        }
+        return resolvedPath;
+    };
+    auto& globalVariables = simulationState_.sharedVariables();
+    if (const auto ticketPackPath = resolveMapAsset(map.metadata.ticketPack, "ticket pack")) {
+        const auto ticketPack = openbus::map::loadMapTicketPackDefinition(*ticketPackPath);
+        for (std::size_t index = 0; index < ticketPack.tickets.size(); ++index) {
+            const openbus::map::MapTicketDefinition& ticket = ticketPack.tickets[index];
+            globalVariables.setString("ticket_name_" + std::to_string(index), ticket.name);
+            globalVariables.set("ticket_value_" + std::to_string(index),
+                                static_cast<float>(ticket.value));
+        }
+        for (const ConfigurationDiagnostic& diagnostic : ticketPack.diagnostics.entries) {
+            gameLog.Log("Map ticket-pack warning line=" + std::to_string(diagnostic.line) + " [" +
+                        diagnostic.keyword + "] " + diagnostic.message);
+        }
+    }
+    if (const auto currencyPath = resolveMapAsset(map.metadata.moneySystem, "currency")) {
+        const auto currency = openbus::map::loadMapCurrencyDefinition(*currencyPath);
+        globalVariables.setString("cash_currency_name", currency.name);
+        for (std::size_t index = 0; index < currency.coins.size(); ++index) {
+            globalVariables.set("cash_coin_value_" + std::to_string(index),
+                                static_cast<float>(currency.coins[index].value));
+            globalVariables.setString("cash_coin_model_" + std::to_string(index),
+                                      currency.coins[index].modelPath);
+        }
+        for (const ConfigurationDiagnostic& diagnostic : currency.diagnostics.entries) {
+            gameLog.Log("Map currency warning line=" + std::to_string(diagnostic.line) + " [" +
+                        diagnostic.keyword + "] " + diagnostic.message);
+        }
+    }
     trafficSplineDebugBuilt_ = false;
     trafficSplineDebugTiles_.clear();
     ++trafficSplineDebugRevision_;

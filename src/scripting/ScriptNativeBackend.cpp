@@ -55,38 +55,68 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
     const auto indexedName = [](const char* prefix, int index) {
         return std::string(prefix) + std::to_string(index);
     };
+    const auto popNonnegativeIndex = [this](int& index) {
+        const float value = nativePopFloat();
+        return std::isfinite(value) && std::floor(value) == value && floatToInt(value, index) &&
+               index >= 0;
+    };
 
     if (name == "getticketname") {
         int ticketIndex = -1;
-        const bool validIndex = floatToInt(nativePopFloat(), ticketIndex) && ticketIndex >= 0;
-        stringStack.push_back(validIndex
-                                  ? localState.getString(indexedName("ticket_name_", ticketIndex))
-                                  : std::string());
+        const bool validIndex = popNonnegativeIndex(ticketIndex);
+        if (!validIndex) {
+            stringStack.emplace_back();
+        } else {
+            const std::string key = indexedName("ticket_name_", ticketIndex);
+            stringStack.push_back(localState.hasString(key)
+                                      ? localState.getString(key)
+                                      : sharedState.sharedVariables().getString(key));
+        }
     } else if (name == "getticketvalue") {
         int ticketIndex = -1;
-        const bool validIndex = floatToInt(nativePopFloat(), ticketIndex) && ticketIndex >= 0;
-        const float value =
-            validIndex ? localState.get(indexedName("ticket_value_", ticketIndex)) : 0.0F;
+        const bool validIndex = popNonnegativeIndex(ticketIndex);
+        const std::string key = validIndex ? indexedName("ticket_value_", ticketIndex) : "";
+        const float value = validIndex
+                                ? (localState.has(key) ? localState.get(key)
+                                                       : sharedState.sharedVariables().get(key))
+                                : 0.0F;
         pushNumber(std::isfinite(value) ? value : 0.0F);
     } else if (name == "givechangecoin") {
-        const float amount = nativePopFloat();
+        int coinIndex = -1;
+        const bool validIndex = popNonnegativeIndex(coinIndex);
+        const std::string coinValueKey =
+            validIndex ? indexedName("cash_coin_value_", coinIndex) : "";
+        const float amount = validIndex ? (localState.has(coinValueKey)
+                                               ? localState.get(coinValueKey)
+                                               : sharedState.sharedVariables().get(coinValueKey))
+                                        : 0.0F;
         if (std::isfinite(amount) && amount > 0.0F) {
             const double previousTotal = localState.get("cash_dispensed_total");
-            const double total = (std::isfinite(previousTotal) && previousTotal > 0.0
-                                      ? previousTotal
-                                      : 0.0) +
-                                 amount;
+            const double total =
+                (std::isfinite(previousTotal) && previousTotal > 0.0 ? previousTotal : 0.0) +
+                amount;
             localState.set("cash_dispensed_total",
                            static_cast<float>(std::min(
                                total, static_cast<double>((std::numeric_limits<float>::max)()))));
             localState.set("cash_last_coin_value", amount);
             const float previousCount = localState.get("cash_dispensed_coin_count");
-            const float count = std::isfinite(previousCount) && previousCount > 0.0F
-                                    ? previousCount
-                                    : 0.0F;
+            const float count =
+                std::isfinite(previousCount) && previousCount > 0.0F ? previousCount : 0.0F;
             localState.set("cash_dispensed_coin_count",
                            std::min(count + 1.0F, (std::numeric_limits<float>::max)()));
+            localState.set("cash_last_coin_index", static_cast<float>(coinIndex));
+            const std::string coinCountKey = indexedName("cash_coin_dispensed_count_", coinIndex);
+            const float previousCoinCount = localState.get(coinCountKey);
+            const float coinCount = std::isfinite(previousCoinCount) && previousCoinCount > 0.0F
+                                        ? previousCoinCount
+                                        : 0.0F;
+            localState.set(coinCountKey,
+                           std::min(coinCount + 1.0F, (std::numeric_limits<float>::max)()));
         }
+    } else if (name == "getttlinestring") {
+        stringStack.push_back(localState.getString("tt_line_string"));
+    } else if (name == "getttbusstopname") {
+        stringStack.push_back(localState.getString("tt_busstop_name"));
     } else if (name == "getterminusindex" || name == "getbusstopindex" || name == "getrouteindex") {
         popFloats(1);
         pushNumber(-1.0);
@@ -97,12 +127,12 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
     } else if (name == "gethumancountonpathlink" || name == "gethumancountonseat") {
         int index = -1;
         const bool validIndex = floatToInt(nativePopFloat(), index) && index >= 0;
-        const char* prefix = name == "gethumancountonseat" ? "human_count_on_seat_"
-                                                             : "human_count_on_path_link_";
+        const char* prefix =
+            name == "gethumancountonseat" ? "human_count_on_seat_" : "human_count_on_path_link_";
         const float count = validIndex ? localState.get(indexedName(prefix, index)) : 0.0F;
         pushNumber(std::isfinite(count) ? count : 0.0F);
-    } else if (name == "getttbusstopname" || name == "getdepotstringglobal" ||
-               name == "getarrbusline" || name == "getarrbusterminus") {
+    } else if (name == "getdepotstringglobal" || name == "getarrbusline" ||
+               name == "getarrbusterminus") {
         popFloats(1);
         pushString();
     } else if (name == "getheightabovepoint") {
@@ -113,9 +143,8 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
         std::minstd_rand random(seed);
         pushNumber(static_cast<float>(random()) / static_cast<float>(std::minstd_rand::max()));
     } else if (name == "getterminuscode" || name == "getrouteterminusindex" ||
-               name == "getbusstopcount" || name == "getttlinestring" ||
-               name == "getttterminusindex" || name == "getttbusstopcount" ||
-               name == "getttbusstopindex" || name == "getttdelay" ||
+               name == "getbusstopcount" || name == "getttterminusindex" ||
+               name == "getttbusstopcount" || name == "getttbusstopindex" || name == "getttdelay" ||
                name == "getarrbustimediff") {
         popFloats(1);
         pushNumber(0.0);

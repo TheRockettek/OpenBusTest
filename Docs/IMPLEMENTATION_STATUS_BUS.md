@@ -74,10 +74,11 @@ override is applied.
 
 ## Passenger-cabin and path CFGs
 
-`[drivpos]`, `[passpos]`, `[entry]`, `[exit]`, basic `[pathpnt]` / `[pathlink]`, `[stepsoundpack]`, and room-height transitions are loaded. They do not constitute a passenger simulation:
+`[drivpos]`, `[passpos]`, `[entry]`, `[exit]`, basic `[pathpnt]` / `[pathlink]`, `[stepsoundpack]`, and room-height transitions are loaded. Passenger seats now have a deterministic per-vehicle occupancy service. Scheduled AI buses stop at matched timetable calls; station-ID-only trips can use complete directed station-link routes. Nearby player buses also service mapped calls when stopped and aligned with the route. Scheduled waiting queues render independently of the ambient pedestrian cap; a reserved boarder walks visually from the queue toward the bus flank during the boarding interval.
 
 - `[linkToNextVeh]`, `[linkToPrevVeh]`, `[stamper]`, and `[noticketsale]` have no complete runtime behavior.
-- Boarding, alighting, passenger movement/mass, route/path selection, and ticket interactions are absent.
+- Boarding into configured seat slots and next-stop alighting are active. Boarding movement is only a roadside visual approximation; cabin path-link traversal and alighting movement are absent. Passenger mass is not applied, and seated humans are not rendered.
+- Map ticket-pack and currency coin records populate the `getticketname`, `getticketvalue`, and `givechangecoin` script macros for player and AI vehicles. Ticket requests, card/cash transactions, ticket-selling UI, and animated/audible/physical coin dispensing are absent.
 - Extended path fields and actual step-sound playback/route use remain incomplete.
 - HOF, timetable, stop-announcement, and arrival-board integration is absent; documented route/timetable script lookups still use safe placeholder behavior.
 

@@ -293,10 +293,9 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                     const double interruptState = values[0];
                     const double targetPhase = values[2];
                     if (std::floor(interruptState) != interruptState || interruptState < 0.0 ||
-                        interruptState > 12.0 || !std::isfinite(values[1]) ||
-                        values[1] < 0.0 || std::floor(targetPhase) != targetPhase ||
-                        targetPhase < 6.0 || targetPhase > 8.0 ||
-                        !std::isfinite(values[3]) || values[3] < 0.0) {
+                        interruptState > 12.0 || !std::isfinite(values[1]) || values[1] < 0.0 ||
+                        std::floor(targetPhase) != targetPhase || targetPhase < 6.0 ||
+                        targetPhase > 8.0 || !std::isfinite(values[3]) || values[3] < 0.0) {
                         result.diagnostics.warning(
                             line.number, keyword,
                             "expected an interrupt phase in [0, 12], a green target phase in "
@@ -447,8 +446,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
     const bool signalProgramValid =
         !result.trafficLights.empty() && openbus::map::mapTrafficSignalProgramValid(*signalProgram);
     if (!signalProgramValid &&
-        (!result.trafficLightStops.empty() ||
-         !result.trafficLightBusPriorityRules.empty())) {
+        (!result.trafficLightStops.empty() || !result.trafficLightBusPriorityRules.empty())) {
         result.diagnostics.warning(0, "traffic_light_jump",
                                    "conditional signal program is invalid and will be ignored");
     }
@@ -468,8 +466,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         schedule.hasConditionalOverrides =
             signalProgramValid &&
             (!signalProgram->controlPoints.empty() || !signalProgram->busPriorityRules.empty());
-        schedule.hasBusPriority =
-            signalProgramValid && !signalProgram->busPriorityRules.empty();
+        schedule.hasBusPriority = signalProgramValid && !signalProgram->busPriorityRules.empty();
         if (openbus::map::mapTrafficSignalStateAtTime(schedule, 0.0).has_value()) {
             result.trafficLightSchedules[lightIndex] = std::move(schedule);
         }

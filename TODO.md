@@ -222,12 +222,20 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   collision records are still parse-only because scenery has no runtime.
 - [~] Passenger-cabin CFG loading and a deterministic per-vehicle service
   runtime now cover waiting counts, timed boarding/alighting, dwell state, and
-  seat occupancy. Legacy TTP station calls matched to scheduled AI-bus routes
-  now trigger braking, stops, dwell, and boarding; waiting queues render as
-  stationary humans near active calls using configured human models. Station-
-  link-only trips, player-bus stop service, shared destination-aware queues,
-  passenger movement/mass, seated-human rendering, and fare-pack integration
-  remain incomplete.
+  seat occupancy. Legacy TTP calls and station-ID-only trips with complete
+  directed StnLink paths can trigger scheduled AI-bus stops and boarding;
+  passengers are assigned their next stop as a destination. Scheduled queues
+  are shared by stop ID and render as scheduled humans independently of the
+  ambient AI pedestrian cap. Reserved boarders animate from the waiting queue
+  toward the bus's roadside flank for the boarding interval; authored cabin
+  path-link traversal is not connected yet. Player buses board and alight at
+  nearby mapped calls when stopped and direction-aligned. Accurate
+  within-spline stop projection, passenger mass, seated-human rendering,
+  passenger ticket purchase, fare transactions, and physical/audible coin
+  output remain incomplete. Shared queue consumption now
+  prevents simultaneous buses from boarding the same passenger; update order
+  determines priority. Map ticket-pack/currency records now feed ticket and
+  change-coin script macros for player and AI buses.
 - [ ] Complete registration persistence and full selection UI; implement or
   explicitly scope out AI/network sections, route/timetable/HOF data, and
   vehicle-specific view systems.
@@ -450,7 +458,7 @@ for alignment is not mistaken for supporting it.
 #### Documented script API gaps
 
 The following documented system macros still dispatch to safe placeholder
-handlers rather than real route, timetable, ticket, passenger, terrain, or
+handlers rather than real route, timetable, passenger-path, terrain, or
 arrival-board data:
 
 - [ ] HOF/route lookups: `GetTerminusIndex`, `GetTerminusCode`,
@@ -459,8 +467,10 @@ arrival-board data:
 - [ ] Timetable lookups: `GetTTLineString`, `GetTTTerminusIndex`,
   `GetTTBusstopCount`, `GetTTBusstopIndex`, `GetTTDelay`, `GetTTBusstopName`,
   `GetTTBusstopArr`, and `GetTTBusstopDep`.
-- [ ] Ticket/passenger lookups: `GiveChangeCoin`, `GetTicketName`,
-  `GetTicketValue`, `GetHumanCountOnPathLink`, and `GetHumanCountOnSeat`.
+- [~] Ticket/passenger macros: `GiveChangeCoin`, `GetTicketName`, and
+  `GetTicketValue` use map ticket/currency data and `GetHumanCountOnSeat` reads
+  the current seat-occupancy variables. Ticket purchasing/payment and
+  `GetHumanCountOnPathLink` producers remain unimplemented.
 - [ ] World and depot lookups: `GetHeightAbovePoint`, `GetDepotStringGlobal`,
   `GetArrBusLine`, `GetArrBusTerminus`, and `GetArrBusTimeDiff`.
 - [~] Verify OMSI parity for `NrSpecRandom`; OpenBus now provides deterministic

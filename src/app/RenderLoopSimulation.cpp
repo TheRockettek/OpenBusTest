@@ -206,8 +206,28 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
     }
     {
         const double passengerServiceTimeStep = std::clamp(frameTimeStep_, 0.0, 0.25);
+        std::unordered_map<Vehicle*, int> sharedQueueStops;
+        for (const TrafficVehicleState& state : trafficVehicles_) {
+            if (state.vehicle != nullptr && state.passengerStopArrived) {
+                sharedQueueStops.emplace(state.vehicle,
+                                         state.vehicle->passengerService.currentStopId());
+            }
+        }
+        if (playerVehicle_ != nullptr && activePlayerPassengerStop_) {
+            sharedQueueStops.emplace(playerVehicle_, *activePlayerPassengerStop_);
+        }
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-            vehicle->passengerService.advance(passengerServiceTimeStep);
+            const auto activeStop = sharedQueueStops.find(vehicle.get());
+            auto queue = activeStop != sharedQueueStops.end()
+                             ? scheduledPassengerQueues_.find(activeStop->second)
+                             : scheduledPassengerQueues_.end();
+            if (queue != scheduledPassengerQueues_.end()) {
+                advanceMapPassengerServiceWithSharedQueue(vehicle->passengerService,
+                                                          activeStop->second, queue->second,
+                                                          passengerServiceTimeStep);
+            } else {
+                vehicle->passengerService.advance(passengerServiceTimeStep);
+            }
         }
     }
     updateScripts();
@@ -250,6 +270,8 @@ void RenderLoop::finishPendingTrafficVehicleLoads() {
             if (!vehicle) {
                 throw std::runtime_error("Traffic vehicle loader returned no vehicle");
             }
+            vehicle->variables.setString("tt_line_string", state.timetableLineName);
+            vehicle->variables.setString("tt_busstop_name", state.timetableDestinationName);
             vehicle->finishDeferredTrafficInitialization();
             vehicle->followsMapTrafficRoute = true;
             vehicle->mapTrafficRouteFinished = true;
@@ -325,13 +347,14 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         if (!state.isBus || state.vehicle == nullptr || !state.populationEnabled) {
             continue;
         }
-        if (state.passengerStopArrived && !state.vehicle->passengerService.dwelling()) {
-            const int completedStopId =
-                state.vehicle->passengerService.currentStopId();
+        if (state.passengerStopArrived) {
+            const int completedStopId = state.vehicle->passengerService.currentStopId();
             const auto queue = scheduledPassengerQueues_.find(completedStopId);
             if (queue != scheduledPassengerQueues_.end()) {
                 queue->second = state.vehicle->passengerService.waitingPassengers(completedStopId);
             }
+        }
+        if (state.passengerStopArrived && !state.vehicle->passengerService.dwelling()) {
             state.passengerStopArrived = false;
             ++state.nextPassengerStopIndex;
         }
@@ -809,24 +832,25 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 if (trafficVehicle.actor.distanceMeters + 0.05 >= stop.routeDistanceMeters &&
                     trafficVehicle.actor.speedMetersPerSecond <=
                         MAP_TRAFFIC_STOPPED_SPEED_METERS_PER_SECOND) {
-                        const int nextStopId =
-                            trafficVehicle.nextPassengerStopIndex + 1 <
-                                    trafficVehicle.passengerStops.size()
-                                ? trafficVehicle.passengerStops[
-                                      trafficVehicle.nextPassengerStopIndex + 1]
-                                      .stopId
-                                : 0;
-                        const auto queue = scheduledPassengerQueues_.find(stop.stopId);
-                        const std::size_t waitingPassengers =
-                            queue == scheduledPassengerQueues_.end() ? 0 : queue->second;
-                        trafficVehicle.vehicle->passengerService.setWaitingPassengers(
-                            stop.stopId, waitingPassengers);
-                        if (!trafficVehicle.vehicle->passengerService.arrive(
-                                {.stopId = stop.stopId,
-                                 .waitingPassengers = 0,
-                                 .passengersAlighting = stop.passengersAlighting,
-                                 .dwellSeconds = stop.dwellSeconds,
-                                 .nextStopId = nextStopId})) {
+                    const int nextStopId =
+                        trafficVehicle.nextPassengerStopIndex + 1 <
+                                trafficVehicle.passengerStops.size()
+                            ? trafficVehicle
+                                  .passengerStops[trafficVehicle.nextPassengerStopIndex + 1]
+                                  .stopId
+                            : 0;
+                    const auto queue = scheduledPassengerQueues_.find(stop.stopId);
+                    const std::size_t waitingPassengers =
+                        queue == scheduledPassengerQueues_.end() || nextStopId == 0 ? 0
+                                                                                    : queue->second;
+                    trafficVehicle.vehicle->passengerService.setWaitingPassengers(
+                        stop.stopId, waitingPassengers);
+                    if (!trafficVehicle.vehicle->passengerService.arrive(
+                            {.stopId = stop.stopId,
+                             .waitingPassengers = 0,
+                             .passengersAlighting = stop.passengersAlighting,
+                             .dwellSeconds = stop.dwellSeconds,
+                             .nextStopId = nextStopId})) {
                         throw std::logic_error(
                             "Scheduled bus reached a passenger stop while already dwelling");
                     }
@@ -1037,6 +1061,85 @@ void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
         playerVehicle_->updateSimulationVariables(
             simulation, playerVehicle_->variables.get("throttle"),
             playerVehicle_->variables.get("steering"), playerVehicle_->variables.get("brake"));
+        if (activePlayerPassengerStop_) {
+            const auto queue = scheduledPassengerQueues_.find(*activePlayerPassengerStop_);
+            if (queue != scheduledPassengerQueues_.end()) {
+                queue->second =
+                    playerVehicle_->passengerService.waitingPassengers(*activePlayerPassengerStop_);
+            }
+        }
+        if (activePlayerPassengerStop_ && !playerVehicle_->passengerService.dwelling()) {
+            activePlayerPassengerStop_.reset();
+        }
+
+        struct NearbyPassengerStop {
+            const TrafficVehicleState* vehicle = nullptr;
+            std::size_t stopIndex = 0;
+            double distanceMeters = std::numeric_limits<double>::infinity();
+        };
+        NearbyPassengerStop nearestStop;
+        const auto chassis = simulation.chassisPose();
+        const double chassisHeading = std::atan2(chassis.rotation[0], chassis.rotation[3]);
+        double latchedStopDistance = std::numeric_limits<double>::infinity();
+        for (const TrafficVehicleState& trafficVehicle : trafficVehicles_) {
+            if (!trafficVehicle.isBus) {
+                continue;
+            }
+            for (std::size_t stopIndex = 0; stopIndex < trafficVehicle.passengerStops.size();
+                 ++stopIndex) {
+                const openbus::map::MapTrafficPassengerStop& stop =
+                    trafficVehicle.passengerStops[stopIndex];
+                const auto pose = openbus::map::sampleMapTrafficRoute(
+                    trafficVehicle.actor.route, stop.routeDistanceMeters, 0.0);
+                if (!pose) {
+                    throw std::runtime_error(
+                        "Cannot sample a scheduled passenger stop for player service");
+                }
+                const double distance = std::hypot(pose->position[0] - chassis.position[0],
+                                                   pose->position[1] - chassis.position[1]);
+                if (playerPassengerStopLatch_ && stop.stopId == *playerPassengerStopLatch_) {
+                    latchedStopDistance = std::min(latchedStopDistance, distance);
+                }
+                const double headingDifference =
+                    std::remainder(chassisHeading - pose->headingRadians, 2.0 * std::numbers::pi);
+                if (std::abs(headingDifference) > std::numbers::pi / 3.0) {
+                    continue;
+                }
+                if (distance < nearestStop.distanceMeters) {
+                    nearestStop = {&trafficVehicle, stopIndex, distance};
+                }
+            }
+        }
+        if (playerPassengerStopLatch_ && latchedStopDistance > 5.0) {
+            playerPassengerStopLatch_.reset();
+        }
+        if (!activePlayerPassengerStop_ && !playerPassengerStopLatch_ &&
+            nearestStop.vehicle != nullptr && nearestStop.distanceMeters <= 2.5 &&
+            std::abs(simulation.speed()) <= 0.35 &&
+            playerVehicle_->passengerService.seatCount() > 0) {
+            const openbus::map::MapTrafficPassengerStop& stop =
+                nearestStop.vehicle->passengerStops[nearestStop.stopIndex];
+            const auto queue = scheduledPassengerQueues_.find(stop.stopId);
+            if (queue != scheduledPassengerQueues_.end()) {
+                const int nextStopId =
+                    nearestStop.stopIndex + 1 < nearestStop.vehicle->passengerStops.size()
+                        ? nearestStop.vehicle->passengerStops[nearestStop.stopIndex + 1].stopId
+                        : 0;
+                playerVehicle_->passengerService.setWaitingPassengers(
+                    stop.stopId, nextStopId == 0 ? 0 : queue->second);
+                if (!playerVehicle_->passengerService.arrive(
+                        {.stopId = stop.stopId,
+                         .waitingPassengers = 0,
+                         .passengersAlighting = stop.passengersAlighting,
+                         .dwellSeconds = stop.dwellSeconds,
+                         .nextStopId = nextStopId})) {
+                    throw std::logic_error("Player bus reached a passenger stop while already "
+                                           "dwelling");
+                }
+                activePlayerPassengerStop_ = stop.stopId;
+                playerPassengerStopLatch_ = stop.stopId;
+            }
+        }
         playerVehicle_->soundBank.updateAmbient(soundEngine_, playerVehicle_->variables,
                                                 soundViewpoint_);
     }

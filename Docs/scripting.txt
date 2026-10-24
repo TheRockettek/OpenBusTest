@@ -234,6 +234,11 @@ f0 Timetable Busstop Index
 GetTTBusstopDep
 f0 Timetable Busstop Index
 
+Scheduled map AI buses receive the matched timetable line and destination before
+their scripts initialize. GetTTLineString returns the timetable line name, and
+GetTTBusstopName returns the timetable destination name; model scripts can use
+these macros to populate their destination signs.
+
 GiveChangeCoin
 f0 Coin Index
 
@@ -332,3 +337,70 @@ f0 ScriptTextureIndex
 
 STGetA
 f0 ScriptTextureIndex
+
+
+OpenBus Implementation Notes: Remaining Work
+
+The inventories above describe OMSI script names and signatures. Recognition of a
+name does not necessarily mean that its OMSI behavior is implemented. The notes
+below distinguish host-updated values and implemented macros from names that
+currently return placeholder values.
+
+System Variables
+
+The simulation clock variables (Time, Day, Month, Year, DayOfYear), Timegap,
+GetTime, mouse_x, and mouse_y are updated by the runtime. mouse_x and mouse_y
+are handler-scoped drag deltas; mouse_cursor_x and mouse_cursor_y are OpenBus
+extensions containing cursor coordinates.
+
+The following documented system variables are declared, but do not currently
+receive live host values: NoSound, Pause, PrecipType, PrecipRate, coll_pos_x,
+coll_pos_y, coll_pos_z, coll_energy, Weather_Temperature, Weather_AbsHum,
+AutoClutch, and SunAlt. Unless a script sets them, their initialized defaults
+are returned. In particular, precipitation values used by rendering are not
+yet synchronized to these script variables, and collision values are not
+populated when a collision trigger runs.
+
+wearlifespan is initialized as a system variable, but the documented behavior
+uses the predefined local variable of the same name instead.
+
+Macros With Runtime Behavior
+
+The script-texture macros (STNewTex, STLock, STUnlock, STFilter, STSetColor,
+STDrawPixel, STDrawRect, STTextOut, STReadPixel, STCopyColor, STLoadTex,
+STGetR/G/B/A, GetFontIndex, and TextLength) have runtime implementations.
+NrSpecRandom is implemented as a seeded pseudo-random value.
+
+GetTicketName and GetTicketValue read indexed ticket data from local or shared
+script state. GiveChangeCoin reads the indexed coin value and updates OpenBus
+cash-dispensing state. These are script-state integrations, not a complete
+OMSI ticket machine or fare system. GetHumanCountOnPathLink and
+GetHumanCountOnSeat read indexed counts from local script state; they are not
+backed by a complete passenger/path-link simulation.
+
+Scheduled map AI buses receive their matched timetable line and destination
+before scripts initialize. GetTTLineString and GetTTBusstopName return those
+values for that use case; other timetable queries listed below are not thereby
+implemented.
+
+Macros Still Returning Placeholder Results
+
+Vehicle route, terminus, and bus-stop lookup:
+GetTerminusIndex, GetTerminusCode, GetTerminusString, GetBusstopIndex,
+GetBusstopString, GetRouteIndex, GetRouteTerminusIndex, GetBusstopCount, and
+GetRouteBusstopIdent.
+
+Timetable queries beyond the matched line and destination:
+GetTTTerminusIndex, GetTTBusstopCount, GetTTBusstopIndex, GetTTDelay,
+GetTTBusstopArr, and GetTTBusstopDep.
+
+Other vehicle queries:
+GetHeightAbovePoint and GetDepotStringGlobal.
+
+Scenery arrival queries:
+GetArrBusLine, GetArrBusTerminus, and GetArrBusTimeDiff.
+
+The currently registered macros above are recognized by the script runtime,
+but their query results are placeholders: empty strings, zero, or -1. A
+complete implementation requires the corresponding route/timetable/depot,
+geometry, or arrival data to be made available to scripts.

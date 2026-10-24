@@ -183,11 +183,10 @@ TrafficSignalDebugStats MapRenderer::trafficSignalDebugStats() const {
             continue;
         }
         ++stats.activeSignalModels;
-        stats.controllerDrivenModels +=
-            (scriptState.trafficSignal->hasConditionalOverrides ||
-             scriptState.trafficSignal->hasBusPriority)
-                ? 1U
-                : 0U;
+        stats.controllerDrivenModels += (scriptState.trafficSignal->hasConditionalOverrides ||
+                                         scriptState.trafficSignal->hasBusPriority)
+                                            ? 1U
+                                            : 0U;
         const auto phase = scriptState.variables.numericValues().find("trafficlightphase");
         if (phase == scriptState.variables.numericValues().end() || !std::isfinite(phase->second) ||
             phase->second < 0.0F || phase->second > 12.0F ||
@@ -691,13 +690,11 @@ void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanCon
 
 void MapRenderer::updateTrafficSignalControllers(
     const std::vector<openbus::map::MapTrafficActor*>& actors, double elapsedSeconds,
-    double initialClockSeconds,
-    std::optional<std::array<double, 2>> playerBusPosition) const {
+    double initialClockSeconds, std::optional<std::array<double, 2>> playerBusPosition) const {
     std::vector<openbus::map::MapTrafficSignalBusPriorityRequest> playerBusRequests;
     if (playerBusPosition.has_value()) {
         for (const TrafficPathDebugSegment& segment : impl_->sceneryTrafficPathSegments) {
-            if (!segment.trafficSignal.has_value() ||
-                !segment.trafficSignal->hasBusPriority ||
+            if (!segment.trafficSignal.has_value() || !segment.trafficSignal->hasBusPriority ||
                 segment.trafficSignal->controller == nullptr ||
                 segment.trafficSignal->program == nullptr || segment.points.size() < 2) {
                 continue;

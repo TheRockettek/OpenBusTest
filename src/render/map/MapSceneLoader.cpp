@@ -397,8 +397,8 @@ void MapSceneLoader::indexMapContent() {
                             if (lane.bidirectional) {
                                 impl_->roadTrafficLaneNetwork.addSegment(segment);
                                 impl_->roadTrafficLaneNetwork.addSegment(
-                                    openbus::map::reverseMapTrafficRouteSegment(
-                                        segment, spline.length));
+                                    openbus::map::reverseMapTrafficRouteSegment(segment,
+                                                                                spline.length));
                             } else {
                                 impl_->roadTrafficLaneNetwork.addSegment(std::move(segment));
                             }
@@ -422,8 +422,8 @@ void MapSceneLoader::indexMapContent() {
                             impl_->humanTrafficLaneNetwork.addSegment(segment);
                             if (pathOffset.bidirectional) {
                                 impl_->humanTrafficLaneNetwork.addSegment(
-                                    openbus::map::reverseMapTrafficRouteSegment(
-                                        std::move(segment), spline.length));
+                                    openbus::map::reverseMapTrafficRouteSegment(std::move(segment),
+                                                                                spline.length));
                             }
                         }
                     }

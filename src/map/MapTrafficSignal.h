@@ -224,8 +224,7 @@ class MapTrafficSignalController {
         if (lightIndex >= program_->lights.size()) {
             return std::nullopt;
         }
-        if (priorityOverrideLightIndex_.has_value() &&
-            priorityOverrideRemainingSeconds_ > 1.0e-9) {
+        if (priorityOverrideLightIndex_.has_value() && priorityOverrideRemainingSeconds_ > 1.0e-9) {
             return lightIndex == *priorityOverrideLightIndex_ ? priorityOverrideState_ : 0;
         }
         return mapTrafficSignalPhaseAtTime(program_->cycleDurationSeconds,
@@ -244,9 +243,8 @@ class MapTrafficSignalController {
                 servedBusPriorityRequests_[requestedLight]) {
                 continue;
             }
-            const std::optional<int> currentState =
-                mapTrafficSignalPhaseAtTime(program_->cycleDurationSeconds,
-                                            program_->lights[requestedLight], clockSeconds_);
+            const std::optional<int> currentState = mapTrafficSignalPhaseAtTime(
+                program_->cycleDurationSeconds, program_->lights[requestedLight], clockSeconds_);
             if (!currentState.has_value()) {
                 continue;
             }

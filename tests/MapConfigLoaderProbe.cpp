@@ -70,9 +70,14 @@ void runFixtureProbe() {
                      "3\n12\n0\n30\n5\n40\n2\n5\n3\n7\n2\nDepot East\n"
                      "[map]\n0\n0\ntile_0_0.map\n[map]\n0\n0\ntile_0_0.map\n"
                      "[map]\n1\n0\ntile_1_0.map\n");
+        writeUtf16Le(root / "Tickets.otp",
+                     "[ticketpack]\n0.5\n[ticket]\n\"Single Ride\"\n\"1.50\"\n1.5\n0\n"
+                     "[ticket]\nDay Pass\n6.00\n6\n1\n");
+        writeUtf16Le(root / "Money.cfg", "[currency]\nCredits\n2\n[coin]\ncoins\\small.o3d\n0.05\n"
+                                         "[coin]\ncoins\\large.o3d\n1.00\n");
         writeUtf16Le(root / "tile_0_0.map",
-                 "Fixture tile\n[version]\n14\n[terrain]\n[water]\n"
-                 "[unknown_future_section]\n opaque tile payload \n\n"
+                     "Fixture tile\n[version]\n14\n[terrain]\n[water]\n"
+                     "[unknown_future_section]\n opaque tile payload \n\n"
                      "[variable_terrain]\n[variable_terrainlightmap]\n\n"
                      "[spline]\n0\nSplines\\road.sli\n30273\n30272\n0\n10\n20\n30\n"
                      "0\n50\n0\n0\n0\n0\n0\n0\n0\n0\n\n"
@@ -96,74 +101,71 @@ void runFixtureProbe() {
                      "2\n30\n4\n0\n1\nCar park B\ncustom tail\n\n[varparent]\n41\n"
                      "[spline_terrain_align]\n[rule]\nattached rule 1\nattached rule 2\n"
                      "attached rule 3\nattached rule 4\n");
-                writeUtf16Le(root / "tile_1_0.map", "Second fixture tile\n[version]\n14\n[terrain]\n");
-                writeUtf16Le(root / "ailists.cfg",
-                             "[aigroup_2]\nNormalCars\nvehicles\\sedan.bus\t7\n"
-                             "vehicles\\delivery van.ovh\n[end]\n"
-                             "[aigroup_2]\nTrucks\nvehicles\\truck.bus\t3\n"
-                             "vehicles\\truck.ovh\n[end]\n"
-                             "[aigroup_2]\nCommercial\nvehicles\\commercial.bus\n[end]\n"
-                             "[aigroup_2]\nCommercials\nvehicles\\commercial_van.bus\n"
-                             "vehicles\\delivery van.ovh\n[end]\n"
-                             "[aigroup_2]\nOther\nvehicles\\other.bus\n[end]\n"
-                             "[aigroup_2]\nNormalCar\nvehicles\\normal_car.ovh\n[end]\n"
-                             "[aigroup_2]\nAmbulance\nvehicles\\ambulance.ovh\n[end]\n"
-                             "[aigroup_depot]\nCentral Depot\nFixture HOF\n"
-                             "[aigroup_depot_typgroup_2]\nvehicles\\city_bus.bus\n"
-                             "1234\tBlue livery\n[end]\n");
-                writeUtf16Le(root / "unsched_vehgroups.txt",
-                             "[group]\nTrucks\n0\n[group]\nNormalCars\n0\n"
-                             "[group]\nCommercials\n0\n[group]\nAmbulance\n0\n");
-                writeUtf16Le(root / "unsched_trafficdens.txt",
-                             "[group]\nNormalCars\n2\n[set_day_of_week]\n0\n"
-                             "[trafficdensity]\n0\n0.3\n[trafficdensity]\n12\n0.3\n"
-                             "[set_day_of_week]\n8\n"
-                             "[set_day_of_week]\n1\n"
-                             "[trafficdensity]\n0\n0.2\n[trafficdensity]\n12\n0.8\n"
-                             "[set_day_of_week]\n4\n[trafficdensity]\n0\n0.1\n"
-                             "[trafficdensity]\n12\n0.1\n[group]\nTrucks\n1\n"
-                             "[set_day_of_week]\n0\n[trafficdensity]\n0\n0.4\n"
-                             "[trafficdensity]\n12\n0.2\n");
-                writeUtf16Le(root / "drivers.txt",
-                             "humans\\drivers\\driver_one.hum\n"
-                             "humans\\custom map\\driver_two.hum\n");
-                writeUtf16Le(root / "humans.txt",
-                             "humans\\pedestrians\\walker_one.hum\n"
-                             "; ignored comment\n"
-                             "humans\\pedestrians\\walker_two.hum\n");
-                const std::filesystem::path timetableDirectory = root / "TTData";
-                std::filesystem::create_directories(timetableDirectory);
-                writeUtf16Le(timetableDirectory / "FixtureTrip.ttp",
-                             "[trip]\nFixtureLine\nTown End\n12\n"
-                             "[station]\n15479\n1\nMain Stop\n0\n0\n0\n0\n5\n"
-                             "[station]\n15480\n1\nInvalid Tile\n-1\n0\n0\n0\n5\n");
-                writeUtf16Le(timetableDirectory / "BusOnly.ttp",
-                             "[trip]\n\nTown End\n12\n"
-                             "[station_typ2]\n15479\n[station_typ2]\n15480\n");
-                writeUtf16Le(timetableDirectory / "BusOnly.ttl",
-                             "[newtour]\nBus\n1\nDep.: 8:15:0\n"
-                             "[addtrip]\nBusOnly\n0\n495.000\n");
-                writeUtf16Le(timetableDirectory / "Busstops.cfg",
-                             "[busstop]\nMain Stop\n0\n15479\n0\n0\n0\n"
-                             "[busstop]\nIncomplete Stop\n"
-                             "[busstop]\nTown End\n0\n15480\n0\n0\n0\n"
-                             "[busstop]\nInvalid Stop\n0\n15481\ninvalid\n0\n0\n");
-                writeUtf16Le(timetableDirectory / "StnLinks.cfg",
-                             "[StnLink]\n"
-                             "[StnLink]\n12.5\n15479\n15480\n0\n0\n0\n0\n0\n0\n"
-                             "[StnLink_entry]\n1\n2\n3\n4.5\n5\n6\n7\n"
-                             "[StnLink_entry]\n2\n3\n4\n5.5\n6\n7\n8\n"
-                             "[StnLink]\ninvalid-length\n15479\n15480\n0\n0\n0\n0\n0\n0\n");
-                writeUtf16Le(timetableDirectory / "FixtureLine.ttr",
-                             "[track_entry]\n30273\n0\n1\n1\n10\n0\n"
-                             "[track_entry]\n30273\n1\n1\n2\n10\n0\n"
-                             "[track_entry]\n30274\n0\n0\n3\n10\n0\n");
-                writeUtf16Le(timetableDirectory / "Fixture.ttl",
-                             "[newtour]\nDriver\n1\n"
-                             "Dep.: 8:15:0\n[addtrip]\nFixtureTrip\n0\n495.000\n"
-                             "Dep.: 6:45:0\n[addtrip]\nFixtureTrip\n0\n405.000\n");
-                {
-                    std::ofstream terrain(root / "tile_0_0.map.terrain", std::ios::binary);
+        writeUtf16Le(root / "tile_1_0.map", "Second fixture tile\n[version]\n14\n[terrain]\n");
+        writeUtf16Le(root / "ailists.cfg",
+                     "[aigroup_2]\nNormalCars\nvehicles\\sedan.bus\t7\n"
+                     "vehicles\\delivery van.ovh\n[end]\n"
+                     "[aigroup_2]\nTrucks\nvehicles\\truck.bus\t3\n"
+                     "vehicles\\truck.ovh\n[end]\n"
+                     "[aigroup_2]\nCommercial\nvehicles\\commercial.bus\n[end]\n"
+                     "[aigroup_2]\nCommercials\nvehicles\\commercial_van.bus\n"
+                     "vehicles\\delivery van.ovh\n[end]\n"
+                     "[aigroup_2]\nOther\nvehicles\\other.bus\n[end]\n"
+                     "[aigroup_2]\nNormalCar\nvehicles\\normal_car.ovh\n[end]\n"
+                     "[aigroup_2]\nAmbulance\nvehicles\\ambulance.ovh\n[end]\n"
+                     "[aigroup_depot]\nCentral Depot\nFixture HOF\n"
+                     "[aigroup_depot_typgroup_2]\nvehicles\\city_bus.bus\n"
+                     "1234\tBlue livery\n[end]\n");
+        writeUtf16Le(root / "unsched_vehgroups.txt",
+                     "[group]\nTrucks\n0\n[group]\nNormalCars\n0\n"
+                     "[group]\nCommercials\n0\n[group]\nAmbulance\n0\n");
+        writeUtf16Le(root / "unsched_trafficdens.txt",
+                     "[group]\nNormalCars\n2\n[set_day_of_week]\n0\n"
+                     "[trafficdensity]\n0\n0.3\n[trafficdensity]\n12\n0.3\n"
+                     "[set_day_of_week]\n8\n"
+                     "[set_day_of_week]\n1\n"
+                     "[trafficdensity]\n0\n0.2\n[trafficdensity]\n12\n0.8\n"
+                     "[set_day_of_week]\n4\n[trafficdensity]\n0\n0.1\n"
+                     "[trafficdensity]\n12\n0.1\n[group]\nTrucks\n1\n"
+                     "[set_day_of_week]\n0\n[trafficdensity]\n0\n0.4\n"
+                     "[trafficdensity]\n12\n0.2\n");
+        writeUtf16Le(root / "drivers.txt", "humans\\drivers\\driver_one.hum\n"
+                                           "humans\\custom map\\driver_two.hum\n");
+        writeUtf16Le(root / "humans.txt", "humans\\pedestrians\\walker_one.hum\n"
+                                          "; ignored comment\n"
+                                          "humans\\pedestrians\\walker_two.hum\n");
+        const std::filesystem::path timetableDirectory = root / "TTData";
+        std::filesystem::create_directories(timetableDirectory);
+        writeUtf16Le(timetableDirectory / "FixtureTrip.ttp",
+                     "[trip]\nFixtureLine\nTown End\n12\n"
+                     "[station]\n15479\n1\nMain Stop\n0\n0\n0\n0\n5\n"
+                     "[station]\n15480\n1\nInvalid Tile\n-1\n0\n0\n0\n5\n");
+        writeUtf16Le(timetableDirectory / "BusOnly.ttp",
+                     "[trip]\n\nTown End\n12\n"
+                     "[station_typ2]\n15479\n[station_typ2]\n15480\n");
+        writeUtf16Le(timetableDirectory / "BusOnly.ttl", "[newtour]\nBus\n1\nDep.: 8:15:0\n"
+                                                         "[addtrip]\nBusOnly\n0\n495.000\n");
+        writeUtf16Le(timetableDirectory / "Busstops.cfg",
+                     "[busstop]\nMain Stop\n0\n15479\n0\n0\n0\n"
+                     "[busstop]\nIncomplete Stop\n"
+                     "[busstop]\nTown End\n0\n15480\n0\n0\n0\n"
+                     "[busstop]\nInvalid Stop\n0\n15481\ninvalid\n0\n0\n");
+        writeUtf16Le(timetableDirectory / "StnLinks.cfg",
+                     "[StnLink]\n"
+                     "[StnLink]\n12.5\n15479\n15480\n0\n0\n0\n0\n0\n0\n"
+                     "[StnLink_entry]\n1\n2\n3\n4.5\n5\n6\n7\n"
+                     "[StnLink_entry]\n2\n3\n4\n5.5\n6\n7\n8\n"
+                     "[StnLink]\ninvalid-length\n15479\n15480\n0\n0\n0\n0\n0\n0\n");
+        writeUtf16Le(timetableDirectory / "FixtureLine.ttr",
+                     "[track_entry]\n30273\n0\n1\n1\n10\n0\n"
+                     "[track_entry]\n30273\n1\n1\n2\n10\n0\n"
+                     "[track_entry]\n30274\n0\n0\n3\n10\n0\n");
+        writeUtf16Le(timetableDirectory / "Fixture.ttl",
+                     "[newtour]\nDriver\n1\n"
+                     "Dep.: 8:15:0\n[addtrip]\nFixtureTrip\n0\n495.000\n"
+                     "Dep.: 6:45:0\n[addtrip]\nFixtureTrip\n0\n405.000\n");
+        {
+            std::ofstream terrain(root / "tile_0_0.map.terrain", std::ios::binary);
             writeU32(terrain, 2);
             for (std::uint32_t value = 1; value <= 9; ++value) {
                 writeU32(terrain, std::bit_cast<std::uint32_t>(static_cast<float>(value)));
@@ -187,6 +189,17 @@ void runFixtureProbe() {
                     definition.metadata.hasDynamicHelperActive && definition.metadata.hasRealRail &&
                     definition.metadata.hasLeftHandTraffic,
                 "global map identity, description, version, and marker metadata captured");
+        const auto ticketPack = openbus::map::loadMapTicketPackDefinition(root / "Tickets.otp");
+        const auto currency = openbus::map::loadMapCurrencyDefinition(root / "Money.cfg");
+        require(ticketPack.tickets.size() == 2 && ticketPack.tickets[0].name == "Single Ride" &&
+                    ticketPack.tickets[0].displayValue == "1.50" &&
+                    ticketPack.tickets[0].value == 1.5 &&
+                    ticketPack.tickets[1].name == "Day Pass" &&
+                    ticketPack.tickets[1].value == 6.0 && currency.name == "Credits" &&
+                    currency.mode == "2" && currency.coins.size() == 2 &&
+                    currency.coins[0].modelPath == "coins\\small.o3d" &&
+                    currency.coins[0].value == 0.05 && currency.coins[1].value == 1.0,
+                "ticket-pack prices and currency coin denominations are loaded in authored order");
         require(definition.metadata.backgroundImage ==
                     std::array<std::string, 6>{"1", "2", "3", "4", "5", "6"} &&
                     definition.metadata.hasBackgroundImage &&
@@ -291,16 +304,22 @@ void runFixtureProbe() {
                     roadVehicles.size() == 5 &&
                     roadVehicles[0].assetPath == "vehicles\\delivery van.ovh" &&
                     roadVehicles[0].groupIndex == 1 &&
+                    roadVehicles[0].trafficRuleGroupIndex == 0 &&
                     roadVehicles[1].assetPath == "vehicles\\truck.ovh" &&
                     roadVehicles[1].groupIndex == 0 &&
+                    roadVehicles[1].trafficRuleGroupIndex == 1 &&
                     roadVehicles[1].defaultVehicleType == 3 &&
                     roadVehicles[2].assetPath == "vehicles\\delivery van.ovh" &&
                     roadVehicles[2].groupIndex == 2 &&
+                    roadVehicles[2].trafficRuleGroupIndex == 2 &&
                     roadVehicles[3].assetPath == "vehicles\\normal_car.ovh" &&
                     roadVehicles[3].groupIndex == 1 &&
+                    roadVehicles[3].trafficRuleGroupIndex == 0 &&
                     roadVehicles[4].assetPath == "vehicles\\ambulance.ovh" &&
-                    roadVehicles[4].groupIndex == 3,
-                "road vehicle group indices map to unsched_vehgroups.txt, including aliases");
+                    roadVehicles[4].groupIndex == 3 &&
+                    roadVehicles[4].trafficRuleGroupIndex == 3,
+                "population group indices follow unsched_vehgroups.txt while rule groups use "
+                "the fixed NormalCar, Trucks, Commercials, Ambulance order");
         const std::vector<openbus::map::MapAiRoadVehicle> weekdayRoadVehicles =
             openbus::map::mapAiRoadVehicles(definition.aiTraffic, 12.0, 1);
         const std::optional<double> weekdayGroupDensity =

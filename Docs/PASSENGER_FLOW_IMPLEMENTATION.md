@@ -5,10 +5,13 @@ service runtime. Legacy timetable `[station]` calls that match a scheduled AI
 bus route now constrain its speed, stop the bus, and run the service dwell and
 boarding flow. Waiting passengers are rendered as stationary humans near an
 active scheduled stop, using the configured human models and the vehicle's
-remaining queue count. This is still an early AI-only slice: station-link-only
-trips, player-bus stop detection, seated passenger rendering, destination-aware
-alighting, and ticket sales are not implemented. Ambient map pedestrians remain
-a separate population.
+remaining shared queue count. Station-ID-only trips can form scheduled bus
+routes when every directed station link has a complete ordered path. Player
+buses can board and alight at mapped stops when stationary and aligned with
+their approach direction. Passengers board with the next stop as their
+destination and alight there; any riders remaining at a route's final mapped
+call alight before the scheduled bus ends its trip. Ambient map pedestrians
+remain a separate population.
 
 ## Timetable station data
 
@@ -26,9 +29,9 @@ the renderer's map-space route geometry.
 The eight-position `[station]` record layout is documented in
 [`OMSI2_MAP_FORMAT_REFERENCE.md`](OMSI2_MAP_FORMAT_REFERENCE.md). An invalid ID,
 negative track-entry index, empty name, invalid tile index, or incomplete record
-is warned about and skipped. The `Busstops.cfg` and `StnLinks.cfg` layouts follow the OMSI Map Merger
-parsers and the openOMSI timetable reader; fields not used for identity remain
-opaque:
+is warned about and skipped. The `Busstops.cfg` and `StnLinks.cfg` layouts
+follow the OMSI Map Merger parsers and the openOMSI timetable reader; fields
+not used for identity remain opaque:
 
 * [OMSI Map Merger trip parser](https://github.com/barteg77/omsi_map_merger/blob/00c2ceb189ab00ef11a59f7f3279dcfd7e7fd79a/trip_parser.py)
 * [OMSI Map Merger station-link parser](https://github.com/barteg77/omsi_map_merger/blob/00c2ceb189ab00ef11a59f7f3279dcfd7e7fd79a/station_links_parser.py)
@@ -46,15 +49,20 @@ coordinates are fabricated from these values.
 Vehicle scripts in both the native OSC and Lua backends can use the following
 per-vehicle `Variables` convention:
 
-* `ticket_name_<index>` (string) and `ticket_value_<index>` (number) provide
-  the lookup values for `getticketname` and `getticketvalue`. Indices are
-  zero-based, non-negative integers. Missing/invalid entries return an empty
-  string or `0`.
-* `givechangecoin` consumes one positive finite amount and updates
+* The map's global `[ticketpack]` path is loaded from the OMSI root. The loader
+  reads ordered `[ticket]` blocks and publishes `ticket_name_<index>` and
+  `ticket_value_<index>` for `getticketname` and `getticketvalue`. A vehicle-
+  local value overrides the map value. Indices must be whole, non-negative
+  integers; missing/invalid entries return an empty string or `0`.
+* The map's `[moneysystem]` config is loaded for its ordered `[coin]` records.
+  `givechangecoin` consumes a whole, non-negative coin index, looks up the
+  configured denomination, and updates
   `cash_dispensed_total`, `cash_last_coin_value`, and
-  `cash_dispensed_coin_count` on that vehicle. Non-positive or non-finite
-  amounts are ignored. These variables provide a script-visible accounting
-  surface; this does not yet animate, sound, or physically model a coin.
+  `cash_dispensed_coin_count` on that vehicle, plus
+  `cash_last_coin_index` and `cash_coin_dispensed_count_<index>`. Invalid
+  indices or denominations are ignored. This is script-visible accounting;
+  coin models are retained as `cash_coin_model_<index>` but not yet animated,
+  sounded, or physically dispensed.
 * `gethumancountonseat` and `gethumancountonpathlink` read the numeric vehicle
   variables `human_count_on_seat_<index>` and
   `human_count_on_path_link_<index>`. These are macro surfaces for an owning
@@ -63,28 +71,41 @@ per-vehicle `Variables` convention:
   populated yet.
 
 The same macros are available to player and AI vehicle scripts because both
-use `ScriptRuntime` with vehicle-local state. Ticket-pack and currency-file
-parsing, passenger-seat/path occupancy queries, and the station service flow
-remain unimplemented; their existing macro fallbacks should not be interpreted
-as live passenger data.
+use `ScriptRuntime` and fall back to map-shared ticket/currency values. Ticket
+and coin configuration loading is active, but passenger ticket selection,
+payment transactions, physical coin dispensing, and live path-link occupancy
+remain unimplemented.
 
 ## Service runtime
 
 `MapPassengerServiceRuntime` maintains per-stop waiting queues, fixed seat
-occupancy, alighting, a dwell timer, and boarding at a bounded rate. Its queue
-scale helper is separate from the ambient pedestrian population target and
-applies only to scheduled queue sizes. The component has deterministic probe coverage and is owned by each vehicle
-using the configured passenger seats. Scheduled AI buses initialize stop
-queues at departure, stop at mapped timetable calls, and board waiting
-passengers into available seats during an eight-second dwell. Rendered queues
-are limited to active scheduled AI-bus calls within 75 meters of the main
-camera. The waiting count is a fixed nominal demand per mapped stop multiplied
-by the scheduled-human scale; it is not a shared map-wide demand model.
+occupancy, alighting, a dwell timer, and boarding at a bounded rate. A
+passenger is reserved from the shared queue while the boarding interval runs,
+then assigned to a seat on completion. During that interval, a human model is
+drawn walking from the stop queue toward the bus's roadside flank. This is a
+visual approach approximation, not yet a path through the authored cabin
+entry/path-link graph. Its queue scale helper is separate from the ambient
+pedestrian population target and applies only to scheduled queue sizes. The
+component has deterministic probe coverage and is owned by each vehicle using
+the configured passenger seats.
+Scheduled AI buses stop at mapped timetable calls and board waiting
+passengers into available seats during an eight-second dwell. Queue consumption
+is serialized each update against the shared remaining count, preventing two
+dwelling buses from boarding the same passenger. Bus iteration order currently
+determines which bus boards first. Queues for registered scheduled AI-bus
+routes' mapped stops are rendered within 75 meters of the main camera,
+independent of the ambient AI pedestrian population cap. The waiting count is
+a fixed nominal demand per mapped stop multiplied by the scheduled-human
+scale; it is not a shared map-wide demand model.
 
 ## Remaining work
 
-Resolve station-link path entries against map geometry, add passenger
-destination/alighting logic, and share demand across trips rather than
-initializing a separate queue per bus. Add player-bus stop detection, seated
-passenger rendering, ticket-pack/currency loading, ticket sales, and audible or
-physical coin output.
+Station-link stop locations currently use the beginning of each matched
+route-entry segment; accurate within-spline stop projection still needs
+verification against map geometry. Queues are shared by stop ID across the
+registered scheduled routes, but demand is still a fixed nominal count and bus
+iteration order decides boarding priority. Waiting people remain stationary
+until their boarding transition; boarded passengers do not yet traverse cabin
+path links, and occupied seats are exposed to scripts but are not rendered as
+seated humans. Ticket selection, payment transactions, and audible or physical
+coin output remain incomplete.

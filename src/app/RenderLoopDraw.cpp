@@ -244,13 +244,12 @@ void appendTrafficBehaviorLine(std::vector<openbus::rendering::PrimitiveVertex>&
 void appendTrafficDebugText(std::vector<openbus::rendering::PrimitiveVertex>& vertices,
                             const std::array<double, 3>& anchor,
                             const std::vector<std::string>& lines, double cameraYawRadians,
-                            double cameraPitchRadians,
-                            const std::array<float, 3>& color) {
+                            double cameraPitchRadians, const std::array<float, 3>& color) {
     constexpr double pixelSize = 0.055;
     constexpr int glyphAdvance = 6;
     constexpr int lineAdvance = 9;
-    const std::array<double, 3> right = {std::sin(cameraYawRadians),
-                                         -std::cos(cameraYawRadians), 0.0};
+    const std::array<double, 3> right = {std::sin(cameraYawRadians), -std::cos(cameraYawRadians),
+                                         0.0};
     const std::array<double, 3> up = {std::sin(cameraYawRadians) * std::sin(cameraPitchRadians),
                                       -std::cos(cameraYawRadians) * std::sin(cameraPitchRadians),
                                       std::cos(cameraPitchRadians)};
@@ -284,9 +283,9 @@ void appendTrafficDebugText(std::vector<openbus::rendering::PrimitiveVertex>& ve
     }
 }
 
-std::vector<std::string> trafficSignalDebugLabel(
-    const openbus::rendering::TrafficPathDebugSegment& segment, std::size_t fallbackId,
-    double signalClockSeconds) {
+std::vector<std::string>
+trafficSignalDebugLabel(const openbus::rendering::TrafficPathDebugSegment& segment,
+                        std::size_t fallbackId, double signalClockSeconds) {
     if (!segment.trafficSignal.has_value()) {
         return {};
     }
@@ -314,14 +313,13 @@ std::vector<std::string> trafficSignalDebugLabel(
         phases = &schedule.program->lights[schedule.lightIndex];
     }
     std::ostringstream phaseLine;
-    phaseLine << 'C' << std::fixed << std::setprecision(2) << schedule.cycleDurationSeconds
-              << " S";
+    phaseLine << 'C' << std::fixed << std::setprecision(2) << schedule.cycleDurationSeconds << " S";
     for (std::size_t index = 0; index < phases->size(); ++index) {
         if (index > 0) {
             phaseLine << ' ';
         }
-        phaseLine << (*phases)[index].state << '/'
-                  << std::fixed << std::setprecision(2) << (*phases)[index].durationSeconds;
+        phaseLine << (*phases)[index].state << '/' << std::fixed << std::setprecision(2)
+                  << (*phases)[index].durationSeconds;
     }
     lines.push_back(phaseLine.str());
 
@@ -1070,14 +1068,50 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                                                     human.gait.weight);
             }
             if (!scheduledPassengerHumanModels_.empty() && lastMainCameraPoseValid_) {
+                const auto drawBoardingPassenger =
+                    [&](const TrafficVehicleState& trafficVehicle,
+                        const openbus::map::MapTrafficPassengerStop& stop,
+                        const openbus::map::MapPassengerServiceRuntime& service) {
+                        if (!service.boardingPassenger()) {
+                            return;
+                        }
+                        const auto stopPose = openbus::map::sampleMapTrafficRoute(
+                            trafficVehicle.actor.route, stop.routeDistanceMeters, 0.0);
+                        if (!stopPose) {
+                            throw std::runtime_error(
+                                "Cannot sample a scheduled passenger boarding pose");
+                        }
+                        const double cameraDistance =
+                            std::hypot(stopPose->position[0] - lastMainCameraPose_.position[0],
+                                       stopPose->position[1] - lastMainCameraPose_.position[1]);
+                        if (cameraDistance > 75.0) {
+                            return;
+                        }
+                        const double rightX = -std::sin(stopPose->headingRadians);
+                        const double rightY = std::cos(stopPose->headingRadians);
+                        const double doorOffset = trafficVehicle.actor.lateralOffsetMeters +
+                                                  trafficVehicle.actor.widthMeters * 0.5 + 0.35;
+                        const double progress = service.boardingProgress();
+                        const double lateralOffset = doorOffset + 1.8 * (1.0 - progress);
+                        openbus::map::MapTrafficPose passengerPose = *stopPose;
+                        passengerPose.position[0] += rightX * lateralOffset;
+                        passengerPose.position[1] += rightY * lateralOffset;
+                        passengerPose.headingRadians -= std::numbers::pi * 0.5;
+                        const std::size_t modelIndex = static_cast<std::size_t>(stop.stopId) %
+                                                       scheduledPassengerHumanModels_.size();
+                        mapRenderer_->drawHumanTrafficActor(
+                            scheduledPassengerHumanModels_[modelIndex], passengerPose,
+                            simulation.simulationTime() * 2.0, 1.0);
+                    };
                 std::unordered_set<int> renderedScheduledStops;
                 for (const TrafficVehicleState& trafficVehicle : trafficVehicles_) {
-                    if (!trafficVehicle.isBus || !trafficVehicle.populationEnabled ||
-                        trafficVehicle.vehicle == nullptr) {
+                    if (!trafficVehicle.isBus || trafficVehicle.vehicle == nullptr) {
                         continue;
                     }
                     for (const openbus::map::MapTrafficPassengerStop& stop :
                          trafficVehicle.passengerStops) {
+                        drawBoardingPassenger(trafficVehicle, stop,
+                                              trafficVehicle.vehicle->passengerService);
                         const auto queue = scheduledPassengerQueues_.find(stop.stopId);
                         if (queue == scheduledPassengerQueues_.end() || queue->second == 0) {
                             continue;
@@ -1088,9 +1122,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                             throw std::runtime_error(
                                 "Cannot sample a scheduled passenger stop for rendering");
                         }
-                        const double cameraDistance = std::hypot(
-                            stopPose->position[0] - lastMainCameraPose_.position[0],
-                            stopPose->position[1] - lastMainCameraPose_.position[1]);
+                        const double cameraDistance =
+                            std::hypot(stopPose->position[0] - lastMainCameraPose_.position[0],
+                                       stopPose->position[1] - lastMainCameraPose_.position[1]);
                         if (cameraDistance > 75.0) {
                             continue;
                         }
@@ -1101,10 +1135,17 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                         const double queueOffsetY = std::cos(stopPose->headingRadians);
                         const double lineOffsetX = std::cos(stopPose->headingRadians);
                         const double lineOffsetY = std::sin(stopPose->headingRadians);
+                        const auto initialQueue =
+                            scheduledPassengerInitialQueues_.find(stop.stopId);
+                        const std::size_t initialCount =
+                            initialQueue == scheduledPassengerInitialQueues_.end()
+                                ? queue->second
+                                : initialQueue->second;
                         for (std::size_t passenger = 0; passenger < queue->second; ++passenger) {
                             openbus::map::MapTrafficPose passengerPose = *stopPose;
-                            const double row = static_cast<double>(passenger / 3);
-                            const double column = static_cast<double>(passenger % 3) - 1.0;
+                            const std::size_t queueSlot = initialCount - passenger - 1;
+                            const double row = static_cast<double>(queueSlot / 3);
+                            const double column = static_cast<double>(queueSlot % 3) - 1.0;
                             passengerPose.position[0] += 2.0 * queueOffsetX -
                                                          0.8 * row * lineOffsetX +
                                                          0.65 * column * queueOffsetX;
@@ -1117,6 +1158,30 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                             mapRenderer_->drawHumanTrafficActor(
                                 scheduledPassengerHumanModels_[modelIndex], passengerPose, 0.0,
                                 0.0);
+                        }
+                    }
+                }
+                if (playerVehicle_ != nullptr && activePlayerPassengerStop_ &&
+                    playerVehicle_->passengerService.boardingPassenger()) {
+                    const auto serviceRoute = std::find_if(
+                        trafficVehicles_.begin(), trafficVehicles_.end(),
+                        [&](const TrafficVehicleState& state) {
+                            return state.isBus &&
+                                   std::any_of(state.passengerStops.begin(),
+                                               state.passengerStops.end(), [&](const auto& stop) {
+                                                   return stop.stopId ==
+                                                          *activePlayerPassengerStop_;
+                                               });
+                        });
+                    if (serviceRoute != trafficVehicles_.end()) {
+                        const auto stop = std::find_if(
+                            serviceRoute->passengerStops.begin(),
+                            serviceRoute->passengerStops.end(), [&](const auto& passengerStop) {
+                                return passengerStop.stopId == *activePlayerPassengerStop_;
+                            });
+                        if (stop != serviceRoute->passengerStops.end()) {
+                            drawBoardingPassenger(*serviceRoute, *stop,
+                                                  playerVehicle_->passengerService);
                         }
                     }
                 }
@@ -1388,16 +1453,15 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             const double forwardY = dy / tangentLength;
             const double lateralX = forwardY;
             const double lateralY = -forwardX;
-            const std::array<double, 3> stopCenter = {
-                start[0] - forwardX * 0.75, start[1] - forwardY * 0.75, start[2] + 0.16};
+            const std::array<double, 3> stopCenter = {start[0] - forwardX * 0.75,
+                                                      start[1] - forwardY * 0.75, start[2] + 0.16};
             const std::optional<int> phase = openbus::map::mapTrafficSignalStateAtTime(
                 *segment.trafficSignal, simulation.simulationTime());
             const std::array<float, 3> stopColor =
                 !phase.has_value() || *phase < 6 || *phase > 8
                     ? std::array<float, 3>{1.0F, 0.12F, 0.08F}
-                    : (*phase >= 9 && *phase <= 11
-                           ? std::array<float, 3>{1.0F, 0.72F, 0.05F}
-                           : std::array<float, 3>{0.08F, 1.0F, 0.18F});
+                    : (*phase >= 9 && *phase <= 11 ? std::array<float, 3>{1.0F, 0.72F, 0.05F}
+                                                   : std::array<float, 3>{0.08F, 1.0F, 0.18F});
             std::array<double, 3> lineStart = stopCenter;
             std::array<double, 3> lineEnd = stopCenter;
             for (std::size_t axis = 0; axis < 2; ++axis) {
@@ -1753,11 +1817,10 @@ void RenderLoop::draw(const BusSimulation& simulation) {
             const int minutesSinceMidnight =
                 static_cast<int>(std::floor(trafficHour * 60.0)) % (24 * 60);
             std::ostringstream statusText;
-            statusText << "TIME " << std::setfill('0') << std::setw(2)
-                       << minutesSinceMidnight / 60 << ':' << std::setw(2)
-                       << minutesSinceMidnight % 60 << std::setfill(' ') << " X " << std::fixed
-                       << std::setprecision(1) << simulation.positionX() << " Y "
-                       << simulation.positionY() << " Z " << simulation.positionZ() << '\n'
+            statusText << "TIME " << std::setfill('0') << std::setw(2) << minutesSinceMidnight / 60
+                       << ':' << std::setw(2) << minutesSinceMidnight % 60 << std::setfill(' ')
+                       << " X " << std::fixed << std::setprecision(1) << simulation.positionX()
+                       << " Y " << simulation.positionY() << " Z " << simulation.positionZ() << '\n'
                        << "CHUNKS " << mapStats.activeTiles << '/' << mapStats.totalTiles
                        << " TERRAIN " << mapStats.activeTerrainTiles << '/'
                        << mapStats.totalTerrainTiles << " OBJECTS " << mapStats.activeSceneryObjects

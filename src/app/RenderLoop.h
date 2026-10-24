@@ -88,7 +88,10 @@ class RenderLoop {
                            bool stopAtRequiredSequenceEnd = false,
                            bool allowIntermediarySegmentsBetweenRequired = false,
                            bool allowReverseTraversalForRequired = false,
-                           std::vector<openbus::map::MapTrafficPassengerStop> passengerStops = {});
+                           std::vector<openbus::map::MapTrafficPassengerStop> passengerStops = {},
+                           std::string timetableLineName = {},
+                           std::string timetableDestinationName = {},
+                           std::optional<std::size_t> trafficRuleGroupIndex = std::nullopt);
     int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -100,8 +103,7 @@ class RenderLoop {
                               double feetDistanceMeters, double heightMeters,
                               double speedMetersPerSecond, double startDistanceMeters,
                               double centerX, double centerY, double maximumDistanceMeters);
-    void SetScheduledPassengerHumanModels(
-        std::vector<std::filesystem::path> humanConfigPaths);
+    void SetScheduledPassengerHumanModels(std::vector<std::filesystem::path> humanConfigPaths);
     void SetMapTrafficPopulation(
         std::size_t roadVehicleCount, std::size_t busCount,
         std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> roadGroupPopulations = {},
@@ -303,6 +305,8 @@ class RenderLoop {
         std::vector<openbus::map::MapTrafficSpawnCandidate> spawnCandidates;
         std::vector<double> scheduledDepartureMinutes;
         std::vector<openbus::map::MapTrafficPassengerStop> passengerStops;
+        std::string timetableLineName;
+        std::string timetableDestinationName;
         std::size_t nextPassengerStopIndex = 0;
         bool passengerStopArrived = false;
         double nextScheduledDepartureElapsedSeconds = 0.0;
@@ -330,6 +334,9 @@ class RenderLoop {
     };
     std::vector<TrafficVehicleState> trafficVehicles_;
     std::unordered_map<int, std::size_t> scheduledPassengerQueues_;
+    std::unordered_map<int, std::size_t> scheduledPassengerInitialQueues_;
+    std::optional<int> playerPassengerStopLatch_;
+    std::optional<int> activePlayerPassengerStop_;
     std::size_t targetRoadTrafficCount_ = 0;
     std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> targetRoadGroupPopulations_;
     bool useGroupRoadPopulation_ = false;

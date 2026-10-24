@@ -530,8 +530,8 @@ struct Vehicle {
         }
 #endif
         VehicleConfig vehicleConfiguration = definition->vehicleConfiguration;
-        passengerService =
-            openbus::map::MapPassengerServiceRuntime(vehicleConfiguration.passengerPositions.size());
+        passengerService = openbus::map::MapPassengerServiceRuntime(
+            vehicleConfiguration.passengerPositions.size());
         trafficAxles = vehicleConfiguration.axles;
         trafficWheelHalfWidthMeters = vehicleConfiguration.wheelHalfWidth;
         const auto axleIndexForVariable =

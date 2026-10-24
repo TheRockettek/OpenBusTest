@@ -15,6 +15,7 @@
 namespace openbus::map {
 
 struct MapTrafficGroupRules {
+    // Fixed OMSI traffic-rule groups: NormalCar, Trucks, Commercials, Ambulance.
     std::size_t groupIndex = 0;
     std::optional<double> speedLimitKmh;
     std::optional<double> density;
@@ -42,6 +43,7 @@ struct MapTrafficVehicleFilter {
     int vehicleType = 0;
     std::optional<std::size_t> unscheduledGroupIndex;
     bool scheduled = false;
+    std::optional<std::size_t> trafficRuleGroupIndex;
 };
 
 struct MapTrafficRouteRequirement {
@@ -116,6 +118,7 @@ struct MapTrafficActor {
     std::optional<double> scheduledStopDistanceMeters;
     int vehicleType = 0;
     std::optional<std::size_t> unscheduledGroupIndex;
+    std::optional<std::size_t> trafficRuleGroupIndex;
     bool scheduled = false;
     bool isBus = false;
     MapTrafficBlockReason blockReason = MapTrafficBlockReason::None;
@@ -227,10 +230,13 @@ class MapPassengerServiceRuntime {
 
     void setWaitingPassengers(int stopId, std::size_t count);
     bool arrive(const MapPassengerStopService& stop);
-    // Boards one passenger per interval until dwell ends or all seats are occupied.
+    // Reserves a waiting passenger at the start of a boarding interval and seats them at
+    // completion.
     void advance(double elapsedSeconds);
     bool dwelling() const noexcept;
     int currentStopId() const noexcept;
+    bool boardingPassenger() const noexcept;
+    double boardingProgress() const noexcept;
     std::size_t waitingPassengers(int stopId) const noexcept;
     std::size_t passengerCountOnSeat(std::size_t seatIndex) const noexcept;
     std::size_t onboardPassengerCount() const noexcept;
@@ -243,8 +249,13 @@ class MapPassengerServiceRuntime {
     int nextStopId_ = 0;
     double dwellRemainingSeconds_ = 0.0;
     double boardingAccumulatorSeconds_ = 0.0;
+    std::optional<std::size_t> boardingSeat_;
     bool dwelling_ = false;
 };
+
+void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service, int stopId,
+                                               std::size_t& sharedWaitingPassengers,
+                                               double elapsedSeconds);
 
 MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath,
                                     double speedMetersPerSecond, double laneOffsetMagnitudeMeters,

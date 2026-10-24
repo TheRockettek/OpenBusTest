@@ -6,13 +6,13 @@
 #include "ProbeTempDirectory.h"
 
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <string>
-
 
 namespace {
 
@@ -32,22 +32,45 @@ bool check(const VehicleConfig& configuration, const char* backend) {
     SimulationState simulation;
     auto& system = simulation.sharedVariables();
     system.updateFrame(0.125F, 10.0F, 100.0F, 200.0F);
+    system.set("ticket_value_2", 7.5F);
+    system.setString("ticket_name_2", "Network Day Pass");
+    system.set("cash_coin_value_1", 0.05F);
     local.set("ticket_value_0", 2.5F);
     local.set("ticket_value_1", std::numeric_limits<float>::infinity());
     local.setString("ticket_name_0", "Single Ride");
+    local.set("cash_coin_value_0", 2.5F);
+    local.set("cash_coin_value_2", std::numeric_limits<float>::infinity());
     local.set("human_count_on_seat_2", 1.0F);
     local.set("human_count_on_path_link_7", 3.0F);
+    local.setString("tt_line_string", "42");
+    local.setString("tt_busstop_name", "Central Station");
     ScriptRuntime runtime(configuration, local, simulation);
     runtime.invokeEntryPoint("trigger_passenger_ticketing");
     if (local.get("ticket_value_result") != 2.5F ||
         local.getString("ticket_name_result") != "Single Ride" ||
-        local.get("cash_dispensed_total") != 2.5F || local.get("cash_last_coin_value") != 2.5F ||
-        local.get("cash_dispensed_coin_count") != 1.0F || local.get("seat_human_count") != 1.0F ||
+        local.get("shared_ticket_value_result") != 7.5F ||
+        local.getString("shared_ticket_name_result") != "Network Day Pass" ||
+        std::abs(local.get("cash_dispensed_total") - 2.55F) > 1.0e-5F ||
+        local.get("cash_last_coin_value") != 0.05F ||
+        local.get("cash_dispensed_coin_count") != 2.0F ||
+        local.get("cash_last_coin_index") != 1.0F ||
+        local.get("cash_coin_dispensed_count_0") != 1.0F ||
+        local.get("cash_coin_dispensed_count_1") != 1.0F || local.get("seat_human_count") != 1.0F ||
         local.get("path_link_human_count") != 3.0F ||
+        local.getString("timetable_line_result") != "42" ||
+        local.getString("timetable_destination_result") != "Central Station" ||
         local.get("nonfinite_ticket_value_result") != 0.0F ||
         local.get("invalid_ticket_value_result") != 0.0F ||
         !local.getString("invalid_ticket_name_result").empty()) {
-        std::cerr << backend << ": ticket lookup or change-coin state mismatch\n";
+        std::cerr << backend << ": ticket, timetable macro or change-coin state mismatch"
+                  << " sharedTicket=" << local.get("shared_ticket_value_result")
+                  << " sharedName=" << local.getString("shared_ticket_name_result")
+                  << " cash=" << local.get("cash_dispensed_total")
+                  << " lastCoin=" << local.get("cash_last_coin_value")
+                  << " coinCount=" << local.get("cash_dispensed_coin_count")
+                  << " lastIndex=" << local.get("cash_last_coin_index")
+                  << " coin0=" << local.get("cash_coin_dispensed_count_0")
+                  << " coin1=" << local.get("cash_coin_dispensed_count_1") << '\n';
         return false;
     }
     bool previous = false;
@@ -203,9 +226,16 @@ int main() {
                   "0 (M.V.getticketname) (S.$.ticket_name_result)\n"
                   "99 (M.V.getticketvalue) (S.L.invalid_ticket_value_result)\n"
                   "-1 (M.V.getticketname) (S.$.invalid_ticket_name_result)\n"
+                  "2 (M.V.getticketvalue) (S.L.shared_ticket_value_result)\n"
+                  "2 (M.V.getticketname) (S.$.shared_ticket_name_result)\n"
                   "2 (M.V.gethumancountonseat) (S.L.seat_human_count)\n"
                   "7 (M.V.gethumancountonpathlink) (S.L.path_link_human_count)\n"
-                  "2.5 (M.V.givechangecoin)\n"
+                  "(M.V.getttlinestring) (S.$.timetable_line_result)\n"
+                  "(M.V.getttbusstopname) (S.$.timetable_destination_result)\n"
+                  "0 (M.V.givechangecoin)\n"
+                  "1 (M.V.givechangecoin)\n"
+                  "2 (M.V.givechangecoin)\n"
+                  "1.5 (M.V.givechangecoin)\n"
                   "-1 (M.V.givechangecoin)\n{end}\n"
                   "{trigger:held}\n(L.L.held_press) 1 + (S.L.held_press)\n"
                   "(L.S.Timegap) (S.L.key_time)\n(L.S.mouse_x) (S.L.key_mouse)\n{end}\n"

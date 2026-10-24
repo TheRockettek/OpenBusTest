@@ -163,18 +163,16 @@ SystemVariables::SystemVariables() : Variables(ScriptObjectKind::System) {
         {"wearlifespan", 1.0},
         {"sunalt", 60.0},
     });
-    configureSimulationClock(localDate.tm_year + 1900, localDate.tm_mon + 1,
-                             localDate.tm_mday, 43200.0);
+    configureSimulationClock(localDate.tm_year + 1900, localDate.tm_mon + 1, localDate.tm_mday,
+                             43200.0);
     updateSimulationClock(0.0);
 }
 
-void SystemVariables::configureSimulationClock(int year, int month, int day,
-                                               double timeSeconds) {
-    const std::chrono::year_month_day date{
-        std::chrono::year{year}, std::chrono::month{static_cast<unsigned>(month)},
-        std::chrono::day{static_cast<unsigned>(day)}};
-    if (!date.ok() || !std::isfinite(timeSeconds) || timeSeconds < 0.0 ||
-        timeSeconds >= 86400.0) {
+void SystemVariables::configureSimulationClock(int year, int month, int day, double timeSeconds) {
+    const std::chrono::year_month_day date{std::chrono::year{year},
+                                           std::chrono::month{static_cast<unsigned>(month)},
+                                           std::chrono::day{static_cast<unsigned>(day)}};
+    if (!date.ok() || !std::isfinite(timeSeconds) || timeSeconds < 0.0 || timeSeconds >= 86400.0) {
         throw std::invalid_argument("Simulation calendar date or time is invalid");
     }
     clockStartYear_ = year;
@@ -191,11 +189,11 @@ void SystemVariables::updateSimulationClock(double elapsedSeconds) {
     }
 
     using namespace std::chrono;
-    const year_month_day startDate{
-        year{clockStartYear_}, month{static_cast<unsigned>(clockStartMonth_)},
-        day{static_cast<unsigned>(clockStartDay_)}};
-    const auto start = sys_days{startDate} +
-                       seconds{static_cast<long long>(std::floor(clockStartTimeSeconds_))};
+    const year_month_day startDate{year{clockStartYear_},
+                                   month{static_cast<unsigned>(clockStartMonth_)},
+                                   day{static_cast<unsigned>(clockStartDay_)}};
+    const auto start =
+        sys_days{startDate} + seconds{static_cast<long long>(std::floor(clockStartTimeSeconds_))};
     const auto current = start + seconds{static_cast<long long>(std::floor(elapsedSeconds))};
     const sys_days currentDate = floor<days>(current);
     const year_month_day calendarDate{currentDate};
@@ -207,8 +205,7 @@ void SystemVariables::updateSimulationClock(double elapsedSeconds) {
         {"day", static_cast<float>(static_cast<unsigned>(calendarDate.day()))},
         {"month", static_cast<float>(static_cast<unsigned>(calendarDate.month()))},
         {"year", static_cast<float>(static_cast<int>(calendarDate.year()))},
-        {"dayofyear",
-         static_cast<float>((currentDate - sys_days{firstDayOfYear}).count())},
+        {"dayofyear", static_cast<float>((currentDate - sys_days{firstDayOfYear}).count())},
     });
 }
 

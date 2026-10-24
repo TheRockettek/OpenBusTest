@@ -323,8 +323,11 @@ Each rule block has four payload lines. Most geometry/numeric values are kept
 as strings by the merger; do not assume radians/metres for every field without
 separate evidence.
 
-OpenBus interprets traffic-rule payloads as the zero-based path index, rule
-name, numeric value, and zero-based `unsched_vehgroups.txt` group index. The
+OpenBus interprets the four `[rule]` payload lines as the path index, rule
+name, numeric value, and traffic vehicle-group index. The final value is in
+`0..3`: `0` NormalCar, `1` Trucks, `2` Commercials, and `3` Ambulance. This
+fixed rule-group mapping is independent of the ordering and indexes in
+`unsched_vehgroups.txt`, which select unscheduled population/density schedules.
 supported names are `speedlimit` (km/h; non-positive clears the limit),
 `trafficdensity` (non-negative relative factor; zero excludes unscheduled
 traffic, positive values weight eligible entry/junction choices), `priority`
