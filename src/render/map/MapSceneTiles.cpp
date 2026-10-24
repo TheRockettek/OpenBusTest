@@ -153,6 +153,9 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
 
 void MapSceneLoader::buildTileContent() {
     for (const openbus::map::MapTileReference& tileReference : map.tiles) {
+        const auto tileStart = std::chrono::steady_clock::now();
+        gameLog.Log("Map content tile " + std::to_string(tilesProcessed + 1) + "/" +
+                    std::to_string(map.tiles.size()) + ": " + tileReference.textPath.string());
         const int tileX = tileReference.x;
         const int tileY = tileReference.y;
         TraceScope tileTrace("map", "MapRenderer.processTile");
@@ -406,6 +409,7 @@ void MapSceneLoader::buildTileContent() {
                                 lane.pathRules = openbus::map::mapTrafficRulesForPath(
                                     *placementRules, path.pathIndex);
                             }
+                            segment.pathRules = lane.pathRules;
                             impl_->roadTrafficLaneNetwork.addSegment(std::move(lane));
                         } else if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
                             openbus::map::MapTrafficRouteSegment lane;
@@ -692,13 +696,12 @@ void MapSceneLoader::buildTileContent() {
                                   roadConnections.joinsFor(spline, tileX, tileY), cantHalfWidth);
             }
         }
-        if (tilesProcessed % 100 == 0 || tilesProcessed == map.tiles.size()) {
-            gameLog.Log("Map content progress: " + std::to_string(tilesProcessed) + "/" +
-                        std::to_string(map.tiles.size()) +
-                        " tiles processed; scenery=" + std::to_string(sceneryPlacementsParsed) +
-                        ", splines=" + std::to_string(splinePlacementsParsed) +
-                        ", cached spline profiles=" + std::to_string(splineProfiles.size()) + ".");
-        }
+        gameLog.Log("Map content progress: " + std::to_string(tilesProcessed) + "/" +
+                    std::to_string(map.tiles.size()) +
+                    " tiles processed; scenery=" + std::to_string(sceneryPlacementsParsed) +
+                    ", splines=" + std::to_string(splinePlacementsParsed) +
+                    ", cached spline profiles=" + std::to_string(splineProfiles.size()) +
+                    "; tile took " + std::to_string(elapsedMilliseconds(tileStart)) + " ms.");
     }
     gameLog.Log("Map content phase complete: " + std::to_string(tilesProcessed) + " tiles, " +
                 std::to_string(sceneryPlacementsParsed) + " scenery placements, " +

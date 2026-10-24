@@ -303,7 +303,10 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             gameLog.Log(
                 std::string("AI and human traffic spline overlay ") +
                 (trafficSplineDebugOverlay_
-                     ? "enabled (cyan=road, magenta=human, white=other vehicle; AI "
+                     ? "enabled (road color=default priority: green=0/high right-of-way, "
+                       "yellow=128, red=255/low right-of-way; labels show spline/path priority and "
+                       "CAR/TRK/COM/AMB group overrides; "
+                       "magenta=human, white=other vehicle; AI "
                        "green=clear, yellow=following, purple=junction yield, amber="
                        "crossing reservation, red=signal/obstacle, blue=in junction, "
                        "bright red=deadlocked; x-ray footprints show occupied areas, "

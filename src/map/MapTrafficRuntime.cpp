@@ -4139,6 +4139,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         std::vector<double> priorities(actors.size());
         std::vector<double> junctionArrivals(actors.size(),
                                              std::numeric_limits<double>::infinity());
+        // A committed turn must not yield to traffic that has not entered the junction.
+        std::vector<char> committedTurningInJunction(actors.size(), 0);
         // Equal authored priority: straight-on movements go before bends, bends before turns,
         // and faster vehicles before slow or waiting ones that can more easily give way.
         // Discrete classes keep the ordering transitive, so yields can never form a cycle.
@@ -4167,6 +4169,9 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                                                                                           : 2;
                 }
             }
+            committedTurningInJunction[candidateIndex] =
+                movementTurnClass[candidateIndex] > 0 &&
+                mapTrafficActorOnJunctionPath(candidate, candidate.distanceMeters);
         }
         // Compare local arrival windows even inside a long junction spline. A vehicle that
         // can still stop before the conflict yields; occupying a distant part of that spline
@@ -4209,9 +4214,17 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         (junctionArrivals[highIndex] < junctionArrivals[lowIndex] ||
                          (junctionArrivals[highIndex] == junctionArrivals[lowIndex] &&
                           highIndex < lowIndex))))));
+                const bool highHasAuthoredPriority =
+                    priorities[highIndex] < priorities[lowIndex] || tieBreaksInFavorOfHigh;
+                const bool committedTurnPrecedenceDiffers =
+                    committedTurningInJunction[highIndex] !=
+                    committedTurningInJunction[lowIndex];
+                const bool highHasPriority =
+                    committedTurnPrecedenceDiffers
+                        ? committedTurningInJunction[highIndex] != 0
+                        : highHasAuthoredPriority;
                 if (highIndex == lowIndex ||
-                    (priorities[highIndex] >= priorities[lowIndex] && !tieBreaksInFavorOfHigh) ||
-                    highHeld) {
+                    !highHasPriority || highHeld) {
                     continue;
                 }
                 const auto& lowPosition = occupied[obstacles.size() + lowIndex].pose.position;
@@ -4338,7 +4351,9 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                                      bool allowFollowingVehicleLookahead) {
                 auto footprint = actorFootprint(actor, distance);
                 const MapTrafficObstacle physicalFootprint = footprint;
-                if (clearance > 0.5) {
+                const bool committedJunctionMovement =
+                    committedTurningInJunction[index] && onJunctionPath(actor, distance);
+                if (clearance > 0.5 && !committedJunctionMovement) {
                     // Headway is ahead of the nose, not behind the tail of the leader.
                     const double extension = clearance - 0.25;
                     footprint.lengthMeters += extension;
@@ -4359,7 +4374,12 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         otherActor != nullptr && clearance <= 0.5 &&
                         onJunctionPath(actor, distance) &&
                         onJunctionPath(*otherActor, otherActor->distanceMeters);
-                    const double pairClearance = bothOnJunction ? 0.1 : clearance;
+                    const bool otherYieldsToCommittedActor =
+                        otherActor != nullptr && committedJunctionMovement &&
+                        !onJunctionPath(*otherActor, otherActor->distanceMeters) &&
+                        yieldsForPriority(other - obstacles.size(), index);
+                    const double pairClearance =
+                        bothOnJunction || otherYieldsToCommittedActor ? 0.1 : clearance;
                     if (!trafficFootprintsOverlap(footprint, occupied[other], pairClearance)) {
                         return false;
                     }
@@ -4688,7 +4708,10 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 // walking pace and settle within a small band, instead of creeping forever.
                 constexpr double settleBandMeters = 0.2;
                 const bool leaderNearlyStopped = nearestFollowingSpeedMetersPerSecond < 0.5;
-                double closingSpeed = excessGap / followingResponseSeconds;
+                const double responseSeconds =
+                    followingResponseSeconds +
+                    std::clamp((actor.speedMetersPerSecond - 6.0) / 6.0, 0.0, 1.0);
+                double closingSpeed = excessGap / responseSeconds;
                 if (leaderNearlyStopped && excessGap > 0.0) {
                     closingSpeed =
                         excessGap > settleBandMeters

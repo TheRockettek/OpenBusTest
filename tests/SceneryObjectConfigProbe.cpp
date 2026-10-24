@@ -181,8 +181,8 @@ int main(int argc, char** argv) {
                 "all traffic-light groups retain independent phase schedules");
             valid &= require(
                 openbus::map::mapTrafficSignalStateAtTime(
-                    *configuration.trafficLightSchedules[2], 8.0) == 12,
-                "unlinked signal groups preserve their dark end-of-cycle interval");
+                    *configuration.trafficLightSchedules[2], 8.0) == 6,
+                "unlinked signal groups retain their final phase through the cycle remainder");
         }
         valid &= require(configuration.diagnostics.entries.empty(),
                          "valid conditional signal timing is not reported unsupported");

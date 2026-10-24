@@ -84,7 +84,7 @@ mapTrafficSignalPhaseAtTime(double cycleDurationSeconds,
         }
         phaseStart = phaseEnd;
     }
-    return 12;
+    return phases.back().state;
 }
 
 inline bool mapTrafficSignalProgramValid(const MapTrafficSignalProgram& program) {

@@ -24,6 +24,13 @@ prove end-to-end rendering or runtime semantics.
 
 ### Map runtime scope
 
+Startup progress is written to the console and `game.log`, including configuration
+loading, renderer initialization, map phases, and each terrain/index/content tile.
+Tile messages include the current file and counts; phase summaries and content
+tile completions include elapsed milliseconds. If loading appears stuck after an
+unhandled-configuration-tag warning, check the subsequent progress messages for
+the active stage or tile. These logs do not require performance tracing.
+
 The current map path loads `global.cfg` and uses its first entrypoint by default.
 When `OPENBUS_MAP_SPAWN` is unset, startup prints all spawn points with their
 zero-based indexes, names, world coordinates, and yaw. Set it to an index (for

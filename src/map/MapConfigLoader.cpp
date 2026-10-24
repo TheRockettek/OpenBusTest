@@ -1,6 +1,7 @@
 #include "map/MapConfigLoader.h"
 
 #include "config/ConfigurationParser.h"
+#include "core/Logger.h"
 #include "core/PerfTrace.h"
 
 #include <algorithm>
@@ -1222,10 +1223,14 @@ std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
 
 MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     openbus::rendering::TraceScope trace("map", "MapConfigLoader::loadMapDefinition");
+    const auto loadStart = std::chrono::steady_clock::now();
+    Logger mapLog("Map");
     MapDefinition definition;
     definition.rootPath = mapDirectory;
     const std::filesystem::path globalPath = mapDirectory / "global.cfg";
+    mapLog.Log("Reading manifest: " + globalPath.string());
     const std::vector<std::string> lines = splitLines(decodeText(globalPath));
+    mapLog.Log("Discovering ground-texture sidecars in " + mapDirectory.string());
     const auto groundTextureSidecarsByTile = discoverGroundTextureSidecars(mapDirectory);
     std::unordered_map<std::uint64_t, std::size_t> tileIndicesByCoordinates;
     std::vector<std::size_t> tileOrdinalToUniqueIndex;
@@ -1491,6 +1496,8 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             std::atan2(forwardNorth, forwardEast) * 180.0 / 3.14159265358979323846};
     }
     const std::filesystem::path aiListPath = mapDirectory / "ailists.cfg";
+    mapLog.Log("Manifest parsed: " + std::to_string(definition.tiles.size()) +
+               " tiles; loading AI lists and population schedules.");
     if (std::filesystem::is_regular_file(aiListPath)) {
         parseAiListFile(aiListPath, definition.aiTraffic);
     }
@@ -1526,7 +1533,9 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
         parseUnscheduledTrafficDensities(unscheduledTrafficDensityPath, definition.aiTraffic,
                                          definition.diagnostics);
     }
+    mapLog.Log("Loading AI timetables: " + (mapDirectory / "TTData").string());
     parseAiTimetableRoutes(mapDirectory / "TTData", definition.aiTraffic, definition.diagnostics);
+    mapLog.Log("AI timetables loaded; loading driver and pedestrian lists.");
     const std::filesystem::path driverListPath = mapDirectory / "drivers.txt";
     if (std::filesystem::is_regular_file(driverListPath)) {
         parseDriverListFile(driverListPath, definition.aiTraffic);
@@ -1535,6 +1544,11 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     if (std::filesystem::is_regular_file(humanListPath)) {
         parseHumanListFile(humanListPath, definition.aiTraffic);
     }
+    mapLog.Log("Map manifest and traffic configuration loaded in " +
+               std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - loadStart)
+                                  .count()) +
+               " ms.");
     return definition;
 }
 

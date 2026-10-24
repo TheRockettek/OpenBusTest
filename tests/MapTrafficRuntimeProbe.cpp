@@ -287,12 +287,16 @@ void verifyDrivingBehavior() {
                 mapTrafficSignalStateAtTime(cycleSignal, 8.0) == 9 &&
                 mapTrafficSignalStateAtTime(cycleSignal, 10.0) == 0,
             "signal phase schedule wraps at the configured cycle duration");
-    const MapTrafficSignalSchedule signalWithDarkRemainder{
+    const MapTrafficSignalSchedule signalWithCycleRemainder{
         10.0, {{0, 3.0}, {6, 5.0}}, false};
-    require(mapTrafficSignalStateAtTime(signalWithDarkRemainder, 7.9) == 6 &&
-                mapTrafficSignalStateAtTime(signalWithDarkRemainder, 8.0) == 12 &&
-                mapTrafficSignalStateAtTime(signalWithDarkRemainder, 10.0) == 0,
-            "unconfigured traffic-light cycle time is rendered as the OMSI off phase");
+    require(mapTrafficSignalStateAtTime(signalWithCycleRemainder, 7.9) == 6 &&
+                mapTrafficSignalStateAtTime(signalWithCycleRemainder, 8.0) == 6 &&
+                mapTrafficSignalStateAtTime(signalWithCycleRemainder, 10.0) == 0,
+            "the final configured traffic-light phase extends through the cycle remainder");
+    const MapTrafficSignalSchedule explicitDarkPhase{
+        10.0, {{0, 3.0}, {6, 5.0}, {12, 2.0}}, false};
+    require(mapTrafficSignalStateAtTime(explicitDarkPhase, 8.0) == 12,
+            "an explicitly configured OMSI off phase remains dark");
     MapTrafficRouteSegment signalWaitSegment = straight(1901, 0.0, 0.0, 0.0, 10.0);
     signalWaitSegment.trafficSignal = cycleSignal;
     MapTrafficActor signalWaiter;
@@ -907,6 +911,15 @@ void verifyDrivingBehavior() {
     require(closeFollowingSpeed + 1.0 < distantFollowingSpeed &&
                 closeFollowingSpeed > 0.0,
             "following speed adapts smoothly to a slowing leader according to the available gap");
+    auto stoppedFollowingLeader =
+        makeMapTrafficActor(road, "stopped-following-leader.ovh", 0.0, 0.0, false);
+    auto approachingFollower =
+        makeMapTrafficActor(road, "approaching-follower.ovh", 12.0, 0.0, false);
+    stoppedFollowingLeader.distanceMeters = 60.0;
+    advanceMapTrafficDriving({&approachingFollower, &stoppedFollowingLeader}, {}, 0.1);
+    require(approachingFollower.targetSpeedMetersPerSecond < 4.5 &&
+                approachingFollower.blockReason == MapTrafficBlockReason::Leader,
+            "a fast follower reduces its target speed early when approaching a stopped leader");
     {
         const auto adjacentLane = oneSegment(straight(1104, 2.4, 0.0, 0.0, 500.0));
         auto adjacentStoppedCar =
@@ -3662,6 +3675,73 @@ void verifyRealisticTrafficBehavior() {
             "a right-turning vehicle accelerates back to cruise speed after the junction clears");
 }
 
+void verifyCommittedLeftTurnPriority() {
+    using namespace openbus::map;
+    const auto straight = [](int id, double x, double y, double heading, double length) {
+        MapTrafficRouteSegment segment{{makeSpline(id, 0, 0, y), 0, 0}};
+        segment.spline.placement.localX = x;
+        segment.spline.placement.elevation = 0.0;
+        segment.spline.placement.rotationDegrees = heading;
+        segment.spline.placement.length = length;
+        return segment;
+    };
+    const auto oneSegment = [](const MapTrafficRouteSegment& segment) {
+        MapTrafficRoute route;
+        route.segments = {segment};
+        route.totalLength = segment.spline.placement.length;
+        route.cumulativeEndDistances = {route.totalLength};
+        return route;
+    };
+    const auto footprint = [](const MapTrafficActor& actor) {
+        return MapTrafficObstacle{
+            *sampleMapTrafficRoute(actor.route, actor.distanceMeters, actor.lateralOffsetMeters),
+            actor.lengthMeters, actor.widthMeters};
+    };
+    MapTrafficGroupRules committedRules;
+    committedRules.groupIndex = 0;
+    committedRules.priority = 192.0;
+    MapTrafficGroupRules approachRules;
+    approachRules.groupIndex = 0;
+    approachRules.priority = 64.0;
+
+    MapTrafficRoute committedLeftTurnRoute;
+    MapTrafficRouteSegment committedLeftTurnPath;
+    committedLeftTurnPath.points = {
+        {0.0, 0.0, 0.0}, {0.0, 8.0, 0.0}, {-8.0, 8.0, 0.0}};
+    committedLeftTurnPath.pathRules.groups.push_back(committedRules);
+    committedLeftTurnRoute.segments = {
+        committedLeftTurnPath, straight(1208, -8.0, 8.0, 270.0, 40.0)};
+    committedLeftTurnRoute.cumulativeEndDistances = {16.0, 56.0};
+    committedLeftTurnRoute.totalLength = 56.0;
+    MapTrafficRoute higherPriorityApproachRoute =
+        oneSegment(straight(1209, -40.0, 4.0, 90.0, 80.0));
+    higherPriorityApproachRoute.segments.front().pathRules.groups.push_back(approachRules);
+    auto committedLeftTurn =
+        makeMapTrafficActor(committedLeftTurnRoute, "committed-left-turn.ovh", 3.0, 0.0, false);
+    auto higherPriorityCrossing = makeMapTrafficActor(
+        higherPriorityApproachRoute, "higher-priority-crossing.ovh", 8.0, 0.0, false);
+    committedLeftTurn.unscheduledGroupIndex = 0;
+    committedLeftTurn.trafficRuleGroupIndex = 0;
+    higherPriorityCrossing.unscheduledGroupIndex = 0;
+    higherPriorityCrossing.trafficRuleGroupIndex = 0;
+    higherPriorityCrossing.distanceMeters = 20.0;
+
+    bool committedTurnPassedFirst = false;
+    for (int frame = 0; frame < 100; ++frame) {
+        advanceMapTrafficDriving({&committedLeftTurn, &higherPriorityCrossing}, {}, 0.1);
+        require(mapTrafficHasClearance(footprint(committedLeftTurn),
+                                       {footprint(higherPriorityCrossing)}, 0.49),
+                "a committed left turn and an approaching vehicle remain separated");
+        committedTurnPassedFirst =
+            committedTurnPassedFirst ||
+            (committedLeftTurn.distanceMeters > 8.0 &&
+             higherPriorityCrossing.distanceMeters < 40.0);
+    }
+    require(committedTurnPassedFirst,
+            "a vehicle already turning through a junction keeps priority over a higher-priority "
+            "approach");
+}
+
 void verifyTJunctionTraffic() {
     using namespace openbus::map;
     constexpr double laneOffset = 1.75;
@@ -3808,6 +3888,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--t-junction") {
             verifyTJunctionTraffic();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--committed-left-turn") {
+            verifyCommittedLeftTurnPriority();
             return 0;
         }
         using namespace openbus::map;

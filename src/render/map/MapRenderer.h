@@ -44,6 +44,7 @@ struct TrafficPathDebugSegment {
     double widthMeters = 0.0;
     std::optional<int> mapObjectId;
     std::size_t pathIndex = 0;
+    openbus::map::MapTrafficPathRules pathRules;
     std::optional<openbus::map::MapTrafficSignalSchedule> trafficSignal;
     int tileX = 0;
     int tileY = 0;

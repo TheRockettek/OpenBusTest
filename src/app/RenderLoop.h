@@ -57,6 +57,11 @@ struct RenderBenchmarkInput {
     double brake = 0.0;
 };
 
+struct TrafficSplinePriorityLabel {
+    std::array<double, 3> anchor = {};
+    std::vector<std::string> lines;
+};
+
 class RenderLoop {
   public:
     RenderLoop(int width, int height, const char* title);
@@ -231,6 +236,7 @@ class RenderLoop {
     bool trafficSplineDebugOverlay_ = false;
     bool trafficSplineDebugBuilt_ = false;
     std::vector<std::pair<int, int>> trafficSplineDebugTiles_;
+    std::vector<TrafficSplinePriorityLabel> trafficSplinePriorityLabels_;
     std::uint64_t trafficSplineDebugRevision_ = 0;
     bool collisionWireframeBuilt_ = false;
     std::uint64_t collisionWireframeRevision_ = 0;

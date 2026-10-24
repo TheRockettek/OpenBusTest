@@ -37,12 +37,19 @@ MapSceneLoader::MapSceneLoader(const openbus::map::MapDefinition& mapDefinition,
 }
 
 void MapSceneLoader::load() {
+    gameLog.Log("Map scene loading started: root=" + map.rootPath.string() +
+                ", tiles=" + std::to_string(map.tiles.size()) + ".");
+    gameLog.Log("Map phase: loading ground textures.");
     loadGroundTextures();
+    gameLog.Log("Map phase: loading terrain.");
     loadTerrainTiles();
     mapContentStart = std::chrono::steady_clock::now();
     TraceScope sceneBuildPhase("map", "MapRenderer.buildSceneGeometryAndBatches");
+    gameLog.Log("Map phase: indexing tile placements and traffic paths.");
     indexMapContent();
+    gameLog.Log("Map phase: building scenery, splines and water.");
     buildTileContent();
+    gameLog.Log("Map phase: resolving traffic-light parents and finalizing lane networks.");
     resolveTrafficLightVariableParents();
     impl_->roadTrafficLaneNetwork.finalize();
     impl_->humanTrafficLaneNetwork.finalize();
@@ -52,6 +59,7 @@ void MapSceneLoader::load() {
                 ", unconnected lane ends=" + std::to_string(laneStats.deadEnds) +
                 ", unconnected ends within 3 m of an aligned lane start=" +
                 std::to_string(laneStats.nearMissDeadEnds) + ".");
+    gameLog.Log("Map phase: uploading road geometry.");
     uploadRoadBatches();
 }
 
@@ -187,12 +195,11 @@ void MapSceneLoader::loadTerrainTiles() {
         TraceScope phase("map", "MapRenderer.loadAllTerrainTiles");
         for (const openbus::map::MapTileReference& tile : map.tiles) {
             ++terrainTilesVisited;
-            if (terrainTilesVisited % 100 == 0 || terrainTilesVisited == map.tiles.size()) {
-                gameLog.Log("Map terrain progress: " + std::to_string(terrainTilesVisited) + "/" +
-                            std::to_string(map.tiles.size()) + " tiles visited; " +
-                            std::to_string(impl_->terrainBuffers.size()) +
-                            " terrain meshes uploaded.");
-            }
+            gameLog.Log("Map terrain tile " + std::to_string(terrainTilesVisited) + "/" +
+                        std::to_string(map.tiles.size()) + ": " + tile.terrainPath.string() +
+                        "; meshes uploaded=" + std::to_string(impl_->terrainBuffers.size()) +
+                        ", elapsed=" + std::to_string(elapsedMilliseconds(terrainLoadStart)) +
+                        " ms.");
             if (!tile.hasTerrainFile) {
                 recordSkipped(skipped, "listed map tiles without a .terrain sidecar",
                               tileLabel(tile.x, tile.y) + " " + tile.textPath.filename().string());
@@ -354,6 +361,7 @@ void MapSceneLoader::loadTerrainTiles() {
 }
 
 void MapSceneLoader::indexMapContent() {
+    const auto indexStart = std::chrono::steady_clock::now();
     const auto registerObjectId = [&](int objectId, MapObjectRecordKind kind,
                                       const std::string& tileName) {
         const auto [existing, inserted] = mapObjectRecordKindsById.try_emplace(objectId, kind);
@@ -368,6 +376,9 @@ void MapSceneLoader::indexMapContent() {
     for (std::size_t tileReferenceIndex = 0; tileReferenceIndex < map.tiles.size();
          ++tileReferenceIndex) {
         const openbus::map::MapTileReference& tileReference = map.tiles[tileReferenceIndex];
+        gameLog.Log("Map index tile " + std::to_string(tileReferenceIndex + 1) + "/" +
+                    std::to_string(map.tiles.size()) + ": " + tileReference.textPath.string() +
+                    "; elapsed=" + std::to_string(elapsedMilliseconds(indexStart)) + " ms.");
         const openbus::map::MapTileData tile = openbus::map::loadMapTile(tileReference);
         const std::string tileName = tileLabel(tileReference.x, tileReference.y);
         impl_->trafficRouteNetwork.addTileSplines(tile.splines, tileReference.x, tileReference.y);
@@ -486,10 +497,13 @@ void MapSceneLoader::indexMapContent() {
             }
         }
     }
+    gameLog.Log("Map tile index parsed; connecting road and traffic route networks.");
     roadConnections.finalize();
     impl_->trafficRouteNetwork.finalize();
     impl_->roadTrafficRouteNetwork.finalize();
     impl_->humanTrafficRouteNetwork.finalize();
+    gameLog.Log("Map index phase complete: " + std::to_string(map.tiles.size()) + " tiles in " +
+                std::to_string(elapsedMilliseconds(indexStart)) + " ms.");
 }
 
 void MapSceneLoader::uploadRoadBatches() {

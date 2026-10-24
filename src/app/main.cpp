@@ -839,6 +839,7 @@ int main() {
         std::filesystem::path mapDirectory;
         int aiVehicleCount = 0;
         {
+            applicationLog.Log("Loading: resolving bus and model configuration paths.");
             openbus::rendering::TraceScope trace("config", "main.resolveConfigurationPaths");
             busConfigPath = busConfigurationPathFor();
             modelConfigPath = modelConfigurationPathForBus(busConfigPath);
@@ -866,6 +867,7 @@ int main() {
 
         openbus::map::MapDefinition mapDefinition;
         {
+            applicationLog.Log("Loading map manifest: " + mapDirectory.string());
             openbus::rendering::TraceScope trace("map", "main.loadMapDefinition");
             mapDefinition = openbus::map::loadMapDefinition(mapDirectory);
         }
@@ -958,17 +960,22 @@ int main() {
 
         BusConfiguration configuration;
         {
+            applicationLog.Log("Loading bus physics configuration: " + busConfigPath.string());
             openbus::rendering::TraceScope trace("config", "main.loadBusConfiguration");
             configuration = loadBusConfiguration(busConfigPath);
+            applicationLog.Log("Bus physics configuration loaded.");
         }
 
         ModelConfig modelConfiguration;
         {
+            applicationLog.Log("Loading bus model configuration: " + modelConfigPath.string());
             openbus::rendering::TraceScope trace("config", "main.loadBusModelConfiguration");
             modelConfiguration = loadBusModelConfiguration(busConfigPath);
+            applicationLog.Log("Bus model configuration loaded.");
         }
 
         {
+            applicationLog.Log("Loading: writing configuration snapshots.");
             openbus::rendering::TraceScope trace("config", "main.writeConfigurationSnapshots");
             std::ofstream configurationOutput("OpenBus_configuration.json", std::ios::trunc);
             if (!configurationOutput) {
@@ -994,6 +1001,7 @@ int main() {
             std::floor(busPlacement.position[1] / openbus::map::OMSI_TILE_SIZE_METERS));
         std::vector<TerrainCollisionGrid> spawnTerrain;
         std::vector<std::pair<int, int>> preloadedTerrainTiles;
+        applicationLog.Log("Loading spawn terrain collision.");
         for (const openbus::map::MapTileReference& tile : mapDefinition.tiles) {
             if (!tile.hasTerrainFile || std::abs(tile.x - spawnTileX) > 2 ||
                 std::abs(tile.y - spawnTileY) > 2) {
@@ -1016,6 +1024,7 @@ int main() {
         }
         applicationLog.Log("Spawn terrain collision preloaded: " +
                            std::to_string(spawnTerrain.size()) + " tiles.");
+        applicationLog.Log("Loading: initializing bus simulation and collision streaming.");
         BusSimulation simulation(configuration, busPlacement, 60.0, 8, busPlacement.position[2],
                                  std::move(spawnTerrain), {}, false);
         openbus::map::MapCollisionStreamer collisionStreamer(
@@ -1027,6 +1036,7 @@ int main() {
             benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_WIDTH", 1280, 16384) : 1920;
         const int windowHeight =
             benchmarkMode ? positiveEnvironmentInt("OPENBUS_BENCHMARK_HEIGHT", 720, 16384) : 1080;
+        applicationLog.Log("Loading: initializing renderer and OpenGL window.");
         RenderLoop renderer(windowWidth, windowHeight, "OpenBus");
         const auto [precipitationType, precipitationRate] = weatherSettingsFromEnvironment();
         renderer.SetWeather(precipitationType, precipitationRate);
@@ -1035,7 +1045,9 @@ int main() {
                                                            : "clear";
         applicationLog.Log("Weather initialized: " + std::string(weatherName) +
                            ", precipitation rate=" + std::to_string(precipitationRate) + ".");
+        applicationLog.Log("Loading map scene: terrain, tile index, scenery and roads.");
         renderer.SetMap(mapDefinition, spawnEntryPoint, groundTextureIndex, omsiRootPath());
+        applicationLog.Log("Map scene loaded; initializing spawn render window.");
         renderer.updateMapStreaming(busPlacement.position[0], busPlacement.position[1]);
         const std::vector<std::pair<int, int>> spawnLoadedGeometryTiles = renderer.loadedMapTiles();
         collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
@@ -1046,10 +1058,12 @@ int main() {
                            "; map manifest tiles=" + std::to_string(mapDefinition.tiles.size()) +
                            ".");
         std::size_t reportedCollisionTileCount = collisionStreamer.loadedTileCount();
+        applicationLog.Log("Loading player vehicle: " + busConfigPath.string());
         Vehicle* playerVehicle =
             renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
                                 {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
         renderer.SetPlayerVehicle(playerVehicle);
+        applicationLog.Log("Player vehicle initialized; preparing AI traffic and pedestrians.");
         if (!aiBusConfigPath.empty()) {
             std::cout << "AI_VEHICLES=" << aiVehicleCount << '\n';
             for (int index = 0; index < aiVehicleCount; ++index) {
