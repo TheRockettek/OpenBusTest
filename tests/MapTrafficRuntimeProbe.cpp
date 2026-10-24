@@ -3732,6 +3732,18 @@ int main(int argc, char** argv) {
                     "vehicle pitch follows authored uphill gradient");
         requireNear(gradedPose->rollRadians, -std::atan(0.05),
                     "vehicle roll follows authored road cant");
+        gradedSegment.spline.placement.skewStart = 0.5;
+        gradedSegment.spline.placement.skewEnd = 0.5;
+        gradedSegment.pathLateralMeters = 2.0;
+        const auto skewedPose = sampleMapTrafficRoute(makeGradedRoute(gradedSegment), 5.0, 0.0);
+        require(skewedPose.has_value(), "skewed road pose is valid");
+        requireNear(skewedPose->position[1], 6.0,
+                    "traffic lane follows the road surface's lateral skew");
+        requireNear(skewedPose->position[2], 0.5,
+                    "traffic lane elevation follows the skew-adjusted road surface");
+        gradedSegment.pathLateralMeters = 0.0;
+        gradedSegment.spline.placement.skewStart = 0.0;
+        gradedSegment.spline.placement.skewEnd = 0.0;
         gradedSegment.reversed = true;
         gradedSegment.splineDistanceAtRouteStartMeters = gradedSegment.spline.placement.length;
         const auto downhillPose = sampleMapTrafficRoute(makeGradedRoute(gradedSegment), 5.0, 0.0);
@@ -3959,6 +3971,11 @@ int main(int argc, char** argv) {
                     "map traffic clock wraps across midnight");
         requireNear(mapTrafficHourAtElapsedSeconds(12.0, 86400.0), 12.0,
                     "map traffic clock wraps after a full day");
+        require(mapTrafficWeekdayMaskAtElapsedSeconds(1, 0.0) == 1 &&
+                    mapTrafficWeekdayMaskAtElapsedSeconds(5, 86400.0) == 2 &&
+                    mapTrafficWeekdayMaskAtElapsedSeconds(6, 86400.0) == 4 &&
+                    mapTrafficWeekdayMaskAtElapsedSeconds(1, 7.0 * 86400.0) == 1,
+                "unscheduled density weekday class advances and wraps with simulation time");
         requireNear(mapTrafficNextDepartureElapsedSeconds(6.0, 0.0, 405.0), 2700.0,
                     "scheduled departure is measured from the configured start hour");
         requireNear(mapTrafficNextDepartureElapsedSeconds(23.5, 0.0, 30.0), 3600.0,
@@ -3989,6 +4006,15 @@ int main(int argc, char** argv) {
                     departurePartitions[0] == std::vector<double>({360.0, 390.0, 440.0}) &&
                     departurePartitions[1] == std::vector<double>({370.0, 410.0}),
                 "overlapping bus assignments partition departures without duplication");
+        require(mapTrafficAllocateScheduledBuses({5, 2, 1}, 2) ==
+                    std::vector<std::size_t>({1, 1, 0}) &&
+                    mapTrafficAllocateScheduledBuses({5, 2, 1}, 5) ==
+                        std::vector<std::size_t>({3, 1, 1}) &&
+                    mapTrafficAllocateScheduledBuses({0, 5, 1}, 1) ==
+                        std::vector<std::size_t>({0, 1, 0}) &&
+                    mapTrafficAllocateScheduledBuses({0, 0}, 4) ==
+                        std::vector<std::size_t>({0, 0}),
+                "scheduled bus pools skip routes without departures and balance eligible route load");
         MapTrafficActor createdActor = makeMapTrafficActor(
             *route, "Vehicles\\traffic.bus", 8.0, 1.5, true, std::string("Humans\\driver.hum"));
         require(createdActor.modelPath == "Vehicles\\traffic.bus" &&

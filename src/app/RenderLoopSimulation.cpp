@@ -897,6 +897,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
 }
 
 void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
+    simulationState_.sharedVariables().updateSimulationClock(simulation.simulationTime());
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(
             simulation, playerVehicle_->variables.get("throttle"),

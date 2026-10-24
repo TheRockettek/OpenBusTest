@@ -413,8 +413,7 @@ for alignment is not mistaken for supporting it.
   and keyboard-context `[entry]`; current controls are hardcoded to the
   runtime key map.
 - [ ] Implement observed configuration records that remain unhandled in their
-  current contexts: model animation `[anim_rot_x]` and animation operation
-  `[Scheiben]`; SCO `[approachdist]`, `[carpark_p]`, `[collisionmesh]`,
+  current contexts: SCO `[approachdist]`, `[carpark_p]`, `[collision_mesh]`,
   `[complexity]`, `[crossingproblem]`, `[entrypoint]`, `[joinable]`, `[mass]`,
   `[momentofintertia]`, `[matl_texadress_border]`, `[newanim]`,
   `[nomaplighting]`, `[shadow]` per-mesh cast-shadow behavior,
@@ -427,14 +426,17 @@ for alignment is not mistaken for supporting it.
   shown by the runtime warning, not the keyword globally. `[newachse]`
   descriptive text lines are labels rather than configuration tags and are
   ignored; only identifier-like unknown axle fields are reported.
-  Model-animation divider comments beginning with `--` are also ignored rather
-  than logged as unknown animation operations. Descriptive multiword labels
-  between animation records and in `[new_attachment]` blocks are not
-  configuration operations and are ignored; identifier-like unknown
-  operations still produce diagnostics. The latest live Cotterell audit found
-  49 distinct unsupported warning keywords (case-insensitive), all
-  cross-referenced here by configuration context; attachment prose no longer
-  produces false warnings.
+  Model-animation directives such as `anim_rot` and `anim_trans` are
+  unbracketed operations inside `[newanim]`, not top-level CFG keywords.
+  Likewise, labels such as `Scheiben` in an animation block are data/labels,
+  not configuration tags; `anim_rot_x` is not a documented keyword in the
+  checked-in format references. Do not add these strings to the unimplemented
+  keyword backlog solely because a parser warning reports them. Model-animation
+  divider comments beginning with `--` and descriptive labels in
+  `[new_attachment]` blocks are ignored; only verified configuration tags or
+  supported operation names belong in this register. The prior live warning
+  count is not retained as a keyword count because warning tokens can include
+  non-keyword text; re-audit source records before publishing a count.
 - [ ] Define safe handling for general metadata `[friendlyname]`,
   `[description]`, and `[usrinfo]`; never copy `[usrinfo]` values into logs,
   diagnostics, or source control.
@@ -524,11 +526,12 @@ for the explicit boundary.
   attached, and spline-row scenery to the sampled terrain normal without
   changing placement height; OMSI parity is not yet verified.
   `[spline_terrain_align_2]` spline data remains preserved but unsupported.
-- Chrono tile parsing now retains the complete source lines and comment/version,
+- Chrono tile parsing retains the complete source lines and comment/version,
   types `[selobject]` and `[selspline]` integer IDs before the opaque object
-  payload, and preserves selector override lines as opaque data. Selector/date
-  resolution is not applied to the map; `[delete]`, `[typ]`, and `[relabel]`
-  have no independent runtime semantics.
+  payload, and preserves selector override lines as opaque data. Date-ranged
+  scenario tile files are now selected at startup by inclusive
+  `[startdate]`/`[enddate]`; selector edits, `[delete]`, `[typ]`, and `[relabel]`
+  still have no independent runtime semantics.
   Global identity/description, version, background/map-camera data, marker flags,
   seasons, and traffic-density records are retained as metadata, but fields such
   as `[worldcoordinates]` have no runtime effect; timetable/HOF and AI-list map
@@ -698,9 +701,17 @@ for the explicit boundary.
 - [~] Apply road and passenger traffic-density schedules to their respective
   capped populations using provisional linear interpolation and endpoint
   clamping. Density changes now defer population transitions until off-screen
-  positions are available and route footprints are clear. Pool sizes are still
-  fixed at startup. Verify native units, interpolation, and time-of-day policy
-  before treating the behavior as OMSI-compatible.
+  positions are available and route footprints are clear. The startup road
+  pool reserves each unscheduled group up to its maximum active target across
+  configured hours and weekday classes, rather than limiting the total queued
+  pool to the simultaneous active population cap. This lets the same fixed,
+  group-specific pool meet separate peaks at different times; the active
+  population remains capped. Sampled split-peak regressions cover this
+  invariant. Weekday schedules derive their starting weekday from the map
+  system calendar (`Day`, `Month`, `Year`, and `DayOfYear`); the date and time
+  variables advance with elapsed simulation time. Verify native units,
+  interpolation, and time-of-day policy before treating the behavior as
+  OMSI-compatible.
 
 #### Implemented AI traffic enhancements
 
@@ -770,7 +781,8 @@ constitute full OMSI parity or in-game visual validation:
   weighted skeletal animation and in-game visual validation remain open.
 - [x] Defer population decreases until actors are off-screen and admit
   preallocated actors only at clear off-screen route positions. Density
-  interpolation and pool sizing remain provisional.
+  interpolation/native unit parity and active-population cap policy remain
+  provisional; unscheduled group peak capacity is regression-tested.
 - [x] Keep map AI vehicles out of unloaded tiles: admit them only from active
   entry tiles, hide and pause them outside the active tile window, and exclude
   paused vehicles from pedestrian obstacles and signal/junction actor updates.
@@ -793,14 +805,30 @@ the outstanding implementation and validation tasks:
   unscheduled access/density filters. Overtaking/lane changes are not
   implemented, so vehicles currently never overtake. `unsched_trafficdens.txt`
   group/day curves now drive the capped, time-varying road population target
-  and weight startup pool composition; active group targets are recomputed as
-  curves change, with safe off-screen admission and retirement. The fixed
-  startup pool may constrain large group-proportion changes, and the initial
-  weekday is taken from the host calendar because no map simulation date is
-  available. Native visual density-category parity remains unverified. Focused
-  probes cover path and group indexing, parsing/validation, scheduled group
-  selection/rebalancing, access, density weighting, speed caps, priority
-  ordering/fairness, and kill rules.
+  and weight startup selection; active group targets are recomputed as curves
+  change, with safe off-screen admission and retirement. The startup pool is
+  queued even when the starting hour has zero group density, so groups becoming
+  active later in the day are not lost. The startup pool uses a rounding-safe
+  upper bound for each group's active target across configured hours and
+  weekday classes instead of sampling only the aggregate peak composition.
+  Its queued pool may exceed the active population cap when group peaks happen
+  at different times; only the simultaneously active population is capped.
+  Sampled split-peak
+  regressions verify reservations across weekday classes, and a targeted
+  threshold regression covers an interior peak caused by integer
+  apportionment at the active-cap transition. Where wildcard and
+  day-specific schedules coexist, the most-specific valid matching curve
+  takes precedence; an invalid curve does not suppress the wildcard fallback.
+  Weekday masks with unknown bits are rejected with a diagnostic rather than
+  silently treated as a schedule that never matches.
+  Weekday selection comes from the map system calendar, which starts with the
+  host local date and advances with simulation time.
+  Native visual density-category parity remains unverified.
+  Focused probes cover path and group indexing, parsing/validation, scheduled
+  group selection/rebalancing and pool capacity, access, density weighting,
+  zero-at-start/future-positive pool scheduling, disjoint peaks above the
+  active cap, reservation coverage across sampled hours/weekdays, speed caps,
+  priority ordering/fairness, and kill rules.
 - [x] **Maintain target population:** recycle preallocated vehicle entries when
   routes end or the target increases, up to the startup pool cap. Re-entry is
   limited to clear, off-screen connected road positions in active tiles;
@@ -832,7 +860,17 @@ the outstanding implementation and validation tasks:
   -1.0, so this is not a join-tolerance defect. Startup still finds 3 exact
   routes and 7 endpoint-only partial fallbacks. Do not classify those fallbacks
   as timetable-faithful or synthesize the disconnected transition; resolve it
-  against valid map lane data before claiming full timetable coverage.
+  against valid map lane data before claiming full timetable coverage. When the
+  configured bus-pool limit is smaller than the number of matched timetable
+  routes, current initialization assigns one bus to routes in parser order
+  until the pool is exhausted, so later routes receive no bus. With spare pool
+  capacity, additional buses are allocated toward routes with the greatest
+  departure count per assigned bus, then each route's departures are
+  round-robin partitioned among its buses without duplication. Focused runtime
+  probes cover undersized pools, departure-load balancing, routes without
+  departures, and unique departure ownership. Validate an intended
+  service-priority policy for undersized pools before changing which routes
+  receive the initial buses.
 - [ ] **Complete traffic control:** verify SCO signal cycle origin, approach
   distance and stop-line placement; implement traffic-sign rules.
 - [~] **Improve junction control:** committed junction-path actors clear before

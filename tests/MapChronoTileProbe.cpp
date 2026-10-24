@@ -93,6 +93,73 @@ void runProbe() {
                     truncated.diagnostics.entries[0].message ==
                         "selector ID is missing; source lines retained",
                 "truncated selector ID is reported without rejecting the raw tile");
+
+        openbus::map::MapDefinition map;
+        map.rootPath = root;
+        openbus::map::MapTileReference baseTile;
+        baseTile.x = 1;
+        baseTile.y = 2;
+        baseTile.textPath = root / "tile_1_2.map";
+        baseTile.terrainPath = root / "tile_1_2.map.terrain";
+        baseTile.hasTerrainFile = true;
+        map.tiles.push_back(baseTile);
+        const std::filesystem::path firstScenario = root / "Chrono" / "01_Construction";
+        const std::filesystem::path laterScenario = root / "Chrono" / "02_Detour";
+        const std::filesystem::path indefiniteScenario = root / "Chrono" / "03_Indefinite";
+        std::filesystem::create_directories(firstScenario);
+        std::filesystem::create_directories(laterScenario);
+        std::filesystem::create_directories(indefiniteScenario);
+        writeUtf16Le(firstScenario / "Chrono.cfg",
+                     "[startdate]\n20200101\n[enddate]\n20201231\n");
+        writeUtf16Le(firstScenario / "tile_1_2.map", "[version]\n14\n[object]\n");
+        writeUtf16Le(laterScenario / "Chrono.cfg",
+                     "[startdate]\n20200601\n[enddate]\n20200630\n");
+        writeUtf16Le(laterScenario / "tile_1_2.map", "[version]\n14\n[object]\n");
+        std::ofstream(laterScenario / "tile_1_2.map.terrain").put('\0');
+        writeUtf16Le(indefiniteScenario / "Chrono.cfg", "[startdate]\n20220101\n");
+        writeUtf16Le(indefiniteScenario / "tile_1_2.map", "[version]\n14\n[object]\n");
+
+        openbus::map::MapDefinition beforeScenario = map;
+        require(openbus::map::applyMapChronoTiles(beforeScenario, 20191231) == 0 &&
+                    beforeScenario.tiles[0].textPath == baseTile.textPath,
+                "Chrono tile variants are inactive before their start date");
+        openbus::map::MapDefinition firstScenarioActive = map;
+        require(openbus::map::applyMapChronoTiles(firstScenarioActive, 20200101) == 1 &&
+                    firstScenarioActive.tiles[0].textPath == firstScenario / "tile_1_2.map" &&
+                    firstScenarioActive.tiles[0].hasTerrainFile &&
+                    firstScenarioActive.tiles[0].terrainPath == baseTile.terrainPath,
+                "Chrono start dates are inclusive and variant files retain absent base sidecars");
+        openbus::map::MapDefinition overlappingScenarios = map;
+        require(openbus::map::applyMapChronoTiles(overlappingScenarios, 20200601) == 2 &&
+                    overlappingScenarios.tiles[0].textPath ==
+                        laterScenario / "tile_1_2.map" &&
+                    overlappingScenarios.tiles[0].terrainPath ==
+                        laterScenario / "tile_1_2.map.terrain",
+                "Chrono start dates are inclusive and later active scenarios override available tiles");
+        openbus::map::MapDefinition overlappingEndDate = map;
+        require(openbus::map::applyMapChronoTiles(overlappingEndDate, 20200630) == 2 &&
+                    overlappingEndDate.tiles[0].textPath == laterScenario / "tile_1_2.map",
+                "Chrono end dates are inclusive");
+        openbus::map::MapDefinition firstScenarioOnly = map;
+        require(openbus::map::applyMapChronoTiles(firstScenarioOnly, 20200701) == 1 &&
+                    firstScenarioOnly.tiles[0].textPath == firstScenario / "tile_1_2.map",
+                "Chrono end dates are inclusive and expired scenarios no longer override tiles");
+        openbus::map::MapDefinition afterScenarios = map;
+        require(openbus::map::applyMapChronoTiles(afterScenarios, 20210101) == 0 &&
+                    afterScenarios.tiles[0].textPath == baseTile.textPath,
+                "base tile version is restored when no scenario is active");
+        openbus::map::MapDefinition openEndedScenario = map;
+        require(openbus::map::applyMapChronoTiles(openEndedScenario, 20220101) == 1 &&
+                    openEndedScenario.tiles[0].textPath ==
+                        indefiniteScenario / "tile_1_2.map",
+                "Chrono scenarios without an end date remain active after their start date");
+        bool invalidDateRejected = false;
+        try {
+            static_cast<void>(openbus::map::applyMapChronoTiles(map, 20200230));
+        } catch (const std::invalid_argument&) {
+            invalidDateRejected = true;
+        }
+        require(invalidDateRejected, "invalid calendar dates are rejected for Chrono selection");
     } catch (...) {
         openbus::probe::removeProbeDirectory(root);
         throw;

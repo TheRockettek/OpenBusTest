@@ -79,17 +79,32 @@ density-scaled road-vehicle base population (default `200`, maximum `200`).
 Trucks are permitted on road paths by default unless the map's path rules
 explicitly prohibit them; configured group and path density rules still apply.
 `OPENBUS_MAP_AI_HOUR` sets the starting hour (default `12`); the in-game traffic
-clock advances from it using elapsed simulation time and wraps at midnight.
+clock's `Time` system variable advances from it using elapsed simulation time.
+The starting date comes from the system variables `Day`, `Month`, and `Year`;
+`DayOfYear` is validated against that date. Traffic weekday schedules derive
+their starting weekday from this same calendar (Sunday `0` through Saturday
+`6`), and the date advances with simulation time across midnight and year
+boundaries. Chrono map-tile variants use that same startup calendar date and
+are selected using inclusive
+`[startdate]`/`[enddate]` ranges from `Chrono/**/Chrono.cfg`. The default date
+is initialized from the host local calendar date. If multiple active scenarios
+contain the same tile, the case-insensitive lexically later Chrono.cfg path
+wins. The selected date is
+fixed for the session; changing the simulation date and selector-based
+`[selobject]`/`[selspline]` edits are not yet applied.
 The current traffic clock is previewed as `TIME HH:MM` in the status HUD.
 Road and pedestrian populations follow their map density schedules as the
 clock advances. A pool sized for each schedule's maximum is queued at
 startup; vehicle instances are constructed and their scripts loaded on asset
 workers, while model mesh parsing is deferred to asynchronous requests.
+For unscheduled traffic, separate group peaks can require a queued pool larger
+than the active population cap; only the simultaneously active population is
+capped at `200`.
 Active vehicle meshes use the per-frame upload budget in order of distance to
 the player, so nearby traffic is prioritized over farther vehicles.
 `OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER` scales the map's scheduled density
 factor for road vehicles, buses, and pedestrians (default `1.0`, maximum
-`100.0`; each population remains capped at `200`). Thus a multiplier of `10`
+`100.0`; each active population remains capped at `200`). Thus a multiplier of `10`
 does not mean 10 times the population cap: the target is the base population
 times the map's density factor times this multiplier. The `run.bat` testing
 launcher defaults it to `10.0`, and `profile.bat` sets it to `25` for denser
@@ -160,6 +175,9 @@ vehicle's minimum turning radius are rejected; authored radius data is used
 when present, otherwise a conservative class/wheelbase estimate is used.
 Genuine loops continue forward without reversing. Conflicting junction paths
 use swept-footprint reservations; authored path/group priority takes precedence.
+AI vehicle bodies follow the sampled road surface in all three rotations: yaw
+tracks travel direction, pitch follows the authored grade, and roll follows
+road cant. Lane positions include the authored road skew and height offsets.
 Among equal priorities, movements under 45° are treated as straight-like,
 45–100° bends go next, and sharper turns go last. Faster approaches (under
 3 m/s, under 8 m/s, or more, based on cruise speed so braking does not reverse

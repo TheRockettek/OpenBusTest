@@ -7,6 +7,7 @@
 #include <bit>
 #include <charconv>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -420,9 +421,9 @@ void parseUnscheduledTrafficDensities(const std::filesystem::path& path,
             const auto maskText = readValue(cursor);
             int mask = 0;
             if (!currentGroup.has_value() || !maskText.has_value() ||
-                !parseInteger(*maskText, mask) || mask < 0) {
+                !parseInteger(*maskText, mask) || mask < 0 || (mask & ~7) != 0) {
                 diagnostics.warning(sectionLine + 1, "set_day_of_week",
-                                    "expected a group and non-negative weekday mask");
+                                    "expected a group and weekday mask from 0 through 7");
                 continue;
             }
             aiTraffic.unscheduledTrafficDensityGroups[*currentGroup].schedules.push_back(
@@ -745,7 +746,200 @@ discoverGroundTextureSidecars(const std::filesystem::path& mapDirectory) {
     return sidecarsByTile;
 }
 
+struct MapChronoDateRange {
+    std::chrono::year_month_day start;
+    std::optional<std::chrono::year_month_day> end;
+};
+
+std::optional<std::chrono::year_month_day>
+parseChronoDate(std::string_view value, const std::filesystem::path& configPath) {
+    int date = 0;
+    if (value.size() != 8 ||
+        !std::all_of(value.begin(), value.end(), [](unsigned char character) {
+            return std::isdigit(character) != 0;
+        }) ||
+        !parseInteger(std::string(value), date)) {
+        throw std::runtime_error("Invalid Chrono date in " + configPath.string() +
+                                 "; expected YYYYMMDD");
+    }
+    const int year = date / 10000;
+    const unsigned month = static_cast<unsigned>((date / 100) % 100);
+    const unsigned day = static_cast<unsigned>(date % 100);
+    const std::chrono::year_month_day parsed{std::chrono::year{year},
+                                             std::chrono::month{month},
+                                             std::chrono::day{day}};
+    if (!parsed.ok()) {
+        throw std::runtime_error("Invalid Chrono calendar date in " + configPath.string());
+    }
+    return parsed;
+}
+
+std::optional<MapChronoDateRange> loadMapChronoDateRange(
+    const std::filesystem::path& configPath, ConfigurationDiagnostics& diagnostics) {
+    const std::vector<std::string> lines = splitLines(decodeText(configPath));
+    std::optional<std::chrono::year_month_day> start;
+    std::optional<std::chrono::year_month_day> end;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const std::string section = lowerAscii(trim(lines[index]));
+        if (section != "[startdate]" && section != "[enddate]") {
+            continue;
+        }
+        std::size_t valueIndex = index + 1;
+        while (valueIndex < lines.size() && trim(lines[valueIndex]).empty()) {
+            ++valueIndex;
+        }
+        if (valueIndex >= lines.size() || isSectionHeaderLine(trim(lines[valueIndex]))) {
+            diagnostics.warning(index + 1, section.substr(1, section.size() - 2),
+                                "missing Chrono date; scenario is inactive");
+            return std::nullopt;
+        }
+        try {
+            const auto parsed = parseChronoDate(trim(lines[valueIndex]), configPath);
+            if (section == "[startdate]") {
+                start = parsed;
+            } else {
+                end = parsed;
+            }
+        } catch (const std::exception& error) {
+            diagnostics.warning(index + 1, section.substr(1, section.size() - 2),
+                                std::string(error.what()) + "; scenario is inactive");
+            return std::nullopt;
+        }
+        index = valueIndex;
+    }
+    if (!start.has_value()) {
+        diagnostics.warning(0, "startdate",
+                            "Chrono scenario has no mandatory [startdate]; scenario is inactive");
+        return std::nullopt;
+    }
+    if (end.has_value() && std::chrono::sys_days{*end} < std::chrono::sys_days{*start}) {
+        diagnostics.warning(0, "enddate",
+                            "Chrono [enddate] precedes [startdate]; scenario is inactive");
+        return std::nullopt;
+    }
+    return MapChronoDateRange{*start, end};
+}
+
+bool mapChronoDateRangeContains(const MapChronoDateRange& range,
+                                std::chrono::year_month_day date) {
+    const std::chrono::sys_days current{date};
+    return current >= std::chrono::sys_days{range.start} &&
+           (!range.end.has_value() || current <= std::chrono::sys_days{*range.end});
+}
+
+void applyChronoTileSidecars(MapTileReference& tile,
+                             const std::filesystem::path& variantPath,
+                             const std::unordered_map<std::string,
+                                 std::vector<MapGroundTextureSidecar>>& sidecarsByTile) {
+    const std::filesystem::path terrainPath(variantPath.string() + ".terrain");
+    if (std::filesystem::is_regular_file(terrainPath)) {
+        tile.terrainPath = terrainPath;
+        tile.hasTerrainFile = true;
+    }
+    const std::filesystem::path waterPath(variantPath.string() + ".water");
+    if (std::filesystem::is_regular_file(waterPath)) {
+        tile.waterPath = waterPath;
+        tile.hasWaterFile = true;
+    }
+    const std::filesystem::path lightmapPath(variantPath.string() + ".LM.bmp");
+    if (std::filesystem::is_regular_file(lightmapPath)) {
+        tile.lightmapPath = lightmapPath;
+        tile.hasLightmapFile = true;
+    }
+    const auto sidecars = sidecarsByTile.find(lowerAscii(variantPath.filename().string()));
+    if (sidecars != sidecarsByTile.end()) {
+        tile.groundTextureSidecars = sidecars->second;
+    }
+}
+
 } // namespace
+
+std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
+    const std::chrono::year_month_day date{
+        std::chrono::year{dateYyyyMmDd / 10000},
+        std::chrono::month{static_cast<unsigned>((dateYyyyMmDd / 100) % 100)},
+        std::chrono::day{static_cast<unsigned>(dateYyyyMmDd % 100)}};
+    if (!date.ok()) {
+        throw std::invalid_argument("Map Chrono date must be a valid YYYYMMDD calendar date");
+    }
+    const std::filesystem::path chronoRoot = map.rootPath / "Chrono";
+    std::error_code filesystemError;
+    const bool chronoRootExists = std::filesystem::exists(chronoRoot, filesystemError);
+    if (filesystemError) {
+        throw std::filesystem::filesystem_error("Could not inspect map Chrono directory",
+                                                chronoRoot, filesystemError);
+    }
+    if (!chronoRootExists) {
+        return 0;
+    }
+    if (!std::filesystem::is_directory(chronoRoot, filesystemError) || filesystemError) {
+        throw std::filesystem::filesystem_error("Map Chrono path is not a readable directory",
+                                                chronoRoot, filesystemError);
+    }
+
+    std::vector<std::filesystem::path> configPaths;
+    std::filesystem::recursive_directory_iterator iterator(chronoRoot, filesystemError);
+    const std::filesystem::recursive_directory_iterator end;
+    for (; iterator != end; iterator.increment(filesystemError)) {
+        if (filesystemError) {
+            throw std::filesystem::filesystem_error("Could not enumerate map Chrono directory",
+                                                    chronoRoot, filesystemError);
+        }
+        std::error_code statusError;
+        if (iterator->is_regular_file(statusError) && !statusError &&
+            lowerAscii(iterator->path().filename().string()) == "chrono.cfg") {
+            configPaths.push_back(iterator->path());
+        }
+    }
+    if (filesystemError) {
+        throw std::filesystem::filesystem_error("Could not enumerate map Chrono directory",
+                                                chronoRoot, filesystemError);
+    }
+    std::sort(configPaths.begin(), configPaths.end(),
+              [](const std::filesystem::path& left, const std::filesystem::path& right) {
+                  return lowerAscii(left.generic_string()) < lowerAscii(right.generic_string());
+              });
+
+    std::unordered_map<std::string, std::size_t> tileIndexByFilename;
+    for (std::size_t index = 0; index < map.tiles.size(); ++index) {
+        tileIndexByFilename.emplace(lowerAscii(map.tiles[index].textPath.filename().string()),
+                                    index);
+    }
+    std::size_t appliedTileCount = 0;
+    for (const std::filesystem::path& configPath : configPaths) {
+        const std::optional<MapChronoDateRange> range =
+            loadMapChronoDateRange(configPath, map.diagnostics);
+        if (!range.has_value() || !mapChronoDateRangeContains(*range, date)) {
+            continue;
+        }
+        const std::filesystem::path scenarioDirectory = configPath.parent_path();
+        const auto scenarioSidecars = discoverGroundTextureSidecars(scenarioDirectory);
+        std::error_code directoryError;
+        for (std::filesystem::directory_iterator tileIterator(scenarioDirectory, directoryError),
+             tileEnd;
+             !directoryError && tileIterator != tileEnd; tileIterator.increment(directoryError)) {
+            std::error_code statusError;
+            if (!tileIterator->is_regular_file(statusError) || statusError ||
+                lowerAscii(tileIterator->path().extension().string()) != ".map") {
+                continue;
+            }
+            const std::string tileFilename = lowerAscii(tileIterator->path().filename().string());
+            const auto tileIndex = tileIndexByFilename.find(tileFilename);
+            if (tileIndex == tileIndexByFilename.end()) {
+                continue;
+            }
+            MapTileReference& tile = map.tiles[tileIndex->second];
+            tile.textPath = tileIterator->path();
+            applyChronoTileSidecars(tile, tile.textPath, scenarioSidecars);
+            ++appliedTileCount;
+        }
+        if (directoryError) {
+            throw std::filesystem::filesystem_error("Could not enumerate Chrono scenario tiles",
+                                                    scenarioDirectory, directoryError);
+        }
+    }
+    return appliedTileCount;
+}
 
 MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     openbus::rendering::TraceScope trace("map", "MapConfigLoader::loadMapDefinition");
@@ -1114,15 +1308,33 @@ const MapAiTrafficDensityGroup* findAiTrafficDensityGroup(const MapAiTrafficData
 
 double aiTrafficGroupDensityAtHour(const MapAiTrafficDensityGroup& group, double hour,
                                    int dayOfWeekMask) {
-    const auto schedule = std::find_if(group.schedules.begin(), group.schedules.end(),
-                                       [&](const MapAiTrafficDensitySchedule& candidate) {
-                                           return candidate.dayOfWeekMask == 0 ||
-                                                  (candidate.dayOfWeekMask & dayOfWeekMask) != 0;
-                                       });
-    if (schedule == group.schedules.end()) {
+    const MapAiTrafficDensitySchedule* selectedSchedule = nullptr;
+    int selectedSpecificity = std::numeric_limits<int>::max();
+    for (const MapAiTrafficDensitySchedule& schedule : group.schedules) {
+        if (!mapTrafficDensityAtHour(schedule.points, hour).has_value()) {
+            continue;
+        }
+        if (schedule.dayOfWeekMask == 0) {
+            if (selectedSchedule == nullptr) {
+                selectedSchedule = &schedule;
+            }
+            continue;
+        }
+        if ((schedule.dayOfWeekMask & dayOfWeekMask) == 0) {
+            continue;
+        }
+        const int specificity =
+            std::popcount(static_cast<unsigned int>(schedule.dayOfWeekMask));
+        if (specificity < selectedSpecificity) {
+            selectedSchedule = &schedule;
+            selectedSpecificity = specificity;
+        }
+    }
+    if (selectedSchedule == nullptr) {
         return 0.0;
     }
-    const std::optional<double> density = mapTrafficDensityAtHour(schedule->points, hour);
+    const std::optional<double> density =
+        mapTrafficDensityAtHour(selectedSchedule->points, hour);
     if (!density.has_value()) {
         return 0.0;
     }
@@ -1295,6 +1507,116 @@ mapAiRoadTrafficPopulationByGroup(const MapAiTrafficData& traffic, std::size_t p
         ++assignedCount;
     }
     return populations;
+}
+
+std::vector<MapAiRoadTrafficGroupPopulation>
+mapAiMaximumRoadTrafficPoolByGroup(const MapAiTrafficData& traffic,
+                                   const std::vector<MapAiRoadVehicle>& vehicles,
+                                   std::size_t basePopulation, double densityMultiplier,
+                                   std::size_t activePopulationCap) {
+    if (!std::isfinite(densityMultiplier) || densityMultiplier < 0.0) {
+        throw std::invalid_argument("AI road traffic pool density multiplier is invalid");
+    }
+    if (!traffic.hasUnscheduledTrafficDensityFile || basePopulation == 0 ||
+        densityMultiplier == 0.0 || activePopulationCap == 0) {
+        return {};
+    }
+
+    std::vector<double> candidateHours{0.0, 24.0};
+    for (const MapAiTrafficDensityGroup& group : traffic.unscheduledTrafficDensityGroups) {
+        for (const MapAiTrafficDensitySchedule& schedule : group.schedules) {
+            for (const MapTrafficDensityPoint& point : schedule.points) {
+                candidateHours.push_back(point.hour);
+            }
+        }
+    }
+    std::sort(candidateHours.begin(), candidateHours.end());
+    candidateHours.erase(std::unique(candidateHours.begin(), candidateHours.end()),
+                         candidateHours.end());
+
+    std::unordered_set<std::string> countedGroups;
+    long double totalGroupFactors = 0.0L;
+    for (const MapAiRoadVehicle& vehicle : vehicles) {
+        if (!countedGroups.insert(vehicle.groupName).second) {
+            continue;
+        }
+        const MapAiTrafficDensityGroup* group =
+            findAiTrafficDensityGroup(traffic, vehicle.groupName);
+        if (group != nullptr) {
+            totalGroupFactors += static_cast<long double>(group->factor);
+        }
+    }
+    if (totalGroupFactors <= 0.0L) {
+        return {};
+    }
+
+    // Bound each group's maximum across curve knots, including rounding between knots.
+    std::unordered_map<std::size_t, std::size_t> maximumByGroup;
+    std::unordered_map<std::size_t, long double> maximumExpectedByGroup;
+    std::unordered_map<std::size_t, long double> maximumShareByGroup;
+    for (const int dayOfWeekMask : {1, 2, 4}) {
+        for (const double hour : candidateHours) {
+            const double density = mapAiRoadTrafficDensityAtHour(
+                                       traffic, vehicles, hour, dayOfWeekMask)
+                                       .value_or(0.0);
+            const std::size_t targetPopulation = mapTrafficPopulationForDensity(
+                basePopulation, density * densityMultiplier, activePopulationCap);
+            for (const MapAiRoadTrafficGroupPopulation& population :
+                 mapAiRoadTrafficPopulationByGroup(traffic, targetPopulation, hour,
+                                                   dayOfWeekMask)) {
+                maximumByGroup[population.groupIndex] =
+                    std::max(maximumByGroup[population.groupIndex], population.populationCount);
+            }
+
+            std::unordered_map<std::size_t, long double> groupWeightByIndex;
+            long double totalWeight = 0.0L;
+            for (const MapAiRoadVehicle& vehicle :
+                 mapAiRoadVehicles(traffic, hour, dayOfWeekMask)) {
+                const long double weight = static_cast<long double>(vehicle.selectionWeight);
+                groupWeightByIndex[vehicle.groupIndex] += weight;
+                totalWeight += weight;
+            }
+            if (totalWeight <= 0.0L) {
+                continue;
+            }
+            for (const auto& [groupIndex, groupWeight] : groupWeightByIndex) {
+                maximumExpectedByGroup[groupIndex] =
+                    std::max(maximumExpectedByGroup[groupIndex],
+                             static_cast<long double>(basePopulation) * densityMultiplier *
+                                 groupWeight / totalGroupFactors);
+                maximumShareByGroup[groupIndex] =
+                    std::max(maximumShareByGroup[groupIndex], groupWeight / totalWeight);
+            }
+        }
+    }
+
+    for (const auto& expectedMaximum : maximumExpectedByGroup) {
+        maximumByGroup.try_emplace(expectedMaximum.first, 0);
+    }
+
+    std::vector<MapAiRoadTrafficGroupPopulation> pool;
+    pool.reserve(maximumByGroup.size());
+    for (const auto& [groupIndex, sampledMaximum] : maximumByGroup) {
+        const long double densityBound =
+            std::ceil(maximumExpectedByGroup[groupIndex] + 0.5L);
+        const long double capBound =
+            std::ceil(static_cast<long double>(activePopulationCap) *
+                      maximumShareByGroup[groupIndex]);
+        const std::size_t boundedMaximum = static_cast<std::size_t>(
+            std::min({densityBound, capBound,
+                      static_cast<long double>(std::numeric_limits<std::size_t>::max())}));
+        const std::size_t populationCount = std::max(sampledMaximum, boundedMaximum);
+        if (populationCount == 0) {
+            continue;
+        }
+        pool.push_back({groupIndex, populationCount});
+    }
+    std::sort(pool.begin(), pool.end(),
+              [](const MapAiRoadTrafficGroupPopulation& left,
+                 const MapAiRoadTrafficGroupPopulation& right) {
+                  return left.groupIndex < right.groupIndex;
+              });
+    return pool;
 }
 
 std::optional<double> mapAiRoadTrafficDensityAtHour(const MapAiTrafficData& traffic,

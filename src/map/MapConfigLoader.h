@@ -166,6 +166,11 @@ std::optional<std::size_t> selectMapAiRoadVehicle(const std::vector<MapAiRoadVeh
 std::vector<MapAiRoadTrafficGroupPopulation>
 mapAiRoadTrafficPopulationByGroup(const MapAiTrafficData& traffic, std::size_t populationCount,
                                   double hour, int dayOfWeekMask);
+std::vector<MapAiRoadTrafficGroupPopulation>
+mapAiMaximumRoadTrafficPoolByGroup(const MapAiTrafficData& traffic,
+                                   const std::vector<MapAiRoadVehicle>& vehicles,
+                                   std::size_t basePopulation, double densityMultiplier,
+                                   std::size_t activePopulationCap);
 std::optional<double> mapAiRoadTrafficDensityAtHour(const MapAiTrafficData& traffic,
                                                     const std::vector<MapAiRoadVehicle>& vehicles,
                                                     double hour, int dayOfWeekMask);
@@ -369,6 +374,7 @@ struct WaterData {
 };
 
 MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory);
+std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd);
 std::size_t selectMapSpawnPoint(const MapDefinition& map, std::string_view selector);
 std::size_t selectMapEntryPoint(const MapDefinition& map, std::string_view selector);
 std::size_t selectMapGroundTextureIndex(const MapDefinition& map, std::string_view selector);

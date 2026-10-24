@@ -442,6 +442,11 @@ void RenderLoop::SetMapTrafficStartHour(double startHour) {
     mapTrafficStartHour_ = startHour;
 }
 
+void RenderLoop::SetMapCalendar(int year, int month, int day, double timeSeconds) {
+    simulationState_.sharedVariables().configureSimulationClock(year, month, day, timeSeconds);
+    mapTrafficStartHour_ = timeSeconds / 3600.0;
+}
+
 void RenderLoop::SetMapTrafficSpawnInView(bool enabled) {
     mapTrafficSpawnInView_ = enabled;
 }

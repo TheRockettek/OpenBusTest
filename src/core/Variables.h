@@ -51,8 +51,17 @@ class SystemVariables : public Variables {
   public:
     SystemVariables();
 
+    void configureSimulationClock(int year, int month, int day, double timeSeconds);
+    void updateSimulationClock(double elapsedSeconds);
+
     // Cursor position is separate from handler-scoped OMSI mouse_x/y deltas.
     void updateFrame(float timegap, float getTime, float cursorX, float cursorY);
+
+  private:
+    int clockStartYear_ = 0;
+    int clockStartMonth_ = 0;
+    int clockStartDay_ = 0;
+    double clockStartTimeSeconds_ = 0.0;
 };
 
 class SimulationState {

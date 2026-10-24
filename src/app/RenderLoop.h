@@ -91,6 +91,7 @@ class RenderLoop {
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
                                     bool isBus) const;
+    void SetMapCalendar(int year, int month, int day, double timeSeconds);
     void SetMapTrafficStartHour(double startHour);
     void SetMapTrafficSpawnInView(bool enabled);
     bool AddHumanTrafficActor(int splineId, const std::filesystem::path& humanConfigPath,

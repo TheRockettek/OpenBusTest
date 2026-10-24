@@ -1,6 +1,7 @@
 #include "core/Variables.h"
 
 #include <iostream>
+#include <stdexcept>
 
 namespace {
 
@@ -23,6 +24,30 @@ int main() {
     bool valid = true;
     valid &= require(simulation.sharedVariables().has("timegap"), "system timegap");
     valid &= require(!simulation.sharedVariables().has("throttle"), "system excludes throttle");
+    simulation.sharedVariables().configureSimulationClock(2024, 2, 28, 86398.0);
+    simulation.sharedVariables().updateSimulationClock(3.0);
+    valid &= require(simulation.sharedVariables().get("year") == 2024.0F &&
+                         simulation.sharedVariables().get("month") == 2.0F &&
+                         simulation.sharedVariables().get("day") == 29.0F &&
+                         simulation.sharedVariables().get("dayofyear") == 59.0F &&
+                         simulation.sharedVariables().get("time") == 1.0F,
+                     "simulation clock advances across leap-day midnight");
+    simulation.sharedVariables().configureSimulationClock(2024, 12, 31, 86399.0);
+    simulation.sharedVariables().updateSimulationClock(1.0);
+    valid &= require(simulation.sharedVariables().get("year") == 2025.0F &&
+                         simulation.sharedVariables().get("month") == 1.0F &&
+                         simulation.sharedVariables().get("day") == 1.0F &&
+                         simulation.sharedVariables().get("dayofyear") == 0.0F &&
+                         simulation.sharedVariables().get("time") == 0.0F,
+                     "simulation clock advances across year boundary");
+    bool rejectedInvalidCalendar = false;
+    try {
+        simulation.sharedVariables().configureSimulationClock(2025, 2, 29, 0.0);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidCalendar = true;
+    }
+    valid &= require(rejectedInvalidCalendar, "invalid simulation calendar is rejected");
+
     valid &= require(vehicle.has("throttle"), "vehicle throttle");
     valid &= require(!vehicle.has("lastmoveddist"), "vehicle excludes human state");
     valid &= require(human.has("lastmoveddist"), "human lastmoveddist");

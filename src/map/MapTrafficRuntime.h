@@ -169,6 +169,7 @@ double mapTrafficRouteTravelHeadingRadians(const MapTrafficRoute& route, double 
                                            double lateralOffsetMeters);
 double mapTrafficHeadingToVehicleYawDegrees(double headingRadians);
 double mapTrafficHourAtElapsedSeconds(double startHour, double elapsedSeconds);
+int mapTrafficWeekdayMaskAtElapsedSeconds(int startWeekday, double elapsedSeconds);
 double mapTrafficNextDepartureElapsedSeconds(double startHour, double elapsedSeconds,
                                              double departureMinutes);
 std::size_t mapTrafficNextDepartureIndex(double startHour, double elapsedSeconds,
@@ -190,6 +191,9 @@ bool mapTrafficActorOnJunctionPath(const MapTrafficActor& actor, double distance
 std::vector<std::vector<double>>
 mapTrafficPartitionScheduledDepartures(const std::vector<double>& departureMinutes,
                                        std::size_t partitionCount);
+std::vector<std::size_t>
+mapTrafficAllocateScheduledBuses(const std::vector<std::size_t>& departureCounts,
+                                 std::size_t busPoolLimit);
 
 MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath,
                                     double speedMetersPerSecond, double laneOffsetMagnitudeMeters,

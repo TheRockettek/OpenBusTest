@@ -165,6 +165,19 @@ double mapTrafficHourAtElapsedSeconds(double startHour, double elapsedSeconds) {
     return hour < 0.0 ? hour + hoursPerDay : hour;
 }
 
+int mapTrafficWeekdayMaskAtElapsedSeconds(int startWeekday, double elapsedSeconds) {
+    if (startWeekday < 0 || startWeekday > 6 || !std::isfinite(elapsedSeconds) ||
+        elapsedSeconds < 0.0) {
+        throw std::invalid_argument("Map AI weekday clock is invalid");
+    }
+    const int elapsedDays = static_cast<int>(std::fmod(std::floor(elapsedSeconds / 86400.0), 7.0));
+    const int weekday = (startWeekday + elapsedDays) % 7;
+    if (weekday == 0) {
+        return 4;
+    }
+    return weekday == 6 ? 2 : 1;
+}
+
 double mapTrafficNextDepartureElapsedSeconds(double startHour, double elapsedSeconds,
                                              double departureMinutes) {
     if (!std::isfinite(startHour) || startHour < 0.0 || startHour >= 24.0 ||
@@ -392,6 +405,42 @@ mapTrafficPartitionScheduledDepartures(const std::vector<double>& departureMinut
         partitions[index % partitionCount].push_back(departureMinutes[index]);
     }
     return partitions;
+}
+
+std::vector<std::size_t>
+mapTrafficAllocateScheduledBuses(const std::vector<std::size_t>& departureCounts,
+                                 std::size_t busPoolLimit) {
+    std::vector<std::size_t> busesPerRoute(departureCounts.size(), 0);
+    std::size_t allocatedBuses = 0;
+    for (std::size_t routeIndex = 0;
+         routeIndex < departureCounts.size() && allocatedBuses < busPoolLimit; ++routeIndex) {
+        if (departureCounts[routeIndex] == 0) {
+            continue;
+        }
+        busesPerRoute[routeIndex] = 1;
+        ++allocatedBuses;
+    }
+    while (allocatedBuses < busPoolLimit) {
+        std::size_t bestRoute = departureCounts.size();
+        double bestDepartureLoad = 0.0;
+        for (std::size_t routeIndex = 0; routeIndex < departureCounts.size(); ++routeIndex) {
+            if (busesPerRoute[routeIndex] >= departureCounts[routeIndex]) {
+                continue;
+            }
+            const double departureLoad = static_cast<double>(departureCounts[routeIndex]) /
+                                         static_cast<double>(busesPerRoute[routeIndex] + 1);
+            if (departureLoad > bestDepartureLoad) {
+                bestDepartureLoad = departureLoad;
+                bestRoute = routeIndex;
+            }
+        }
+        if (bestRoute == departureCounts.size()) {
+            break;
+        }
+        ++busesPerRoute[bestRoute];
+        ++allocatedBuses;
+    }
+    return busesPerRoute;
 }
 
 MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath,
@@ -926,10 +975,13 @@ std::optional<MapTrafficPose> sampleMapTrafficRouteRaw(const MapTrafficRoute& ro
         mapSplineRightOffset(center->headingRadians, splineLateral);
     const double progress = boundedSplineDistance / spline.length;
     const double cant = spline.cantStart + (spline.cantEnd - spline.cantStart) * progress;
+    const double skew =
+        spline.skewStart + (spline.skewEnd - spline.skewStart) * progress;
+    const double skewShift = splineLateral * skew;
     const double elevation = mapSplineElevation(
         spline.elevation, spline.length, spline.gradientStart, spline.gradientEnd,
         spline.elevated ? std::optional<double>(spline.heightDelta) : std::nullopt,
-        boundedSplineDistance);
+        boundedSplineDistance + skewShift);
 
     const auto sampleSurface = [&](double distance) -> std::optional<std::array<double, 3>> {
         const auto surfaceCenter = sampleMapSpline(
@@ -941,14 +993,20 @@ std::optional<MapTrafficPose> sampleMapTrafficRouteRaw(const MapTrafficRoute& ro
         const double surfaceProgress = distance / spline.length;
         const double surfaceCant =
             spline.cantStart + (spline.cantEnd - spline.cantStart) * surfaceProgress;
+        const double surfaceSkew =
+            spline.skewStart + (spline.skewEnd - spline.skewStart) * surfaceProgress;
+        const double surfaceSkewShift = splineLateral * surfaceSkew;
         const double surfaceElevation = mapSplineElevation(
             spline.elevation, spline.length, spline.gradientStart, spline.gradientEnd,
             spline.elevated ? std::optional<double>(spline.heightDelta) : std::nullopt,
-            distance);
+            distance + surfaceSkewShift);
         const auto surfaceOffset =
             mapSplineRightOffset(surfaceCenter->headingRadians, splineLateral);
         return std::array<double, 3>{
-            surfaceCenter->x + surfaceOffset[0], surfaceCenter->y + surfaceOffset[1],
+            surfaceCenter->x + surfaceOffset[0] +
+                std::sin(surfaceCenter->headingRadians) * surfaceSkewShift,
+            surfaceCenter->y + surfaceOffset[1] +
+                std::cos(surfaceCenter->headingRadians) * surfaceSkewShift,
             surfaceElevation + mapSplineCantHeightOffset(splineLateral, surfaceCant) +
                 routeSegment.pathHeightMeters};
     };
@@ -969,7 +1027,10 @@ std::optional<MapTrafficPose> sampleMapTrafficRouteRaw(const MapTrafficRoute& ro
     const double bank = mapSplineCantBankRadians(splineLateral, cant);
     const double roll = routeSegment.reversed ? bank : -bank;
 
-    return MapTrafficPose{{center->x + offset[0], center->y + offset[1],
+    return MapTrafficPose{{center->x + offset[0] +
+                               std::sin(center->headingRadians) * skewShift,
+                           center->y + offset[1] +
+                               std::cos(center->headingRadians) * skewShift,
                            elevation + mapSplineCantHeightOffset(splineLateral, cant) +
                                routeSegment.pathHeightMeters},
                           std::remainder(heading, 2.0 * std::numbers::pi),

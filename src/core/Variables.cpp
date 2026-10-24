@@ -1,6 +1,10 @@
 #include "core/Variables.h"
 
+#include <chrono>
+#include <cmath>
 #include <ctime>
+#include <limits>
+#include <stdexcept>
 #include <unordered_set>
 
 Variables::Variables(ScriptObjectKind objectKind) : objectKind_(objectKind) {}
@@ -158,6 +162,53 @@ SystemVariables::SystemVariables() : Variables(ScriptObjectKind::System) {
         {"autoclutch", 0.0},
         {"wearlifespan", 1.0},
         {"sunalt", 60.0},
+    });
+    configureSimulationClock(localDate.tm_year + 1900, localDate.tm_mon + 1,
+                             localDate.tm_mday, 43200.0);
+    updateSimulationClock(0.0);
+}
+
+void SystemVariables::configureSimulationClock(int year, int month, int day,
+                                               double timeSeconds) {
+    const std::chrono::year_month_day date{
+        std::chrono::year{year}, std::chrono::month{static_cast<unsigned>(month)},
+        std::chrono::day{static_cast<unsigned>(day)}};
+    if (!date.ok() || !std::isfinite(timeSeconds) || timeSeconds < 0.0 ||
+        timeSeconds >= 86400.0) {
+        throw std::invalid_argument("Simulation calendar date or time is invalid");
+    }
+    clockStartYear_ = year;
+    clockStartMonth_ = month;
+    clockStartDay_ = day;
+    clockStartTimeSeconds_ = timeSeconds;
+    updateSimulationClock(0.0);
+}
+
+void SystemVariables::updateSimulationClock(double elapsedSeconds) {
+    if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
+        elapsedSeconds > static_cast<double>(std::numeric_limits<long long>::max() / 2)) {
+        throw std::invalid_argument("Simulation clock elapsed time is invalid");
+    }
+
+    using namespace std::chrono;
+    const year_month_day startDate{
+        year{clockStartYear_}, month{static_cast<unsigned>(clockStartMonth_)},
+        day{static_cast<unsigned>(clockStartDay_)}};
+    const auto start = sys_days{startDate} +
+                       seconds{static_cast<long long>(std::floor(clockStartTimeSeconds_))};
+    const auto current = start + seconds{static_cast<long long>(std::floor(elapsedSeconds))};
+    const sys_days currentDate = floor<days>(current);
+    const year_month_day calendarDate{currentDate};
+    const year_month_day firstDayOfYear{calendarDate.year(), January, day{1}};
+    const double timeOfDay =
+        duration<double>{current - time_point_cast<seconds>(currentDate)}.count();
+    setValues({
+        {"time", static_cast<float>(timeOfDay)},
+        {"day", static_cast<float>(static_cast<unsigned>(calendarDate.day()))},
+        {"month", static_cast<float>(static_cast<unsigned>(calendarDate.month()))},
+        {"year", static_cast<float>(static_cast<int>(calendarDate.year()))},
+        {"dayofyear",
+         static_cast<float>((currentDate - sys_days{firstDayOfYear}).count())},
     });
 }
 
