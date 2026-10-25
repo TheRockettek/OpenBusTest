@@ -610,9 +610,9 @@ MapTrafficPathRules mapTrafficRulesForPath(const std::vector<MapTileRule>& rules
             continue;
         }
         const long long groupIndex = parseRuleNumber<long long>(rule.fields[3], "vehicle group");
-        if (groupIndex < 0 || groupIndex > 3) {
+        if (groupIndex < 0) {
             throw std::invalid_argument(trafficInputError(
-                "Map traffic rule vehicle group must be in [0, 3]", "vehicleGroup=", groupIndex));
+                "Map traffic rule vehicle group cannot be negative", "vehicleGroup=", groupIndex));
         }
         const auto existing = std::find_if(
             result.groups.begin(), result.groups.end(), [&](const MapTrafficGroupRules& group) {
@@ -3433,8 +3433,8 @@ void validateFootprint(const MapTrafficObstacle& obstacle) {
         throw std::invalid_argument(trafficInputError(
             "Traffic obstacle footprint is invalid", "x=", obstacle.pose.position[0],
             "y=", obstacle.pose.position[1], "z=", obstacle.pose.position[2],
-            "headingRadians=", obstacle.pose.headingRadians,
-            "lengthMeters=", obstacle.lengthMeters, "widthMeters=", obstacle.widthMeters));
+            "headingRadians=", obstacle.pose.headingRadians, "lengthMeters=", obstacle.lengthMeters,
+            "widthMeters=", obstacle.widthMeters));
     }
 }
 
@@ -3863,9 +3863,8 @@ bool advanceMapTrafficActorLoopingAvoidingObstacles(
         actor.speedMetersPerSecond * elapsedSeconds > 10000.0) {
         throw std::invalid_argument(trafficInputError(
             "Obstacle-aware actor movement inputs are invalid", "lengthMeters=", lengthMeters,
-            "widthMeters=", widthMeters, "elapsedSeconds=", elapsedSeconds,
-            "signalClockSeconds=", signalClockSeconds,
-            "speedMetersPerSecond=", actor.speedMetersPerSecond,
+            "widthMeters=", widthMeters, "elapsedSeconds=", elapsedSeconds, "signalClockSeconds=",
+            signalClockSeconds, "speedMetersPerSecond=", actor.speedMetersPerSecond,
             "cruiseSpeedMetersPerSecond=", actor.cruiseSpeedMetersPerSecond,
             "distanceMeters=", actor.distanceMeters,
             "requestedTravelMeters=", actor.speedMetersPerSecond * elapsedSeconds));
@@ -3921,10 +3920,11 @@ bool advanceMapTrafficActorLoopingAvoidingObstacles(
             const auto pose =
                 sampleMapTrafficRoute(actor.route, actor.distanceMeters, actor.lateralOffsetMeters);
             if (!pose) {
-                throw std::runtime_error(trafficInputError(
-                    "Cannot sample an obstacle-aware traffic actor", "distanceMeters=",
-                    actor.distanceMeters, "lateralOffsetMeters=", actor.lateralOffsetMeters,
-                    "routeTotalLength=", actor.route.totalLength));
+                throw std::runtime_error(
+                    trafficInputError("Cannot sample an obstacle-aware traffic actor",
+                                      "distanceMeters=", actor.distanceMeters,
+                                      "lateralOffsetMeters=", actor.lateralOffsetMeters,
+                                      "routeTotalLength=", actor.route.totalLength));
             }
             if (!mapTrafficHasClearance({*pose, lengthMeters, widthMeters}, obstacles, 0.05)) {
                 restore();
@@ -3966,8 +3966,8 @@ bool mapTrafficEntryHiddenFromCamera(const std::array<double, 3>& position, doub
         throw std::invalid_argument(trafficInputError(
             "Traffic entry visibility inputs are invalid", "radiusMeters=", radiusMeters,
             "minimumDistanceMeters=", minimumDistanceMeters, "positionX=", position[0],
-            "positionY=", position[1], "positionZ=", position[2], "cameraX=",
-            cameraPosition[0], "cameraY=", cameraPosition[1], "cameraZ=", cameraPosition[2]));
+            "positionY=", position[1], "positionZ=", position[2], "cameraX=", cameraPosition[0],
+            "cameraY=", cameraPosition[1], "cameraZ=", cameraPosition[2]));
     }
     if (std::hypot(position[0] - cameraPosition[0], position[1] - cameraPosition[1]) <=
         minimumDistanceMeters + radiusMeters) {
@@ -4034,22 +4034,22 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
     openbus::rendering::TraceScope trace("traffic", "MapTrafficRuntime::advanceMapTrafficDriving");
     if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
         !std::isfinite(signalClockSeconds) || signalClockSeconds < 0.0) {
-        throw std::invalid_argument(trafficInputError(
-            "Traffic driving timestep is invalid", "elapsedSeconds=", elapsedSeconds,
-            "signalClockSeconds=", signalClockSeconds));
+        throw std::invalid_argument(trafficInputError("Traffic driving timestep is invalid",
+                                                      "elapsedSeconds=", elapsedSeconds,
+                                                      "signalClockSeconds=", signalClockSeconds));
     }
     std::unordered_set<MapTrafficActor*> unique;
     for (std::size_t index = 0; index < actors.size(); ++index) {
         auto* actor = actors[index];
         if (actor == nullptr) {
-            throw std::invalid_argument(trafficInputError(
-                "Traffic driving actor state is invalid", "actorIndex=", index,
-                "actorIsNull=", true));
+            throw std::invalid_argument(trafficInputError("Traffic driving actor state is invalid",
+                                                          "actorIndex=", index,
+                                                          "actorIsNull=", true));
         }
         if (!unique.insert(actor).second) {
-            throw std::invalid_argument(trafficInputError(
-                "Traffic driving actor state is invalid", "actorIndex=", index,
-                "duplicateActor=", static_cast<const void*>(actor)));
+            throw std::invalid_argument(
+                trafficInputError("Traffic driving actor state is invalid", "actorIndex=", index,
+                                  "duplicateActor=", static_cast<const void*>(actor)));
         }
         if (!std::isfinite(actor->distanceMeters) || actor->distanceMeters < 0.0 ||
             !std::isfinite(actor->speedMetersPerSecond) || actor->speedMetersPerSecond < 0.0 ||
@@ -4061,19 +4061,16 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             actor->minimumTurnRadiusMeters < 0.0 || !std::isfinite(actor->junctionWaitSeconds) ||
             actor->junctionWaitSeconds < 0.0 ||
             (actor->scheduledStopDistanceMeters.has_value() &&
-             (!std::isfinite(*actor->scheduledStopDistanceMeters) ||
-              *actor->scheduledStopDistanceMeters < actor->distanceMeters))) {
+             !std::isfinite(*actor->scheduledStopDistanceMeters))) {
             throw std::invalid_argument(trafficInputError(
-                "Traffic driving actor state is invalid", "actorIndex=", index,
-                "distanceMeters=", actor->distanceMeters,
-                "speedMetersPerSecond=", actor->speedMetersPerSecond,
+                "Traffic driving actor state is invalid", "actorIndex=", index, "distanceMeters=",
+                actor->distanceMeters, "speedMetersPerSecond=", actor->speedMetersPerSecond,
                 "targetSpeedMetersPerSecond=", actor->targetSpeedMetersPerSecond,
                 "cruiseSpeedMetersPerSecond=", actor->cruiseSpeedMetersPerSecond,
                 "minimumTurnRadiusMeters=", actor->minimumTurnRadiusMeters,
                 "junctionWaitSeconds=", actor->junctionWaitSeconds,
                 "hasScheduledStopDistance=", actor->scheduledStopDistanceMeters.has_value(),
-                "scheduledStopDistanceMeters=",
-                actor->scheduledStopDistanceMeters.value_or(0.0)));
+                "scheduledStopDistanceMeters=", actor->scheduledStopDistanceMeters.value_or(0.0)));
         }
         validateFootprint(actorFootprint(*actor, actor->distanceMeters));
     }
@@ -4870,9 +4867,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 throw std::logic_error(trafficInputError(
                     "Traffic occupancy index lost a footprint cell", "footprintIndex=", index,
                     "oldCellX=", occupancyCellByIndex[index].x,
-                    "oldCellY=", occupancyCellByIndex[index].y,
-                    "newCellX=", cell->x, "newCellY=", cell->y,
-                    "occupancyCellCount=", occupancyCells.size()));
+                    "oldCellY=", occupancyCellByIndex[index].y, "newCellX=", cell->x,
+                    "newCellY=", cell->y, "occupancyCellCount=", occupancyCells.size()));
             }
             auto& oldMembers = oldCell->second;
             const std::size_t slot = occupancySlotByIndex[index];

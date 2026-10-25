@@ -316,9 +316,9 @@ bool RenderLoop::AddTrafficVehicle(
     }
     const double turnRadius = calculateTrafficMinimumTurnRadius(configuration, isBus);
     const int vehicleType = isBus ? 2 : configuration.vehicleType.value_or(defaultVehicleType);
-    if (!isBus && (!trafficRuleGroupIndex.has_value() || *trafficRuleGroupIndex > 3)) {
+    if (!isBus && !trafficRuleGroupIndex.has_value()) {
         throw std::invalid_argument(
-            "Unscheduled map traffic requires a vehicle-rule group in [0, 3]");
+            "Unscheduled map traffic requires a vehicle-rule group");
     }
     const openbus::map::MapTrafficVehicleFilter vehicleFilter{
         vehicleType, isBus ? std::nullopt : unscheduledGroupIndex, isBus,

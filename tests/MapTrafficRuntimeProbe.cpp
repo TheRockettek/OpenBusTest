@@ -924,6 +924,21 @@ void verifyDrivingBehavior() {
         requireNear(scheduledBus.speedMetersPerSecond, 0.0,
                     "scheduled bus holds safely at a passenger stop");
     }
+    {
+        auto busPastScheduledStop =
+            makeMapTrafficActor(oneSegment(straight(2298, 0.0, 0.0, 0.0, 100.0)),
+                                "scheduled.bus", 11.0, 0.0, false);
+        busPastScheduledStop.distanceMeters = 0.0307274;
+        busPastScheduledStop.speedMetersPerSecond = 11.0;
+        busPastScheduledStop.targetSpeedMetersPerSecond = 11.0;
+        busPastScheduledStop.cruiseSpeedMetersPerSecond = 11.0;
+        busPastScheduledStop.scheduledStopDistanceMeters = 0.0;
+        advanceMapTrafficDriving({&busPastScheduledStop}, {}, 0.1);
+        requireNear(busPastScheduledStop.distanceMeters, 0.0307274,
+                    "a bus already past a scheduled stop remains safely held");
+        requireNear(busPastScheduledStop.speedMetersPerSecond, 0.0,
+                    "a bus already past a scheduled stop brakes to a hold");
+    }
     for (const auto* route : {&*left, &*right}) {
         auto actor = makeMapTrafficActor(*route, "car.ovh", 12.0, 0.0, false);
         actor.minimumTurnRadiusMeters = 10.0;
@@ -3335,6 +3350,7 @@ void verifyTrafficRules() {
         {false, {"0", "trucks", "1", "0"}},
         {false, {"0", "overtaking_prohib", "1", "0"}},
         {false, {"0", "no_unsched_traffic", "1", "3"}},
+        {false, {"0", "trafficdensity", "0.25", "7"}},
         {false, {"1", "speedlimit", "not-a-number", "0"}},
     };
     const MapTrafficPathRules rules = mapTrafficRulesForPath(authoredRules, 0);
@@ -3343,11 +3359,12 @@ void verifyTrafficRules() {
                 !mapTrafficPathSpeedLimitForVehicle(rules, {0, 0, false, 1}).has_value() &&
                 mapTrafficPathPriorityForVehicle(rules, {0, 0, false, 1}) == 128.0,
             "rules use the fixed vehicle group rather than the unscheduled population index");
-    require(rules.groups.size() == 3 && rules.groups[0].carsProhibited == true &&
+    require(rules.groups.size() == 4 && rules.groups[0].carsProhibited == true &&
                 rules.groups[0].busesAllowed == true && rules.groups[0].trucksAllowed == true &&
                 rules.groups[0].overtakingProhibited == true &&
                 rules.groups[2].groupIndex == 3 &&
-                rules.groups[2].unscheduledTrafficProhibited == true,
+                rules.groups[2].unscheduledTrafficProhibited == true &&
+                rules.groups[3].groupIndex == 7,
             "access, overtaking and no-unscheduled-traffic rules decode as group overrides");
     requireNear(mapTrafficPathDensityForVehicle(rules, {0, 1, false, 0}), 0.5,
                 "traffic density resolves for its matching vehicle group");
@@ -3355,6 +3372,8 @@ void verifyTrafficRules() {
                 "the last matching group density rule takes effect");
     requireNear(mapTrafficPathDensityForVehicle(rules, {0, 0, false, 3}), 0.0,
                 "no_unsched_traffic removes the matching group's effective path density");
+    requireNear(mapTrafficPathDensityForVehicle(rules, {0, 0, false, 7}), 0.25,
+                "traffic rule groups above three parse and match without truncation");
     MapTrafficRoute spawnSpeedRoute;
     MapTrafficRouteSegment spawnSpeedSegment;
     spawnSpeedSegment.points = {{0.0, 0.0, 0.0}, {0.0, 100.0, 0.0}};
@@ -3429,15 +3448,15 @@ void verifyTrafficRules() {
         malformedPathRejected = true;
     }
     require(malformedPathRejected, "malformed path indices fail explicitly");
-    bool invalidVehicleGroupRejected = false;
+    bool negativeVehicleGroupRejected = false;
     try {
         static_cast<void>(mapTrafficRulesForPath(
-            std::vector<MapTileRule>{{false, {"0", "trafficdensity", "1", "4"}}}, 0));
+            std::vector<MapTileRule>{{false, {"0", "trafficdensity", "1", "-1"}}}, 0));
     } catch (const std::invalid_argument&) {
-        invalidVehicleGroupRejected = true;
+        negativeVehicleGroupRejected = true;
     }
-    require(invalidVehicleGroupRejected,
-            "traffic rule vehicle groups outside the defined 0-3 range are rejected");
+    require(negativeVehicleGroupRejected,
+            "negative traffic rule vehicle groups are rejected");
 
     MapTrafficRouteSegment restrictedSegment;
     restrictedSegment.spline = {makeSpline(1300, 0, 0, 0.0), 0, 0};

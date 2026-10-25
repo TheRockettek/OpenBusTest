@@ -107,11 +107,10 @@ struct MapCollisionStreamer::WorkerState {
                 if (tile == map.tiles.end()) {
                     throw std::runtime_error("Collision request references a missing map tile");
                 }
-                MapRoadCollisionResult roadCollision = buildMapSplineCollisionTile(
-                    map, omsiRoot, job.tileX, job.tileY, &roadConnections());
+                MapRoadCollisionResult roadCollision = buildMapRoadCollisionTile(
+                    map, omsiRoot, job.tileX, job.tileY, &roadConnections(), &sceneryCollisions());
                 result.meshes = std::move(roadCollision.meshes);
-                result.poles = buildMapPoleCollisionTile(map, omsiRoot, job.tileX, job.tileY,
-                                                         &sceneryCollisions());
+                result.poles = std::move(roadCollision.poles);
             } catch (...) {
                 result.error = std::current_exception();
             }
