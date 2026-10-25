@@ -51,8 +51,7 @@ std::filesystem::path groundTexturePath(const openbus::map::MapDefinition& map,
     const std::array<std::filesystem::path, 2> candidates = {map.rootPath / relative,
                                                              omsiRoot / relative};
     for (const std::filesystem::path& candidate : candidates) {
-        const std::filesystem::path resolved =
-            openbus::assets::resolveCaseInsensitivePath(candidate);
+        const std::filesystem::path resolved = openbus::assets::resolveTexturePath(candidate);
         if (std::filesystem::is_regular_file(resolved)) {
             return resolved;
         }
@@ -161,28 +160,9 @@ std::filesystem::path findSceneryTexture(const std::filesystem::path& objectRoot
         omsiRoot / relative,
         omsiRoot / "Texture" / relative};
     for (const std::filesystem::path& candidate : candidates) {
-        const std::filesystem::path exact = findCaseInsensitiveFile(candidate);
-        if (!exact.empty()) {
-            return exact;
-        }
-        std::string extension = lowercasePathComponent(candidate.extension().string());
-        constexpr std::array<const char*, 6> textureExtensions = {".dds", ".bmp", ".tga",
-                                                                  ".png", ".jpg", ".jpeg"};
-        const bool supportedExtension =
-            std::any_of(textureExtensions.begin(), textureExtensions.end(),
-                        [&extension](const char* supported) { return extension == supported; });
-        if (supportedExtension) {
-            for (const char* alternativeExtension : textureExtensions) {
-                if (extension == alternativeExtension) {
-                    continue;
-                }
-                std::filesystem::path alternate = candidate;
-                alternate.replace_extension(alternativeExtension);
-                const std::filesystem::path alternateMatch = findCaseInsensitiveFile(alternate);
-                if (!alternateMatch.empty()) {
-                    return alternateMatch;
-                }
-            }
+        const std::filesystem::path resolved = openbus::assets::resolveTexturePath(candidate);
+        if (std::filesystem::is_regular_file(resolved)) {
+            return resolved;
         }
     }
     return {};

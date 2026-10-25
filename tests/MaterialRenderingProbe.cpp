@@ -34,6 +34,14 @@ int main() {
         glfwTerminate();
         return 1;
     }
+    static_cast<void>(hasOpenGLExtension("GL_EXT_texture_compression_s3tc"));
+    if (glGetError() != GL_NO_ERROR) {
+        std::cerr << "OpenGL core-profile extension enumeration produced an error\n";
+        shutdownCoreRenderer();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return 1;
+    }
     setPerspective(32, 32, 90);
     setModelViewMatrix(identityMatrix());
     glViewport(0, 0, 32, 32);

@@ -1,5 +1,6 @@
 #include "assets/TextureLoader.h"
 
+#include "core/AssetPath.h"
 #include "core/Logger.h"
 #include "ProbeTempDirectory.h"
 
@@ -41,6 +42,35 @@ bool writeBytes(const std::filesystem::path& path, const std::vector<std::uint8_
 
 int main() {
     bool valid = true;
+    const std::filesystem::path texturePathDirectory =
+        openbus::probe::makeProbeDirectory("openbus_texture_path");
+    const std::filesystem::path configuredGroundTexture =
+        texturePathDirectory / "texture" / "X10_gras.bmp";
+    const std::filesystem::path installedGroundTexture =
+        texturePathDirectory / "Texture" / "X10_gras.dds";
+    std::filesystem::create_directories(installedGroundTexture.parent_path());
+    {
+        std::ofstream output(installedGroundTexture, std::ios::binary);
+        output.put('x');
+    }
+    const std::filesystem::path resolvedGroundTexture =
+        openbus::assets::resolveTexturePath(configuredGroundTexture);
+    valid &= require(resolvedGroundTexture.extension() == ".dds" &&
+                         std::filesystem::is_regular_file(resolvedGroundTexture),
+                     "configured BMP ground texture resolves to installed DDS variant");
+    const std::filesystem::path exactGroundTexture =
+        texturePathDirectory / "Texture" / "X10_gras.bmp";
+    {
+        std::ofstream output(exactGroundTexture, std::ios::binary);
+        output.put('x');
+    }
+    const std::filesystem::path exactResolution =
+        openbus::assets::resolveTexturePath(configuredGroundTexture);
+    valid &= require(exactResolution.extension() == ".bmp" &&
+                         std::filesystem::is_regular_file(exactResolution),
+                     "existing configured ground texture takes priority over alternate formats");
+    openbus::probe::removeProbeDirectory(texturePathDirectory);
+
     std::size_t bufferSize = 0;
     valid &= require(openbus::rendering::checkedTextureBufferSize(64, 32, 4, bufferSize) &&
                          bufferSize == 8192,

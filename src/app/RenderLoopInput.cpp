@@ -143,7 +143,6 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             const bool freeCameraToggle = binding.key == GLFW_KEY_F3;
             const bool trafficSplineDebugToggle = binding.key == GLFW_KEY_F2;
             if (changed) {
-                keyEvents_.push_back({binding.action, pressed, glfwGetTime()});
                 if (mouseControlToggle && pressed && playerVehicle_ != nullptr) {
                     mouseControlEnabled_ = !mouseControlEnabled_;
                     if (mouseControlEnabled_) {

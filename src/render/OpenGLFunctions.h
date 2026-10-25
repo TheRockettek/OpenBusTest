@@ -8,7 +8,12 @@
 #endif
 
 #include <cstddef>
+#include <string_view>
 #include <GL/gl.h>
+
+#ifndef GL_NUM_EXTENSIONS
+#define GL_NUM_EXTENSIONS 0x821D
+#endif
 
 #ifndef GL_VERTEX_SHADER
 #define GL_VERTEX_SHADER 0x8B31
@@ -26,6 +31,7 @@ using CompressedTexImage2DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsize
                                           const void*);
 using CompressedTexImage3DProc = void (*)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLsizei, GLint,
                                           GLsizei, const void*);
+using GetStringiProc = const GLubyte*(APIENTRY*)(GLenum, GLuint);
 using ActiveTextureProc = void (*)(GLenum);
 using GenVertexArraysProc = void (*)(GLsizei, GLuint*);
 using BindVertexArrayProc = void (*)(GLuint);
@@ -66,6 +72,7 @@ extern BufferDataProc pglBufferData;
 extern DeleteBuffersProc pglDeleteBuffers;
 extern CompressedTexImage2DProc pglCompressedTexImage2D;
 extern CompressedTexImage3DProc pglCompressedTexImage3D;
+extern GetStringiProc pglGetStringi;
 extern ActiveTextureProc pglActiveTexture;
 extern GenVertexArraysProc pglGenVertexArrays;
 extern BindVertexArrayProc pglBindVertexArray;
@@ -101,6 +108,7 @@ extern FramebufferTexture2DProc pglFramebufferTexture2D;
 extern CheckFramebufferStatusProc pglCheckFramebufferStatus;
 
 bool loadOpenGLFunctions();
+[[nodiscard]] bool hasOpenGLExtension(std::string_view extension);
 
 // Optional OpenGL 4.3 entry points; never part of the 3.3 renderer requirement.
 using DispatchComputeProc = void(APIENTRY*)(GLuint, GLuint, GLuint);

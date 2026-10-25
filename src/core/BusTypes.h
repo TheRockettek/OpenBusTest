@@ -3,14 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <optional>
-#include <string>
 #include <vector>
-
-struct KeyEvent {
-    std::string key;
-    bool pressed;
-    double wallTimeSeconds;
-};
 
 struct BusAxle {
     double position;

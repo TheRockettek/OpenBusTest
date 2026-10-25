@@ -3,6 +3,7 @@
 #include "config/VehicleCatalog.h"
 #include "core/Environment.h"
 #include "core/Logger.h"
+#include "core/Utf8Path.h"
 
 #include <imgui.h>
 
@@ -16,16 +17,14 @@
 
 namespace {
 
-std::string pathToUtf8(const std::filesystem::path& path) {
-    const std::u8string utf8 = path.u8string();
-    return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
-}
+using openbus::pathToUtf8;
 
 std::vector<std::filesystem::path> discoverMaps(const std::filesystem::path& omsiRoot) {
     const std::filesystem::path mapsDirectory = omsiRoot / "maps";
     std::error_code error;
     if (!std::filesystem::is_directory(mapsDirectory, error) || error) {
-        throw std::runtime_error("OMSI maps directory is unavailable: " + pathToUtf8(mapsDirectory));
+        throw std::runtime_error("OMSI maps directory is unavailable: " +
+                                 pathToUtf8(mapsDirectory));
     }
 
     std::vector<std::filesystem::path> maps;
@@ -39,8 +38,8 @@ std::vector<std::filesystem::path> discoverMaps(const std::filesystem::path& oms
         }
     }
     if (error) {
-        throw std::runtime_error("Failed to list OMSI maps directory '" + pathToUtf8(mapsDirectory) +
-                                 "': " + error.message());
+        throw std::runtime_error("Failed to list OMSI maps directory '" +
+                                 pathToUtf8(mapsDirectory) + "': " + error.message());
     }
     std::sort(maps.begin(), maps.end());
     return maps;
@@ -224,9 +223,9 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                     normalizedText(vehicles[selectedVehicleIndex].manufacturer)) {
                     continue;
                 }
-                const std::string label =
-                    vehicles[index].type + " (" +
-                    pathToUtf8(vehicles[index].configurationPath.filename()) + ")";
+                const std::string label = vehicles[index].type + " (" +
+                                          pathToUtf8(vehicles[index].configurationPath.filename()) +
+                                          ")";
                 const bool selected = index == selectedVehicleIndex;
                 if (ImGui::Selectable(label.c_str(), selected) && !selected) {
                     selectedVehicleIndex = index;
@@ -282,8 +281,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                 for (std::size_t index = 0; index < depots.size(); ++index) {
                     const bool selected = selectedDepotIndex == index + 1;
                     const std::string label =
-                        depots[index].name + " (" +
-                        pathToUtf8(depots[index].path.filename()) + ")";
+                        depots[index].name + " (" + pathToUtf8(depots[index].path.filename()) + ")";
                     if (ImGui::Selectable(label.c_str(), selected)) {
                         selectedDepotIndex = index + 1;
                     }

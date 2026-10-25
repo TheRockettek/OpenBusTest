@@ -167,11 +167,9 @@ GLuint Vehicle::uploadCompressedDds(const std::filesystem::path& path, const Com
     if (pglCompressedTexImage2D == nullptr || image.levels.empty()) {
         return 0;
     }
-    const GLubyte* extensionBytes = glGetString(GL_EXTENSIONS);
-    const std::string extensions =
-        extensionBytes != nullptr ? reinterpret_cast<const char*>(extensionBytes) : std::string();
-    if (extensions.find("GL_EXT_texture_compression_s3tc") == std::string::npos &&
-        extensions.find("GL_S3_s3tc") == std::string::npos) {
+    static const bool s3tcSupported =
+        hasOpenGLExtension("GL_EXT_texture_compression_s3tc") || hasOpenGLExtension("GL_S3_s3tc");
+    if (!s3tcSupported) {
         return 0;
     }
     GLuint texture = 0;
@@ -444,6 +442,14 @@ void Vehicle::ensureAuxiliaryTexture(Batch& batch, AuxiliaryTexture& auxiliary) 
             if (request->compressedDds) {
                 auxiliary.cacheEntry->texture =
                     uploadCompressedDds(request->resolvedPath, *request->compressedDds);
+                if (auxiliary.cacheEntry->texture == 0) {
+                    Image fallbackImage;
+                    if (openbus::rendering::TextureLoader::readImage(request->resolvedPath,
+                                                                     fallbackImage)) {
+                        auxiliary.cacheEntry->texture =
+                            uploadTexture(request->resolvedPath, std::move(fallbackImage));
+                    }
+                }
             } else if (request->compressedTexture) {
                 auxiliary.cacheEntry->texture = uploadCompressedTexture(
                     request->resolvedPath, *request->compressedTexture,
@@ -478,16 +484,29 @@ void Vehicle::updateFreeTexture(Batch& batch) {
     }
     ScriptRuntime::ScriptTextureSnapshot snapshot;
     int index = -1;
-    bool copied = false;
+    bool textTexture = false;
     if (batch.textTextureIndex >= 0) {
         index = batch.textTextureIndex;
-        copied = scripts->copyTextTexture(index, snapshot);
+        textTexture = true;
     } else if (batch.scriptTextureIndex >= 0) {
         index = batch.scriptTextureIndex;
-        copied = scripts->copyScriptTexture(index, snapshot);
     } else {
         index = static_cast<int>(std::lround(variables.get(batch.freeTextureVariable)));
-        copied = scripts->copyScriptTexture(index, snapshot);
+    }
+    const bool textureAlreadyCached = batch.freeTexture != 0 && batch.freeTextureIndex == index;
+    const auto copyTexture = [&] {
+        if (textureAlreadyCached) {
+            return textTexture ? scripts->copyTextTextureIfChanged(index, batch.freeTextureRevision,
+                                                                   snapshot)
+                               : scripts->copyScriptTextureIfChanged(
+                                     index, batch.freeTextureRevision, snapshot);
+        }
+        return textTexture ? scripts->copyTextTexture(index, snapshot)
+                           : scripts->copyScriptTexture(index, snapshot);
+    };
+    const bool copied = copyTexture();
+    if (textureAlreadyCached && snapshot.pixels.empty()) {
+        return;
     }
     if (index < 0 || !copied || snapshot.width <= 0 || snapshot.height <= 0 ||
         snapshot.pixels.empty()) {

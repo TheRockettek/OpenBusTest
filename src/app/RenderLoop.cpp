@@ -928,12 +928,6 @@ bool RenderLoop::isCaptureReady() const {
     return playerVehicle_ && playerVehicle_->isCaptureReady();
 }
 
-std::vector<KeyEvent> RenderLoop::consumeKeyEvents() {
-    std::vector<KeyEvent> events;
-    events.swap(keyEvents_);
-    return events;
-}
-
 bool RenderLoop::consumeRaisePlayerRequest() {
     const bool requested = raisePlayerRequestPending_;
     raisePlayerRequestPending_ = false;

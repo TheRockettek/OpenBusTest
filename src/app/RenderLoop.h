@@ -195,7 +195,6 @@ class RenderLoop {
     double physicsSteering() const;
     std::vector<double> physicsWheelBrakeForces(std::size_t axleCount) const;
     std::vector<double> physicsAxleSpringFactors(std::size_t axleCount) const;
-    std::vector<KeyEvent> consumeKeyEvents();
 
   private:
     static void scrollCallback(GLFWwindow* window, double xOffset, double yOffset);
@@ -328,7 +327,6 @@ class RenderLoop {
     double steeringSmoothingRate_ = 0.0;
     bool steeringSmoothingOverride_ = false;
     double smoothedSteering_ = 0.0;
-    std::vector<KeyEvent> keyEvents_;
     std::vector<VehicleCamera> vehicleCameras_;
     SimulationState simulationState_;
     std::unique_ptr<openbus::rendering::AssetRequestManager> assetRequestManager_;

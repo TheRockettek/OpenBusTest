@@ -3,6 +3,7 @@
 #include "config/ConfigurationParser.h"
 #include "core/Logger.h"
 #include "core/PerfTrace.h"
+#include "core/Utf8Path.h"
 
 #include <algorithm>
 #include <bit>
@@ -22,10 +23,7 @@ namespace openbus::map {
 
 namespace {
 
-std::string pathToUtf8(const std::filesystem::path& path) {
-    const std::u8string utf8 = path.u8string();
-    return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
-}
+using openbus::pathToUtf8;
 
 std::filesystem::path pathFromUtf8(std::string_view value) {
     std::u8string utf8;
@@ -36,8 +34,7 @@ std::filesystem::path pathFromUtf8(std::string_view value) {
     return std::filesystem::path(utf8);
 }
 
-std::filesystem::path pathWithSuffix(const std::filesystem::path& path,
-                                     std::string_view suffix) {
+std::filesystem::path pathWithSuffix(const std::filesystem::path& path, std::string_view suffix) {
     std::filesystem::path result = path;
     result += suffix;
     return result;
@@ -1228,7 +1225,8 @@ std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
                 lowerAscii(pathToUtf8(tileIterator->path().extension())) != ".map") {
                 continue;
             }
-            const std::string tileFilename = lowerAscii(pathToUtf8(tileIterator->path().filename()));
+            const std::string tileFilename =
+                lowerAscii(pathToUtf8(tileIterator->path().filename()));
             const auto tileIndex = tileIndexByFilename.find(tileFilename);
             if (tileIndex == tileIndexByFilename.end()) {
                 continue;
@@ -2539,7 +2537,8 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             if (hasField(11)) {
                 if (!parseInteger(trim(readSplineField()), spline.previousSplineId) ||
                     !parseInteger(trim(readSplineField()), spline.nextSplineId)) {
-                    throw std::runtime_error("Invalid spline links in " + pathToUtf8(tile.textPath));
+                    throw std::runtime_error("Invalid spline links in " +
+                                             pathToUtf8(tile.textPath));
                 }
             } else {
                 int linkedToPrevious = -1;
@@ -2688,7 +2687,8 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             object.hasExplicitId = tileVersion >= 6;
             if (object.hasExplicitId) {
                 if (!parseInteger(trim(requireField(field++)), object.id)) {
-                    throw std::runtime_error("Invalid [attachObj] ID in " + pathToUtf8(tile.textPath));
+                    throw std::runtime_error("Invalid [attachObj] ID in " +
+                                             pathToUtf8(tile.textPath));
                 }
             } else {
                 object.id = -static_cast<int>(++automaticRecordId);
@@ -2766,7 +2766,8 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 if (!parseInteger(trim(requireField(field++)),
                                   attachment.repeaterMasterTileIndex) ||
                     !parseSize(trim(requireField(field++)), attachment.repeaterFirstObjectIndex)) {
-                    throw std::runtime_error("Invalid repeater index in " + pathToUtf8(tile.textPath));
+                    throw std::runtime_error("Invalid repeater index in " +
+                                             pathToUtf8(tile.textPath));
                 }
             }
             attachment.assetPath = trim(requireField(field++));
@@ -2974,8 +2975,7 @@ TerrainGrid loadTerrainGrid(const std::filesystem::path& terrainPath) {
     for (std::size_t offset = 4; offset < bytes.size(); offset += 4) {
         const float height = std::bit_cast<float>(readU32(bytes, offset));
         if (!std::isfinite(height)) {
-            throw std::runtime_error("Non-finite terrain height in " +
-                                     pathToUtf8(terrainPath));
+            throw std::runtime_error("Non-finite terrain height in " + pathToUtf8(terrainPath));
         }
         grid.heights.push_back(height);
     }
@@ -2991,8 +2991,7 @@ WaterData loadWaterData(const std::filesystem::path& waterPath) {
     const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(input)),
                                            std::istreambuf_iterator<char>());
     if (bytes.size() < 4) {
-        throw std::runtime_error("Water file is shorter than its header: " +
-                                 pathToUtf8(waterPath));
+        throw std::runtime_error("Water file is shorter than its header: " + pathToUtf8(waterPath));
     }
     const std::uint32_t surfaceCount = readU32(bytes, 0);
     constexpr std::uint32_t MAX_WATER_SURFACES = 1'000'000;
@@ -3015,8 +3014,7 @@ WaterData loadWaterData(const std::filesystem::path& waterPath) {
             height = std::bit_cast<float>(readU32(bytes, offset));
             offset += 4;
             if (!std::isfinite(height)) {
-                throw std::runtime_error("Non-finite water height in " +
-                                         pathToUtf8(waterPath));
+                throw std::runtime_error("Non-finite water height in " + pathToUtf8(waterPath));
             }
         }
         water.surfaces.push_back(surface);

@@ -10,6 +10,7 @@
 #include "config/HumanConfigLoader.h"
 #include "core/AssetPath.h"
 #include "core/PerfTrace.h"
+#include "core/Utf8Path.h"
 #include "app/RenderLoop.h"
 
 #include <GLFW/glfw3.h>
@@ -34,10 +35,7 @@
 
 namespace {
 
-std::string pathToUtf8(const std::filesystem::path& path) {
-    const std::u8string utf8 = path.u8string();
-    return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
-}
+using openbus::pathToUtf8;
 
 std::string environmentValue(const char* name) {
     const char* value = openbus::getEnvironment(name);
@@ -1747,7 +1745,6 @@ int main() {
             bool captureOnStartup = openbus::rendering::parseEnabledFlag(
                 openbus::getEnvironment("OPENBUS_CAPTURE_VIEWS"));
             bool pendingCaptureRequest = captureOnStartup;
-            std::vector<KeyEvent> pendingKeyEvents;
 
             while (!renderer.shouldClose()) {
                 openbus::rendering::TraceScope frameTrace("frame", "main");
@@ -1775,9 +1772,6 @@ int main() {
                     applicationLog.Log("Raised player vehicle 5 m above its current location");
                 }
 
-                const std::vector<KeyEvent> frameKeyEvents = renderer.consumeKeyEvents();
-                pendingKeyEvents.insert(pendingKeyEvents.end(), frameKeyEvents.begin(),
-                                        frameKeyEvents.end());
                 renderer.updatePlayerVariables(simulation, renderer.throttle(), renderer.steering(),
                                                renderer.brake());
                 simulation.updateWithWheelTorqueAndBrakeForces(

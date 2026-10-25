@@ -13,6 +13,7 @@ BufferDataProc pglBufferData = nullptr;
 DeleteBuffersProc pglDeleteBuffers = nullptr;
 CompressedTexImage2DProc pglCompressedTexImage2D = nullptr;
 CompressedTexImage3DProc pglCompressedTexImage3D = nullptr;
+GetStringiProc pglGetStringi = nullptr;
 ActiveTextureProc pglActiveTexture = nullptr;
 GenVertexArraysProc pglGenVertexArrays = nullptr;
 BindVertexArrayProc pglBindVertexArray = nullptr;
@@ -55,6 +56,7 @@ DrawArraysIndirectProc pglDrawArraysIndirect = nullptr;
 DrawElementsIndirectProc pglDrawElementsIndirect = nullptr;
 
 bool loadOpenGLFunctions() {
+    pglGetStringi = reinterpret_cast<GetStringiProc>(glfwGetProcAddress("glGetStringi"));
     pglDrawArraysIndirect =
         reinterpret_cast<DrawArraysIndirectProc>(glfwGetProcAddress("glDrawArraysIndirect"));
     pglDrawElementsIndirect =
@@ -126,17 +128,37 @@ bool loadOpenGLFunctions() {
         glfwGetProcAddress("glCheckFramebufferStatus"));
     const bool available =
         pglGenBuffers && pglBindBuffer && pglBufferData && pglDeleteBuffers &&
-        pglCompressedTexImage2D && pglActiveTexture && pglGenVertexArrays && pglBindVertexArray &&
-        pglDeleteVertexArrays && pglEnableVertexAttribArray && pglDisableVertexAttribArray &&
-        pglVertexAttribPointer && pglCreateShader && pglShaderSource && pglCompileShader &&
-        pglGetShaderiv && pglGetShaderInfoLog && pglDeleteShader && pglCreateProgram &&
-        pglAttachShader && pglLinkProgram && pglGetProgramiv && pglGetProgramInfoLog &&
-        pglDeleteProgram && pglUseProgram && pglGetUniformLocation && pglUniformMatrix4fv &&
-        pglUniform1i && pglUniform1f && pglUniform2f && pglUniform3f && pglUniform4f &&
-        pglUniform4fv && pglGenFramebuffers && pglBindFramebuffer && pglDeleteFramebuffers &&
-        pglFramebufferTexture2D && pglCheckFramebufferStatus;
+        pglCompressedTexImage2D && pglGetStringi && pglActiveTexture && pglGenVertexArrays &&
+        pglBindVertexArray && pglDeleteVertexArrays && pglEnableVertexAttribArray &&
+        pglDisableVertexAttribArray && pglVertexAttribPointer && pglCreateShader &&
+        pglShaderSource && pglCompileShader && pglGetShaderiv && pglGetShaderInfoLog &&
+        pglDeleteShader && pglCreateProgram && pglAttachShader && pglLinkProgram &&
+        pglGetProgramiv && pglGetProgramInfoLog && pglDeleteProgram && pglUseProgram &&
+        pglGetUniformLocation && pglUniformMatrix4fv && pglUniform1i && pglUniform1f &&
+        pglUniform2f && pglUniform3f && pglUniform4f && pglUniform4fv && pglGenFramebuffers &&
+        pglBindFramebuffer && pglDeleteFramebuffers && pglFramebufferTexture2D &&
+        pglCheckFramebufferStatus;
     if (!available) {
         gameLog.Log("Failed to load required OpenGL VBO functions");
     }
     return available;
+}
+
+bool hasOpenGLExtension(std::string_view extension) {
+    if (extension.empty() || extension.find(' ') != std::string_view::npos ||
+        pglGetStringi == nullptr) {
+        return false;
+    }
+    GLint extensionCount = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &extensionCount);
+    if (extensionCount <= 0) {
+        return false;
+    }
+    for (GLint index = 0; index < extensionCount; ++index) {
+        const auto* value = pglGetStringi(GL_EXTENSIONS, static_cast<GLuint>(index));
+        if (value != nullptr && extension == reinterpret_cast<const char*>(value)) {
+            return true;
+        }
+    }
+    return false;
 }
