@@ -10,7 +10,7 @@ namespace {
 
 void writeJsonString(std::ostream& output, const std::string& value) {
     output << '"';
-    for (const char character : value) {
+    for (const unsigned char character : value) {
         switch (character) {
         case '"':
             output << "\\\"";
@@ -28,7 +28,12 @@ void writeJsonString(std::ostream& output, const std::string& value) {
             output << "\\t";
             break;
         default:
-            output << character;
+            if (character < 0x20U) {
+                constexpr char hex[] = "0123456789abcdef";
+                output << "\\u00" << hex[character >> 4U] << hex[character & 0x0fU];
+            } else {
+                output << static_cast<char>(character);
+            }
             break;
         }
     }

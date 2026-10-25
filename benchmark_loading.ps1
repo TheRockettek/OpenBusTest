@@ -1,6 +1,9 @@
 param(
+    [ValidateRange(1, 100)]
     [int]$Runs = 5,
-    [string]$Vehicle = "e400",
+    [string]$BuildDirectory = "build-ninja",
+    [string]$BusConfig = "Vehicles/MAN_DL05/MAN_DL05.bus",
+    [string]$Map = "Cotterell",
     [switch]$EnableTrace
 )
 
@@ -14,82 +17,132 @@ if ($runningOpenBus.Count -gt 0) {
 
 function Get-MedianMs {
     param([double[]]$Values)
-    if (-not $Values -or $Values.Count -eq 0) {
+    $sorted = @($Values | Sort-Object)
+    if ($sorted.Count -eq 0) {
         return $null
     }
-    $sorted = $Values | Sort-Object
-    $middle = [int]($sorted.Count / 2)
+    $middle = [int][math]::Floor($sorted.Count / 2.0)
     if ($sorted.Count % 2 -eq 1) {
         return [math]::Round($sorted[$middle], 2)
     }
     return [math]::Round((($sorted[$middle - 1] + $sorted[$middle]) / 2.0), 2)
 }
 
-$exePath = Join-Path $PSScriptRoot "build-ode\\Release\\OpenBus.exe"
-if (-not (Test-Path $exePath)) {
-    throw "Missing executable at $exePath. Build OpenBus first."
+function Assert-PerfTraceEnabledBuild {
+    param([string]$BuildPath)
+
+    $cachePath = Join-Path $BuildPath "CMakeCache.txt"
+    if (-not (Test-Path -LiteralPath $cachePath -PathType Leaf) -or
+        -not (Select-String -LiteralPath $cachePath `
+            -Pattern '^OPENBUS_ENABLE_PERF_TRACE:BOOL=ON$' -Quiet)) {
+        throw "Tracing was requested, but $BuildPath is not configured with OPENBUS_ENABLE_PERF_TRACE=ON. Configure and build the windows-clang-benchmark preset, or pass its build directory."
+    }
+}
+
+if ([System.IO.Path]::IsPathRooted($BuildDirectory)) {
+    $buildPath = $BuildDirectory
+} else {
+    $buildPath = Join-Path $PSScriptRoot $BuildDirectory
+}
+$exePath = Join-Path $buildPath "OpenBus.exe"
+if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+    throw "Missing executable at $exePath. Build OpenBus first or pass -BuildDirectory."
+}
+if ($EnableTrace) {
+    Assert-PerfTraceEnabledBuild $buildPath
+}
+
+$outputRoot = Join-Path $PSScriptRoot "render-benchmark-results"
+$runDirectory = Join-Path $outputRoot ("loading-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
+New-Item -ItemType Directory -Path $runDirectory -Force | Out-Null
+
+$environmentNames = @(
+    "OPENBUS_BENCHMARK",
+    "OPENBUS_BUS_CONFIG",
+    "OPENBUS_MAP_PATH",
+    "OPENBUS_VSYNC",
+    "OPENBUS_TRACE",
+    "OPENBUS_TRACE_FILE",
+    "OPENBUS_LOG_FILE",
+    "OPENBUS_AI_BUS_CONFIG",
+    "OPENBUS_AI_MODEL_CONFIG",
+    "OPENBUS_AI_COUNT",
+    "OPENBUS_MAP_AI_COUNT",
+    "OPENBUS_MAP_BUS_COUNT",
+    "OPENBUS_MAP_HUMAN_COUNT"
+)
+$originalEnvironment = @{}
+foreach ($name in $environmentNames) {
+    $originalEnvironment[$name] = [pscustomobject]@{
+        Exists = Test-Path "Env:$name"
+        Value = [Environment]::GetEnvironmentVariable($name, "Process")
+    }
 }
 
 $results = @()
-for ($run = 1; $run -le $Runs; $run++) {
-    Write-Host "Run $run/$Runs"
+try {
+    for ($run = 1; $run -le $Runs; $run++) {
+        Write-Host "Run $run/$Runs (close the application window after the load completes)"
 
-    if (Test-Path (Join-Path $PSScriptRoot "game.log")) {
-        Remove-Item (Join-Path $PSScriptRoot "game.log") -Force
-    }
+        $logPath = Join-Path $runDirectory "run-$run.log"
+        [Environment]::SetEnvironmentVariable("OPENBUS_BENCHMARK", "1", "Process")
+        [Environment]::SetEnvironmentVariable("OPENBUS_BUS_CONFIG", $BusConfig, "Process")
+        [Environment]::SetEnvironmentVariable("OPENBUS_MAP_PATH", $Map, "Process")
+        [Environment]::SetEnvironmentVariable("OPENBUS_VSYNC", "off", "Process")
+        [Environment]::SetEnvironmentVariable("OPENBUS_LOG_FILE", $logPath, "Process")
+        [Environment]::SetEnvironmentVariable("OPENBUS_AI_BUS_CONFIG", $null, "Process")
+        [Environment]::SetEnvironmentVariable("OPENBUS_AI_MODEL_CONFIG", $null, "Process")
+        [Environment]::SetEnvironmentVariable("OPENBUS_AI_COUNT", $null, "Process")
+        [Environment]::SetEnvironmentVariable("OPENBUS_MAP_AI_COUNT", "0", "Process")
+        [Environment]::SetEnvironmentVariable("OPENBUS_MAP_BUS_COUNT", "0", "Process")
+        [Environment]::SetEnvironmentVariable("OPENBUS_MAP_HUMAN_COUNT", "0", "Process")
+        [Environment]::SetEnvironmentVariable(
+            "OPENBUS_TRACE", $(if ($EnableTrace) { "1" } else { "0" }), "Process")
+        if ($EnableTrace) {
+            $tracePath = Join-Path $runDirectory "run-$run-trace.json"
+            [Environment]::SetEnvironmentVariable("OPENBUS_TRACE_FILE", $tracePath, "Process")
+        } else {
+            [Environment]::SetEnvironmentVariable("OPENBUS_TRACE_FILE", $null, "Process")
+        }
 
-    $env:OPENBUS_VEHICLE = $Vehicle
-    $env:OPENBUS_VSYNC = "off"
-    $env:OPENBUS_CAPTURE_VIEWS = "1"
-    if ($EnableTrace) {
-        $env:OPENBUS_TRACE = "1"
-        $env:OPENBUS_TRACE_FILE = Join-Path $PSScriptRoot "openbus_trace_run$run.json"
-    } else {
-        Remove-Item Env:OPENBUS_TRACE -ErrorAction SilentlyContinue
-        Remove-Item Env:OPENBUS_TRACE_FILE -ErrorAction SilentlyContinue
-    }
+        $process = Start-Process -FilePath $exePath -WorkingDirectory $PSScriptRoot `
+            -PassThru -Wait -NoNewWindow
+        if ($process.ExitCode -ne 0) {
+            throw "OpenBus run $run exited with code $($process.ExitCode). See $logPath."
+        }
+        if (-not (Test-Path -LiteralPath $logPath -PathType Leaf)) {
+            throw "OpenBus did not create its run log: $logPath."
+        }
+        if ($EnableTrace -and -not (Test-Path -LiteralPath $tracePath -PathType Leaf)) {
+            throw "OpenBus did not create the requested performance trace: $tracePath."
+        }
 
-    & $exePath
+        $objects = Select-String -Path $logPath `
+            -Pattern '^\[(\d+)\] Game All objects loaded\.'
+        if (-not $objects) {
+            throw "The object-load completion marker was not written for run $run. See $logPath."
+        }
 
-    $logPath = Join-Path $PSScriptRoot "game.log"
-    if (-not (Test-Path $logPath)) {
-        Write-Warning "Missing game.log for run $run"
-        continue
-    }
-    $lines = Get-Content $logPath
-
-    $objects = $lines | Select-String -Pattern "^\[(\d+)\] Game All objects loaded\."
-    $textures = $lines | Select-String -Pattern "^\[(\d+)\] Game All textures loaded\."
-    if (-not $objects -or -not $textures) {
-        Write-Warning "Load completion markers missing for run $run"
-        continue
-    }
-
-    $objectMs = [double]$objects[-1].Matches[0].Groups[1].Value
-    $textureMs = [double]$textures[-1].Matches[0].Groups[1].Value
-    $results += [pscustomobject]@{
-        Run = $run
-        ObjectsMs = $objectMs
-        TexturesMs = $textureMs
+        $results += [pscustomobject]@{
+            Run = $run
+            ObjectsMs = [double]$objects[-1].Matches[0].Groups[1].Value
+        }
     }
 }
-
-Remove-Item Env:OPENBUS_CAPTURE_VIEWS -ErrorAction SilentlyContinue
-Remove-Item Env:OPENBUS_VSYNC -ErrorAction SilentlyContinue
-Remove-Item Env:OPENBUS_VEHICLE -ErrorAction SilentlyContinue
-if (-not $EnableTrace) {
-    Remove-Item Env:OPENBUS_TRACE -ErrorAction SilentlyContinue
-    Remove-Item Env:OPENBUS_TRACE_FILE -ErrorAction SilentlyContinue
-}
-
-if ($results.Count -eq 0) {
-    throw "No successful benchmark runs."
+finally {
+    foreach ($name in $environmentNames) {
+        $original = $originalEnvironment[$name]
+        if ($original.Exists) {
+            [Environment]::SetEnvironmentVariable($name, $original.Value, "Process")
+        } else {
+            [Environment]::SetEnvironmentVariable($name, $null, "Process")
+        }
+    }
 }
 
 $results | Format-Table -AutoSize
+$results | Export-Csv -LiteralPath (Join-Path $runDirectory "results.csv") -NoTypeInformation
 
 $objectMedian = Get-MedianMs ($results | ForEach-Object { $_.ObjectsMs })
-$textureMedian = Get-MedianMs ($results | ForEach-Object { $_.TexturesMs })
-
 Write-Host "Median objects loaded (ms): $objectMedian"
-Write-Host "Median textures loaded (ms): $textureMedian"
+Write-Host "Run logs and results: $runDirectory"

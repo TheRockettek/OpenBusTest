@@ -155,6 +155,15 @@ openbus_add_probe(OpenBusTextureAddressModeProbe TextureAddressModeProbe.cpp
 openbus_add_probe(OpenBusStaticPrimitiveBufferProbe StaticPrimitiveBufferProbe.cpp)
 target_include_directories(OpenBusStaticPrimitiveBufferProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
 
+if(WIN32)
+    find_program(OPENBUS_POWERSHELL_EXECUTABLE NAMES pwsh powershell)
+    if(OPENBUS_POWERSHELL_EXECUTABLE)
+        add_test(NAME OpenBusLoadingBenchmarkProbe
+            COMMAND "${OPENBUS_POWERSHELL_EXECUTABLE}" -NoProfile -File
+                "${CMAKE_CURRENT_SOURCE_DIR}/BenchmarkLoadingProbe.ps1")
+    endif()
+endif()
+
 get_property(probeTargets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 add_custom_target(check-probes
     COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${PROJECT_BINARY_DIR}"

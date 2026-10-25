@@ -1,5 +1,7 @@
 #include "core/Logger.h"
 
+#include "core/Environment.h"
+
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -18,10 +20,19 @@ struct LogEntry {
     std::string message;
 };
 
+std::string logFilePath() {
+    if (const char* configuredPath = openbus::getEnvironment("OPENBUS_LOG_FILE");
+        configuredPath != nullptr && *configuredPath != '\0') {
+        return configuredPath;
+    }
+    return "game.log";
+}
+
 class LoggerState {
   public:
     LoggerState()
-        : logFile("game.log", std::ios::out | std::ios::trunc), worker(&LoggerState::run, this) {}
+        : logFile(logFilePath(), std::ios::out | std::ios::trunc),
+          worker(&LoggerState::run, this) {}
 
     ~LoggerState() {
         flush();

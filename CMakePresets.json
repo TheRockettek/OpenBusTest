@@ -7,16 +7,16 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-release-ninja",
       "cacheVariables": {
-        "CMAKE_CXX_COMPILER": "C:/Program Files/LLVM/bin/clang-cl.exe",
+        "CMAKE_CXX_COMPILER": "$env{OPENBUS_CLANG_COMPILER}",
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_TOOLCHAIN_FILE": "C:/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_TOOLCHAIN_FILE": "$env{OPENBUS_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "OPENBUS_ENABLE_PERF_TRACE": "ON",
         "OPENBUS_BUILD_BGFX_LIGHTING_PROBE": "OFF"
       },
       "environment": {
-        "PATH": "C:/Program Files/LLVM/bin;C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64;$penv{PATH}",
-        "INCLUDE": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/include;C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/ucrt;C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/shared;C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/um",
-        "LIB": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/lib/x64;C:/Program Files (x86)/Windows Kits/10/Lib/10.0.26100.0/ucrt/x64;C:/Program Files (x86)/Windows Kits/10/Lib/10.0.26100.0/um/x64"
+        "PATH": "$env{OPENBUS_CLANG_BIN};$env{OPENBUS_NINJA_BIN};$env{OPENBUS_MSVC_ROOT}/bin/Hostx64/x64;$penv{PATH}",
+        "INCLUDE": "$env{OPENBUS_MSVC_ROOT}/include;$env{OPENBUS_WINDOWS_KIT}/Include/$env{OPENBUS_WINDOWS_KIT_VERSION}/ucrt;$env{OPENBUS_WINDOWS_KIT}/Include/$env{OPENBUS_WINDOWS_KIT_VERSION}/shared;$env{OPENBUS_WINDOWS_KIT}/Include/$env{OPENBUS_WINDOWS_KIT_VERSION}/um",
+        "LIB": "$env{OPENBUS_MSVC_ROOT}/lib/x64;$env{OPENBUS_WINDOWS_KIT}/Lib/$env{OPENBUS_WINDOWS_KIT_VERSION}/ucrt/x64;$env{OPENBUS_WINDOWS_KIT}/Lib/$env{OPENBUS_WINDOWS_KIT_VERSION}/um/x64"
       }
     },
     {
@@ -26,7 +26,7 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-ninja",
       "cacheVariables": {
-        "CMAKE_MAKE_PROGRAM": "C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe",
+        "CMAKE_MAKE_PROGRAM": "$env{OPENBUS_NINJA}",
         "OPENBUS_ENABLE_PERF_TRACE": "OFF"
       }
     },

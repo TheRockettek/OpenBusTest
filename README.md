@@ -138,7 +138,7 @@ factor for road vehicles, buses, and pedestrians (default `1.0`, maximum
 `100.0`; each active population remains capped at `200`). Thus a multiplier of `10`
 does not mean 10 times the population cap: the target is the base population
 times the map's density factor times this multiplier. The `run.bat` testing
-launcher defaults it to `10.0`, and `profile.bat` sets it to `25` for denser
+launcher defaults it to `10.0`, and `profile.bat` sets it to `100` for denser
 profiling traffic; `run.bat` respects a value already set in the
 environment; set it to `1.0` for normal scheduled density.
 Pedestrian `.hum` and model CFG parsing, mesh parsing, and texture decoding
@@ -427,7 +427,7 @@ Vendored code lives in `third_party/` (Lua 5.1, sol2) and is built separately fr
 
 ## Prerequisites
 
-- CMake 3.20 or newer
+- CMake 3.21 or newer (required for the configure-preset schema)
 - A C++23 compiler
 - zlib
 - ODE
@@ -439,8 +439,15 @@ On Windows with vcpkg, install standalone LLVM (for `clang-cl.exe`) and the
 Visual Studio C++ build tools (for the MSVC headers, libraries, and linker):
 
 ```powershell
-vcpkg install ode:x64-windows glfw3:x64-windows zlib:x64-windows
+vcpkg install ode:x64-windows glfw3:x64-windows openal-soft:x64-windows zlib:x64-windows
 ```
+
+Set `OPENBUS_VCPKG_ROOT` to the vcpkg installation directory when it is not
+`C:\vcpkg`. The Windows helper discovers Visual Studio C++ tools, the Windows
+SDK, LLVM on `PATH`, and Ninja where possible; set `OPENBUS_CLANG_BIN`,
+`OPENBUS_CLANG_COMPILER`, `OPENBUS_VS_ROOT`, `OPENBUS_MSVC_ROOT`,
+`OPENBUS_WINDOWS_KIT`, `OPENBUS_WINDOWS_KIT_VERSION`, or `OPENBUS_NINJA` to
+select specific installations.
 
 On Debian or Ubuntu, install the native development packages:
 
@@ -473,11 +480,12 @@ Visual Studio-bundled Ninja executable. Its `windows-clang-ninja` preset builds
 in `build-ninja` using 12 parallel jobs; the original NMake `build-ode`
 directory remains untouched. The first Ninja build compiles from scratch, while
 subsequent builds recompile only changed sources. For a manual NMake configure
-from `cmd.exe`:
+from `cmd.exe`, the helper's environment variables and preset paths can be
+overridden before invoking it:
 
 ```bat
 call windows_clang_env.bat
-cmake -S . -B build-ode -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+cmake -S . -B build-ode -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%OPENBUS_VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake"
 cmake --build build-ode --target OpenBus
 ```
 
@@ -487,7 +495,7 @@ when using a toolchain that does not support IPO:
 
 ```bat
 call windows_clang_env.bat
-cmake -S . -B build-ode -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DOPENBUS_ENABLE_IPO=OFF
+cmake -S . -B build-ode -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%OPENBUS_VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake" -DOPENBUS_ENABLE_IPO=OFF
 ```
 
 On Linux, use a native build directory and the provided shell helpers:
@@ -498,7 +506,8 @@ chmod +x run.sh profile.sh screenshot.sh convert.sh
 ```
 
 The helpers use `build-linux` by default. Set `BUILD_DIR` to choose another
-build directory, and set `OPENBUS_VEHICLE=e400` to run the E400 model.
+build directory. Set `OPENBUS_BUS_CONFIG` to the OMSI-relative bus configuration
+path to select a vehicle.
 
 ## Running all test probes
 
@@ -509,6 +518,10 @@ On Windows, run `test.bat`, or select **Tasks: Run Test Task** in VS Code and
 choose **Build and run all probes**. The helper configures the
 `windows-clang-ninja` preset, builds all test probes, and runs the full CTest
 suite with failure output. Build or test failures return a nonzero exit code.
+The preset consumes the installation paths prepared by `windows_clang_env.bat`;
+use that helper in the same `cmd.exe` session before invoking CMake presets
+manually. You can override discovered installations with the environment
+variables listed above.
 
 For any configured build directory, the equivalent cross-platform command is:
 
@@ -526,11 +539,13 @@ preview is a developer tool, not part of the automated test suite.
 Install LLVM so `clang-tidy` is available on `PATH`, then run:
 
 ```powershell
-.\lint.bat -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+.\lint.bat -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 ```
 
 This uses the separate `build-lint` directory and enables the project’s
 `.clang-tidy` checks without changing the normal `build-ode` configuration.
+Additional CMake arguments are passed through and can override the helper's
+defaults.
 
 To format the project’s C++ files with `clang-format`, install LLVM and run:
 
@@ -541,7 +556,7 @@ To format the project’s C++ files with `clang-format`, install LLVM and run:
 Run the prototype:
 
 ```powershell
-.\build-ode\Release\OpenBus.exe
+.\build-ode\OpenBus.exe
 ```
 
 The executable opens a simple OpenGL preview window while the physics runs at
@@ -574,13 +589,15 @@ invalid invocation/root path.
 ### Optional binary mesh bundle
 
 To reduce startup parsing and file-open overhead, generate an `.obx` bundle
-from converted OBJ meshes:
+from converted OBJ meshes. The wrapper configures and builds the bundle tool
+in `build-ninja`; its arguments are the model root and optional output path:
 
 ```powershell
-.\build-ode\Release\obj_bundle.exe MAN_DL05\Model\DL05_obj build-ode\DL05.obx
+.\bundle.bat MAN_DL05\Model\DL05_obj
 ```
 
-Copy or rename the resulting file to `openbus.obx` beside the model's
+`bundle.bat` configures/builds `obj_bundle` in `build-ninja` and passes the
+arguments to it. Copy or rename the resulting file to `openbus.obx` beside the model's
 converted meshes. OpenBus uses matching bundle entries when available and
 falls back to OBJ files for missing entries, so the bundle is optional.
 The model CFG still controls mesh order, visibility, animations, and material
@@ -830,13 +847,14 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   `OPENBUS_TRACE_MIN_US=5` to omit scopes shorter than five microseconds;
   values below `1` are treated as `1`.
 - Optional texture downscaling: set `OPENBUS_TEXTURE_SCALE=0.5` before
-  launching to upload half-resolution textures; valid range is `0.25`-`1.0`
-  JPEG files. To create BC3 DDS siblings with AMD Compressonator, run
-  `.\convert_textures.ps1 -Compressonator C:\path\to\CompressonatorCLI.exe`.
-  selection, and sorted opaque/transparent batches to reduce off-screen work
-  and state churn. Set `OPENBUS_FRUSTUM_CULLING=0` to disable culling for
-  debugging. Opaque parts are front-to-back and transparent parts
-  back-to-front; this is not hardware occlusion-query culling.
+  launching to upload half-resolution textures; valid range is `0.25`-`1.0`.
+  OpenBus does not include a texture-conversion helper; create BC3 DDS files
+  with your preferred compatible tool if needed.
+- Mesh rendering uses frustum selection and sorted opaque/transparent batches
+  to reduce off-screen work and state churn. Set `OPENBUS_FRUSTUM_CULLING=0`
+  to disable culling for debugging. Opaque parts are front-to-back and
+  transparent parts back-to-front; this is not hardware occlusion-query
+  culling.
 - Set `OPENBUS_WHEELS_FROM_ODE=1` to bypass wheel `newanim` transforms and
   place each wheel from its matching ODE body pose. The default is `0`.
 - Doppler pitch shifting is disabled by default. Set `OPENBUS_DOPPLER=1` (also
@@ -970,6 +988,20 @@ are enabled only when every actor's route provably cannot fail to sample. Otherw
 so a malformed route still raises the same exception at the same update. The probe's
 malformed-route checks guard this behaviour.
 
+## Loading benchmark
+
+`benchmark_loading.ps1` runs the existing `build-ninja\OpenBus.exe` by default,
+with `OPENBUS_BUS_CONFIG` set to MAN DL05 and benchmark mode enabled. Close the
+application after each run finishes loading. It records the existing object-load
+completion marker only; texture completion has no runtime marker. Per-run logs,
+optional traces, and CSV results are kept under `render-benchmark-results`.
+Use `-BuildDirectory`, `-BusConfig`, `-Map`, and `-Runs` to select the build,
+vehicle, map, and sample count. The benchmark disables map and external AI
+populations so the object-load measurement belongs to the selected bus. For
+`-EnableTrace`, configure and build the `windows-clang-benchmark` preset; the
+script rejects builds without tracing instrumentation and verifies that a trace
+file was written.
+
 ## Repeatable render benchmark
 
 Run `benchmark_rendering.bat` to build an isolated Release executable
@@ -981,10 +1013,9 @@ seeded order; use `--runs 1` for a quick check or `--seed N` to change the order
 After building, the Python runner can also be launched directly with
 `python benchmark_rendering.py`. Each run measures baseline rendering,
 user-facing camera cycling, third-person zoom, driving controls, and dashboard
-interaction. Benchmark mode creates a hidden GLFW window, uses a fixed 60 Hz
-simulation step, and disables VSync. Hiding the window may avoid OS work-area
-constraints; actual dimensions are checked and mismatched runs are skipped before
-warm-up and measurement.
+interaction. Benchmark mode currently creates a visible GLFW window, uses a
+fixed 60 Hz simulation step, and disables VSync. Actual dimensions are checked
+and mismatched runs are skipped before warm-up and measurement.
 Normal simulator launches remain visible and retain the standard `build-ode`
 build and `profile.bat` settings.
 

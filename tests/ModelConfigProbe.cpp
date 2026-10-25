@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 int main() {
     const std::filesystem::path root =
@@ -669,6 +670,41 @@ int main() {
         result.parts[0].materialStatesInOrder[0].textureChanges[0].activationVariable !=
             "cockpit_lights" || !sceneryResult.absoluteHeight) {
         std::cerr << "model texture records were not retained and bound\n";
+        return 1;
+    }
+
+    ModelConfig jsonConfig;
+    jsonConfig.diagnostics.entries.emplace_back();
+    jsonConfig.diagnostics.entries.back().message.reserve(0x20);
+    for (unsigned char character = 0; character < 0x20U; ++character) {
+        jsonConfig.diagnostics.entries.back().message.push_back(static_cast<char>(character));
+    }
+    std::ostringstream jsonOutput;
+    writeModelConfigurationJson(jsonOutput, "model.cfg", jsonConfig);
+    std::string escapedControlCharacters;
+    for (unsigned char character = 0; character < 0x20U; ++character) {
+        switch (character) {
+        case '\n':
+            escapedControlCharacters += "\\n";
+            break;
+        case '\r':
+            escapedControlCharacters += "\\r";
+            break;
+        case '\t':
+            escapedControlCharacters += "\\t";
+            break;
+        default: {
+            constexpr char hex[] = "0123456789abcdef";
+            escapedControlCharacters += "\\u00";
+            escapedControlCharacters += hex[character >> 4U];
+            escapedControlCharacters += hex[character & 0x0fU];
+            break;
+        }
+        }
+    }
+    if (jsonOutput.str().find("\"message\":\"" + escapedControlCharacters + "\"") ==
+        std::string::npos) {
+        std::cerr << "model configuration JSON did not escape all control characters\n";
         return 1;
     }
     return 0;

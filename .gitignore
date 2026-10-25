@@ -5,6 +5,8 @@ __pycache__/
 *.log
 *_configuration.json
 *_trace.json
+openbus_trace*.json
+uno3d_trace*.json
 
 build*
 

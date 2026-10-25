@@ -12,8 +12,9 @@ OMSI compatibility.
 ## Executive summary
 
 This review records unresolved implementation defects, compatibility limitations, and
-architectural/performance risks. The latest recorded Windows Clang Release validation passed
-all **63 of 63 configured CTest probes serially**.
+architectural/performance risks. The Windows Clang Release full-suite validation passed all
+**64 of 64** configured CTest probes serially, including serializer and benchmark-statistics
+probes.
 
 The highest-priority remaining work is:
 
@@ -23,7 +24,7 @@ The highest-priority remaining work is:
 | Medium | Texture fallback cost | DXT5 fallback rereads and decodes textures on the render thread; dedicated fallback coverage is incomplete. |
 | Medium | Memory residency | Asset caches retain CPU payloads and GPU resources without a byte-based residency policy. |
 | Medium | Map scalability | Newly active tiles are loaded synchronously and retained; activation scans retained scenery/script state, while global parsed map/placement data remains CPU-resident. |
-| Medium | Build/docs verification | Model-JSON serializer coverage and clean Linux validation remain absent; several helper/setup instructions are still stale. |
+| Medium | Build verification | Clean Linux validation remains outstanding. |
 
 Findings below distinguish confirmed defects from architectural scaling risks. The full
 configured CTest suite includes material-rendering and compute-culling GPU probes, but no
@@ -45,125 +46,6 @@ advertised Linux build path therefore remain unverified.
 
 **Follow-up:** Validate the native Lua headers/library pairing with a clean Linux configure,
 build, and CTest run.
-
-### Medium priority
-
-#### 2. Model-config JSON does not escape every control character
-
-**Location:** `src/config/ModelConfigJson.cpp` (`writeJsonString`).
-
-Quotes, backslashes, newline, carriage return, and tab are escaped, but other bytes below
-`0x20` are written raw. A configuration string containing one of those bytes produces invalid
-JSON.
-
-**Suggested fix:** Encode every remaining control byte as `\u00XX` and add serializer tests
-covering the full control-byte range.
-
-#### 3. Loading benchmark is out of sync with the runtime and can misreport results
-
-**Locations:** `benchmark_loading.ps1` (executable path, per-run log removal, environment setup
-and cleanup, `Get-MedianMs`); `CMakePresets.json` (NMake generator); `src/app/RenderLoop.cpp`
-(current load-completion logging).
-
-The benchmark expects `build-ode\Release\OpenBus.exe`, but the documented Windows preset uses
-single-configuration NMake, which writes `build-ode\OpenBus.exe`; the current workspace has the
-latter and not the former. Fixing that path alone is insufficient: the script requires an
-`All textures loaded.` log marker that the current source does not emit, and sets
-`OPENBUS_VEHICLE`, which the current application no longer reads.
-
-`Get-MedianMs` casts `Count / 2` to `[int]`, which rounds rather than floors in PowerShell.
-The isolated calculation for `[1, 2, 3]` selects index 2 and returns 3 instead of the median 2.
-Three- and seven-sample runs select the element above the median; one- and five-sample runs
-select the correct index because of ties-to-even rounding. Some odd run counts therefore
-report the wrong statistic even after the launch/logging issues are fixed.
-
-Each run also deletes the repository's `game.log`, and the script removes/overwrites
-caller-provided `OPENBUS_*` values instead of restoring them. An exception can skip cleanup.
-
-**Suggested fix:** Derive the executable path from the configured build or use the actual
-single-config output path; use supported configuration selectors and explicit readiness
-metrics. Floor the median index and test empty, one-, three-, five-, and even-sized samples.
-Write each run to an isolated working/output directory, check exit/readiness status, and
-snapshot/restore environment variables in `try/finally`.
-
-#### 4. Windows setup instructions omit the required OpenAL vcpkg port
-
-**Locations:** `CMakeLists.txt` (`find_package(OpenAL CONFIG REQUIRED)`);
-`README.md` (Windows vcpkg and Debian/Ubuntu prerequisites).
-
-The Debian/Ubuntu package list includes `libopenal-dev`, but the Windows vcpkg command installs
-ODE, GLFW, and zlib without OpenAL. Since configure requires `OpenAL::OpenAL`, a clean Windows
-vcpkg setup following the README may fail before building.
-
-**Suggested fix:** Add the OpenAL vcpkg port to the Windows setup instructions and verify from
-a clean configure.
-
-#### 5. Windows build helpers and presets are tied to one machine's paths
-
-**Locations:** `windows_clang_env.bat`, `CMakePresets.json`, and `lint.bat`.
-
-LLVM, MSVC, Windows SDK, and vcpkg locations/versions are hard-coded. The environment helper
-overwrites `OPENBUS_CLANG_BIN` before checking it, so its instruction to set that variable does
-not work. `lint.bat` checks the default `C:\vcpkg` path before forwarded arguments can supply an
-alternative toolchain. Separately, the README says CMake 3.20 is sufficient, but preset schema
-version 3 requires CMake 3.21 or newer.
-
-**Suggested fix:** Respect caller-provided paths and discover or document supported toolchain
-versions. Honor the lint script's custom toolchain argument, and align the CMake minimum with
-the preset schema or lower the schema version.
-
-#### 6. Some build helpers assume the caller's working directory is the repository root
-
-**Location:** `profile.bat` (`cmake -S .` and relative build paths).
-
-`profile.bat` calls `cmake -S .` without first switching to `%~dp0`. Invoking it by absolute
-path from another current directory makes CMake configure the wrong source tree or fail.
-**Suggested fix:** `pushd` to `%~dp0` before project-relative commands and `popd` on all exit
-paths.
-
-### Low priority
-
-#### 7. `stb` is fetched from a mutable branch
-
-**Location:** `CMakeLists.txt` (`FetchContent_Declare(stb)`).
-
-`GIT_TAG master` allows identical source revisions to fetch different dependency contents over
-time, reducing build reproducibility.
-
-**Suggested fix:** Pin a reviewed release or immutable commit hash and update it deliberately.
-
-#### 8. README examples and runtime instructions are stale
-
-**Locations:** `README.md`, `Docs/OMSI_CFG_GENERAL_REFERENCE.md`,
-`Docs/OMSI2_MAP_FORMAT_REFERENCE.md`, and the current helper scripts.
-
-The README still documents a missing `convert_textures.ps1` and claims the
-render-benchmark window is hidden even though `RenderLoop` requests `GLFW_VISIBLE=GLFW_TRUE`.
-These remaining tool instructions are directly reproducible.
-
-**Suggested fix:** Remove or implement the missing conversion command and report benchmark
-window visibility accurately. Keep supported, parsed-only, and visually/contact-validated
-features distinct.
-
-#### 9. Generated trace artifact is not covered by the ignore rule
-
-**Location:** `.gitignore` (exact-name trace exclusions).
-
-`.gitignore` excludes exact trace filenames, not copied/variant trace names, so a broad
-`git add` can stage large generated artifacts.
-
-**Suggested fix:** Keep generated traces outside the repository or add a suitable trace-file
-pattern to `.gitignore` without excluding intentional JSON fixtures/configuration.
-
-#### 10. `bundle.bat` is an empty no-op
-
-**Location:** `bundle.bat`.
-
-The repository documents an `obj_bundle` target, but the checked-in batch helper is empty and
-silently does nothing.
-
-**Suggested fix:** Implement the wrapper with checked build/run steps or remove the misleading
-empty helper.
 
 ## Compatibility limitations
 
@@ -289,19 +171,7 @@ comparison.
 Reuse decoded payloads or move fallback decoding off-thread where ownership and upload ordering
 permit.
 
-### P5. Medium: Static primitive buffer registry has no explicit lifetime contract
-
-**Locations:** `src/render/CoreRenderer.cpp` (`StaticPrimitiveBuffer` registration and
-`drawStaticPrimitives`).
-
-The registry retains raw pointers to caller-owned buffers, so callers must keep each buffer
-alive until renderer teardown. The lifetime requirement is not encoded in the API, making
-independent caller/resource teardown unsafe.
-
-**Recommendation:** Document and enforce the ownership contract or replace raw registration
-with an owning/RAII handle before allowing independent resource removal.
-
-### P6. Medium: Rendered scenery and collision use different placement semantics
+### P5. Medium: Rendered scenery and collision use different placement semantics
 
 **Locations:** `src/map/MapCollisionBuilder.cpp` (`tile.sceneryObjects` loop,
 `transformSceneryVertex`); `src/render/map/MapSceneTiles.cpp`
@@ -344,7 +214,7 @@ ECS/backend migration.
 ## Validation scope
 
 The recorded `build-ninja` Windows Clang Release build succeeded, and
-`ctest --test-dir build-ninja --output-on-failure -j 1` passed **63 of 63** tests. This does
+`ctest --test-dir build-ninja --output-on-failure -j 1` passed **64 of 64** tests. This does
 not include a Linux build, sanitizer run, fresh dependency setup, loading/render benchmark, or
 memory profile. The focused GPU probes do not validate full application/map-streaming
 behavior, live in-game contact/render parity, or acceptable frame latency.

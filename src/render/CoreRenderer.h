@@ -22,11 +22,12 @@ struct PrimitiveVertex {
     float b;
 };
 
-// Renderer-owned GL storage for cached primitive vertices; shutdown resets the cache.
+// Renderer-owned GL storage for cached primitive vertices.
 struct StaticPrimitiveBuffer {
     GLuint buffer = 0;
     std::size_t vertexCount = 0;
     std::uint64_t contentRevision = 0;
+    std::uint64_t rendererGeneration = 0;
 
     bool requiresUpload(std::size_t requestedVertexCount,
                         std::uint64_t requestedContentRevision) const noexcept {

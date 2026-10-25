@@ -174,7 +174,8 @@ GLuint textureQuadProgram = 0;
 GLuint modelVertexArray = 0;
 GLuint primitiveVertexArray = 0;
 GLuint primitiveBuffer = 0;
-std::vector<StaticPrimitiveBuffer*> staticPrimitiveBuffers;
+std::vector<GLuint> staticPrimitiveBuffers;
+std::uint64_t rendererGeneration = 0;
 GLuint textureQuadVertexArray = 0;
 GLuint textureQuadBuffer = 0;
 Uniforms modelUniforms;
@@ -1199,6 +1200,10 @@ bool initializeCoreRenderer() {
         currentTextureUnit = GL_TEXTURE0;
         boundTexture2D.fill(0);
         boundTextureArray.fill(0);
+        ++rendererGeneration;
+        if (rendererGeneration == 0) {
+            ++rendererGeneration;
+        }
         const char* cullingBackend = openbus::getEnvironment("OPENBUS_CULLING_BACKEND");
         initializeComputeCulling(
             computeCullingRequested(cullingBackend != nullptr ? std::string_view(cullingBackend)
@@ -1221,14 +1226,9 @@ void shutdownCoreRenderer() {
     currentTextureUnit = GL_TEXTURE0;
     boundTexture2D.fill(0);
     boundTextureArray.fill(0);
-    for (StaticPrimitiveBuffer* cache : staticPrimitiveBuffers) {
-        if (cache == nullptr) {
-            continue;
-        }
-        if (cache->buffer != 0) {
-            pglDeleteBuffers(1, &cache->buffer);
-        }
-        *cache = {};
+    if (!staticPrimitiveBuffers.empty()) {
+        pglDeleteBuffers(static_cast<GLsizei>(staticPrimitiveBuffers.size()),
+                         staticPrimitiveBuffers.data());
     }
     staticPrimitiveBuffers.clear();
     if (primitiveBuffer != 0) {
@@ -1546,6 +1546,10 @@ void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
     if (primitiveProgram == 0 || vertices.empty()) {
         return;
     }
+    if (cache.rendererGeneration != rendererGeneration) {
+        cache = {};
+        cache.rendererGeneration = rendererGeneration;
+    }
     useProgram(primitiveProgram);
     uploadMatrices(primitiveUniforms);
     const bool needsUpload = cache.requiresUpload(vertices.size(), contentRevision);
@@ -1554,7 +1558,7 @@ void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
         if (cache.buffer == 0) {
             return;
         }
-        staticPrimitiveBuffers.push_back(&cache);
+        staticPrimitiveBuffers.push_back(cache.buffer);
     }
     if (currentVertexArray != primitiveVertexArray) {
         pglBindVertexArray(primitiveVertexArray);

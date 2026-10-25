@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 
 project(OpenBus VERSION 0.1.0 LANGUAGES CXX)
 
@@ -109,7 +109,7 @@ endif()
 
 FetchContent_Declare(stb
     GIT_REPOSITORY https://github.com/nothings/stb.git
-    GIT_TAG master
+    GIT_TAG 003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5
 )
 FetchContent_GetProperties(stb)
 if(NOT stb_POPULATED)
