@@ -228,8 +228,10 @@ close. A vehicle can continue when its next swept step increases separation
 from an external obstacle, so a pedestrian close behind does not hold it in
 place while it moves away. Once a vehicle is committed to a junction, the
 swept collision margin is reduced while still preventing physical footprint
-overlap, allowing close but clear turning paths to proceed. Vehicles in the
-same lane, moving or stopped, are followed with a damped
+overlap. All committed vehicle turns use a 0.15 m clearance from external
+vehicle footprints instead of the normal 0.5 m, allowing close, collision-free turns
+when the configured bounding boxes are conservative. Vehicles in the same lane,
+moving or stopped, are followed with a damped
 gap model instead of being treated as parked obstacles, so a queue keeps flowing
 through a junction behind a moving leader and creeps up behind a stopped one. Before entering a junction, a vehicle claims it
 and waits at the entry line while any vehicle inside or already admitted would
@@ -722,17 +724,23 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Press `F2` to show traffic paths in the active map tiles, including authored
   lane offsets and scenery-object junction paths. SCO `[path]` records are
   tessellated as local spline segments from their position, heading, radius,
-  and length fields. Road/AI paths are cyan and human paths are magenta. Orange
-  squares mark unconnected directed starts, and orange Xs mark unconnected
+  and length fields. Road paths are colored by priority (0 purple, 64 blue,
+  128 green, 192 yellow, and 255 red), with a matching F2 legend; human paths
+  are magenta. Orange squares mark unconnected directed starts; red Xs mark unconnected
   directed ends. Connected endpoints have no marker: they have reciprocal links
   or a matching map or scenery path endpoint within 0.5 m horizontally and
   vertically. Matching endpoints are joined in the overlay with a short colored
   connector when a visible gap remains; this does not change AI route connectivity.
+  Traffic-light phase, cycle, control-point, and bus priority diagnostics appear
+  in an ImGui panel while F2 is active. The top-left ImGui status panel shows the
+  simulation date and time to the second, along with player coordinates and
+  map/traffic statistics.
   Signalized road paths show a stopline across the authored path width, placed
-  0.75 m before the controlled path entry (the AI stopping boundary). A nearby
-  billboard lists junction/object ID (`J`), path (`P`), light (`L`), current
-  phase (`PH`), controller clock (`T`), cycle and each phase/duration (`C`/`S`),
-  conditional stop control points (`CP`), and bus-priority rules (`BP`).
+  0.75 m before the controlled path entry (the AI stopping boundary). The ImGui
+  traffic-light panel lists junction/object ID (`J`), path (`P`), light (`L`),
+  current phase (`PH`), controller clock (`T`), cycle and each phase/duration
+  (`C`/`S`), conditional stop control points (`CP`), and bus-priority rules
+  (`BP`).
   Signal stoplines are red for stop phases, amber for changeover phases, and
   green for permissive phases. Editor-only junction controller records remain
   included in this diagnostic overlay.

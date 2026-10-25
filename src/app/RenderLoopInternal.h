@@ -4,7 +4,6 @@
 
 #include "app/RenderLoop.h"
 #include "app/ScriptTickScheduler.h"
-#include "app/StatusHud.h"
 #include "app/vehicle/Vehicle.h"
 #include "input/VehicleKeyBindings.h"
 

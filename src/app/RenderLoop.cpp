@@ -155,29 +155,6 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         throw std::runtime_error("Failed to initialize core OpenGL renderer");
     }
     imguiLayer_ = std::make_unique<ImGuiLayer>(window_);
-    pglActiveTexture(GL_TEXTURE0);
-    glGenTextures(1, &statusHudTexture_);
-    if (statusHudTexture_ != 0) {
-        glBindTexture(GL_TEXTURE_2D, statusHudTexture_);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        const std::vector<std::uint8_t> initialPixels =
-            makeStatusHudPixels("TIME 12:00 X 0.0 Y 0.0 Z 0.0\n"
-                                "CHUNKS 0/0 TERRAIN 0/0 OBJECTS 0/0\n"
-                                "ROADS 0/0 COLLISION TILES 0 AI VEHICLES 0");
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, STATUS_HUD_TEXTURE_WIDTH, STATUS_HUD_TEXTURE_HEIGHT,
-                     0, GL_RGBA, GL_UNSIGNED_BYTE, initialPixels.data());
-        openbus::rendering::invalidateTextureBindings();
-        if (glGetError() != GL_NO_ERROR) {
-            glDeleteTextures(1, &statusHudTexture_);
-            statusHudTexture_ = 0;
-            gameLog.Log("Status HUD texture initialization failed");
-        }
-    } else {
-        gameLog.Log("Status HUD texture could not be allocated");
-    }
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.45f, 0.65f, 0.88f, 1.0f);
     gameLog.Log("RenderLoop initialized");
@@ -208,11 +185,6 @@ RenderLoop::~RenderLoop() {
     assetRequestManager_->join();
     vehicles_.clear();
     Vehicle::clearSharedDisplayCache();
-    if (statusHudTexture_ != 0) {
-        glDeleteTextures(1, &statusHudTexture_);
-        statusHudTexture_ = 0;
-        openbus::rendering::invalidateTextureBindings();
-    }
     openbus::rendering::shutdownCoreRenderer();
     assetRequestManager_.reset();
 

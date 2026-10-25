@@ -69,11 +69,6 @@ struct StartupSelection {
     double timeSeconds = 0.0;
 };
 
-struct TrafficSplinePriorityLabel {
-    std::array<double, 3> anchor = {};
-    std::vector<std::string> lines;
-};
-
 class RenderLoop {
   public:
     RenderLoop(int width, int height, const char* title);
@@ -265,7 +260,6 @@ class RenderLoop {
     double trafficSplineDebugOriginX_ = 0.0;
     double trafficSplineDebugOriginY_ = 0.0;
     std::vector<std::pair<int, int>> trafficSplineDebugTiles_;
-    std::vector<TrafficSplinePriorityLabel> trafficSplinePriorityLabels_;
     std::uint64_t trafficSplineDebugRevision_ = 0;
     bool collisionWireframeBuilt_ = false;
     std::uint64_t collisionWireframeRevision_ = 0;
@@ -309,8 +303,6 @@ class RenderLoop {
     double droppedScriptTimeSinceDiagnostic_ = 0.0;
     int framebufferWidth_ = 1;
     int framebufferHeight_ = 1;
-    unsigned int statusHudTexture_ = 0;
-    std::string statusHudText_;
     openbus::rendering::StaticPrimitiveBuffer collisionWireframeBuffer_;
     std::vector<openbus::rendering::PrimitiveVertex> collisionWireframeVertices_;
     openbus::rendering::StaticPrimitiveBuffer trafficSplineDebugBuffer_;

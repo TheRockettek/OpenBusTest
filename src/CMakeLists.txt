@@ -171,7 +171,6 @@ add_executable(OpenBus
     app/RenderLoopInput.cpp
     app/RenderLoopSimulation.cpp
     app/RenderLoopSetup.cpp
-    app/StatusHud.cpp
     app/main.cpp
     app/vehicle/Vehicle.cpp
     app/vehicle/VehicleAnimation.cpp

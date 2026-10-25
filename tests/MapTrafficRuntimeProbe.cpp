@@ -1322,6 +1322,32 @@ void verifyDrivingBehavior() {
         route.totalLength = 86.0;
         return route;
     };
+    MapTrafficRoute turningBusRoute;
+    MapTrafficRouteSegment turningBusJunction;
+    turningBusJunction.points = {{0.0, 0.0, 0.0}, {0.0, 4.0, 0.0}};
+    turningBusRoute.segments = {straight(1590, 0.0, -20.0, 0.0, 20.0),
+                                turningBusJunction, straight(1591, 0.0, 4.0, 90.0, 30.0)};
+    turningBusRoute.cumulativeEndDistances = {20.0, 24.0, 54.0};
+    turningBusRoute.totalLength = 54.0;
+    auto turningBus =
+        makeMapTrafficActor(turningBusRoute, "turning-bus.ovh", 8.0, 0.0, false);
+    turningBus.isBus = true;
+    turningBus.distanceMeters = 22.5;
+    auto turningCar =
+        makeMapTrafficActor(turningBusRoute, "turning-car.ovh", 8.0, 0.0, false);
+    turningCar.distanceMeters = 22.5;
+    const MapTrafficObstacle nearbyVehicle{{{3.7, 6.4, 0.0}, std::numbers::pi / 2.0, 0},
+                                           2.5, 2.5};
+    for (int frame = 0; frame < 80; ++frame) {
+        advanceMapTrafficDriving({&turningBus}, {nearbyVehicle}, 0.1);
+        advanceMapTrafficDriving({&turningCar}, {nearbyVehicle}, 0.1);
+        require(mapTrafficHasClearance(footprint(turningBus), {nearbyVehicle}, 0.0) &&
+                    mapTrafficHasClearance(footprint(turningCar), {nearbyVehicle}, 0.0),
+                "vehicle-box leeway never permits actual footprint overlap");
+    }
+    require(turningBus.distanceMeters > 27.5 && turningCar.distanceMeters > 27.5,
+            "committed bus and car turns tolerate small vehicle-box clearance");
+
     auto longJunctionRoute = throughJunction(1600, 0.0, -40.0, 0.0, 0.0, 1.0);
     longJunctionRoute.segments[1].points = {{0.0, -6.0, 0.0}, {0.0, 194.0, 0.0}};
     longJunctionRoute.segments[2] = straight(1602, 0.0, 194.0, 0.0, 40.0);

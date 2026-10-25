@@ -3841,6 +3841,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
     constexpr double parkedVehicleFollowingGapMeters = 1.0;
     constexpr double junctionCheckSectionLengthMeters = 10.0;
     constexpr double trafficVerticalClearanceMeters = 3.0;
+    constexpr double turningObstacleClearanceMeters = 0.15;
     // A short margin beyond the vehicles' predicted physical occupancy at a conflict.
     constexpr double priorityGapSeconds = 0.75;
     const auto trafficFootprintsOverlap = [](const MapTrafficObstacle& first,
@@ -5014,7 +5015,10 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         bothOnJunction || otherYieldsToCommittedActor ? 0.1 : clearance;
                     const MapTrafficObstacle& candidateFootprint =
                         otherActor == nullptr ? physicalFootprint : footprint;
-                    const double candidateClearance = otherActor == nullptr ? 0.5 : pairClearance;
+                    const double candidateClearance =
+                        otherActor == nullptr
+                            ? (committedJunctionMovement ? turningObstacleClearanceMeters : 0.5)
+                            : pairClearance;
                     if (!trafficFootprintsOverlap(candidateFootprint, occupied[other],
                                                   candidateClearance)) {
                         return false;
