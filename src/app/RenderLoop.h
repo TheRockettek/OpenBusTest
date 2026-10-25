@@ -9,6 +9,7 @@
 #include "render/HumanGait.h"
 #include "audio/SoundEngine.h"
 #include "config/VehicleConfigLoader.h"
+#include "config/VehicleCatalog.h"
 #include "core/Viewpoint.h"
 #include "core/Variables.h"
 #include "physics/BusSimulation.h"
@@ -77,14 +78,20 @@ struct RenderBenchmarkInput {
 struct StartupSelection {
     std::filesystem::path mapDirectory;
     openbus::map::MapDefinition mapDefinition;
-    std::filesystem::path vehicleConfigPath;
+    std::filesystem::path initialSimulationBusConfigPath;
+    std::vector<std::filesystem::path> simulationBusConfigCandidates;
     VehicleSetupOptions vehicleSetup;
-    bool startInBus = false;
     std::size_t spawnEntryPoint = 0;
     int year = 0;
     int month = 0;
     int day = 0;
     double timeSeconds = 0.0;
+};
+
+struct SpawnBusRequest {
+    std::filesystem::path configurationPath;
+    VehiclePlacement placement;
+    VehicleSetupOptions setupOptions;
 };
 
 class RenderLoop {
@@ -175,7 +182,7 @@ class RenderLoop {
     void SetPlayerVehicle(Vehicle* vehicle);
     bool runStartupMenu(const std::filesystem::path& omsiRoot, StartupSelection& selection);
     void SetNoBusSpawnPoint(const VehiclePlacement& placement);
-    bool consumeSpawnBusRequest();
+    std::optional<SpawnBusRequest> consumeSpawnBusRequest();
     void SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
                 std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot,
                 bool prepareInitialWindowAsync = false);
@@ -195,6 +202,7 @@ class RenderLoop {
     bool consumeCaptureRequest();
     bool consumeRaisePlayerRequest();
     bool isCaptureReady() const;
+    void SetSpawnBusError(std::string error);
     double throttle() const;
     double steering() const;
     double brake() const;
@@ -216,11 +224,26 @@ class RenderLoop {
     double currentFieldOfView() const;
     void renderReflectionViews(const BusSimulation& simulation);
     void drawOnFootUi();
+    void loadMapVehicleOptions();
 
     GLFWwindow* window_;
     std::unique_ptr<ImGuiLayer> imguiLayer_;
     bool imguiEnabled_ = false;
     bool spawnBusRequestPending_ = false;
+    std::string spawnBusError_;
+    std::vector<openbus::config::VehicleCatalogEntry> vehicleCatalog_;
+    std::filesystem::path vehiclesDirectory_;
+    std::size_t selectedMapVehicleIndex_ = 0;
+    std::optional<std::size_t> loadedMapVehicleIndex_;
+    std::optional<VehicleConfig> mapVehicleConfig_;
+    std::vector<openbus::config::VehicleAppearance> mapVehicleAppearances_;
+    std::vector<openbus::config::VehicleDepot> mapVehicleDepots_;
+    std::size_t selectedMapAppearanceIndex_ = 0;
+    std::size_t selectedMapDepotIndex_ = 0;
+    std::size_t selectedMapRegistrationIndex_ = 0;
+    std::array<char, 256> mapRegistrationInput_{};
+    std::array<char, 256> mapVehicleNumberInput_{};
+    std::string mapVehicleLoadError_;
     double cameraYaw_ = -2.3;
     double cameraPitch_ = 0.45;
     double fieldOfViewOffset_ = 0.0;
@@ -337,6 +360,7 @@ class RenderLoop {
     std::array<int, 4> viewport_ = {0, 0, 1, 1};
     double scriptRateHz_ = 0.0;
     double scriptAccumulator_ = 0.0;
+    double aiScriptAccumulator_ = 0.0;
     double steeringSmoothingRate_ = 0.0;
     bool steeringSmoothingOverride_ = false;
     double smoothedSteering_ = 0.0;
@@ -418,6 +442,7 @@ class RenderLoop {
     double aiSimulationRateHz_ = 0.0;
     double aiMaximumRateHz_ = 0.0;
     double aiRateDivisor_ = 1.0;
+    double trafficWorkerInputAccumulatorSeconds_ = 0.0;
     double currentAiSimulationRateHz_ = 0.0;
     double currentAiWorkerTickMilliseconds_ = 0.0;
     std::unique_ptr<openbus::app::MapTrafficWorker> trafficWorker_;
@@ -425,6 +450,7 @@ class RenderLoop {
     void updateTrafficDriving(const BusSimulation& simulation, double elapsedSeconds);
     struct HumanTrafficState {
         openbus::map::MapTrafficActor actor;
+        std::shared_ptr<const openbus::map::MapTrafficActor> workerActorTemplate;
         double feetDistanceMeters = 0.2;
         double heightMeters = 1.7;
         double walkStrideLengthMeters = 1.4;

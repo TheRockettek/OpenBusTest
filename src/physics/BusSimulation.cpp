@@ -94,6 +94,7 @@ std::uint64_t mapTileKey(int tileX, int tileY) {
 class OdeRuntime {
   public:
     OdeRuntime() {
+        openbus::rendering::TraceScope trace("physics", "BusSimulation::OdeRuntime.initialize");
         if (dInitODE2(0) == 0) {
             throw std::runtime_error("Failed to initialize ODE");
         }
@@ -307,6 +308,7 @@ struct BusSimulation::Impl {
 
     void addTerrainCollision(const TerrainCollisionGrid& terrain,
                              StreamedTileCollision* streamedTile = nullptr) {
+        openbus::rendering::TraceScope trace("physics", "BusSimulation::addTerrainCollision");
         if (terrain.intervals == 0 || terrain.intervals > 1024 ||
             !std::isfinite(terrain.tileSizeMeters) || terrain.tileSizeMeters <= 0.0) {
             throw std::invalid_argument("Map terrain grid has invalid dimensions");
@@ -385,6 +387,7 @@ struct BusSimulation::Impl {
 
     void addStaticCollision(StaticCollisionMesh mesh,
                             StreamedTileCollision* streamedTile = nullptr) {
+        openbus::rendering::TraceScope trace("physics", "BusSimulation::addStaticCollision");
         if (mesh.vertices.empty() && mesh.indices.empty()) {
             return;
         }
@@ -837,6 +840,7 @@ struct BusSimulation::Impl {
          WheelStaticContactSettings wheelContact)
         : wheelStaticContact(wheelContact), configuration(std::move(vehicle)),
           placement(vehiclePlacement), maxCatchUpSteps(catchUpSteps) {
+        openbus::rendering::TraceScope initializeTrace("physics", "BusSimulation::Impl.initialize");
         if (!std::isfinite(physicsHz) || physicsHz <= 0.0 || catchUpSteps <= 0) {
             simulationLog.Log("Invalid physics timing configuration");
             throw std::invalid_argument(
@@ -901,20 +905,30 @@ struct BusSimulation::Impl {
                               std::to_string(minimumMass) + " kg");
             configuration.mass = minimumMass;
         }
-        if (terrain.empty() && createDefaultGround) {
-            ground = dCreatePlane(ode.space, 0.0, 0.0, 1.0, groundPlaneZ);
-            for (const RoadBump& bump : defaultRoadBumps()) {
-                addRoadFeature(bump);
-            }
-        } else {
-            for (const TerrainCollisionGrid& tile : terrain) {
-                initialTerrainTileKeys.insert(mapTileKey(tile.tileX, tile.tileY));
-                addTerrainCollision(tile);
+        {
+            openbus::rendering::TraceScope terrainTrace(
+                "physics", "BusSimulation::Impl.initialize.terrainAndRoadCollision");
+            if (terrain.empty() && createDefaultGround) {
+                ground = dCreatePlane(ode.space, 0.0, 0.0, 1.0, groundPlaneZ);
+                for (const RoadBump& bump : defaultRoadBumps()) {
+                    addRoadFeature(bump);
+                }
+            } else {
+                for (const TerrainCollisionGrid& tile : terrain) {
+                    initialTerrainTileKeys.insert(mapTileKey(tile.tileX, tile.tileY));
+                    addTerrainCollision(tile);
+                }
             }
         }
-        for (StaticCollisionMesh& mesh : staticCollision) {
-            addStaticCollision(std::move(mesh));
+        {
+            openbus::rendering::TraceScope staticCollisionTrace(
+                "physics", "BusSimulation::Impl.initialize.staticCollision");
+            for (StaticCollisionMesh& mesh : staticCollision) {
+                addStaticCollision(std::move(mesh));
+            }
         }
+        openbus::rendering::TraceScope vehiclePhysicsTrace(
+            "physics", "BusSimulation::Impl.initialize.vehiclePhysics");
         chassis = dBodyCreate(ode.world);
         dMass mass;
         const dReal chassisMass =
@@ -1364,7 +1378,6 @@ BusSimulation::BusSimulation(BusConfiguration configuration, VehiclePlacement pl
     : impl_(std::make_unique<Impl>(std::move(configuration), placement, physicsHz, maxCatchUpSteps,
                                    groundPlaneZ, std::move(terrain), std::move(staticCollision),
                                    createDefaultGround, wheelStaticContact)) {
-    openbus::rendering::TraceScope trace("startup", "BusSimulation::BusSimulation");
     simulationLog.Log("Bus simulation started at " + std::to_string(physicsHz) + " Hz");
 }
 

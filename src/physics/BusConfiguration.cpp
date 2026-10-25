@@ -150,6 +150,8 @@ void fitWheelCollidersToModel(BusConfiguration& configuration, const ModelConfig
 
 BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
                                                 const ModelConfig& model) {
+    openbus::rendering::TraceScope trace("config",
+                                         "BusConfiguration::configurationFromVehicleConfig");
     const std::array<double, 6>& boundingBox =
         model.hasBoundingBox ? model.boundingBox : source.boundingBox;
 
@@ -181,6 +183,8 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
     fitWheelCollidersToModel(configuration, model);
 
     for (const ModelCollisionMesh& collisionMesh : model.collisionMeshes) {
+        openbus::rendering::TraceScope collisionMeshTrace(
+            "config", "BusConfiguration::configurationFromVehicleConfig.collisionMesh");
         if (collisionMesh.hasPart) {
             if (collisionMesh.partIndex >= model.parts.size()) {
                 throw std::runtime_error("Bus model collision mesh refers to an invalid mesh part");
@@ -396,7 +400,11 @@ BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath) {
 BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath,
                                       const std::filesystem::path& modelConfigPath) {
     openbus::rendering::TraceScope trace("config", "loadBusConfiguration.explicit");
-    VehicleConfig source = loadBusConfig(configPath);
+    VehicleConfig source;
+    {
+        openbus::rendering::TraceScope busConfigTrace("config", "loadBusConfiguration.busConfig");
+        source = loadBusConfig(configPath);
+    }
     for (const ConfigurationDiagnostic& diagnostic : source.diagnostics.entries) {
         if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error &&
             openbus::config::lower(diagnostic.keyword) == "rollwiderstand") {
@@ -432,8 +440,13 @@ BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath,
                                  configPath.string());
     }
     openbus::scripting::Vehicle variables;
-    const ModelConfig model = loadModelConfig(modelConfigPath, modelRootForConfig(modelConfigPath),
-                                              ModelConfigKind::Bus, variables);
+    ModelConfig model;
+    {
+        openbus::rendering::TraceScope modelConfigTrace("config",
+                                                        "loadBusConfiguration.modelConfig");
+        model = loadModelConfig(modelConfigPath, modelRootForConfig(modelConfigPath),
+                                ModelConfigKind::Bus, variables);
+    }
     if (model.diagnostics.hasErrors()) {
         for (const ConfigurationDiagnostic& diagnostic : model.diagnostics.entries) {
             if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error) {
@@ -444,6 +457,8 @@ BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath,
         }
     }
     applyModelSteering(source, model);
+    openbus::rendering::TraceScope conversionTrace("config",
+                                                   "loadBusConfiguration.physicsConversion");
     return configurationFromVehicleConfig(source, model);
 }
 

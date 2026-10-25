@@ -2168,6 +2168,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                 mapRenderer_ != nullptr ? mapRenderer_->renderStats()
                                         : openbus::rendering::MapRenderStats{};
             const std::size_t spawnedAiVehicleCount = trafficVehicleCount();
+            const std::size_t activeHumanCount = static_cast<std::size_t>(std::count_if(
+                humanTrafficActors_.begin(), humanTrafficActors_.end(),
+                [](const HumanTrafficState& human) { return human.populationEnabled; }));
             const SystemVariables& systemVariables = simulationState_.sharedVariables();
             const int year = static_cast<int>(systemVariables.get("year"));
             const int month = static_cast<int>(systemVariables.get("month"));
@@ -2189,9 +2192,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                        << '/' << mapStats.totalSceneryObjects << '\n'
                        << "ROADS " << mapStats.activeRoadBatches << '/' << mapStats.totalRoadBatches
                        << " COLLISION TILES " << simulation.loadedMapCollisionTileCount()
-                       << " AI VEHICLES " << spawnedAiVehicleCount << " AI " << std::fixed
-                       << std::setprecision(1) << currentAiSimulationRateHz_ << " HZ / "
-                       << currentAiWorkerTickMilliseconds_ << " MS";
+                       << " AI VEHICLES " << spawnedAiVehicleCount << " HUMANS " << activeHumanCount
+                       << " AI " << std::fixed << std::setprecision(1) << currentAiSimulationRateHz_
+                       << " HZ / " << currentAiWorkerTickMilliseconds_ << " MS";
             if (trafficSplineDebugOverlay_) {
                 std::size_t clearCount = 0;
                 std::size_t followingCount = 0;

@@ -529,6 +529,7 @@ struct Vehicle {
           assets(&manager), placement(configuredPlacement), modelOffsetZ(configuredModelOffsetZ),
           setupOptions(std::move(selectedSetupOptions)),
           wheelsFromOde(parseEnabledFlag(openbus::getEnvironment("OPENBUS_WHEELS_FROM_ODE"))) {
+        TraceScope constructionTrace("startup", "Vehicle::Vehicle.initialize");
         if (const char* scale = openbus::getEnvironment("OPENBUS_TEXTURE_SCALE")) {
             try {
                 textureScale = std::clamp(std::stod(scale), 0.25, 1.0);
@@ -648,25 +649,31 @@ struct Vehicle {
             vehicleConfiguration.hasOdometerInitial
                 ? std::max(0.0, vehicleConfiguration.odometerInitialKilometres) * 1000.0
                 : 0.0;
-        soundBank.load(soundConfigPathForVehicle(vehicleConfiguration, isAiVehicle));
+        {
+            TraceScope soundTrace("startup", "Vehicle::Vehicle.loadSoundBank");
+            soundBank.load(soundConfigPathForVehicle(vehicleConfiguration, isAiVehicle));
+        }
         aiDeltaHeight = isAiVehicle && vehicleConfiguration.hasAiDeltaHeight
                             ? vehicleConfiguration.aiDeltaHeight
                             : 0.0;
-        scripts = std::make_unique<ScriptRuntime>(
-            vehicleConfiguration, variables, simulationState,
-            [this, &soundEngine, &soundViewpoint](const std::string& name, const std::string& file,
-                                                  double controlValue) {
-                if (!soundEventsEnabled) {
-                    return;
-                }
-                if (file.empty() && !soundBank.hasTrigger(name) && name.size() > 4 &&
-                    name.compare(name.size() - 4, 4, "_off") == 0) {
-                    soundBank.stop(soundEngine, name.substr(0, name.size() - 4));
-                } else {
-                    soundBank.trigger(soundEngine, name, file, static_cast<float>(controlValue),
-                                      variables, soundViewpoint);
-                }
-            });
+        {
+            TraceScope scriptsTrace("startup", "Vehicle::Vehicle.createScriptRuntime");
+            scripts = std::make_unique<ScriptRuntime>(
+                vehicleConfiguration, variables, simulationState,
+                [this, &soundEngine, &soundViewpoint](
+                    const std::string& name, const std::string& file, double controlValue) {
+                    if (!soundEventsEnabled) {
+                        return;
+                    }
+                    if (file.empty() && !soundBank.hasTrigger(name) && name.size() > 4 &&
+                        name.compare(name.size() - 4, 4, "_off") == 0) {
+                        soundBank.stop(soundEngine, name.substr(0, name.size() - 4));
+                    } else {
+                        soundBank.trigger(soundEngine, name, file, static_cast<float>(controlValue),
+                                          variables, soundViewpoint);
+                    }
+                });
+        }
         for (const std::string& error : scripts->errors()) {
             gameLog.Log("Lua script error: " + error);
         }
@@ -700,13 +707,23 @@ struct Vehicle {
             }
             return;
         }
-        load(*definition);
-        scripts->initialize();
+        {
+            TraceScope definitionTrace("startup", "Vehicle::Vehicle.loadDefinition");
+            load(*definition);
+        }
+        {
+            TraceScope scriptsInitializeTrace("startup", "Vehicle::Vehicle.initializeScripts");
+            scripts->initialize();
+        }
         for (const std::string& error : scripts->errors()) {
             gameLog.Log("Lua initialization error: " + error);
         }
-        scripts->update(false);
+        {
+            TraceScope scriptsUpdateTrace("startup", "Vehicle::Vehicle.initialScriptUpdate");
+            scripts->update(false);
+        }
         if (!hasSharedGeometry) {
+            TraceScope spawnTrace("startup", "Vehicle::Vehicle.spawnAndCacheModels");
             spawn();
             cacheSharedDisplayLists();
         } else {

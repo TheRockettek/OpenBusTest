@@ -57,6 +57,18 @@ openbus::app::MapTrafficWorker::ActorInput makeVehicleInput(
             std::nullopt};
 }
 
+openbus::app::MapTrafficWorker::HumanInput makeHumanInput(
+    std::size_t stateIndex, std::uint64_t generation, openbus::map::MapTrafficActor actor,
+    double feetDistanceMeters, bool populationEnabled, bool advanceWhileInactive) {
+    using Worker = openbus::app::MapTrafficWorker;
+    const double distanceMeters = actor.distanceMeters;
+    const double speedMetersPerSecond = actor.speedMetersPerSecond;
+    return {stateIndex, generation,
+            std::make_shared<const openbus::map::MapTrafficActor>(std::move(actor)),
+            distanceMeters, speedMetersPerSecond, feetDistanceMeters, populationEnabled,
+            advanceWhileInactive};
+}
+
 } // namespace
 
 int main() {
@@ -74,8 +86,8 @@ int main() {
         auto signalController =
             std::make_shared<openbus::map::MapTrafficSignalController>(signalProgram);
         worker.submit({makeVehicleInput(0, 0, std::move(vehicle))},
-                       {{0, 0, std::move(pedestrian), 0.2, true, false},
-                        {1, 0, std::move(inactivePedestrian), 0.2, false, true}},
+                       {makeHumanInput(0, 0, std::move(pedestrian), 0.2, true, false),
+                        makeHumanInput(1, 0, std::move(inactivePedestrian), 0.2, false, true)},
                        {}, {}, {signalController}, {},
                        0.05, 0.05);
 
@@ -95,8 +107,8 @@ int main() {
                     results->humans.size() == 2 && results->humans[0].generation == 0,
                 "the dedicated traffic loop publishes vehicle and pedestrian updates");
         require(std::abs(results->actors[0].motion.distanceMeters - 10.25) < 0.05 &&
-                    results->humans[0].actor.distanceMeters > 30.0 &&
-                    results->humans[1].actor.distanceMeters > 50.0,
+                    results->humans[0].distanceMeters > 30.0 &&
+                    results->humans[1].distanceMeters > 50.0,
                 "the dedicated loop advances vehicle, active pedestrian, and off-screen pedestrian AI");
         const auto expectedActor = makeActor();
         const auto expectedVehiclePose = openbus::map::sampleMapTrafficRoute(
@@ -122,8 +134,8 @@ int main() {
         inactivePedestrian = makeActor();
         inactivePedestrian.distanceMeters = 60.0;
         worker.submit({makeVehicleInput(0, 1, std::move(vehicle))},
-                      {{0, 1, std::move(pedestrian), 0.2, true, false},
-                       {1, 1, std::move(inactivePedestrian), 0.2, false, true}},
+                      {makeHumanInput(0, 1, std::move(pedestrian), 0.2, true, false),
+                       makeHumanInput(1, 1, std::move(inactivePedestrian), 0.2, false, true)},
                       {}, {}, {}, {},
                       0.05, 0.10);
         results = waitForResults();
@@ -131,9 +143,9 @@ int main() {
                     results->actors[0].generation == 1 &&
                     std::abs(results->actors[0].motion.distanceMeters - 20.25) < 0.05 &&
                     results->humans.size() == 2 && results->humans[0].generation == 1 &&
-                    results->humans[0].actor.distanceMeters > 40.0 &&
+                    results->humans[0].distanceMeters > 40.0 &&
                     results->humans[1].generation == 1 &&
-                    results->humans[1].actor.distanceMeters > 60.0,
+                    results->humans[1].distanceMeters > 60.0,
                 "new generations do not inherit stale actor movement state");
 
         worker.submitPopulationPlan(
@@ -208,8 +220,9 @@ int main() {
         inactiveSignalPedestrian.speedMetersPerSecond = 0.0;
         inactiveSignalPedestrian.route.segments[0].trafficSignal = conditionalSchedule;
         openbus::app::MapTrafficWorker signalWorker;
-        signalWorker.submit({}, {{0, 0, std::move(inactiveSignalPedestrian), 0.2, false, false}},
-                            {}, {}, {conditionalSignalController}, {}, 3.05, 3.05);
+        signalWorker.submit(
+            {}, {makeHumanInput(0, 0, std::move(inactiveSignalPedestrian), 0.2, false, false)},
+            {}, {}, {conditionalSignalController}, {}, 3.05, 3.05);
         double signalWorkerElapsedSeconds = 0.0;
         const auto signalDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (signalWorkerElapsedSeconds < 3.05 &&

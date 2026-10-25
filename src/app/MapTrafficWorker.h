@@ -47,7 +47,9 @@ class MapTrafficWorker {
     struct HumanInput {
         std::size_t stateIndex = 0;
         std::uint64_t generation = 0;
-        openbus::map::MapTrafficActor actor;
+        std::shared_ptr<const openbus::map::MapTrafficActor> actorTemplate;
+        double distanceMeters = 0.0;
+        double speedMetersPerSecond = 0.0;
         double feetDistanceMeters = 0.2;
         bool populationEnabled = true;
         bool advanceWhileInactive = false;
@@ -56,8 +58,8 @@ class MapTrafficWorker {
     struct HumanResult {
         std::size_t stateIndex = 0;
         std::uint64_t generation = 0;
-        openbus::map::MapTrafficActor actor;
-        double feetDistanceMeters = 0.2;
+        double distanceMeters = 0.0;
+        double speedMetersPerSecond = 0.0;
     };
 
     struct UpdateResults {

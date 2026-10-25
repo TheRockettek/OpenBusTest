@@ -61,12 +61,28 @@ void preserveMovementState(openbus::map::MapTrafficActor& destination,
 } // namespace
 
 struct MapTrafficWorker::Impl {
+    struct InputSnapshot {
+        std::vector<ActorInput> actors;
+        std::vector<HumanInput> humans;
+        std::vector<openbus::map::MapTrafficObstacle> obstacles;
+        std::vector<openbus::map::MapTrafficObstacle> humanObstacles;
+        std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>> signalControllers;
+        std::vector<openbus::map::MapTrafficSignalBusPriorityRequest> busPriorityRequests;
+    };
+
     struct WorkingActor {
         std::size_t stateIndex = 0;
         std::uint64_t generation = 0;
         openbus::map::MapTrafficActor actor;
         std::optional<std::size_t> blockingActorStateIndex;
         std::optional<std::uint64_t> blockingActorGeneration;
+    };
+
+    struct WorkingHuman {
+        std::size_t stateIndex = 0;
+        std::uint64_t generation = 0;
+        openbus::map::MapTrafficActor actor;
+        double feetDistanceMeters = 0.2;
     };
 
     Impl() {
@@ -185,52 +201,8 @@ struct MapTrafficWorker::Impl {
                 hasLatestPopulationDecisions = true;
                 continue;
             }
-
             const auto tickProcessingStart = std::chrono::steady_clock::now();
-            std::vector<ActorInput> tickActors = submittedActors;
-            std::vector<HumanInput> tickHumans = submittedHumans;
-            std::unordered_map<std::size_t, std::size_t> previousActorByState;
-            previousActorByState.reserve(workingActors.size());
-            for (std::size_t index = 0; index < workingActors.size(); ++index) {
-                previousActorByState.emplace(workingActors[index].stateIndex, index);
-            }
-            std::vector<openbus::map::MapTrafficActor> runtimeActors;
-            runtimeActors.reserve(tickActors.size());
-            for (ActorInput& actor : tickActors) {
-                const auto previous = previousActorByState.find(actor.stateIndex);
-                const bool hasPrevious =
-                    previous != previousActorByState.end() &&
-                    workingActors[previous->second].generation == actor.generation;
-                runtimeActors.push_back(*actor.actorTemplate);
-                openbus::map::MapTrafficActor& runtimeActor = runtimeActors.back();
-                applyMotion(runtimeActor, actor.motion);
-                if (hasPrevious) {
-                    const WorkingActor& previousActor = workingActors[previous->second];
-                    preserveMovementState(runtimeActor, previousActor.actor);
-                    actor.blockingActorStateIndex = previousActor.blockingActorStateIndex;
-                    actor.blockingActorGeneration = previousActor.blockingActorGeneration;
-                }
-                runtimeActor.blockingActor = nullptr;
-            }
-            std::unordered_map<std::size_t, std::size_t> previousHumanByState;
-            previousHumanByState.reserve(workingHumans.size());
-            for (std::size_t index = 0; index < workingHumans.size(); ++index) {
-                previousHumanByState.emplace(workingHumans[index].stateIndex, index);
-            }
-            for (HumanInput& human : tickHumans) {
-                const auto previous = previousHumanByState.find(human.stateIndex);
-                if (previous != previousHumanByState.end() &&
-                    workingHumans[previous->second].generation == human.generation) {
-                    const HumanInput& previousHuman = workingHumans[previous->second];
-                    human.actor.distanceMeters = previousHuman.actor.distanceMeters;
-                    human.actor.speedMetersPerSecond = previousHuman.actor.speedMetersPerSecond;
-                }
-            }
-
-            std::vector<openbus::map::MapTrafficObstacle> tickObstacles = submittedObstacles;
-            std::vector<openbus::map::MapTrafficObstacle> humanObstacles = submittedHumanObstacles;
-            auto tickSignalControllers = submittedSignalControllers;
-            auto tickBusPriorityRequests = submittedBusPriorityRequests;
+            const std::shared_ptr<const InputSnapshot> tickInput = submittedInput;
             const double simulationStepSecondsForTick = simulationStepSeconds;
             pendingElapsedSeconds -= simulationStepSecondsForTick;
             const double signalClockSeconds = std::max(
@@ -238,6 +210,64 @@ struct MapTrafficWorker::Impl {
             lock.unlock();
 
             try {
+                std::vector<ActorInput> tickActors = tickInput->actors;
+                std::vector<HumanInput> tickHumans = tickInput->humans;
+                std::vector<openbus::map::MapTrafficObstacle> tickObstacles = tickInput->obstacles;
+                std::vector<openbus::map::MapTrafficObstacle> humanObstacles =
+                    tickInput->humanObstacles;
+                auto tickSignalControllers = tickInput->signalControllers;
+                auto tickBusPriorityRequests = tickInput->busPriorityRequests;
+                std::unordered_map<std::size_t, std::size_t> previousActorByState;
+                previousActorByState.reserve(workingActors.size());
+                for (std::size_t index = 0; index < workingActors.size(); ++index) {
+                    previousActorByState.emplace(workingActors[index].stateIndex, index);
+                }
+                std::vector<openbus::map::MapTrafficActor> runtimeActors;
+                runtimeActors.reserve(tickActors.size());
+                for (ActorInput& actor : tickActors) {
+                    const auto previous = previousActorByState.find(actor.stateIndex);
+                    const bool hasPrevious =
+                        previous != previousActorByState.end() &&
+                        workingActors[previous->second].generation == actor.generation;
+                    runtimeActors.push_back(*actor.actorTemplate);
+                    openbus::map::MapTrafficActor& runtimeActor = runtimeActors.back();
+                    applyMotion(runtimeActor, actor.motion);
+                    if (hasPrevious) {
+                        const WorkingActor& previousActor = workingActors[previous->second];
+                        preserveMovementState(runtimeActor, previousActor.actor);
+                        actor.blockingActorStateIndex = previousActor.blockingActorStateIndex;
+                        actor.blockingActorGeneration = previousActor.blockingActorGeneration;
+                    }
+                    runtimeActor.blockingActor = nullptr;
+                }
+                std::unordered_map<std::size_t, std::size_t> previousHumanByState;
+                previousHumanByState.reserve(workingHumans.size());
+                for (std::size_t index = 0; index < workingHumans.size(); ++index) {
+                    previousHumanByState.emplace(workingHumans[index].stateIndex, index);
+                }
+                std::vector<WorkingHuman> runtimeHumans;
+                runtimeHumans.reserve(tickHumans.size());
+                for (const HumanInput& human : tickHumans) {
+                    const auto previous = previousHumanByState.find(human.stateIndex);
+                    if (previous != previousHumanByState.end() &&
+                        workingHumans[previous->second].generation == human.generation) {
+                        runtimeHumans.push_back(std::move(workingHumans[previous->second]));
+                    } else {
+                        if (human.actorTemplate == nullptr) {
+                            throw std::invalid_argument(
+                                "A traffic human is missing its immutable actor template");
+                        }
+                        openbus::map::MapTrafficActor actor = *human.actorTemplate;
+                        actor.distanceMeters = human.distanceMeters;
+                        actor.speedMetersPerSecond = human.speedMetersPerSecond;
+                        runtimeHumans.push_back({human.stateIndex, human.generation,
+                                                 std::move(actor), human.feetDistanceMeters});
+                    }
+                    WorkingHuman& runtimeHuman = runtimeHumans.back();
+                    runtimeHuman.stateIndex = human.stateIndex;
+                    runtimeHuman.generation = human.generation;
+                    runtimeHuman.feetDistanceMeters = human.feetDistanceMeters;
+                }
                 openbus::rendering::TraceScope trace("traffic",
                                                      "MapTrafficWorker::advanceMapTrafficDriving");
 
@@ -269,9 +299,9 @@ struct MapTrafficWorker::Impl {
                     actorPositionByActor.emplace(&runtimeActors[index], index);
                 }
                 std::vector<openbus::map::MapTrafficActor*> signalActors = actorPointers;
-                for (HumanInput& human : tickHumans) {
-                    if (human.populationEnabled) {
-                        signalActors.push_back(&human.actor);
+                for (std::size_t index = 0; index < runtimeHumans.size(); ++index) {
+                    if (tickHumans[index].populationEnabled) {
+                        signalActors.push_back(&runtimeHumans[index].actor);
                     }
                 }
                 openbus::map::advanceMapTrafficSignalControllers(
@@ -280,20 +310,23 @@ struct MapTrafficWorker::Impl {
                 openbus::map::advanceMapTrafficDriving(
                     actorPointers, tickObstacles, simulationStepSecondsForTick, signalClockSeconds);
 
-                std::vector<HumanResult> advancedHumans;
-                advancedHumans.reserve(tickHumans.size());
-                for (HumanInput& human : tickHumans) {
-                    if (human.populationEnabled) {
+                std::vector<HumanResult> advancedHumanResults;
+                advancedHumanResults.reserve(runtimeHumans.size());
+                for (std::size_t index = 0; index < runtimeHumans.size(); ++index) {
+                    WorkingHuman& human = runtimeHumans[index];
+                    const HumanInput& humanInput = tickHumans[index];
+                    if (humanInput.populationEnabled) {
                         openbus::map::advanceMapTrafficActorLoopingAvoidingObstacles(
                             human.actor, humanObstacles, human.feetDistanceMeters * 1.25,
                             human.feetDistanceMeters * 2.1, simulationStepSecondsForTick,
                             signalClockSeconds);
-                    } else if (human.advanceWhileInactive) {
+                    } else if (humanInput.advanceWhileInactive) {
                         openbus::map::advanceMapTrafficActorLooping(human.actor,
                                                                     simulationStepSecondsForTick);
                     }
-                    advancedHumans.push_back({human.stateIndex, human.generation,
-                                              std::move(human.actor), human.feetDistanceMeters});
+                    advancedHumanResults.push_back({human.stateIndex, human.generation,
+                                                    human.actor.distanceMeters,
+                                                    human.actor.speedMetersPerSecond});
                 }
 
                 std::vector<WorkingActor> advancedActors;
@@ -334,10 +367,9 @@ struct MapTrafficWorker::Impl {
                             actor.actor.lateralOffsetMeters));
                 }
 
-                lock.lock();
                 std::unordered_map<std::size_t, std::uint64_t> activeStates;
-                activeStates.reserve(submittedActors.size());
-                for (const ActorInput& actor : submittedActors) {
+                activeStates.reserve(tickActors.size());
+                for (const ActorInput& actor : tickActors) {
                     activeStates.emplace(actor.stateIndex, actor.generation);
                 }
                 std::vector<WorkingActor> activeActors;
@@ -362,33 +394,23 @@ struct MapTrafficWorker::Impl {
                                                   tickProcessingStart)
                         .count();
                 workingActors = std::move(advancedActors);
-                averageTickProcessingSeconds =
-                    averageTickProcessingSeconds <= 0.0
-                        ? tickProcessingSeconds
-                        : averageTickProcessingSeconds * 0.9 + tickProcessingSeconds * 0.1;
-                latestResults.clear();
-                latestResults.reserve(workingActors.size());
+                std::vector<ActorResult> completedActorResults;
+                completedActorResults.reserve(workingActors.size());
                 for (std::size_t index = 0; index < workingActors.size(); ++index) {
                     const WorkingActor& actor = workingActors[index];
-                    latestResults.push_back(
+                    completedActorResults.push_back(
                         {actor.stateIndex, actor.generation, captureMotion(actor.actor),
                          actor.blockingActorStateIndex, actor.blockingActorGeneration,
                          activePoses[index], activeTravelHeadings[index]});
                 }
-                std::erase_if(advancedHumans, [&](const HumanResult& human) {
-                    return std::none_of(submittedHumans.begin(), submittedHumans.end(),
-                                        [&](const HumanInput& activeHuman) {
-                                            return activeHuman.stateIndex == human.stateIndex &&
-                                                   activeHuman.generation == human.generation;
-                                        });
-                });
-                workingHumans.clear();
-                workingHumans.reserve(advancedHumans.size());
-                for (const HumanResult& human : advancedHumans) {
-                    workingHumans.push_back({human.stateIndex, human.generation, human.actor,
-                                             human.feetDistanceMeters});
-                }
-                latestHumanResults = std::move(advancedHumans);
+                workingHumans = std::move(runtimeHumans);
+                lock.lock();
+                averageTickProcessingSeconds =
+                    averageTickProcessingSeconds <= 0.0
+                        ? tickProcessingSeconds
+                        : averageTickProcessingSeconds * 0.9 + tickProcessingSeconds * 0.1;
+                latestResults = std::move(completedActorResults);
+                latestHumanResults = std::move(advancedHumanResults);
                 hasLatestResults = true;
                 latestResultsElapsedSeconds += simulationStepSecondsForTick;
             } catch (...) {
@@ -410,13 +432,7 @@ struct MapTrafficWorker::Impl {
     double simulationStepSeconds = 1.0 / kDefaultTrafficSimulationRateHz;
     double pendingElapsedSeconds = 0.0;
     double simulationTimeSeconds = 0.0;
-    std::vector<ActorInput> submittedActors;
-    std::vector<HumanInput> submittedHumans;
-    std::vector<openbus::map::MapTrafficObstacle> submittedObstacles;
-    std::vector<openbus::map::MapTrafficObstacle> submittedHumanObstacles;
-    std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>>
-        submittedSignalControllers;
-    std::vector<openbus::map::MapTrafficSignalBusPriorityRequest> submittedBusPriorityRequests;
+    std::shared_ptr<const InputSnapshot> submittedInput;
     std::vector<PopulationCandidate> populationCandidates;
     std::size_t populationRoadTarget = 0;
     std::size_t populationBusTarget = 0;
@@ -425,7 +441,7 @@ struct MapTrafficWorker::Impl {
     bool populationUseGroups = false;
     bool hasPopulationRequest = false;
     std::vector<WorkingActor> workingActors;
-    std::vector<HumanInput> workingHumans;
+    std::vector<WorkingHuman> workingHumans;
     std::vector<ActorResult> latestResults;
     std::vector<HumanResult> latestHumanResults;
     bool hasLatestResults = false;
@@ -471,32 +487,14 @@ void MapTrafficWorker::submit(
                     [](const ActorInput& actor) { return !actor.actorTemplate; })) {
         throw std::invalid_argument("Map traffic worker received no actor template");
     }
+    auto input = std::make_shared<Impl::InputSnapshot>(Impl::InputSnapshot{
+        std::move(actors), std::move(humans), std::move(obstacles), std::move(humanObstacles),
+        std::move(signalControllers), std::move(busPriorityRequests)});
     std::lock_guard lock(impl_->mutex);
     if (impl_->workerException) {
         std::rethrow_exception(impl_->workerException);
     }
-    impl_->submittedActors = std::move(actors);
-    impl_->submittedHumans = std::move(humans);
-    impl_->submittedObstacles = std::move(obstacles);
-    impl_->submittedHumanObstacles = std::move(humanObstacles);
-    impl_->submittedSignalControllers = std::move(signalControllers);
-    impl_->submittedBusPriorityRequests = std::move(busPriorityRequests);
-    std::unordered_map<std::size_t, std::uint64_t> activeStates;
-    activeStates.reserve(impl_->submittedActors.size());
-    for (const ActorInput& actor : impl_->submittedActors) {
-        activeStates.emplace(actor.stateIndex, actor.generation);
-    }
-    std::erase_if(impl_->workingActors, [&](const Impl::WorkingActor& actor) {
-        const auto active = activeStates.find(actor.stateIndex);
-        return active == activeStates.end() || active->second != actor.generation;
-    });
-    std::erase_if(impl_->workingHumans, [&](const HumanInput& human) {
-        return std::none_of(impl_->submittedHumans.begin(), impl_->submittedHumans.end(),
-                            [&](const HumanInput& activeHuman) {
-                                return activeHuman.stateIndex == human.stateIndex &&
-                                       activeHuman.generation == human.generation;
-                            });
-    });
+    impl_->submittedInput = std::move(input);
     impl_->pendingElapsedSeconds += elapsedSeconds;
     impl_->simulationTimeSeconds = simulationTimeSeconds;
     impl_->hasInput = true;

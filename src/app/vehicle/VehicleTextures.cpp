@@ -767,6 +767,7 @@ void Vehicle::ensureEnvironmentTexture(Batch& batch, bool visible) {
 }
 
 void Vehicle::preloadTextures() {
+    TraceScope trace("texture", "Vehicle::preloadTextures");
     const auto preload = [&](std::vector<DisplayPart>& parts) {
         for (DisplayPart& part : parts) {
             for (Batch& batch : part.batches) {

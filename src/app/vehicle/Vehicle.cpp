@@ -199,19 +199,34 @@ void Vehicle::spawn() {
     TraceScope trace("obj", "spawn");
     std::vector<std::pair<Part*, std::shared_future<std::shared_ptr<ParsedObj>>>> requests;
     requests.reserve(pendingParts.size());
-    for (Part& part : pendingParts) {
-        requests.emplace_back(&part, parsedObjFuture(part.objPath, part.bundleEntry));
+    {
+        TraceScope requestTrace("obj", "Vehicle::spawn.requestModels");
+        for (Part& part : pendingParts) {
+            requests.emplace_back(&part, parsedObjFuture(part.objPath, part.bundleEntry));
+        }
     }
-    for (const auto& request : requests) {
-        loadObj(*request.first, request.second.get());
+    {
+        TraceScope buildTrace("obj", "Vehicle::spawn.waitAndBuildModels");
+        for (const auto& request : requests) {
+            loadObj(*request.first, request.second.get());
+        }
     }
-    finishSpawn();
+    {
+        TraceScope finishTrace("obj", "Vehicle::spawn.finish");
+        finishSpawn();
+    }
 }
 
 void Vehicle::finishSpawn() {
     pendingParts.clear();
-    rebuildDisplayOrder();
-    preloadTextures();
+    {
+        TraceScope orderTrace("obj", "Vehicle::finishSpawn.rebuildDisplayOrder");
+        rebuildDisplayOrder();
+    }
+    {
+        TraceScope textureTrace("obj", "Vehicle::finishSpawn.preloadTextures");
+        preloadTextures();
+    }
     loaded = !displayLists.empty();
     hasLoadedInitialView = true;
     if (!loggedAllObjectsLoaded && loaded) {
@@ -246,6 +261,7 @@ double Vehicle::parseDouble(const std::string& value, double fallback) {
 }
 
 void Vehicle::load(const SharedVehicleDefinition& definition) {
+    TraceScope trace("startup", "Vehicle::load");
     const openbus::rendering::BusModelLoadResult& result = definition.modelConfiguration;
     if (scripts) {
         scripts->configureScriptTextures(result.scriptTextures);

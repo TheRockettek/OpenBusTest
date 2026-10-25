@@ -21,6 +21,7 @@ bool near(double actual, double expected) {
 
 int main() {
     using openbus::app::MAX_SCRIPT_CATCH_UP_TICKS;
+    using openbus::app::AI_VEHICLE_SCRIPT_RATE_HZ;
     using openbus::app::scheduleScriptTicks;
 
     bool valid = true;
@@ -37,6 +38,19 @@ int main() {
     valid &= require(firstHighFpsFrame.ticks == 0 && secondHighFpsFrame.ticks == 1 &&
                          near(secondHighFpsFrame.remainderSeconds, 0.0),
                      "120 FPS should preserve fractional time between script ticks");
+
+    double aiAccumulator = 0.0;
+    int aiTicks = 0;
+    for (int frame = 0; frame < 20; ++frame) {
+        const auto schedule = scheduleScriptTicks(
+            aiAccumulator, 0.05, 1.0 / AI_VEHICLE_SCRIPT_RATE_HZ);
+        aiAccumulator = schedule.remainderSeconds;
+        aiTicks += schedule.ticks;
+        valid &= require(schedule.ticks <= 1,
+                         "AI vehicle scripts should not tick more than once per 50 ms");
+    }
+    valid &= require(aiTicks == 10 && near(aiAccumulator, 0.0),
+                     "AI vehicle scripts should run at exactly 10 Hz over one second");
 
     const auto zeroElapsed = scheduleScriptTicks(0.0, 0.0, scriptStep);
     valid &= require(zeroElapsed.ticks == 0 && zeroElapsed.droppedTicks == 0 &&

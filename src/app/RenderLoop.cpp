@@ -253,6 +253,7 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
                                 const std::filesystem::path& modelConfigPath,
                                 const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy,
                                 bool isAiVehicle, VehicleSetupOptions setupOptions) {
+    TraceScope trace("startup", "RenderLoop::AddVehicle");
     const std::filesystem::path resolvedVehicleConfigPath =
         busConfigurationPathFor(vehicleConfigPath);
     const VehicleFileKind configKind = vehicleFileKindForConfig(resolvedVehicleConfigPath);
@@ -264,8 +265,12 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
             : (configKind == VehicleFileKind::Bus
                    ? modelConfigurationPathForBus(resolvedVehicleConfigPath, modelConfigPath)
                    : modelConfigurationPathForVehicle(resolvedVehicleConfigPath, modelConfigPath));
-    const std::shared_ptr<const SharedVehicleDefinition> definition =
-        sharedVehicleDefinition(resolvedVehicleConfigPath, resolvedModelConfigPath, configKind);
+    std::shared_ptr<const SharedVehicleDefinition> definition;
+    {
+        TraceScope definitionTrace("startup", "RenderLoop::AddVehicle.sharedDefinition");
+        definition =
+            sharedVehicleDefinition(resolvedVehicleConfigPath, resolvedModelConfigPath, configKind);
+    }
     const VehicleConfig& vehicleConfiguration = definition->vehicleConfiguration;
     if (vehicleCameras_.empty()) {
         for (const VehicleCamera& camera : vehicleConfiguration.cameras) {
@@ -301,10 +306,14 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
         reflectionRenderer_->initialize(vehicleCameras_);
     }
     const double modelOffsetZ = -vehicleConfiguration.centerOfGravityHeight;
-    auto model = std::make_unique<Vehicle>(
-        definition, placementForVehicle(vehicleConfiguration, placement, isAiVehicle), modelOffsetZ,
-        loadingPolicy, *assetRequestManager_, simulationState_, soundEngine_, soundViewpoint_,
-        isAiVehicle, false, std::move(setupOptions));
+    std::unique_ptr<Vehicle> model;
+    {
+        TraceScope vehicleTrace("startup", "RenderLoop::AddVehicle.constructVehicle");
+        model = std::make_unique<Vehicle>(
+            definition, placementForVehicle(vehicleConfiguration, placement, isAiVehicle),
+            modelOffsetZ, loadingPolicy, *assetRequestManager_, simulationState_, soundEngine_,
+            soundViewpoint_, isAiVehicle, false, std::move(setupOptions));
+    }
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
     return result;
@@ -323,6 +332,7 @@ bool RenderLoop::AddTrafficVehicle(
     std::string timetableLineName, std::string timetableDestinationName,
     std::optional<std::size_t> trafficRuleGroupIndex, bool registerPassengerRouteOnly,
     std::optional<std::size_t> passengerRouteIndex, std::size_t* registeredPassengerRouteIndex) {
+    TraceScope trace("startup", "RenderLoop::AddTrafficVehicle");
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
     }
@@ -354,7 +364,11 @@ bool RenderLoop::AddTrafficVehicle(
     const std::filesystem::path modelConfig =
         configKind == VehicleFileKind::Bus ? modelConfigurationPathForBusFromConfig(resolvedConfig)
                                            : modelConfigurationPathForVehicle(resolvedConfig);
-    const auto definition = sharedVehicleDefinition(resolvedConfig, modelConfig, configKind);
+    std::shared_ptr<const SharedVehicleDefinition> definition;
+    {
+        TraceScope definitionTrace("startup", "RenderLoop::AddTrafficVehicle.sharedDefinition");
+        definition = sharedVehicleDefinition(resolvedConfig, modelConfig, configKind);
+    }
     const auto& configuration = definition->vehicleConfiguration;
     if (!configuration.hasBoundingBox || configuration.boundingBox[0] <= 0.0 ||
         configuration.boundingBox[1] <= 0.0) {
@@ -371,14 +385,20 @@ bool RenderLoop::AddTrafficVehicle(
         isBus ? std::nullopt : trafficRuleGroupIndex};
     const double routeSearchTurnRadius =
         isBus && !requiredRouteSplineIds.empty() ? 0.0 : turnRadius;
-    auto route = mapRenderer_->buildDrivingRoute(
-        splineId, laneSelector, routeSeed, routeSearchTurnRadius, vehicleFilter,
-        requiredRouteSplineIds, requiredSceneryPathSequence, stopAtRequiredSequenceEnd,
-        allowIntermediarySegmentsBetweenRequired, allowReverseTraversalForRequired);
+    std::optional<openbus::map::MapTrafficRoute> route;
+    {
+        TraceScope routeTrace("startup", "RenderLoop::AddTrafficVehicle.buildRoute");
+        route = mapRenderer_->buildDrivingRoute(
+            splineId, laneSelector, routeSeed, routeSearchTurnRadius, vehicleFilter,
+            requiredRouteSplineIds, requiredSceneryPathSequence, stopAtRequiredSequenceEnd,
+            allowIntermediarySegmentsBetweenRequired, allowReverseTraversalForRequired);
+        if (route) {
+            *route = openbus::map::subdivideMapTrafficRoute(*route);
+        }
+    }
     if (!route) {
         return false;
     }
-    *route = openbus::map::subdivideMapTrafficRoute(*route);
     auto actor = openbus::map::makeMapTrafficActor(std::move(*route), busConfigPath.string(),
                                                    speedMetersPerSecond, 0.0, false,
                                                    std::move(driverModelPath));
@@ -623,13 +643,21 @@ bool RenderLoop::AddHumanTrafficActor(int splineId, const std::filesystem::path&
     }
     actor->lengthMeters = feetDistanceMeters * 1.25;
     actor->widthMeters = feetDistanceMeters * 2.1;
-    humanTrafficActors_.push_back(
-        {std::move(*actor), feetDistanceMeters, heightMeters, walkStrideLengthMeters, {}, false});
+    humanTrafficActors_.push_back({std::move(*actor),
+                                   {},
+                                   feetDistanceMeters,
+                                   heightMeters,
+                                   walkStrideLengthMeters,
+                                   {},
+                                   false});
+    humanTrafficActors_.back().workerActorTemplate =
+        std::make_shared<const openbus::map::MapTrafficActor>(humanTrafficActors_.back().actor);
     return true;
 }
 
 void RenderLoop::SetScheduledPassengerHumanModels(
     std::vector<std::filesystem::path> humanConfigPaths) {
+    TraceScope trace("startup", "RenderLoop::SetScheduledPassengerHumanModels");
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot load scheduled passenger models before loading a map");
     }

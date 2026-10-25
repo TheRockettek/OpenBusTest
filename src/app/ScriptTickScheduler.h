@@ -8,6 +8,7 @@ namespace openbus::app {
 
 inline constexpr int MAX_SCRIPT_CATCH_UP_TICKS = 8;
 inline constexpr double MAX_SCRIPT_FRAME_DELTA_SECONDS = 0.25;
+inline constexpr double AI_VEHICLE_SCRIPT_RATE_HZ = 10.0;
 
 struct ScriptTickSchedule {
     int ticks = 0;

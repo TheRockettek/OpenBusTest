@@ -24,6 +24,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -133,7 +134,7 @@ std::size_t
 maximumMapTrafficPopulation(std::size_t basePopulation,
                             const std::vector<openbus::map::MapTrafficDensityPoint>& schedule,
                             double densityMultiplier) {
-    constexpr std::size_t populationCap = 200;
+    constexpr std::size_t populationCap = 10000;
     const auto populationForDensity = [&](std::optional<double> density) {
         return openbus::map::mapTrafficPopulationForDensity(
             basePopulation, density.value_or(1.0) * densityMultiplier, populationCap);
@@ -775,8 +776,7 @@ int main() {
                 busConfigPath = busConfigurationPathFor();
                 modelConfigPath = modelConfigurationPathForBus(busConfigPath);
             } else {
-                busConfigPath = startupSelection.vehicleConfigPath;
-                modelConfigPath = modelConfigurationPathForBusFromConfig(busConfigPath);
+                busConfigPath = startupSelection.initialSimulationBusConfigPath;
             }
             const std::string configuredAiBusPath = environmentValue("OPENBUS_AI_BUS_CONFIG");
             const std::string configuredAiModelPath = environmentValue("OPENBUS_AI_MODEL_CONFIG");
@@ -857,19 +857,45 @@ int main() {
                            std::to_string(busPlacement.yawDegrees) + " deg");
 
         BusConfiguration configuration;
-        {
-            applicationLog.Log("Loading bus physics configuration: " + busConfigPath.string());
-            openbus::rendering::TraceScope trace("config", "main.loadBusConfiguration");
-            configuration = loadBusConfiguration(busConfigPath, modelConfigPath);
-            applicationLog.Log("Bus physics configuration loaded.");
-        }
-
         ModelConfig modelConfiguration;
         {
-            applicationLog.Log("Loading bus model configuration: " + modelConfigPath.string());
-            openbus::rendering::TraceScope trace("config", "main.loadBusModelConfiguration");
-            modelConfiguration = loadBusModelConfigurationFromModelConfig(modelConfigPath);
-            applicationLog.Log("Bus model configuration loaded.");
+            openbus::rendering::TraceScope trace("config", "main.loadInitialSimulationBus");
+            std::vector<std::filesystem::path> candidates =
+                benchmarkMode ? std::vector<std::filesystem::path>{busConfigPath}
+                              : startupSelection.simulationBusConfigCandidates;
+            if (candidates.empty()) {
+                candidates.push_back(busConfigPath);
+            }
+            std::string lastLoadError;
+            bool loaded = false;
+            for (const std::filesystem::path& candidate : candidates) {
+                try {
+                    const std::filesystem::path candidateModelConfig =
+                        benchmarkMode ? modelConfigPath
+                                      : modelConfigurationPathForBusFromConfig(candidate);
+                    applicationLog.Log("Loading bus physics configuration: " + candidate.string());
+                    BusConfiguration candidateConfiguration =
+                        loadBusConfiguration(candidate, candidateModelConfig);
+                    ModelConfig candidateModelConfiguration =
+                        loadBusModelConfigurationFromModelConfig(candidateModelConfig);
+                    busConfigPath = candidate;
+                    modelConfigPath = candidateModelConfig;
+                    configuration = std::move(candidateConfiguration);
+                    modelConfiguration = std::move(candidateModelConfiguration);
+                    loaded = true;
+                    applicationLog.Log("Initial simulation bus configuration loaded.");
+                    break;
+                } catch (const std::exception& error) {
+                    lastLoadError = error.what();
+                    applicationLog.Log("Initial simulation bus unavailable '" + candidate.string() +
+                                       "': " + error.what());
+                }
+            }
+            if (!loaded) {
+                throw std::runtime_error("No usable bus configuration was found for the initial "
+                                         "on-foot simulation: " +
+                                         lastLoadError);
+            }
         }
 
         {
@@ -893,46 +919,53 @@ int main() {
             modelConfigurationOutput.flush();
         }
 
-        const int spawnTileX = static_cast<int>(
-            std::floor(busPlacement.position[0] / mapDefinition.coordinates.tileSize));
-        const int spawnTileY = static_cast<int>(
-            std::floor(busPlacement.position[1] / mapDefinition.coordinates.tileSize));
-        std::vector<TerrainCollisionGrid> spawnTerrain;
-        std::vector<std::pair<int, int>> preloadedTerrainTiles;
+        const auto loadSpawnTerrain = [&](const VehiclePlacement& placement) {
+            const int spawnTileX = static_cast<int>(
+                std::floor(placement.position[0] / mapDefinition.coordinates.tileSize));
+            const int spawnTileY = static_cast<int>(
+                std::floor(placement.position[1] / mapDefinition.coordinates.tileSize));
+            std::pair<std::vector<TerrainCollisionGrid>, std::vector<std::pair<int, int>>> loaded;
+            for (const openbus::map::MapTileReference& tile : mapDefinition.tiles) {
+                if (!tile.hasTerrainFile || std::abs(tile.x - spawnTileX) > 2 ||
+                    std::abs(tile.y - spawnTileY) > 2) {
+                    continue;
+                }
+                try {
+                    openbus::rendering::TraceScope tileTrace(
+                        "startup", "main.loadSpawnTerrain.loadTerrainGrid");
+                    const openbus::map::TerrainGrid grid =
+                        openbus::map::loadTerrainGrid(tile.terrainPath);
+                    loaded.first.push_back({tile.x, tile.y, mapDefinition.coordinates.tileSize,
+                                            grid.intervals, grid.heights});
+                    loaded.second.emplace_back(tile.x, tile.y);
+                } catch (const std::exception& error) {
+                    applicationLog.Log("Spawn terrain collision unavailable for tile (" +
+                                       std::to_string(tile.x) + "," + std::to_string(tile.y) +
+                                       "): " + error.what());
+                }
+            }
+            if (loaded.first.empty()) {
+                throw std::runtime_error(
+                    "No terrain collision could be loaded around the spawn point");
+            }
+            return loaded;
+        };
         applicationLog.Log("Loading spawn terrain collision.");
         openbus::rendering::TraceScope spawnTerrainTrace("startup",
                                                          "main.loadSpawnCollisionTerrain");
-        for (const openbus::map::MapTileReference& tile : mapDefinition.tiles) {
-            if (!tile.hasTerrainFile || std::abs(tile.x - spawnTileX) > 2 ||
-                std::abs(tile.y - spawnTileY) > 2) {
-                continue;
-            }
-            try {
-                const openbus::map::TerrainGrid grid =
-                    openbus::map::loadTerrainGrid(tile.terrainPath);
-                spawnTerrain.push_back({tile.x, tile.y, mapDefinition.coordinates.tileSize,
-                                        grid.intervals, grid.heights});
-                preloadedTerrainTiles.emplace_back(tile.x, tile.y);
-            } catch (const std::exception& error) {
-                applicationLog.Log("Spawn terrain collision unavailable for tile (" +
-                                   std::to_string(tile.x) + "," + std::to_string(tile.y) +
-                                   "): " + error.what());
-            }
-        }
-        if (spawnTerrain.empty()) {
-            throw std::runtime_error("No terrain collision could be loaded around the spawn point");
-        }
+        auto [spawnTerrain, preloadedTerrainTiles] = loadSpawnTerrain(busPlacement);
         spawnTerrainTrace.finish();
         applicationLog.Log("Spawn terrain collision preloaded: " +
                            std::to_string(spawnTerrain.size()) + " tiles.");
         applicationLog.Log("Loading: initializing bus simulation and collision streaming.");
         openbus::rendering::TraceScope simulationTrace("startup",
                                                        "main.initializeSimulationAndCollision");
-        BusSimulation simulation(configuration, busPlacement, 60.0, 8, busPlacement.position[2],
-                                 std::move(spawnTerrain), {}, false);
-        simulation.setFrozen(!benchmarkMode);
-        openbus::map::MapCollisionStreamer collisionStreamer(
-            mapDefinition, omsiRootPath(), simulation, 2, 2, std::move(preloadedTerrainTiles));
+        auto simulation = std::make_unique<BusSimulation>(
+            configuration, busPlacement, 60.0, 8, busPlacement.position[2], std::move(spawnTerrain),
+            std::vector<StaticCollisionMesh>{}, false);
+        simulation->setFrozen(!benchmarkMode);
+        auto collisionStreamer = std::make_unique<openbus::map::MapCollisionStreamer>(
+            mapDefinition, omsiRootPath(), *simulation, 2, 2, std::move(preloadedTerrainTiles));
         simulationTrace.finish();
 
         const auto [precipitationType, precipitationRate] = weatherSettingsFromEnvironment();
@@ -949,31 +982,35 @@ int main() {
         renderer.updateMapStreaming(busPlacement.position[0], busPlacement.position[1]);
         const std::vector<std::pair<int, int>> spawnLoadedGeometryTiles = renderer.loadedMapTiles();
         std::vector<std::pair<int, int>> roadTrafficPoolLoadedTiles = spawnLoadedGeometryTiles;
-        collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
-                                 spawnLoadedGeometryTiles);
+        collisionStreamer->update(busPlacement.position[0], busPlacement.position[1],
+                                  spawnLoadedGeometryTiles);
         applicationLog.Log("Map collision streaming started asynchronously with spawn terrain "
                            "already active: resident tiles=" +
-                           std::to_string(collisionStreamer.loadedTileCount()) +
+                           std::to_string(collisionStreamer->loadedTileCount()) +
                            "; map manifest tiles=" + std::to_string(mapDefinition.tiles.size()) +
                            ".");
         mapSceneTrace.finish();
-        std::size_t reportedCollisionTileCount = collisionStreamer.loadedTileCount();
+        std::size_t reportedCollisionTileCount = collisionStreamer->loadedTileCount();
         Vehicle* playerVehicle = nullptr;
         openbus::rendering::TraceScope preFrameSetupTrace("startup",
                                                           "main.prepareInitialVehiclesAndTraffic");
-        if (benchmarkMode || startupSelection.startInBus) {
+        if (benchmarkMode) {
+            openbus::rendering::TraceScope playerVehicleTrace("startup",
+                                                              "main.createPlayerVehicle");
             applicationLog.Log("Loading player vehicle: " + busConfigPath.string());
             playerVehicle =
                 renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
                                     {AssetLoadingMode::Deferred, AssetLoadingMode::Eager}, false,
                                     startupSelection.vehicleSetup);
-            simulation.setFrozen(false);
+            simulation->setFrozen(false);
             renderer.SetPlayerVehicle(playerVehicle);
             applicationLog.Log("Player vehicle initialized; preparing AI traffic and pedestrians.");
         } else {
             applicationLog.Log("Starting on foot; use the in-game panel to spawn a bus.");
         }
         if (!aiBusConfigPath.empty()) {
+            openbus::rendering::TraceScope aiVehiclePoolTrace("startup",
+                                                              "main.createConfiguredAiVehiclePool");
             std::cout << "AI_VEHICLES=" << aiVehicleCount << '\n';
             for (int index = 0; index < aiVehicleCount; ++index) {
                 renderer.AddVehicle(aiBusConfigPath, aiModelConfigPath,
@@ -987,7 +1024,7 @@ int main() {
         const double scheduledHumanScale =
             nonnegativeEnvironmentDouble("OPENBUS_MAP_SCHEDULED_HUMAN_SCALE", 1.0, 100.0);
         const double mapTrafficDensityMultiplier =
-            nonnegativeEnvironmentDouble("OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER", 1.0, 100.0);
+            nonnegativeEnvironmentDouble("OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER", 1.0, 1000.0);
         const std::size_t mapAiBusPoolCount = mapTrafficPopulationForTestDensity(
             static_cast<std::size_t>(mapAiBusCount), 1.0, mapTrafficDensityMultiplier);
         if (mapTrafficDensityMultiplier != 1.0) {
@@ -1011,6 +1048,8 @@ int main() {
                 "(OPENBUS_MAP_AI_SPAWN_VISIBLE=1); active-tile and collision-clearance checks "
                 "remain enabled.");
         }
+        openbus::rendering::TraceScope roadTrafficTrace("startup",
+                                                        "main.prepareMapRoadTrafficPool");
         if (mapAiBaseCount == 0) {
             applicationLog.Log("Map-driven AI traffic is disabled by OPENBUS_MAP_AI_COUNT=0.");
         } else {
@@ -1209,11 +1248,14 @@ int main() {
                 queueAdditionalMapRoadTraffic();
             }
         }
+        roadTrafficTrace.finish();
 
         if (mapAiBusPoolCount == 0) {
             applicationLog.Log("Map AI buses have no active population.");
         }
         {
+            openbus::rendering::TraceScope busTrafficTrace("startup",
+                                                           "main.prepareScheduledBusTraffic");
             const std::vector<std::string> aiBusConfigurations =
                 openbus::map::mapAiBusAssetPaths(mapDefinition.aiTraffic);
             if (aiBusConfigurations.empty()) {
@@ -1247,6 +1289,8 @@ int main() {
                 };
                 std::vector<MatchedBusRoute> matchedBusRoutes;
                 std::unordered_set<std::size_t> assignedTimetableRoutes;
+                openbus::rendering::TraceScope routeSearchTrace("startup",
+                                                                "main.searchScheduledBusRoutes");
                 for (const std::string& busPath : aiBusConfigurations) {
                     if (unavailableAiBuses.contains(busPath)) {
                         continue;
@@ -1297,6 +1341,7 @@ int main() {
                         }
                     }
                 }
+                routeSearchTrace.finish();
                 if (!matchedBusRoutes.empty()) {
                     applicationLog.Log("Scheduled bus route search found " +
                                        std::to_string(matchedBusRoutes.size()) +
@@ -1480,7 +1525,9 @@ int main() {
                         "asynchronously.");
                 }
             }
+            busTrafficTrace.finish();
         }
+        openbus::rendering::TraceScope humanTrafficTrace("startup", "main.prepareHumanTrafficPool");
         const std::vector<std::string>& configuredHumanModelPaths =
             mapDefinition.aiTraffic.humanModelPaths;
         std::vector<std::filesystem::path> scheduledPassengerHumanModels;
@@ -1521,6 +1568,8 @@ int main() {
                 double walkStrideLengthMeters = 1.4;
             };
             std::vector<HumanModel> humanModels;
+            openbus::rendering::TraceScope humanConfigTrace("startup",
+                                                            "main.loadHumanTrafficConfigurations");
             for (const std::string& configuredPath : configuredHumanModelPaths) {
                 std::string normalizedPath = configuredPath;
                 std::replace(normalizedPath.begin(), normalizedPath.end(), '\\', '/');
@@ -1561,6 +1610,7 @@ int main() {
                                        humanConfigPath.generic_string() + "': " + error.what());
                 }
             }
+            humanConfigTrace.finish();
             if (!configuredDensity.has_value()) {
                 applicationLog.Log("Map passenger traffic density is unavailable at " +
                                    std::to_string(mapAiStartHour) + "h; using density factor 1.0.");
@@ -1574,6 +1624,8 @@ int main() {
             } else if (humanPoolCount == 0) {
                 applicationLog.Log("Map passenger traffic schedule has no positive population.");
             } else {
+                openbus::rendering::TraceScope humanActorTrace("startup",
+                                                               "main.queueHumanTrafficActors");
                 constexpr double humanSpeedMetersPerSecond = 1.2;
                 constexpr double humanSpacingMeters = 8.0;
                 constexpr double trafficRadiusMeters = 750.0;
@@ -1609,12 +1661,13 @@ int main() {
                     "thread.");
             }
         }
+        humanTrafficTrace.finish();
 
         const auto updateMapTrafficPopulation = [&] {
             const double trafficHour = openbus::map::mapTrafficHourAtElapsedSeconds(
-                mapAiStartHour, simulation.simulationTime());
+                mapAiStartHour, simulation->simulationTime());
             const int trafficWeekdayMask = openbus::map::mapTrafficWeekdayMaskAtElapsedSeconds(
-                mapAiStartWeekdayIndex, simulation.simulationTime());
+                mapAiStartWeekdayIndex, simulation->simulationTime());
             const std::optional<double> groupDensity = openbus::map::mapAiRoadTrafficDensityAtHour(
                 mapDefinition.aiTraffic, availableAiRoadVehicles, trafficHour, trafficWeekdayMask);
             const std::optional<double> roadDensity =
@@ -1641,7 +1694,10 @@ int main() {
                            "h on " + std::to_string(mapCalendarYear) + "-" +
                            std::to_string(mapCalendarMonth) + "-" + std::to_string(mapCalendarDay) +
                            "; time and weekday advance from the map system calendar.");
+        openbus::rendering::TraceScope populationTrace("startup",
+                                                       "main.setInitialTrafficPopulation");
         updateMapTrafficPopulation();
+        populationTrace.finish();
         preFrameSetupTrace.finish();
 
         double previousTime = glfwGetTime();
@@ -1665,15 +1721,15 @@ int main() {
                 renderer.beginFrame(benchmarkTimeStep);
                 const RenderBenchmarkInput input =
                     renderer.setBenchmarkFrame(phase, frameInPhase, framesInPhase);
-                renderer.updatePlayerVariables(simulation, input.throttle, input.steering,
+                renderer.updatePlayerVariables(*simulation, input.throttle, input.steering,
                                                input.brake);
-                simulation.updateWithWheelTorqueAndBrakeForces(
+                simulation->updateWithWheelTorqueAndBrakeForces(
                     benchmarkTimeStep, renderer.physicsWheelTorque(), renderer.physicsSteering(),
-                    renderer.physicsWheelBrakeForces(simulation.axleCount()),
-                    renderer.physicsAxleSpringFactors(simulation.axleCount()));
+                    renderer.physicsWheelBrakeForces(simulation->axleCount()),
+                    renderer.physicsAxleSpringFactors(simulation->axleCount()));
                 updateMapTrafficPopulation();
-                renderer.updatePostPhysicsVariables(simulation);
-                renderer.updateMapStreaming(simulation.positionX(), simulation.positionY());
+                renderer.updatePostPhysicsVariables(*simulation);
+                renderer.updateMapStreaming(simulation->positionX(), simulation->positionY());
                 const auto loadedTiles = renderer.loadedMapTiles();
                 if (loadedTiles != roadTrafficPoolLoadedTiles) {
                     roadTrafficPoolLoadedTiles = loadedTiles;
@@ -1681,16 +1737,16 @@ int main() {
                         queueAdditionalMapRoadTraffic();
                     }
                 }
-                collisionStreamer.update(simulation.positionX(), simulation.positionY(),
-                                         loadedTiles);
-                renderer.updateMapPoleStates(simulation.mapPoleStates());
-                const std::size_t collisionTileCount = collisionStreamer.loadedTileCount();
+                collisionStreamer->update(simulation->positionX(), simulation->positionY(),
+                                          loadedTiles);
+                renderer.updateMapPoleStates(simulation->mapPoleStates());
+                const std::size_t collisionTileCount = collisionStreamer->loadedTileCount();
                 if (collisionTileCount != reportedCollisionTileCount) {
                     applicationLog.Log("Map collision streaming progress: resident tiles=" +
                                        std::to_string(collisionTileCount) + ".");
                     reportedCollisionTileCount = collisionTileCount;
                 }
-                renderer.draw(simulation);
+                renderer.draw(*simulation);
                 renderer.endFrame();
             };
 
@@ -1770,31 +1826,114 @@ int main() {
                 previousTime = currentTime;
 
                 renderer.beginFrame();
-                renderer.updateOnFoot(simulation, elapsed);
-                if (renderer.consumeSpawnBusRequest() && playerVehicle == nullptr) {
-                    applicationLog.Log("Spawning player bus: " + busConfigPath.string());
-                    playerVehicle =
-                        renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
-                                            {AssetLoadingMode::Deferred, AssetLoadingMode::Eager},
-                                            false, startupSelection.vehicleSetup);
-                    renderer.SetPlayerVehicle(playerVehicle);
-                    simulation.setFrozen(false);
-                    applicationLog.Log("Player bus spawned; physics simulation resumed.");
+                renderer.updateOnFoot(*simulation, elapsed);
+                if (const std::optional<SpawnBusRequest> spawnRequest =
+                        renderer.consumeSpawnBusRequest();
+                    spawnRequest.has_value() && playerVehicle == nullptr) {
+                    openbus::rendering::TraceScope spawnTrace("startup",
+                                                              "main.spawnSelectedMapBus");
+                    try {
+                        std::filesystem::path selectedBusConfig;
+                        std::filesystem::path selectedModelConfig;
+                        {
+                            openbus::rendering::TraceScope pathTrace(
+                                "startup", "spawnSelectedMapBus.resolveConfigurationPaths");
+                            selectedBusConfig =
+                                busConfigurationPathFor(spawnRequest->configurationPath);
+                            selectedModelConfig =
+                                modelConfigurationPathForBusFromConfig(selectedBusConfig);
+                        }
+                        applicationLog.Log("Spawning player bus: " + selectedBusConfig.string());
+                        BusConfiguration selectedConfiguration;
+                        {
+                            openbus::rendering::TraceScope configTrace(
+                                "startup", "spawnSelectedMapBus.loadBusConfiguration");
+                            selectedConfiguration =
+                                loadBusConfiguration(selectedBusConfig, selectedModelConfig);
+                        }
+                        std::vector<TerrainCollisionGrid> selectedTerrain;
+                        std::vector<std::pair<int, int>> selectedTerrainTiles;
+                        {
+                            openbus::rendering::TraceScope terrainTrace(
+                                "startup", "spawnSelectedMapBus.loadTerrain");
+                            auto loadedTerrain = loadSpawnTerrain(spawnRequest->placement);
+                            selectedTerrain = std::move(loadedTerrain.first);
+                            selectedTerrainTiles = std::move(loadedTerrain.second);
+                        }
+                        std::unique_ptr<BusSimulation> replacementSimulation;
+                        {
+                            openbus::rendering::TraceScope simulationTrace(
+                                "startup", "spawnSelectedMapBus.constructSimulation");
+                            replacementSimulation = std::make_unique<BusSimulation>(
+                                std::move(selectedConfiguration), spawnRequest->placement, 60.0, 8,
+                                spawnRequest->placement.position[2], std::move(selectedTerrain),
+                                std::vector<StaticCollisionMesh>{}, false);
+                        }
+                        replacementSimulation->setFrozen(false);
+                        std::unique_ptr<openbus::map::MapCollisionStreamer>
+                            replacementCollisionStreamer;
+                        {
+                            openbus::rendering::TraceScope streamerTrace(
+                                "startup", "spawnSelectedMapBus.constructCollisionStreamer");
+                            replacementCollisionStreamer =
+                                std::make_unique<openbus::map::MapCollisionStreamer>(
+                                    mapDefinition, omsiRootPath(), *replacementSimulation, 2, 2,
+                                    std::move(selectedTerrainTiles));
+                        }
+                        {
+                            openbus::rendering::TraceScope streamerUpdateTrace(
+                                "startup", "spawnSelectedMapBus.initializeCollisionStreaming");
+                            replacementCollisionStreamer->update(
+                                spawnRequest->placement.position[0],
+                                spawnRequest->placement.position[1], renderer.loadedMapTiles());
+                        }
+                        Vehicle* selectedPlayerVehicle = nullptr;
+                        {
+                            openbus::rendering::TraceScope vehicleTrace(
+                                "startup", "spawnSelectedMapBus.addPlayerVehicle");
+                            selectedPlayerVehicle = renderer.AddVehicle(
+                                selectedBusConfig, selectedModelConfig, spawnRequest->placement,
+                                {AssetLoadingMode::Deferred, AssetLoadingMode::Eager}, false,
+                                spawnRequest->setupOptions);
+                        }
+                        {
+                            openbus::rendering::TraceScope replaceTrace(
+                                "startup", "spawnSelectedMapBus.replaceSimulation");
+                            auto previousCollisionStreamer = std::move(collisionStreamer);
+                            auto previousSimulation = std::move(simulation);
+                            simulation = std::move(replacementSimulation);
+                            collisionStreamer = std::move(replacementCollisionStreamer);
+                            previousCollisionStreamer.reset();
+                            previousSimulation.reset();
+                        }
+                        playerVehicle = selectedPlayerVehicle;
+                        {
+                            openbus::rendering::TraceScope playerTrace(
+                                "startup", "spawnSelectedMapBus.initializePlayerVehicle");
+                            renderer.SetPlayerVehicle(playerVehicle);
+                        }
+                        reportedCollisionTileCount = collisionStreamer->loadedTileCount();
+                        applicationLog.Log("Selected bus physics initialized; simulation resumed.");
+                    } catch (const std::exception& error) {
+                        const std::string message = error.what();
+                        applicationLog.Log("Unable to spawn selected bus: " + message);
+                        renderer.SetSpawnBusError(message);
+                    }
                 }
                 if (renderer.consumeRaisePlayerRequest()) {
-                    simulation.translateVertically(5.0);
+                    simulation->translateVertically(5.0);
                     applicationLog.Log("Raised player vehicle 5 m above its current location");
                 }
 
-                renderer.updatePlayerVariables(simulation, renderer.throttle(), renderer.steering(),
-                                               renderer.brake());
-                simulation.updateWithWheelTorqueAndBrakeForces(
+                renderer.updatePlayerVariables(*simulation, renderer.throttle(),
+                                               renderer.steering(), renderer.brake());
+                simulation->updateWithWheelTorqueAndBrakeForces(
                     elapsed, renderer.physicsWheelTorque(), renderer.physicsSteering(),
-                    renderer.physicsWheelBrakeForces(simulation.axleCount()),
-                    renderer.physicsAxleSpringFactors(simulation.axleCount()));
+                    renderer.physicsWheelBrakeForces(simulation->axleCount()),
+                    renderer.physicsAxleSpringFactors(simulation->axleCount()));
                 updateMapTrafficPopulation();
-                renderer.updatePostPhysicsVariables(simulation);
-                const auto streamingPosition = renderer.streamingPosition(simulation);
+                renderer.updatePostPhysicsVariables(*simulation);
+                const auto streamingPosition = renderer.streamingPosition(*simulation);
                 renderer.updateMapStreaming(streamingPosition[0], streamingPosition[1]);
                 const auto loadedTiles = renderer.loadedMapTiles();
                 if (loadedTiles != roadTrafficPoolLoadedTiles) {
@@ -1803,15 +1942,15 @@ int main() {
                         queueAdditionalMapRoadTraffic();
                     }
                 }
-                collisionStreamer.update(streamingPosition[0], streamingPosition[1], loadedTiles);
-                renderer.updateMapPoleStates(simulation.mapPoleStates());
-                const std::size_t collisionTileCount = collisionStreamer.loadedTileCount();
+                collisionStreamer->update(streamingPosition[0], streamingPosition[1], loadedTiles);
+                renderer.updateMapPoleStates(simulation->mapPoleStates());
+                const std::size_t collisionTileCount = collisionStreamer->loadedTileCount();
                 if (collisionTileCount != reportedCollisionTileCount) {
                     applicationLog.Log("Map collision streaming progress: resident tiles=" +
                                        std::to_string(collisionTileCount) + ".");
                     reportedCollisionTileCount = collisionTileCount;
                 }
-                renderer.draw(simulation);
+                renderer.draw(*simulation);
 
                 if (renderer.consumeCaptureRequest()) {
                     pendingCaptureRequest = true;
@@ -1820,7 +1959,7 @@ int main() {
                 if (pendingCaptureRequest && renderer.isCaptureReady()) {
                     pendingCaptureRequest = false;
                     captureOnStartup = false;
-                    renderer.captureViews(simulation, "screenshots");
+                    renderer.captureViews(*simulation, "screenshots");
                     renderer.requestClose();
                 }
 
