@@ -1,6 +1,7 @@
 // Window lifecycle, vehicle/map registration and simple accessors.
 
 #include "app/RenderLoopInternal.h"
+#include "app/MapTrafficWorker.h"
 #include "app/ImGuiLayer.h"
 #include "app/vehicle/VehicleDefinition.h"
 #include "core/AssetPath.h"
@@ -36,6 +37,24 @@ double calculateTrafficMinimumTurnRadius(const VehicleConfig& configuration, boo
     return turnRadius;
 }
 
+double positiveEnvironmentRate(const char* name, double defaultValue) {
+    const char* value = openbus::getEnvironment(name);
+    if (value == nullptr) {
+        return defaultValue;
+    }
+    try {
+        std::size_t parsed = 0;
+        const double rate = std::stod(value, &parsed);
+        if (value[parsed] != '\0' || !std::isfinite(rate) || rate <= 0.0) {
+            throw std::invalid_argument("Rate must be finite and positive");
+        }
+        return std::clamp(rate, 0.01, 1000.0);
+    } catch (const std::exception&) {
+        gameLog.Log(std::string("Invalid ") + name + "; ignoring the setting");
+        return defaultValue;
+    }
+}
+
 } // namespace
 
 RenderLoop::RenderLoop(int width, int height, const char* title)
@@ -47,6 +66,23 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     }
     if (drivetrainDiagnosticsEnabled_) {
         gameLog.Log("Native drivetrain variable diagnostics enabled (1 Hz)");
+    }
+    aiSimulationRateHz_ = positiveEnvironmentRate("OPENBUS_AI_HZ", 0.0);
+    aiMaximumRateHz_ = positiveEnvironmentRate("OPENBUS_MAX_FPS", 0.0);
+    aiRateDivisor_ = positiveEnvironmentRate("OPENBUS_AI_HZ_DIVISOR", 1.0);
+    renderFpsCapHz_ = positiveEnvironmentRate("OPENBUS_FPS_CAP", 0.0);
+    gameLog.Log(
+        aiSimulationRateHz_ > 0.0
+            ? "AI traffic simulation rate set to " + std::to_string(aiSimulationRateHz_) + " Hz"
+            : "AI traffic simulation rate follows average FPS divided by " +
+                  std::to_string(aiRateDivisor_) + " (60 Hz until an FPS average is available)");
+    if (aiMaximumRateHz_ > 0.0) {
+        gameLog.Log("AI traffic rate capped at " + std::to_string(aiMaximumRateHz_) + " Hz");
+    }
+    if (renderFpsCapHz_ > 0.0) {
+        gameLog.Log("Render frame rate capped at " + std::to_string(renderFpsCapHz_) + " FPS");
+    } else {
+        gameLog.Log("Render frame rate is not capped");
     }
     mouseLookEnabled_ = parseEnabledFlag(openbus::getEnvironment("OPENBUS_MOUSE_LOOK"));
     if (mouseLookEnabled_) {
@@ -171,6 +207,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
 RenderLoop::~RenderLoop() {
     gameLog.Log("RenderLoop shutting down");
     imguiLayer_.reset();
+    trafficWorker_.reset();
     for (TrafficVehicleState& state : trafficVehicles_) {
         if (!state.pendingVehicle.valid()) {
             continue;
@@ -393,6 +430,8 @@ bool RenderLoop::AddTrafficVehicle(
     const double modelOffsetZ = -configuration.centerOfGravityHeight;
     TrafficVehicleState trafficState;
     trafficState.actor = std::move(actor);
+    trafficState.workerActorTemplate =
+        std::make_shared<const openbus::map::MapTrafficActor>(trafficState.actor);
     trafficState.spawnCandidates = std::move(spawnCandidates);
     trafficState.scheduledDepartureMinutes = std::move(scheduledDepartureMinutes);
     trafficState.timetableLineName = std::move(timetableLineName);

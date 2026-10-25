@@ -14,6 +14,7 @@
 #include <map>
 #include <numbers>
 #include <sstream>
+#include <thread>
 
 namespace {
 
@@ -2188,7 +2189,9 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                        << '/' << mapStats.totalSceneryObjects << '\n'
                        << "ROADS " << mapStats.activeRoadBatches << '/' << mapStats.totalRoadBatches
                        << " COLLISION TILES " << simulation.loadedMapCollisionTileCount()
-                       << " AI VEHICLES " << spawnedAiVehicleCount;
+                       << " AI VEHICLES " << spawnedAiVehicleCount << " AI " << std::fixed
+                       << std::setprecision(1) << currentAiSimulationRateHz_ << " HZ / "
+                       << currentAiWorkerTickMilliseconds_ << " MS";
             if (trafficSplineDebugOverlay_) {
                 std::size_t clearCount = 0;
                 std::size_t followingCount = 0;
@@ -2445,6 +2448,22 @@ void RenderLoop::endFrame() {
         imguiLayer_->render();
     }
     glfwSwapBuffers(window_);
+    if (renderFpsCapHz_ <= 0.0) {
+        return;
+    }
+    const auto framePeriod = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(1.0 / renderFpsCapHz_));
+    const auto now = std::chrono::steady_clock::now();
+    if (!frameDeadlineInitialized_) {
+        nextFrameDeadline_ = now;
+        frameDeadlineInitialized_ = true;
+    }
+    nextFrameDeadline_ += framePeriod;
+    if (nextFrameDeadline_ > now) {
+        std::this_thread::sleep_until(nextFrameDeadline_);
+    } else {
+        nextFrameDeadline_ = now;
+    }
 }
 
 void RenderLoop::captureViews(const BusSimulation& simulation,

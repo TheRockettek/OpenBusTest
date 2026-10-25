@@ -898,9 +898,14 @@ void MapRenderer::loadHumanTrafficModelNow(
     impl_->humanTrafficModels.emplace(cacheKey, std::move(asset));
 }
 
-void MapRenderer::updateTrafficSignalControllers(
-    const std::vector<openbus::map::MapTrafficActor*>& actors, double elapsedSeconds,
-    double initialClockSeconds, std::optional<std::array<double, 2>> playerBusPosition) const {
+std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>>
+MapRenderer::trafficSignalControllers() const {
+    return impl_->trafficSignalControllers;
+}
+
+std::vector<openbus::map::MapTrafficSignalBusPriorityRequest>
+MapRenderer::trafficSignalBusPriorityRequests(
+    std::optional<std::array<double, 2>> playerBusPosition) const {
     std::vector<openbus::map::MapTrafficSignalBusPriorityRequest> playerBusRequests;
     if (playerBusPosition.has_value()) {
         for (const TrafficPathDebugSegment& segment : impl_->sceneryTrafficPathSegments) {
@@ -935,10 +940,10 @@ void MapRenderer::updateTrafficSignalControllers(
             }
         }
     }
-    openbus::map::advanceMapTrafficSignalControllers(impl_->trafficSignalControllers, actors,
-                                                     elapsedSeconds, initialClockSeconds,
-                                                     playerBusRequests);
-    const double signalClockSeconds = initialClockSeconds + elapsedSeconds;
+    return playerBusRequests;
+}
+
+void MapRenderer::updateTrafficSignalScripts(double signalClockSeconds) const {
     for (const std::size_t stateIndex : impl_->activeSceneryScriptStateIndices) {
         Impl::SceneryScriptState& scriptState = *impl_->sceneryScriptStates[stateIndex];
         if (!scriptState.trafficSignal.has_value()) {

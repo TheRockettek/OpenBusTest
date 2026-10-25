@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <vector>
@@ -127,24 +128,28 @@ class MapTrafficSignalController {
         }
     }
 
-    void clearRequests() noexcept {
+    void clearRequests() {
+        std::lock_guard lock(mutex_);
         std::fill(requests_.begin(), requests_.end(), false);
         std::fill(busPriorityRequests_.begin(), busPriorityRequests_.end(), false);
     }
 
-    void request(std::size_t lightIndex) noexcept {
+    void request(std::size_t lightIndex) {
+        std::lock_guard lock(mutex_);
         if (lightIndex < requests_.size()) {
             requests_[lightIndex] = true;
         }
     }
 
-    void requestBusPriority(std::size_t lightIndex) noexcept {
+    void requestBusPriority(std::size_t lightIndex) {
+        std::lock_guard lock(mutex_);
         if (lightIndex < busPriorityRequests_.size()) {
             busPriorityRequests_[lightIndex] = true;
         }
     }
 
     void advance(double elapsedSeconds, double initialClockSeconds) {
+        std::lock_guard lock(mutex_);
         if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
             !std::isfinite(initialClockSeconds) || initialClockSeconds < 0.0) {
             throw std::invalid_argument("Traffic signal clock inputs are invalid");
@@ -221,6 +226,17 @@ class MapTrafficSignalController {
     }
 
     std::optional<int> state(std::size_t lightIndex) const {
+        std::lock_guard lock(mutex_);
+        return stateUnlocked(lightIndex);
+    }
+
+    double clockSeconds() const {
+        std::lock_guard lock(mutex_);
+        return clockSeconds_;
+    }
+
+  private:
+    std::optional<int> stateUnlocked(std::size_t lightIndex) const {
         if (lightIndex >= program_->lights.size()) {
             return std::nullopt;
         }
@@ -231,11 +247,6 @@ class MapTrafficSignalController {
                                            program_->lights[lightIndex], clockSeconds_);
     }
 
-    double clockSeconds() const noexcept {
-        return clockSeconds_;
-    }
-
-  private:
     void activateBusPriorityIfSafe() {
         for (std::size_t requestedLight = 0; requestedLight < busPriorityRequests_.size();
              ++requestedLight) {
@@ -316,7 +327,7 @@ class MapTrafficSignalController {
 
     bool inRedYellowChangeover() const {
         for (std::size_t index = 0; index < program_->lights.size(); ++index) {
-            const std::optional<int> lightState = state(index);
+            const std::optional<int> lightState = stateUnlocked(index);
             if (lightState.has_value() && *lightState >= 3 && *lightState <= 5) {
                 return true;
             }
@@ -325,6 +336,7 @@ class MapTrafficSignalController {
     }
 
     std::shared_ptr<const MapTrafficSignalProgram> program_;
+    mutable std::mutex mutex_;
     std::vector<bool> requests_;
     std::vector<bool> busPriorityRequests_;
     std::vector<bool> servedBusPriorityRequests_;

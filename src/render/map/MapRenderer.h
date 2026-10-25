@@ -112,10 +112,11 @@ class MapRenderer {
     void drawHumanTrafficActor(const std::filesystem::path& humanConfigPath,
                                const openbus::map::MapTrafficPose& pose, double gaitPhaseRadians,
                                double gaitWeight) const;
-    void updateTrafficSignalControllers(
-        const std::vector<openbus::map::MapTrafficActor*>& actors, double elapsedSeconds,
-        double initialClockSeconds,
-        std::optional<std::array<double, 2>> playerBusPosition = std::nullopt) const;
+    std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>>
+    trafficSignalControllers() const;
+    std::vector<openbus::map::MapTrafficSignalBusPriorityRequest>
+    trafficSignalBusPriorityRequests(std::optional<std::array<double, 2>> playerBusPosition) const;
+    void updateTrafficSignalScripts(double signalClockSeconds) const;
     bool addTrafficActor(openbus::map::MapTrafficActor actor);
     std::size_t updateTrafficActors(double elapsedSeconds);
     const std::vector<openbus::map::MapTrafficActor>& trafficActors() const;

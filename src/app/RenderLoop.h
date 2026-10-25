@@ -14,7 +14,9 @@
 #include "physics/BusSimulation.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <future>
 #include <memory>
@@ -34,6 +36,10 @@ class AssetRequestManager;
 class MapRenderer;
 class ReflectionRenderer;
 } // namespace openbus::rendering
+
+namespace openbus::app {
+class MapTrafficWorker;
+} // namespace openbus::app
 
 enum class AssetLoadingMode {
     Eager,
@@ -225,6 +231,11 @@ class RenderLoop {
     double displayedFps_ = 0.0;
     std::uint64_t fpsSampleFrameCount_ = 0;
     bool fpsSampleInitialized_ = false;
+    std::deque<double> frameStartTimes_;
+    double averageRenderFpsHz_ = 0.0;
+    double renderFpsCapHz_ = 0.0;
+    std::chrono::steady_clock::time_point nextFrameDeadline_{};
+    bool frameDeadlineInitialized_ = false;
     double cameraDistance_ = 24.0;
     openbus::rendering::FreeCameraPose freeCameraPose_{};
     OnFootState onFootState_{};
@@ -342,6 +353,14 @@ class RenderLoop {
         Vehicle* vehicle = nullptr;
         std::future<std::unique_ptr<Vehicle>> pendingVehicle;
         openbus::map::MapTrafficActor actor;
+        std::shared_ptr<const openbus::map::MapTrafficActor> workerActorTemplate;
+        std::optional<std::size_t> blockingActorStateIndex;
+        std::optional<std::uint64_t> blockingActorGeneration;
+        std::optional<openbus::map::MapTrafficPose> cachedPose;
+        double cachedPoseDistanceMeters = 0.0;
+        double cachedPoseLateralOffsetMeters = 0.0;
+        double cachedTravelHeadingRadians = 0.0;
+        std::uint64_t cachedPoseGeneration = 0;
         std::vector<openbus::map::MapTrafficSpawnCandidate> spawnCandidates;
         std::vector<double> scheduledDepartureMinutes;
         std::vector<openbus::map::MapTrafficPassengerStop> passengerStops;
@@ -372,6 +391,7 @@ class RenderLoop {
         double lastProgressDistanceMeters = 0.0;
         double stoppedSecondsSinceProgress = 0.0;
         bool stuckDiagnosticLogged = false;
+        std::uint64_t workerGeneration = 0;
     };
     struct PassengerStopRouteState {
         openbus::map::MapTrafficActor actor;
@@ -394,6 +414,12 @@ class RenderLoop {
     std::size_t targetBusTrafficCount_ = 0;
     double mapTrafficStartHour_ = 12.0;
     bool mapTrafficSpawnInView_ = false;
+    double aiSimulationRateHz_ = 0.0;
+    double aiMaximumRateHz_ = 0.0;
+    double aiRateDivisor_ = 1.0;
+    double currentAiSimulationRateHz_ = 0.0;
+    double currentAiWorkerTickMilliseconds_ = 0.0;
+    std::unique_ptr<openbus::app::MapTrafficWorker> trafficWorker_;
     void finishPendingTrafficVehicleLoads();
     void updateTrafficDriving(const BusSimulation& simulation, double elapsedSeconds);
     struct HumanTrafficState {
@@ -403,6 +429,8 @@ class RenderLoop {
         double walkStrideLengthMeters = 1.4;
         openbus::rendering::HumanGaitState gait;
         bool populationEnabled = false;
+        bool advanceWhileInactive = false;
+        std::uint64_t workerGeneration = 0;
     };
     std::vector<HumanTrafficState> humanTrafficActors_;
     std::vector<std::filesystem::path> scheduledPassengerHumanModels_;

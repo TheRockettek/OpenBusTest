@@ -101,6 +101,19 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         imguiLayer_->beginFrame(playerVehicle_ == nullptr);
     }
     const double currentTime = glfwGetTime();
+    frameStartTimes_.push_back(currentTime);
+    const double frameWindowStart = currentTime - 3.0;
+    while (frameStartTimes_.size() > 1 && frameStartTimes_.front() < frameWindowStart) {
+        frameStartTimes_.pop_front();
+    }
+    if (frameStartTimes_.size() >= 2) {
+        const double sampleDuration = frameStartTimes_.back() - frameStartTimes_.front();
+        if (sampleDuration > 0.0) {
+            averageRenderFpsHz_ = static_cast<double>(frameStartTimes_.size() - 1) / sampleDuration;
+        }
+    } else {
+        averageRenderFpsHz_ = 0.0;
+    }
     const double wallTimegap =
         hasPreviousVariableTime_ ? std::max(0.0, currentTime - previousVariableTime_) : 0.0;
     const double timegap =

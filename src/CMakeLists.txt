@@ -167,6 +167,7 @@ openbus_add_module(openbus_render
 add_executable(OpenBus
     app/CrashHandler.cpp
     app/ImGuiLayer.cpp
+    app/MapTrafficWorker.cpp
     app/RenderLoop.cpp
     app/RenderLoopDraw.cpp
     app/RenderLoopInput.cpp

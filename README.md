@@ -797,7 +797,19 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Press `U` to raise the player bus and its physics bodies 5 m at the current
   X/Y location; it then falls naturally under gravity.
 - VSync is enabled by default; set `OPENBUS_VSYNC=0`, `off`, or `false` before
-  launching to run above the display refresh cadence
+  launching to run above the display refresh cadence. Set `OPENBUS_FPS_CAP=60`
+  to limit rendered frames to 60 FPS independently of VSync; leave it unset for
+  no software frame-rate cap.
+- AI traffic, pedestrians, and traffic signals run on a dedicated worker loop.
+  Set `OPENBUS_AI_HZ=60` to choose its update rate. If unset, AI follows the
+  average rendered FPS over a rolling three-second window, divided by
+  `OPENBUS_AI_HZ_DIVISOR` (default `1`); it starts at 60 Hz until an average is
+  available. `OPENBUS_MAX_FPS` optionally caps the AI update rate only; it does
+  not limit rendering. AI rate is also automatically reduced when the smoothed
+  worker tick time exceeds 80% of its configured tick budget. The HUD reports
+  the effective AI Hz and average worker tick time in milliseconds.
+  `OPENBUS_FPS_CAP` is the separate software render cap and works independently
+  of VSync.
 - Reflection mirrors render at `256x256` by default. Set
   `OPENBUS_REFLECTION_SIZE=256`, `512`, or `1024` to choose the square mirror
   target resolution.

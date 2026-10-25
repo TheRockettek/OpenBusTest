@@ -94,6 +94,11 @@ openbus_add_probe(OpenBusMapSplineProfileProbe MapSplineProfileProbe.cpp LIBS op
         "${OPENBUS_FIXTURES}/map_spline_profile_explicit_cant_width.sli"
         "${OPENBUS_FIXTURES}/map_spline_profile_no_collision.sli")
 openbus_add_probe(OpenBusMapTrafficRuntimeProbe MapTrafficRuntimeProbe.cpp LIBS openbus_map)
+add_executable(OpenBusMapTrafficWorkerProbe MapTrafficWorkerProbe.cpp
+    "${OPENBUS_SOURCE_ROOT}/app/MapTrafficWorker.cpp")
+target_include_directories(OpenBusMapTrafficWorkerProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
+target_link_libraries(OpenBusMapTrafficWorkerProbe PRIVATE openbus_map)
+add_test(NAME OpenBusMapTrafficWorkerProbe COMMAND OpenBusMapTrafficWorkerProbe)
 add_test(NAME OpenBusMapTrafficIncrementalLaneNetworkProbe
     COMMAND OpenBusMapTrafficRuntimeProbe --incremental-lane-network)
 add_test(NAME OpenBusMapTrafficTJunctionProbe
