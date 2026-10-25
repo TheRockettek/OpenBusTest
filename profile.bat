@@ -6,7 +6,7 @@ taskkill.exe /F /IM OpenBus.exe
 set "OPENBUS_BUS_CONFIG=Vehicles/MAN_DL05/MAN_DL05.bus"
 set "OPENBUS_MODEL_CONFIG=Vehicles/MAN_DL05/Model/DL05.cfg"
 
-set "OPENBUS_MAP_PATH=Cotterell"
+set "OPENBUS_MAP_PATH=DBC_Map"
 set "OPENBUS_MAP_SPAWN=1"
 
 set "OPENBUS_VSYNC=off"

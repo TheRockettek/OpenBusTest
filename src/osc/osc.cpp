@@ -61,6 +61,14 @@ struct Token {
     int line = 0;
 };
 
+static bool is_entry_block(const Token& token) {
+    const std::string& keyword = token.val;
+    return token.type == TT::BlockKW &&
+           (keyword == "frame" || keyword == "frame_ai" || keyword == "init" ||
+            (keyword.size() > 6 && keyword.substr(0, 6) == "macro:") ||
+            (keyword.size() > 8 && keyword.substr(0, 8) == "trigger:"));
+}
+
 class Tokenizer {
     std::string src;
     size_t pos = 0;
@@ -487,6 +495,11 @@ class Emitter {
     void skip_body() {
         int depth = 1;
         while (peek().type != TT::Eof) {
+            if (is_entry_block(peek())) {
+                std::cerr << "Warning: new block {" << peek().val << "} at line " << peek().line
+                          << " before {end}; closing the previous block implicitly\n";
+                return;
+            }
             Token t = consume();
             if (t.type == TT::BlockKW) {
                 // Any block-opening keyword increments depth
@@ -506,12 +519,6 @@ class Emitter {
                         return;
                     continue;
                 }
-                // macro:/trigger:/frame/etc nested inside another block also need tracking
-                bool is_entry = t.val == "frame" || t.val == "frame_ai" || t.val == "init" ||
-                                (t.val.size() > 6 && t.val.substr(0, 6) == "macro:") ||
-                                (t.val.size() > 8 && t.val.substr(0, 8) == "trigger:");
-                if (is_entry)
-                    ++depth;
             }
         }
     }
@@ -557,6 +564,10 @@ class Emitter {
         pending_str_expr.clear();
         out += "function " + func_name(hdr.val) + "()\n";
         emit_body(out, 1);
+        if (is_entry_block(peek())) {
+            std::cerr << "Warning: new block {" << peek().val << "} at line " << peek().line
+                      << " before {end}; closing {" << hdr.val << "} implicitly\n";
+        }
         out += "end\n\n";
     }
 
@@ -567,6 +578,10 @@ class Emitter {
             if (peek().type == TT::Eof) {
                 std::cerr << "Warning: EOF inside body (missing {end}?) at line " << peek().line
                           << "\n";
+                break;
+            }
+            if (is_entry_block(peek())) {
+                flush_pending(out, depth);
                 break;
             }
             if (is_kw("end")) {
@@ -1238,10 +1253,7 @@ class Emitter {
 
             if (t.type == TT::BlockKW) {
                 const std::string& kw = t.val;
-                bool is_entry = kw == "frame" || kw == "frame_ai" || kw == "init" ||
-                                (kw.size() > 6 && kw.substr(0, 6) == "macro:") ||
-                                (kw.size() > 8 && kw.substr(0, 8) == "trigger:");
-                if (is_entry) {
+                if (is_entry_block(t)) {
                     emit_block(out);
                     continue;
                 }
@@ -1456,6 +1468,9 @@ class BytecodeCompiler {
 
     void compileBody(std::vector<OscInstruction>& code, bool stopAtEndif = false) {
         while (!error_.empty() == false && peek().type != TT::Eof) {
+            if (is_entry_block(peek())) {
+                return;
+            }
             if (is("end") || is("else") || (stopAtEndif && is("endif"))) {
                 return;
             }
@@ -1486,6 +1501,10 @@ class BytecodeCompiler {
                     compileBody(code, true);
                     if (is("endif")) {
                         consume();
+                    } else if (is_entry_block(peek())) {
+                        std::cerr << "Warning: new block {" << peek().val << "} at line "
+                                  << peek().line
+                                  << " before {endif}; closing the conditional implicitly\n";
                     } else {
                         unsupported(token, "missing {endif}");
                     }
@@ -1493,6 +1512,10 @@ class BytecodeCompiler {
                 } else if (is("endif")) {
                     consume();
                     code[falseJump].index = static_cast<int>(code.size());
+                } else if (is_entry_block(peek())) {
+                    code[falseJump].index = static_cast<int>(code.size());
+                    std::cerr << "Warning: new block {" << peek().val << "} at line " << peek().line
+                              << " before {endif}; closing the conditional implicitly\n";
                 } else {
                     unsupported(token, "missing {endif}");
                 }
@@ -1518,6 +1541,9 @@ class BytecodeCompiler {
         } else if (peek().type == TT::Eof) {
             std::cerr << "Warning: EOF inside {" << header.val
                       << "}; treating it as an implicit {end}\n";
+        } else if (is_entry_block(peek())) {
+            std::cerr << "Warning: new block {" << peek().val << "} at line " << peek().line
+                      << " before {end}; closing {" << header.val << "} implicitly\n";
         } else if (error_.empty()) {
             unsupported(header, "missing {end}");
         }
@@ -1534,10 +1560,7 @@ class BytecodeCompiler {
             if (token.type == TT::Comment) {
                 continue;
             }
-            if (token.type == TT::BlockKW &&
-                (token.val == "frame" || token.val == "frame_ai" || token.val == "init" ||
-                 (token.val.size() > 6 && token.val.substr(0, 6) == "macro:") ||
-                 (token.val.size() > 8 && token.val.substr(0, 8) == "trigger:"))) {
+            if (is_entry_block(token)) {
                 compileBlock(token);
             } else {
                 unsupported(token, "unsupported top-level OSC content");

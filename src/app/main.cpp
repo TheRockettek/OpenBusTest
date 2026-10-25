@@ -20,6 +20,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -1046,6 +1047,7 @@ int main() {
         applicationLog.Log("Map scene loaded; initializing spawn render window.");
         renderer.updateMapStreaming(busPlacement.position[0], busPlacement.position[1]);
         const std::vector<std::pair<int, int>> spawnLoadedGeometryTiles = renderer.loadedMapTiles();
+        std::vector<std::pair<int, int>> roadTrafficPoolLoadedTiles = spawnLoadedGeometryTiles;
         collisionStreamer.update(busPlacement.position[0], busPlacement.position[1],
                                  spawnLoadedGeometryTiles);
         applicationLog.Log("Map collision streaming started asynchronously with spawn terrain "
@@ -1094,6 +1096,7 @@ int main() {
             booleanEnvironmentValue("OPENBUS_MAP_AI_SPAWN_VISIBLE", false);
         const std::vector<openbus::map::MapAiRoadVehicle> availableAiRoadVehicles =
             openbus::map::mapAiRoadVehicles(mapDefinition.aiTraffic);
+        std::function<void()> queueAdditionalMapRoadTraffic;
         renderer.SetMapCalendar(mapCalendarYear, mapCalendarMonth, mapCalendarDay,
                                 mapAiStartHour * 3600.0);
         renderer.SetMapTrafficSpawnInView(mapTrafficSpawnInView);
@@ -1148,7 +1151,6 @@ int main() {
                     poolVehiclesByGroup[vehicle.groupIndex].push_back(vehicle);
                 }
             }
-            const auto roadSpawnLanes = renderer.trafficSpawnLanes();
             if (!configuredDensity.has_value()) {
                 applicationLog.Log("Map road traffic density is unavailable at " +
                                    std::to_string(mapAiStartHour) + "h; using density factor 1.0.");
@@ -1162,111 +1164,146 @@ int main() {
                 applicationLog.Log(
                     "Map road traffic not spawned: unsched_trafficdens.txt has no positive "
                     "density for a supported group at the selected weekday and hour.");
-            } else if (roadSpawnLanes.empty()) {
-                applicationLog.Log(
-                    "Map road traffic not queued: no connected road lane with a forward "
-                    "continuation is available.");
             } else if (roadVehiclePoolCount == 0) {
                 applicationLog.Log("Map road traffic schedule has no positive population.");
             } else {
-                constexpr double trafficSpeedMetersPerSecond = 12.0;
-                std::size_t addedTrafficVehicles = 0;
-                std::size_t noCompatibleSpawnLaneCount = 0;
-                std::size_t rejectedTrafficRouteCount = 0;
-                std::size_t poolGroupCursor = 0;
-                std::unordered_set<std::string> unavailableAiVehicles;
-                std::unordered_map<std::size_t, std::size_t> queuedTrafficByGroup;
-                for (std::size_t candidate = 0; candidate < roadVehiclePoolCount * 4 &&
-                                                addedTrafficVehicles < roadVehiclePoolCount;
-                     ++candidate) {
-                    const std::vector<openbus::map::MapAiRoadVehicle>* selectionPool =
-                        &aiRoadVehicles;
-                    std::optional<std::size_t> requiredGroupIndex;
-                    if (hasGroupDensitySchedule) {
-                        for (std::size_t offset = 0; offset < roadVehiclePoolByGroup.size();
-                             ++offset) {
-                            const std::size_t index =
-                                (poolGroupCursor + offset) % roadVehiclePoolByGroup.size();
-                            const auto& groupTarget = roadVehiclePoolByGroup[index];
-                            if (queuedTrafficByGroup[groupTarget.groupIndex] <
-                                groupTarget.populationCount) {
-                                requiredGroupIndex = groupTarget.groupIndex;
-                                poolGroupCursor = (index + 1) % roadVehiclePoolByGroup.size();
-                                break;
+                queueAdditionalMapRoadTraffic =
+                    [&, roadVehiclePoolCount, targetRoadVehicleCount, roadDensity,
+                     hasGroupDensitySchedule, roadVehiclePoolByGroup, aiRoadVehicles,
+                     poolVehiclesByGroup, addedTrafficVehicles = std::size_t{0},
+                     noCompatibleSpawnLaneCount = std::size_t{0},
+                     rejectedTrafficRouteCount = std::size_t{0}, poolGroupCursor = std::size_t{0},
+                     nextCandidateSeed = std::size_t{0},
+                     lastSpawnLanes = std::vector<openbus::map::MapTrafficLaneStart>{},
+                     hasObservedSpawnLanes = false, hasLoggedPoolState = false,
+                     unavailableAiVehicles = std::unordered_set<std::string>{},
+                     queuedTrafficByGroup = std::unordered_map<std::size_t, std::size_t>{}]() mutable {
+                        constexpr double trafficSpeedMetersPerSecond = 12.0;
+                        if (addedTrafficVehicles >= roadVehiclePoolCount) {
+                            return;
+                        }
+                        const auto roadSpawnLanes = renderer.trafficSpawnLanes();
+                        if (hasObservedSpawnLanes && roadSpawnLanes == lastSpawnLanes) {
+                            return;
+                        }
+                        hasObservedSpawnLanes = true;
+                        lastSpawnLanes = roadSpawnLanes;
+                        if (roadSpawnLanes.empty()) {
+                            applicationLog.Log(
+                                "Map road traffic not queued: no connected road lane with a "
+                                "forward continuation is available yet.");
+                            return;
+                        }
+
+                        const std::size_t previouslyAdded = addedTrafficVehicles;
+                        const std::size_t remainingReservations =
+                            roadVehiclePoolCount - addedTrafficVehicles;
+                        for (std::size_t attempt = 0;
+                             attempt < remainingReservations * 4 &&
+                             addedTrafficVehicles < roadVehiclePoolCount;
+                             ++attempt) {
+                            const std::size_t candidateSeed = ++nextCandidateSeed;
+                            const std::vector<openbus::map::MapAiRoadVehicle>* selectionPool =
+                                &aiRoadVehicles;
+                            std::optional<std::size_t> requiredGroupIndex;
+                            if (hasGroupDensitySchedule) {
+                                for (std::size_t offset = 0;
+                                     offset < roadVehiclePoolByGroup.size(); ++offset) {
+                                    const std::size_t index =
+                                        (poolGroupCursor + offset) %
+                                        roadVehiclePoolByGroup.size();
+                                    const auto& groupTarget = roadVehiclePoolByGroup[index];
+                                    if (queuedTrafficByGroup[groupTarget.groupIndex] <
+                                        groupTarget.populationCount) {
+                                        requiredGroupIndex = groupTarget.groupIndex;
+                                        poolGroupCursor =
+                                            (index + 1) % roadVehiclePoolByGroup.size();
+                                        break;
+                                    }
+                                }
+                                if (!requiredGroupIndex.has_value()) {
+                                    break;
+                                }
+                                const auto groupVehicles =
+                                    poolVehiclesByGroup.find(*requiredGroupIndex);
+                                if (groupVehicles == poolVehiclesByGroup.end()) {
+                                    continue;
+                                }
+                                selectionPool = &groupVehicles->second;
+                            }
+                            const std::optional<std::size_t> selectedVehicle =
+                                openbus::map::selectMapAiRoadVehicle(*selectionPool,
+                                                                     candidateSeed);
+                            if (!selectedVehicle.has_value()) {
+                                if (!hasGroupDensitySchedule) {
+                                    break;
+                                }
+                                continue;
+                            }
+                            const openbus::map::MapAiRoadVehicle& roadVehicle =
+                                (*selectionPool)[*selectedVehicle];
+                            const std::string& vehiclePath = roadVehicle.assetPath;
+                            if (unavailableAiVehicles.contains(vehiclePath)) {
+                                continue;
+                            }
+                            const std::optional<std::string> driverPath =
+                                mapDefinition.aiTraffic.driverModelPaths.empty()
+                                    ? std::nullopt
+                                    : std::optional<std::string>(
+                                          mapDefinition.aiTraffic.driverModelPaths
+                                              [addedTrafficVehicles %
+                                               mapDefinition.aiTraffic.driverModelPaths.size()]);
+                            try {
+                                const int vehicleType = renderer.trafficVehicleType(
+                                    vehiclePath, roadVehicle.defaultVehicleType);
+                                const auto lane = renderer.selectTrafficSpawnLane(
+                                    {vehicleType, roadVehicle.groupIndex, false,
+                                     roadVehicle.trafficRuleGroupIndex},
+                                    candidateSeed);
+                                if (!lane.has_value()) {
+                                    ++noCompatibleSpawnLaneCount;
+                                    continue;
+                                }
+                                if (renderer.AddTrafficVehicle(
+                                        lane->splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD,
+                                        vehiclePath, driverPath, trafficSpeedMetersPerSecond,
+                                        {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred},
+                                        false, lane->laneSelector, candidateSeed, {},
+                                        roadVehicle.groupIndex, roadVehicle.defaultVehicleType, {},
+                                        {}, false, false, false, {}, {}, {},
+                                        roadVehicle.trafficRuleGroupIndex)) {
+                                    ++addedTrafficVehicles;
+                                    ++queuedTrafficByGroup[roadVehicle.groupIndex];
+                                } else {
+                                    ++rejectedTrafficRouteCount;
+                                }
+                            } catch (const std::exception& error) {
+                                unavailableAiVehicles.insert(vehiclePath);
+                                applicationLog.Log("Skipping map road vehicle '" + vehiclePath +
+                                                   "': " + error.what());
                             }
                         }
-                        if (!requiredGroupIndex.has_value()) {
-                            break;
+                        if (previouslyAdded == addedTrafficVehicles && hasLoggedPoolState) {
+                            return;
                         }
-                        const auto groupVehicles = poolVehiclesByGroup.find(*requiredGroupIndex);
-                        if (groupVehicles == poolVehiclesByGroup.end()) {
-                            continue;
-                        }
-                        selectionPool = &groupVehicles->second;
-                    }
-                    const std::optional<std::size_t> selectedVehicle =
-                        openbus::map::selectMapAiRoadVehicle(*selectionPool, candidate + 1);
-                    if (!selectedVehicle.has_value()) {
-                        if (!hasGroupDensitySchedule) {
-                            break;
-                        }
-                        continue;
-                    }
-                    const openbus::map::MapAiRoadVehicle& roadVehicle =
-                        (*selectionPool)[*selectedVehicle];
-                    const std::string& vehiclePath = roadVehicle.assetPath;
-                    if (unavailableAiVehicles.contains(vehiclePath)) {
-                        continue;
-                    }
-                    const std::optional<std::string> driverPath =
-                        mapDefinition.aiTraffic.driverModelPaths.empty()
-                            ? std::nullopt
-                            : std::optional<std::string>(
-                                  mapDefinition.aiTraffic.driverModelPaths
-                                      [addedTrafficVehicles %
-                                       mapDefinition.aiTraffic.driverModelPaths.size()]);
-                    try {
-                        const int vehicleType = renderer.trafficVehicleType(
-                            vehiclePath, roadVehicle.defaultVehicleType);
-                        const auto lane = renderer.selectTrafficSpawnLane(
-                            {vehicleType, roadVehicle.groupIndex, false,
-                             roadVehicle.trafficRuleGroupIndex},
-                            candidate + 1);
-                        if (!lane.has_value()) {
-                            ++noCompatibleSpawnLaneCount;
-                            continue;
-                        }
-                        if (renderer.AddTrafficVehicle(
-                                lane->splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD,
-                                vehiclePath, driverPath, trafficSpeedMetersPerSecond,
-                                {AssetLoadingMode::Deferred, AssetLoadingMode::Deferred}, false,
-                                lane->laneSelector, candidate + 1, {}, roadVehicle.groupIndex,
-                                roadVehicle.defaultVehicleType, {}, {}, false, false, false, {}, {},
-                                {}, roadVehicle.trafficRuleGroupIndex)) {
-                            ++addedTrafficVehicles;
-                            ++queuedTrafficByGroup[roadVehicle.groupIndex];
-                        } else {
-                            ++rejectedTrafficRouteCount;
-                        }
-                    } catch (const std::exception& error) {
-                        unavailableAiVehicles.insert(vehiclePath);
-                        applicationLog.Log("Skipping map road vehicle '" + vehiclePath +
-                                           "': " + error.what());
-                    }
-                }
-                applicationLog.Log(
-                    "Map road AI vehicle pool queued: " + std::to_string(addedTrafficVehicles) +
-                    " of " + std::to_string(roadVehiclePoolCount) +
-                    " reserved, target active=" + std::to_string(targetRoadVehicleCount) +
-                    ", density=" + std::to_string(roadDensity) +
-                    ", connected spawn lanes=" + std::to_string(roadSpawnLanes.size()) +
-                    ", attempts without a compatible lane=" +
-                    std::to_string(noCompatibleSpawnLaneCount) +
-                    ", selected lanes with rejected routes=" +
-                    std::to_string(rejectedTrafficRouteCount) +
-                    ". Models and scripts load asynchronously; road vehicles wait for a clear, "
-                    "off-screen position in a currently active tile. Scheduled buses retain "
-                    "endpoint-only admission.");
+                        hasLoggedPoolState = true;
+                        applicationLog.Log(
+                            "Map road AI vehicle pool queued: " +
+                            std::to_string(addedTrafficVehicles) + " of " +
+                            std::to_string(roadVehiclePoolCount) +
+                            " reserved, initial target active=" +
+                            std::to_string(targetRoadVehicleCount) + ", density=" +
+                            std::to_string(roadDensity) + ", connected spawn lanes=" +
+                            std::to_string(roadSpawnLanes.size()) +
+                            ", attempts without a compatible lane=" +
+                            std::to_string(noCompatibleSpawnLaneCount) +
+                            ", selected lanes with rejected routes=" +
+                            std::to_string(rejectedTrafficRouteCount) +
+                            ". Models and scripts load asynchronously; road vehicles wait for a "
+                            "clear, off-screen position in a currently active tile. Scheduled "
+                            "buses retain endpoint-only admission.");
+                    };
+                queueAdditionalMapRoadTraffic();
             }
         }
 
@@ -1821,8 +1858,14 @@ int main() {
                 updateMapTrafficPopulation();
                 renderer.updatePostPhysicsVariables(simulation);
                 renderer.updateMapStreaming(simulation.positionX(), simulation.positionY());
-                collisionStreamer.update(simulation.positionX(), simulation.positionY(),
-                                         renderer.loadedMapTiles());
+                const auto loadedTiles = renderer.loadedMapTiles();
+                if (loadedTiles != roadTrafficPoolLoadedTiles) {
+                    roadTrafficPoolLoadedTiles = loadedTiles;
+                    if (queueAdditionalMapRoadTraffic) {
+                        queueAdditionalMapRoadTraffic();
+                    }
+                }
+                collisionStreamer.update(simulation.positionX(), simulation.positionY(), loadedTiles);
                 renderer.updateMapPoleStates(simulation.mapPoleStates());
                 const std::size_t collisionTileCount = collisionStreamer.loadedTileCount();
                 if (collisionTileCount != reportedCollisionTileCount) {
@@ -1939,8 +1982,14 @@ int main() {
                 renderer.updatePostPhysicsVariables(simulation);
                 const auto streamingPosition = renderer.streamingPosition(simulation);
                 renderer.updateMapStreaming(streamingPosition[0], streamingPosition[1]);
-                collisionStreamer.update(streamingPosition[0], streamingPosition[1],
-                                         renderer.loadedMapTiles());
+                const auto loadedTiles = renderer.loadedMapTiles();
+                if (loadedTiles != roadTrafficPoolLoadedTiles) {
+                    roadTrafficPoolLoadedTiles = loadedTiles;
+                    if (queueAdditionalMapRoadTraffic) {
+                        queueAdditionalMapRoadTraffic();
+                    }
+                }
+                collisionStreamer.update(streamingPosition[0], streamingPosition[1], loadedTiles);
                 renderer.updateMapPoleStates(simulation.mapPoleStates());
                 const std::size_t collisionTileCount = collisionStreamer.loadedTileCount();
                 if (collisionTileCount != reportedCollisionTileCount) {

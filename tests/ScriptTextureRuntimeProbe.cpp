@@ -274,6 +274,81 @@ int main() {
         std::cerr << "Lua conversion truncated a macro at an unmatched {endif}\n";
         return 1;
     }
+    const std::filesystem::path missingBlockEndScript = root / "missing_block_end.osc";
+    {
+        std::ofstream missingBlockEndSource(missingBlockEndScript);
+        missingBlockEndSource << "{macro:antrieb_frame}\n"
+                                 "(L.L.antrieb_failure_general) !\n"
+                                 "{if}\n"
+                                 "(M.L.antrieb_getr_chkNxtGear)\n"
+                                 "{endif}\n"
+                                 "{macro:antrieb_getr_chkNxtGear}\n"
+                                 "1 (S.L.gear_macro_body)\n"
+                                 "{end}\n";
+    }
+    OscProgram missingBlockEndProgram;
+    std::string missingBlockEndError;
+    if (!compileOscToBytecode(missingBlockEndScript, missingBlockEndProgram,
+                              missingBlockEndError) ||
+        missingBlockEndProgram.functions.find("macro_antrieb_frame") ==
+            missingBlockEndProgram.functions.end() ||
+        missingBlockEndProgram.functions.find("macro_antrieb_getr_chknxtgear") ==
+            missingBlockEndProgram.functions.end()) {
+        std::cerr << "new OSC block did not recover from a missing preceding {end}: "
+                  << missingBlockEndError << "\n";
+        return 1;
+    }
+    const auto& recoveredFrameCode =
+        missingBlockEndProgram.functions.at("macro_antrieb_frame");
+    if (std::none_of(recoveredFrameCode.begin(), recoveredFrameCode.end(),
+                     [](const OscInstruction& instruction) {
+                         return instruction.opcode == OscOpcode::CallFunction &&
+                                instruction.name == "macro_antrieb_getr_chknxtgear";
+                     }) ||
+        missingBlockEndProgram.functions.at("macro_antrieb_getr_chknxtgear").size() != 2) {
+        std::cerr << "recovered OSC blocks did not retain the call and macro body\n";
+        return 1;
+    }
+    std::string missingBlockEndLuaError;
+    if (!convertOscToLua(missingBlockEndScript, generatedLuaPath(missingBlockEndScript),
+                         missingBlockEndLuaError)) {
+        std::cerr << "Lua conversion did not recover from a missing preceding {end}: "
+                  << missingBlockEndLuaError << "\n";
+        return 1;
+    }
+    const std::string recoveredLuaSource = readTextFile(generatedLuaPath(missingBlockEndScript));
+    if (recoveredLuaSource.find("function macro_antrieb_getr_chknxtgear()") ==
+            std::string::npos ||
+        recoveredLuaSource.find("macro_antrieb_getr_chknxtgear()") == std::string::npos ||
+        recoveredLuaSource.find("gear_macro_body") == std::string::npos) {
+        std::cerr << "Lua conversion did not emit the recovered macro declaration and call\n";
+        return 1;
+    }
+    for (const char* backend : {"native", "lua"}) {
+        if (!setScriptBackend(backend)) {
+            return 1;
+        }
+        VehicleConfig configuration;
+        configuration.sourcePath = root / "missing_block_end.bus";
+        configuration.scripts = {missingBlockEndScript.filename().string()};
+        Variables variables(ScriptObjectKind::Vehicle);
+        SimulationState simulation;
+        ScriptRuntime runtime(configuration, variables, simulation);
+        runtime.initialize();
+        if (!runtime.valid() || !runtime.errors().empty() ||
+            !runtime.hasScriptEntryPoint("macro_antrieb_getr_chknxtgear")) {
+            std::cerr << backend << ": recovered gear macro was not registered\n";
+            return 1;
+        }
+        runtime.invokeEntryPoint("macro_antrieb_frame");
+        if (variables.get("gear_macro_body") != 1.0F) {
+            std::cerr << backend << ": recovered gear macro was not invoked by its caller\n";
+            return 1;
+        }
+    }
+    if (!setScriptBackend(nullptr)) {
+        return 1;
+    }
     const std::filesystem::path stringCompareScript = root / "string_compare.osc";
     {
         std::ofstream stringCompareSource(stringCompareScript);
