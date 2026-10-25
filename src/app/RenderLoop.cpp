@@ -782,6 +782,12 @@ void RenderLoop::updateMapStreaming(double worldX, double worldY) {
     }
 }
 
+void RenderLoop::updateMapPoleStates(const std::vector<MapPoleState>& states) {
+    if (mapRenderer_ != nullptr) {
+        mapRenderer_->updatePoleStates(states);
+    }
+}
+
 std::vector<std::pair<int, int>> RenderLoop::activeMapTiles() const {
     if (mapRenderer_ == nullptr) {
         return {};

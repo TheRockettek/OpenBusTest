@@ -337,8 +337,8 @@ std::array<float, 3> trafficPriorityDebugColor(double priority) {
     };
     for (std::size_t index = 1; index < stops.size(); ++index) {
         if (boundedPriority <= stops[index]) {
-            const double amount = (boundedPriority - stops[index - 1]) /
-                                  (stops[index] - stops[index - 1]);
+            const double amount =
+                (boundedPriority - stops[index - 1]) / (stops[index] - stops[index - 1]);
             return {
                 static_cast<float>(colors[index - 1][0] +
                                    amount * (colors[index][0] - colors[index - 1][0])),
@@ -419,8 +419,8 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
         for (const openbus::map::MapSplinePathOffset& pathOffset : pathOffsets) {
             const std::array<float, 3> pathColor =
                 pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD
-                    ? trafficPriorityDebugColor(trafficPriorityDebugValue(
-                          openbus::map::mapTrafficRulesForPath(
+                    ? trafficPriorityDebugColor(
+                          trafficPriorityDebugValue(openbus::map::mapTrafficRulesForPath(
                               splineReference.placement.rules, pathOffset.pathIndex)))
                     : color;
             std::optional<openbus::map::MapTrafficPose> previousPose =
@@ -562,9 +562,9 @@ void appendSceneryTrafficPathDebugVertices(
         const bool roadPath = segment.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD;
         const std::array<float, 3> color =
             roadPath ? trafficPriorityDebugColor(trafficPriorityDebugValue(segment.pathRules))
-                     : segment.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN
-                           ? std::array<float, 3>{1.0F, 0.25F, 0.9F}
-                           : std::array<float, 3>{0.15F, 0.9F, 1.0F};
+            : segment.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN
+                ? std::array<float, 3>{1.0F, 0.25F, 0.9F}
+                : std::array<float, 3>{0.15F, 0.9F, 1.0F};
         for (std::size_t index = 1; index < segment.points.size(); ++index) {
             for (const std::array<double, 3>& point :
                  {segment.points[index - 1], segment.points[index]}) {

@@ -169,9 +169,27 @@ struct BusSimulation::Impl {
     struct StreamedTileCollision {
         std::vector<dGeomID> geometries;
         std::vector<dTriMeshDataID> meshData;
+        std::vector<dGeomID> poleGeometries;
+        std::vector<dBodyID> poleBodies;
         std::vector<std::vector<double>> terrainVertices;
         std::vector<std::vector<int>> terrainIndices;
         std::vector<StaticCollisionMesh> staticMeshes;
+    };
+
+    struct PoleRuntime {
+        MapPoleCollision definition;
+        dBodyID body = nullptr;
+        dGeomID geometry = nullptr;
+        std::array<double, 3> up = {};
+        std::array<double, 3> rotationAxis = {};
+        double length = 0.0;
+        double angleRadians = 0.0;
+        bool broken = false;
+    };
+
+    struct PoleImpact {
+        double speedMetersPerSecond = 0.0;
+        std::array<double, 3> velocity = {};
     };
 
     OdeRuntime ode;
@@ -191,6 +209,10 @@ struct BusSimulation::Impl {
     std::vector<dTriMeshDataID> mapCollisionMeshData;
     std::vector<StaticCollisionMesh> mapCollisionMeshes;
     std::unordered_map<std::uint64_t, StreamedTileCollision> streamedTileCollisions;
+    std::unordered_map<dGeomID, std::unique_ptr<PoleRuntime>> mapPoles;
+    std::unordered_set<dGeomID> poleContactsPrevious;
+    std::unordered_set<dGeomID> poleContactsCurrent;
+    std::unordered_map<dGeomID, PoleImpact> poleImpactsCurrent;
     std::unordered_set<dGeomID> wheelGeometries;
     std::uint64_t collisionRevision = 0;
     dGeomID chassisGeom = nullptr;
@@ -257,6 +279,16 @@ struct BusSimulation::Impl {
         }
         for (auto& [key, tile] : streamedTileCollisions) {
             static_cast<void>(key);
+            for (dGeomID geometry : tile.poleGeometries) {
+                if (geometry) {
+                    dGeomDestroy(geometry);
+                }
+            }
+            for (dBodyID body : tile.poleBodies) {
+                if (body) {
+                    dBodyDestroy(body);
+                }
+            }
             for (dGeomID geometry : tile.geometries) {
                 if (geometry) {
                     dGeomDestroy(geometry);
@@ -404,11 +436,145 @@ struct BusSimulation::Impl {
         }
     }
 
+    static std::array<double, 3> rotatedVector(const std::array<double, 3>& vector,
+                                               const std::array<double, 3>& axis, double angle) {
+        const double cosine = std::cos(angle);
+        const double sine = std::sin(angle);
+        const double dot = vector[0] * axis[0] + vector[1] * axis[1] + vector[2] * axis[2];
+        const std::array<double, 3> cross = {axis[1] * vector[2] - axis[2] * vector[1],
+                                             axis[2] * vector[0] - axis[0] * vector[2],
+                                             axis[0] * vector[1] - axis[1] * vector[0]};
+        return {vector[0] * cosine + cross[0] * sine + axis[0] * dot * (1.0 - cosine),
+                vector[1] * cosine + cross[1] * sine + axis[1] * dot * (1.0 - cosine),
+                vector[2] * cosine + cross[2] * sine + axis[2] * dot * (1.0 - cosine)};
+    }
+
+    void setPoleTransform(PoleRuntime& pole) {
+        const std::array<double, 3> newUp =
+            rotatedVector(pole.up, pole.rotationAxis, pole.angleRadians);
+        const std::array<double, 3> center = {
+            pole.definition.basePosition[0] + newUp[0] * pole.length * 0.5,
+            pole.definition.basePosition[1] + newUp[1] * pole.length * 0.5,
+            pole.definition.basePosition[2] + newUp[2] * pole.length * 0.5};
+        dBodySetPosition(pole.body, center[0], center[1], center[2]);
+        dMatrix3 rotation;
+        const std::array<double, 3> axis = {-newUp[1], newUp[0], 0.0};
+        const double axisLength = std::hypot(axis[0], axis[1]);
+        if (axisLength > 1.0e-8) {
+            dRFromAxisAndAngle(rotation, axis[0] / axisLength, axis[1] / axisLength, axis[2],
+                               std::atan2(axisLength, std::clamp(newUp[2], -1.0, 1.0)));
+        } else {
+            dRFromAxisAndAngle(rotation, 1.0, 0.0, 0.0, newUp[2] < 0.0 ? PI : 0.0);
+        }
+        dBodySetRotation(pole.body, rotation);
+    }
+
+    void addPoleCollision(const MapPoleCollision& definition, StreamedTileCollision& streamedTile) {
+        const std::array<double, 3> axis = {definition.topPosition[0] - definition.basePosition[0],
+                                            definition.topPosition[1] - definition.basePosition[1],
+                                            definition.topPosition[2] - definition.basePosition[2]};
+        const double length = std::hypot(axis[0], axis[1], axis[2]);
+        if (definition.mapObjectId < 0 || !std::isfinite(length) || length <= 0.1 ||
+            !std::isfinite(definition.radiusMeters) || definition.radiusMeters <= 0.0 ||
+            !std::isfinite(definition.resistanceRadiansPerTonneMeterPerSecond) ||
+            definition.resistanceRadiansPerTonneMeterPerSecond <= 0.0 ||
+            !std::isfinite(definition.breakAngleRadians) || definition.breakAngleRadians <= 0.0) {
+            throw std::invalid_argument("Map pole collision parameters are invalid");
+        }
+        auto pole = std::make_unique<PoleRuntime>();
+        pole->definition = definition;
+        pole->length = length;
+        pole->up = {axis[0] / length, axis[1] / length, axis[2] / length};
+        const double capsuleLength = std::max(0.01, length - 2.0 * definition.radiusMeters);
+        dBodyID body = dBodyCreate(ode.world);
+        if (!body) {
+            throw std::runtime_error("Failed to create map pole body");
+        }
+        dBodySetKinematic(body);
+        const dGeomID geometry = dCreateCapsule(ode.space, definition.radiusMeters, capsuleLength);
+        if (!geometry) {
+            dBodyDestroy(body);
+            throw std::runtime_error("Failed to create map pole collision geometry");
+        }
+        dGeomSetBody(geometry, body);
+        pole->body = body;
+        pole->geometry = geometry;
+        setPoleTransform(*pole);
+        streamedTile.poleGeometries.push_back(geometry);
+        streamedTile.poleBodies.push_back(body);
+        mapPoles.emplace(geometry, std::move(pole));
+    }
+
+    void recordPoleImpact(dGeomID poleGeometry, const dContactGeom& contact) {
+        const auto pole = mapPoles.find(poleGeometry);
+        if (pole == mapPoles.end() || pole->second->broken) {
+            return;
+        }
+        poleContactsCurrent.insert(poleGeometry);
+        const dReal* velocity = dBodyGetLinearVel(chassis);
+        const double normalSpeed =
+            std::abs(velocity[0] * contact.normal[0] + velocity[1] * contact.normal[1] +
+                     velocity[2] * contact.normal[2]);
+        auto& impact = poleImpactsCurrent[poleGeometry];
+        if (normalSpeed > impact.speedMetersPerSecond) {
+            impact.speedMetersPerSecond = normalSpeed;
+            impact.velocity = {velocity[0], velocity[1], velocity[2]};
+        }
+    }
+
+    void applyPoleImpacts() {
+        for (const auto& [geometry, impact] : poleImpactsCurrent) {
+            if (poleContactsPrevious.contains(geometry) || impact.speedMetersPerSecond < 0.5) {
+                continue;
+            }
+            auto found = mapPoles.find(geometry);
+            if (found == mapPoles.end()) {
+                continue;
+            }
+            PoleRuntime& pole = *found->second;
+            const double horizontalSpeed = std::hypot(impact.velocity[0], impact.velocity[1]);
+            if (horizontalSpeed <= 1.0e-8) {
+                continue;
+            }
+            const std::array<double, 3> direction = {impact.velocity[0] / horizontalSpeed,
+                                                     impact.velocity[1] / horizontalSpeed, 0.0};
+            std::array<double, 3> rotationAxis = {
+                pole.up[1] * direction[2] - pole.up[2] * direction[1],
+                pole.up[2] * direction[0] - pole.up[0] * direction[2],
+                pole.up[0] * direction[1] - pole.up[1] * direction[0]};
+            const double axisLength = std::hypot(rotationAxis[0], rotationAxis[1], rotationAxis[2]);
+            if (axisLength <= 1.0e-8) {
+                continue;
+            }
+            pole.rotationAxis = {rotationAxis[0] / axisLength, rotationAxis[1] / axisLength,
+                                 rotationAxis[2] / axisLength};
+            dMass mass;
+            dBodyGetMass(chassis, &mass);
+            const double momentumInTonneMetersPerSecond =
+                std::max(0.0, mass.mass / 1000.0) * impact.speedMetersPerSecond;
+            const double addedAngle = pole.definition.resistanceRadiansPerTonneMeterPerSecond *
+                                      momentumInTonneMetersPerSecond;
+            pole.angleRadians =
+                std::min(pole.definition.breakAngleRadians, pole.angleRadians + addedAngle);
+            if (pole.angleRadians >= pole.definition.breakAngleRadians) {
+                pole.broken = true;
+                pole.angleRadians = std::max(pole.angleRadians, PI * 0.5);
+                dGeomDisable(pole.geometry);
+            }
+            setPoleTransform(pole);
+        }
+    }
+
     static void nearCallback(void* context, dGeomID first, dGeomID second) {
         auto* simulation = static_cast<Impl*>(context);
         const bool firstHasBody = dGeomGetBody(first) != nullptr;
         const bool secondHasBody = dGeomGetBody(second) != nullptr;
-        if (firstHasBody == secondHasBody) {
+        const auto firstPole = simulation->mapPoles.find(first);
+        const auto secondPole = simulation->mapPoles.find(second);
+        const bool isPoleContact =
+            firstPole != simulation->mapPoles.end() || secondPole != simulation->mapPoles.end();
+        if ((!firstHasBody && !secondHasBody) ||
+            (firstHasBody && secondHasBody && !isPoleContact)) {
             return;
         }
         const bool firstIsWheel = simulation->wheelGeometries.contains(first);
@@ -418,6 +584,13 @@ struct BusSimulation::Impl {
         dContact contacts[4] = {};
         const int count = dCollide(first, second, 4, &contacts[0].geom, sizeof(dContact));
         for (int index = 0; index < count; ++index) {
+            if (firstPole != simulation->mapPoles.end() &&
+                dGeomGetBody(second) == simulation->chassis) {
+                simulation->recordPoleImpact(first, contacts[index].geom);
+            } else if (secondPole != simulation->mapPoles.end() &&
+                       dGeomGetBody(first) == simulation->chassis) {
+                simulation->recordPoleImpact(second, contacts[index].geom);
+            }
             contacts[index].surface.mode = dContactSoftERP | dContactSoftCFM | dContactApprox1;
             contacts[index].surface.mu = ROAD_FRICTION_COEFFICIENT;
             contacts[index].surface.soft_erp =
@@ -1127,9 +1300,13 @@ struct BusSimulation::Impl {
         if (!frozen) {
             applyCornerForces(driveCommand, steering, wheelBrakeForces, wheelSpringFactors,
                               scriptDriven);
+            poleContactsCurrent.clear();
+            poleImpactsCurrent.clear();
             dSpaceCollide(ode.space, this, &nearCallback);
+            applyPoleImpacts();
             dWorldStep(ode.world, fixedStep);
             dJointGroupEmpty(ode.contacts);
+            poleContactsPrevious = poleContactsCurrent;
             refreshWheelTelemetry();
         }
         simulationTime += fixedStep;
@@ -1151,8 +1328,8 @@ struct BusSimulation::Impl {
             dropped = true;
             if (!dropReported) {
                 simulationLog.Log("Dropped accumulated simulation time after exceeding catch-up "
-                                  "limit. Dropped frames: " +
-                                  std::to_string(accumulator));
+                                  "limit. Dropped seconds: " +
+                                  std::to_string(elapsedSeconds));
                 dropReported = true;
             }
             accumulator = std::fmod(accumulator, fixedStep);
@@ -1374,7 +1551,8 @@ double BusSimulation::positionZ() const {
 
 void BusSimulation::addMapTileCollision(int tileX, int tileY,
                                         std::optional<TerrainCollisionGrid> terrain,
-                                        std::vector<StaticCollisionMesh> staticCollision) {
+                                        std::vector<StaticCollisionMesh> staticCollision,
+                                        std::vector<MapPoleCollision> poles) {
     const std::uint64_t key = mapTileKey(tileX, tileY);
     const auto [tileIt, inserted] = impl_->streamedTileCollisions.try_emplace(key);
     if (!inserted) {
@@ -1390,7 +1568,21 @@ void BusSimulation::addMapTileCollision(int tileX, int tileY,
         for (StaticCollisionMesh& mesh : staticCollision) {
             impl_->addStaticCollision(std::move(mesh), &tileIt->second);
         }
+        for (const MapPoleCollision& pole : poles) {
+            impl_->addPoleCollision(pole, tileIt->second);
+        }
     } catch (...) {
+        for (dGeomID geometry : tileIt->second.poleGeometries) {
+            impl_->mapPoles.erase(geometry);
+            if (geometry) {
+                dGeomDestroy(geometry);
+            }
+        }
+        for (dBodyID body : tileIt->second.poleBodies) {
+            if (body) {
+                dBodyDestroy(body);
+            }
+        }
         for (dGeomID geometry : tileIt->second.geometries) {
             if (geometry) {
                 dGeomDestroy(geometry);
@@ -1408,13 +1600,31 @@ void BusSimulation::addMapTileCollision(int tileX, int tileY,
 }
 
 void BusSimulation::addMapTileStaticCollision(int tileX, int tileY,
-                                              std::vector<StaticCollisionMesh> staticCollision) {
+                                              std::vector<StaticCollisionMesh> staticCollision,
+                                              std::vector<MapPoleCollision> poles) {
     const auto tile = impl_->streamedTileCollisions.find(mapTileKey(tileX, tileY));
     if (tile == impl_->streamedTileCollisions.end()) {
         throw std::invalid_argument("Map tile collision must be published before static collision");
     }
     for (StaticCollisionMesh& mesh : staticCollision) {
         impl_->addStaticCollision(std::move(mesh), &tile->second);
+    }
+    const std::size_t initialPoleCount = tile->second.poleGeometries.size();
+    try {
+        for (const MapPoleCollision& pole : poles) {
+            impl_->addPoleCollision(pole, tile->second);
+        }
+    } catch (...) {
+        while (tile->second.poleGeometries.size() > initialPoleCount) {
+            const dGeomID geometry = tile->second.poleGeometries.back();
+            tile->second.poleGeometries.pop_back();
+            impl_->mapPoles.erase(geometry);
+            dGeomDestroy(geometry);
+            const dBodyID body = tile->second.poleBodies.back();
+            tile->second.poleBodies.pop_back();
+            dBodyDestroy(body);
+        }
+        throw;
     }
     ++impl_->collisionRevision;
 }
@@ -1436,6 +1646,20 @@ void BusSimulation::removeMapTileCollision(int tileX, int tileY) {
     const auto tile = impl_->streamedTileCollisions.find(mapTileKey(tileX, tileY));
     if (tile == impl_->streamedTileCollisions.end()) {
         return;
+    }
+    for (dGeomID geometry : tile->second.poleGeometries) {
+        impl_->mapPoles.erase(geometry);
+        impl_->poleContactsPrevious.erase(geometry);
+        impl_->poleContactsCurrent.erase(geometry);
+        impl_->poleImpactsCurrent.erase(geometry);
+        if (geometry) {
+            dGeomDestroy(geometry);
+        }
+    }
+    for (dBodyID body : tile->second.poleBodies) {
+        if (body) {
+            dBodyDestroy(body);
+        }
     }
     for (dGeomID geometry : tile->second.geometries) {
         if (geometry) {
@@ -1482,6 +1706,23 @@ std::vector<StaticCollisionMesh> BusSimulation::collisionDebugMeshes() const {
         meshes.insert(meshes.end(), tile.staticMeshes.begin(), tile.staticMeshes.end());
     }
     return meshes;
+}
+
+std::vector<MapPoleState> BusSimulation::mapPoleStates() const {
+    std::vector<MapPoleState> states;
+    states.reserve(impl_->mapPoles.size());
+    for (const auto& [geometry, pole] : impl_->mapPoles) {
+        static_cast<void>(geometry);
+        states.push_back({pole->definition.mapObjectId, pole->definition.tileX,
+                          pole->definition.tileY, pole->rotationAxis, pole->angleRadians,
+                          pole->broken});
+    }
+    std::sort(states.begin(), states.end(),
+              [](const MapPoleState& left, const MapPoleState& right) {
+                  return std::pair{left.tileX, left.mapObjectId} <
+                         std::pair{right.tileX, right.mapObjectId};
+              });
+    return states;
 }
 
 double BusSimulation::yaw() const {

@@ -86,15 +86,19 @@ void verifyPassengerServiceBehavior() {
     bool rejectedInvalidPassengerStop = false;
     try {
         (void)mapScheduledPassengerModelIdentity(0, 0);
-    } catch (const std::invalid_argument&) {
-        rejectedInvalidPassengerStop = true;
+    } catch (const std::invalid_argument& error) {
+        rejectedInvalidPassengerStop =
+            std::string_view(error.what()).find("stopId=0") != std::string_view::npos &&
+            std::string_view(error.what()).find("queuePosition=0") != std::string_view::npos;
     }
     bool rejectedPassengerIdentityOverflow = false;
     try {
         (void)mapScheduledPassengerModelIdentity(
             1, (std::numeric_limits<std::size_t>::max)());
-    } catch (const std::overflow_error&) {
-        rejectedPassengerIdentityOverflow = true;
+    } catch (const std::overflow_error& error) {
+        rejectedPassengerIdentityOverflow =
+            std::string_view(error.what()).find("stopId=1") != std::string_view::npos &&
+            std::string_view(error.what()).find("queuePosition=") != std::string_view::npos;
     }
     require(rejectedInvalidPassengerStop && rejectedPassengerIdentityOverflow,
             "passenger identity rejects invalid stop IDs and overflowing queue positions");
@@ -623,6 +627,9 @@ void verifyDrivingBehavior() {
             "waiting bus priority activates once conflicting green has cleared");
 
     MapTrafficLaneNetwork junction;
+    for (int index = 0; index < 4; ++index) {
+        junction.addSegment(straight(1090 + index, 1000.0 + index * 20.0, 1000.0, 0.0, 5.0));
+    }
     junction.addSegment(straight(1001, 0.0, -40.0, 0.0, 40.0));
     junction.addSegment(straight(1002, 0.0, 0.0, 0.0, 40.0));
     for (const double radius : {-10.0, 10.0}) {
@@ -834,9 +841,6 @@ void verifyDrivingBehavior() {
                 "pedestrian routes preserve the authored sidewalk lateral offset");
     requireNear(sidewalkPose->position[2], 0.2,
                 "pedestrian routes preserve the authored path height offset");
-    std::optional<MapTrafficRoute> left;
-    std::optional<MapTrafficRoute> right;
-    bool foundStraight = false;
     for (std::size_t seed = 1; seed <= 12; ++seed) {
         const auto route = junction.buildRoute(1001, 0, seed, 4.5);
         require(route.has_value(), "a normal car can route through an authored junction");
@@ -845,12 +849,6 @@ void verifyDrivingBehavior() {
                     "a route accepted for a vehicle never produces a permanent zero curve speed");
         }
         const int exit = route->segments.back().spline.placement.splineId;
-        if (exit == 1003)
-            left = route;
-        if (exit == 1004)
-            right = route;
-        if (exit == 1002)
-            foundStraight = true;
         const auto largeVehicle = junction.buildRoute(1001, 0, seed, 20.0);
         require(largeVehicle && largeVehicle->segments.back().spline.placement.splineId == 1002,
                 "vehicles with a 20 m minimum radius reject the 10 m junction turns");
@@ -858,8 +856,44 @@ void verifyDrivingBehavior() {
         require(exactRadius && exactRadius->segments.back().spline.placement.splineId == exit,
                 "a vehicle with a 10 m minimum radius can use authored 10 m turns");
     }
-    require(left && right && foundStraight,
-            "seeded junction choices include left, right, and straight movements");
+    std::optional<MapTrafficRoute> left;
+    std::optional<MapTrafficRoute> right;
+    std::size_t straightSelections = 0;
+    std::size_t leftSelections = 0;
+    std::size_t rightSelections = 0;
+    std::size_t smallPoolStraightSelections = 0;
+    std::size_t smallPoolLeftSelections = 0;
+    std::size_t smallPoolRightSelections = 0;
+    for (std::size_t seed = 1; seed <= 1200; ++seed) {
+        const auto route = junction.buildRoute(1001, 0, seed, 4.5);
+        require(route.has_value(), "a seeded vehicle route is available through the junction");
+        switch (route->segments.back().spline.placement.splineId) {
+        case 1002:
+            ++straightSelections;
+            smallPoolStraightSelections += seed <= 8 ? 1U : 0U;
+            break;
+        case 1003:
+            ++leftSelections;
+            smallPoolLeftSelections += seed <= 8 ? 1U : 0U;
+            left = route;
+            break;
+        case 1004:
+            ++rightSelections;
+            smallPoolRightSelections += seed <= 8 ? 1U : 0U;
+            right = route;
+            break;
+        default:
+            require(false, "junction route selects one of its three authored exits");
+        }
+    }
+    require(straightSelections > leftSelections * 3 / 2 &&
+                straightSelections > rightSelections * 3 / 2 && leftSelections > 0 &&
+                rightSelections > 0 && left.has_value() && right.has_value(),
+            "equal-density junction choices favor straight movement over each turn");
+    require(smallPoolStraightSelections >= smallPoolLeftSelections &&
+                smallPoolStraightSelections >= smallPoolRightSelections &&
+                smallPoolLeftSelections > 0 && smallPoolRightSelections > 0,
+            "a small fixed vehicle pool samples straight, left, and right exits without a branch skew");
     MapTrafficRouteSegment sharpCurveSegment;
     for (const auto& sample : tessellateMapSpline(0.0, 0.0, 0.0, std::acos(-1.0) * 0.25, 0.5)) {
         sharpCurveSegment.points.push_back({sample.x, sample.y, 0.0});
@@ -2380,12 +2414,30 @@ void verifyDrivingBehavior() {
     require(lowPriorityYielded && highPriorityWasServedFirst && lowPriority.distanceMeters > 60.0 &&
                 highPriority.distanceMeters > 60.0,
             "priority 256 wins over priority 64 before wait aging closes the priority gap");
-    MapTrafficRoute lowPriorityTurningRoute = oneSegment(straight(1208, 0.0, -40.0, 0.0, 100.0));
-    lowPriorityTurningRoute.segments.front().points = {{0.0, -40.0, 0.0}, {0.0, 60.0, 0.0}};
-    lowPriorityTurningRoute.segments.front().pathRules.groups.push_back(committedPathRules);
-    MapTrafficRoute highPriorityJunctionRoute = oneSegment(straight(1209, -40.0, 0.0, 90.0, 100.0));
-    highPriorityJunctionRoute.segments.front().points = {{-40.0, 0.0, 0.0}, {60.0, 0.0, 0.0}};
-    highPriorityJunctionRoute.segments.front().pathRules.groups.push_back(approachingPathRules);
+    MapTrafficRoute lowPriorityTurningRoute;
+    auto lowPriorityApproach = straight(1208, 0.0, -40.0, 0.0, 40.0);
+    lowPriorityApproach.pathRules.groups.push_back(committedPathRules);
+    auto lowPriorityConnector = straight(1217, 0.0, 0.0, 0.0, 1.0);
+    lowPriorityConnector.points = {{0.0, 0.0, 0.0}, {0.0, 4.0, 0.0},
+                                   {4.0, 8.0, 0.0}, {10.0, 8.0, 0.0}};
+    lowPriorityConnector.pathRules.groups.push_back(committedPathRules);
+    const double lowPriorityConnectorLength =
+        4.0 + std::hypot(4.0, 4.0) + 6.0;
+    lowPriorityTurningRoute.segments = {
+        lowPriorityApproach, lowPriorityConnector, straight(1218, 10.0, 8.0, 90.0, 60.0)};
+    lowPriorityTurningRoute.cumulativeEndDistances = {
+        40.0, 40.0 + lowPriorityConnectorLength, 100.0 + lowPriorityConnectorLength};
+    lowPriorityTurningRoute.totalLength = lowPriorityTurningRoute.cumulativeEndDistances.back();
+    MapTrafficRoute highPriorityJunctionRoute;
+    auto highJunctionApproach = straight(1209, -40.0, 0.0, 90.0, 20.0);
+    highJunctionApproach.pathRules.groups.push_back(approachingPathRules);
+    auto highPriorityThrough = straight(1219, -20.0, 0.0, 90.0, 40.0);
+    highPriorityThrough.points = {{-20.0, 0.0, 0.0}, {20.0, 0.0, 0.0}};
+    highPriorityThrough.pathRules.groups.push_back(approachingPathRules);
+    highPriorityJunctionRoute.segments = {
+        highJunctionApproach, highPriorityThrough, straight(1220, 20.0, 0.0, 90.0, 60.0)};
+    highPriorityJunctionRoute.cumulativeEndDistances = {20.0, 60.0, 120.0};
+    highPriorityJunctionRoute.totalLength = 120.0;
     auto lowPriorityTurning = makeMapTrafficActor(std::move(lowPriorityTurningRoute),
                                                   "low-priority-turn.ovh", 8.0, 0.0, false);
     auto highPriorityInJunction = makeMapTrafficActor(
@@ -2394,25 +2446,72 @@ void verifyDrivingBehavior() {
     highPriorityInJunction.unscheduledGroupIndex = 0;
     lowPriorityTurning.trafficRuleGroupIndex = 0;
     highPriorityInJunction.trafficRuleGroupIndex = 0;
-    lowPriorityTurning.distanceMeters = 35.0;
-    highPriorityInJunction.distanceMeters = 35.0;
+    lowPriorityTurning.distanceMeters = 24.0;
+    highPriorityInJunction.distanceMeters = 30.0;
     lowPriorityTurning.speedMetersPerSecond = 8.0;
     highPriorityInJunction.speedMetersPerSecond = 8.0;
     lowPriorityTurning.junctionWaitSeconds = 30.0;
-    bool lowerPriorityClearedConflictFirst = false;
+    require(!mapTrafficRoutePositionOnJunctionPath(lowPriorityTurning.route,
+                                                   lowPriorityTurning.distanceMeters) &&
+                !mapTrafficRoutePositionOnJunctionPath(
+                    lowPriorityTurning.route,
+                    lowPriorityTurning.distanceMeters + lowPriorityTurning.lengthMeters * 0.5) &&
+                mapTrafficRoutePositionOnJunctionPath(
+                    highPriorityInJunction.route, highPriorityInJunction.distanceMeters),
+            "a lower-priority turn approaches while the priority vehicle is already established "
+            "in the junction");
+    bool lowerEnteredBeforePriorityCleared = false;
+    for (int frame = 0; frame < 80; ++frame) {
+        advanceMapTrafficDriving({&highPriorityInJunction, &lowPriorityTurning}, {}, 0.1);
+        lowerEnteredBeforePriorityCleared =
+            lowerEnteredBeforePriorityCleared ||
+            (lowPriorityTurning.distanceMeters >= 40.0 &&
+             highPriorityInJunction.distanceMeters <= 60.0);
+        require(mapTrafficHasClearance(footprint(lowPriorityTurning),
+                                       {footprint(highPriorityInJunction)}, 0.49),
+                "a priority vehicle in the junction clears physically separated lower-priority "
+                "turning traffic");
+    }
+    require(highPriorityInJunction.distanceMeters > 50.0 &&
+                !lowerEnteredBeforePriorityCleared,
+            "a lower-priority turn does not commit ahead of higher-priority traffic already in "
+            "the junction");
     for (int frame = 0; frame < 300; ++frame) {
         advanceMapTrafficDriving({&highPriorityInJunction, &lowPriorityTurning}, {}, 0.1);
         require(mapTrafficHasClearance(footprint(lowPriorityTurning),
                                        {footprint(highPriorityInJunction)}, 0.49),
-                "committed low-priority turns retain physical clearance while clearing");
-        lowerPriorityClearedConflictFirst =
-            lowerPriorityClearedConflictFirst || (lowPriorityTurning.distanceMeters > 45.0 &&
-                                                  highPriorityInJunction.distanceMeters < 60.0);
+                "lower-priority traffic preserves clearance after the priority vehicle passes");
     }
-    require(lowerPriorityClearedConflictFirst && lowPriorityTurning.distanceMeters > 60.0 &&
+    require(lowPriorityTurning.distanceMeters > 60.0 &&
                 highPriorityInJunction.distanceMeters > 60.0,
-            "waiting low-priority junction traffic clears before a higher-priority actor already "
-            "in the junction");
+            "a lower-priority turn enters after higher-priority junction traffic clears");
+    auto committedLowerTurn = makeMapTrafficActor(
+        lowPriorityTurning.route, "committed-lower-turn.ovh", 8.0, 0.0, false);
+    auto establishedMainTraffic = makeMapTrafficActor(
+        highPriorityInJunction.route, "established-main-traffic.ovh", 8.0, 0.0, false);
+    committedLowerTurn.unscheduledGroupIndex = 0;
+    establishedMainTraffic.unscheduledGroupIndex = 0;
+    committedLowerTurn.trafficRuleGroupIndex = 0;
+    establishedMainTraffic.trafficRuleGroupIndex = 0;
+    committedLowerTurn.distanceMeters = 39.0;
+    establishedMainTraffic.distanceMeters = 55.0;
+    committedLowerTurn.speedMetersPerSecond = 0.0;
+    establishedMainTraffic.speedMetersPerSecond = 8.0;
+    require(mapTrafficActorOnJunctionPath(committedLowerTurn,
+                                          committedLowerTurn.distanceMeters) &&
+                !mapTrafficRoutePositionOnJunctionPath(committedLowerTurn.route,
+                                                       committedLowerTurn.distanceMeters),
+            "the turning vehicle is committed by its front before its center enters");
+    const double committedTurnStart = committedLowerTurn.distanceMeters;
+    for (int frame = 0; frame < 200; ++frame) {
+        advanceMapTrafficDriving({&establishedMainTraffic, &committedLowerTurn}, {}, 0.1);
+        require(mapTrafficHasClearance(footprint(committedLowerTurn),
+                                       {footprint(establishedMainTraffic)}, 0.49),
+                "an already-committed turn preserves physical clearance from main-road traffic");
+    }
+    require(committedLowerTurn.distanceMeters > committedTurnStart + 10.0 &&
+                establishedMainTraffic.distanceMeters > 60.0,
+            "an already-committed lower-priority turn clears instead of stopping mid-junction");
     MapTrafficRoute rightTurnRoute;
     auto rightTurnApproach = straight(1214, 0.0, -40.0, 0.0, 30.0);
     rightTurnApproach.pathRules.groups.push_back(committedPathRules);
@@ -3695,7 +3794,10 @@ void verifyMalformedRouteErrors() {
         actor.distanceMeters = startMeters;
         actor.speedMetersPerSecond = 1.0;
         const auto [update, message] = drivingError({&actor}, 1, 0.05);
-        require(update == 0 && message == "Cannot sample traffic curve",
+        require(update == 0 && message.find("Cannot sample traffic curve") == 0 &&
+                    message.find("distanceMeters=") != std::string::npos &&
+                    message.find("fromDistance=") != std::string::npos &&
+                    message.find("toSampled=0") != std::string::npos,
                 "slow traffic on a malformed route reports the curve sampling failure");
     }
     // Lane 0 segment 8 exercises the lookahead curve query; lane 2 segment 8 exercises the
@@ -3711,7 +3813,11 @@ void verifyMalformedRouteErrors() {
             pointers.push_back(&actor);
         }
         const auto [update, message] = drivingError(pointers, 60, 1.0 / 60.0);
-        require(update == expectedUpdate && message == "Cannot sample traffic curve",
+        require(update == expectedUpdate &&
+                    message.find("Cannot sample traffic curve") == 0 &&
+                    message.find("distanceMeters=") != std::string::npos &&
+                    message.find("toDistance=") != std::string::npos &&
+                    message.find("toSampled=0") != std::string::npos,
                 "malformed junction traffic fails at the same update with the same error");
     }
 }
@@ -4225,6 +4331,48 @@ void verifyAuthoredPriorityOrder() {
     require(lowPriorityYielded && highPriorityWasServedFirst && lowPriority.distanceMeters > 60.0 &&
                 highPriority.distanceMeters > 60.0,
             "priority 256 wins over priority 64 before wait aging closes the priority gap");
+
+    MapTrafficRoute shortLowPriorityRoute;
+    auto highPriorityApproach = straight(1206, 0.0, -40.0, 0.0, 30.0);
+    highPriorityApproach.pathRules.groups.push_back(
+        MapTrafficGroupRules{.groupIndex = 0, .priority = 192.0});
+    auto shortLowPriorityConnector = straight(1207, 0.0, -10.0, 0.0, 10.0);
+    shortLowPriorityConnector.pathRules.groups.push_back(
+        MapTrafficGroupRules{.groupIndex = 0, .priority = 64.0});
+    shortLowPriorityRoute.segments = {
+        highPriorityApproach, shortLowPriorityConnector,
+        straight(1208, 0.0, 0.0, 0.0, 100.0)};
+    shortLowPriorityRoute.cumulativeEndDistances = {30.0, 40.0, 140.0};
+    shortLowPriorityRoute.totalLength = 140.0;
+    MapTrafficRoute defaultPriorityCrossingRoute =
+        oneSegment(straight(1209, -40.0, 0.0, 90.0, 100.0));
+    auto vehicleApproachingShortLowPriority =
+        makeMapTrafficActor(shortLowPriorityRoute, "short-low-priority.ovh", 8.0, 0.0, false);
+    auto defaultPriorityCrossing = makeMapTrafficActor(
+        defaultPriorityCrossingRoute, "default-priority-crossing.ovh", 8.0, 0.0, false);
+    vehicleApproachingShortLowPriority.unscheduledGroupIndex = 0;
+    defaultPriorityCrossing.unscheduledGroupIndex = 0;
+    vehicleApproachingShortLowPriority.trafficRuleGroupIndex = 0;
+    defaultPriorityCrossing.trafficRuleGroupIndex = 0;
+    vehicleApproachingShortLowPriority.distanceMeters = 20.0;
+    defaultPriorityCrossing.distanceMeters = 35.0;
+    bool shortLowPriorityVehicleYielded = false;
+    bool defaultPriorityTrafficWasServedFirst = false;
+    for (int frame = 0; frame < 300; ++frame) {
+        advanceMapTrafficDriving(
+            {&vehicleApproachingShortLowPriority, &defaultPriorityCrossing}, {}, 0.1);
+        if (vehicleApproachingShortLowPriority.junctionWaitSeconds > 0.0) {
+            shortLowPriorityVehicleYielded = true;
+            defaultPriorityTrafficWasServedFirst =
+                defaultPriorityTrafficWasServedFirst ||
+                defaultPriorityCrossing.distanceMeters >
+                    vehicleApproachingShortLowPriority.distanceMeters;
+        }
+    }
+    require(shortLowPriorityVehicleYielded && defaultPriorityTrafficWasServedFirst &&
+                vehicleApproachingShortLowPriority.distanceMeters > 40.0 &&
+                defaultPriorityCrossing.distanceMeters > 60.0,
+            "a short low-priority connector lowers the approaching vehicle's junction priority");
 }
 
 } // namespace

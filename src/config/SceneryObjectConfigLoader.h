@@ -43,6 +43,11 @@ struct SceneryObjectTrafficLight {
     std::optional<double> approachDistanceMeters;
 };
 
+struct SceneryPoleCrashConfiguration {
+    double resistanceRadiansPerTonneMeterPerSecond = 0.0;
+    double breakAngleRadians = 0.0;
+};
+
 struct SceneryObjectConfig {
     std::filesystem::path sourcePath;
     std::filesystem::path modelPath;
@@ -51,6 +56,7 @@ struct SceneryObjectConfig {
     bool surface = false;
     bool onlyEditor = false;
     bool absoluteHeight = false;
+    std::optional<SceneryPoleCrashConfiguration> poleCrash;
     bool helpArrow = false;
     bool trafficLight = false;
     int renderType = 2;

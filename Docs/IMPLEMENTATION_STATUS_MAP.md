@@ -52,7 +52,7 @@ attachments, terrain/water, collision, inverse conversion, and GPU vertex precis
 
 | Keyword / family | Status | Current boundary |
 | --- | --- | --- |
-| `[object]` | Partial | Static supported scenery placement is active. Counted placement labels feed label-oriented inline SCO text-texture slots, visible only on the authored front face; label/slot ordering is inferred and native OMSI visual parity remains unverified. Chrono overrides and some placement semantics are not implemented. |
+| `[object]` | Partial | Static supported scenery placement is active. Counted placement labels feed label-oriented inline SCO text-texture slots, visible only on the authored front face; label/slot ordering is inferred and native OMSI visual parity remains unverified. `[crashmode_pole]` objects use streamed capsule collision and visible bending/breaking; hinge/fall dynamics and broad live-map validation remain incomplete. Chrono overrides and some placement semantics are not implemented. |
 | `[spline]`, `[spline_h]` | Partial | Road centerlines, elevation, cant, and a subset of profile rendering are active. Full OMSI geometry/material semantics and visual parity remain incomplete. |
 | `[splineAttachement]` | Partial | Rows follow unique reciprocal spline links across tile boundaries. Missing/ambiguous IDs, invalid spline geometry, or chains without a usable local owner still produce no placement. |
 | `[splineAttachement_repeater]` | Partial | Rows follow linked spline chains from their local owner; resolving the encoded repeater master tile/object index is still incomplete. |

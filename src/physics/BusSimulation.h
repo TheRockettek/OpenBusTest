@@ -62,14 +62,17 @@ class BusSimulation {
     double positionZ() const;
     void translateVertically(double meters);
     void addMapTileCollision(int tileX, int tileY, std::optional<TerrainCollisionGrid> terrain,
-                             std::vector<StaticCollisionMesh> staticCollision);
+                             std::vector<StaticCollisionMesh> staticCollision,
+                             std::vector<MapPoleCollision> poles = {});
     void addMapTileTerrainCollision(int tileX, int tileY, TerrainCollisionGrid terrain);
     void addMapTileStaticCollision(int tileX, int tileY,
-                                   std::vector<StaticCollisionMesh> staticCollision);
+                                   std::vector<StaticCollisionMesh> staticCollision,
+                                   std::vector<MapPoleCollision> poles = {});
     void removeMapTileCollision(int tileX, int tileY);
     std::uint64_t collisionDebugRevision() const;
     std::size_t loadedMapCollisionTileCount() const;
     std::vector<StaticCollisionMesh> collisionDebugMeshes() const;
+    std::vector<MapPoleState> mapPoleStates() const;
     double yaw() const;
     double steeringAngle() const;
     std::array<double, 3> centerOfGravity() const;

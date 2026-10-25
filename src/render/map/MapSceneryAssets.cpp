@@ -37,6 +37,9 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
         if (objectConfiguration.trafficLight) {
             sceneryTrafficLightAssets.insert(cacheKey);
         }
+        if (objectConfiguration.poleCrash.has_value()) {
+            poleCrashSceneryAssets.insert(cacheKey);
+        }
         // Editor-only assets can still contribute path debug geometry.
         if (objectConfiguration.absoluteHeight) {
             absoluteHeightSceneryAssets.insert(cacheKey);

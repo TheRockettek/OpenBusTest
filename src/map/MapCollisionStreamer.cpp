@@ -45,6 +45,7 @@ struct MapCollisionStreamer::WorkerState {
         int tileY = 0;
         std::optional<TerrainCollisionGrid> terrain;
         std::vector<StaticCollisionMesh> meshes;
+        std::vector<MapPoleCollision> poles;
         std::exception_ptr error;
         bool terrainOnly = false;
     };
@@ -109,6 +110,8 @@ struct MapCollisionStreamer::WorkerState {
                 MapRoadCollisionResult roadCollision = buildMapSplineCollisionTile(
                     map, omsiRoot, job.tileX, job.tileY, &roadConnections());
                 result.meshes = std::move(roadCollision.meshes);
+                result.poles = buildMapPoleCollisionTile(map, omsiRoot, job.tileX, job.tileY,
+                                                         &sceneryCollisions());
             } catch (...) {
                 result.error = std::current_exception();
             }
@@ -180,11 +183,19 @@ struct MapCollisionStreamer::WorkerState {
         return *connections;
     }
 
+    const MapSceneryCollisionIndex& sceneryCollisions() {
+        if (!scenery) {
+            scenery = buildMapSceneryCollisionIndex(map, omsiRoot);
+        }
+        return *scenery;
+    }
+
     const MapDefinition& map;
     std::filesystem::path omsiRoot;
     std::unordered_set<std::uint64_t> preloadedTerrainKeys;
     // Only accessed by this worker thread; never conditioned on published collision tiles.
     std::optional<MapRoadConnectionIndex> connections;
+    std::shared_ptr<const MapSceneryCollisionIndex> scenery;
     std::mutex mutex;
     std::condition_variable condition;
     std::deque<Job> pending;
@@ -339,10 +350,12 @@ void MapCollisionStreamer::update(double worldX, double worldY,
             } else {
                 if (loaded != loadedTiles_.end()) {
                     simulation_.addMapTileStaticCollision(result.tileX, result.tileY,
-                                                          std::move(result.meshes));
+                                                          std::move(result.meshes),
+                                                          std::move(result.poles));
                 } else {
                     simulation_.addMapTileCollision(result.tileX, result.tileY, std::nullopt,
-                                                    std::move(result.meshes));
+                                                    std::move(result.meshes),
+                                                    std::move(result.poles));
                     loadedTiles_.emplace(result.key, std::pair{result.tileX, result.tileY});
                 }
                 completedCollisionKeys_.insert(result.key);

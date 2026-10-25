@@ -1814,6 +1814,7 @@ int main() {
                 renderer.updateMapStreaming(simulation.positionX(), simulation.positionY());
                 collisionStreamer.update(simulation.positionX(), simulation.positionY(),
                                          renderer.loadedMapTiles());
+                renderer.updateMapPoleStates(simulation.mapPoleStates());
                 const std::size_t collisionTileCount = collisionStreamer.loadedTileCount();
                 if (collisionTileCount != reportedCollisionTileCount) {
                     applicationLog.Log("Map collision streaming progress: resident tiles=" +
@@ -1931,6 +1932,7 @@ int main() {
                 renderer.updateMapStreaming(streamingPosition[0], streamingPosition[1]);
                 collisionStreamer.update(streamingPosition[0], streamingPosition[1],
                                          renderer.loadedMapTiles());
+                renderer.updateMapPoleStates(simulation.mapPoleStates());
                 const std::size_t collisionTileCount = collisionStreamer.loadedTileCount();
                 if (collisionTileCount != reportedCollisionTileCount) {
                     applicationLog.Log("Map collision streaming progress: resident tiles=" +

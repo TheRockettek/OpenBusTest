@@ -242,7 +242,9 @@ junction movement and would arrive within the same conflict window (plus a
 0.75-second safety margin accounting for vehicle occupancy); traffic that has
 already cleared before the turn arrives does not hold it back;
 higher-priority vehicles do not wait for such a vehicle's unused claim. Waiting
-time orders junction admission among vehicles of equal priority. If a collision
+time orders junction admission among vehicles of equal priority. Approach priority
+uses the lowest priority across the current spline and connected route splines
+within 150 m, so short low-priority connectors still affect right-of-way. If a collision
 cycle nevertheless traps two vehicles inside a junction, the lower-priority
 vehicle backs out to the approach when its swept path is clear, then waits for
 the other vehicle to exit. Crossing movements use time-aware three-second

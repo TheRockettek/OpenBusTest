@@ -99,6 +99,7 @@ class MapSceneLoader {
         sceneryRuntimeDefinitions;
     std::unordered_set<std::string> sceneryAssetsNeedingVariables;
     std::unordered_set<std::string> sceneryTrafficLightAssets;
+    std::unordered_set<std::string> poleCrashSceneryAssets;
     std::unordered_set<std::string> editorOnlySceneryAssets;
     std::unordered_set<std::string> absoluteHeightSceneryAssets;
     bool verboseAlphaMaterials = false;

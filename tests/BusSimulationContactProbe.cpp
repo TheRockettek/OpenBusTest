@@ -165,6 +165,31 @@ ContactMetrics runCurbCrossing(WheelStaticContactSettings settings) {
     return metrics;
 }
 
+MapPoleState runPoleImpact(double resistance, double breakAngle) {
+    BusSimulation simulation(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0},
+                             60.0, 8, 0.0, {}, {}, true);
+    MapPoleCollision pole;
+    pole.mapObjectId = 101;
+    pole.tileX = 0;
+    pole.basePosition = {12.0, 0.0, 0.0};
+    pole.topPosition = {12.0, 0.0, 4.0};
+    pole.radiusMeters = 0.25;
+    pole.resistanceRadiansPerTonneMeterPerSecond = resistance;
+    pole.breakAngleRadians = breakAngle;
+    simulation.addMapTileCollision(0, 0, std::nullopt, {}, {pole});
+    for (int step = 0; step < 300; ++step) {
+        simulation.step(0.0, 0.0, 1.0);
+    }
+    for (int step = 0; step < 900; ++step) {
+        simulation.step(0.55, 0.0, 0.0);
+        const auto states = simulation.mapPoleStates();
+        if (!states.empty() && states.front().angleRadians > 0.0) {
+            return states.front();
+        }
+    }
+    throw std::runtime_error("bus did not bend the configured map pole");
+}
+
 void printMetrics(const char* label, const ContactMetrics& metrics) {
     std::cout << label << " maxYawRate=" << metrics.maximumYawRate
               << " maxSteeringHinge=" << metrics.maximumSteeringHingeAngle
@@ -181,10 +206,19 @@ int main() {
         const ContactMetrics compliant = runCrossing({0.65, 1.0e-5});
         const ContactMetrics firmCurb = runCurbCrossing({0.8, 1.0e-6});
         const ContactMetrics compliantCurb = runCurbCrossing({0.65, 1.0e-5});
+        const MapPoleState bentPole = runPoleImpact(0.0001, 1.2);
+        const MapPoleState brokenPole = runPoleImpact(0.25, 0.01);
+        const MapPoleState highThresholdBrokenPole = runPoleImpact(0.25, 2.0);
         printMetrics("firm", firm);
         printMetrics("compliant", compliant);
         printMetrics("firm-curb", firmCurb);
         printMetrics("compliant-curb", compliantCurb);
+        if (bentPole.broken || bentPole.angleRadians <= 0.0 || !brokenPole.broken ||
+            brokenPole.angleRadians < std::acos(-1.0) * 0.5 ||
+            !highThresholdBrokenPole.broken || highThresholdBrokenPole.angleRadians < 2.0) {
+            std::cerr << "pole impacts did not apply resistance and break-angle behavior\n";
+            return 1;
+        }
         if (firm.finalX < 21.0 || compliant.finalX < 21.0) {
             std::cerr << "bus did not traverse the raised-marking test strip\n";
             return 1;

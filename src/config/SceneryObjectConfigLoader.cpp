@@ -365,7 +365,16 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         }
         if (keyword == "crashmode_pole") {
             std::vector<double> values;
-            readDoubles(reader, keyword, 2, values, result.diagnostics);
+            if (readDoubles(reader, keyword, 2, values, result.diagnostics)) {
+                if (!std::isfinite(values[0]) || !std::isfinite(values[1]) || values[0] <= 0.0 ||
+                    values[1] <= 0.0) {
+                    result.diagnostics.error(
+                        line.number, keyword,
+                        "resistance and break angle must both be finite and greater than zero");
+                } else {
+                    result.poleCrash = SceneryPoleCrashConfiguration{values[0], values[1]};
+                }
+            }
             continue;
         }
         if (keyword == "maplight") {

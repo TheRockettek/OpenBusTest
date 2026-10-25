@@ -53,6 +53,9 @@ int main(int argc, char** argv) {
     const std::filesystem::path singleStopPath = directory / "single-stop.sco";
     const std::filesystem::path remappedPath = directory / "remapped-light.sco";
     const std::filesystem::path bathRoundaboutPath = directory / "bath-roundabout.sco";
+    const std::filesystem::path polePath = directory / "pole.sco";
+    const std::filesystem::path invalidPolePath = directory / "invalid-pole.sco";
+    const std::filesystem::path nonFinitePolePath = directory / "non-finite-pole.sco";
     {
         std::ofstream output(path);
         if (!output) {
@@ -138,11 +141,27 @@ int main(int argc, char** argv) {
                   "[phase]\n0\n3\n"
                   "[phase]\n6\n7\n";
     }
+    {
+        std::ofstream output(polePath);
+        output << "[crashmode_pole]\n0.25\n1.2\n";
+    }
+    {
+        std::ofstream output(invalidPolePath);
+        output << "[crashmode_pole]\n-1\n0\n";
+    }
+    {
+        std::ofstream output(nonFinitePolePath);
+        output << "[crashmode_pole]\nnan\n1.2\n";
+    }
     const SceneryObjectConfig configuration = loadSceneryObjectFile(path);
     const SceneryObjectConfig singleStopConfiguration = loadSceneryObjectFile(singleStopPath);
     const SceneryObjectConfig remappedConfiguration = loadSceneryObjectFile(remappedPath);
     const SceneryObjectConfig bathRoundaboutConfiguration =
         loadSceneryObjectFile(bathRoundaboutPath);
+    const SceneryObjectConfig poleConfiguration = loadSceneryObjectFile(polePath);
+    const SceneryObjectConfig invalidPoleConfiguration = loadSceneryObjectFile(invalidPolePath);
+    const SceneryObjectConfig nonFinitePoleConfiguration =
+        loadSceneryObjectFile(nonFinitePolePath);
     openbus::probe::removeProbeDirectory(directory);
 
     bool valid = require(configuration.trafficPaths.size() == 2, "path sections parsed");
@@ -176,6 +195,17 @@ int main(int argc, char** argv) {
                          bathRoundaboutConfiguration.trafficLights.empty() &&
                          bathRoundaboutConfiguration.trafficLightSchedules.empty(),
                      "Bath Roundabout light with no referencing path is discarded");
+    valid &= require(poleConfiguration.poleCrash.has_value() &&
+                         poleConfiguration.poleCrash->resistanceRadiansPerTonneMeterPerSecond ==
+                             0.25 &&
+                         poleConfiguration.poleCrash->breakAngleRadians == 1.2,
+                     "[crashmode_pole] retains resistance and break angle");
+    valid &= require(!invalidPoleConfiguration.poleCrash.has_value() &&
+                         !invalidPoleConfiguration.diagnostics.entries.empty(),
+                     "[crashmode_pole] rejects non-positive resistance and break angle");
+    valid &= require(!nonFinitePoleConfiguration.poleCrash.has_value() &&
+                         !nonFinitePoleConfiguration.diagnostics.entries.empty(),
+                     "[crashmode_pole] rejects non-finite values");
     valid &= require(configuration.trafficLight,
                      "standalone [trafficlight] model marker is recognized");
     if (configuration.trafficPaths.size() == 2) {

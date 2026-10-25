@@ -319,11 +319,13 @@ struct MapRenderer::Impl {
 
     struct SceneryInstance {
         std::size_t batchIndex = 0;
+        std::optional<int> mapObjectId;
         double x = 0.0;
         double y = 0.0;
         double z = 0.0;
         double boundingRadius = 0.0;
-        // Static world transform (translation and rotation), precomputed at load.
+        bool poleCrash = false;
+        Matrix4 baseTransform = {};
         Matrix4 transform = {};
         std::size_t scriptStateIndex = std::numeric_limits<std::size_t>::max();
         std::size_t lodThresholdSetIndex = 0;

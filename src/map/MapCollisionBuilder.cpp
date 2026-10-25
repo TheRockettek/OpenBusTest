@@ -169,6 +169,49 @@ std::vector<std::array<double, 3>> clipPolygonToTile(std::vector<std::array<doub
     return clip(polygon, 1, maxY, false);
 }
 
+std::optional<MapPoleCollision> makeMapPoleCollision(const MapSceneryCollisionObject& object,
+                                                     const MapDefinition& map, int tileX,
+                                                     int tileY) {
+    if (!object.poleCrash.has_value()) {
+        return std::nullopt;
+    }
+    const std::array<double, 3> localBottom = {
+        (object.localBounds[0] + object.localBounds[3]) * 0.5,
+        (object.localBounds[1] + object.localBounds[4]) * 0.5, object.localBounds[2]};
+    const std::array<double, 3> localTop = {localBottom[0], localBottom[1], object.localBounds[5]};
+    const auto bottomOffset = transformMapSceneryVector(object.pose, localBottom);
+    const auto topOffset = transformMapSceneryVector(object.pose, localTop);
+    MapPoleCollision pole;
+    pole.mapObjectId = object.mapObjectId;
+    pole.tileX = tileX;
+    pole.tileY = tileY;
+    pole.basePosition = {object.pose.x + bottomOffset[0], object.pose.y + bottomOffset[1],
+                         object.worldZ + bottomOffset[2]};
+    pole.topPosition = {object.pose.x + topOffset[0], object.pose.y + topOffset[1],
+                        object.worldZ + topOffset[2]};
+    const double localRadius = 0.5 * std::max(object.localBounds[3] - object.localBounds[0],
+                                              object.localBounds[4] - object.localBounds[1]);
+    const auto xAxis = transformMapSceneryVector(object.pose, {1.0, 0.0, 0.0});
+    const auto yAxis = transformMapSceneryVector(object.pose, {0.0, 1.0, 0.0});
+    pole.radiusMeters =
+        localRadius * std::max(std::hypot(xAxis[0], xAxis[1]), std::hypot(yAxis[0], yAxis[1]));
+    pole.resistanceRadiansPerTonneMeterPerSecond =
+        object.poleCrash->resistanceRadiansPerTonneMeterPerSecond;
+    pole.breakAngleRadians = object.poleCrash->breakAngleRadians;
+    const int baseTileX =
+        static_cast<int>(std::floor(pole.basePosition[0] / map.coordinates.tileSize));
+    const int baseTileY =
+        static_cast<int>(std::floor(pole.basePosition[1] / map.coordinates.tileSize));
+    if (baseTileX != tileX || baseTileY != tileY ||
+        std::hypot(pole.topPosition[0] - pole.basePosition[0],
+                   pole.topPosition[1] - pole.basePosition[1],
+                   pole.topPosition[2] - pole.basePosition[2]) <= 0.1 ||
+        !std::isfinite(pole.radiusMeters) || pole.radiusMeters <= 0.0) {
+        return std::nullopt;
+    }
+    return pole;
+}
+
 void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
                                    const MapSceneryCollisionIndex& index, int tileX, int tileY,
                                    MapRoadCollisionResult& result, const MapDefinition& map) {
@@ -186,6 +229,12 @@ void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
             continue;
         }
         const MapSceneryCollisionObject& object = index.objects[objectIndex];
+        if (object.poleCrash.has_value()) {
+            if (auto pole = makeMapPoleCollision(object, map, tileX, tileY)) {
+                result.poles.push_back(std::move(*pole));
+            }
+            continue;
+        }
         for (const auto& parsed : object.meshes) {
             if (!parsed) {
                 continue;
@@ -269,16 +318,16 @@ void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
     }
 }
 
-std::vector<std::filesystem::path>
-readSceneryCollisionMeshes(const std::filesystem::path& configPath,
-                           const std::filesystem::path& omsiRoot,
-                           const std::filesystem::path& mapRoot, bool& noCollision,
-                           bool& onlyEditor, bool& absoluteHeight) {
+std::vector<std::filesystem::path> readSceneryCollisionMeshes(
+    const std::filesystem::path& configPath, const std::filesystem::path& omsiRoot,
+    const std::filesystem::path& mapRoot, bool& noCollision, bool& onlyEditor, bool& absoluteHeight,
+    std::optional<SceneryPoleCrashConfiguration>& poleCrash) {
     std::vector<std::filesystem::path> meshes;
     const SceneryObjectConfig scenery = loadSceneryObjectFile(configPath);
     noCollision = scenery.noCollision;
     onlyEditor = scenery.onlyEditor;
     absoluteHeight = scenery.absoluteHeight;
+    poleCrash = scenery.poleCrash;
     const std::filesystem::path objectRoot = configPath.parent_path();
     if (!scenery.collisionMesh.empty()) {
         const std::filesystem::path collisionRelative =
@@ -335,6 +384,7 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
         bool noCollision = false;
         bool onlyEditor = false;
         bool absoluteHeight = false;
+        std::optional<SceneryPoleCrashConfiguration> poleCrash;
     };
     auto index = std::make_shared<MapSceneryCollisionIndex>();
     std::unordered_map<std::string, ConfigCollision> configCache;
@@ -374,7 +424,7 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
                 ConfigCollision collision;
                 collision.paths = readSceneryCollisionMeshes(
                     configPath, omsiRoot, map.rootPath, collision.noCollision, collision.onlyEditor,
-                    collision.absoluteHeight);
+                    collision.absoluteHeight, collision.poleCrash);
                 config = configCache.emplace(configKey, std::move(collision)).first;
             }
             const ConfigCollision& collision = config->second;
@@ -383,13 +433,19 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
             }
 
             MapSceneryCollisionObject object;
+            object.mapObjectId = placement.id;
             object.pose = *pose;
+            object.poleCrash = collision.poleCrash;
             const double ground = collision.absoluteHeight
                                       ? 0.0
                                       : sampleTerrainHeight(map, pose->x, pose->y, terrainCache);
             object.worldZ = mapSceneryWorldHeight(pose->z, ground, collision.absoluteHeight);
             object.minX = object.minY = std::numeric_limits<double>::max();
             object.maxX = object.maxY = std::numeric_limits<double>::lowest();
+            object.localBounds = {
+                std::numeric_limits<double>::max(),    std::numeric_limits<double>::max(),
+                std::numeric_limits<double>::max(),    std::numeric_limits<double>::lowest(),
+                std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
             for (const std::filesystem::path& meshPath : collision.paths) {
                 const std::string meshKey = meshPath.lexically_normal().generic_string();
                 auto mesh = meshCache.find(meshKey);
@@ -406,6 +462,14 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
                     continue;
                 }
                 object.meshes.push_back(mesh->second);
+                for (const auto& vertex : mesh->second->positions) {
+                    object.localBounds[0] = std::min(object.localBounds[0], vertex.x);
+                    object.localBounds[1] = std::min(object.localBounds[1], vertex.y);
+                    object.localBounds[2] = std::min(object.localBounds[2], vertex.z);
+                    object.localBounds[3] = std::max(object.localBounds[3], vertex.x);
+                    object.localBounds[4] = std::max(object.localBounds[4], vertex.y);
+                    object.localBounds[5] = std::max(object.localBounds[5], vertex.z);
+                }
                 auto bounds = meshLocalBoundsCache.find(meshKey);
                 if (bounds == meshLocalBoundsCache.end()) {
                     std::array<double, 6> localBounds = {std::numeric_limits<double>::max(),
@@ -626,6 +690,35 @@ MapRoadCollisionResult buildMapSplineCollisionTile(const MapDefinition& map,
             : std::nullopt;
     return buildMapRoadCollisionImpl(
         map, omsiRoot, &*tile, connections == nullptr ? *ownedConnections : *connections, nullptr);
+}
+
+std::vector<MapPoleCollision> buildMapPoleCollisionTile(const MapDefinition& map,
+                                                        const std::filesystem::path& omsiRoot,
+                                                        int tileX, int tileY,
+                                                        const MapSceneryCollisionIndex* scenery) {
+    const auto tile = std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& reference) {
+        return reference.x == tileX && reference.y == tileY;
+    });
+    if (tile == map.tiles.end()) {
+        return {};
+    }
+    const std::shared_ptr<const MapSceneryCollisionIndex> ownedScenery =
+        scenery == nullptr ? buildMapSceneryCollisionIndex(map, omsiRoot) : nullptr;
+    const MapSceneryCollisionIndex& collisionIndex = scenery == nullptr ? *ownedScenery : *scenery;
+    const auto found = collisionIndex.objectsByTile.find(tileKey(tileX, tileY));
+    if (found == collisionIndex.objectsByTile.end()) {
+        return {};
+    }
+    std::vector<MapPoleCollision> poles;
+    for (const std::size_t index : found->second) {
+        if (index >= collisionIndex.objects.size()) {
+            continue;
+        }
+        if (auto pole = makeMapPoleCollision(collisionIndex.objects[index], map, tileX, tileY)) {
+            poles.push_back(std::move(*pole));
+        }
+    }
+    return poles;
 }
 
 MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map,

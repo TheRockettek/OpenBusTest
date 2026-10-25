@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/BusTypes.h"
+#include "config/SceneryObjectConfigLoader.h"
 #include "map/MapConfigLoader.h"
 #include "map/MapSceneryPlacement.h"
 #include "map/MapRoadGeometry.h"
@@ -17,6 +18,7 @@ namespace openbus::map {
 
 struct MapRoadCollisionResult {
     std::vector<StaticCollisionMesh> meshes;
+    std::vector<MapPoleCollision> poles;
     std::size_t tilesVisited = 0;
     std::size_t splineSectionsAdded = 0;
     std::size_t sceneryCollisionObjectsAdded = 0;
@@ -26,12 +28,15 @@ struct MapRoadCollisionResult {
 };
 
 struct MapSceneryCollisionObject {
+    int mapObjectId = 0;
     MapSceneryPose pose;
     double worldZ = 0.0;
     double minX = 0.0;
     double minY = 0.0;
     double maxX = 0.0;
     double maxY = 0.0;
+    std::optional<SceneryPoleCrashConfiguration> poleCrash;
+    std::array<double, 6> localBounds = {};
     std::vector<std::shared_ptr<openbus::rendering::ParsedObj>> meshes;
 };
 
@@ -59,6 +64,9 @@ MapRoadCollisionResult
 buildMapSplineCollisionTile(const MapDefinition& map, const std::filesystem::path& omsiRoot,
                             int tileX, int tileY,
                             const MapRoadConnectionIndex* connections = nullptr);
+std::vector<MapPoleCollision>
+buildMapPoleCollisionTile(const MapDefinition& map, const std::filesystem::path& omsiRoot,
+                          int tileX, int tileY, const MapSceneryCollisionIndex* scenery = nullptr);
 
 // Metadata only, independent of geometry residency. Streaming workers retain this once per map.
 // Resolve profile cant widths before finalizing joins; unavailable widths retain legacy cant.

@@ -9,6 +9,52 @@
 #include <cmath>
 
 namespace openbus::rendering {
+namespace {
+
+Matrix4 bentPoleTransform(const Matrix4& baseTransform, const std::array<double, 3>& base,
+                          const MapPoleState& state) {
+    if (!std::isfinite(state.angleRadians) || std::abs(state.angleRadians) <= 1.0e-8) {
+        return baseTransform;
+    }
+    const double axisLength =
+        std::hypot(state.rotationAxis[0], state.rotationAxis[1], state.rotationAxis[2]);
+    if (!std::isfinite(axisLength) || axisLength <= 1.0e-8) {
+        return baseTransform;
+    }
+    const std::array<double, 3> axis = {state.rotationAxis[0] / axisLength,
+                                        state.rotationAxis[1] / axisLength,
+                                        state.rotationAxis[2] / axisLength};
+    const double cosine = std::cos(state.angleRadians);
+    const double sine = std::sin(state.angleRadians);
+    const auto rotate = [&](const std::array<double, 3>& vector) {
+        const double dot = vector[0] * axis[0] + vector[1] * axis[1] + vector[2] * axis[2];
+        const std::array<double, 3> cross = {axis[1] * vector[2] - axis[2] * vector[1],
+                                             axis[2] * vector[0] - axis[0] * vector[2],
+                                             axis[0] * vector[1] - axis[1] * vector[0]};
+        return std::array<double, 3>{
+            vector[0] * cosine + cross[0] * sine + axis[0] * dot * (1.0 - cosine),
+            vector[1] * cosine + cross[1] * sine + axis[1] * dot * (1.0 - cosine),
+            vector[2] * cosine + cross[2] * sine + axis[2] * dot * (1.0 - cosine)};
+    };
+    Matrix4 transformed = baseTransform;
+    for (std::size_t column = 0; column < 3; ++column) {
+        const std::array<double, 3> direction = {baseTransform[column * 4],
+                                                 baseTransform[column * 4 + 1],
+                                                 baseTransform[column * 4 + 2]};
+        const auto bent = rotate(direction);
+        for (std::size_t row = 0; row < 3; ++row) {
+            transformed[column * 4 + row] = bent[row];
+        }
+    }
+    const std::array<double, 3> origin = {baseTransform[12], baseTransform[13], baseTransform[14]};
+    const auto bentOffset = rotate({origin[0] - base[0], origin[1] - base[1], origin[2] - base[2]});
+    transformed[12] = base[0] + bentOffset[0];
+    transformed[13] = base[1] + bentOffset[1];
+    transformed[14] = base[2] + bentOffset[2];
+    return transformed;
+}
+
+} // namespace
 
 MapRenderer::Impl::~Impl() {
     const auto deleteBuffer = [](GLuint buffer) {
@@ -184,6 +230,29 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
     gameLog.Log("Map active render window: center=" + tileLabel(centerX, centerY) +
                 ", active tiles=" + std::to_string(impl_->activeTileCoordinates.size()) +
                 ", radius=" + std::to_string(MAP_ACTIVE_TILE_RADIUS) + " tiles.");
+}
+
+void MapRenderer::updatePoleStates(const std::vector<MapPoleState>& states) {
+    std::map<std::tuple<int, int, int>, MapPoleState> statesByPlacement;
+    for (const MapPoleState& state : states) {
+        statesByPlacement.insert_or_assign(std::tuple{state.tileX, state.tileY, state.mapObjectId},
+                                           state);
+    }
+    for (auto& [key, chunk] : impl_->sceneryChunks) {
+        static_cast<void>(key);
+        for (Impl::SceneryInstance& instance : chunk.instances) {
+            if (!instance.poleCrash || !instance.mapObjectId.has_value()) {
+                continue;
+            }
+            const auto state = statesByPlacement.find(
+                std::tuple{instance.sourceTileX, instance.sourceTileY, *instance.mapObjectId});
+            instance.transform =
+                state == statesByPlacement.end()
+                    ? instance.baseTransform
+                    : bentPoleTransform(instance.baseTransform,
+                                        {instance.x, instance.y, instance.z}, state->second);
+        }
+    }
 }
 
 const std::vector<std::pair<int, int>>& MapRenderer::activeTileCoordinates() const {

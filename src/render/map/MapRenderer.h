@@ -63,6 +63,7 @@ class MapRenderer {
 
     void updateScripts();
     void updateStreaming(double worldX, double worldY);
+    void updatePoleStates(const std::vector<MapPoleState>& states);
     bool leftHandTraffic() const noexcept;
     double tileSize() const noexcept;
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;

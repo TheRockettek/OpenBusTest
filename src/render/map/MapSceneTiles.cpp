@@ -492,12 +492,16 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                                   impl_->sceneryProjectionRadiusScale;
             Impl::SceneryInstance instance;
             instance.batchIndex = batchIndex;
+            instance.mapObjectId = mapObjectId;
             instance.x = worldX;
             instance.y = worldY;
             instance.z = worldZ;
             instance.boundingRadius = radius;
-            instance.transform = makeSceneryInstanceTransform(
+            instance.poleCrash =
+                mapObjectId.has_value() && poleCrashSceneryAssets.contains(assetKey);
+            instance.baseTransform = makeSceneryInstanceTransform(
                 worldX, worldY, worldZ, rotationDegrees, rotationCount, orientationMatrix);
+            instance.transform = instance.baseTransform;
             instance.scriptStateIndex = scriptStateIndex;
             instance.lodThresholdSetIndex = lodThresholdSetIndex;
             instance.sourceTileX = tileX;

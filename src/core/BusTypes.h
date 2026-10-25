@@ -101,6 +101,26 @@ struct StaticCollisionMesh {
     std::vector<int> indices;
 };
 
+struct MapPoleCollision {
+    int mapObjectId = 0;
+    int tileX = 0;
+    int tileY = 0;
+    std::array<double, 3> basePosition = {};
+    std::array<double, 3> topPosition = {};
+    double radiusMeters = 0.0;
+    double resistanceRadiansPerTonneMeterPerSecond = 0.0;
+    double breakAngleRadians = 0.0;
+};
+
+struct MapPoleState {
+    int mapObjectId = 0;
+    int tileX = 0;
+    int tileY = 0;
+    std::array<double, 3> rotationAxis = {};
+    double angleRadians = 0.0;
+    bool broken = false;
+};
+
 struct ChassisCollisionBox {
     double length;
     double width;

@@ -80,6 +80,37 @@ void writeJunctionO3D(const std::filesystem::path& path) {
     writeU16(output, 0);
 }
 
+void writePoleO3D(const std::filesystem::path& path) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary);
+    if (!output) {
+        throw std::runtime_error("failed to write pole O3D fixture");
+    }
+    output.put(static_cast<char>(0x84));
+    output.put(static_cast<char>(0x19));
+    output.put(static_cast<char>(3));
+    output.put(static_cast<char>(0x17));
+    writeU16(output, 3);
+    const std::array<std::array<float, 3>, 3> positions = {
+        std::array<float, 3>{-0.1F, 0.0F, 0.0F},
+        std::array<float, 3>{0.1F, 0.0F, 0.0F},
+        std::array<float, 3>{0.0F, 2.0F, 0.0F}};
+    for (const auto& position : positions) {
+        for (float value : position) {
+            writeF32(output, value);
+        }
+        for (int value = 0; value < 5; ++value) {
+            writeF32(output, value == 2 ? 1.0F : 0.0F);
+        }
+    }
+    output.put(static_cast<char>(0x49));
+    writeU16(output, 1);
+    writeU16(output, 0);
+    writeU16(output, 2);
+    writeU16(output, 1);
+    writeU16(output, 0);
+}
+
 void writeLongBridgeO3D(const std::filesystem::path& path) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream output(path, std::ios::binary);
@@ -448,6 +479,39 @@ void runProbe() {
                         bridgeTile.meshes[0].vertices[vertex + 1] <= 300.0 + 1.0e-8,
                     "streamed bridge collision triangles are clipped to their owning tile");
         }
+
+        MapDefinition poleMap;
+        poleMap.rootPath = mapRoot;
+        MapTileReference poleTile;
+        poleTile.x = 0;
+        poleTile.y = 0;
+        poleTile.textPath = mapRoot / "pole.map";
+        writeText(poleTile.textPath,
+                  "[version]\n12\n[terrain]\n[object]\n0\n"
+                  "Sceneryobjects\\Test\\Pole.sco\n77\n50\n50\n5\n0\n0\n0\n0\n");
+        poleMap.tiles.push_back(poleTile);
+        writeText(omsiRoot / "Sceneryobjects" / "Test" / "Pole.sco",
+                  "[model]\npole.cfg\n[crashmode_pole]\n0.25\n1.2\n");
+        writeText(omsiRoot / "Sceneryobjects" / "Test" / "pole.cfg",
+                  "[collision_mesh]\npole.o3d\n");
+        writePoleO3D(omsiRoot / "Sceneryobjects" / "Test" / "pole.o3d");
+        const auto poleCollisions = buildMapPoleCollisionTile(poleMap, omsiRoot, 0, 0);
+        require(poleCollisions.size() == 1 && poleCollisions.front().mapObjectId == 77 &&
+                    poleCollisions.front().radiusMeters > 0.0 &&
+                    std::hypot(poleCollisions.front().topPosition[0] -
+                                   poleCollisions.front().basePosition[0],
+                               poleCollisions.front().topPosition[1] -
+                                   poleCollisions.front().basePosition[1],
+                               poleCollisions.front().topPosition[2] -
+                                   poleCollisions.front().basePosition[2]) > 0.1 &&
+                    poleCollisions.front().resistanceRadiansPerTonneMeterPerSecond == 0.25 &&
+                    poleCollisions.front().breakAngleRadians == 1.2,
+                "[crashmode_pole] produces a streamed, dimensioned pole collision");
+        const auto poleTileCollision = buildMapRoadCollisionTile(poleMap, omsiRoot, 0, 0);
+        require(poleTileCollision.poles.size() == 1 &&
+                    poleTileCollision.sceneryCollisionObjectsAdded == 0 &&
+                    poleTileCollision.meshes.empty(),
+                "pole collision is dynamic rather than merged into the static scenery mesh");
 
     openbus::probe::removeProbeDirectory(root);
 }
