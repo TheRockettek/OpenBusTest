@@ -777,6 +777,7 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
         mapRenderer_.reset();
     }
     if (!mapRenderer_) {
+        TraceScope rendererTrace("map", "RenderLoop::SetMap.createMapRenderer");
         mapRenderer_ = std::make_unique<openbus::rendering::MapRenderer>(
             map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex),
             map.entryPoints[spawnEntryPointIndex].placement.position[0],
@@ -804,6 +805,7 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     };
     auto& globalVariables = simulationState_.sharedVariables();
     if (const auto ticketPackPath = resolveMapAsset(map.metadata.ticketPack, "ticket pack")) {
+        TraceScope ticketTrace("map", "RenderLoop::SetMap.loadTicketPack");
         const auto ticketPack = openbus::map::loadMapTicketPackDefinition(*ticketPackPath);
         for (std::size_t index = 0; index < ticketPack.tickets.size(); ++index) {
             const openbus::map::MapTicketDefinition& ticket = ticketPack.tickets[index];

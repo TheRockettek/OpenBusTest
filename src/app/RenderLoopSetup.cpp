@@ -21,6 +21,7 @@ namespace {
 using openbus::pathToUtf8;
 
 std::vector<std::filesystem::path> discoverMaps(const std::filesystem::path& omsiRoot) {
+    openbus::rendering::TraceScope trace("startup", "startup.discoverMaps");
     const std::filesystem::path mapsDirectory = omsiRoot / "maps";
     std::error_code error;
     if (!std::filesystem::is_directory(mapsDirectory, error) || error) {
@@ -81,8 +82,11 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                                  pathToUtf8(omsiRoot / "maps") + "'");
     }
     const std::filesystem::path vehiclesDirectory = omsiRoot / "Vehicles";
-    const std::vector<openbus::config::VehicleCatalogEntry> vehicles =
-        openbus::config::discoverVehicleCatalog(vehiclesDirectory);
+    std::vector<openbus::config::VehicleCatalogEntry> vehicles;
+    {
+        TraceScope catalogTrace("startup", "startup.discoverVehicleCatalog");
+        vehicles = openbus::config::discoverVehicleCatalog(vehiclesDirectory);
+    }
     if (vehicles.empty()) {
         throw std::runtime_error("No OMSI .bus files were found under '" +
                                  pathToUtf8(vehiclesDirectory) + "'");
@@ -120,6 +124,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
     std::optional<openbus::map::MapDefinition> selectedDefinition;
     std::string mapLoadError;
     bool waitingForInitialMapWindow = false;
+    std::optional<TraceScope> initialMapWaitTrace;
     bool restoreSetupDialogSize = false;
     std::optional<VehicleConfig> selectedVehicleConfig;
     std::vector<openbus::config::VehicleAppearance> appearances;
@@ -139,6 +144,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         copyToInputBuffer(registrationInput, std::string{});
         copyToInputBuffer(vehicleNumberInput, std::string{});
         try {
+            TraceScope vehicleTrace("startup", "startup.loadSelectedVehicleConfig");
             selectedVehicleConfig = loadVehicleConfig(
                 vehicles[selectedVehicleIndex].configurationPath, VehicleFileKind::Bus, false);
             appearances = openbus::config::discoverVehicleAppearances(
@@ -161,6 +167,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         selectedSpawn = 0;
         mapLoadError.clear();
         try {
+            TraceScope mapTrace("startup", "startup.loadSelectedMapDefinition");
             selectedDefinition = openbus::map::loadMapDefinition(maps[selectedMapIndex]);
         } catch (const std::exception& error) {
             mapLoadError = error.what();
@@ -187,6 +194,10 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                     selection.mapDefinition.entryPoints[selection.spawnEntryPoint].placement;
                 updateMapStreaming(spawn.position[0], spawn.position[1]);
                 if (initialMapWindowReady()) {
+                    if (initialMapWaitTrace.has_value()) {
+                        initialMapWaitTrace->finish();
+                        initialMapWaitTrace.reset();
+                    }
                     ImGui::SetNextWindowSize(ImVec2(480.0F, 120.0F), ImGuiCond_Always);
                     ImGui::SetNextWindowPos(ImVec2(static_cast<float>(windowWidth) * 0.5F,
                                                    static_cast<float>(windowHeight) * 0.5F),
@@ -200,6 +211,10 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                     return true;
                 }
             } catch (const std::exception& error) {
+                if (initialMapWaitTrace.has_value()) {
+                    initialMapWaitTrace->finish();
+                    initialMapWaitTrace.reset();
+                }
                 waitingForInitialMapWindow = false;
                 restoreSetupDialogSize = true;
                 mapLoadError = error.what();
@@ -505,10 +520,12 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         if (ImGui::Button("Start in bus", ImVec2(buttonWidth, 42.0F))) {
             saveSelection(true);
             try {
+                TraceScope mapTrace("startup", "startup.beginInitialMapSceneLoad");
                 SetMap(selection.mapDefinition, selection.spawnEntryPoint,
                        openbus::map::selectMapGroundTextureIndex(
                            selection.mapDefinition, environmentValue("OPENBUS_MAP_GROUNDTEX")),
                        omsiRoot, true);
+                initialMapWaitTrace.emplace("startup", "startup.waitForInitialMapWindow");
                 waitingForInitialMapWindow = true;
                 mapLoadError.clear();
             } catch (const std::exception& error) {
@@ -521,10 +538,12 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         if (ImGui::Button("Start on foot", ImVec2(buttonWidth, 42.0F))) {
             saveSelection(false);
             try {
+                TraceScope mapTrace("startup", "startup.beginInitialMapSceneLoad");
                 SetMap(selection.mapDefinition, selection.spawnEntryPoint,
                        openbus::map::selectMapGroundTextureIndex(
                            selection.mapDefinition, environmentValue("OPENBUS_MAP_GROUNDTEX")),
                        omsiRoot, true);
+                initialMapWaitTrace.emplace("startup", "startup.waitForInitialMapWindow");
                 waitingForInitialMapWindow = true;
                 mapLoadError.clear();
             } catch (const std::exception& error) {

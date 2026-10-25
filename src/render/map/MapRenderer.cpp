@@ -101,8 +101,14 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     impl_->leftHandTraffic = mapDefinition_.metadata.hasLeftHandTraffic;
     sceneLoader_ = std::make_unique<MapSceneLoader>(
         mapDefinition_, centerTileIndex, groundTextureIndex, omsiRoot, *impl_, assetRequests);
-    sceneLoader_->load();
-    updateStreaming(spawnWorldX, spawnWorldY);
+    {
+        TraceScope loadTrace("map", "MapRenderer.startSceneLoad");
+        sceneLoader_->load();
+    }
+    {
+        TraceScope streamingTrace("map", "MapRenderer.initialStreaming");
+        updateStreaming(spawnWorldX, spawnWorldY);
+    }
 }
 
 MapRenderer::~MapRenderer() = default;
@@ -174,8 +180,20 @@ void MapRenderer::initializeActiveScripts() {
 }
 
 void MapRenderer::updateStreaming(double worldX, double worldY) {
+    const bool initialStreaming = !impl_->activeCenterTile.has_value();
+    std::optional<TraceScope> streamingTrace;
+    if (initialStreaming) {
+        streamingTrace.emplace("map", "MapRenderer.updateStreaming.initial");
+    }
     const bool waitForInitialLoad = !impl_->activeCenterTile.has_value() && !asyncInitialLoad_;
-    if (!sceneLoader_->finishLoad(waitForInitialLoad)) {
+    bool sceneReady = false;
+    if (initialStreaming) {
+        TraceScope finishTrace("map", "MapRenderer.finishSceneLoad.initial");
+        sceneReady = sceneLoader_->finishLoad(waitForInitialLoad);
+    } else {
+        sceneReady = sceneLoader_->finishLoad(waitForInitialLoad);
+    }
+    if (!sceneReady) {
         return;
     }
     const int centerX = openbus::map::mapWorldTile(worldX, impl_->coordinates.tileSize);
@@ -187,9 +205,17 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
             impl_->coordinates.tileSize);
         impl_->requestedCenterTile = center;
     }
-    const MapSceneLoader::TileLoadStatus loadStatus = sceneLoader_->loadActiveTiles(
-        impl_->requestedTileCoordinates, *impl_->requestedCenterTile, waitForInitialLoad,
-        !impl_->activeCenterTile.has_value() && asyncInitialLoad_);
+    MapSceneLoader::TileLoadStatus loadStatus;
+    if (initialStreaming) {
+        TraceScope tileTrace("map", "MapRenderer.loadActiveTiles.initial");
+        loadStatus = sceneLoader_->loadActiveTiles(
+            impl_->requestedTileCoordinates, *impl_->requestedCenterTile, waitForInitialLoad,
+            !impl_->activeCenterTile.has_value() && asyncInitialLoad_);
+    } else {
+        loadStatus = sceneLoader_->loadActiveTiles(
+            impl_->requestedTileCoordinates, *impl_->requestedCenterTile, waitForInitialLoad,
+            !impl_->activeCenterTile.has_value() && asyncInitialLoad_);
+    }
     if (loadStatus == MapSceneLoader::TileLoadStatus::Pending) {
         return;
     }

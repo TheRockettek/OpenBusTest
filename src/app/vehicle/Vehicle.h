@@ -126,6 +126,11 @@ using openbus::rendering::ViewFrustum;
 
 struct Vehicle {
     ModelLoadingPolicy loadingPolicy;
+    enum class DeferredTrafficInitializationStep {
+        Waiting,
+        Progressed,
+        Complete,
+    };
     using TextureRequest = AssetRequestManager::TextureRequest;
     using TextureCacheEntry = AssetRequestManager::TextureCacheEntry;
 
@@ -371,6 +376,9 @@ struct Vehicle {
     VehicleSoundBank soundBank;
     bool soundEventsEnabled = false;
     std::vector<Part> pendingParts;
+    std::vector<std::shared_ptr<ObjRequest>> deferredObjRequests;
+    std::size_t nextDeferredPartIndex = 0;
+    bool deferredInitializationStarted = false;
     std::vector<ModelInteriorLight> interiorLights;
     std::vector<InteriorLightController> interiorLightControllers;
     Matrix4 interiorLightRootModelView = identityMatrix();
@@ -503,7 +511,7 @@ struct Vehicle {
     bool handleMouseClick(const std::string& eventName);
 
     void joinTextureWorkers();
-    void finishDeferredTrafficInitialization();
+    DeferredTrafficInitializationStep finishDeferredTrafficInitialization();
 
 #ifdef _WIN32
     bool comInitialized = false;
@@ -670,6 +678,26 @@ struct Vehicle {
         }
         if (deferTrafficInitialization) {
             deferredDefinition = definition;
+            if (!definition->modelConfiguration.textTextures.empty()) {
+                std::vector<std::string> fontNames;
+                for (const ModelTextTexture& textTexture :
+                     definition->modelConfiguration.textTextures) {
+                    const std::size_t fontIndex = textTexture.placementLabel ? 0U : 1U;
+                    if (fontIndex < textTexture.values.size()) {
+                        fontNames.push_back(textTexture.values[fontIndex]);
+                    }
+                }
+                ScriptRuntime::prepareFontSearch(vehicleConfiguration.sourcePath, fontNames);
+            }
+            if (loadingPolicy.modelMode == AssetLoadingMode::Eager) {
+                deferredObjRequests.reserve(definition->modelConfiguration.parts.size());
+                for (const openbus::rendering::BusModelPart& part :
+                     definition->modelConfiguration.parts) {
+                    auto request = std::make_shared<ObjRequest>();
+                    request->future = assets->requestObj(part.objPath, part.bundleEntry);
+                    deferredObjRequests.push_back(std::move(request));
+                }
+            }
             return;
         }
         load(*definition);
@@ -763,6 +791,8 @@ struct Vehicle {
     void drawEnvironmentMap(Batch& batch, double alpha);
 
     void preloadTextures();
+
+    void finishSpawn();
 
     std::shared_future<std::shared_ptr<ParsedObj>>
     parsedObjFuture(const std::filesystem::path& path, const std::string& bundleEntry = {});

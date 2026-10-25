@@ -733,8 +733,11 @@ int main() {
             const std::string configuredMap = environmentValue("OPENBUS_MAP_PATH");
             startupSelection.mapDirectory =
                 omsiRoot / "maps" / (configuredMap.empty() ? "Cotterell" : configuredMap);
-            startupSelection.mapDefinition =
-                openbus::map::loadMapDefinition(startupSelection.mapDirectory);
+            {
+                openbus::rendering::TraceScope mapTrace("startup", "main.loadMapDefinition");
+                startupSelection.mapDefinition =
+                    openbus::map::loadMapDefinition(startupSelection.mapDirectory);
+            }
             SystemVariables currentCalendar;
             startupSelection.year = static_cast<int>(currentCalendar.get("year"));
             startupSelection.month = static_cast<int>(currentCalendar.get("month"));
@@ -897,6 +900,8 @@ int main() {
         std::vector<TerrainCollisionGrid> spawnTerrain;
         std::vector<std::pair<int, int>> preloadedTerrainTiles;
         applicationLog.Log("Loading spawn terrain collision.");
+        openbus::rendering::TraceScope spawnTerrainTrace("startup",
+                                                         "main.loadSpawnCollisionTerrain");
         for (const openbus::map::MapTileReference& tile : mapDefinition.tiles) {
             if (!tile.hasTerrainFile || std::abs(tile.x - spawnTileX) > 2 ||
                 std::abs(tile.y - spawnTileY) > 2) {
@@ -917,14 +922,18 @@ int main() {
         if (spawnTerrain.empty()) {
             throw std::runtime_error("No terrain collision could be loaded around the spawn point");
         }
+        spawnTerrainTrace.finish();
         applicationLog.Log("Spawn terrain collision preloaded: " +
                            std::to_string(spawnTerrain.size()) + " tiles.");
         applicationLog.Log("Loading: initializing bus simulation and collision streaming.");
+        openbus::rendering::TraceScope simulationTrace("startup",
+                                                       "main.initializeSimulationAndCollision");
         BusSimulation simulation(configuration, busPlacement, 60.0, 8, busPlacement.position[2],
                                  std::move(spawnTerrain), {}, false);
         simulation.setFrozen(!benchmarkMode);
         openbus::map::MapCollisionStreamer collisionStreamer(
             mapDefinition, omsiRootPath(), simulation, 2, 2, std::move(preloadedTerrainTiles));
+        simulationTrace.finish();
 
         const auto [precipitationType, precipitationRate] = weatherSettingsFromEnvironment();
         renderer.SetWeather(precipitationType, precipitationRate);
@@ -934,6 +943,7 @@ int main() {
         applicationLog.Log("Weather initialized: " + std::string(weatherName) +
                            ", precipitation rate=" + std::to_string(precipitationRate) + ".");
         applicationLog.Log("Loading map scene: terrain, tile index, scenery and roads.");
+        openbus::rendering::TraceScope mapSceneTrace("startup", "main.initializeMapScene");
         renderer.SetMap(mapDefinition, spawnEntryPoint, groundTextureIndex, omsiRootPath());
         applicationLog.Log("Map scene loaded; initializing spawn render window.");
         renderer.updateMapStreaming(busPlacement.position[0], busPlacement.position[1]);
@@ -946,8 +956,11 @@ int main() {
                            std::to_string(collisionStreamer.loadedTileCount()) +
                            "; map manifest tiles=" + std::to_string(mapDefinition.tiles.size()) +
                            ".");
+        mapSceneTrace.finish();
         std::size_t reportedCollisionTileCount = collisionStreamer.loadedTileCount();
         Vehicle* playerVehicle = nullptr;
+        openbus::rendering::TraceScope preFrameSetupTrace("startup",
+                                                          "main.prepareInitialVehiclesAndTraffic");
         if (benchmarkMode || startupSelection.startInBus) {
             applicationLog.Log("Loading player vehicle: " + busConfigPath.string());
             playerVehicle =
@@ -1629,6 +1642,7 @@ int main() {
                            std::to_string(mapCalendarMonth) + "-" + std::to_string(mapCalendarDay) +
                            "; time and weekday advance from the map system calendar.");
         updateMapTrafficPopulation();
+        preFrameSetupTrace.finish();
 
         double previousTime = glfwGetTime();
         if (benchmarkMode) {

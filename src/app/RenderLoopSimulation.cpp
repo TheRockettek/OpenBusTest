@@ -216,26 +216,62 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
 
 void RenderLoop::finishPendingTrafficVehicleLoads() {
     TraceScope trace("traffic", "RenderLoop::finishPendingTrafficVehicleLoads");
+    using DeferredStep = Vehicle::DeferredTrafficInitializationStep;
     for (TrafficVehicleState& state : trafficVehicles_) {
-        if (state.vehicle != nullptr || state.vehicleLoadFailed || !state.pendingVehicle.valid() ||
-            state.pendingVehicle.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        if (state.vehicle != nullptr || state.vehicleLoadFailed) {
             continue;
         }
         try {
-            std::unique_ptr<Vehicle> vehicle = state.pendingVehicle.get();
-            if (!vehicle) {
-                throw std::runtime_error("Traffic vehicle loader returned no vehicle");
+            if (!state.pendingInitializationVehicle) {
+                bool vehicleLoadReady = false;
+                {
+                    TraceScope pollTrace("traffic", "finishPendingTrafficVehicleLoads.poll");
+                    vehicleLoadReady = state.pendingVehicle.valid() &&
+                                       state.pendingVehicle.wait_for(std::chrono::seconds(0)) ==
+                                           std::future_status::ready;
+                }
+                if (!vehicleLoadReady) {
+                    continue;
+                }
+                {
+                    TraceScope getTrace("traffic", "finishPendingTrafficVehicleLoads.get");
+                    state.pendingInitializationVehicle = state.pendingVehicle.get();
+                }
+                if (!state.pendingInitializationVehicle) {
+                    throw std::runtime_error("Traffic vehicle loader returned no vehicle");
+                }
+                {
+                    TraceScope metadataTrace("traffic",
+                                             "finishPendingTrafficVehicleLoads.metadata");
+                    state.pendingInitializationVehicle->variables.setString(
+                        "tt_line_string", state.timetableLineName);
+                    state.pendingInitializationVehicle->variables.setString(
+                        "tt_busstop_name", state.timetableDestinationName);
+                }
             }
-            vehicle->variables.setString("tt_line_string", state.timetableLineName);
-            vehicle->variables.setString("tt_busstop_name", state.timetableDestinationName);
-            vehicle->finishDeferredTrafficInitialization();
-            vehicle->followsMapTrafficRoute = true;
-            vehicle->mapTrafficRouteFinished = true;
-            vehicle->mapTrafficTileActive = false;
-            Vehicle* const loadedVehicle = vehicle.get();
-            vehicles_.push_back(std::move(vehicle));
-            state.vehicle = loadedVehicle;
+            DeferredStep step;
+            {
+                TraceScope initializeTrace("traffic",
+                                           "finishPendingTrafficVehicleLoads.initialize");
+                step = state.pendingInitializationVehicle->finishDeferredTrafficInitialization();
+            }
+            if (step == DeferredStep::Complete) {
+                {
+                    TraceScope attachTrace("traffic", "finishPendingTrafficVehicleLoads.attach");
+                    state.pendingInitializationVehicle->followsMapTrafficRoute = true;
+                    state.pendingInitializationVehicle->mapTrafficRouteFinished = true;
+                    state.pendingInitializationVehicle->mapTrafficTileActive = false;
+                    Vehicle* const loadedVehicle = state.pendingInitializationVehicle.get();
+                    vehicles_.push_back(std::move(state.pendingInitializationVehicle));
+                    state.vehicle = loadedVehicle;
+                }
+                break;
+            }
+            if (step == DeferredStep::Progressed) {
+                break;
+            }
         } catch (const std::exception& error) {
+            state.pendingInitializationVehicle.reset();
             state.vehicleLoadFailed = true;
             gameLog.Log("Could not asynchronously load map traffic vehicle '" +
                         state.actor.modelPath + "': " + error.what());

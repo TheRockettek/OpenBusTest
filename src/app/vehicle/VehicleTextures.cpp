@@ -292,7 +292,14 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
         std::unordered_map<std::string, std::filesystem::path> byFileName;
         std::unordered_map<std::string, std::filesystem::path> byStem;
     };
+    struct RootTextureDirectoryIndex {
+        std::mutex mutex;
+        bool built = false;
+        std::unordered_map<std::string, std::filesystem::path> byStem;
+    };
     static std::unordered_map<std::string, std::shared_ptr<TextureDirectoryIndex>> textureIndexes;
+    static std::unordered_map<std::string, std::shared_ptr<RootTextureDirectoryIndex>>
+        rootTextureIndexes;
 
     const std::filesystem::path normalizedRequestPath =
         std::filesystem::path(cleaned).lexically_normal();
@@ -367,6 +374,49 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
         return index;
     };
 
+    const auto getIndexForRoot = [&](const std::filesystem::path& textureRoot) {
+        const std::string indexKey = normalizedPathKey(textureRoot);
+        std::shared_ptr<RootTextureDirectoryIndex> index;
+        {
+            std::lock_guard<std::mutex> lock(resolutionMutex);
+            const auto found = rootTextureIndexes.find(indexKey);
+            if (found != rootTextureIndexes.end()) {
+                index = found->second;
+            } else {
+                index = std::make_shared<RootTextureDirectoryIndex>();
+                rootTextureIndexes.emplace(indexKey, index);
+            }
+        }
+        {
+            std::lock_guard<std::mutex> lock(index->mutex);
+            if (!index->built) {
+                std::error_code error;
+                std::filesystem::directory_iterator entry(
+                    textureRoot, std::filesystem::directory_options::skip_permission_denied, error);
+                const std::filesystem::directory_iterator end;
+                for (; !error && entry != end; entry.increment(error)) {
+                    std::error_code statusError;
+                    if (!entry->is_regular_file(statusError) || statusError) {
+                        continue;
+                    }
+                    const std::string extension = lower(entry->path().extension().string());
+                    if (!isImageExtension(extension)) {
+                        continue;
+                    }
+                    const std::string stem = lower(entry->path().stem().string());
+                    const auto existing = index->byStem.find(stem);
+                    if (existing == index->byStem.end() ||
+                        textureFormatPriority(entry->path()) >
+                            textureFormatPriority(existing->second)) {
+                        index->byStem[stem] = entry->path();
+                    }
+                }
+                index->built = true;
+            }
+        }
+        return index;
+    };
+
     std::filesystem::path direct = root / cleaned;
     if (std::filesystem::exists(direct)) {
         return cacheResult(preferCompressedSibling(direct));
@@ -392,22 +442,15 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
     const std::string basename = lower(std::filesystem::path(cleaned).filename().string());
     const std::string requestedStem = lower(std::filesystem::path(cleaned).stem().string());
     if (std::filesystem::exists(root)) {
-        std::filesystem::path preferredDirect;
-        for (const auto& entry : std::filesystem::directory_iterator(
-                 root, std::filesystem::directory_options::skip_permission_denied)) {
-            if (entry.is_regular_file() && lower(entry.path().stem().string()) == requestedStem &&
-                isImageExtension(lower(entry.path().extension().string()))) {
-                if (preferredDirect.empty() ||
-                    textureFormatPriority(entry.path()) > textureFormatPriority(preferredDirect)) {
-                    preferredDirect = entry.path();
-                }
-            }
-        }
-        if (!preferredDirect.empty()) {
+        const std::shared_ptr<RootTextureDirectoryIndex> index = getIndexForRoot(root);
+        std::lock_guard<std::mutex> lock(index->mutex);
+        const auto preferredDirect = index->byStem.find(requestedStem);
+        if (preferredDirect != index->byStem.end()) {
             if (verboseTextureLookupLogs) {
-                gameLog.Log("Found texture directly at path: " + preferredDirect.generic_string());
+                gameLog.Log("Found texture directly at path: " +
+                            preferredDirect->second.generic_string());
             }
-            return cacheResult(preferredDirect);
+            return cacheResult(preferredDirect->second);
         }
     }
 

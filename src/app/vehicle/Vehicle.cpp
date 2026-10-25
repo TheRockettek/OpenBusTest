@@ -31,27 +31,76 @@ void Vehicle::updateScripts(bool isAiVehicle) {
     }
 }
 
-void Vehicle::finishDeferredTrafficInitialization() {
-    if (!deferredDefinition) {
-        throw std::logic_error("Deferred traffic vehicle initialization was not requested");
+Vehicle::DeferredTrafficInitializationStep Vehicle::finishDeferredTrafficInitialization() {
+    if (!deferredInitializationStarted) {
+        if (!deferredDefinition) {
+            throw std::logic_error("Deferred traffic vehicle initialization was not requested");
+        }
+        const std::shared_ptr<const SharedVehicleDefinition> definition =
+            std::move(deferredDefinition);
+        {
+            TraceScope definitionTrace("traffic", "deferredTraffic.loadDefinition");
+            for (const std::string& error : scripts->errors()) {
+                gameLog.Log("Lua script error: " + error);
+            }
+            load(*definition);
+        }
+        {
+            TraceScope scriptsTrace("traffic", "deferredTraffic.initializeScripts");
+            scripts->initialize();
+            for (const std::string& error : scripts->errors()) {
+                gameLog.Log("Lua initialization error: " + error);
+            }
+            scripts->update(false);
+        }
+
+        if (hasSharedGeometry || loadingPolicy.modelMode != AssetLoadingMode::Eager) {
+            if (hasSharedGeometry) {
+                loggedAllObjectsLoaded = true;
+            }
+            soundEventsEnabled = true;
+            deferredInitializationStarted = true;
+            return DeferredTrafficInitializationStep::Complete;
+        }
+        if (deferredObjRequests.size() != pendingParts.size()) {
+            throw std::logic_error("Deferred traffic OBJ requests do not match model parts");
+        }
+        for (std::size_t index = 0; index < pendingParts.size(); ++index) {
+            pendingParts[index].objRequest = deferredObjRequests[index];
+        }
+        deferredInitializationStarted = true;
+        return DeferredTrafficInitializationStep::Progressed;
     }
-    const std::shared_ptr<const SharedVehicleDefinition> definition = std::move(deferredDefinition);
-    for (const std::string& error : scripts->errors()) {
-        gameLog.Log("Lua script error: " + error);
+
+    if (nextDeferredPartIndex < pendingParts.size()) {
+        Part& part = pendingParts[nextDeferredPartIndex];
+        {
+            TraceScope pollTrace("traffic", "deferredTraffic.pollObj");
+            if (!part.objRequest || part.objRequest->future.wait_for(std::chrono::milliseconds(
+                                        0)) != std::future_status::ready) {
+                return DeferredTrafficInitializationStep::Waiting;
+            }
+        }
+        {
+            TraceScope loadTrace("traffic", "deferredTraffic.loadObj");
+            loadObj(part, part.objRequest->future.get());
+        }
+        ++nextDeferredPartIndex;
+        if (nextDeferredPartIndex < pendingParts.size()) {
+            return DeferredTrafficInitializationStep::Progressed;
+        }
     }
-    load(*definition);
-    scripts->initialize();
-    for (const std::string& error : scripts->errors()) {
-        gameLog.Log("Lua initialization error: " + error);
+
+    {
+        TraceScope finalizeTrace("traffic", "deferredTraffic.finishSpawn");
+        finishSpawn();
     }
-    scripts->update(false);
-    if (!hasSharedGeometry && loadingPolicy.modelMode == AssetLoadingMode::Eager) {
-        spawn();
+    {
+        TraceScope cacheTrace("traffic", "deferredTraffic.cacheSharedDisplayLists");
         cacheSharedDisplayLists();
-    } else if (hasSharedGeometry) {
-        loggedAllObjectsLoaded = true;
     }
     soundEventsEnabled = true;
+    return DeferredTrafficInitializationStep::Complete;
 }
 
 void Vehicle::initializePlayerSystems() {
@@ -156,6 +205,10 @@ void Vehicle::spawn() {
     for (const auto& request : requests) {
         loadObj(*request.first, request.second.get());
     }
+    finishSpawn();
+}
+
+void Vehicle::finishSpawn() {
     pendingParts.clear();
     rebuildDisplayOrder();
     preloadTextures();

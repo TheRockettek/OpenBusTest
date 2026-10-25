@@ -49,6 +49,9 @@ std::string scriptName(std::string value);
 std::shared_ptr<const OscProgram> cachedNativeProgram(const std::filesystem::path& sourcePath,
                                                       std::string& error, bool& compiledThisCall);
 
+void prepareFontSearch(const std::filesystem::path& sourcePath,
+                       const std::vector<std::string>& fontNames);
+
 } // namespace script_detail
 
 using script_detail::cachedNativeProgram;

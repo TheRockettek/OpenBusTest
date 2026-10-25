@@ -1252,9 +1252,19 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     definition.rootPath = mapDirectory;
     const std::filesystem::path globalPath = mapDirectory / "global.cfg";
     mapLog.Log("Reading manifest: " + pathToUtf8(globalPath));
-    const std::vector<std::string> lines = splitLines(decodeText(globalPath));
+    std::vector<std::string> lines;
+    {
+        openbus::rendering::TraceScope trace("map", "MapConfigLoader.readGlobalCfg");
+        lines = splitLines(decodeText(globalPath));
+    }
     mapLog.Log("Discovering ground-texture sidecars in " + pathToUtf8(mapDirectory));
-    const auto groundTextureSidecarsByTile = discoverGroundTextureSidecars(mapDirectory);
+    std::unordered_map<std::string, std::vector<MapGroundTextureSidecar>>
+        groundTextureSidecarsByTile;
+    {
+        openbus::rendering::TraceScope trace("map",
+                                             "MapConfigLoader.discoverGroundTextureSidecars");
+        groundTextureSidecarsByTile = discoverGroundTextureSidecars(mapDirectory);
+    }
     std::unordered_map<std::uint64_t, std::size_t> tileIndicesByCoordinates;
     constexpr std::size_t missingTileIndex = std::numeric_limits<std::size_t>::max();
     std::vector<std::size_t> tileOrdinalToUniqueIndex;
@@ -1274,6 +1284,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
         }
     };
 
+    openbus::rendering::TraceScope manifestTrace("map", "MapConfigLoader.parseGlobalCfg");
     for (; cursor < lines.size();) {
         const std::size_t sectionLine = cursor;
         const std::string section = trim(lines[cursor]);
@@ -1469,6 +1480,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             definition.unsupportedSections.push_back(std::move(opaqueSection));
         }
     }
+    manifestTrace.finish();
 
     if (definition.tiles.empty()) {
         throw std::runtime_error("No [map] tile records found in " + pathToUtf8(globalPath));
@@ -1491,6 +1503,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
         }
         return false;
     });
+    openbus::rendering::TraceScope entryPointTrace("map", "MapConfigLoader.resolveEntryPoints");
     for (MapEntryPoint& entryPoint : definition.entryPoints) {
         if (entryPoint.tileIndex < 0 ||
             static_cast<std::size_t>(entryPoint.tileIndex) >= tileOrdinalToUniqueIndex.size()) {
@@ -1545,9 +1558,11 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             std::atan2(forwardNorth * transform.scaleY, forwardEast * transform.scaleX) * 180.0 /
                 3.14159265358979323846};
     }
+    entryPointTrace.finish();
     const std::filesystem::path aiListPath = mapDirectory / "ailists.cfg";
     mapLog.Log("Manifest parsed: " + std::to_string(definition.tiles.size()) +
                " tiles; loading AI lists and population schedules.");
+    openbus::rendering::TraceScope trafficTrace("map", "MapConfigLoader.loadTrafficSchedules");
     if (std::filesystem::is_regular_file(aiListPath)) {
         parseAiListFile(aiListPath, definition.aiTraffic);
     }
@@ -1594,6 +1609,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     if (std::filesystem::is_regular_file(humanListPath)) {
         parseHumanListFile(humanListPath, definition.aiTraffic);
     }
+    trafficTrace.finish();
     mapLog.Log("Map manifest and traffic configuration loaded in " +
                std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
                                   std::chrono::steady_clock::now() - loadStart)

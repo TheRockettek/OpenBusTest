@@ -352,6 +352,7 @@ class RenderLoop {
     struct TrafficVehicleState {
         Vehicle* vehicle = nullptr;
         std::future<std::unique_ptr<Vehicle>> pendingVehicle;
+        std::unique_ptr<Vehicle> pendingInitializationVehicle;
         openbus::map::MapTrafficActor actor;
         std::shared_ptr<const openbus::map::MapTrafficActor> workerActorTemplate;
         std::optional<std::size_t> blockingActorStateIndex;

@@ -51,13 +51,17 @@ MapSceneLoader::~MapSceneLoader() {
 }
 
 void MapSceneLoader::load() {
+    TraceScope trace("map", "MapSceneLoader::load");
     if (loadStarted_) {
         throw std::logic_error("Map scene loading was already started");
     }
     loadStarted_ = true;
     gameLog.Log("Map scene loading started: root=" + map.rootPath.string() +
                 ", tiles=" + std::to_string(map.tiles.size()) + ".");
-    configureGroundTextures();
+    {
+        TraceScope textureConfigTrace("map", "MapSceneLoader.configureGroundTextures");
+        configureGroundTextures();
+    }
     gameLog.Log("Map phase: loading ground textures.");
     if (std::none_of(
             map.tiles.begin(), map.tiles.end(),
@@ -68,6 +72,7 @@ void MapSceneLoader::load() {
     baseTexturePath_ =
         groundTexturePath(map, omsiRoot, map.groundTextures[baseGroundTextureIndex].texturePath);
     baseTextureRequest_ = assetRequests_->submit([baseTexturePath = baseTexturePath_] {
+        TraceScope textureReadTrace("map", "MapSceneLoader.readBaseGroundTexture");
         Image image;
         if (!TextureLoader::readImage(baseTexturePath, image)) {
             throw std::runtime_error("Could not decode map ground texture: " +
@@ -75,10 +80,17 @@ void MapSceneLoader::load() {
         }
         return image;
     });
-    mapIndexRequest_ = assetRequests_->submit([this] { indexMapContent(); });
+    mapIndexRequest_ = assetRequests_->submit([this] {
+        TraceScope indexTrace("map", "MapSceneLoader.indexMapContent");
+        indexMapContent();
+    });
 }
 
 bool MapSceneLoader::finishLoad(bool waitForCompletion) {
+    std::optional<TraceScope> trace;
+    if (!loadFinished_) {
+        trace.emplace("map", "MapSceneLoader::finishLoad");
+    }
     if (loadFinished_) {
         return true;
     }
@@ -86,6 +98,7 @@ bool MapSceneLoader::finishLoad(bool waitForCompletion) {
         throw std::logic_error("Map scene loading was not started");
     }
     if (waitForCompletion) {
+        TraceScope waitTrace("map", "MapSceneLoader.finishLoad.waitForPreparation");
         baseTextureRequest_.wait();
         mapIndexRequest_.wait();
     } else if (baseTextureRequest_.wait_for(std::chrono::seconds(0)) != std::future_status::ready ||
@@ -112,7 +125,10 @@ bool MapSceneLoader::finishLoad(bool waitForCompletion) {
         loadFinished_ = true;
         std::rethrow_exception(preparationError);
     }
-    loadGroundTextures();
+    {
+        TraceScope textureLoadTrace("map", "MapSceneLoader.finishLoad.loadGroundTextures");
+        loadGroundTextures();
+    }
     loadFinished_ = true;
     return true;
 }
@@ -867,6 +883,11 @@ MapSceneLoader::TileLoadStatus
 MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoordinates,
                                 const openbus::map::MapTileCoordinate& priorityCenter,
                                 bool waitForCompletion, bool failOnExhaustedRetries) {
+    const bool initialLoad = waitForCompletion || failOnExhaustedRetries;
+    std::optional<TraceScope> trace;
+    if (initialLoad) {
+        trace.emplace("map", "MapSceneLoader::loadActiveTiles.initial");
+    }
     std::unordered_set<std::uint64_t> activeTileKeys;
     activeTileKeys.reserve(tileCoordinates.size());
     for (const auto& [tileX, tileY] : tileCoordinates) {
@@ -977,6 +998,10 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
                              : std::pair{left->x, left->y} < std::pair{right->x, right->y};
               });
     constexpr std::size_t maxPendingTileParses = 8;
+    std::optional<TraceScope> parseSubmissionTrace;
+    if (initialLoad) {
+        parseSubmissionTrace.emplace("map", "MapSceneLoader.submitActiveTileParses");
+    }
     for (const openbus::map::MapTileReference* tileReference : prioritizedActiveTiles) {
         const std::uint64_t key = tileKey(tileReference->x, tileReference->y);
         if (!tilePreparationRetryReady(key) || pendingTileDataRequests.contains(key) ||
@@ -989,12 +1014,21 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
                                             return openbus::map::loadMapTile(tileReference);
                                         }));
     }
+    if (parseSubmissionTrace.has_value()) {
+        parseSubmissionTrace->finish();
+    }
 
     if (!terrainLoadPhaseLogged) {
         gameLog.Log("Map phase: loading terrain for the active tile window.");
         terrainLoadPhaseLogged = true;
     }
-    bool contentChanged = loadTerrainTiles(terrainTileKeys, priorityCenter, waitForCompletion);
+    bool contentChanged = false;
+    if (initialLoad) {
+        TraceScope terrainTrace("map", "MapSceneLoader.loadActiveTiles.terrain");
+        contentChanged = loadTerrainTiles(terrainTileKeys, priorityCenter, waitForCompletion);
+    } else {
+        contentChanged = loadTerrainTiles(terrainTileKeys, priorityCenter, waitForCompletion);
+    }
     const bool terrainReady =
         std::all_of(map.tiles.begin(), map.tiles.end(), [this, &terrainTileKeys](const auto& tile) {
             const std::uint64_t key = tileKey(tile.x, tile.y);
@@ -1038,7 +1072,14 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
                     ", road preparations=" + std::to_string(countActive(pendingTileRoadRequests)) +
                     ", prepared roads=" + std::to_string(countActive(preparedTileRoads)) + ".");
     };
-    if (!finishTrafficLaneNetworkPreparation(waitForCompletion)) {
+    bool laneNetworksReady = false;
+    if (initialLoad) {
+        TraceScope laneTrace("map", "MapSceneLoader.loadActiveTiles.finishLaneNetworks");
+        laneNetworksReady = finishTrafficLaneNetworkPreparation(waitForCompletion);
+    } else {
+        laneNetworksReady = finishTrafficLaneNetworkPreparation(waitForCompletion);
+    }
+    if (!laneNetworksReady) {
         reportTileProgress("traffic lane preparation");
         return TileLoadStatus::Pending;
     }
@@ -1063,6 +1104,10 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
             }
             return TileLoadStatus::Updated;
         }
+    }
+    std::optional<TraceScope> contentTrace;
+    if (initialLoad) {
+        contentTrace.emplace("map", "MapSceneLoader.prepareActiveTileContent");
     }
     for (const openbus::map::MapTileReference* tileReference : prioritizedActiveTiles) {
         const std::uint64_t key = tileKey(tileReference->x, tileReference->y);
@@ -1172,6 +1217,9 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
         if (!waitForCompletion) {
             break;
         }
+    }
+    if (contentTrace.has_value()) {
+        contentTrace->finish();
     }
     if (!contentChanged) {
         if (!finishTrafficLaneNetworkPreparation(waitForCompletion)) {
@@ -1661,6 +1709,7 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
 }
 
 void MapSceneLoader::indexMapContent() {
+    TraceScope trace("map", "MapSceneLoader::indexMapContent.work");
     const auto indexStart = std::chrono::steady_clock::now();
     std::unordered_set<int> referencedSplineAttachmentIds;
     const auto registerObjectId = [&](int objectId, MapObjectRecordKind kind,

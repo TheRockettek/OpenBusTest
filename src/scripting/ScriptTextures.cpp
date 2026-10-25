@@ -2,6 +2,133 @@
 
 #include "scripting/ScriptRuntimeImpl.h"
 
+namespace {
+
+struct FontDirectoryIndex {
+    std::unordered_map<std::string, std::filesystem::path> pathsByName;
+};
+
+std::mutex& fontDirectoryIndexMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::unordered_map<std::string, std::shared_ptr<const FontDirectoryIndex>>& fontDirectoryIndexes() {
+    static std::unordered_map<std::string, std::shared_ptr<const FontDirectoryIndex>> indexes;
+    return indexes;
+}
+
+std::string normalizedFontDirectoryKey(const std::filesystem::path& directory) {
+    std::error_code error;
+    std::filesystem::path normalized = std::filesystem::absolute(directory, error);
+    if (error) {
+        normalized = directory;
+    }
+    normalized = normalized.lexically_normal();
+    std::string key = normalized.generic_string();
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return key;
+}
+
+std::vector<std::string> readFontLines(const std::filesystem::path& path) {
+    std::vector<std::string> lines;
+    std::ifstream input(path);
+    std::string line;
+    while (std::getline(input, line)) {
+        const std::size_t first = line.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) {
+            lines.emplace_back();
+        } else {
+            const std::size_t last = line.find_last_not_of(" \t\r\n");
+            lines.push_back(line.substr(first, last - first + 1));
+        }
+    }
+    return lines;
+}
+
+std::shared_ptr<const FontDirectoryIndex>
+fontDirectoryIndex(const std::filesystem::path& directory) {
+    const std::string key = normalizedFontDirectoryKey(directory);
+    std::lock_guard<std::mutex> lock(fontDirectoryIndexMutex());
+    auto& indexes = fontDirectoryIndexes();
+    const auto cached = indexes.find(key);
+    if (cached != indexes.end()) {
+        return cached->second;
+    }
+
+    auto index = std::make_shared<FontDirectoryIndex>();
+    std::error_code error;
+    if (std::filesystem::is_directory(directory, error) && !error) {
+        std::filesystem::directory_iterator entry(
+            directory, std::filesystem::directory_options::skip_permission_denied, error);
+        const std::filesystem::directory_iterator end;
+        for (; !error && entry != end; entry.increment(error)) {
+            std::error_code statusError;
+            if (!entry->is_regular_file(statusError) || statusError ||
+                lower(entry->path().extension().string()) != ".oft") {
+                continue;
+            }
+            const std::vector<std::string> lines = readFontLines(entry->path());
+            for (std::size_t lineIndex = 0; lineIndex + 5 < lines.size(); ++lineIndex) {
+                std::string section = lines[lineIndex];
+                std::transform(section.begin(), section.end(), section.begin(),
+                               [](unsigned char character) {
+                                   return static_cast<char>(std::tolower(character));
+                               });
+                if (section != "[newfont]") {
+                    continue;
+                }
+                std::string name = lines[lineIndex + 1];
+                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char character) {
+                    return static_cast<char>(std::tolower(character));
+                });
+                index->pathsByName.try_emplace(std::move(name), entry->path());
+            }
+        }
+    }
+    indexes.emplace(key, index);
+    return index;
+}
+
+std::filesystem::path findFontPath(const std::filesystem::path& sourcePath,
+                                   const std::string& name) {
+    std::filesystem::path sourceDirectory = sourcePath.parent_path();
+    while (!sourceDirectory.empty()) {
+        const std::shared_ptr<const FontDirectoryIndex> index =
+            fontDirectoryIndex(sourceDirectory / "Fonts");
+        const auto found = index->pathsByName.find(name);
+        if (found != index->pathsByName.end()) {
+            return found->second;
+        }
+        const std::filesystem::path parentDirectory = sourceDirectory.parent_path();
+        if (parentDirectory == sourceDirectory) {
+            break;
+        }
+        sourceDirectory = parentDirectory;
+    }
+    return {};
+}
+
+} // namespace
+
+void script_detail::prepareFontSearch(const std::filesystem::path& sourcePath,
+                                      const std::vector<std::string>& fontNames) {
+    openbus::rendering::TraceScope trace("script", "ScriptRuntime.prepareFontSearch");
+    for (const std::string& fontName : fontNames) {
+        if (fontName.empty()) {
+            continue;
+        }
+        const std::string normalizedName = lower(fontName);
+        {
+            openbus::rendering::TraceScope lookupTrace("script",
+                                                       "ScriptRuntime.prepareFontSearch.lookup");
+            static_cast<void>(findFontPath(sourcePath, normalizedName));
+        }
+    }
+}
+
 bool ScriptRuntime::Impl::floatToInt(float value, int& result) {
     const double numericValue = static_cast<double>(value);
     if (!std::isfinite(numericValue) ||
@@ -184,6 +311,8 @@ std::array<std::uint8_t, 7> ScriptRuntime::Impl::glyph(char character) {
 
 std::shared_ptr<ScriptRuntime::Impl::FontAsset>
 ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
+    const std::string traceName = "ScriptRuntime::loadFont: " + requestedName;
+    openbus::rendering::TraceScope trace("script", traceName.c_str());
     const std::string name = lower(requestedName);
     const auto cached = fonts.find(name);
     if (cached != fonts.end()) {
@@ -196,15 +325,6 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
         }
         const std::size_t last = value.find_last_not_of(" \t\r\n");
         return value.substr(first, last - first + 1);
-    };
-    const auto readFontLines = [&trimFontLine](const std::filesystem::path& path) {
-        std::vector<std::string> lines;
-        std::ifstream input(path);
-        std::string line;
-        while (std::getline(input, line)) {
-            lines.push_back(trimFontLine(line));
-        }
-        return lines;
     };
     const auto parseInteger = [&trimFontLine](const std::string& value, int& result) {
         try {
@@ -220,44 +340,10 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
             return false;
         }
     };
-    std::vector<std::filesystem::path> fontDirectories;
-    std::filesystem::path sourceDirectory = configuration.sourcePath.parent_path();
-    while (!sourceDirectory.empty()) {
-        fontDirectories.push_back(sourceDirectory / "Fonts");
-        const std::filesystem::path parentDirectory = sourceDirectory.parent_path();
-        if (parentDirectory == sourceDirectory) {
-            break;
-        }
-        sourceDirectory = parentDirectory;
-    }
     std::filesystem::path fontPath;
-    std::error_code error;
-    for (const auto& directory : fontDirectories) {
-        if (!std::filesystem::is_directory(directory, error)) {
-            continue;
-        }
-        for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
-            if (!entry.is_regular_file(error) ||
-                lower(entry.path().extension().string()) != ".oft") {
-                continue;
-            }
-            const std::vector<std::string> lines = readFontLines(entry.path());
-            for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
-                if (lower(lines[lineIndex]) != "[newfont]" || lineIndex + 5 >= lines.size()) {
-                    continue;
-                }
-                if (lower(lines[lineIndex + 1]) == name) {
-                    fontPath = entry.path();
-                    break;
-                }
-            }
-            if (!fontPath.empty()) {
-                break;
-            }
-        }
-        if (!fontPath.empty()) {
-            break;
-        }
+    {
+        openbus::rendering::TraceScope searchTrace("script", "ScriptRuntime.loadFont.search");
+        fontPath = findFontPath(configuration.sourcePath, name);
     }
     if (fontPath.empty()) {
         fonts.emplace(name, nullptr);
@@ -265,7 +351,11 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
     }
 
     auto font = std::make_shared<FontAsset>();
-    const std::vector<std::string> lines = readFontLines(fontPath);
+    std::vector<std::string> lines;
+    {
+        openbus::rendering::TraceScope readTrace("script", "ScriptRuntime.loadFont.readDefinition");
+        lines = ::readFontLines(fontPath);
+    }
     for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
         if (lines[lineIndex] != "[newfont]" && lines[lineIndex] != "[char]") {
             if (lines[lineIndex].size() > 2 && lines[lineIndex].front() == '[' &&
@@ -294,10 +384,21 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
             }
             font->height = height;
             font->horizontalGap = horizontalGap;
-            if (!openbus::rendering::TextureLoader::readImage(
-                    fontPath.parent_path() / trimFontLine(values[1]), font->colorImage) ||
-                !openbus::rendering::TextureLoader::readImage(
-                    fontPath.parent_path() / trimFontLine(values[2]), font->alphaImage)) {
+            bool colorLoaded = false;
+            bool alphaLoaded = false;
+            {
+                openbus::rendering::TraceScope colorTrace("script",
+                                                          "ScriptRuntime.loadFont.colorImage");
+                colorLoaded = openbus::rendering::TextureLoader::readImage(
+                    fontPath.parent_path() / trimFontLine(values[1]), font->colorImage);
+            }
+            {
+                openbus::rendering::TraceScope alphaTrace("script",
+                                                          "ScriptRuntime.loadFont.alphaImage");
+                alphaLoaded = openbus::rendering::TextureLoader::readImage(
+                    fontPath.parent_path() / trimFontLine(values[2]), font->alphaImage);
+            }
+            if (!colorLoaded || !alphaLoaded) {
                 continue;
             }
         } else {
@@ -392,6 +493,7 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
                                    std::array<std::uint8_t, 4> color, int letterSpacing,
                                    int maximumScale, TextAlignment alignment,
                                    bool centerVertically) {
+    openbus::rendering::TraceScope trace("script", "ScriptRuntime.drawText");
     if (value.empty() || value.size() > openbus::scripting::maxScriptTextLength ||
         !openbus::scripting::validScriptTextureSize(texture.width, texture.height)) {
         return;
@@ -474,6 +576,7 @@ void ScriptRuntime::Impl::drawText(ScriptTexture& texture, const std::string& va
 bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::string& value,
                                              int x, int y, const TextTextureDefinition& definition,
                                              const FontAsset& font, bool centerVertically) {
+    openbus::rendering::TraceScope trace("script", "ScriptRuntime.drawBitmapFontText");
     if (value.size() > openbus::scripting::maxScriptTextLength ||
         !openbus::scripting::validScriptTextureSize(texture.width, texture.height)) {
         return false;
@@ -589,11 +692,26 @@ bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::
 }
 
 void ScriptRuntime::Impl::updateTextTextures(bool force) {
+    std::string vehicleName = scriptIdentity;
+    if (!configuration.selectedRegistration.empty()) {
+        vehicleName += " [" + configuration.selectedRegistration;
+        if (!configuration.selectedVehicleNumber.empty() &&
+            configuration.selectedVehicleNumber != configuration.selectedRegistration) {
+            vehicleName += "/" + configuration.selectedVehicleNumber;
+        }
+        vehicleName += "]";
+    } else if (!configuration.selectedVehicleNumber.empty()) {
+        vehicleName += " [" + configuration.selectedVehicleNumber + "]";
+    }
+    const std::string traceName = "updateTextTextures: " + vehicleName;
+    openbus::rendering::TraceScope trace("script", traceName.c_str());
     if (!force && localState.get("refresh_strings") == 0.0) {
         return;
     }
     for (auto& entry : textTextureDefinitions) {
         const int index = entry.first;
+        const std::string entryTraceName = "updateTextTextures: index " + std::to_string(index);
+        openbus::rendering::TraceScope entryTrace("script", entryTraceName.c_str());
         TextTextureDefinition& definition = entry.second;
         const std::size_t byteSize =
             openbus::scripting::scriptTextureByteSize(definition.width, definition.height);
@@ -615,12 +733,24 @@ void ScriptRuntime::Impl::updateTextTextures(bool force) {
         ScriptTexture& texture = textTextures[index];
         texture.width = definition.width;
         texture.height = definition.height;
-        clearTexture(texture);
+        {
+            openbus::rendering::TraceScope clearTrace("script", "updateTextTextures.clear");
+            clearTexture(texture);
+        }
         const int maximumScale = 8;
-        const std::shared_ptr<FontAsset> font = loadFont(definition.font);
-        const bool bitmapFontRendered =
-            font != nullptr && drawBitmapFontText(texture, value, 0, 0, definition, *font);
+        std::shared_ptr<FontAsset> font;
+        {
+            openbus::rendering::TraceScope fontTrace("script", "updateTextTextures.loadFont");
+            font = loadFont(definition.font);
+        }
+        bool bitmapFontRendered = false;
+        if (font != nullptr) {
+            openbus::rendering::TraceScope bitmapTrace("script",
+                                                       "updateTextTextures.drawBitmapFontText");
+            bitmapFontRendered = drawBitmapFontText(texture, value, 0, 0, definition, *font);
+        }
         if (!bitmapFontRendered && !value.empty()) {
+            openbus::rendering::TraceScope bitmapTrace("script", "updateTextTextures.drawText");
             drawText(texture, value, 0, 0, definition.color, definition.gridSpacing, maximumScale,
                      definition.alignment, true);
         } else if (!bitmapFontRendered) {
@@ -633,13 +763,24 @@ void ScriptRuntime::Impl::updateTextTextures(bool force) {
 }
 
 bool ScriptRuntime::Impl::loadScriptTexture(int index, const std::string& requestedPath) {
+    openbus::rendering::TraceScope trace("script", "ScriptRuntime.loadScriptTexture");
     if (!validTextureIndex(index)) {
         return false;
     }
-    const std::filesystem::path path =
-        openbus::assets::resolveReferencedPath(configuration.sourcePath, requestedPath);
+    std::filesystem::path path;
+    {
+        openbus::rendering::TraceScope resolveTrace("script",
+                                                    "ScriptRuntime.loadScriptTexture.resolve");
+        path = openbus::assets::resolveReferencedPath(configuration.sourcePath, requestedPath);
+    }
     openbus::rendering::Image image;
-    if (!openbus::rendering::TextureLoader::readImage(path, image) || image.rgba.empty()) {
+    bool imageLoaded = false;
+    {
+        openbus::rendering::TraceScope readTrace("script",
+                                                 "ScriptRuntime.loadScriptTexture.readImage");
+        imageLoaded = openbus::rendering::TextureLoader::readImage(path, image);
+    }
+    if (!imageLoaded || image.rgba.empty()) {
         return false;
     }
     const std::size_t byteSize =
@@ -886,6 +1027,7 @@ int ScriptRuntime::Impl::scriptFontIndex(const std::string& name) {
 
 void ScriptRuntime::Impl::drawScriptText(int index, int x, int y, int fontIndex, bool fullColor,
                                          int letterSpacing, const std::string& value) {
+    openbus::rendering::TraceScope trace("script", "ScriptRuntime.drawScriptText");
     if (fontIndex < 0 || static_cast<std::size_t>(fontIndex) >= scriptFonts.size()) {
         log("Invalid script font index: " + std::to_string(fontIndex));
         return;

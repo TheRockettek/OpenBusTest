@@ -109,6 +109,7 @@ bool checkAuthoredScriptDrawing(const std::filesystem::path& root) {
         std::cerr << error << '\n';
         return false;
     }
+    ScriptRuntime::prepareFontSearch(root / "drawing.bus", {"ProbeFont", "UnitFont"});
     for (const char* backend : {"native", "lua"}) {
         if (!setScriptBackend(backend)) {
             return false;

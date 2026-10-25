@@ -11,6 +11,11 @@ ScriptRuntime::ScriptRuntime(
 
 ScriptRuntime::~ScriptRuntime() = default;
 
+void ScriptRuntime::prepareFontSearch(const std::filesystem::path& sourcePath,
+                                      const std::vector<std::string>& fontNames) {
+    script_detail::prepareFontSearch(sourcePath, fontNames);
+}
+
 void ScriptRuntime::configureScriptTextures(const std::vector<ModelScriptTexture>& definitions) {
     if (!impl_) {
         return;
@@ -159,12 +164,20 @@ void ScriptRuntime::initialize() {
     if (impl_ && (impl_->nativeBackend || impl_->state)) {
         impl_->floatStack.clear();
         impl_->stringStack.clear();
-        if (impl_->nativeBackend) {
-            impl_->executeNativeFunction("init");
-        } else {
-            impl_->invoke("init");
+        {
+            openbus::rendering::TraceScope entryPointTrace("script",
+                                                           "ScriptRuntime.initialize.init");
+            if (impl_->nativeBackend) {
+                impl_->executeNativeFunction("init");
+            } else {
+                impl_->invoke("init");
+            }
         }
-        impl_->updateTextTextures(true);
+        {
+            openbus::rendering::TraceScope textTextureTrace(
+                "script", "ScriptRuntime.initialize.textTextures");
+            impl_->updateTextTextures(true);
+        }
     }
 }
 
@@ -375,15 +388,22 @@ void ScriptRuntime::update(bool isAiVehicle) {
     if (impl_ && (impl_->nativeBackend || impl_->state)) {
         impl_->floatStack.clear();
         impl_->stringStack.clear();
-        if (impl_->nativeBackend) {
-            if (isAiVehicle && !impl_->executeNativeFunction("frame_ai")) {
-                impl_->executeNativeFunction("frame");
-            } else if (!isAiVehicle) {
-                impl_->executeNativeFunction("frame");
+        {
+            openbus::rendering::TraceScope frameTrace("script", "ScriptRuntime.update.frame");
+            if (impl_->nativeBackend) {
+                if (isAiVehicle && !impl_->executeNativeFunction("frame_ai")) {
+                    impl_->executeNativeFunction("frame");
+                } else if (!isAiVehicle) {
+                    impl_->executeNativeFunction("frame");
+                }
+            } else {
+                impl_->invokeFrame(isAiVehicle);
             }
-        } else {
-            impl_->invokeFrame(isAiVehicle);
         }
-        impl_->updateTextTextures();
+        {
+            openbus::rendering::TraceScope textTextureTrace("script",
+                                                            "ScriptRuntime.update.textTextures");
+            impl_->updateTextTextures();
+        }
     }
 }

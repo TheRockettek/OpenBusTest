@@ -33,6 +33,8 @@ class ScriptRuntime {
 
     bool valid() const;
     const std::vector<std::string>& errors() const;
+    static void prepareFontSearch(const std::filesystem::path& sourcePath,
+                                  const std::vector<std::string>& fontNames);
     void initialize();
     void update(bool isAiVehicle);
     void invokeEntryPoint(const std::string& functionName);
