@@ -67,12 +67,11 @@ inline std::filesystem::path resolveTexturePath(const std::filesystem::path& req
     }
 
     std::string extension = requestedPath.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-                   [](unsigned char character) {
-                       return static_cast<char>(std::tolower(character));
-                   });
+    std::transform(
+        extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
     constexpr std::array<const char*, 6> textureExtensions = {".dds", ".bmp", ".tga",
-                                                               ".png", ".jpg", ".jpeg"};
+                                                              ".png", ".jpg", ".jpeg"};
     const bool supportedExtension =
         std::any_of(textureExtensions.begin(), textureExtensions.end(),
                     [&extension](const char* supported) { return extension == supported; });

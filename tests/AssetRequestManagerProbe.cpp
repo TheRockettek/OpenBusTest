@@ -138,6 +138,32 @@ int main() {
                 passed = false;
             }
         }
+
+        {
+            std::lock_guard<std::mutex> lock(recovered->request->mutex);
+            recovered->request->image.reset();
+            recovered->request->compressedDds =
+                std::make_shared<openbus::rendering::CompressedDds>();
+        }
+        assets.requestDxt5Fallback(recovered->request);
+        std::shared_future<void> fallbackTask;
+        {
+            std::lock_guard<std::mutex> lock(recovered->request->mutex);
+            fallbackTask = recovered->request->fallbackTask;
+        }
+        if (!fallbackTask.valid() || fallbackTask.wait_for(5s) != std::future_status::ready) {
+            std::cerr << "DXT5 fallback decode did not complete asynchronously\n";
+            passed = false;
+        } else {
+            std::lock_guard<std::mutex> lock(recovered->request->mutex);
+            if (!recovered->request->fallbackDecodeStarted ||
+                !recovered->request->fallbackDecodeComplete || !recovered->request->image ||
+                recovered->request->image->width != 1 ||
+                recovered->request->image->height != 1) {
+                std::cerr << "DXT5 fallback decode did not publish its image\n";
+                passed = false;
+            }
+        }
     }
     openbus::probe::removeProbeDirectory(directory);
     return passed ? 0 : 1;

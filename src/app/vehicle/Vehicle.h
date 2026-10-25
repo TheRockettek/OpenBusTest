@@ -730,12 +730,14 @@ struct Vehicle {
 
     static double parseDouble(const std::string& value, double fallback);
 
-    GLuint uploadTexture(const std::filesystem::path& path, Image image);
+    GLuint uploadTexture(const std::filesystem::path& path, const Image& image);
 
     GLuint uploadCompressedTexture(const std::filesystem::path& path, const gli::texture& image,
                                    bool& textureArray, std::size_t& textureArrayLayers);
 
     GLuint uploadCompressedDds(const std::filesystem::path& path, const CompressedDds& image);
+
+    bool uploadTextureCacheEntry(const std::shared_ptr<TextureCacheEntry>& entry);
 
     static std::filesystem::path findTexture(const std::filesystem::path& root,
                                              const std::string& name);

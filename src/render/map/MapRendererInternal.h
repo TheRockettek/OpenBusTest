@@ -333,6 +333,11 @@ struct MapRenderer::Impl {
         int sourceTileY = 0;
     };
 
+    struct SceneryInstanceReference {
+        std::uint64_t chunkKey = 0;
+        std::size_t instanceIndex = 0;
+    };
+
     struct SceneryRuntimeDefinition {
         VehicleConfig configuration;
         std::vector<ModelScriptTexture> scriptTextures;
@@ -399,8 +404,11 @@ struct MapRenderer::Impl {
     std::vector<std::vector<double>> sceneryLodThresholdSets;
     std::vector<std::unique_ptr<SceneryScriptState>> sceneryScriptStates;
     std::vector<std::size_t> activeSceneryScriptStateIndices;
+    std::unordered_map<std::uint64_t, std::vector<std::size_t>> sceneryScriptStatesByTile;
     std::size_t sceneryScriptRuntimeCount = 0;
     std::unordered_map<std::uint64_t, SceneryChunk> sceneryChunks;
+    std::unordered_map<std::uint64_t, std::vector<SceneryInstanceReference>>
+        sceneryInstancesBySourceTile;
     std::size_t sceneryInstanceCount = 0;
     std::size_t sceneryObjectCount = 0;
     std::vector<ModelBatch> roadBatches;
@@ -434,8 +442,10 @@ struct MapRenderer::Impl {
     std::array<std::vector<const SceneryDraw*>, SCENERY_DRAW_GROUP_COUNT> transparentSceneryScratch;
     std::vector<openbus::map::MapTileCoordinate> mapTileCoordinates;
     std::vector<openbus::map::MapTileCoordinate> activeTileCoordinates;
+    std::vector<openbus::map::MapTileCoordinate> requestedTileCoordinates;
     std::unordered_set<std::uint64_t> activeTileKeys;
     std::optional<openbus::map::MapTileCoordinate> activeCenterTile;
+    std::optional<openbus::map::MapTileCoordinate> requestedCenterTile;
     bool leftHandTraffic = false;
     SimulationState* simulationState = nullptr;
 

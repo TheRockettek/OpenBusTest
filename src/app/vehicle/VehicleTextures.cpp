@@ -8,6 +8,11 @@ bool Vehicle::areTexturesLoaded() const {
         return false;
     }
     std::unordered_set<const TextureCacheEntry*> trackedTextures;
+    const auto requestComplete = [](const std::shared_ptr<TextureRequest>& request) {
+        std::lock_guard<std::mutex> lock(request->mutex);
+        return request->complete &&
+               (!request->fallbackDecodeStarted || request->fallbackDecodeComplete);
+    };
     const auto texturesLoadedInParts = [&](const std::vector<DisplayPart>& parts) {
         for (const DisplayPart& displayPart : parts) {
             for (const Batch& batch : displayPart.batches) {
@@ -16,11 +21,9 @@ bool Vehicle::areTexturesLoaded() const {
                         return false;
                     }
                     const TextureCacheEntry* sourceEntry = source.textureCacheEntry.get();
-                    if (trackedTextures.insert(sourceEntry).second) {
-                        std::lock_guard<std::mutex> sourceLock(sourceEntry->request->mutex);
-                        if (!sourceEntry->request->complete) {
-                            return false;
-                        }
+                    if (trackedTextures.insert(sourceEntry).second &&
+                        !requestComplete(sourceEntry->request)) {
+                        return false;
                     }
                 }
                 if (batch.materialTextures.empty() &&
@@ -29,11 +32,8 @@ bool Vehicle::areTexturesLoaded() const {
                         return false;
                     }
                     const TextureCacheEntry* entry = batch.textureCacheEntry.get();
-                    if (trackedTextures.insert(entry).second) {
-                        std::lock_guard<std::mutex> lock(entry->request->mutex);
-                        if (!entry->request->complete) {
-                            return false;
-                        }
+                    if (trackedTextures.insert(entry).second && !requestComplete(entry->request)) {
+                        return false;
                     }
                 }
                 for (const AuxiliaryTexture* auxiliary :
@@ -49,8 +49,7 @@ bool Vehicle::areTexturesLoaded() const {
                     if (!trackedTextures.insert(auxiliaryEntry).second) {
                         continue;
                     }
-                    std::lock_guard<std::mutex> auxiliaryLock(auxiliaryEntry->request->mutex);
-                    if (!auxiliaryEntry->request->complete) {
+                    if (!requestComplete(auxiliaryEntry->request)) {
                         return false;
                     }
                 }
@@ -64,13 +63,60 @@ bool Vehicle::areTexturesLoaded() const {
     return true;
 }
 
-GLuint Vehicle::uploadTexture(const std::filesystem::path& path, Image image) {
+bool Vehicle::uploadTextureCacheEntry(const std::shared_ptr<TextureCacheEntry>& entry) {
+    if (!entry) {
+        return false;
+    }
+    const std::shared_ptr<TextureRequest>& request = entry->request;
+    std::unique_lock<std::mutex> lock(request->mutex);
+    if (!request->complete) {
+        return false;
+    }
+    if (entry->uploadAttempted) {
+        return true;
+    }
+    if (request->resolvedPath.empty()) {
+        entry->uploadAttempted = true;
+        return true;
+    }
+
+    if (request->compressedDds) {
+        if (!entry->compressedUploadAttempted) {
+            entry->texture = uploadCompressedDds(request->resolvedPath, *request->compressedDds);
+            entry->compressedUploadAttempted = true;
+            if (entry->texture == 0) {
+                lock.unlock();
+                assets->requestDxt5Fallback(request);
+                return false;
+            }
+        } else if (entry->texture == 0) {
+            if (!request->fallbackDecodeComplete) {
+                return false;
+            }
+            if (request->image) {
+                entry->texture = uploadTexture(request->resolvedPath, *request->image);
+            }
+        }
+    } else if (request->compressedTexture) {
+        entry->texture = uploadCompressedTexture(request->resolvedPath, *request->compressedTexture,
+                                                 entry->textureArray, entry->textureArrayLayers);
+    } else if (request->image) {
+        entry->texture = uploadTexture(request->resolvedPath, *request->image);
+    }
+
+    entry->uploadAttempted = true;
+    return true;
+}
+
+GLuint Vehicle::uploadTexture(const std::filesystem::path& path, const Image& image) {
     TraceScope trace("texture", "uploadTexture");
     static const bool verboseTextureUploadLogs =
         parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
     if (verboseTextureUploadLogs) {
         gameLog.Log("Uploading texture from path: " + path.generic_string());
     }
+    Image scaledImage;
+    const Image* uploadImage = &image;
     if (textureScale < 0.999) {
         const int scaledWidth =
             std::max(1, static_cast<int>(std::lround(image.width * textureScale)));
@@ -95,9 +141,10 @@ GLuint Vehicle::uploadTexture(const std::filesystem::path& path, Image image) {
                 std::copy_n(image.rgba.data() + source, 4, scaled.data() + target);
             }
         }
-        image.width = scaledWidth;
-        image.height = scaledHeight;
-        image.rgba = std::move(scaled);
+        scaledImage.width = scaledWidth;
+        scaledImage.height = scaledHeight;
+        scaledImage.rgba = std::move(scaled);
+        uploadImage = &scaledImage;
     }
     GLuint texture = 0;
     glGenTextures(1, &texture);
@@ -107,8 +154,8 @@ GLuint Vehicle::uploadTexture(const std::filesystem::path& path, Image image) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                 image.rgba.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, uploadImage->width, uploadImage->height, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, uploadImage->rgba.data());
     openbus::rendering::invalidateTextureBindings();
     assets->trackTexture(texture);
     return texture;
@@ -435,30 +482,8 @@ void Vehicle::ensureAuxiliaryTexture(Batch& batch, AuxiliaryTexture& auxiliary) 
     if (!requestComplete) {
         return;
     }
-    std::lock_guard<std::mutex> lock(request->mutex);
-    if (!auxiliary.cacheEntry->uploadAttempted) {
-        auxiliary.cacheEntry->uploadAttempted = true;
-        if (!request->resolvedPath.empty()) {
-            if (request->compressedDds) {
-                auxiliary.cacheEntry->texture =
-                    uploadCompressedDds(request->resolvedPath, *request->compressedDds);
-                if (auxiliary.cacheEntry->texture == 0) {
-                    Image fallbackImage;
-                    if (openbus::rendering::TextureLoader::readImage(request->resolvedPath,
-                                                                     fallbackImage)) {
-                        auxiliary.cacheEntry->texture =
-                            uploadTexture(request->resolvedPath, std::move(fallbackImage));
-                    }
-                }
-            } else if (request->compressedTexture) {
-                auxiliary.cacheEntry->texture = uploadCompressedTexture(
-                    request->resolvedPath, *request->compressedTexture,
-                    auxiliary.cacheEntry->textureArray, auxiliary.cacheEntry->textureArrayLayers);
-            } else if (request->image) {
-                auxiliary.cacheEntry->texture =
-                    uploadTexture(request->resolvedPath, *request->image);
-            }
-        }
+    if (!uploadTextureCacheEntry(auxiliary.cacheEntry)) {
+        return;
     }
     auxiliary.texture = auxiliary.cacheEntry->texture;
     auxiliary.loadAttempted = true;
@@ -579,22 +604,16 @@ void Vehicle::ensureTexture(Batch& batch, bool visible) {
         batch.textureLoadStarted = true;
     }
     startTextureRequest(batch.textureCacheEntry);
-    bool requestComplete = false;
-    {
-        std::lock_guard<std::mutex> lock(batch.textureCacheEntry->request->mutex);
-        requestComplete = batch.textureCacheEntry->request->complete;
-    }
-    if (!requestComplete) {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(batch.textureCacheEntry->request->mutex);
-    if (!batch.textureCacheEntry->request->complete) {
-        return;
-    }
     if (!visible) {
         return;
     }
-    batch.texturePath = batch.textureCacheEntry->request->resolvedPath;
+    {
+        std::lock_guard<std::mutex> lock(batch.textureCacheEntry->request->mutex);
+        if (!batch.textureCacheEntry->request->complete) {
+            return;
+        }
+        batch.texturePath = batch.textureCacheEntry->request->resolvedPath;
+    }
     if (!batch.textureCacheEntry->uploadAttempted) {
         if (loadingPolicy.textureMode == AssetLoadingMode::Deferred) {
             constexpr auto textureUploadBudget = std::chrono::milliseconds(2);
@@ -602,28 +621,8 @@ void Vehicle::ensureTexture(Batch& batch, bool visible) {
                 return;
             }
         }
-        batch.textureCacheEntry->uploadAttempted = true;
-        if (!batch.texturePath.empty()) {
-            if (batch.textureCacheEntry->request->compressedDds) {
-                batch.textureCacheEntry->texture = uploadCompressedDds(
-                    batch.texturePath, *batch.textureCacheEntry->request->compressedDds);
-                if (batch.textureCacheEntry->texture == 0) {
-                    Image fallbackImage;
-                    if (openbus::rendering::TextureLoader::readImage(batch.texturePath,
-                                                                     fallbackImage)) {
-                        batch.textureCacheEntry->texture =
-                            uploadTexture(batch.texturePath, std::move(fallbackImage));
-                    }
-                }
-            } else if (batch.textureCacheEntry->request->compressedTexture) {
-                batch.textureCacheEntry->texture = uploadCompressedTexture(
-                    batch.texturePath, *batch.textureCacheEntry->request->compressedTexture,
-                    batch.textureCacheEntry->textureArray,
-                    batch.textureCacheEntry->textureArrayLayers);
-            } else {
-                batch.textureCacheEntry->texture =
-                    uploadTexture(batch.texturePath, *batch.textureCacheEntry->request->image);
-            }
+        if (!uploadTextureCacheEntry(batch.textureCacheEntry)) {
+            return;
         }
     }
     batch.texture = batch.textureCacheEntry->texture;
@@ -665,19 +664,16 @@ void Vehicle::ensureMaterialTexture(MaterialTextureSource& source, bool visible)
         source.textureLoadStarted = true;
     }
     startTextureRequest(source.textureCacheEntry);
-    bool requestComplete = false;
     {
         std::lock_guard<std::mutex> lock(source.textureCacheEntry->request->mutex);
-        requestComplete = source.textureCacheEntry->request->complete;
+        if (!source.textureCacheEntry->request->complete) {
+            return;
+        }
+        source.texturePath = source.textureCacheEntry->request->resolvedPath;
     }
-    if (!requestComplete || !visible) {
+    if (!visible) {
         return;
     }
-    std::lock_guard<std::mutex> lock(source.textureCacheEntry->request->mutex);
-    if (!source.textureCacheEntry->request->complete) {
-        return;
-    }
-    source.texturePath = source.textureCacheEntry->request->resolvedPath;
     if (!source.textureCacheEntry->uploadAttempted) {
         if (loadingPolicy.textureMode == AssetLoadingMode::Deferred) {
             constexpr auto textureUploadBudget = std::chrono::milliseconds(2);
@@ -685,28 +681,8 @@ void Vehicle::ensureMaterialTexture(MaterialTextureSource& source, bool visible)
                 return;
             }
         }
-        source.textureCacheEntry->uploadAttempted = true;
-        if (!source.texturePath.empty()) {
-            if (source.textureCacheEntry->request->compressedDds) {
-                source.textureCacheEntry->texture = uploadCompressedDds(
-                    source.texturePath, *source.textureCacheEntry->request->compressedDds);
-                if (source.textureCacheEntry->texture == 0) {
-                    Image fallbackImage;
-                    if (openbus::rendering::TextureLoader::readImage(source.texturePath,
-                                                                     fallbackImage)) {
-                        source.textureCacheEntry->texture =
-                            uploadTexture(source.texturePath, std::move(fallbackImage));
-                    }
-                }
-            } else if (source.textureCacheEntry->request->compressedTexture) {
-                source.textureCacheEntry->texture = uploadCompressedTexture(
-                    source.texturePath, *source.textureCacheEntry->request->compressedTexture,
-                    source.textureCacheEntry->textureArray,
-                    source.textureCacheEntry->textureArrayLayers);
-            } else if (source.textureCacheEntry->request->image) {
-                source.textureCacheEntry->texture =
-                    uploadTexture(source.texturePath, *source.textureCacheEntry->request->image);
-            }
+        if (!uploadTextureCacheEntry(source.textureCacheEntry)) {
+            return;
         }
     }
     source.texture = source.textureCacheEntry->texture;
@@ -729,37 +705,18 @@ void Vehicle::ensureEnvironmentTexture(Batch& batch, bool visible) {
     }
     const std::shared_ptr<TextureCacheEntry>& entry = batch.environmentTextureCacheEntry;
     startTextureRequest(entry);
-    bool requestComplete = false;
     {
         std::lock_guard<std::mutex> lock(entry->request->mutex);
-        requestComplete = entry->request->complete;
+        if (!entry->request->complete) {
+            return;
+        }
     }
-    if (!requestComplete || !visible) {
+    if (!visible) {
         return;
     }
-    std::lock_guard<std::mutex> lock(entry->request->mutex);
     if (!entry->uploadAttempted) {
-        entry->uploadAttempted = true;
-        if (!entry->request->resolvedPath.empty()) {
-            if (entry->request->compressedDds) {
-                entry->texture = uploadCompressedDds(entry->request->resolvedPath,
-                                                     *entry->request->compressedDds);
-                if (entry->texture == 0) {
-                    Image fallbackImage;
-                    if (openbus::rendering::TextureLoader::readImage(entry->request->resolvedPath,
-                                                                     fallbackImage)) {
-                        entry->texture =
-                            uploadTexture(entry->request->resolvedPath, std::move(fallbackImage));
-                    }
-                }
-            } else if (entry->request->compressedTexture) {
-                entry->texture = uploadCompressedTexture(
-                    entry->request->resolvedPath, *entry->request->compressedTexture,
-                    entry->textureArray, entry->textureArrayLayers);
-            } else if (entry->request->image) {
-                entry->texture =
-                    uploadTexture(entry->request->resolvedPath, *entry->request->image);
-            }
+        if (!uploadTextureCacheEntry(entry)) {
+            return;
         }
     }
     batch.environmentTexture = entry->texture;

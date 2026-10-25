@@ -99,7 +99,7 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     }
     impl_->leftHandTraffic = map.metadata.hasLeftHandTraffic;
     sceneLoader_ = std::make_unique<MapSceneLoader>(map, centerTileIndex, groundTextureIndex,
-                                                    omsiRoot, *impl_);
+                                                    omsiRoot, *impl_, assetRequests);
     sceneLoader_->load();
     updateStreaming(spawnWorldX, spawnWorldY);
     sceneLoader_->logSummary();
@@ -165,19 +165,31 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
     const int centerX = openbus::map::mapWorldTile(worldX, impl_->coordinates.tileSize);
     const int centerY = openbus::map::mapWorldTile(worldY, impl_->coordinates.tileSize);
     const openbus::map::MapTileCoordinate center{centerX, centerY};
-    if (impl_->activeCenterTile == center) {
+    if (impl_->requestedCenterTile != center) {
+        impl_->requestedTileCoordinates = openbus::map::selectMapTilesWithinRadius(
+            impl_->mapTileCoordinates, worldX, worldY, MAP_ACTIVE_TILE_RADIUS,
+            impl_->coordinates.tileSize);
+        impl_->requestedCenterTile = center;
+    }
+    const MapSceneLoader::TileLoadStatus loadStatus =
+        sceneLoader_->loadActiveTiles(impl_->requestedTileCoordinates, *impl_->requestedCenterTile,
+                                      !impl_->activeCenterTile.has_value());
+    if (loadStatus == MapSceneLoader::TileLoadStatus::Pending) {
         return;
     }
-    impl_->activeTileCoordinates = openbus::map::selectMapTilesWithinRadius(
-        impl_->mapTileCoordinates, worldX, worldY, MAP_ACTIVE_TILE_RADIUS,
-        impl_->coordinates.tileSize);
-    impl_->activeTileKeys.clear();
-    impl_->activeTileKeys.reserve(impl_->activeTileCoordinates.size());
-    for (const auto& [tileX, tileY] : impl_->activeTileCoordinates) {
-        impl_->activeTileKeys.insert(tileKey(tileX, tileY));
+    const bool centerChanged = impl_->activeCenterTile != impl_->requestedCenterTile;
+    if (!centerChanged && loadStatus != MapSceneLoader::TileLoadStatus::Updated) {
+        return;
     }
-    sceneLoader_->loadActiveTiles(impl_->activeTileCoordinates);
-    impl_->activeCenterTile = center;
+    if (centerChanged) {
+        impl_->activeTileCoordinates = impl_->requestedTileCoordinates;
+        impl_->activeTileKeys.clear();
+        impl_->activeTileKeys.reserve(impl_->activeTileCoordinates.size());
+        for (const auto& [tileX, tileY] : impl_->activeTileCoordinates) {
+            impl_->activeTileKeys.insert(tileKey(tileX, tileY));
+        }
+        impl_->activeCenterTile = impl_->requestedCenterTile;
+    }
     MapRenderStats stats;
     stats.activeTiles = impl_->activeTileCoordinates.size();
     stats.totalTiles = impl_->mapTileCoordinates.size();
@@ -198,19 +210,32 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
     for (auto& activeChunks : impl_->activeSceneryChunks) {
         activeChunks.clear();
     }
-    for (const auto& [key, chunk] : impl_->sceneryChunks) {
-        static_cast<void>(key);
-        std::array<Impl::ActiveSceneryChunk, 2> active = {Impl::ActiveSceneryChunk{&chunk, {}},
-                                                          Impl::ActiveSceneryChunk{&chunk, {}}};
-        for (const Impl::SceneryInstance& instance : chunk.instances) {
-            if (instance.batchIndex >= impl_->sceneryBatches.size() ||
-                !impl_->activeTileKeys.contains(
-                    tileKey(instance.sourceTileX, instance.sourceTileY))) {
+    std::unordered_map<std::uint64_t, std::array<Impl::ActiveSceneryChunk, 2>> activeByChunk;
+    for (const auto& [tileX, tileY] : impl_->activeTileCoordinates) {
+        const auto instances = impl_->sceneryInstancesBySourceTile.find(tileKey(tileX, tileY));
+        if (instances == impl_->sceneryInstancesBySourceTile.end()) {
+            continue;
+        }
+        for (const Impl::SceneryInstanceReference& reference : instances->second) {
+            const auto chunk = impl_->sceneryChunks.find(reference.chunkKey);
+            if (chunk == impl_->sceneryChunks.end() ||
+                reference.instanceIndex >= chunk->second.instances.size()) {
                 continue;
             }
+            const Impl::SceneryInstance& instance =
+                chunk->second.instances[reference.instanceIndex];
+            if (instance.batchIndex >= impl_->sceneryBatches.size()) {
+                continue;
+            }
+            auto& active = activeByChunk[reference.chunkKey];
+            active[0].chunk = &chunk->second;
+            active[1].chunk = &chunk->second;
             const bool typeFour = impl_->sceneryBatches[instance.batchIndex].renderType == 4;
             active[typeFour ? 1 : 0].instances.push_back(&instance);
         }
+    }
+    for (auto& [key, active] : activeByChunk) {
+        static_cast<void>(key);
         for (std::size_t pass = 0; pass < active.size(); ++pass) {
             if (!active[pass].instances.empty()) {
                 impl_->activeSceneryChunks[pass].push_back(std::move(active[pass]));
@@ -218,12 +243,12 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
         }
     }
     impl_->activeSceneryScriptStateIndices.clear();
-    impl_->activeSceneryScriptStateIndices.reserve(impl_->sceneryScriptStates.size());
-    for (std::size_t stateIndex = 0; stateIndex < impl_->sceneryScriptStates.size(); ++stateIndex) {
-        const Impl::SceneryScriptState& scriptState = *impl_->sceneryScriptStates[stateIndex];
-        if (impl_->activeTileKeys.contains(
-                tileKey(scriptState.ownerTileX, scriptState.ownerTileY))) {
-            impl_->activeSceneryScriptStateIndices.push_back(stateIndex);
+    for (const auto& [tileX, tileY] : impl_->activeTileCoordinates) {
+        const auto states = impl_->sceneryScriptStatesByTile.find(tileKey(tileX, tileY));
+        if (states != impl_->sceneryScriptStatesByTile.end()) {
+            impl_->activeSceneryScriptStateIndices.insert(
+                impl_->activeSceneryScriptStateIndices.end(), states->second.begin(),
+                states->second.end());
         }
     }
     initializeActiveScripts();

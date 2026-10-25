@@ -12,25 +12,25 @@ OMSI compatibility.
 ## Executive summary
 
 This review records unresolved implementation defects, compatibility limitations, and
-architectural/performance risks. The Windows Clang Release full-suite validation passed all
-**64 of 64** configured CTest probes serially, including serializer and benchmark-statistics
-probes.
+architectural/performance risks. The current Windows Clang Release `build-ninja` full-suite run
+passed all **64 of 64** configured CTest probes, including both traffic-light rendering variants
+and the asynchronous DXT5 fallback probe.
 
 The highest-priority remaining work is:
 
 | Priority | Area | Main risk / next action |
 | --- | --- | --- |
 | Medium | Collision-streaming latency | Terrain/road/scenery mesh preparation is asynchronous, but ODE insertion/removal remains on the simulation thread and may still stall; measure publication and contact readiness. |
-| Medium | Texture fallback cost | DXT5 fallback rereads and decodes textures on the render thread; dedicated fallback coverage is incomplete. |
+| Medium | Texture fallback validation | DXT5 fallback decoding is asynchronous and has a worker-level regression probe; GL upload behavior and driver performance remain unverified. |
 | Medium | Memory residency | Asset caches retain CPU payloads and GPU resources without a byte-based residency policy. |
-| Medium | Map scalability | Newly active tiles are loaded synchronously and retained; activation scans retained scenery/script state, while global parsed map/placement data remains CPU-resident. |
+| Medium | Map scalability | Tile/terrain and scenery/model configuration parsing run on workers, but scenery/road mesh construction and render-thread publication remain synchronous; loaded resources and global parsed map/placement data remain resident. |
 | Medium | Build verification | Clean Linux validation remains outstanding. |
 
 Findings below distinguish confirmed defects from architectural scaling risks. The full
-configured CTest suite includes material-rendering and compute-culling GPU probes, but no
-full application/map-streaming context test, Linux build, sanitizer run, fresh benchmark,
-GPU timing study, or memory profile was performed. No speedup percentages or measured hitch
-durations are claimed.
+configured CTest suite includes material-rendering and compute-culling GPU probes and a
+synthetic two-window map-streaming GL probe, but no full-application/in-game streaming test,
+Linux build, sanitizer run, fresh benchmark, GPU timing study, or memory profile was performed.
+No speedup percentages or measured hitch durations are claimed.
 
 ## Current issues
 
@@ -101,25 +101,36 @@ Test travel in both directions, re-entry, negative coordinates, rapid center cha
 continuity; consider moving the entire ODE world to a dedicated owner thread if publication is
 still costly.
 
-### P2. Medium: Synchronous tile activation and retained map state limit larger-map scalability
+### P2. Medium: Partially asynchronous tile activation and retained map state limit larger-map scalability
 
 **Locations:** `src/render/map/MapRenderer.cpp` (`updateStreaming`);
 `src/render/map/MapSceneLoader.cpp` (`loadActiveTiles`); `MapRenderer::Impl` resource vectors.
 
-The constructor loads the initial active tiles synchronously. Later center-tile changes also call
-`loadActiveTiles` synchronously for newly encountered tiles. Already loaded tile content is
-retained rather than rebuilt or evicted, so memory can grow as more of the map is explored.
-`updateStreaming` then scans all retained scenery chunks and all scenery script states to build
-active lists, even though only active owners are added to the lists. Global parsed map records
-remain resident for cross-tile attachment resolution. Collision CPU preparation is asynchronous,
-but ODE publication/removal remains on the simulation thread. These are scaling risks; no current
-boundary hitch duration or memory-growth rate was measured.
+The constructor waits for the initial active window. Map-wide placement/traffic indexing, map-tile
+file parsing, terrain-file parsing, and terrain vertex/index construction run on the asset worker
+pool. Later tile activation polls those jobs, retains the old active window until the requested
+window is ready, prioritizes jobs near the requested center, caps pending tile decode/preparation
+jobs, and limits terrain uploads and scene-tile publication to one tile of each per frame. Map and
+terrain decoding overlap. Per-tile scenery and model configuration parsing is also scheduled on
+workers before publication, with at most eight tile-level config-preparation jobs outstanding.
+Attached-object parent assets are included. Scenery O3D/X files are parsed and expanded into
+material-group vertex data in those jobs; parsed configuration and geometry results plus placement
+state are consumed on the renderer thread. Work already queued for a tile that leaves the
+requested window cannot be cancelled, but its results are discarded when harvested. OpenGL
+publication remains on the renderer thread. Road mesh construction, scenery material/texture
+setup, and GPU upload still run synchronously during publication, so boundary stalls remain
+possible. Already loaded tile content is retained rather than rebuilt or evicted, and
+obsolete pending requests are discarded from the loader when their tiles leave the desired
+window. Global parsed map records remain resident for cross-tile attachment resolution. Collision
+CPU preparation is asynchronous, but ODE publication/removal remains on the simulation thread.
+These are scaling risks; no current boundary hitch duration or memory-growth rate was measured.
 
-**Recommendation:** Keep parsed map data available for dependency resolution, but add per-tile
-indexes for retained scenery/script state so activation work scales with entering/leaving tiles
-rather than the explored map. Measure boundary-frame latency and CPU/GPU residency during a
-repeatable route before undertaking tile-resource eviction or a broader streaming rewrite. Add
-a GL-context integration smoke test and in-game visual/contact validation.
+**Recommendation:** Move road mesh construction and remaining dependency reads into immutable
+worker results, while keeping shared-cache mutation and GL resource creation/destruction on their
+owning threads. Keep parsed map data available for dependency resolution. Measure boundary-frame
+latency and CPU/GPU residency during a repeatable route before undertaking tile-resource eviction
+or a broader streaming rewrite. Add a GL-context integration smoke test and in-game
+visual/contact validation.
 
 `MapRenderer::updateScripts()` now initializes and ticks scenery runtimes only when their owner
 tile is active; each placement keeps independent mutable state, and native compiled programs are
@@ -138,8 +149,8 @@ destructor); `src/app/vehicle/VehicleDefinition.cpp`, `src/app/vehicle/VehicleTe
 lifetime. Texture requests and `decodedTextureCache_` strongly retain decoded/compressed
 payloads after upload; tracked vehicle GL textures/buffers are released only when the manager
 is destroyed. Parsed source arrays, expanded render vertices, and GPU buffers can therefore
-remain resident together. `uploadTexture(path, Image image)` adds a full RGBA copy for cached
-lvalue images even when no downscaling is requested.
+remain resident together. Texture upload now reads cached images by const reference and only
+allocates a second RGBA buffer when downscaling is requested.
 
 Path-only process/static caches for definitions, script programs, and texture resolution
 also have no change-generation invalidation. Missing-file results can remain cached after
@@ -154,22 +165,20 @@ in-flight staging, and GPU bytes. Define pinned users plus byte-based eviction, 
 keys, and owner-thread deferred GPU deletion before adding removal/hot reload. Drop obsolete
 source payloads only when all required consumers have finished; preserve CPU data used for
 picking/transparency or replace it with an appropriate compact representation. Avoid clearing
-shared payloads while workers/users still depend on them. Use a const upload view when scaling
-is unnecessary; test load/unload/reload and shared-resource lifetimes under a small budget.
+shared payloads while workers/users still depend on them. Test load/unload/reload and
+shared-resource lifetimes under a small budget.
 
-### P4. Medium: DXT5 fallback decoding runs on the render thread
+### P4. Medium: DXT5 fallback upload lacks GL-context validation
 
 **Locations:** `src/app/vehicle/VehicleTextures.cpp` (compressed-texture fallback);
 vehicle base/material/environment/auxiliary texture upload paths.
 
-When compressed upload is unavailable, affected paths reread and decode the texture on the
-render thread. This avoids a failed load but can add synchronous work during texture upload.
-There is no dedicated supported/unsupported DXT5 upload fixture or driver performance
-comparison.
+There is no GL-context test that exercises both supported and unsupported DXT5 upload paths or
+verifies driver-specific error behavior.
 
-**Recommendation:** Add focused fallback tests and measure the render-thread decode cost.
-Reuse decoded payloads or move fallback decoding off-thread where ownership and upload ordering
-permit.
+**Recommendation:** Add a GL-context fallback integration test where practical and compare
+supported/unsupported driver behavior. Measure render-thread upload cost separately from decode
+cost.
 
 ### P5. Medium: Rendered scenery and collision use different placement semantics
 
@@ -213,8 +222,10 @@ ECS/backend migration.
 
 ## Validation scope
 
-The recorded `build-ninja` Windows Clang Release build succeeded, and
-`ctest --test-dir build-ninja --output-on-failure -j 1` passed **64 of 64** tests. This does
-not include a Linux build, sanitizer run, fresh dependency setup, loading/render benchmark, or
-memory profile. The focused GPU probes do not validate full application/map-streaming
-behavior, live in-game contact/render parity, or acceptable frame latency.
+The recorded Windows Clang Release `build-ninja` build succeeded. The latest
+`ctest --test-dir build-ninja --output-on-failure -j 1` run passed **64 of 64** tests. A clean
+configure and fresh target build succeeded, but its GLFW probe did not complete within the
+available wait. This does not include a Linux build, sanitizer run, loading/render benchmark,
+or memory profile. The focused GPU probes do not validate full application/map-streaming
+behavior, live in-game contact/render parity, driver-specific DXT5 fallback behavior, or
+acceptable frame latency.

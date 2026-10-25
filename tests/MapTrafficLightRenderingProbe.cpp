@@ -1,5 +1,6 @@
 #include "ProbeTempDirectory.h"
 #include "core/Variables.h"
+#include "map/MapTileWindow.h"
 #include "render/AssetRequestManager.h"
 #include "render/CoreRenderer.h"
 #include "render/MatrixMath.h"
@@ -9,6 +10,7 @@
 #include <GLFW/glfw3.h>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -16,6 +18,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <vector>
 
 using namespace openbus::rendering;
 
@@ -29,17 +33,26 @@ void writeText(const std::filesystem::path& path, const std::string& text) {
     }
 }
 
+void check(bool condition, const char* message) {
+    if (!condition) {
+        throw std::runtime_error(message);
+    }
+}
+
+void writeTinyTerrain(const std::filesystem::path& path) {
+    std::array<std::uint8_t, 20> terrain = {};
+    terrain[0] = 1;
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(terrain.data()),
+                 static_cast<std::streamsize>(terrain.size()));
+    check(static_cast<bool>(output), "Could not write probe terrain");
+}
+
 void writeLamp(const std::filesystem::path& path, const std::string& color) {
     writeText(path, "xof 0303txt 0032\n"
                     "Mesh { 3; -2;0;-2;, 2;0;-2;, 0;0;2;; 2; 3;0,1,2;, 3;2,1,0;;\n"
                     "MeshMaterialList { 1; 2; 0,0;; Material { " +
                         color + ";1;; 0; 0;0;0;; 1;1;1;; } } }\n");
-}
-
-void check(bool condition, const char* message) {
-    if (!condition) {
-        throw std::runtime_error(message);
-    }
 }
 
 void runProbe(const std::filesystem::path& root, bool conditional) {
@@ -67,7 +80,9 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
               "[path]\n0\n0\n0\n0\n0\n20\n0\n0\n0\n3\n0\n0\n"
               "[use_traffic_light]\n1\n"
               "[mesh]\ngreen.x\n" +
-                  std::string(conditional ? "[traffic_light_stop]\n1\n4\n0\n" : ""));
+                  std::string(conditional ? "[traffic_light_stop]\n1\n4\n0\n"
+                                          "[traffic_light_stop]\n1\n8\n0\n"
+                                          : ""));
     writeText(root / "tile.map",
               "[version]\n14\n[terrain]\n"
               "[object]\n0\ncontroller.sco\n100\n0\n0\n0\n0\n0\n0\n0\n"
@@ -82,12 +97,11 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
         output.write(reinterpret_cast<const char*>(ground.data()), ground.size());
         check(static_cast<bool>(output), "Could not write probe ground texture");
     }
-    {
-        std::array<std::uint8_t, 20> terrain = {};
-        terrain[0] = 1;
-        std::ofstream output(root / "tile.terrain", std::ios::binary);
-        output.write(reinterpret_cast<const char*>(terrain.data()), terrain.size());
-        check(static_cast<bool>(output), "Could not write probe terrain");
+    writeTinyTerrain(root / "tile.terrain");
+    for (const int tileX : {4, 5}) {
+        const std::string tileName = "tile_" + std::to_string(tileX);
+        writeText(root / (tileName + ".map"), "[version]\n14\n[terrain]\n");
+        writeTinyTerrain(root / (tileName + ".terrain"));
     }
     openbus::map::MapDefinition map;
     map.rootPath = root;
@@ -97,16 +111,25 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     tile.terrainPath = root / "tile.terrain";
     tile.hasTerrainFile = true;
     map.tiles.push_back(tile);
+    for (const int tileX : {4, 5}) {
+        openbus::map::MapTileReference distantTile;
+        const std::string tileName = "tile_" + std::to_string(tileX);
+        distantTile.x = tileX;
+        distantTile.textPath = root / (tileName + ".map");
+        distantTile.terrainPath = root / (tileName + ".terrain");
+        distantTile.hasTerrainFile = true;
+        map.tiles.push_back(std::move(distantTile));
+    }
     SimulationState simulation;
     AssetRequestManager assets;
     MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
     const auto& paths = renderer.sceneryTrafficPathSegments();
     check(paths.size() == 1 && paths.front().trafficSignal.has_value() &&
               paths.front().pathIndex == 0 && paths.front().widthMeters == 3.0 &&
-              paths.front().trafficSignal->lightIndex == 1 &&
+              paths.front().trafficSignal->lightIndex == 0 &&
               paths.front().trafficSignal->program != nullptr &&
               paths.front().trafficSignal->program->controlPoints.size() ==
-                  (conditional ? 1U : 0U),
+                  (conditional ? 2U : 0U),
           "F2 signal debug path must retain controller phase and stopline data");
     check(renderer.renderStats().activeSceneryObjects == 1,
           "Editor-only junction geometry must remain hidden");
@@ -162,6 +185,25 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
               priorityStats.controllerDrivenModels == 2,
           "player bus approaching the stopline activates its configured green priority phase");
     check(glGetError() == GL_NO_ERROR, "Traffic-light rendering produced an OpenGL error");
+
+    const std::vector<openbus::map::MapTileCoordinate> originalWindow = {{0, 0}};
+    const std::vector<openbus::map::MapTileCoordinate> nextWindow = {{4, 0}, {5, 0}};
+    check(renderer.activeTileCoordinates() == originalWindow,
+          "Initial map window must contain only the spawn tile");
+    renderer.updateStreaming(4.0 * map.coordinates.tileSize, 0.0);
+    check(renderer.activeTileCoordinates() == originalWindow,
+          "Current active window must remain until the requested tiles are ready");
+    bool nextWindowActivated = false;
+    for (int attempt = 0; attempt < 1000; ++attempt) {
+        renderer.updateStreaming(4.0 * map.coordinates.tileSize, 0.0);
+        if (renderer.activeTileCoordinates() == nextWindow) {
+            nextWindowActivated = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    check(nextWindowActivated,
+          "Background tile parsing and bounded publication must eventually activate the new window");
 }
 
 } // namespace

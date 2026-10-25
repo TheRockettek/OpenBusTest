@@ -149,14 +149,14 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
     return resolved;
 }
 
-void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tileReference) {
+void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tileReference,
+                                      const openbus::map::MapTileData& tile) {
     const auto tileStart = std::chrono::steady_clock::now();
     const int tileX = tileReference.x;
     const int tileY = tileReference.y;
     gameLog.Log("Map content tile " + tileLabel(tileX, tileY) + ": " +
                 tileReference.textPath.string());
     TraceScope tileTrace("map", "MapRenderer.processTile");
-    const openbus::map::MapTileData tile = openbus::map::loadMapTile(tileReference);
     ++tilesProcessed;
     sceneryPlacementsParsed +=
         tile.sceneryObjects.size() + tile.attachedObjects.size() + tile.splineAttachments.size();
@@ -482,6 +482,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             scriptState->trafficLightModel = trafficLightModel;
             scriptStateIndex = impl_->sceneryScriptStates.size();
             impl_->sceneryScriptStates.push_back(std::move(scriptState));
+            impl_->sceneryScriptStatesByTile[tileKey(tileX, tileY)].push_back(scriptStateIndex);
         }
         // Editor-only junctions still own the schedules referenced by visible heads.
         if (editorOnlySceneryAssets.contains(assetKey)) {
@@ -520,7 +521,10 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             instance.sourceTileY = tileY;
             const int chunkX = static_cast<int>(std::floor(worldX / map.coordinates.tileSize));
             const int chunkY = static_cast<int>(std::floor(worldY / map.coordinates.tileSize));
-            Impl::SceneryChunk& chunk = impl_->sceneryChunks[tileKey(chunkX, chunkY)];
+            const std::uint64_t chunkKey = tileKey(chunkX, chunkY);
+            Impl::SceneryChunk& chunk = impl_->sceneryChunks[chunkKey];
+            impl_->sceneryInstancesBySourceTile[tileKey(tileX, tileY)].push_back(
+                {chunkKey, chunk.instances.size()});
             chunk.instances.push_back(instance);
             chunk.minX = std::min(chunk.minX, worldX - radius);
             chunk.minY = std::min(chunk.minY, worldY - radius);

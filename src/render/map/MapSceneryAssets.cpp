@@ -29,7 +29,18 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
     std::vector<std::size_t> batchIndexes;
     try {
         const std::filesystem::path objectRoot = configPath.parent_path();
-        const SceneryObjectConfig objectConfiguration = loadSceneryObjectFile(configPath);
+        PreparedSceneryAsset prepared;
+        auto preparation = preparedSceneryAssetConfigs.find(cacheKey);
+        if (preparation == preparedSceneryAssetConfigs.end()) {
+            prepared = prepareSceneryAsset(configPath);
+        } else {
+            prepared = std::move(preparation->second);
+            preparedSceneryAssetConfigs.erase(preparation);
+        }
+        if (prepared.preparationError) {
+            std::rethrow_exception(prepared.preparationError);
+        }
+        const SceneryObjectConfig& objectConfiguration = prepared.objectConfiguration;
         sceneryAttachmentPoints[cacheKey] = objectConfiguration.attachmentPoints;
         sceneryTrafficPaths[cacheKey] = objectConfiguration.trafficPaths;
         sceneryTrafficLightSchedules[cacheKey] = objectConfiguration.trafficLightSchedules;
@@ -53,18 +64,13 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             editorOnlySceneryAssets.insert(cacheKey);
             return sceneryAssetBatches.emplace(cacheKey, std::move(batchIndexes)).first->second;
         }
-        std::filesystem::path modelConfigPath =
-            resolveSceneryObjectModelConfigPath(objectConfiguration);
-        bool usesExternalModelConfig = !objectConfiguration.modelPath.empty();
-        if (usesExternalModelConfig && !std::filesystem::is_regular_file(modelConfigPath)) {
+        const std::filesystem::path& modelConfigPath = prepared.modelConfigPath;
+        const std::filesystem::path& modelRoot = prepared.modelRoot;
+        if (prepared.externalModelConfigMissing) {
             recordSkipped(skipped, "scenery external model configs not found",
                           configPath.filename().string() +
-                              " model=" + modelConfigPath.generic_string());
-            modelConfigPath = configPath;
-            usesExternalModelConfig = false;
+                              " model=" + prepared.externalModelConfigPath.generic_string());
         }
-        const std::filesystem::path modelRoot =
-            usesExternalModelConfig ? modelConfigPath.parent_path() : objectRoot / "model";
         for (const ConfigurationDiagnostic& diagnostic : objectConfiguration.diagnostics.entries) {
             const std::string severity =
                 diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error"
@@ -112,9 +118,8 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             }
             return sceneryAssetBatches.emplace(cacheKey, std::move(batchIndexes)).first->second;
         }
-        openbus::scripting::SceneryObject variables;
-        const ModelConfig configuration =
-            loadModelConfig(modelConfigPath, modelRoot, ModelConfigKind::SceneryObject, variables);
+        const openbus::scripting::SceneryObject& variables = prepared.variables;
+        const ModelConfig& configuration = prepared.modelConfiguration;
         const std::size_t lodThresholdSetIndex = impl_->sceneryLodThresholdSets.size();
         impl_->sceneryLodThresholdSets.push_back(configuration.lodThresholds);
         sceneryLodThresholdSetByAsset.emplace(cacheKey, lodThresholdSetIndex);
@@ -179,73 +184,34 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                                   part.objPath.generic_string());
                 continue;
             }
-            const std::shared_ptr<ParsedObj> parsed = meshExtension == ".x"
-                                                          ? XLoader::parse(part.objPath)
-                                                          : O3DLoader::parse(part.objPath);
-            if (!parsed) {
+            const std::string meshKey = part.objPath.lexically_normal().generic_string();
+            const auto preparedMesh = prepared.meshes.find(meshKey);
+            if (preparedMesh != prepared.meshes.end() && preparedMesh->second.preparationError) {
+                try {
+                    std::rethrow_exception(preparedMesh->second.preparationError);
+                } catch (const std::exception& error) {
+                    recordSkipped(skipped, "scenery O3D meshes that failed to prepare",
+                                  part.objPath.filename().string() + ": " + error.what());
+                } catch (...) {
+                    recordSkipped(skipped, "scenery O3D meshes that failed to prepare",
+                                  part.objPath.filename().string() + ": unknown error");
+                }
+                continue;
+            }
+            if (preparedMesh == prepared.meshes.end() || !preparedMesh->second.parsed) {
                 recordSkipped(skipped, "scenery O3D meshes that failed to parse",
                               configPath.filename().string() + " " +
                                   part.objPath.filename().string());
                 continue;
             }
-            std::unordered_map<int, std::vector<ModelVertex>> verticesByMaterial;
-            const auto statesByMaterial = openbus::map::resolveSceneryMaterialStates(*parsed, part);
-            for (const ObjTriangle& triangle : parsed->triangles) {
-                const auto sourceMaterial = parsed->materials.find(triangle.material);
-                const int materialIndex = sourceMaterial == parsed->materials.end()
-                                              ? 0
-                                              : sourceMaterial->second.materialIndex;
-                const auto validIndex = [](int index, std::size_t count) {
-                    return index > 0 && static_cast<std::size_t>(index) <= count;
-                };
-                for (const ObjIndex& index : triangle.indices) {
-                    if (!validIndex(index.position, parsed->positions.size())) {
-                        recordSkipped(skipped,
-                                      "scenery mesh vertices with invalid position indices",
-                                      part.objPath.filename().string());
-                        continue;
-                    }
-                    const std::size_t positionIndex = static_cast<std::size_t>(index.position - 1);
-                    const ObjPosition& sourcePosition = parsed->positions[positionIndex];
-                    const std::array<double, 4> vertexColor =
-                        positionIndex < parsed->vertexColors.size()
-                            ? parsed->vertexColors[positionIndex]
-                            : std::array<double, 4>{1.0, 1.0, 1.0, 1.0};
-                    std::array<double, 3> normal = {0.0, 0.0, 1.0};
-                    if (validIndex(index.normal, parsed->normals.size())) {
-                        const ObjNormal& sourceNormal =
-                            parsed->normals[static_cast<std::size_t>(index.normal - 1)];
-                        // O3DLoader already swaps the file's up/forward axes and
-                        // adjusts handedness. Do not apply the OBJ vehicle-frame
-                        // conversion a second time to map scenery normals.
-                        normal = {sourceNormal.x, sourceNormal.y, sourceNormal.z};
-                        const double length = std::sqrt(
-                            normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
-                        if (length > 1.0e-8) {
-                            for (double& component : normal) {
-                                component /= length;
-                            }
-                        }
-                    }
-                    float u = 0.0F;
-                    float v = 0.0F;
-                    if (validIndex(index.texCoord, parsed->texCoords.size())) {
-                        const ObjTexCoord& coordinate =
-                            parsed->texCoords[static_cast<std::size_t>(index.texCoord - 1)];
-                        u = static_cast<float>(coordinate.u);
-                        v = static_cast<float>(1.0 - coordinate.v);
-                    }
-                    verticesByMaterial[materialIndex].push_back(
-                        {static_cast<float>(sourcePosition.x), static_cast<float>(sourcePosition.y),
-                         static_cast<float>(sourcePosition.z), u, v, 0.0F,
-                         static_cast<float>(normal[0]), static_cast<float>(normal[1]),
-                         static_cast<float>(normal[2]), static_cast<float>(vertexColor[0]),
-                         static_cast<float>(vertexColor[1]), static_cast<float>(vertexColor[2]),
-                         static_cast<float>(vertexColor[3])});
-                }
+            const PreparedSceneryMesh& mesh = preparedMesh->second;
+            const std::shared_ptr<ParsedObj>& parsed = mesh.parsed;
+            if (mesh.invalidPositionIndices > 0) {
+                recordSkipped(skipped, "scenery mesh vertices with invalid position indices",
+                              part.objPath.filename().string(), mesh.invalidPositionIndices);
             }
-
-            for (auto& [materialIndex, vertices] : verticesByMaterial) {
+            const auto statesByMaterial = openbus::map::resolveSceneryMaterialStates(*parsed, part);
+            for (const auto& [materialIndex, vertices] : mesh.verticesByMaterial) {
                 if (vertices.empty()) {
                     recordSkipped(skipped, "empty scenery material batches",
                                   part.objPath.filename().string());

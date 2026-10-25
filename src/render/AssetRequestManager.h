@@ -36,8 +36,11 @@ class AssetRequestManager {
         std::shared_ptr<CompressedDds> compressedDds;
         bool complete = false;
         bool started = false;
+        bool fallbackDecodeStarted = false;
+        bool fallbackDecodeComplete = false;
         std::mutex mutex;
         std::shared_future<void> task;
+        std::shared_future<void> fallbackTask;
     };
 
     struct TextureCacheEntry {
@@ -46,6 +49,7 @@ class AssetRequestManager {
         bool textureArray = false;
         std::size_t textureArrayLayers = 1;
         bool uploadAttempted = false;
+        bool compressedUploadAttempted = false;
         bool decodeFailureLogged = false;
     };
 
@@ -72,6 +76,7 @@ class AssetRequestManager {
                                                       const std::string& name,
                                                       TextureResolver resolver);
     void startTextureRequest(const std::shared_ptr<TextureCacheEntry>& entry);
+    void requestDxt5Fallback(const std::shared_ptr<TextureRequest>& request);
     void trackTexture(TextureHandle texture);
     void trackBuffer(unsigned int buffer);
     void join();

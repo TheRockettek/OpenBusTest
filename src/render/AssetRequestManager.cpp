@@ -1,6 +1,7 @@
 #include "render/AssetRequestManager.h"
 
 #include "assets/O3DLoader.h"
+#include "assets/TextureLoader.h"
 #include "assets/XLoader.h"
 
 #include "core/Environment.h"
@@ -229,11 +230,16 @@ void AssetRequestManager::startTextureRequest(const std::shared_ptr<TextureCache
             std::lock_guard<std::mutex> lock(request->mutex);
             request->complete = true;
         });
-        entry->request->task = task->get_future().share();
+        std::shared_future<void> requestTask = task->get_future().share();
+        {
+            std::lock_guard<std::mutex> lock(entry->request->mutex);
+            entry->request->task = std::move(requestTask);
+        }
         enqueue([task] { (*task)(); });
     } catch (const std::exception& error) {
         gameLog.Log("Failed to start texture worker: " + std::string(error.what()));
         std::lock_guard<std::mutex> lock(entry->request->mutex);
+        entry->request->task = {};
         entry->request->complete = true;
     }
 }
@@ -294,6 +300,54 @@ void AssetRequestManager::loadTextureRequest(const std::shared_ptr<TextureReques
     request->complete = true;
 }
 
+void AssetRequestManager::requestDxt5Fallback(const std::shared_ptr<TextureRequest>& request) {
+    std::filesystem::path path;
+    {
+        std::lock_guard<std::mutex> lock(request->mutex);
+        if (!request->compressedDds || request->fallbackDecodeStarted) {
+            return;
+        }
+        request->fallbackDecodeStarted = true;
+        path = request->resolvedPath;
+    }
+
+    try {
+        auto task = std::make_shared<std::packaged_task<void()>>([request, path] {
+#ifdef _WIN32
+            const ComInitializer com;
+#endif
+            try {
+                Image image;
+                if (TextureLoader::readImage(path, image)) {
+                    std::lock_guard<std::mutex> lock(request->mutex);
+                    request->image = std::make_shared<Image>(std::move(image));
+                } else {
+                    gameLog.Log("DXT5 fallback decode failed: " + path.generic_string());
+                }
+            } catch (const std::exception& error) {
+                gameLog.Log("DXT5 fallback decode failed for " + path.generic_string() + ": " +
+                            error.what());
+            } catch (...) {
+                gameLog.Log("DXT5 fallback decode failed for " + path.generic_string() +
+                            " with an unknown error");
+            }
+            std::lock_guard<std::mutex> lock(request->mutex);
+            request->fallbackDecodeComplete = true;
+        });
+        std::shared_future<void> fallbackTask = task->get_future().share();
+        {
+            std::lock_guard<std::mutex> lock(request->mutex);
+            request->fallbackTask = std::move(fallbackTask);
+        }
+        enqueue([task] { (*task)(); });
+    } catch (const std::exception& error) {
+        gameLog.Log("Failed to start DXT5 fallback decoder: " + std::string(error.what()));
+        std::lock_guard<std::mutex> lock(request->mutex);
+        request->fallbackTask = {};
+        request->fallbackDecodeComplete = true;
+    }
+}
+
 void AssetRequestManager::trackTexture(TextureHandle texture) {
     if (texture != 0) {
         textures_.push_back(texture);
@@ -309,8 +363,21 @@ void AssetRequestManager::trackBuffer(unsigned int buffer) {
 void AssetRequestManager::join() {
     std::lock_guard<std::mutex> lock(textureMutex_);
     for (const auto& cache : textureCache_) {
-        if (cache.second->request && cache.second->request->task.valid()) {
-            cache.second->request->task.wait();
+        if (!cache.second->request) {
+            continue;
+        }
+        std::shared_future<void> task;
+        std::shared_future<void> fallbackTask;
+        {
+            std::lock_guard<std::mutex> requestLock(cache.second->request->mutex);
+            task = cache.second->request->task;
+            fallbackTask = cache.second->request->fallbackTask;
+        }
+        if (task.valid()) {
+            task.wait();
+        }
+        if (fallbackTask.valid()) {
+            fallbackTask.wait();
         }
     }
 }

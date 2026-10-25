@@ -31,8 +31,8 @@ std::string logFilePath() {
 class LoggerState {
   public:
     LoggerState()
-        : logFile(logFilePath(), std::ios::out | std::ios::trunc),
-          worker(&LoggerState::run, this) {}
+        : logFile(logFilePath(), std::ios::out | std::ios::trunc), worker(&LoggerState::run, this) {
+    }
 
     ~LoggerState() {
         flush();

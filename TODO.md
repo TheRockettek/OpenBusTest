@@ -1100,19 +1100,51 @@ the outstanding implementation and validation tasks:
   determine corner/quadrant ordering and implement water rendering. Per-tile/
   detail/seasonal ground textures, map lightmaps, and Chrono variant resolution
   remain. Chrono selector IDs and opaque override payload lines are parser-only.
-- [~] Terrain, road, and scenery geometry is constructed/uploaded only for the
-  two-tile bus-centered window; a shared-GL-context worker builds/uploads a
-  replacement window while the old one remains drawable. Scenery script startup
-  is deferred to the main thread (at most 32 new runtimes per frame), and state
-  persists across windows. Collision mesh CPU preparation runs in a worker for
-  the one-tile neighborhood constrained to successfully uploaded render geometry;
-  ODE publication/removal remains on the simulation thread, one tile per update.
-  Initial map construction and collision warm-up are synchronous, and renderer
-  loading falls back to synchronous if shared-context creation fails. The global
-  parsed tile/placement index remains CPU-resident. Implement per-tile rather
-  than full-window rebuilds, measure ODE publication and boundary-frame latency,
-  and validate in-game visual/contact continuity before claiming hitch-free
-  streaming.
+- [~] Map loading is being moved to background preparation with main-thread
+  publication. Map-wide tile/traffic indexing now runs on the asset worker pool;
+  map startup waits for that phase and for the initial active window. Newly
+  activated tiles submit `.map` parsing, terrain-file parsing, and terrain mesh
+  vertex/index construction to workers; decoded results are published and
+  uploaded on the renderer thread, keeping OpenGL operations on the
+  context-owning thread. The old active window remains visible until the new
+  window is ready, and at most one terrain tile and one scene tile are published
+  per frame. Tile jobs are prioritized by distance to the requested center and
+  capped to eight pending preparations per job type; map and terrain decoding
+  overlap. Per-tile `.sco` and model configuration resolution/parsing is now
+  scheduled on workers before scene publication; results are consumed and
+  committed on the renderer thread, including attached-object parent assets.
+  Scenery O3D/X mesh parsing and material-group vertex expansion are included
+  in those worker results.
+  Initial map load waits for configuration prep needed by the first active
+  window. Scenery batch material/texture setup, road mesh construction, GL
+  uploads, and some cross-tile dependency reads remain synchronous, so boundary
+  stalls are still possible.
+  Scenery-config preparation is capped at eight tile-level worker jobs; work
+  already queued for a stale tile is allowed to finish, but results are
+  discarded unless that tile is still requested.
+- [ ] Move road mesh CPU construction and remaining dependency reads into
+  immutable worker results. Keep shared cache mutation, placement state, and
+  OpenGL resource creation/upload/destruction on their owning thread; preserve
+  cross-tile attachment resolution.
+- [ ] Decode referenced textures on workers. Keep OpenGL object creation,
+  upload, and destruction on a valid context-owning thread; use bounded
+  publication work per frame and keep the previous active window drawable
+  while new tile results are incomplete.
+- [ ] Add prioritization and stale-request handling for tile jobs, avoid
+  duplicate config/model reads across placements, and define explicit error
+  reporting/retry behavior. Measure tile-boundary p95/p99 frame time, memory,
+  and upload cost; validate visual and collision continuity in-game.
+- [ ] Move AI traffic route/decision calculations to a dedicated worker using
+  immutable simulation, route, signal, and obstacle snapshots. Publish results
+  at a defined fixed-step boundary on the simulation/main owner thread; do not
+  let the worker mutate vehicles, scripts, renderer state, or ODE objects.
+  Preserve deterministic ordering and safe shutdown, and add concurrency and
+  replay/regression coverage before enabling it by default.
+- [ ] Keep collision mesh CPU preparation on workers and ODE publication/removal
+  on the simulation thread; measure publication cost and contact readiness,
+  then define safe behavior for fast travel, teleports, worker failures, and
+  contact continuity. Validate live driving across representative tile seams
+  before claiming hitch-free streaming.
 - [x] Select map entrypoints at startup by zero-based index or case-insensitive
   name through `OPENBUS_MAP_ENTRY`; the default remains the first entrypoint.
   Selection and invalid-index behavior are covered by `OpenBusMapConfigProbe`.
