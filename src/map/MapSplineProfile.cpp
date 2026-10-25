@@ -288,13 +288,14 @@ bool mapSplineProfileHasPathType(const MapSplineProfile& profile, int pathTypeCo
 }
 
 std::vector<MapSplinePathOffset> mapSplineProfilePathOffsets(const MapSplineProfile& profile,
-                                                             int pathTypeCode) {
+                                                             int pathTypeCode, bool mirrored) {
     std::vector<MapSplinePathOffset> offsets;
     for (std::size_t pathIndex = 0; pathIndex < profile.paths.size(); ++pathIndex) {
         const MapSplinePathDefinition& path = profile.paths[pathIndex];
         if (path.pathTypeCode == pathTypeCode && path.numericFieldsValid &&
             path.numericFields.size() >= 3) {
-            offsets.push_back({pathIndex, path.numericFields[1], path.numericFields[2],
+            const double lateral = mirrored ? -path.numericFields[1] : path.numericFields[1];
+            offsets.push_back({pathIndex, lateral, path.numericFields[2],
                                path.numericFields.size() >= 5 && path.numericFields[4] == 1.0,
                                path.numericFields.size() >= 5 && path.numericFields[4] == 2.0});
         }

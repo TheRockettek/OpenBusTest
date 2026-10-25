@@ -233,7 +233,7 @@ struct MapAiTrafficData {
 struct MapAiRoadVehicle {
     std::string assetPath;
     std::size_t groupIndex = 0;
-    // Fixed OMSI traffic-rule group, independent of the population group index above.
+    // Index from unsched_vehgroups.txt, also used by path traffic rules.
     std::size_t trafficRuleGroupIndex = 0;
     int defaultVehicleType = 0;
     std::string groupName;

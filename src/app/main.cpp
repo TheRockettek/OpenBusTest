@@ -1155,8 +1155,8 @@ int main() {
             }
             if (aiRoadVehicles.empty()) {
                 applicationLog.Log(
-                    "Map road traffic not spawned: NormalCar(s), Trucks, Commercial(s), and "
-                    "Ambulance have no loadable .ovh entries.");
+                    "Map road traffic not spawned: supported NormalCar(s), Trucks, Commercial(s), "
+                    "and Ambulance groups have no loadable .ovh/.bus entries.");
             } else if (!hasGroupDensitySchedule &&
                        !openbus::map::selectMapAiRoadVehicle(aiRoadVehicles, 1).has_value()) {
                 applicationLog.Log(
@@ -1171,6 +1171,8 @@ int main() {
             } else {
                 constexpr double trafficSpeedMetersPerSecond = 12.0;
                 std::size_t addedTrafficVehicles = 0;
+                std::size_t noCompatibleSpawnLaneCount = 0;
+                std::size_t rejectedTrafficRouteCount = 0;
                 std::size_t poolGroupCursor = 0;
                 std::unordered_set<std::string> unavailableAiVehicles;
                 std::unordered_map<std::size_t, std::size_t> queuedTrafficByGroup;
@@ -1231,6 +1233,7 @@ int main() {
                              roadVehicle.trafficRuleGroupIndex},
                             candidate + 1);
                         if (!lane.has_value()) {
+                            ++noCompatibleSpawnLaneCount;
                             continue;
                         }
                         if (renderer.AddTrafficVehicle(
@@ -1242,6 +1245,8 @@ int main() {
                                 {}, roadVehicle.trafficRuleGroupIndex)) {
                             ++addedTrafficVehicles;
                             ++queuedTrafficByGroup[roadVehicle.groupIndex];
+                        } else {
+                            ++rejectedTrafficRouteCount;
                         }
                     } catch (const std::exception& error) {
                         unavailableAiVehicles.insert(vehiclePath);
@@ -1255,6 +1260,10 @@ int main() {
                     " reserved, target active=" + std::to_string(targetRoadVehicleCount) +
                     ", density=" + std::to_string(roadDensity) +
                     ", connected spawn lanes=" + std::to_string(roadSpawnLanes.size()) +
+                    ", attempts without a compatible lane=" +
+                    std::to_string(noCompatibleSpawnLaneCount) +
+                    ", selected lanes with rejected routes=" +
+                    std::to_string(rejectedTrafficRouteCount) +
                     ". Models and scripts load asynchronously; road vehicles wait for a clear, "
                     "off-screen position in a currently active tile. Scheduled buses retain "
                     "endpoint-only admission.");

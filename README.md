@@ -20,7 +20,7 @@ prove end-to-end rendering or runtime semantics.
 | Scripts and dynamic displays | Vehicle script/text textures and scenery per-placement script/text texture surfaces, `init`/`frame`, and `[visible]` control are active; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/scripting/ScriptRuntime.cpp), [`MapRenderer.cpp`](src/render/map/MapRenderer.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
 | Weather | Partial first slice: configurable exterior rain/snow particles use the shared `PrecipType` and `PrecipRate` system variables; map weather schedules, fog, windshield effects, and accumulation are not implemented. | [`WeatherEffects.cpp`](src/render/WeatherEffects.cpp), [`RenderLoopDraw.cpp`](src/app/RenderLoopDraw.cpp) | [`WeatherEffectsProbe.cpp`](tests/WeatherEffectsProbe.cpp); rain and snow visually validated in app captures |
 | Sound | Player sound runtime is active; AI vehicles select `[sound_ai]` when configured and otherwise fall back to `[sound]`. Full OMSI sound and AI event coverage remain incomplete. | [`VehicleSoundBank.cpp`](src/audio/VehicleSoundBank.cpp), [`VehicleConfigLoader.cpp`](src/config/VehicleConfigLoader.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp), [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp) |
-| AI traffic, pedestrians, and routes | Partial runtime: asynchronous `.ovh` vehicle construction and model/script loading, asynchronous pedestrian `.hum`/model CFG and mesh loading, scheduled map buses, group-scoped path traffic rules (including `no_unsched_traffic`) for unscheduled road vehicles, route-end retirement, sidewalk pedestrians, fixed-cycle plus request-aware SCO signal timing, route-based AI turn indicators, and `unsched_trafficdens.txt` group/day curves for group-specific active targets are active. Pedestrian populations use passenger-density schedules on human paths; vehicle `[rule]` restrictions target unscheduled groups and do not apply to scheduled buses or pedestrians. Group quotas change over time with safe off-screen admission/retirement; the startup pool remains fixed and may constrain extreme group shifts. AI driver models, lane changing/overtaking, and full OMSI parity remain incomplete. | [traffic runtime](src/map/MapTrafficRuntime.cpp), [map configuration](src/map/MapConfigLoader.cpp), [render loop](src/app/RenderLoop.cpp) | [MapTrafficRuntimeProbe.cpp](tests/MapTrafficRuntimeProbe.cpp), [MapConfigLoaderProbe.cpp](tests/MapConfigLoaderProbe.cpp), [AssetRequestManagerProbe.cpp](tests/AssetRequestManagerProbe.cpp); see the [completion TODO](TODO.md) |
+| AI traffic, pedestrians, and routes | Partial runtime: asynchronous `.ovh` vehicle construction and model/script loading, asynchronous pedestrian `.hum`/model CFG and mesh loading, scheduled map buses, group-scoped path traffic rules (including `no_unsched_traffic`) for unscheduled road vehicles, route-end retirement, sidewalk pedestrians, fixed-cycle plus request-aware SCO signal timing, route-based AI turn indicators, and `unsched_trafficdens.txt` group/day curves for group-specific active targets are active. Pedestrian populations use passenger-density schedules on human paths; vehicle `[rule]` restrictions target unscheduled groups and do not apply to scheduled buses or pedestrians. Group quotas change over time with safe off-screen admission/retirement; the maximum reserved pool is fixed at startup, and unfilled reservations are retried as connected road lanes stream in. AI driver models, lane changing/overtaking, and full OMSI parity remain incomplete. | [traffic runtime](src/map/MapTrafficRuntime.cpp), [map configuration](src/map/MapConfigLoader.cpp), [render loop](src/app/RenderLoop.cpp) | [MapTrafficRuntimeProbe.cpp](tests/MapTrafficRuntimeProbe.cpp), [MapConfigLoaderProbe.cpp](tests/MapConfigLoaderProbe.cpp), [AssetRequestManagerProbe.cpp](tests/AssetRequestManagerProbe.cpp); see the [completion TODO](TODO.md) |
 
 ### Map runtime scope
 
@@ -89,12 +89,14 @@ runtime collision preparation is asynchronous, but ODE setup can still cost time
 on publication. If preparation falls behind the player, temporary contact gaps
 are possible. Physics residency follows loaded map tiles, not camera visibility.
 
-Random map road traffic uses only `.ovh` entries from the `NormalCars`,
-`Trucks`, and `Commercial`/`Commercials` `[aigroup_2]` groups. `.bus` vehicles
-are excluded from this pool and spawned separately as scheduled AI buses using
-bus-type configurations and timetable routes. Other groups and legacy
-vehicle-list formats are not supported by this runtime. `OPENBUS_MAP_AI_COUNT` sets the
-density-scaled road-vehicle base population (default `200`, maximum `200`).
+Random map road traffic uses `.ovh` and `.bus` entries from supported
+`[aigroup_2]` groups. `Normal`, `NormalCar(s)`, and `Taxi` use normal-car path
+rules; `Emergency` and `Ambulance` use ambulance rules; `Trucks` and
+`Commercial`/`Commercials` use their corresponding rules. Other groups and
+legacy vehicle-list formats are not supported by this runtime. Depot `.bus`
+entries continue to provide scheduled AI buses on timetable routes.
+`OPENBUS_MAP_AI_COUNT` sets the density-scaled road-vehicle base population
+(default `200`, maximum `200`).
 Trucks are permitted on road paths by default unless the map's path rules
 explicitly prohibit them; configured group and path density rules still apply.
 The selected start date/time drives the in-game traffic clock's `Time` system
@@ -326,7 +328,7 @@ partial:
   `.x` meshes now load. The tree preview is not the original mesh. Cross-tile
   repeater-master resolution, full `[attachObj]` scripting,
   scenery script-driven animation/material changes, scenery mouse events, and
-  non-authored scenery collision are incomplete. Per-placement scenery
+  attached/repeater scenery collision are incomplete. Per-placement scenery
   `init`/`frame`, `[visible]`, `[usetexttexture]`, and `[usescripttexture]`
   surfaces are active.
 - Full `.sli` semantics and visual validation of curved sidewalks, road seams,
@@ -334,10 +336,11 @@ partial:
   texture phase across linked splines need representative asset tests. Parsed
   v11+ chain offsets now affect road texture V, but do not resolve links or
   prove visual parity.
-- Supported `.sli` profile-strip road geometry and declared SCO/model
-  `[collision_mesh]` O3D geometry are connected to ODE for tiles within one
-  tile of the bus; terrain and road/scenery collision are unloaded beyond a
-  two-tile radius. `[boundingbox]` is not yet used for map scenery, and
+- Supported `.sli` profile-strip road geometry and SCO/model scenery collision
+  are connected to ODE for tiles within one tile of the bus. Scenery prefers
+  `[collision_mesh]`, falls back to `[boundingbox]`, then to first-LOD O3D model
+  geometry; `[nocollision]` is honored unless the SCO also declares `[surface]`.
+  Terrain and road/scenery collision are unloaded beyond a two-tile radius, and
   overlapping road/terrain contacts still need tuning.
 - Per-tile/detail/seasonal ground-texture rendering, water rendering, tile
   lightmaps, Chrono map variants, and asynchronous map construction are absent.
@@ -357,8 +360,9 @@ partial:
   vehicle-access settings to road paths; see the [OMSI map format reference](Docs/OMSI2_MAP_FORMAT_REFERENCE.md).
   The separate `unsched_trafficdens.txt` group/day schedule applies its hourly
   curves to the capped road-traffic population target, startup pool composition,
-  and per-group active targets. The pool remains fixed at startup and can
-  constrain large changes in group proportions. Weekday schedules use the map
+  and per-group active targets. The maximum reserved pool is fixed at startup,
+  but unfilled reservations are retried as connected road lanes stream in.
+  Weekday schedules use the map
   system calendar, initialized to the host local date and advanced by
   simulation time.
 - Scheduled OMSI AI buses use matched timetable routes and departures; fixed

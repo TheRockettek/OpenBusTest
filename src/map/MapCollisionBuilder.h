@@ -50,8 +50,9 @@ struct MapSceneryCollisionIndex {
 std::shared_ptr<const MapSceneryCollisionIndex>
 buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::path& omsiRoot);
 
-// Builds map collision from road-profile strips and authored SCO/model [collision_mesh]
-// scenery throughout the selected map, partitioned into per-tile ODE mesh inputs.
+// Builds map collision from road-profile strips and SCO/model scenery throughout the selected
+// map. Scenery prefers authored [collision_mesh], then [boundingbox], then first-LOD O3D geometry.
+// [nocollision] is honored unless the SCO also declares [surface].
 MapRoadCollisionResult buildMapRoadCollision(const MapDefinition& map,
                                              const std::filesystem::path& omsiRoot);
 // Builds only the requested tile; an absent tile returns an empty result.

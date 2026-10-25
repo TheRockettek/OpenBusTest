@@ -71,6 +71,7 @@ std::optional<double> mapSplineProfileCantHalfWidth(const MapSplineProfile& prof
 
 bool mapSplineProfileHasPathType(const MapSplineProfile& profile, int pathTypeCode) noexcept;
 std::vector<MapSplinePathOffset> mapSplineProfilePathOffsets(const MapSplineProfile& profile,
-                                                             int pathTypeCode);
+                                                             int pathTypeCode,
+                                                             bool mirrored = false);
 
 } // namespace openbus::map

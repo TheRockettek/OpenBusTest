@@ -734,6 +734,29 @@ double mapTrafficPathPriorityForVehicle(const MapTrafficPathRules& rules,
 
 bool mapTrafficPathAllowsVehicle(const MapTrafficPathRules& rules,
                                  const MapTrafficVehicleFilter& vehicle) {
+    if (rules.priority <= 0.0) {
+        return false;
+    }
+    if (const MapTrafficGroupRules* group = mapTrafficRulesForVehicleGroup(rules, vehicle);
+        group != nullptr && group->priority.has_value() && *group->priority <= 0.0) {
+        return false;
+    }
+    if (vehicle.scheduled && !vehicle.trafficRuleGroupIndex) {
+        const bool hasGroupPriorities =
+            std::any_of(rules.groups.begin(), rules.groups.end(),
+                        [](const MapTrafficGroupRules& group) {
+                            return group.priority.has_value();
+                        });
+        const bool everyGroupPriorityIsZero =
+            hasGroupPriorities &&
+            std::all_of(rules.groups.begin(), rules.groups.end(),
+                        [](const MapTrafficGroupRules& group) {
+                            return !group.priority.has_value() || *group.priority <= 0.0;
+                        });
+        if (everyGroupPriorityIsZero) {
+            return false;
+        }
+    }
     if (!vehicle.scheduled) {
         const double density = mapTrafficPathDensityForVehicle(rules, vehicle);
         if (!std::isfinite(density) || density <= 0.0) {
@@ -3389,10 +3412,10 @@ MapTrafficLaneNetwork::selectLane(MapTrafficVehicleFilter vehicle, std::size_t s
         }
         const MapTrafficRouteSegment& segment =
             segments_[laneGroup->second[entry.laneSelector % laneGroup->second.size()]];
+        const double density = mapTrafficPathDensityForVehicle(segment.pathRules, vehicle);
         if (!mapTrafficPathAllowsVehicle(segment.pathRules, vehicle)) {
             continue;
         }
-        const double density = mapTrafficPathDensityForVehicle(segment.pathRules, vehicle);
         maximumDensity = std::max(maximumDensity, density);
         candidates.push_back({entry, density});
     }

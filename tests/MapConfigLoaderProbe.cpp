@@ -272,18 +272,48 @@ void runFixtureProbe() {
                                                  "vehicles\\delivery van.ovh"},
                 "road vehicle references are extracted while full group lines are preserved");
         require(openbus::map::mapAiRoadVehicleAssetPaths(definition.aiTraffic) ==
-                    std::vector<std::string>{"vehicles\\delivery van.ovh",
+                    std::vector<std::string>{"vehicles\\sedan.bus",
+                                             "vehicles\\delivery van.ovh",
+                                             "vehicles\\truck.bus",
                                              "vehicles\\truck.ovh",
+                                             "vehicles\\commercial.bus",
+                                             "vehicles\\commercial_van.bus",
                                              "vehicles\\normal_car.ovh",
                                              "vehicles\\ambulance.ovh"} &&
                     openbus::map::mapAiBusAssetPaths(definition.aiTraffic) ==
                         std::vector<std::string>{"vehicles\\city_bus.bus"},
-                "random road traffic selects supported AI groups and only .ovh assets while "
-                "scheduled buses remain .bus-only");
+                "random road traffic selects .ovh and .bus assets from supported groups while "
+                "scheduled buses remain sourced from depot definitions");
         const std::vector<openbus::map::MapAiRoadVehicle> roadVehicles =
             openbus::map::mapAiRoadVehicles(definition.aiTraffic);
+        openbus::map::MapAiTrafficData legacyGroupTraffic;
+        legacyGroupTraffic.vehicleGroups = {
+            {"Normal", {}, {{"vehicles\\normal.bus", "vehicles\\normal.bus\t1"}}},
+            {"Emergency", {}, {{"vehicles\\emergency.bus", "vehicles\\emergency.bus\t1"}}},
+            {"Taxi", {}, {{"vehicles\\taxi.bus", "vehicles\\taxi.bus\t1"}}}};
+        const std::vector<openbus::map::MapAiRoadVehicle> legacyGroupVehicles =
+            openbus::map::mapAiRoadVehicles(legacyGroupTraffic);
+        openbus::map::MapAiTrafficData explicitGroupTraffic;
+        explicitGroupTraffic.vehicleGroups = {
+            {"Special Traffic", {}, {{"vehicles\\special.ovh", "vehicles\\special.ovh"}}},
+            {"Taxi", {}, {{"vehicles\\taxi.bus", "vehicles\\taxi.bus\t1"}}},
+            {"Emergency", {}, {{"vehicles\\emergency.bus", "vehicles\\emergency.bus\t1"}}}};
+        explicitGroupTraffic.unscheduledVehicleGroupNames = {"Taxi", "Special Traffic",
+                                                             "Emergency"};
+        const std::vector<openbus::map::MapAiRoadVehicle> explicitGroupVehicles =
+            openbus::map::mapAiRoadVehicles(explicitGroupTraffic);
         require(definition.aiTraffic.unscheduledVehicleGroupNames ==
                     std::vector<std::string>{"Trucks", "NormalCars", "Commercials", "Ambulance"} &&
+                    legacyGroupVehicles.size() == 1 &&
+                    legacyGroupVehicles[0].trafficRuleGroupIndex == 0 &&
+                    legacyGroupVehicles[0].groupName == "normalcars" &&
+                    explicitGroupVehicles.size() == 3 &&
+                    explicitGroupVehicles[0].groupIndex == 1 &&
+                    explicitGroupVehicles[0].trafficRuleGroupIndex == 1 &&
+                    explicitGroupVehicles[1].groupIndex == 0 &&
+                    explicitGroupVehicles[1].trafficRuleGroupIndex == 0 &&
+                    explicitGroupVehicles[2].groupIndex == 2 &&
+                    explicitGroupVehicles[2].trafficRuleGroupIndex == 2 &&
                     definition.aiTraffic.hasUnscheduledTrafficDensityFile &&
                     definition.aiTraffic.unscheduledTrafficDensityGroups.size() == 2 &&
                     definition.aiTraffic.unscheduledTrafficDensityGroups[0].name == "NormalCars" &&
@@ -301,25 +331,38 @@ void runFixtureProbe() {
                     definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules[1]
                             .points[1]
                             .density == 0.8 &&
-                    roadVehicles.size() == 5 &&
-                    roadVehicles[0].assetPath == "vehicles\\delivery van.ovh" &&
+                    roadVehicles.size() == 9 &&
+                    roadVehicles[0].assetPath == "vehicles\\sedan.bus" &&
                     roadVehicles[0].groupIndex == 1 &&
-                    roadVehicles[0].trafficRuleGroupIndex == 0 &&
-                    roadVehicles[1].assetPath == "vehicles\\truck.ovh" &&
-                    roadVehicles[1].groupIndex == 0 &&
+                    roadVehicles[0].trafficRuleGroupIndex == 1 &&
+                    roadVehicles[1].assetPath == "vehicles\\delivery van.ovh" &&
+                    roadVehicles[1].groupIndex == 1 &&
                     roadVehicles[1].trafficRuleGroupIndex == 1 &&
-                    roadVehicles[1].defaultVehicleType == 3 &&
-                    roadVehicles[2].assetPath == "vehicles\\delivery van.ovh" &&
-                    roadVehicles[2].groupIndex == 2 &&
-                    roadVehicles[2].trafficRuleGroupIndex == 2 &&
-                    roadVehicles[3].assetPath == "vehicles\\normal_car.ovh" &&
-                    roadVehicles[3].groupIndex == 1 &&
+                    roadVehicles[2].assetPath == "vehicles\\truck.bus" &&
+                    roadVehicles[2].groupIndex == 0 &&
+                    roadVehicles[2].trafficRuleGroupIndex == 0 &&
+                    roadVehicles[2].defaultVehicleType == 3 &&
+                    roadVehicles[3].assetPath == "vehicles\\truck.ovh" &&
+                    roadVehicles[3].groupIndex == 0 &&
                     roadVehicles[3].trafficRuleGroupIndex == 0 &&
-                    roadVehicles[4].assetPath == "vehicles\\ambulance.ovh" &&
-                    roadVehicles[4].groupIndex == 3 &&
-                    roadVehicles[4].trafficRuleGroupIndex == 3,
-                "population group indices follow unsched_vehgroups.txt while rule groups use "
-                "the fixed NormalCar, Trucks, Commercials, Ambulance order");
+                    roadVehicles[3].defaultVehicleType == 3 &&
+                    roadVehicles[4].assetPath == "vehicles\\commercial.bus" &&
+                    roadVehicles[4].groupIndex == 2 &&
+                    roadVehicles[4].trafficRuleGroupIndex == 2 &&
+                    roadVehicles[5].assetPath == "vehicles\\commercial_van.bus" &&
+                    roadVehicles[5].groupIndex == 2 &&
+                    roadVehicles[5].trafficRuleGroupIndex == 2 &&
+                    roadVehicles[6].assetPath == "vehicles\\delivery van.ovh" &&
+                    roadVehicles[6].groupIndex == 2 &&
+                    roadVehicles[6].trafficRuleGroupIndex == 2 &&
+                    roadVehicles[7].assetPath == "vehicles\\normal_car.ovh" &&
+                    roadVehicles[7].groupIndex == 1 &&
+                    roadVehicles[7].trafficRuleGroupIndex == 1 &&
+                    roadVehicles[8].assetPath == "vehicles\\ambulance.ovh" &&
+                    roadVehicles[8].groupIndex == 3 &&
+                    roadVehicles[8].trafficRuleGroupIndex == 3,
+                "both population scheduling and path rules use unsched_vehgroups.txt group "
+                "indices, regardless of AI-list group names");
         const std::vector<openbus::map::MapAiRoadVehicle> weekdayRoadVehicles =
             openbus::map::mapAiRoadVehicles(definition.aiTraffic, 12.0, 1);
         const std::optional<double> weekdayGroupDensity =

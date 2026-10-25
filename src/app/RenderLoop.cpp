@@ -14,6 +14,15 @@
 
 namespace {
 
+VehicleFileKind vehicleFileKindForConfig(const std::filesystem::path& configPath) {
+    std::string extension = configPath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
+    return extension == ".ovh" ? VehicleFileKind::Vehicle : VehicleFileKind::Bus;
+}
+
 double calculateTrafficMinimumTurnRadius(const VehicleConfig& configuration, bool isBus) {
     double turnRadius = configuration.inverseMinimumTurnRadius > 0.0
                             ? 1.0 / configuration.inverseMinimumTurnRadius
@@ -210,12 +219,7 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
                                 bool isAiVehicle) {
     const std::filesystem::path resolvedVehicleConfigPath =
         busConfigurationPathFor(vehicleConfigPath);
-    std::string extension = resolvedVehicleConfigPath.extension().string();
-    std::transform(
-        extension.begin(), extension.end(), extension.begin(),
-        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
-    const VehicleFileKind configKind =
-        extension == ".ovh" ? VehicleFileKind::Vehicle : VehicleFileKind::Bus;
+    const VehicleFileKind configKind = vehicleFileKindForConfig(resolvedVehicleConfigPath);
     const std::filesystem::path resolvedModelConfigPath =
         modelConfigPath.empty()
             ? (configKind == VehicleFileKind::Bus
@@ -305,17 +309,20 @@ bool RenderLoop::AddTrafficVehicle(
         return false;
     }
     const auto resolvedConfig = busConfigurationPathFor(busConfigPath);
+    const VehicleFileKind configKind = vehicleFileKindForConfig(resolvedConfig);
+    const std::filesystem::path modelConfig =
+        configKind == VehicleFileKind::Bus ? modelConfigurationPathForBus(resolvedConfig)
+                                           : modelConfigurationPathForVehicle(resolvedConfig);
     const auto definition =
-        sharedVehicleDefinition(resolvedConfig, modelConfigurationPathForVehicle(resolvedConfig),
-                                isBus ? VehicleFileKind::Bus : VehicleFileKind::Vehicle);
+        sharedVehicleDefinition(resolvedConfig, modelConfig, configKind);
     const auto& configuration = definition->vehicleConfiguration;
     if (!configuration.hasBoundingBox || configuration.boundingBox[0] <= 0.0 ||
         configuration.boundingBox[1] <= 0.0) {
         throw std::runtime_error("Map traffic requires a valid vehicle bounding box: " +
                                  busConfigPath.string());
     }
-    const double turnRadius = calculateTrafficMinimumTurnRadius(configuration, isBus);
     const int vehicleType = isBus ? 2 : configuration.vehicleType.value_or(defaultVehicleType);
+    const double turnRadius = calculateTrafficMinimumTurnRadius(configuration, vehicleType == 2);
     if (!isBus && !trafficRuleGroupIndex.has_value()) {
         throw std::invalid_argument(
             "Unscheduled map traffic requires a vehicle-rule group");
@@ -512,8 +519,11 @@ int RenderLoop::trafficVehicleType(const std::filesystem::path& vehicleConfigPat
         throw std::logic_error("Cannot query map traffic vehicle types before loading a map");
     }
     const auto resolvedConfig = busConfigurationPathFor(vehicleConfigPath);
-    const auto definition = sharedVehicleDefinition(
-        resolvedConfig, modelConfigurationPathForVehicle(resolvedConfig), VehicleFileKind::Vehicle);
+    const VehicleFileKind configKind = vehicleFileKindForConfig(resolvedConfig);
+    const std::filesystem::path modelConfig =
+        configKind == VehicleFileKind::Bus ? modelConfigurationPathForBus(resolvedConfig)
+                                           : modelConfigurationPathForVehicle(resolvedConfig);
+    const auto definition = sharedVehicleDefinition(resolvedConfig, modelConfig, configKind);
     return definition->vehicleConfiguration.vehicleType.value_or(defaultVehicleType);
 }
 

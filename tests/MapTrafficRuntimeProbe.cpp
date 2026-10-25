@@ -3334,6 +3334,22 @@ void verifyTrafficRules() {
                 mapTrafficPathAllowsVehicle(unrestrictedRoad, {1, std::nullopt, false}) &&
                 mapTrafficPathAllowsVehicle(unrestrictedRoad, {3, std::nullopt, false}),
             "unmarked road paths admit cars, commercial vehicles and trucks by default");
+    MapTrafficPathRules noTrafficPriorityRoad;
+    noTrafficPriorityRoad.priority = 0.0;
+    require(!mapTrafficPathAllowsVehicle(noTrafficPriorityRoad, {0, 0, false, 0}) &&
+                !mapTrafficPathAllowsVehicle(noTrafficPriorityRoad, {2, std::nullopt, true}),
+            "priority-zero paths exclude unscheduled and scheduled traffic");
+    MapTrafficPathRules groupPriorityRoad;
+    groupPriorityRoad.groups = {{0, std::nullopt, std::nullopt, 0.0},
+                                {1, std::nullopt, std::nullopt, 0.0}};
+    require(!mapTrafficPathAllowsVehicle(groupPriorityRoad, {0, 0, false, 0}) &&
+                !mapTrafficPathAllowsVehicle(groupPriorityRoad, {0, 1, false, 1}) &&
+                !mapTrafficPathAllowsVehicle(groupPriorityRoad, {2, std::nullopt, true}),
+            "group priority zero excludes that group and paths closed to all scheduled traffic");
+    groupPriorityRoad.groups[1].priority = 64.0;
+    require(mapTrafficPathAllowsVehicle(groupPriorityRoad, {0, 1, false, 1}) &&
+                mapTrafficPathAllowsVehicle(groupPriorityRoad, {2, std::nullopt, true}),
+            "positive group priority keeps eligible traffic paths available");
     MapTrafficPathRules truckRestrictedRoad;
     truckRestrictedRoad.trucksAllowed = false;
     require(!mapTrafficPathAllowsVehicle(truckRestrictedRoad, {3, std::nullopt, false}),

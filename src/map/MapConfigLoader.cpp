@@ -177,7 +177,7 @@ std::string lowerAscii(std::string value) {
 
 std::string canonicalAiRoadGroupName(std::string name) {
     name = lowerAscii(std::move(name));
-    if (name == "normalcar") {
+    if (name == "normal" || name == "normalcar") {
         return "normalcars";
     }
     if (name == "commercial") {
@@ -187,26 +187,15 @@ std::string canonicalAiRoadGroupName(std::string name) {
 }
 
 bool isSupportedRoadAiGroup(std::string_view name) {
-    const std::string normalized = lowerAscii(std::string(name));
-    return normalized == "normalcar" || normalized == "normalcars" || normalized == "trucks" ||
-           normalized == "commercial" || normalized == "commercials" || normalized == "ambulance";
+    const std::string normalized = canonicalAiRoadGroupName(std::string(name));
+    return normalized == "normalcars" || normalized == "trucks" || normalized == "commercials" ||
+           normalized == "ambulance" || normalized == "emergency" || normalized == "taxi";
 }
 
-std::optional<std::size_t> aiRoadTrafficRuleGroupIndex(std::string_view name) {
+bool isLegacySupportedRoadAiGroup(std::string_view name) {
     const std::string normalized = canonicalAiRoadGroupName(std::string(name));
-    if (normalized == "normalcars") {
-        return 0;
-    }
-    if (normalized == "trucks") {
-        return 1;
-    }
-    if (normalized == "commercials") {
-        return 2;
-    }
-    if (normalized == "ambulance") {
-        return 3;
-    }
-    return std::nullopt;
+    return normalized == "normalcars" || normalized == "trucks" || normalized == "commercials" ||
+           normalized == "ambulance";
 }
 
 bool isSectionHeaderLine(const std::string& value) {
@@ -1754,33 +1743,32 @@ std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic)
     std::unordered_set<std::string> seen;
     for (std::size_t groupIndex = 0; groupIndex < traffic.vehicleGroups.size(); ++groupIndex) {
         const MapAiVehicleGroup& group = traffic.vehicleGroups[groupIndex];
-        if (!isSupportedRoadAiGroup(group.name)) {
-            continue;
-        }
-        const std::optional<std::size_t> trafficRuleGroupIndex =
-            aiRoadTrafficRuleGroupIndex(group.name);
-        if (!trafficRuleGroupIndex.has_value()) {
-            throw std::logic_error("Supported AI road group has no traffic-rule group mapping");
-        }
         std::size_t unscheduledGroupIndex = groupIndex;
+        bool groupIsConfigured = false;
         for (std::size_t index = 0; index < traffic.unscheduledVehicleGroupNames.size(); ++index) {
             if (canonicalAiRoadGroupName(traffic.unscheduledVehicleGroupNames[index]) ==
                 canonicalAiRoadGroupName(group.name)) {
                 unscheduledGroupIndex = index;
+                groupIsConfigured = true;
                 break;
             }
+        }
+        if (!groupIsConfigured &&
+            (!traffic.unscheduledVehicleGroupNames.empty() ||
+             !isLegacySupportedRoadAiGroup(group.name))) {
+            continue;
         }
         for (const MapAiVehicleEntry& vehicle : group.vehicles) {
             const std::string extension =
                 lowerAscii(std::filesystem::path(vehicle.assetPath).extension().string());
-            if (extension != ".ovh") {
+            if (extension != ".ovh" && extension != ".bus") {
                 continue;
             }
             const std::string key =
                 lowerAscii(vehicle.assetPath) + "\n" + std::to_string(unscheduledGroupIndex);
             if (seen.insert(key).second) {
                 vehicles.push_back({vehicle.assetPath, unscheduledGroupIndex,
-                                    *trafficRuleGroupIndex,
+                                    unscheduledGroupIndex,
                                     lowerAscii(group.name) == "trucks" ? 3 : 0,
                                     canonicalAiRoadGroupName(group.name), 1.0});
             }

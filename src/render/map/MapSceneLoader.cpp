@@ -437,7 +437,7 @@ void MapSceneLoader::indexMapContent() {
                     roadTrafficSplines.push_back(spline);
                     impl_->roadTrafficSplinePathOffsets[spline.splineId] =
                         openbus::map::mapSplineProfilePathOffsets(
-                            *profile, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD);
+                            *profile, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, spline.mirrored);
                     if (spline.geometryValid && std::isfinite(spline.length) &&
                         spline.length > 0.0) {
                         for (const auto& lane :
@@ -465,7 +465,7 @@ void MapSceneLoader::indexMapContent() {
                         *profile, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN)) {
                     humanTrafficSplines.push_back(spline);
                     auto pathOffsets = openbus::map::mapSplineProfilePathOffsets(
-                        *profile, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN);
+                        *profile, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN, spline.mirrored);
                     impl_->humanTrafficSplinePathOffsets[spline.splineId] = pathOffsets;
                     if (spline.geometryValid && std::isfinite(spline.length) &&
                         spline.length > 0.0) {

@@ -488,15 +488,21 @@ void runProbe() {
         poleTile.textPath = mapRoot / "pole.map";
         writeText(poleTile.textPath,
                   "[version]\n12\n[terrain]\n[object]\n0\n"
-                  "Sceneryobjects\\Test\\Pole.sco\n77\n50\n50\n5\n0\n0\n0\n0\n");
+                  "Sceneryobjects\\Test\\Pole.sco\n77\n50\n50\n5\n0\n0\n0\n0\n"
+                  "[object]\n0\nSceneryobjects\\Test\\BoundingBoxPole.sco\n"
+                  "78\n60\n50\n5\n0\n0\n0\n0\n");
         poleMap.tiles.push_back(poleTile);
         writeText(omsiRoot / "Sceneryobjects" / "Test" / "Pole.sco",
                   "[model]\npole.cfg\n[crashmode_pole]\n0.25\n1.2\n");
+        writeText(omsiRoot / "Sceneryobjects" / "Test" / "BoundingBoxPole.sco",
+                  "[model]\nboundingboxpole.cfg\n[crashmode_pole]\n0.25\n1.2\n");
+        writeText(omsiRoot / "Sceneryobjects" / "Test" / "boundingboxpole.cfg",
+                  "[boundingbox]\n1\n2\n1\n0\n0\n0\n");
         writeText(omsiRoot / "Sceneryobjects" / "Test" / "pole.cfg",
                   "[collision_mesh]\npole.o3d\n");
         writePoleO3D(omsiRoot / "Sceneryobjects" / "Test" / "pole.o3d");
         const auto poleCollisions = buildMapPoleCollisionTile(poleMap, omsiRoot, 0, 0);
-        require(poleCollisions.size() == 1 && poleCollisions.front().mapObjectId == 77 &&
+        require(poleCollisions.size() == 2 && poleCollisions.front().mapObjectId == 77 &&
                     poleCollisions.front().radiusMeters > 0.0 &&
                     std::hypot(poleCollisions.front().topPosition[0] -
                                    poleCollisions.front().basePosition[0],
@@ -505,14 +511,69 @@ void runProbe() {
                                poleCollisions.front().topPosition[2] -
                                    poleCollisions.front().basePosition[2]) > 0.1 &&
                     poleCollisions.front().resistanceRadiansPerTonneMeterPerSecond == 0.25 &&
-                    poleCollisions.front().breakAngleRadians == 1.2,
-                "[crashmode_pole] produces a streamed, dimensioned pole collision");
+                        poleCollisions.front().breakAngleRadians == 1.2 &&
+                        poleCollisions.back().mapObjectId == 78 &&
+                        poleCollisions.back().radiusMeters > 0.0 &&
+                        std::hypot(poleCollisions.back().topPosition[0] -
+                                       poleCollisions.back().basePosition[0],
+                                   poleCollisions.back().topPosition[1] -
+                                       poleCollisions.back().basePosition[1],
+                                   poleCollisions.back().topPosition[2] -
+                                       poleCollisions.back().basePosition[2]) > 0.1,
+                    "[crashmode_pole] produces streamed collisions from mesh or bounding-box bounds");
         const auto poleTileCollision = buildMapRoadCollisionTile(poleMap, omsiRoot, 0, 0);
-        require(poleTileCollision.poles.size() == 1 &&
+        require(poleTileCollision.poles.size() == 2 &&
                     poleTileCollision.sceneryCollisionObjectsAdded == 0 &&
                     poleTileCollision.meshes.empty(),
-                "pole collision is dynamic rather than merged into the static scenery mesh");
+                "mesh and bounding-box poles stay dynamic instead of entering the static mesh");
 
+    openbus::probe::removeProbeDirectory(root);
+}
+
+void runSceneryGeometryFallbackProbe() {
+    using namespace openbus::map;
+    const auto root = openbus::probe::makeProbeDirectory("OpenBusSceneryGeometryFallbackProbe");
+    const auto mapRoot = root / "map";
+    const auto omsiRoot = root / "omsi";
+    const auto sceneryRoot = omsiRoot / "Sceneryobjects" / "Test";
+    writeJunctionO3D(sceneryRoot / "model" / "model.o3d");
+
+    writeText(sceneryRoot / "SurfaceFallback.sco",
+              "[surface]\n[nocollision]\n[mesh]\nmodel.o3d\n");
+    writeText(sceneryRoot / "GeometryFallback.sco", "[mesh]\nmodel.o3d\n");
+    writeText(sceneryRoot / "BoundingBox.sco",
+              "[boundingbox]\n2\n4\n6\n1\n0\n0\n[mesh]\nmodel.o3d\n");
+    writeText(sceneryRoot / "NoSurfaceNoCollision.sco",
+              "[nocollision]\n[mesh]\nmodel.o3d\n");
+    writeText(sceneryRoot / "BrokenCollisionFallback.sco",
+              "[collision_mesh]\nbroken.o3d\n[mesh]\nmodel.o3d\n");
+    writeText(sceneryRoot / "model" / "broken.o3d", "not an O3D model");
+
+    MapDefinition map;
+    map.rootPath = mapRoot;
+    MapTileReference tile;
+    tile.textPath = mapRoot / "tile_0_0.map";
+    writeText(tile.textPath,
+              "[version]\n12\n[terrain]\n"
+              "[object]\n0\nSceneryobjects\\Test\\SurfaceFallback.sco\n"
+              "1\n50\n50\n4\n0\n0\n0\n0\n"
+              "[object]\n0\nSceneryobjects\\Test\\GeometryFallback.sco\n"
+              "2\n60\n50\n4\n0\n0\n0\n0\n"
+              "[object]\n0\nSceneryobjects\\Test\\BoundingBox.sco\n"
+              "3\n70\n50\n4\n0\n0\n0\n0\n"
+              "[object]\n0\nSceneryobjects\\Test\\NoSurfaceNoCollision.sco\n"
+              "4\n80\n50\n4\n0\n0\n0\n0\n"
+              "[object]\n0\nSceneryobjects\\Test\\BrokenCollisionFallback.sco\n"
+              "5\n90\n50\n4\n0\n0\n0\n0\n");
+    map.tiles.push_back(tile);
+
+    const auto index = buildMapSceneryCollisionIndex(map, omsiRoot);
+    require(index->objects.size() == 4,
+            "surface and ordinary scenery use model or box fallback while no-surface nocollision is honored");
+    const auto result = buildMapRoadCollisionTile(map, omsiRoot, 0, 0, nullptr, index.get());
+    require(result.sceneryCollisionObjectsAdded == 4 && result.meshes.size() == 1 &&
+                result.meshes.front().indices.size() == 45,
+            "fallback model meshes and authored bounding boxes contribute scenery collision, including after a bad collision mesh");
     openbus::probe::removeProbeDirectory(root);
 }
 
@@ -523,6 +584,7 @@ int main() {
         runProbe();
         runLinkedProbe();
         runNoCollisionProbe();
+        runSceneryGeometryFallbackProbe();
     } catch (const std::exception& error) {
         std::cerr << "map collision builder probe failed: " << error.what() << '\n';
         return 1;

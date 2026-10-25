@@ -110,6 +110,14 @@ void runProbe(const std::filesystem::path& fixture) {
     requireNear(roadPathOffsets[1].lateralMeters, 1.9, "second lane lateral offset");
     require(!roadPathOffsets[0].reversed && roadPathOffsets[1].reversed,
             "authored forward and reverse lane direction flags are retained");
+    const std::vector<openbus::map::MapSplinePathOffset> mirroredRoadPathOffsets =
+        mapSplineProfilePathOffsets(pairedPathProfile, 0, true);
+    requireNear(mirroredRoadPathOffsets[0].lateralMeters, 1.9,
+                "mirrored spline moves the first traffic lane across the centerline");
+    requireNear(mirroredRoadPathOffsets[1].lateralMeters, -1.9,
+                "mirrored spline moves the second traffic lane across the centerline");
+    require(!mirroredRoadPathOffsets[0].reversed && mirroredRoadPathOffsets[1].reversed,
+            "mirroring changes traffic lane sides without changing authored travel directions");
 }
 
 void runExplicitCantWidthProbe(const std::filesystem::path& fixture) {

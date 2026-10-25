@@ -237,9 +237,10 @@ by one profile width only for unbounded profiles. For example, an effective
 `0.060 m` half-width limits `-120%` cant to approximately `±0.072 m` at the
 outer profile edges. This cant clamp is reverse-engineered behavior; visual
 parity against OMSI remains to be confirmed. The literal `mirror` marker
-reflects `.sli` cross-section lateral offsets across the spline centerline in
-shared render/collision geometry, while preserving authored texture
-coordinates and correcting triangle winding.
+reflects `.sli` cross-section lateral offsets and traffic-path lateral offsets
+across the spline centerline. Authored traffic-path travel directions and
+texture coordinates are preserved; road-strip triangle winding is corrected
+for the reflected cross-section.
 
 The start-to-end cant transition is evaluated per spline record with
 `t = clamp(segmentDistance / spline.length, 0, 1)`, using the authored segment
@@ -324,19 +325,23 @@ as strings by the merger; do not assume radians/metres for every field without
 separate evidence.
 
 OpenBus interprets the four `[rule]` payload lines as the path index, rule
-name, numeric value, and traffic vehicle-group index. The final value is in
-`0..3`: `0` NormalCar, `1` Trucks, `2` Commercials, and `3` Ambulance. This
-fixed rule-group mapping is independent of the ordering and indexes in
-`unsched_vehgroups.txt`, which select unscheduled population/density schedules.
+name, numeric value, and unscheduled traffic group index. The index is
+map-defined by the corresponding entry's order in `unsched_vehgroups.txt` and
+is used for both population schedules and path rules; it is not a fixed
+vehicle-class index. For random road traffic, supported `[aigroup_2]` names
+are matched to these map-defined groups (for example, `Normal` and
+`NormalCars`); both `.ovh` and `.bus` entries can be used.
 supported names are `speedlimit` (km/h; non-positive clears the limit),
 `trafficdensity` (non-negative relative factor; zero excludes unscheduled
 traffic, positive values weight eligible entry/junction choices), `priority`
-(observed levels 64 low, 128 default, 192 high), `no_cars`, `bus`, `trucks`,
-and `overtaking_prohib`. These rules are group-scoped; the map AI vehicle's
+(zero excludes traffic; positive values affect right-of-way, with observed
+levels 64 low, 128 default, 192 high), `no_cars`, `bus`, `trucks`, and
+`overtaking_prohib`. These rules are group-scoped; the map AI vehicle's
 configured vehicle type distinguishes cars, cabs, buses, and trucks. Cars are
 denied by `no_cars`; cabs may use such a path when `bus` or `trucks` is enabled;
 unscheduled buses/trucks require their corresponding permission. Scheduled
-buses bypass unscheduled access and density rules. `[kill_rule]` clears the
+buses bypass unscheduled access and density rules, but do not use paths with
+zero traffic priority. `[kill_rule]` clears the
 matching path/group rule. The path index refers to the source order of all
 `.sli` or `.sco` `[path]` records, including records of other path types.
 

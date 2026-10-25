@@ -17,7 +17,7 @@
 namespace openbus::map {
 
 struct MapTrafficGroupRules {
-    // Fixed OMSI traffic-rule groups: NormalCar, Trucks, Commercials, Ambulance.
+    // Group index is defined by unsched_vehgroups.txt.
     std::size_t groupIndex = 0;
     std::optional<double> speedLimitKmh;
     std::optional<double> density;
