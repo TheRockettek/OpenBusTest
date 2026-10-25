@@ -313,6 +313,12 @@ std::filesystem::path modelConfigurationPathForBus(const std::filesystem::path& 
         configuredPath != nullptr && *configuredPath != '\0') {
         return modelConfigurationPathForBus(busConfigPath, configuredPath);
     }
+    return modelConfigurationPathForBusFromConfig(busConfigPath);
+}
+
+std::filesystem::path
+modelConfigurationPathForBusFromConfig(const std::filesystem::path& busConfigPath) {
+    openbus::rendering::TraceScope trace("config", "modelConfigurationPathForBusFromConfig");
     const VehicleConfig source = loadBusConfig(busConfigPath);
     if (source.modelPath.empty()) {
         throw std::runtime_error("Bus configuration has no [model] entry: " +
@@ -371,6 +377,11 @@ modelConfigurationPathForVehicle(const std::filesystem::path& vehicleConfigPath,
 ModelConfig loadBusModelConfiguration(const std::filesystem::path& busConfigPath) {
     openbus::rendering::TraceScope trace("config", "loadBusModelConfiguration");
     const std::filesystem::path modelConfigPath = modelConfigurationPathForBus(busConfigPath);
+    return loadBusModelConfigurationFromModelConfig(modelConfigPath);
+}
+
+ModelConfig loadBusModelConfigurationFromModelConfig(const std::filesystem::path& modelConfigPath) {
+    openbus::rendering::TraceScope trace("config", "loadBusModelConfigurationFromModelConfig");
     openbus::scripting::Vehicle variables;
     return loadModelConfig(modelConfigPath, modelRootForConfig(modelConfigPath),
                            ModelConfigKind::Bus, variables);
@@ -378,6 +389,13 @@ ModelConfig loadBusModelConfiguration(const std::filesystem::path& busConfigPath
 
 BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath) {
     openbus::rendering::TraceScope trace("config", "loadBusConfiguration");
+    const std::filesystem::path modelConfigPath = modelConfigurationPathForBus(configPath);
+    return loadBusConfiguration(configPath, modelConfigPath);
+}
+
+BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath,
+                                      const std::filesystem::path& modelConfigPath) {
+    openbus::rendering::TraceScope trace("config", "loadBusConfiguration.explicit");
     VehicleConfig source = loadBusConfig(configPath);
     for (const ConfigurationDiagnostic& diagnostic : source.diagnostics.entries) {
         if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error &&
@@ -413,7 +431,6 @@ BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath) {
         throw std::runtime_error("Bus configuration contains no valid [newachse] entries: " +
                                  configPath.string());
     }
-    const std::filesystem::path modelConfigPath = modelConfigurationPathForBus(configPath);
     openbus::scripting::Vehicle variables;
     const ModelConfig model = loadModelConfig(modelConfigPath, modelRootForConfig(modelConfigPath),
                                               ModelConfigKind::Bus, variables);

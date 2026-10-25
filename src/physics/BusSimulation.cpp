@@ -38,6 +38,7 @@ constexpr dReal BODY_ROLL_STIFFNESS = 600000.0;
 constexpr dReal BODY_PITCH_STIFFNESS = 250000.0;
 constexpr dReal BODY_ATTITUDE_DAMPING = 100000.0;
 constexpr dReal MAX_CHASSIS_ANGULAR_SPEED = 2.0;
+constexpr double POLE_BEND_SPEED_RADIANS_PER_SECOND = 4.0;
 constexpr dReal STOP_LATERAL_DAMPING = 90000.0;
 constexpr dReal STOP_YAW_DAMPING = 300000.0;
 constexpr dReal MAX_STEER_ANGLE = 0.45;
@@ -184,6 +185,8 @@ struct BusSimulation::Impl {
         std::array<double, 3> rotationAxis = {};
         double length = 0.0;
         double angleRadians = 0.0;
+        double targetAngleRadians = 0.0;
+        bool targetBroken = false;
         bool broken = false;
     };
 
@@ -546,22 +549,40 @@ struct BusSimulation::Impl {
             if (axisLength <= 1.0e-8) {
                 continue;
             }
-            pole.rotationAxis = {rotationAxis[0] / axisLength, rotationAxis[1] / axisLength,
-                                 rotationAxis[2] / axisLength};
+            if (pole.targetAngleRadians <= 1.0e-8) {
+                pole.rotationAxis = {rotationAxis[0] / axisLength, rotationAxis[1] / axisLength,
+                                     rotationAxis[2] / axisLength};
+            }
             dMass mass;
             dBodyGetMass(chassis, &mass);
             const double momentumInTonneMetersPerSecond =
                 std::max(0.0, mass.mass / 1000.0) * impact.speedMetersPerSecond;
             const double addedAngle = pole.definition.resistanceRadiansPerTonneMeterPerSecond *
                                       momentumInTonneMetersPerSecond;
-            pole.angleRadians =
-                std::min(pole.definition.breakAngleRadians, pole.angleRadians + addedAngle);
-            if (pole.angleRadians >= pole.definition.breakAngleRadians) {
-                pole.broken = true;
-                pole.angleRadians = std::max(pole.angleRadians, PI * 0.5);
-                dGeomDisable(pole.geometry);
+            const double impactAngle =
+                std::min(pole.definition.breakAngleRadians, pole.targetAngleRadians + addedAngle);
+            pole.targetAngleRadians = std::max(pole.targetAngleRadians, impactAngle);
+            if (impactAngle >= pole.definition.breakAngleRadians) {
+                pole.targetBroken = true;
+                pole.targetAngleRadians = std::max(pole.targetAngleRadians, PI * 0.5);
             }
-            setPoleTransform(pole);
+        }
+    }
+
+    void updatePoleBends(double elapsedSeconds) {
+        const double maximumAngleChange = POLE_BEND_SPEED_RADIANS_PER_SECOND * elapsedSeconds;
+        for (auto& [geometry, pole] : mapPoles) {
+            static_cast<void>(geometry);
+            if (pole->broken || pole->angleRadians >= pole->targetAngleRadians) {
+                continue;
+            }
+            pole->angleRadians =
+                std::min(pole->targetAngleRadians, pole->angleRadians + maximumAngleChange);
+            setPoleTransform(*pole);
+            if (pole->targetBroken && pole->angleRadians >= pole->targetAngleRadians) {
+                pole->broken = true;
+                dGeomDisable(pole->geometry);
+            }
         }
     }
 
@@ -1304,6 +1325,7 @@ struct BusSimulation::Impl {
             poleImpactsCurrent.clear();
             dSpaceCollide(ode.space, this, &nearCallback);
             applyPoleImpacts();
+            updatePoleBends(fixedStep);
             dWorldStep(ode.world, fixedStep);
             dJointGroupEmpty(ode.contacts);
             poleContactsPrevious = poleContactsCurrent;

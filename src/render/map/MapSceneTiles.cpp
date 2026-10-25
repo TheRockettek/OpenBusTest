@@ -198,14 +198,15 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                           tileName + " spline=" + std::to_string(spline.splineId));
         }
     }
+    std::optional<openbus::map::WaterData> tileWater;
     if (tile.hasWaterMarker) {
         if (!tileReference.hasWaterFile) {
             recordSkipped(skipped, "[water] markers without a .map.water sidecar",
                           tileName + " " + tileReference.textPath.filename().string());
         } else {
             try {
-                const openbus::map::WaterData water =
-                    openbus::map::loadWaterData(tileReference.waterPath);
+                tileWater = openbus::map::loadWaterData(tileReference.waterPath);
+                const openbus::map::WaterData& water = *tileWater;
                 std::vector<ModelVertex> vertices;
                 std::vector<std::uint32_t> indices;
                 vertices.reserve(water.surfaces.size() * 4);
@@ -397,6 +398,9 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                 if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
                     openbus::map::MapTrafficRouteSegment lane;
                     lane.points = segment.points;
+                    lane.spline.tileX = tileX;
+                    lane.spline.tileY = tileY;
+                    lane.spline.coordinates = map.coordinates;
                     if (mapObjectId.has_value()) {
                         lane.spline.placement.splineId = *mapObjectId;
                         lane.sceneryPathIndex = path.pathIndex;
@@ -407,8 +411,16 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                             openbus::map::mapTrafficRulesForPath(*placementRules, path.pathIndex);
                     }
                     segment.pathRules = lane.pathRules;
-                    roadTrafficLaneNetworkDirty = true;
-                    impl_->roadTrafficLaneNetwork.addSegment(std::move(lane));
+                    if (tileWater && !openbus::map::mapTrafficRouteSegmentClearsWater(
+                                         lane, *tileWater, map.coordinates.tileSize)) {
+                        recordSkipped(skipped, "scenery road paths without water clearance",
+                                      tileName +
+                                          " object ID=" + std::to_string(mapObjectId.value_or(0)) +
+                                          " path=" + std::to_string(path.pathIndex));
+                    } else {
+                        roadTrafficLaneNetworkDirty = true;
+                        impl_->roadTrafficLaneNetwork.addSegment(std::move(lane));
+                    }
                 } else if (path.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
                     openbus::map::MapTrafficRouteSegment lane;
                     lane.points = segment.points;

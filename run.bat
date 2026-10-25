@@ -9,8 +9,10 @@ if not errorlevel 1 goto :already_running
 call "%~dp0windows_clang_env.bat"
 if errorlevel 1 goto :failed
 
-set "OPENBUS_BUS_CONFIG=Vehicles/MAN_DL05/MAN_DL05.bus"
-set "OPENBUS_MODEL_CONFIG=Vehicles/MAN_DL05/Model/DL05.cfg"
+if /I "%OPENBUS_BENCHMARK%"=="1" (
+    if not defined OPENBUS_BUS_CONFIG set "OPENBUS_BUS_CONFIG=Vehicles/MAN_DL05/MAN_DL05.bus"
+    if not defined OPENBUS_MODEL_CONFIG set "OPENBUS_MODEL_CONFIG=Vehicles/MAN_DL05/Model/DL05.cfg"
+)
 set "OPENBUS_MAP_PATH=Cotterell"
 set "OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER=10.0"
 set "OPENBUS_VSYNC=off"

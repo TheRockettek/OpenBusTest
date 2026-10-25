@@ -2,8 +2,10 @@
 set -euo pipefail
 
 export OPENBUS_OMSI_ROOT="/home/rock/.local/share/Steam/steamapps/common/OMSI 2"
-export OPENBUS_BUS_CONFIG="Vehicles/MAN_DL05/MAN_DL05.bus"
-export OPENBUS_MODEL_CONFIG="Vehicles/MAN_DL05/Model/DL05.cfg"
+if [[ "${OPENBUS_BENCHMARK:-0}" == "1" ]]; then
+    export OPENBUS_BUS_CONFIG="${OPENBUS_BUS_CONFIG:-Vehicles/MAN_DL05/MAN_DL05.bus}"
+    export OPENBUS_MODEL_CONFIG="${OPENBUS_MODEL_CONFIG:-Vehicles/MAN_DL05/Model/DL05.cfg}"
+fi
 export OPENBUS_MAP_PATH="London"
 export OPENBUS_VSYNC="on"
 export OPENBUS_REFLECTION_TRANSPARENT="1"

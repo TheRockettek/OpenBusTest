@@ -1,7 +1,7 @@
 # Developer tools built alongside the game.
 
 add_executable(OpenBusConfigAudit config_audit.cpp)
-target_link_libraries(OpenBusConfigAudit PRIVATE openbus_config openbus_osc)
+target_link_libraries(OpenBusConfigAudit PRIVATE openbus_config openbus_map openbus_osc)
 
 add_executable(obj_bundle obj_bundle.cpp)
 target_link_libraries(obj_bundle PRIVATE openbus_assets)

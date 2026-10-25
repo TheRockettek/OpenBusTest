@@ -575,17 +575,25 @@ bool mapTrafficScheduledDepartureDue(double elapsedSeconds, double departureElap
 
 namespace {
 
-const MapTrafficGroupRules*
-mapTrafficRulesForVehicleGroup(const MapTrafficPathRules& rules,
-                               const MapTrafficVehicleFilter& vehicle) noexcept {
+template <typename T>
+std::optional<T>
+mapTrafficGroupRuleForVehicle(const MapTrafficPathRules& rules,
+                              const MapTrafficVehicleFilter& vehicle,
+                              std::optional<T> MapTrafficGroupRules::* rule) noexcept {
     if (!vehicle.trafficRuleGroupIndex.has_value()) {
-        return nullptr;
+        return std::nullopt;
     }
-    const auto group = std::find_if(
-        rules.groups.begin(), rules.groups.end(), [&](const MapTrafficGroupRules& candidate) {
-            return candidate.groupIndex == *vehicle.trafficRuleGroupIndex;
-        });
-    return group == rules.groups.end() ? nullptr : &*group;
+    const auto configuredValue = [&](std::size_t groupIndex) -> std::optional<T> {
+        const auto group = std::find_if(rules.groups.begin(), rules.groups.end(),
+                                        [&](const MapTrafficGroupRules& candidate) {
+                                            return candidate.groupIndex == groupIndex;
+                                        });
+        return group == rules.groups.end() ? std::nullopt : (*group).*rule;
+    };
+    if (const std::optional<T> specific = configuredValue(*vehicle.trafficRuleGroupIndex)) {
+        return specific;
+    }
+    return *vehicle.trafficRuleGroupIndex == 0 ? std::nullopt : configuredValue(0);
 }
 
 } // namespace
@@ -679,25 +687,21 @@ MapTrafficPathRules mapTrafficRulesForPath(const std::vector<MapTileRule>& rules
 
 double mapTrafficPathDensityForVehicle(const MapTrafficPathRules& rules,
                                        const MapTrafficVehicleFilter& vehicle) noexcept {
-    if (const MapTrafficGroupRules* group = mapTrafficRulesForVehicleGroup(rules, vehicle)) {
-        if (group->unscheduledTrafficProhibited.value_or(false)) {
-            return 0.0;
-        }
-        if (group->density.has_value()) {
-            return *group->density;
-        }
+    if (mapTrafficGroupRuleForVehicle(rules, vehicle,
+                                      &MapTrafficGroupRules::unscheduledTrafficProhibited)
+            .value_or(false)) {
+        return 0.0;
     }
-    return rules.density.value_or(1.0);
+    return mapTrafficGroupRuleForVehicle(rules, vehicle, &MapTrafficGroupRules::density)
+        .value_or(rules.density.value_or(1.0));
 }
 
 std::optional<double>
 mapTrafficPathSpeedLimitForVehicle(const MapTrafficPathRules& rules,
                                    const MapTrafficVehicleFilter& vehicle) noexcept {
-    if (const MapTrafficGroupRules* group = mapTrafficRulesForVehicleGroup(rules, vehicle);
-        group != nullptr && group->speedLimitKmh.has_value()) {
-        return group->speedLimitKmh;
-    }
-    return rules.speedLimitKmh;
+    const std::optional<double> groupSpeedLimit =
+        mapTrafficGroupRuleForVehicle(rules, vehicle, &MapTrafficGroupRules::speedLimitKmh);
+    return groupSpeedLimit.has_value() ? groupSpeedLimit : rules.speedLimitKmh;
 }
 
 double mapTrafficSpawnSpeedMetersPerSecond(const MapTrafficActor& actor, double distanceMeters) {
@@ -725,35 +729,40 @@ double mapTrafficPathPriorityForVehicle(const MapTrafficPathRules& rules,
     if (rules.roundabout) {
         return 256.0;
     }
-    if (const MapTrafficGroupRules* group = mapTrafficRulesForVehicleGroup(rules, vehicle);
-        group != nullptr && group->priority.has_value()) {
-        return *group->priority;
-    }
-    return rules.priority;
+    return mapTrafficGroupRuleForVehicle(rules, vehicle, &MapTrafficGroupRules::priority)
+        .value_or(rules.priority);
 }
 
 bool mapTrafficPathAllowsVehicle(const MapTrafficPathRules& rules,
                                  const MapTrafficVehicleFilter& vehicle) {
-    if (rules.priority <= 0.0) {
-        return false;
-    }
-    if (const MapTrafficGroupRules* group = mapTrafficRulesForVehicleGroup(rules, vehicle);
-        group != nullptr && group->priority.has_value() && *group->priority <= 0.0) {
+    if (rules.priority <= 0.0 ||
+        mapTrafficGroupRuleForVehicle(rules, vehicle, &MapTrafficGroupRules::priority)
+                .value_or(rules.priority) <= 0.0) {
         return false;
     }
     if (vehicle.scheduled && !vehicle.trafficRuleGroupIndex) {
-        const bool hasGroupPriorities =
-            std::any_of(rules.groups.begin(), rules.groups.end(),
-                        [](const MapTrafficGroupRules& group) {
-                            return group.priority.has_value();
-                        });
+        const bool hasGroupPriorities = std::any_of(
+            rules.groups.begin(), rules.groups.end(),
+            [](const MapTrafficGroupRules& group) { return group.priority.has_value(); });
         const bool everyGroupPriorityIsZero =
-            hasGroupPriorities &&
-            std::all_of(rules.groups.begin(), rules.groups.end(),
-                        [](const MapTrafficGroupRules& group) {
-                            return !group.priority.has_value() || *group.priority <= 0.0;
-                        });
+            hasGroupPriorities && std::all_of(rules.groups.begin(), rules.groups.end(),
+                                              [](const MapTrafficGroupRules& group) {
+                                                  return !group.priority.has_value() ||
+                                                         *group.priority <= 0.0;
+                                              });
         if (everyGroupPriorityIsZero) {
+            return false;
+        }
+        const bool hasGroupDensities = std::any_of(
+            rules.groups.begin(), rules.groups.end(),
+            [](const MapTrafficGroupRules& group) { return group.density.has_value(); });
+        const bool everyGroupDensityIsZero =
+            hasGroupDensities && std::all_of(rules.groups.begin(), rules.groups.end(),
+                                             [](const MapTrafficGroupRules& group) {
+                                                 return group.density.has_value() &&
+                                                        *group.density <= 0.0;
+                                             });
+        if ((rules.density.has_value() && *rules.density <= 0.0) || everyGroupDensityIsZero) {
             return false;
         }
     }
@@ -776,14 +785,15 @@ bool mapTrafficPathAllowsVehicle(const MapTrafficPathRules& rules,
         }
         return true;
     }
-    bool carsProhibited = rules.carsProhibited;
-    bool busesAllowed = rules.busesAllowed;
-    bool trucksAllowed = rules.trucksAllowed;
-    if (const MapTrafficGroupRules* group = mapTrafficRulesForVehicleGroup(rules, vehicle)) {
-        carsProhibited = group->carsProhibited.value_or(carsProhibited);
-        busesAllowed = group->busesAllowed.value_or(busesAllowed);
-        trucksAllowed = group->trucksAllowed.value_or(trucksAllowed);
-    }
+    const bool carsProhibited =
+        mapTrafficGroupRuleForVehicle(rules, vehicle, &MapTrafficGroupRules::carsProhibited)
+            .value_or(rules.carsProhibited);
+    const bool busesAllowed =
+        mapTrafficGroupRuleForVehicle(rules, vehicle, &MapTrafficGroupRules::busesAllowed)
+            .value_or(rules.busesAllowed);
+    const bool trucksAllowed =
+        mapTrafficGroupRuleForVehicle(rules, vehicle, &MapTrafficGroupRules::trucksAllowed)
+            .value_or(rules.trucksAllowed);
     switch (vehicle.vehicleType) {
     case 0:
         return !carsProhibited;
@@ -1631,6 +1641,79 @@ std::optional<MapTrafficPose> sampleMapTrafficRouteRaw(const MapTrafficRoute& ro
 }
 
 } // namespace
+
+bool mapTrafficRouteSegmentClearsWater(const MapTrafficRouteSegment& segment,
+                                       const WaterData& water, double tileSize,
+                                       double clearanceMeters) {
+    if (!std::isfinite(tileSize) || tileSize <= 0.0 || !std::isfinite(clearanceMeters) ||
+        clearanceMeters < 0.0) {
+        throw std::invalid_argument(trafficInputError("Water clearance inputs are invalid",
+                                                      "tileSize=", tileSize,
+                                                      "clearanceMeters=", clearanceMeters));
+    }
+    if (water.surfaces.empty()) {
+        return true;
+    }
+
+    const double segmentLength = [&] {
+        if (segment.points.empty()) {
+            return segment.spline.placement.length;
+        }
+        double length = 0.0;
+        for (std::size_t index = 1; index < segment.points.size(); ++index) {
+            const auto& previous = segment.points[index - 1];
+            const auto& current = segment.points[index];
+            length += std::hypot(current[0] - previous[0], current[1] - previous[1],
+                                 current[2] - previous[2]);
+        }
+        return length;
+    }();
+    if (!std::isfinite(segmentLength) || segmentLength <= 0.0) {
+        return false;
+    }
+
+    MapTrafficRoute route;
+    route.segments.push_back(segment);
+    route.totalLength = segmentLength;
+    route.cumulativeEndDistances.push_back(segmentLength);
+    const MapTileTransform tile =
+        segment.spline.coordinates.tile(segment.spline.tileX, segment.spline.tileY);
+    const double tileWidth = tileSize * tile.scaleX;
+    const double tileHeight = tileSize * tile.scaleY;
+    constexpr double sampleSpacingMeters = 2.0;
+
+    const auto clearsAt = [&](double distance) {
+        const std::optional<MapTrafficPose> pose = sampleMapTrafficRouteRaw(route, distance, 0.0);
+        if (!pose) {
+            return false;
+        }
+        const double x = (pose->position[0] - tile.originX) / tileWidth;
+        const double y = (pose->position[1] - tile.originY) / tileHeight;
+        if (x < 0.0 || x > 1.0 || y < 0.0 || y > 1.0) {
+            return true;
+        }
+
+        double waterHeight = -std::numeric_limits<double>::infinity();
+        for (const WaterSurface& surface : water.surfaces) {
+            const auto& h = surface.heights;
+            if (std::any_of(h.begin(), h.end(),
+                            [](float height) { return !std::isfinite(height); })) {
+                throw std::invalid_argument("Water surface has a non-finite corner height");
+            }
+            const double height = x >= y ? h[0] * (1.0 - x) + h[1] * (x - y) + h[2] * y
+                                         : h[0] * (1.0 - y) + h[2] * x + h[3] * (y - x);
+            waterHeight = (std::max)(waterHeight, height);
+        }
+        return pose->position[2] >= waterHeight + clearanceMeters;
+    };
+
+    for (double distance = 0.0; distance < segmentLength; distance += sampleSpacingMeters) {
+        if (!clearsAt(distance)) {
+            return false;
+        }
+    }
+    return clearsAt(segmentLength);
+}
 
 std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route,
                                                     double distanceMeters,

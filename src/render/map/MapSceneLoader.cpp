@@ -416,6 +416,7 @@ void MapSceneLoader::indexMapContent() {
             }
         }
     };
+    std::size_t submergedTrafficLaneCount = 0;
     for (std::size_t tileReferenceIndex = 0; tileReferenceIndex < map.tiles.size();
          ++tileReferenceIndex) {
         const openbus::map::MapTileReference& tileReference = map.tiles[tileReferenceIndex];
@@ -424,6 +425,15 @@ void MapSceneLoader::indexMapContent() {
                     "; elapsed=" + std::to_string(elapsedMilliseconds(indexStart)) + " ms.");
         const openbus::map::MapTileData tile = openbus::map::loadMapTile(tileReference);
         const std::string tileName = tileLabel(tileReference.x, tileReference.y);
+        std::optional<openbus::map::WaterData> trafficWater;
+        if (tile.hasWaterMarker && tileReference.hasWaterFile) {
+            try {
+                trafficWater = openbus::map::loadWaterData(tileReference.waterPath);
+            } catch (const std::exception& error) {
+                recordSkipped(skipped, "water sidecars unavailable for traffic clearance",
+                              tileName + ": " + error.what());
+            }
+        }
         impl_->trafficRouteNetwork.addTileSplines(tile.splines, tileReference.x, tileReference.y,
                                                   map.coordinates);
         std::vector<openbus::map::MapSplinePlacement> roadTrafficSplines;
@@ -450,6 +460,12 @@ void MapSceneLoader::indexMapContent() {
                             segment.pathHeightMeters = lane.heightMeters;
                             segment.pathRules =
                                 openbus::map::mapTrafficRulesForPath(spline.rules, lane.pathIndex);
+                            if (trafficWater &&
+                                !openbus::map::mapTrafficRouteSegmentClearsWater(
+                                    segment, *trafficWater, map.coordinates.tileSize)) {
+                                ++submergedTrafficLaneCount;
+                                continue;
+                            }
                             if (lane.bidirectional) {
                                 impl_->roadTrafficLaneNetwork.addSegment(segment);
                                 impl_->roadTrafficLaneNetwork.addSegment(
@@ -554,6 +570,10 @@ void MapSceneLoader::indexMapContent() {
     impl_->humanTrafficRouteNetwork.finalize();
     roadTrafficLaneNetworkDirty = true;
     humanTrafficLaneNetworkDirty = true;
+    if (submergedTrafficLaneCount > 0) {
+        gameLog.Log("Map traffic excluded " + std::to_string(submergedTrafficLaneCount) +
+                    " road lanes without 0.25 m of clearance above water.");
+    }
     gameLog.Log("Map index phase complete: " + std::to_string(map.tiles.size()) + " tiles in " +
                 std::to_string(elapsedMilliseconds(indexStart)) + " ms.");
 }

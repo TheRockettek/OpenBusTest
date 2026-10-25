@@ -372,6 +372,14 @@ void parseUnscheduledVehicleGroups(const std::filesystem::path& path, MapAiTraff
                 --cursor;
                 break;
             }
+            if (name.size() >= 2 && name.front() == '<' && name.back() == '>') {
+                while (++cursor < lines.size() && !isSectionHeaderLine(trim(lines[cursor]))) {
+                }
+                if (cursor < lines.size()) {
+                    --cursor;
+                }
+                break;
+            }
             aiTraffic.unscheduledVehicleGroupNames.push_back(name);
             break;
         }
@@ -1753,9 +1761,8 @@ std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic)
                 break;
             }
         }
-        if (!groupIsConfigured &&
-            (!traffic.unscheduledVehicleGroupNames.empty() ||
-             !isLegacySupportedRoadAiGroup(group.name))) {
+        if (!groupIsConfigured && (!traffic.unscheduledVehicleGroupNames.empty() ||
+                                   !isLegacySupportedRoadAiGroup(group.name))) {
             continue;
         }
         for (const MapAiVehicleEntry& vehicle : group.vehicles) {
@@ -1767,8 +1774,7 @@ std::vector<MapAiRoadVehicle> mapAiRoadVehicles(const MapAiTrafficData& traffic)
             const std::string key =
                 lowerAscii(vehicle.assetPath) + "\n" + std::to_string(unscheduledGroupIndex);
             if (seen.insert(key).second) {
-                vehicles.push_back({vehicle.assetPath, unscheduledGroupIndex,
-                                    unscheduledGroupIndex,
+                vehicles.push_back({vehicle.assetPath, unscheduledGroupIndex, unscheduledGroupIndex,
                                     lowerAscii(group.name) == "trucks" ? 3 : 0,
                                     canonicalAiRoadGroupName(group.name), 1.0});
             }

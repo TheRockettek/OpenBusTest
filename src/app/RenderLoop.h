@@ -45,6 +45,15 @@ struct ModelLoadingPolicy {
     AssetLoadingMode textureMode = AssetLoadingMode::Deferred;
 };
 
+struct VehicleSetupOptions {
+    std::unordered_map<std::string, std::string> ctcTextureReplacements;
+    std::string appearanceKey;
+    std::optional<std::string> vehicleNumber;
+    std::optional<std::string> registration;
+    std::filesystem::path depotPath;
+    std::string depotName;
+};
+
 enum class RenderBenchmarkPhase {
     Baseline,
     CameraCycle,
@@ -62,6 +71,9 @@ struct RenderBenchmarkInput {
 struct StartupSelection {
     std::filesystem::path mapDirectory;
     openbus::map::MapDefinition mapDefinition;
+    std::filesystem::path vehicleConfigPath;
+    VehicleSetupOptions vehicleSetup;
+    bool startInBus = false;
     std::size_t spawnEntryPoint = 0;
     int year = 0;
     int month = 0;
@@ -89,7 +101,7 @@ class RenderLoop {
     Vehicle* AddVehicle(const std::filesystem::path& vehicleConfigPath,
                         const std::filesystem::path& modelConfigPath,
                         const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy = {},
-                        bool isAiVehicle = false);
+                        bool isAiVehicle = false, VehicleSetupOptions setupOptions = {});
     bool AddTrafficVehicle(int splineId, int pathTypeCode,
                            const std::filesystem::path& busConfigPath,
                            std::optional<std::string> driverModelPath, double speedMetersPerSecond,

@@ -264,6 +264,39 @@ void verifyPassengerServiceBehavior() {
 
 }
 
+void verifyTrafficWaterClearance() {
+    using namespace openbus::map;
+    MapTrafficRouteSegment segment;
+    segment.spline.placement = makeSpline(1, 0, 0, 10.0);
+    segment.spline.placement.elevation = -0.1;
+    segment.pathHeightMeters = 0.1;
+
+    WaterData water;
+    water.surfaces.push_back({{0.0F, 0.0F, 0.0F, 0.0F}});
+    require(!mapTrafficRouteSegmentClearsWater(segment, water, OMSI_TILE_SIZE_METERS),
+            "traffic lane at water level must not be used");
+
+    segment.pathHeightMeters = 0.5;
+    require(mapTrafficRouteSegmentClearsWater(segment, water, OMSI_TILE_SIZE_METERS),
+            "traffic lane above water must remain usable");
+    require(mapTrafficRouteSegmentClearsWater(segment, WaterData{}, OMSI_TILE_SIZE_METERS),
+            "traffic lane in a tile without water must remain usable");
+
+    segment.spline.placement.elevation = 0.5;
+    segment.pathHeightMeters = 0.0;
+    segment.spline.placement.gradientStart = 0.0;
+    segment.spline.placement.gradientEnd = -20.0;
+    require(!mapTrafficRouteSegmentClearsWater(segment, water, OMSI_TILE_SIZE_METERS),
+            "traffic lane that crosses below water must be excluded");
+
+    MapTrafficRouteSegment junctionPath;
+    junctionPath.spline.tileX = 0;
+    junctionPath.spline.tileY = 0;
+    junctionPath.points = {{{2.0, 10.0, -0.5}}, {{12.0, 10.0, -0.5}}};
+    require(!mapTrafficRouteSegmentClearsWater(junctionPath, water, OMSI_TILE_SIZE_METERS),
+            "scenery junction paths below water must also be excluded");
+}
+
 void verifyDrivingBehavior() {
     using namespace openbus::map;
     const auto straight = [](int id, double x, double y, double heading, double length) {
@@ -3372,9 +3405,80 @@ void verifyTrafficRules() {
     const MapTrafficPathRules rules = mapTrafficRulesForPath(authoredRules, 0);
     require(mapTrafficPathSpeedLimitForVehicle(rules, {0, 1, false, 0}) == 36.0 &&
                 mapTrafficPathPriorityForVehicle(rules, {0, 1, false, 0}) == 192.0 &&
-                !mapTrafficPathSpeedLimitForVehicle(rules, {0, 0, false, 1}).has_value() &&
-                mapTrafficPathPriorityForVehicle(rules, {0, 0, false, 1}) == 128.0,
-            "rules use the fixed vehicle group rather than the unscheduled population index");
+                mapTrafficPathSpeedLimitForVehicle(rules, {0, 0, false, 1}) == 36.0 &&
+                mapTrafficPathPriorityForVehicle(rules, {0, 0, false, 1}) == 192.0,
+            "group rules use the traffic-rule index, with missing properties falling back to group zero");
+    const MapTrafficPathRules groupZeroFallbackRules = mapTrafficRulesForPath(
+        {{false, {"0", "speedlimit", "36", "0"}},
+         {false, {"0", "trafficdensity", "0.5", "0"}},
+         {false, {"0", "priority", "192", "0"}},
+         {false, {"0", "no_cars", "1", "0"}},
+         {false, {"0", "no_unsched_traffic", "1", "0"}},
+         {false, {"0", "bus", "1", "0"}},
+         {false, {"0", "trucks", "1", "0"}},
+         {false, {"0", "trafficdensity", "0.25", "4"}},
+         {false, {"0", "no_cars", "0", "4"}},
+         {false, {"0", "no_unsched_traffic", "0", "4"}}},
+        0);
+    require(mapTrafficPathSpeedLimitForVehicle(groupZeroFallbackRules, {0, 0, false, 4}) ==
+                    36.0 &&
+                mapTrafficPathPriorityForVehicle(groupZeroFallbackRules, {0, 0, false, 4}) ==
+                    192.0 &&
+                mapTrafficPathDensityForVehicle(groupZeroFallbackRules, {0, 0, false, 4}) ==
+                    0.25 &&
+                mapTrafficPathAllowsVehicle(groupZeroFallbackRules, {0, 0, false, 4}) &&
+                mapTrafficPathSpeedLimitForVehicle(groupZeroFallbackRules, {0, 0, false, 5}) ==
+                    36.0 &&
+                mapTrafficPathPriorityForVehicle(groupZeroFallbackRules, {0, 0, false, 5}) ==
+                    192.0 &&
+                mapTrafficPathDensityForVehicle(groupZeroFallbackRules, {0, 0, false, 5}) == 0.0 &&
+                !mapTrafficPathAllowsVehicle(groupZeroFallbackRules, {0, 0, false, 5}),
+            "groups inherit group-zero path properties unless their own rule overrides that property, including explicit zeros and prohibitions");
+    const MapTrafficPathRules groupZeroAccessRules = mapTrafficRulesForPath(
+        {{false, {"0", "no_cars", "1", "0"}},
+         {false, {"0", "no_cars", "0", "4"}},
+         {false, {"0", "bus", "1", "0"}},
+         {false, {"0", "trucks", "1", "0"}}},
+        0);
+    require(mapTrafficPathAllowsVehicle(groupZeroAccessRules, {0, 0, false, 4}) &&
+                !mapTrafficPathAllowsVehicle(groupZeroAccessRules, {0, 0, false, 5}) &&
+                mapTrafficPathAllowsVehicle(groupZeroAccessRules, {1, 0, false, 5}) &&
+                mapTrafficPathAllowsVehicle(groupZeroAccessRules, {3, 0, false, 5}),
+            "access restrictions and permissions inherit group-zero rules while explicit group rules win");
+    const MapTrafficPathRules zeroDensityRules = mapTrafficRulesForPath(
+        {{false, {"0", "trafficdensity", "0", "0"}},
+         {false, {"0", "trafficdensity", "0", "1"}}},
+        0);
+    require(!mapTrafficPathAllowsVehicle(zeroDensityRules, {0, 0, false, 0}) &&
+                !mapTrafficPathAllowsVehicle(zeroDensityRules, {0, 1, false, 1}) &&
+                !mapTrafficPathAllowsVehicle(zeroDensityRules, {2, std::nullopt, true}),
+            "zero density for every traffic group excludes scheduled and unscheduled vehicles");
+    const MapTrafficPathRules groupSpecificZeroDensity = mapTrafficRulesForPath(
+        {{false, {"0", "trafficdensity", "0", "0"}},
+         {false, {"0", "trafficdensity", "0.5", "1"}}},
+        0);
+    require(!mapTrafficPathAllowsVehicle(groupSpecificZeroDensity, {0, 0, false, 0}) &&
+                mapTrafficPathAllowsVehicle(groupSpecificZeroDensity, {0, 1, false, 1}) &&
+                mapTrafficPathAllowsVehicle(groupSpecificZeroDensity, {2, std::nullopt, true}),
+            "group-specific zero density blocks its group without closing positive-density routes");
+    const MapTrafficPathRules singleGroupDensityRule =
+        mapTrafficRulesForPath({{false, {"0", "trafficdensity", "0", "0"}}}, 0);
+    require(!mapTrafficPathAllowsVehicle(singleGroupDensityRule, {2, std::nullopt, true}),
+            "scheduled buses are excluded when all configured density rules are zero");
+    MapTrafficLaneNetwork zeroDensityLaneNetwork;
+    MapTrafficRouteSegment zeroDensityLane;
+    zeroDensityLane.spline.placement = makeSpline(1200, 0, 1201, 0.0);
+    zeroDensityLane.pathRules = zeroDensityRules;
+    zeroDensityLaneNetwork.addSegment(std::move(zeroDensityLane));
+    MapTrafficRouteSegment densityContinuationLane;
+    densityContinuationLane.spline.placement = makeSpline(1201, 1200, 0, 10.0);
+    zeroDensityLaneNetwork.addSegment(std::move(densityContinuationLane));
+    zeroDensityLaneNetwork.finalize();
+    require(!zeroDensityLaneNetwork.selectSpawnLane({0, 0, false, 0}, 1) &&
+                !zeroDensityLaneNetwork.selectSpawnLane({2, std::nullopt, true}, 2) &&
+                !zeroDensityLaneNetwork.buildRoute(1200, 0, 0, 0.0, {0, 0, false, 0}) &&
+                !zeroDensityLaneNetwork.buildRoute(1200, 0, 0, 0.0, {2, std::nullopt, true}),
+            "zero-density lanes are neither spawn points nor traversable route segments");
     require(rules.groups.size() == 4 && rules.groups[0].carsProhibited == true &&
                 rules.groups[0].busesAllowed == true && rules.groups[0].trucksAllowed == true &&
                 rules.groups[0].overtakingProhibited == true &&
@@ -3415,7 +3519,7 @@ void verifyTrafficRules() {
             mapTrafficPathAllowsVehicle(rules, {3, 1, false, 0}) &&
             !mapTrafficPathAllowsVehicle(rules, {0, 1, false, 0}) &&
             !mapTrafficPathAllowsVehicle(rules, {3, 0, false, 1}) &&
-            mapTrafficPathAllowsVehicle(rules, {0, 1, false, 2}) &&
+            !mapTrafficPathAllowsVehicle(rules, {0, 1, false, 2}) &&
             !mapTrafficPathAllowsVehicle(rules, {0, 0, false, 3}) &&
             mapTrafficPathAllowsVehicle(rules, {2, std::nullopt, true}),
         "path rules enforce unscheduled access and density while preserving scheduled buses");
@@ -3431,8 +3535,8 @@ void verifyTrafficRules() {
          {false, {"0", "trafficdensity", "0", "0"}},
          {false, {"0", "no_unsched_traffic", "1", "0"}}},
         0);
-    require(mapTrafficPathAllowsVehicle(scheduledBusAllowedRoad, {2, std::nullopt, true}),
-            "scheduled buses ignore unscheduled density rules when explicitly permitted");
+    require(!mapTrafficPathAllowsVehicle(scheduledBusAllowedRoad, {2, std::nullopt, true}),
+            "an explicit bus allowance cannot override a path with zero traffic density");
     const MapTrafficPathRules afterKill =
         mapTrafficRulesForPath({{false, {"0", "no_cars", "1", "0"}},
                                 {true, {"0", "no_cars", "1", "0"}},
@@ -4450,6 +4554,7 @@ int main(int argc, char** argv) {
         using namespace openbus::map;
         verifyPassengerSideOffsets();
         verifyPassengerServiceBehavior();
+        verifyTrafficWaterClearance();
         verifyDrivingBehavior();
         verifyTrafficRules();
         verifyAutomaticRoundaboutPriority();

@@ -11,6 +11,7 @@ These pages describe OpenBus runtime support, not complete OMSI compatibility. A
 
 ## By file family
 
+- [Consolidated keyword gap index](UNIMPLEMENTED_CONFIGURATION_KEYWORDS.md) — known keywords and record families whose runtime behavior is absent, parsed-only, partial, or unverified.
 - [BUS and bus-model configuration](IMPLEMENTATION_STATUS_BUS.md) — `.bus`, bus model CFG, and linked passenger/path data.
 - [Scenery configuration](IMPLEMENTATION_STATUS_SCENERY.md) — `.sco` and its model CFG, placement, scripts, and collision.
 - [Map configuration](IMPLEMENTATION_STATUS_MAP.md) — `global.cfg`, tile `.map`, terrain/texture sidecars, and `.sli` roads.

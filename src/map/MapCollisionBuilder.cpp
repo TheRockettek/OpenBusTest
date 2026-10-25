@@ -132,8 +132,8 @@ std::array<double, 3> transformSceneryVertex(const openbus::rendering::ObjPositi
 
 std::array<double, 6> parsedMeshBounds(const openbus::rendering::ParsedObj& mesh) {
     std::array<double, 6> bounds = {
-        std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
-        std::numeric_limits<double>::max(), std::numeric_limits<double>::lowest(),
+        std::numeric_limits<double>::max(),    std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::max(),    std::numeric_limits<double>::lowest(),
         std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
     for (const auto& vertex : mesh.positions) {
         bounds[0] = std::min(bounds[0], vertex.x);
@@ -147,7 +147,7 @@ std::array<double, 6> parsedMeshBounds(const openbus::rendering::ParsedObj& mesh
 }
 
 void expandSceneryCollisionObjectBounds(MapSceneryCollisionObject& object,
-                                       const std::array<double, 6>& localBounds) {
+                                        const std::array<double, 6>& localBounds) {
     for (int corner = 0; corner < 8; ++corner) {
         const openbus::rendering::ObjPosition vertex{
             (corner & 1) == 0 ? localBounds[0] : localBounds[3],
@@ -163,10 +163,11 @@ void expandSceneryCollisionObjectBounds(MapSceneryCollisionObject& object,
 
 bool hasUsableCollisionTriangles(const openbus::rendering::ParsedObj& mesh) {
     return std::any_of(mesh.triangles.begin(), mesh.triangles.end(), [&](const auto& triangle) {
-        return std::all_of(triangle.indices.begin(), triangle.indices.end(), [&](const auto& index) {
-            return index.position > 0 &&
-                   static_cast<std::size_t>(index.position) <= mesh.positions.size();
-        });
+        return std::all_of(
+            triangle.indices.begin(), triangle.indices.end(), [&](const auto& index) {
+                return index.position > 0 &&
+                       static_cast<std::size_t>(index.position) <= mesh.positions.size();
+            });
     });
 }
 
@@ -184,9 +185,18 @@ makeBoundingBoxCollisionMesh(const std::array<double, 6>& boundingBox) {
         mesh->positions.push_back({position[0], position[1], position[2]});
     }
     constexpr std::array<std::array<int, 3>, 12> triangles = {{
-        {{0, 2, 3}}, {{0, 3, 1}}, {{4, 5, 7}}, {{4, 7, 6}},
-        {{0, 1, 5}}, {{0, 5, 4}}, {{2, 6, 7}}, {{2, 7, 3}},
-        {{0, 4, 6}}, {{0, 6, 2}}, {{1, 3, 7}}, {{1, 7, 5}},
+        {{0, 2, 3}},
+        {{0, 3, 1}},
+        {{4, 5, 7}},
+        {{4, 7, 6}},
+        {{0, 1, 5}},
+        {{0, 5, 4}},
+        {{2, 6, 7}},
+        {{2, 7, 3}},
+        {{0, 4, 6}},
+        {{0, 6, 2}},
+        {{1, 3, 7}},
+        {{1, 7, 5}},
     }};
     for (const auto& indices : triangles) {
         openbus::rendering::ObjTriangle triangle;
@@ -405,9 +415,9 @@ struct SceneryCollisionDefinition {
     std::optional<SceneryPoleCrashConfiguration> poleCrash;
 };
 
-SceneryCollisionDefinition readSceneryCollisionDefinition(
-    const std::filesystem::path& configPath, const std::filesystem::path& omsiRoot,
-    const std::filesystem::path& mapRoot) {
+SceneryCollisionDefinition readSceneryCollisionDefinition(const std::filesystem::path& configPath,
+                                                          const std::filesystem::path& omsiRoot,
+                                                          const std::filesystem::path& mapRoot) {
     SceneryCollisionDefinition definition;
     const SceneryObjectConfig scenery = loadSceneryObjectFile(configPath);
     definition.noCollision = scenery.noCollision;
@@ -460,8 +470,8 @@ SceneryCollisionDefinition readSceneryCollisionDefinition(
             resolved = resolved.lexically_normal();
             if (std::none_of(definition.meshes.begin(), definition.meshes.end(),
                              [&](const auto& existing) {
-                    return existing.lexically_normal() == resolved;
-                })) {
+                                 return existing.lexically_normal() == resolved;
+                             })) {
                 definition.meshes.push_back(std::move(resolved));
             }
         }
@@ -480,10 +490,9 @@ SceneryCollisionDefinition readSceneryCollisionDefinition(
             continue;
         }
         meshPath = meshPath.lexically_normal();
-        if (std::none_of(definition.modelGeometryMeshes.begin(),
-                         definition.modelGeometryMeshes.end(), [&](const auto& existing) {
-                             return existing.lexically_normal() == meshPath;
-                         })) {
+        if (std::none_of(
+                definition.modelGeometryMeshes.begin(), definition.modelGeometryMeshes.end(),
+                [&](const auto& existing) { return existing.lexically_normal() == meshPath; })) {
             definition.modelGeometryMeshes.push_back(std::move(meshPath));
         }
     }
@@ -606,9 +615,9 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
                     }
                     auto bounds = meshLocalBoundsCache.find(meshKey);
                     if (bounds == meshLocalBoundsCache.end()) {
-                        bounds = meshLocalBoundsCache
-                                     .emplace(meshKey, parsedMeshBounds(*mesh->second))
-                                     .first;
+                        bounds =
+                            meshLocalBoundsCache.emplace(meshKey, parsedMeshBounds(*mesh->second))
+                                .first;
                     }
                     addMesh(mesh->second, bounds->second);
                 }

@@ -16,10 +16,9 @@ namespace {
 
 VehicleFileKind vehicleFileKindForConfig(const std::filesystem::path& configPath) {
     std::string extension = configPath.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-                   [](unsigned char character) {
-                       return static_cast<char>(std::tolower(character));
-                   });
+    std::transform(
+        extension.begin(), extension.end(), extension.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
     return extension == ".ovh" ? VehicleFileKind::Vehicle : VehicleFileKind::Bus;
 }
 
@@ -216,7 +215,7 @@ RenderLoop::~RenderLoop() {
 Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
                                 const std::filesystem::path& modelConfigPath,
                                 const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy,
-                                bool isAiVehicle) {
+                                bool isAiVehicle, VehicleSetupOptions setupOptions) {
     const std::filesystem::path resolvedVehicleConfigPath =
         busConfigurationPathFor(vehicleConfigPath);
     const VehicleFileKind configKind = vehicleFileKindForConfig(resolvedVehicleConfigPath);
@@ -268,7 +267,7 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
     auto model = std::make_unique<Vehicle>(
         definition, placementForVehicle(vehicleConfiguration, placement, isAiVehicle), modelOffsetZ,
         loadingPolicy, *assetRequestManager_, simulationState_, soundEngine_, soundViewpoint_,
-        isAiVehicle);
+        isAiVehicle, false, std::move(setupOptions));
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
     return result;
@@ -289,6 +288,11 @@ bool RenderLoop::AddTrafficVehicle(
     std::optional<std::size_t> passengerRouteIndex, std::size_t* registeredPassengerRouteIndex) {
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
+    }
+    if (isBus && !registerPassengerRouteOnly &&
+        (requiredRouteSplineIds.empty() || !stopAtRequiredSequenceEnd)) {
+        throw std::invalid_argument("Scheduled map buses require a complete timetable route ending "
+                                    "at its final checkpoint");
     }
     const auto laneStarts =
         isBus ? mapRenderer_->trafficEntryLanes() : mapRenderer_->trafficSpawnLanes();
@@ -311,10 +315,9 @@ bool RenderLoop::AddTrafficVehicle(
     const auto resolvedConfig = busConfigurationPathFor(busConfigPath);
     const VehicleFileKind configKind = vehicleFileKindForConfig(resolvedConfig);
     const std::filesystem::path modelConfig =
-        configKind == VehicleFileKind::Bus ? modelConfigurationPathForBus(resolvedConfig)
+        configKind == VehicleFileKind::Bus ? modelConfigurationPathForBusFromConfig(resolvedConfig)
                                            : modelConfigurationPathForVehicle(resolvedConfig);
-    const auto definition =
-        sharedVehicleDefinition(resolvedConfig, modelConfig, configKind);
+    const auto definition = sharedVehicleDefinition(resolvedConfig, modelConfig, configKind);
     const auto& configuration = definition->vehicleConfiguration;
     if (!configuration.hasBoundingBox || configuration.boundingBox[0] <= 0.0 ||
         configuration.boundingBox[1] <= 0.0) {
@@ -324,8 +327,7 @@ bool RenderLoop::AddTrafficVehicle(
     const int vehicleType = isBus ? 2 : configuration.vehicleType.value_or(defaultVehicleType);
     const double turnRadius = calculateTrafficMinimumTurnRadius(configuration, vehicleType == 2);
     if (!isBus && !trafficRuleGroupIndex.has_value()) {
-        throw std::invalid_argument(
-            "Unscheduled map traffic requires a vehicle-rule group");
+        throw std::invalid_argument("Unscheduled map traffic requires a vehicle-rule group");
     }
     const openbus::map::MapTrafficVehicleFilter vehicleFilter{
         vehicleType, isBus ? std::nullopt : unscheduledGroupIndex, isBus,
@@ -521,7 +523,7 @@ int RenderLoop::trafficVehicleType(const std::filesystem::path& vehicleConfigPat
     const auto resolvedConfig = busConfigurationPathFor(vehicleConfigPath);
     const VehicleFileKind configKind = vehicleFileKindForConfig(resolvedConfig);
     const std::filesystem::path modelConfig =
-        configKind == VehicleFileKind::Bus ? modelConfigurationPathForBus(resolvedConfig)
+        configKind == VehicleFileKind::Bus ? modelConfigurationPathForBusFromConfig(resolvedConfig)
                                            : modelConfigurationPathForVehicle(resolvedConfig);
     const auto definition = sharedVehicleDefinition(resolvedConfig, modelConfig, configKind);
     return definition->vehicleConfiguration.vehicleType.value_or(defaultVehicleType);
@@ -548,7 +550,7 @@ double RenderLoop::trafficMinimumTurnRadius(const std::filesystem::path& vehicle
     const std::filesystem::path resolvedConfig = busConfigurationPathFor(vehicleConfigPath);
     const VehicleFileKind configKind = isBus ? VehicleFileKind::Bus : VehicleFileKind::Vehicle;
     const std::filesystem::path resolvedModelConfig =
-        isBus ? modelConfigurationPathForBus(resolvedConfig)
+        isBus ? modelConfigurationPathForBusFromConfig(resolvedConfig)
               : modelConfigurationPathForVehicle(resolvedConfig);
     const auto definition =
         sharedVehicleDefinition(resolvedConfig, resolvedModelConfig, configKind);

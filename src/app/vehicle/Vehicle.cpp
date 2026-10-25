@@ -212,6 +212,9 @@ void Vehicle::load(const SharedVehicleDefinition& definition) {
     for (const ModelCtcTexture& texture : result.ctcTextures) {
         ctcTextureReplacements[lower(texture.slot)] = texture.textureName;
     }
+    for (const auto& [slot, textureName] : setupOptions.ctcTextureReplacements) {
+        ctcTextureReplacements[lower(slot)] = textureName;
+    }
     if (loadSharedDisplayLists()) {
         return;
     }

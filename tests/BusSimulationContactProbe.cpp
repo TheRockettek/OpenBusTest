@@ -165,7 +165,12 @@ ContactMetrics runCurbCrossing(WheelStaticContactSettings settings) {
     return metrics;
 }
 
-MapPoleState runPoleImpact(double resistance, double breakAngle) {
+struct PoleImpactResult {
+    double initialAngleRadians = 0.0;
+    MapPoleState finalState;
+};
+
+PoleImpactResult runPoleImpact(double resistance, double breakAngle) {
     BusSimulation simulation(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0},
                              60.0, 8, 0.0, {}, {}, true);
     MapPoleCollision pole;
@@ -177,14 +182,25 @@ MapPoleState runPoleImpact(double resistance, double breakAngle) {
     pole.resistanceRadiansPerTonneMeterPerSecond = resistance;
     pole.breakAngleRadians = breakAngle;
     simulation.addMapTileCollision(0, 0, std::nullopt, {}, {pole});
+    PoleImpactResult result;
+    int stepsSinceImpact = 0;
     for (int step = 0; step < 300; ++step) {
         simulation.step(0.0, 0.0, 1.0);
     }
     for (int step = 0; step < 900; ++step) {
         simulation.step(0.55, 0.0, 0.0);
         const auto states = simulation.mapPoleStates();
-        if (!states.empty() && states.front().angleRadians > 0.0) {
-            return states.front();
+        if (states.empty()) {
+            continue;
+        }
+        if (result.initialAngleRadians == 0.0 && states.front().angleRadians > 0.0) {
+            result.initialAngleRadians = states.front().angleRadians;
+        }
+        if (result.initialAngleRadians > 0.0) {
+            ++stepsSinceImpact;
+            if (states.front().broken || stepsSinceImpact >= 90) {
+                return {result.initialAngleRadians, states.front()};
+            }
         }
     }
     throw std::runtime_error("bus did not bend the configured map pole");
@@ -206,17 +222,30 @@ int main() {
         const ContactMetrics compliant = runCrossing({0.65, 1.0e-5});
         const ContactMetrics firmCurb = runCurbCrossing({0.8, 1.0e-6});
         const ContactMetrics compliantCurb = runCurbCrossing({0.65, 1.0e-5});
-        const MapPoleState bentPole = runPoleImpact(0.0001, 1.2);
-        const MapPoleState brokenPole = runPoleImpact(0.25, 0.01);
-        const MapPoleState highThresholdBrokenPole = runPoleImpact(0.25, 2.0);
+        const PoleImpactResult bentPole = runPoleImpact(0.0001, 1.2);
+        const PoleImpactResult brokenPole = runPoleImpact(0.25, 0.01);
+        const PoleImpactResult highThresholdBrokenPole = runPoleImpact(0.25, 2.0);
         printMetrics("firm", firm);
         printMetrics("compliant", compliant);
         printMetrics("firm-curb", firmCurb);
         printMetrics("compliant-curb", compliantCurb);
-        if (bentPole.broken || bentPole.angleRadians <= 0.0 || !brokenPole.broken ||
-            brokenPole.angleRadians < std::acos(-1.0) * 0.5 ||
-            !highThresholdBrokenPole.broken || highThresholdBrokenPole.angleRadians < 2.0) {
-            std::cerr << "pole impacts did not apply resistance and break-angle behavior\n";
+        if (bentPole.finalState.broken || bentPole.finalState.angleRadians <= 0.0 ||
+            !brokenPole.finalState.broken ||
+            brokenPole.finalState.angleRadians < std::acos(-1.0) * 0.5 ||
+            brokenPole.initialAngleRadians >= brokenPole.finalState.angleRadians ||
+            !highThresholdBrokenPole.finalState.broken ||
+            highThresholdBrokenPole.finalState.angleRadians < 2.0 ||
+            highThresholdBrokenPole.initialAngleRadians >=
+                highThresholdBrokenPole.finalState.angleRadians) {
+            std::cerr << "pole impact behavior unexpected: bent="
+                      << bentPole.initialAngleRadians << "->"
+                      << bentPole.finalState.angleRadians << " broken="
+                      << brokenPole.initialAngleRadians << "->"
+                      << brokenPole.finalState.angleRadians << " ("
+                      << brokenPole.finalState.broken << ") high-threshold="
+                      << highThresholdBrokenPole.initialAngleRadians << "->"
+                      << highThresholdBrokenPole.finalState.angleRadians << " ("
+                      << highThresholdBrokenPole.finalState.broken << ")\n";
             return 1;
         }
         if (firm.finalX < 21.0 || compliant.finalX < 21.0) {

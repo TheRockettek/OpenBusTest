@@ -775,6 +775,44 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             state.stuckDiagnosticLogged = false;
             state.vehicle->mapTrafficRouteFinished = false;
             state.vehicle->mapTrafficTileActive = true;
+            const MapTrafficRoute& spawnedRoute = state.actor.route;
+            if (spawnedRoute.segments.empty() ||
+                spawnedRoute.cumulativeEndDistances.size() != spawnedRoute.segments.size()) {
+                throw std::logic_error("Spawned map traffic vehicle has an invalid route");
+            }
+            const auto routeSegment = std::upper_bound(spawnedRoute.cumulativeEndDistances.begin(),
+                                                       spawnedRoute.cumulativeEndDistances.end(),
+                                                       state.actor.distanceMeters);
+            const std::size_t routeSegmentIndex =
+                routeSegment == spawnedRoute.cumulativeEndDistances.end()
+                    ? spawnedRoute.segments.size() - 1
+                    : static_cast<std::size_t>(routeSegment -
+                                               spawnedRoute.cumulativeEndDistances.begin());
+            const MapTrafficRouteSegment& spawnedSegment = spawnedRoute.segments[routeSegmentIndex];
+            const MapTrafficVehicleFilter spawnedVehicleFilter{
+                state.actor.vehicleType, state.actor.unscheduledGroupIndex, state.actor.scheduled,
+                state.actor.trafficRuleGroupIndex};
+            gameLog.Log(std::string(state.isBus ? "Scheduled map AI bus spawned: "
+                                                : "Map road AI vehicle spawned: ") +
+                        "vehicle=" + state.actor.modelPath + ", spline=" +
+                        std::to_string(spawnedSegment.spline.placement.splineId) + ", path=" +
+                        (spawnedSegment.sceneryPathIndex.has_value()
+                             ? std::to_string(*spawnedSegment.sceneryPathIndex)
+                             : std::string("none")) +
+                        ", priority=" +
+                        std::to_string(mapTrafficPathPriorityForVehicle(spawnedSegment.pathRules,
+                                                                        spawnedVehicleFilter)) +
+                        ", density=" +
+                        std::to_string(mapTrafficPathDensityForVehicle(spawnedSegment.pathRules,
+                                                                       spawnedVehicleFilter)) +
+                        ", unscheduledGroup=" +
+                        (state.actor.unscheduledGroupIndex.has_value()
+                             ? std::to_string(*state.actor.unscheduledGroupIndex)
+                             : std::string("none")) +
+                        ", trafficRuleGroup=" +
+                        (state.actor.trafficRuleGroupIndex.has_value()
+                             ? std::to_string(*state.actor.trafficRuleGroupIndex)
+                             : std::string("none")));
             if (state.isBus) {
                 state.nextPassengerStopIndex = 0;
                 while (state.nextPassengerStopIndex < state.passengerStops.size() &&

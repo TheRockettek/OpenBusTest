@@ -350,6 +350,9 @@ MapTrafficTurnSignal mapTrafficActorTurnSignal(const MapTrafficActor& actor,
                                                double activationDistanceMeters = 35.0);
 std::vector<MapTrafficSpawnCandidate> mapTrafficRouteSpawnCandidates(const MapTrafficRoute& route,
                                                                      double vehicleLengthMeters);
+bool mapTrafficRouteSegmentClearsWater(const MapTrafficRouteSegment& segment,
+                                       const WaterData& water, double tileSize,
+                                       double clearanceMeters = 0.25);
 
 // Advances one actor. Returns false when it reaches the end of an open route.
 bool advanceMapTrafficActor(MapTrafficActor& actor, double elapsedSeconds);

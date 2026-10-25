@@ -43,6 +43,7 @@ openbus_add_probe(OpenBusSceneryObjectConfigProbe SceneryObjectConfigProbe.cpp
 openbus_add_probe(OpenBusModelConfigProbe ModelConfigProbe.cpp LIBS openbus_config openbus_osc)
 openbus_add_probe(OpenBusVehicleConfigProbe VehicleConfigProbe.cpp
     LIBS openbus_config openbus_osc openbus_physics)
+openbus_add_probe(OpenBusVehicleCatalogProbe VehicleCatalogProbe.cpp LIBS openbus_config)
 add_executable(OpenBusVehicleDefinitionProbe VehicleDefinitionProbe.cpp
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleDefinition.cpp")
 target_include_directories(OpenBusVehicleDefinitionProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")

@@ -1,6 +1,7 @@
 #include "config/ModelConfigLoader.h"
 #include "config/VehicleConfigLoader.h"
 #include "core/Variables.h"
+#include "map/MapConfigLoader.h"
 #include "osc/OscConverter.h"
 
 #include <algorithm>
@@ -167,6 +168,15 @@ Finding validateModel(const std::filesystem::path& path) {
     return finding;
 }
 
+Finding validateMap(const std::filesystem::path& path) {
+    Finding finding;
+    finding.kind = "map";
+    const openbus::map::MapDefinition map =
+        openbus::map::loadMapDefinition(path.parent_path());
+    appendDiagnostics(finding, map.diagnostics);
+    return finding;
+}
+
 Finding validateOsc(const std::filesystem::path& path) {
     Finding finding;
     finding.kind = "osc";
@@ -276,6 +286,7 @@ int main(int argc, char** argv) {
     }
 
     std::size_t files = 0;
+    std::size_t maps = 0;
     std::size_t invalid = 0;
     std::size_t unsupported = 0;
     std::filesystem::recursive_directory_iterator iterator(
@@ -297,7 +308,28 @@ int main(int argc, char** argv) {
             error.clear();
             continue;
         }
+        if (lower(iterator->path().filename().string()) == "global.cfg") {
+            ++maps;
+            try {
+                const Finding finding = validateMap(iterator->path());
+                printFinding(iterator->path().parent_path(), finding);
+                invalid += finding.status == Status::Invalid ? 1U : 0U;
+                unsupported += finding.status == Status::Unsupported ? 1U : 0U;
+            } catch (const std::exception& exception) {
+                Finding finding;
+                finding.status = Status::Invalid;
+                finding.kind = "map";
+                finding.diagnostics.push_back({ConfigurationDiagnostic::Severity::Error, 0,
+                                               "global.cfg", exception.what()});
+                printFinding(iterator->path().parent_path(), finding);
+                ++invalid;
+            }
+        }
         const std::string extension = lower(iterator->path().extension().string());
+        if (extension == ".cfg" &&
+            lower(iterator->path().filename().string()) == "global.cfg") {
+            continue;
+        }
         if (extension != ".bus" && extension != ".cfg" && extension != ".osc") {
             continue;
         }
@@ -318,7 +350,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::cout << "\nScanned " << files << " file(s): " << invalid << " invalid, " << unsupported
-              << " unsupported/unrecognized.\n";
+    std::cout << "\nScanned " << files << " file(s) and " << maps << " map(s): " << invalid
+              << " invalid, " << unsupported << " unsupported/unrecognized.\n";
     return invalid == 0 ? 0 : 1;
 }

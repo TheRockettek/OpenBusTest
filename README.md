@@ -22,6 +22,10 @@ prove end-to-end rendering or runtime semantics.
 | Sound | Player sound runtime is active; AI vehicles select `[sound_ai]` when configured and otherwise fall back to `[sound]`. Full OMSI sound and AI event coverage remain incomplete. | [`VehicleSoundBank.cpp`](src/audio/VehicleSoundBank.cpp), [`VehicleConfigLoader.cpp`](src/config/VehicleConfigLoader.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp), [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp) |
 | AI traffic, pedestrians, and routes | Partial runtime: asynchronous `.ovh` vehicle construction and model/script loading, asynchronous pedestrian `.hum`/model CFG and mesh loading, scheduled map buses, group-scoped path traffic rules (including `no_unsched_traffic`) for unscheduled road vehicles, route-end retirement, sidewalk pedestrians, fixed-cycle plus request-aware SCO signal timing, route-based AI turn indicators, and `unsched_trafficdens.txt` group/day curves for group-specific active targets are active. Pedestrian populations use passenger-density schedules on human paths; vehicle `[rule]` restrictions target unscheduled groups and do not apply to scheduled buses or pedestrians. Group quotas change over time with safe off-screen admission/retirement; the maximum reserved pool is fixed at startup, and unfilled reservations are retried as connected road lanes stream in. AI driver models, lane changing/overtaking, and full OMSI parity remain incomplete. | [traffic runtime](src/map/MapTrafficRuntime.cpp), [map configuration](src/map/MapConfigLoader.cpp), [render loop](src/app/RenderLoop.cpp) | [MapTrafficRuntimeProbe.cpp](tests/MapTrafficRuntimeProbe.cpp), [MapConfigLoaderProbe.cpp](tests/MapConfigLoaderProbe.cpp), [AssetRequestManagerProbe.cpp](tests/AssetRequestManagerProbe.cpp); see the [completion TODO](TODO.md) |
 
+For a consolidated list of configuration keywords with incomplete support,
+including bus model CFG keywords selected by `OPENBUS_MODEL_CONFIG`, see the
+[configuration keyword gap index](Docs/UNIMPLEMENTED_CONFIGURATION_KEYWORDS.md).
+
 ### Map runtime scope
 
 Startup progress is written to the console and `game.log`, including configuration
@@ -32,18 +36,27 @@ unhandled-configuration-tag warning, check the subsequent progress messages for
 the active stage or tile. These logs do not require performance tracing.
 
 Interactive startup opens an ImGui setup screen. It lists maps with a
-`global.cfg` under the configured OMSI root, lets the player choose a map and
-one of that map's entrypoints, and defaults the date/time to the host's current
-local date and time. The session starts on foot at the selected location.
+`global.cfg` under the configured OMSI root and `.bus` vehicles under
+`Vehicles`. Choose a vehicle by its `[friendlyname]` manufacturer and type,
+then choose its default appearance or a discovered `.cti` livery, an optional
+HOF depot, and a configured number/registration. CTI texture replacements
+apply to the selected vehicle. The depot's HOF path and name are exposed to
+vehicle scripts as `hof_file` and `hof_name`; HOF timetable and destination
+loading are not implemented yet. Choose a map and one of its entrypoints; the
+date/time defaults to the host's current local date and time. **Start in bus**
+enters the selected vehicle immediately, while **Start on foot** lets the
+player enter it later.
 Use **WASD** to walk relative to your view and **Space** to jump while grounded.
 **F4** toggles mouse look and releases the cursor again to use the on-foot panel.
 Walking uses gravity and a collision capsule against terrain, roads, and static
 scenery; it is not the bus's flying debug camera. Map and collision streaming
 follow the walker. The hidden bus's collision outline is not drawn on foot.
-Use the in-game **Spawn configured bus** button to enter the bus at the selected
-entrypoint, configured by `OPENBUS_BUS_CONFIG` and `OPENBUS_MODEL_CONFIG`. Benchmark mode
-bypasses the interactive menu and continues to honor the environment-selected
-map, spawn, and `OPENBUS_MAP_AI_HOUR` values.
+Use the in-game **Spawn selected bus** button to enter the chosen vehicle at the
+selected entrypoint. Interactive vehicle selection uses each `.bus` file's
+own `[model]` entry; `OPENBUS_BUS_CONFIG` and `OPENBUS_MODEL_CONFIG` remain
+available for benchmark/custom runs. Benchmark mode bypasses the interactive
+menu and continues to honor the environment-selected map, spawn, and
+`OPENBUS_MAP_AI_HOUR` values.
 ImGui manages the cursor during setup and on foot; after a bus is spawned,
 the game manages the steering crosshair and clickable-control cursors.
 Bus physics stays frozen while on foot and resumes when the bus is spawned.
@@ -537,7 +550,9 @@ the configured fixed rate.
 ### OMSI configuration audit
 
 On Windows, run the helper with an OMSI directory (or another directory to
-inspect). It builds `OpenBusConfigAudit` in `build-ode` before scanning:
+inspect). It builds `OpenBusConfigAudit` in `build-ode` before scanning. The
+audit validates map manifests (`global.cfg`), bus configurations and their
+referenced models, model configuration files, and OSC scripts:
 
 ```powershell
 .\audit.bat "C:\Path\To\OMSI 2"
@@ -596,10 +611,11 @@ with `-DCMAKE_BUILD_TYPE=Debug`.
   frame exceeds that budget, excess accumulated time is dropped to avoid a
   spiral of death
 
-Vehicle physics is loaded from the OMSI `.bus` file configured by
-`OPENBUS_BUS_CONFIG`. Relative paths are resolved against the standard Steam
-installation at `C:\Program Files (x86)\Steam\steamapps\common\OMSI 2`; set
-`OPENBUS_OMSI_ROOT` when OMSI is installed elsewhere:
+Interactive vehicle physics is loaded from the `.bus` selected in the startup
+menu. Benchmark/custom runs can select a bus with `OPENBUS_BUS_CONFIG`.
+Relative paths are resolved against the standard Steam installation at
+`C:\Program Files (x86)\Steam\steamapps\common\OMSI 2`; set `OPENBUS_OMSI_ROOT`
+when OMSI is installed elsewhere:
 
 ```powershell
 $env:OPENBUS_OMSI_ROOT = "D:\SteamLibrary\steamapps\common\OMSI 2"
@@ -634,10 +650,11 @@ disables precipitation. `OPENBUS_WEATHER_RATE` accepts `0`–`1` and defaults to
 them. This does not yet load OMSI map weather schedules or render fog,
 windshield effects, wet roads, or snow accumulation.
 
-`OPENBUS_BUS_CONFIG` accepts either an absolute path or a path relative to
-`OPENBUS_OMSI_ROOT`. Set the optional `OPENBUS_MODEL_CONFIG` to select a `.cfg`
-explicitly; otherwise the loader uses the `.bus` file's `[model]` entry. For
-example, both paths below are relative to the OMSI installation root:
+For benchmark/custom runs, `OPENBUS_BUS_CONFIG` accepts an absolute path or a
+path relative to `OPENBUS_OMSI_ROOT`. Set the optional `OPENBUS_MODEL_CONFIG`
+to select a `.cfg` explicitly; otherwise the loader uses the `.bus` file's
+`[model]` entry. These settings do not override interactive vehicle selection.
+For example, both paths below are relative to the OMSI installation root:
 
 ```powershell
 $env:OPENBUS_BUS_CONFIG = "Vehicles/Caetano Levante/Caetano.bus"
@@ -652,8 +669,10 @@ The first vehicle is connected to the shared bus simulation; additional
 vehicles are scripted AI models rendered at their declared placements. Set
 `OPENBUS_AI_BUS_CONFIG` and `OPENBUS_AI_MODEL_CONFIG` together to add AI
 vehicles. `OPENBUS_AI_COUNT` selects the number to spawn (defaults to 1 and is
-limited to 200); multiple instances are arranged in a grid. `run.bat` selects
-the MAN DL05 on Cotterell at spawn 0.
+limited to 200); multiple instances are arranged in a grid. `run.bat` opens
+the interactive vehicle selector and defaults the map to Cotterell. The
+launcher supplies the MAN DL05 config defaults only when benchmark mode is
+enabled.
 
 The loader uses `[mass]`, `[boundingbox]`, `[schwerpunkt]`, and `[newachse]`
 records, including axle spring, damper, load, and driven flags. The

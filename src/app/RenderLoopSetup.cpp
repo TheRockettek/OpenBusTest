@@ -1,10 +1,14 @@
 #include "app/RenderLoopInternal.h"
 #include "app/ImGuiLayer.h"
+#include "config/VehicleCatalog.h"
 #include "core/Environment.h"
+#include "core/Logger.h"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <chrono>
 #include <ctime>
 #include <numbers>
@@ -42,6 +46,19 @@ std::string spawnLabel(std::size_t index, const openbus::map::MapEntryPoint& ent
            (entryPoint.name.empty() ? std::string("(unnamed)") : entryPoint.name);
 }
 
+std::string normalizedText(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return value;
+}
+
+void copyToInputBuffer(std::array<char, 256>& buffer, const std::string& value) {
+    const std::size_t count = std::min(value.size(), buffer.size() - 1);
+    std::copy_n(value.data(), count, buffer.data());
+    buffer[count] = '\0';
+}
+
 } // namespace
 
 bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
@@ -52,6 +69,13 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
     if (maps.empty()) {
         throw std::runtime_error("No OMSI maps containing global.cfg were found under '" +
                                  (omsiRoot / "maps").string() + "'");
+    }
+    const std::filesystem::path vehiclesDirectory = omsiRoot / "Vehicles";
+    const std::vector<openbus::config::VehicleCatalogEntry> vehicles =
+        openbus::config::discoverVehicleCatalog(vehiclesDirectory);
+    if (vehicles.empty()) {
+        throw std::runtime_error("No OMSI .bus files were found under '" +
+                                 vehiclesDirectory.string() + "'");
     }
 
     std::size_t selectedMapIndex = 0;
@@ -81,8 +105,46 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
     int hour = localTime.tm_hour;
     int minute = localTime.tm_min;
     int selectedSpawn = 0;
+    std::size_t selectedVehicleIndex = 0;
+    std::size_t selectedAppearanceIndex = 0;
+    std::size_t selectedDepotIndex = 0;
+    std::size_t selectedRegistrationIndex = 0;
     std::optional<openbus::map::MapDefinition> selectedDefinition;
     std::string mapLoadError;
+    std::optional<VehicleConfig> selectedVehicleConfig;
+    std::vector<openbus::config::VehicleAppearance> appearances;
+    std::vector<openbus::config::VehicleDepot> depots;
+    std::string vehicleLoadError;
+    std::array<char, 256> registrationInput = {};
+    std::array<char, 256> vehicleNumberInput = {};
+
+    const auto loadSelectedVehicle = [&] {
+        selectedVehicleConfig.reset();
+        appearances.clear();
+        depots.clear();
+        vehicleLoadError.clear();
+        selectedAppearanceIndex = 0;
+        selectedDepotIndex = 0;
+        selectedRegistrationIndex = 0;
+        copyToInputBuffer(registrationInput, std::string{});
+        copyToInputBuffer(vehicleNumberInput, std::string{});
+        try {
+            selectedVehicleConfig = loadVehicleConfig(
+                vehicles[selectedVehicleIndex].configurationPath, VehicleFileKind::Bus, false);
+            appearances = openbus::config::discoverVehicleAppearances(
+                vehicles[selectedVehicleIndex].configurationPath, vehiclesDirectory);
+            depots = openbus::config::discoverVehicleDepots(
+                vehicles[selectedVehicleIndex].configurationPath, vehiclesDirectory);
+            copyToInputBuffer(registrationInput, selectedVehicleConfig->selectedRegistration);
+            copyToInputBuffer(vehicleNumberInput, selectedVehicleConfig->selectedVehicleNumber);
+        } catch (const std::exception& error) {
+            vehicleLoadError = error.what();
+            gameLog.Log("Unable to load bus '" +
+                        vehicles[selectedVehicleIndex].configurationPath.string() +
+                        "': " + error.what());
+        }
+    };
+    loadSelectedVehicle();
 
     const auto loadSelectedMap = [&] {
         selectedDefinition.reset();
@@ -92,6 +154,8 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
             selectedDefinition = openbus::map::loadMapDefinition(maps[selectedMapIndex]);
         } catch (const std::exception& error) {
             mapLoadError = error.what();
+            gameLog.Log("Unable to load map '" + maps[selectedMapIndex].string() +
+                        "': " + error.what());
         }
     };
     loadSelectedMap();
@@ -107,15 +171,172 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         imguiLayer_->beginFrame();
 
-        ImGui::SetNextWindowSize(ImVec2(560.0F, 500.0F), ImGuiCond_Once);
+        ImGui::SetNextWindowSize(ImVec2(700.0F, 760.0F), ImGuiCond_Once);
         ImGui::SetNextWindowPos(
             ImVec2(static_cast<float>(windowWidth) * 0.5F, static_cast<float>(windowHeight) * 0.5F),
             ImGuiCond_Always, ImVec2(0.5F, 0.5F));
         ImGui::Begin("OpenBus setup", nullptr,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
-        ImGui::TextUnformatted("Choose where and when to start.");
+        ImGui::TextUnformatted("Choose your bus, depot, and where and when to start.");
         ImGui::Spacing();
 
+        std::vector<std::string> manufacturers;
+        for (const openbus::config::VehicleCatalogEntry& vehicle : vehicles) {
+            if (manufacturers.empty() ||
+                normalizedText(manufacturers.back()) != normalizedText(vehicle.manufacturer)) {
+                manufacturers.push_back(vehicle.manufacturer);
+            }
+        }
+        const std::string selectedManufacturer = vehicles[selectedVehicleIndex].manufacturer;
+        if (ImGui::BeginCombo("Manufacturer", selectedManufacturer.c_str())) {
+            for (const std::string& manufacturer : manufacturers) {
+                const bool selected =
+                    normalizedText(manufacturer) == normalizedText(selectedManufacturer);
+                if (ImGui::Selectable(manufacturer.c_str(), selected) && !selected) {
+                    const auto nextVehicle =
+                        std::find_if(vehicles.begin(), vehicles.end(),
+                                     [&](const openbus::config::VehicleCatalogEntry& candidate) {
+                                         return normalizedText(candidate.manufacturer) ==
+                                                normalizedText(manufacturer);
+                                     });
+                    selectedVehicleIndex = static_cast<std::size_t>(nextVehicle - vehicles.begin());
+                    loadSelectedVehicle();
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        const std::string selectedType = vehicles[selectedVehicleIndex].type;
+        const std::string currentVehicleLabel =
+            selectedType + " (" +
+            vehicles[selectedVehicleIndex].configurationPath.filename().string() + ")";
+        if (ImGui::BeginCombo("Type", currentVehicleLabel.c_str())) {
+            for (std::size_t index = 0; index < vehicles.size(); ++index) {
+                if (normalizedText(vehicles[index].manufacturer) !=
+                    normalizedText(vehicles[selectedVehicleIndex].manufacturer)) {
+                    continue;
+                }
+                const std::string label = vehicles[index].type + " (" +
+                                          vehicles[index].configurationPath.filename().string() +
+                                          ")";
+                const bool selected = index == selectedVehicleIndex;
+                if (ImGui::Selectable(label.c_str(), selected) && !selected) {
+                    selectedVehicleIndex = index;
+                    loadSelectedVehicle();
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        if (selectedVehicleConfig.has_value()) {
+            std::string defaultAppearance = selectedVehicleConfig->friendlyDefaultPaint.empty()
+                                                ? vehicles[selectedVehicleIndex].defaultAppearance
+                                                : selectedVehicleConfig->friendlyDefaultPaint;
+            if (defaultAppearance.empty()) {
+                defaultAppearance = "Default";
+            }
+            const std::string currentAppearance =
+                selectedAppearanceIndex == 0 ? defaultAppearance
+                                             : appearances[selectedAppearanceIndex - 1].name;
+            if (ImGui::BeginCombo("Appearance", currentAppearance.c_str())) {
+                const bool defaultSelected = selectedAppearanceIndex == 0;
+                if (ImGui::Selectable(defaultAppearance.c_str(), defaultSelected)) {
+                    selectedAppearanceIndex = 0;
+                }
+                if (defaultSelected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+                for (std::size_t index = 0; index < appearances.size(); ++index) {
+                    const bool selected = selectedAppearanceIndex == index + 1;
+                    if (ImGui::Selectable(appearances[index].name.c_str(), selected)) {
+                        selectedAppearanceIndex = index + 1;
+                    }
+                    if (selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            const std::string currentDepot =
+                selectedDepotIndex == 0 ? "None" : depots[selectedDepotIndex - 1].name;
+            if (ImGui::BeginCombo("Depot (HOF)", currentDepot.c_str())) {
+                const bool noDepotSelected = selectedDepotIndex == 0;
+                if (ImGui::Selectable("None", noDepotSelected)) {
+                    selectedDepotIndex = 0;
+                }
+                if (noDepotSelected) {
+                    ImGui::SetItemDefaultFocus();
+                }
+                for (std::size_t index = 0; index < depots.size(); ++index) {
+                    const bool selected = selectedDepotIndex == index + 1;
+                    const std::string label =
+                        depots[index].name + " (" + depots[index].path.filename().string() + ")";
+                    if (ImGui::Selectable(label.c_str(), selected)) {
+                        selectedDepotIndex = index + 1;
+                    }
+                    if (selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            const std::size_t registrationCount = registrationOptionCount(*selectedVehicleConfig);
+            if (registrationCount > 0) {
+                selectedRegistrationIndex =
+                    std::min(selectedRegistrationIndex, registrationCount - 1);
+                VehicleConfig registration = *selectedVehicleConfig;
+                selectRegistrationAtIndex(registration, selectedRegistrationIndex);
+                const auto registrationLabel = [](const VehicleConfig& config) {
+                    std::string label = config.selectedVehicleNumber;
+                    if (!label.empty() && !config.selectedRegistration.empty()) {
+                        label += " — ";
+                    }
+                    label += config.selectedRegistration;
+                    return label.empty() ? std::string("(unnumbered)") : label;
+                };
+                const std::string currentRegistration = registrationLabel(registration);
+                if (ImGui::BeginCombo("Number / registration", currentRegistration.c_str())) {
+                    for (std::size_t index = 0; index < registrationCount; ++index) {
+                        VehicleConfig option = *selectedVehicleConfig;
+                        selectRegistrationAtIndex(option, index);
+                        const std::string label = registrationLabel(option);
+                        const bool selected = index == selectedRegistrationIndex;
+                        if (ImGui::Selectable(label.c_str(), selected)) {
+                            selectedRegistrationIndex = index;
+                            copyToInputBuffer(registrationInput, option.selectedRegistration);
+                            copyToInputBuffer(vehicleNumberInput, option.selectedVehicleNumber);
+                        }
+                        if (selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+            if (selectedVehicleConfig->registrationFree) {
+                ImGui::SetNextItemWidth(-1.0F);
+                ImGui::InputText(registrationCount > 0 ? "Registration override" : "Registration",
+                                 registrationInput.data(), registrationInput.size());
+            } else if (selectedVehicleConfig->registrationAutomatic) {
+                ImGui::Text("Registration: automatic (%s)",
+                            selectedVehicleConfig->registrationPrefix.c_str());
+            } else {
+                ImGui::TextUnformatted("Registration: not configured");
+            }
+            if (!vehicleLoadError.empty()) {
+                ImGui::TextWrapped("Unable to load this bus: %s", vehicleLoadError.c_str());
+            }
+        }
+
+        ImGui::Spacing();
         const std::string selectedMapName = maps[selectedMapIndex].filename().string();
         if (ImGui::BeginCombo("Map", selectedMapName.c_str())) {
             for (std::size_t index = 0; index < maps.size(); ++index) {
@@ -182,20 +403,63 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                                    day >= 1 && day <= 31 && selectedDate.ok() && hour >= 0 &&
                                    hour < 24 && minute >= 0 && minute < 60;
         const bool canStart = selectedDefinition.has_value() &&
-                              !selectedDefinition->entryPoints.empty() && validDateTime;
+                              !selectedDefinition->entryPoints.empty() && validDateTime &&
+                              selectedVehicleConfig.has_value() && vehicleLoadError.empty();
         if (!validDateTime) {
             ImGui::TextColored(ImVec4(1.0F, 0.45F, 0.35F, 1.0F), "Enter a valid date and time.");
         }
         ImGui::Spacing();
         ImGui::BeginDisabled(!canStart);
-        if (ImGui::Button("Start on foot", ImVec2(-1.0F, 42.0F))) {
+        const auto saveSelection = [&](bool startInBus) {
             selection.mapDirectory = maps[selectedMapIndex];
             selection.mapDefinition = std::move(*selectedDefinition);
+            selection.vehicleConfigPath = vehicles[selectedVehicleIndex].configurationPath;
+            selection.vehicleSetup = {};
+            if (selectedAppearanceIndex > 0) {
+                const openbus::config::VehicleAppearance& appearance =
+                    appearances[selectedAppearanceIndex - 1];
+                selection.vehicleSetup.ctcTextureReplacements = appearance.textureReplacements;
+                selection.vehicleSetup.appearanceKey =
+                    appearance.sourcePath.generic_string() + "|" + appearance.name;
+            } else {
+                selection.vehicleSetup.appearanceKey = "default";
+            }
+            if (selectedDepotIndex > 0) {
+                const openbus::config::VehicleDepot& depot = depots[selectedDepotIndex - 1];
+                selection.vehicleSetup.depotPath = depot.path;
+                selection.vehicleSetup.depotName = depot.name;
+            }
+            if (registrationOptionCount(*selectedVehicleConfig) > 0) {
+                VehicleConfig registration = *selectedVehicleConfig;
+                selectRegistrationAtIndex(registration, selectedRegistrationIndex);
+                selection.vehicleSetup.vehicleNumber = registration.selectedVehicleNumber;
+                selection.vehicleSetup.registration = selectedVehicleConfig->registrationFree
+                                                          ? std::string(registrationInput.data())
+                                                          : registration.selectedRegistration;
+            } else if (selectedVehicleConfig->registrationFree) {
+                selection.vehicleSetup.registration = registrationInput.data();
+                selection.vehicleSetup.vehicleNumber = vehicleNumberInput.data();
+            }
+            selection.startInBus = startInBus;
             selection.spawnEntryPoint = static_cast<std::size_t>(selectedSpawn);
             selection.year = year;
             selection.month = month;
             selection.day = day;
             selection.timeSeconds = static_cast<double>(hour * 3600 + minute * 60);
+        };
+        const float buttonWidth =
+            (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5F;
+        if (ImGui::Button("Start in bus", ImVec2(buttonWidth, 42.0F))) {
+            saveSelection(true);
+            ImGui::EndDisabled();
+            ImGui::End();
+            imguiLayer_->render();
+            glfwSwapBuffers(window_);
+            return true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Start on foot", ImVec2(buttonWidth, 42.0F))) {
+            saveSelection(false);
             ImGui::EndDisabled();
             ImGui::End();
             imguiLayer_->render();
@@ -262,7 +526,7 @@ void RenderLoop::drawOnFootUi() {
                  ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoNav);
     ImGui::TextUnformatted("You are not in a bus.");
-    if (ImGui::Button("Spawn configured bus", ImVec2(220.0F, 36.0F))) {
+    if (ImGui::Button("Spawn selected bus", ImVec2(220.0F, 36.0F))) {
         spawnBusRequestPending_ = true;
     }
     ImGui::TextUnformatted("WASD: walk | Space: jump | F4: toggle mouse look");

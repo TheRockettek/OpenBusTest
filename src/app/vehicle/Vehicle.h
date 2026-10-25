@@ -397,6 +397,7 @@ struct Vehicle {
     bool frustumCulling = true;
     std::vector<double> lodThresholds;
     std::unordered_map<std::string, std::string> ctcTextureReplacements;
+    VehicleSetupOptions setupOptions;
     std::size_t opaqueDisplayCount = 0;
     std::uint64_t viewDepthGeneration = 0;
     // The outer visibility pass advances this once; reflection views and the main
@@ -513,10 +514,12 @@ struct Vehicle {
                      ModelLoadingPolicy policy, AssetRequestManager& manager,
                      SimulationState& simulationState, SoundEngine& soundEngine,
                      openbus::rendering::ViewpointContext& soundViewpoint, bool isAiVehicle,
-                     bool deferTrafficInitialization = false)
+                     bool deferTrafficInitialization = false,
+                     VehicleSetupOptions selectedSetupOptions = {})
         : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
-          modelCacheKey(definition->cacheKey), assets(&manager), placement(configuredPlacement),
-          modelOffsetZ(configuredModelOffsetZ),
+          modelCacheKey(definition->cacheKey + "|" + selectedSetupOptions.appearanceKey),
+          assets(&manager), placement(configuredPlacement), modelOffsetZ(configuredModelOffsetZ),
+          setupOptions(std::move(selectedSetupOptions)),
           wheelsFromOde(parseEnabledFlag(openbus::getEnvironment("OPENBUS_WHEELS_FROM_ODE"))) {
         if (const char* scale = openbus::getEnvironment("OPENBUS_TEXTURE_SCALE")) {
             try {
@@ -623,6 +626,16 @@ struct Vehicle {
         trafficHeightMeters = vehicleConfiguration.boundingBox[2] +
                               2.0 * std::abs(vehicleConfiguration.boundingBox[5]);
         selectRuntimeRegistration(vehicleConfiguration, configuredPlacement);
+        if (setupOptions.vehicleNumber.has_value()) {
+            vehicleConfiguration.selectedVehicleNumber = *setupOptions.vehicleNumber;
+        }
+        if (setupOptions.registration.has_value()) {
+            vehicleConfiguration.selectedRegistration = *setupOptions.registration;
+        }
+        if (!setupOptions.depotPath.empty()) {
+            variables.setString("hof_file", setupOptions.depotPath.generic_string());
+            variables.setString("hof_name", setupOptions.depotName);
+        }
         odometerMetres =
             vehicleConfiguration.hasOdometerInitial
                 ? std::max(0.0, vehicleConfiguration.odometerInitialKilometres) * 1000.0

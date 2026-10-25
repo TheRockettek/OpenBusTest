@@ -113,12 +113,14 @@ void runFixtureProbe() {
                      "[aigroup_2]\nOther\nvehicles\\other.bus\n[end]\n"
                      "[aigroup_2]\nNormalCar\nvehicles\\normal_car.ovh\n[end]\n"
                      "[aigroup_2]\nAmbulance\nvehicles\\ambulance.ovh\n[end]\n"
+                     "[aigroup_2]\nSudden Stop Vehicles\nvehicles\\sudden_stop.bus\n[end]\n"
                      "[aigroup_depot]\nCentral Depot\nFixture HOF\n"
                      "[aigroup_depot_typgroup_2]\nvehicles\\city_bus.bus\n"
                      "1234\tBlue livery\n[end]\n");
         writeUtf16Le(root / "unsched_vehgroups.txt",
-                     "[group]\nTrucks\n0\n[group]\nNormalCars\n0\n"
-                     "[group]\nCommercials\n0\n[group]\nAmbulance\n0\n");
+                     "[group]\n<aigroup-name>\n0\n[group]\nTrucks\n0\n"
+                     "[group]\nNormalCars\n0\n[group]\nCommercials\n0\n"
+                     "[group]\nAmbulance\n0\n[group]\nSudden Stop Vehicles\n0\n");
         writeUtf16Le(root / "unsched_trafficdens.txt",
                      "[group]\nNormalCars\n2\n[set_day_of_week]\n0\n"
                      "[trafficdensity]\n0\n0.3\n[trafficdensity]\n12\n0.3\n"
@@ -256,7 +258,7 @@ void runFixtureProbe() {
             invalidDensityHourRejected = true;
         }
         require(invalidDensityHourRejected, "density lookup rejects hours outside [0, 24]");
-        require(definition.aiTraffic.vehicleGroups.size() == 7 &&
+        require(definition.aiTraffic.vehicleGroups.size() == 8 &&
                     definition.aiTraffic.vehicleGroups[0].name == "NormalCars" &&
                     definition.aiTraffic.vehicleGroups[0].vehicles.size() == 2 &&
                     definition.aiTraffic.vehicleGroups[0].vehicles[0].assetPath ==
@@ -279,7 +281,8 @@ void runFixtureProbe() {
                                              "vehicles\\commercial.bus",
                                              "vehicles\\commercial_van.bus",
                                              "vehicles\\normal_car.ovh",
-                                             "vehicles\\ambulance.ovh"} &&
+                                             "vehicles\\ambulance.ovh",
+                                             "vehicles\\sudden_stop.bus"} &&
                     openbus::map::mapAiBusAssetPaths(definition.aiTraffic) ==
                         std::vector<std::string>{"vehicles\\city_bus.bus"},
                 "random road traffic selects .ovh and .bus assets from supported groups while "
@@ -303,7 +306,8 @@ void runFixtureProbe() {
         const std::vector<openbus::map::MapAiRoadVehicle> explicitGroupVehicles =
             openbus::map::mapAiRoadVehicles(explicitGroupTraffic);
         require(definition.aiTraffic.unscheduledVehicleGroupNames ==
-                    std::vector<std::string>{"Trucks", "NormalCars", "Commercials", "Ambulance"} &&
+                    std::vector<std::string>{"Trucks", "NormalCars", "Commercials", "Ambulance",
+                                             "Sudden Stop Vehicles"} &&
                     legacyGroupVehicles.size() == 1 &&
                     legacyGroupVehicles[0].trafficRuleGroupIndex == 0 &&
                     legacyGroupVehicles[0].groupName == "normalcars" &&
@@ -331,7 +335,7 @@ void runFixtureProbe() {
                     definition.aiTraffic.unscheduledTrafficDensityGroups[0].schedules[1]
                             .points[1]
                             .density == 0.8 &&
-                    roadVehicles.size() == 9 &&
+                    roadVehicles.size() == 10 &&
                     roadVehicles[0].assetPath == "vehicles\\sedan.bus" &&
                     roadVehicles[0].groupIndex == 1 &&
                     roadVehicles[0].trafficRuleGroupIndex == 1 &&
@@ -360,7 +364,10 @@ void runFixtureProbe() {
                     roadVehicles[7].trafficRuleGroupIndex == 1 &&
                     roadVehicles[8].assetPath == "vehicles\\ambulance.ovh" &&
                     roadVehicles[8].groupIndex == 3 &&
-                    roadVehicles[8].trafficRuleGroupIndex == 3,
+                    roadVehicles[8].trafficRuleGroupIndex == 3 &&
+                    roadVehicles[9].assetPath == "vehicles\\sudden_stop.bus" &&
+                    roadVehicles[9].groupIndex == 4 &&
+                    roadVehicles[9].trafficRuleGroupIndex == 4,
                 "both population scheduling and path rules use unsched_vehgroups.txt group "
                 "indices, regardless of AI-list group names");
         const std::vector<openbus::map::MapAiRoadVehicle> weekdayRoadVehicles =
