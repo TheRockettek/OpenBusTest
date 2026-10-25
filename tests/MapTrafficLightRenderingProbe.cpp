@@ -1,4 +1,5 @@
 #include "ProbeTempDirectory.h"
+#include "core/Logger.h"
 #include "core/Variables.h"
 #include "map/MapTileWindow.h"
 #include "render/AssetRequestManager.h"
@@ -10,9 +11,11 @@
 #include <GLFW/glfw3.h>
 
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -39,6 +42,39 @@ void check(bool condition, const char* message) {
     }
 }
 
+void configureProbeLog(const std::filesystem::path& path) {
+#ifdef _WIN32
+    check(_putenv_s("OPENBUS_LOG_FILE", path.string().c_str()) == 0,
+          "Could not configure probe log path");
+#else
+    check(setenv("OPENBUS_LOG_FILE", path.string().c_str(), 1) == 0,
+          "Could not configure probe log path");
+#endif
+}
+
+bool logContains(const std::filesystem::path& path, const std::string& text) {
+    std::ifstream input(path);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.find(text) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool logContains(const std::filesystem::path& path, const std::string& first,
+                 const std::string& second) {
+    std::ifstream input(path);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.find(first) != std::string::npos && line.find(second) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void writeTinyTerrain(const std::filesystem::path& path) {
     std::array<std::uint8_t, 20> terrain = {};
     terrain[0] = 1;
@@ -46,6 +82,46 @@ void writeTinyTerrain(const std::filesystem::path& path) {
     output.write(reinterpret_cast<const char*>(terrain.data()),
                  static_cast<std::streamsize>(terrain.size()));
     check(static_cast<bool>(output), "Could not write probe terrain");
+}
+
+void writeBrokenTerrain(const std::filesystem::path& path) {
+    const std::array<std::uint8_t, 2> terrain = {};
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(terrain.data()),
+                 static_cast<std::streamsize>(terrain.size()));
+    check(static_cast<bool>(output), "Could not write broken probe terrain");
+}
+
+void writeTinyWater(const std::filesystem::path& path) {
+    std::ofstream output(path, std::ios::binary);
+    const std::array<std::uint32_t, 5> values = {
+        1U, std::bit_cast<std::uint32_t>(1.0F), std::bit_cast<std::uint32_t>(1.5F),
+        std::bit_cast<std::uint32_t>(2.0F), std::bit_cast<std::uint32_t>(2.5F)};
+    for (const std::uint32_t value : values) {
+        for (unsigned int byte = 0; byte < 4; ++byte) {
+            output.put(static_cast<char>((value >> (byte * 8U)) & 0xffU));
+        }
+    }
+    check(static_cast<bool>(output), "Could not write probe water sidecar");
+}
+
+void writeTinyTexture(const std::filesystem::path& path) {
+    std::array<std::uint8_t, 21> image = {};
+    image[2] = 2;
+    image[12] = image[14] = 1;
+    image[16] = 24;
+    image[18] = 255;
+    image[19] = 255;
+    image[20] = 255;
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(image.data()),
+                 static_cast<std::streamsize>(image.size()));
+    check(static_cast<bool>(output), "Could not write probe scenery texture");
+}
+
+std::string splineTileText(int splineId) {
+    return "[version]\n14\n[terrain]\n[spline]\n0\nSplines/Test.sli\n" + std::to_string(splineId) +
+           "\n0\n0\n10\n0\n20\n0\n10\n0\n0\n0\n0\n0\n0\n0\n0\n";
 }
 
 void writeLamp(const std::filesystem::path& path, const std::string& color) {
@@ -57,20 +133,34 @@ void writeLamp(const std::filesystem::path& path, const std::string& color) {
 
 void runProbe(const std::filesystem::path& root, bool conditional) {
     std::filesystem::create_directories(root / "model");
+    std::filesystem::create_directories(root / "Splines");
+    std::filesystem::create_directories(root / "Texture");
+    writeText(root / "Splines" / "Test.sli",
+              "[texture]\nroad.tga\n[profile]\n0\n[profilepnt]\n-2\n0.25\n0\n0.2\n"
+              "[profilepnt]\n2\n0.25\n1\n0.2\n");
+    writeTinyTexture(root / "Texture" / "road.tga");
     writeLamp(root / "model" / "red.x", "1;0;0");
     writeLamp(root / "model" / "yellow.x", "1;1;0");
     writeLamp(root / "model" / "green.x", "0;1;0");
+    writeText(root / "shared.sco", "[mesh]\nred.x\n");
+    writeText(root / "retry.sco", "[tree]\nretry.tga\n10\n10\n1\n1\n");
+    const std::array<std::uint8_t, 2> brokenTexture = {};
+    {
+        std::ofstream output(root / "retry.tga", std::ios::binary);
+        output.write(reinterpret_cast<const char*>(brokenTexture.data()),
+                     static_cast<std::streamsize>(brokenTexture.size()));
+        check(static_cast<bool>(output), "Could not write broken probe scenery texture");
+    }
     writeText(root / "head.sco",
               "[trafficlight]\n[script]\n1\nlamp.osc\n[varnamelist]\n1\nlamp_vars.txt\n"
               "[mesh]\nred.x\n[visible]\nlamp_red\n1\n"
               "[mesh]\nyellow.x\n[visible]\nlamp_yellow\n1\n"
               "[mesh]\ngreen.x\n[visible]\nlamp_green\n1\n");
     writeText(root / "lamp_vars.txt", "lamp_red\nlamp_yellow\nlamp_green\n");
-    writeText(root / "lamp.osc",
-              "{frame}\n"
-              "(L.L.TrafficLightPhase) 0 = (S.L.lamp_red)\n"
-              "(L.L.TrafficLightPhase) 9 = (S.L.lamp_yellow)\n"
-              "(L.L.TrafficLightPhase) 6 = (S.L.lamp_green)\n{end}\n");
+    writeText(root / "lamp.osc", "{frame}\n"
+                                 "(L.L.TrafficLightPhase) 0 = (S.L.lamp_red)\n"
+                                 "(L.L.TrafficLightPhase) 9 = (S.L.lamp_yellow)\n"
+                                 "(L.L.TrafficLightPhase) 6 = (S.L.lamp_green)\n{end}\n");
     writeText(root / "controller.sco",
               "[onlyeditor]\n[traffic_lights_group]\n6\n"
               "[traffic_light]\nOther approach\n[phase]\n0\n6\n"
@@ -81,12 +171,18 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
               "[use_traffic_light]\n1\n"
               "[mesh]\ngreen.x\n" +
                   std::string(conditional ? "[traffic_light_stop]\n1\n4\n0\n"
-                                          "[traffic_light_stop]\n1\n8\n0\n"
+                                            "[traffic_light_stop]\n1\n8\n0\n"
                                           : ""));
     writeText(root / "tile.map",
-              "[version]\n14\n[terrain]\n"
-              "[object]\n0\ncontroller.sco\n100\n0\n0\n0\n0\n0\n0\n0\n"
-              "[object]\n0\nhead.sco\n101\n0\n0\n1\n0\n0\n0\n1\n1\n[varparent]\n100\n");
+              splineTileText(1) +
+                  "[object]\n0\ncontroller.sco\n100\n0\n0\n0\n0\n0\n0\n0\n"
+                  "[object]\n0\nhead.sco\n101\n0\n0\n1\n0\n0\n0\n1\n1\n[varparent]\n100\n"
+                  "[attachObj]\n0\nshared.sco\n301\n204\n0\n0\n0\n0\n0\n0\n");
+    {
+        std::ofstream output(root / "tile.map", std::ios::binary | std::ios::app);
+        output << "[water]\n";
+        check(static_cast<bool>(output), "Could not append water marker to probe tile");
+    }
     // A one-pixel uncompressed TGA supplies the mandatory map ground texture.
     std::array<std::uint8_t, 21> ground = {};
     ground[2] = 2;
@@ -97,19 +193,39 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
         output.write(reinterpret_cast<const char*>(ground.data()), ground.size());
         check(static_cast<bool>(output), "Could not write probe ground texture");
     }
+    writeTinyTexture(root / "ground-layer.tga");
+    writeTinyTexture(root / "tile.map.2.tga");
     writeTinyTerrain(root / "tile.terrain");
+    writeTinyWater(root / "tile.map.water");
     for (const int tileX : {4, 5}) {
         const std::string tileName = "tile_" + std::to_string(tileX);
-        writeText(root / (tileName + ".map"), "[version]\n14\n[terrain]\n");
-        writeTinyTerrain(root / (tileName + ".terrain"));
+        writeText(root / (tileName + ".map"),
+                  splineTileText(tileX + 2) +
+                      (tileX == 4 ? "[splineAttachement]\n0\nshared.sco\n204\n0\n0\n0\n0\n0\n0\n"
+                                    "0\n0\n0\n0\n0\n"
+                                  : "[object]\n0\nshared.sco\n" + std::to_string(200 + tileX) +
+                                        "\n0\n0\n0\n0\n0\n0\n0\n[object]\n0\nretry.sco\n250\n"
+                                        "0\n0\n0\n0\n0\n0\n0\n") +
+                      "[water]\n");
+        writeTinyTexture(root / (tileName + ".map.2.tga"));
+        if (tileX == 4) {
+            writeBrokenTerrain(root / (tileName + ".terrain"));
+        } else {
+            writeTinyTerrain(root / (tileName + ".terrain"));
+        }
+        writeTinyWater(root / (tileName + ".map.water"));
     }
     openbus::map::MapDefinition map;
     map.rootPath = root;
     map.groundTextures.push_back({"ground.tga", "", {}});
+    map.groundTextures.push_back({"ground-layer.tga", "", {}});
     openbus::map::MapTileReference tile;
     tile.textPath = root / "tile.map";
     tile.terrainPath = root / "tile.terrain";
     tile.hasTerrainFile = true;
+    tile.waterPath = root / "tile.map.water";
+    tile.hasWaterFile = true;
+    tile.groundTextureSidecars.push_back({"2", root / "tile.map.2.tga"});
     map.tiles.push_back(tile);
     for (const int tileX : {4, 5}) {
         openbus::map::MapTileReference distantTile;
@@ -118,21 +234,28 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
         distantTile.textPath = root / (tileName + ".map");
         distantTile.terrainPath = root / (tileName + ".terrain");
         distantTile.hasTerrainFile = true;
+        distantTile.waterPath = root / (tileName + ".map.water");
+        distantTile.hasWaterFile = true;
+        distantTile.groundTextureSidecars.push_back({"2", root / (tileName + ".map.2.tga")});
         map.tiles.push_back(std::move(distantTile));
     }
     SimulationState simulation;
     AssetRequestManager assets;
     MapRenderer renderer(map, 0, 0, 0, 0, root, simulation, assets);
+    check(
+        renderer.renderStats().totalRoadBatches == 1 &&
+            renderer.renderStats().totalWaterBatches == 1 &&
+            renderer.renderStats().totalTextures == 3,
+        "Initial road, water, and asynchronously decoded ground-layer textures must be published");
     const auto& paths = renderer.sceneryTrafficPathSegments();
     check(paths.size() == 1 && paths.front().trafficSignal.has_value() &&
               paths.front().pathIndex == 0 && paths.front().widthMeters == 3.0 &&
               paths.front().trafficSignal->lightIndex == 0 &&
               paths.front().trafficSignal->program != nullptr &&
-              paths.front().trafficSignal->program->controlPoints.size() ==
-                  (conditional ? 2U : 0U),
+              paths.front().trafficSignal->program->controlPoints.size() == (conditional ? 2U : 0U),
           "F2 signal debug path must retain controller phase and stopline data");
-    check(renderer.renderStats().activeSceneryObjects == 1,
-          "Editor-only junction geometry must remain hidden");
+    check(renderer.renderStats().activeSceneryObjects == 2,
+          "Cross-tile spline parents must resolve for active attached scenery");
     setPerspective(32, 32, 90);
     setModelViewMatrix(translationMatrix({0, 0, -2}));
     glViewport(0, 0, 32, 32);
@@ -141,14 +264,13 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     const auto drawPhase = [&](double clock, int phase, std::array<int, 3> expected) {
         const double elapsed = clock + 0.1 - previousClock;
         simulation.sharedVariables().updateFrame(static_cast<float>(elapsed),
-                                                  static_cast<float>(clock), 0, 0);
+                                                 static_cast<float>(clock), 0, 0);
         renderer.updateTrafficSignalControllers({}, elapsed, previousClock);
         previousClock = clock + 0.1;
         renderer.updateScripts();
         const auto stats = renderer.trafficSignalDebugStats();
         check(stats.activeSignalModels == 2 && stats.modelsWithoutPhase == 0 &&
-                  stats.modelsByPhase[phase] >= 1 &&
-                  stats.controllerDrivenModels == 2,
+                  stats.modelsByPhase[phase] >= 1 && stats.controllerDrivenModels == 2,
               "Visible head did not inherit its labelled editor-only controller phase");
         glDepthMask(GL_TRUE);
         glClearColor(0, 0, 0, 0);
@@ -158,9 +280,9 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
         glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
         for (std::size_t channel = 0; channel < 3; ++channel) {
             if (std::abs(static_cast<int>(pixel[channel]) - expected[channel]) > 2) {
-                std::cerr << "phase=" << phase << " pixel=" << static_cast<int>(pixel[0])
-                          << ',' << static_cast<int>(pixel[1]) << ','
-                          << static_cast<int>(pixel[2]) << '\n';
+                std::cerr << "phase=" << phase << " pixel=" << static_cast<int>(pixel[0]) << ','
+                          << static_cast<int>(pixel[1]) << ',' << static_cast<int>(pixel[2])
+                          << '\n';
                 throw std::runtime_error("Traffic-light lamp pixels did not change colour");
             }
         }
@@ -181,8 +303,7 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     renderer.updateTrafficSignalControllers({}, 0.1, 6.1, playerBusPosition);
     renderer.updateScripts();
     const auto priorityStats = renderer.trafficSignalDebugStats();
-    check(priorityStats.modelsByPhase[6] >= 1 &&
-              priorityStats.controllerDrivenModels == 2,
+    check(priorityStats.modelsByPhase[6] >= 1 && priorityStats.controllerDrivenModels == 2,
           "player bus approaching the stopline activates its configured green priority phase");
     check(glGetError() == GL_NO_ERROR, "Traffic-light rendering produced an OpenGL error");
 
@@ -193,17 +314,125 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     renderer.updateStreaming(4.0 * map.coordinates.tileSize, 0.0);
     check(renderer.activeTileCoordinates() == originalWindow,
           "Current active window must remain until the requested tiles are ready");
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        renderer.updateStreaming(4.0 * map.coordinates.tileSize, 0.0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    writeTinyTerrain(root / "tile_4.terrain");
+    const std::filesystem::path probeLog = root / "probe.log";
+    const auto retryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    bool assetRetryObserved = false;
+    while (std::chrono::steady_clock::now() < retryDeadline) {
+        renderer.updateStreaming(4.0 * map.coordinates.tileSize, 0.0);
+        if (logContains(probeLog, "scenery/model asset preparation failed for", "retrying in")) {
+            assetRetryObserved = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    check(renderer.activeTileCoordinates() == originalWindow,
+          "Tile window must remain on the prior view while scenery asset retries are pending");
+    check(assetRetryObserved, "Scenery preparation failure must be reported for retry");
+    writeTinyTexture(root / "retry.tga");
     bool nextWindowActivated = false;
-    for (int attempt = 0; attempt < 1000; ++attempt) {
+    const auto activationDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < activationDeadline) {
         renderer.updateStreaming(4.0 * map.coordinates.tileSize, 0.0);
         if (renderer.activeTileCoordinates() == nextWindow) {
             nextWindowActivated = true;
             break;
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    check(
+        nextWindowActivated,
+        "Background tile parsing and bounded publication must eventually activate the new window");
+    const MapRenderStats streamedStats = renderer.renderStats();
+    check(streamedStats.activeRoadBatches == 2 && streamedStats.totalRoadBatches == 3,
+          "Background road geometry preparation must publish both streamed tiles");
+    check(streamedStats.totalWaterBatches == 3,
+          "Background water sidecar preparation must publish both streamed tiles");
+    check(streamedStats.activeSceneryObjects == 3,
+          "Tiles sharing a scenery asset must both publish their placements");
+    check(streamedStats.totalTextures == 6,
+          "Streamed road and terrain tiles must reuse shared textures and publish tile masks");
+
+    openbus::map::MapDefinition startupMap;
+    startupMap.rootPath = root;
+    startupMap.coordinates = map.coordinates;
+    startupMap.groundTextures = map.groundTextures;
+    {
+        const std::array<std::uint8_t, 2> brokenTexture = {};
+        std::ofstream output(root / "startup_shared.tga", std::ios::binary);
+        output.write(reinterpret_cast<const char*>(brokenTexture.data()),
+                     static_cast<std::streamsize>(brokenTexture.size()));
+        check(static_cast<bool>(output), "Could not write broken startup texture");
+    }
+    for (int assetIndex = 0; assetIndex < 9; ++assetIndex) {
+        const std::string assetName = "startup_batch_" + std::to_string(assetIndex);
+        writeText(root / (assetName + ".sco"), "[tree]\nstartup_shared.tga\n10\n10\n1\n1\n");
+    }
+    for (int tileY = -1; tileY <= 1; ++tileY) {
+        for (int tileX = -1; tileX <= 1; ++tileX) {
+            const std::filesystem::path startupTilePath =
+                root /
+                ("startup_tile_" + std::to_string(tileX) + "_" + std::to_string(tileY) + ".map");
+            std::string startupObjects;
+            for (int assetIndex = 0; assetIndex < 9; ++assetIndex) {
+                const std::string assetName = "startup_batch_" + std::to_string(assetIndex);
+                const int objectId = ((tileX + 1) * 3 + tileY + 1) * 100 + assetIndex;
+                startupObjects += "[object]\n0\n" + assetName + ".sco\n" +
+                                  std::to_string(objectId) + "\n0\n0\n0\n0\n0\n0\n0\n";
+            }
+            writeText(startupTilePath, "[version]\n14\n[terrain]\n" + startupObjects);
+            openbus::map::MapTileReference tileReference;
+            tileReference.x = tileX;
+            tileReference.y = tileY;
+            tileReference.textPath = startupTilePath;
+            tileReference.terrainPath = root / "tile.terrain";
+            tileReference.hasTerrainFile = true;
+            startupMap.tiles.push_back(std::move(tileReference));
+        }
+    }
+    MapRenderer startupRenderer(startupMap, 0, 0, 0, 0, root, simulation, assets, true);
+    check(!startupRenderer.initialWindowReady(),
+          "Menu startup map preparation must return before the initial tile window is ready");
+    const auto startupRetryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    bool startupAssetRetryObserved = false;
+    bool startupLaneLookupChecked = false;
+    while (std::chrono::steady_clock::now() < startupRetryDeadline) {
+        startupRenderer.updateStreaming(0, 0);
+        if (!startupLaneLookupChecked &&
+            logContains(probeLog, "Map index phase complete:", "9 tiles in")) {
+            check(startupRenderer.trafficSpawnLanes().empty(),
+                  "Spawn-lane lookup must remain available while startup tiles are pending");
+            check(!startupRenderer.selectTrafficSpawnLane({}, 1).has_value(),
+                  "Spawn selection must defer while startup lane data is unavailable");
+            startupLaneLookupChecked = true;
+        }
+        if (logContains(probeLog, "scenery/model asset preparation failed for", "attempt 1 of 3")) {
+            startupAssetRetryObserved = true;
+            break;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    check(nextWindowActivated,
-          "Background tile parsing and bounded publication must eventually activate the new window");
+    check(startupAssetRetryObserved,
+          "A batch of failed scenery assets must consume one tile retry attempt");
+    check(startupLaneLookupChecked,
+          "Spawn-lane lookup must be exercised while startup tiles are pending");
+    writeTinyTexture(root / "startup_shared.tga");
+    const auto startupDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!startupRenderer.initialWindowReady() &&
+           std::chrono::steady_clock::now() < startupDeadline) {
+        startupRenderer.updateStreaming(0, 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    check(startupRenderer.initialWindowReady(),
+          "Initial map window must become ready while the startup menu remains active");
+    check(logContains(probeLog, "preparing road traffic lane network asynchronously"),
+          "Traffic lane graph finalization must be dispatched to a worker thread");
+    check(logContains(probeLog, "preparing human traffic lane network asynchronously"),
+          "Human lane graph finalization must be dispatched to a worker thread");
 }
 
 } // namespace
@@ -226,8 +455,9 @@ int main(int argc, char** argv) {
         return 77;
     }
     glfwMakeContextCurrent(window);
-    bool passed = loadOpenGLFunctions() && initializeCoreRenderer();
     const auto root = openbus::probe::makeProbeDirectory("openbus-traffic-light-rendering");
+    configureProbeLog(root / "probe.log");
+    bool passed = loadOpenGLFunctions() && initializeCoreRenderer();
     if (passed) {
         try {
             runProbe(root, argc == 2);

@@ -728,16 +728,24 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
 }
 
 void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
-                        std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot) {
+                        std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot,
+                        bool prepareInitialWindowAsync) {
     TraceScope trace("map", "RenderLoop::SetMap");
     if (spawnEntryPointIndex >= map.entryPoints.size()) {
         throw std::out_of_range("Selected map spawn entrypoint is outside [entrypoints]");
     }
-    mapRenderer_ = std::make_unique<openbus::rendering::MapRenderer>(
-        map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex),
-        map.entryPoints[spawnEntryPointIndex].placement.position[0],
-        map.entryPoints[spawnEntryPointIndex].placement.position[1], groundTextureIndex, omsiRoot,
-        simulationState_, *assetRequestManager_);
+    if (prepareInitialWindowAsync) {
+        mapRenderer_.reset();
+    }
+    if (!mapRenderer_) {
+        mapRenderer_ = std::make_unique<openbus::rendering::MapRenderer>(
+            map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex),
+            map.entryPoints[spawnEntryPointIndex].placement.position[0],
+            map.entryPoints[spawnEntryPointIndex].placement.position[1], groundTextureIndex,
+            omsiRoot, simulationState_, *assetRequestManager_, prepareInitialWindowAsync);
+    } else if (!prepareInitialWindowAsync) {
+        mapRenderer_->enableScripts();
+    }
     const auto resolveMapAsset =
         [&](const std::string& configuredPath,
             std::string_view assetName) -> std::optional<std::filesystem::path> {
@@ -792,6 +800,10 @@ void RenderLoop::updateMapStreaming(double worldX, double worldY) {
     if (mapRenderer_ != nullptr) {
         mapRenderer_->updateStreaming(worldX, worldY);
     }
+}
+
+bool RenderLoop::initialMapWindowReady() const noexcept {
+    return mapRenderer_ != nullptr && mapRenderer_->initialWindowReady();
 }
 
 void RenderLoop::updateMapPoleStates(const std::vector<MapPoleState>& states) {

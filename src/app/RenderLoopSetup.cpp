@@ -13,6 +13,7 @@
 #include <chrono>
 #include <ctime>
 #include <numbers>
+#include <string>
 #include <system_error>
 
 namespace {
@@ -63,6 +64,11 @@ void copyToInputBuffer(std::array<char, 256>& buffer, const std::string& value) 
     buffer[count] = '\0';
 }
 
+std::string environmentValue(const char* name) {
+    const char* value = openbus::getEnvironment(name);
+    return value == nullptr ? std::string{} : std::string(value);
+}
+
 } // namespace
 
 bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
@@ -83,9 +89,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
     }
 
     std::size_t selectedMapIndex = 0;
-    const std::string configuredMap = openbus::getEnvironment("OPENBUS_MAP_PATH") == nullptr
-                                          ? std::string{}
-                                          : openbus::getEnvironment("OPENBUS_MAP_PATH");
+    const std::string configuredMap = environmentValue("OPENBUS_MAP_PATH");
     if (!configuredMap.empty()) {
         const auto configured =
             std::find_if(maps.begin(), maps.end(), [&](const std::filesystem::path& path) {
@@ -115,6 +119,8 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
     std::size_t selectedRegistrationIndex = 0;
     std::optional<openbus::map::MapDefinition> selectedDefinition;
     std::string mapLoadError;
+    bool waitingForInitialMapWindow = false;
+    bool restoreSetupDialogSize = false;
     std::optional<VehicleConfig> selectedVehicleConfig;
     std::vector<openbus::config::VehicleAppearance> appearances;
     std::vector<openbus::config::VehicleDepot> depots;
@@ -175,7 +181,50 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         imguiLayer_->beginFrame();
 
-        ImGui::SetNextWindowSize(ImVec2(700.0F, 760.0F), ImGuiCond_Once);
+        if (waitingForInitialMapWindow) {
+            try {
+                const VehiclePlacement& spawn =
+                    selection.mapDefinition.entryPoints[selection.spawnEntryPoint].placement;
+                updateMapStreaming(spawn.position[0], spawn.position[1]);
+                if (initialMapWindowReady()) {
+                    ImGui::SetNextWindowSize(ImVec2(480.0F, 120.0F), ImGuiCond_Always);
+                    ImGui::SetNextWindowPos(ImVec2(static_cast<float>(windowWidth) * 0.5F,
+                                                   static_cast<float>(windowHeight) * 0.5F),
+                                            ImGuiCond_Always, ImVec2(0.5F, 0.5F));
+                    ImGui::Begin("OpenBus setup", nullptr,
+                                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
+                    ImGui::TextUnformatted("Initial map tiles are ready.");
+                    ImGui::End();
+                    imguiLayer_->render();
+                    glfwSwapBuffers(window_);
+                    return true;
+                }
+            } catch (const std::exception& error) {
+                waitingForInitialMapWindow = false;
+                restoreSetupDialogSize = true;
+                mapLoadError = error.what();
+                selectedDefinition = selection.mapDefinition;
+                gameLog.Log("Initial map tile loading failed: " + mapLoadError);
+            }
+            if (waitingForInitialMapWindow) {
+                ImGui::SetNextWindowSize(ImVec2(480.0F, 120.0F), ImGuiCond_Always);
+                ImGui::SetNextWindowPos(ImVec2(static_cast<float>(windowWidth) * 0.5F,
+                                               static_cast<float>(windowHeight) * 0.5F),
+                                        ImGuiCond_Always, ImVec2(0.5F, 0.5F));
+                ImGui::Begin("OpenBus setup", nullptr,
+                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
+                ImGui::TextUnformatted("Loading initial map tiles...");
+                ImGui::TextUnformatted("The setup menu will close when the spawn area is ready.");
+                ImGui::End();
+                imguiLayer_->render();
+                glfwSwapBuffers(window_);
+                continue;
+            }
+        }
+
+        ImGui::SetNextWindowSize(ImVec2(700.0F, 760.0F),
+                                 restoreSetupDialogSize ? ImGuiCond_Always : ImGuiCond_Once);
+        restoreSetupDialogSize = false;
         ImGui::SetNextWindowPos(
             ImVec2(static_cast<float>(windowWidth) * 0.5F, static_cast<float>(windowHeight) * 0.5F),
             ImGuiCond_Always, ImVec2(0.5F, 0.5F));
@@ -455,20 +504,34 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
             (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5F;
         if (ImGui::Button("Start in bus", ImVec2(buttonWidth, 42.0F))) {
             saveSelection(true);
-            ImGui::EndDisabled();
-            ImGui::End();
-            imguiLayer_->render();
-            glfwSwapBuffers(window_);
-            return true;
+            try {
+                SetMap(selection.mapDefinition, selection.spawnEntryPoint,
+                       openbus::map::selectMapGroundTextureIndex(
+                           selection.mapDefinition, environmentValue("OPENBUS_MAP_GROUNDTEX")),
+                       omsiRoot, true);
+                waitingForInitialMapWindow = true;
+                mapLoadError.clear();
+            } catch (const std::exception& error) {
+                mapLoadError = error.what();
+                selectedDefinition = selection.mapDefinition;
+                gameLog.Log("Unable to start map loading: " + mapLoadError);
+            }
         }
         ImGui::SameLine();
         if (ImGui::Button("Start on foot", ImVec2(buttonWidth, 42.0F))) {
             saveSelection(false);
-            ImGui::EndDisabled();
-            ImGui::End();
-            imguiLayer_->render();
-            glfwSwapBuffers(window_);
-            return true;
+            try {
+                SetMap(selection.mapDefinition, selection.spawnEntryPoint,
+                       openbus::map::selectMapGroundTextureIndex(
+                           selection.mapDefinition, environmentValue("OPENBUS_MAP_GROUNDTEX")),
+                       omsiRoot, true);
+                waitingForInitialMapWindow = true;
+                mapLoadError.clear();
+            } catch (const std::exception& error) {
+                mapLoadError = error.what();
+                selectedDefinition = selection.mapDefinition;
+                gameLog.Log("Unable to start map loading: " + mapLoadError);
+            }
         }
         ImGui::EndDisabled();
         ImGui::End();

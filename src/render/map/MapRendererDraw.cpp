@@ -221,8 +221,8 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                                               chunk.maxZ - chunk.minZ) *
                                        0.5)))
                 continue;
-            for (const Impl::SceneryInstance* instancePointer : active.instances) {
-                const Impl::SceneryInstance& instance = *instancePointer;
+            for (const std::size_t instanceIndex : active.instanceIndexes) {
+                const Impl::SceneryInstance& instance = active.chunk->instances[instanceIndex];
                 const auto& batch = impl_->sceneryBatches[instance.batchIndex];
                 auto& item = addSphere(
                     &instance, {instance.x, instance.y, instance.z}, instance.boundingRadius,
@@ -543,8 +543,8 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                                       chunk.maxZ))) {
                 continue;
             }
-            for (const Impl::SceneryInstance* instancePointer : active.instances) {
-                const Impl::SceneryInstance& instance = *instancePointer;
+            for (const std::size_t instanceIndex : active.instanceIndexes) {
+                const Impl::SceneryInstance& instance = active.chunk->instances[instanceIndex];
                 if (gpuCulling
                         ? !gpuVisible(&instance)
                         : (outsideVisibilityBounds(instance.x - instance.boundingRadius,

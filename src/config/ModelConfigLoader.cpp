@@ -1059,7 +1059,21 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             ModelPart* current = requirePart();
             if (current != nullptr) {
                 std::vector<std::string> values;
-                if (readValues(reader, line.number, keyword, 3, values, result.diagnostics)) {
+                if (reader.readPayloads(2, values, result.diagnostics, keyword)) {
+                    Line activation;
+                    bool hasActivation = reader.next(activation);
+                    while (hasActivation && isSeparatorLine(trim(activation.text))) {
+                        hasActivation = reader.next(activation);
+                    }
+                    if (!hasActivation || activation.isKeyword()) {
+                        if (hasActivation) {
+                            reader.pushBack(std::move(activation));
+                        }
+                        result.diagnostics.warning(line.number, keyword,
+                                                   "expected 3 values; discarded 2-value record");
+                        continue;
+                    }
+                    values.push_back(std::move(activation.text));
                     const std::string textureName = trim(values[0]);
                     int layer = 0;
                     if (!parseInt(values[1], layer) || layer < 0) {

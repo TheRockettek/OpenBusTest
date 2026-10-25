@@ -78,6 +78,8 @@ Conditionally changes a material texture or slot:
 2. Material slot/index
 3. Script variable or condition name
 
+A record with only the first two values is discarded and produces a warning.
+
 ### `[matl_bumpmap]`
 
 Two values: bump/normal-map filename and strength.

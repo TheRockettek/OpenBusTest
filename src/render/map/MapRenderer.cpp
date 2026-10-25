@@ -85,24 +85,24 @@ MapRenderer::Impl::~Impl() {
 MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
                          double spawnWorldX, double spawnWorldY, std::size_t groundTextureIndex,
                          const std::filesystem::path& omsiRoot, SimulationState& simulationState,
-                         AssetRequestManager& assetRequests)
-    : impl_(std::make_unique<Impl>()) {
+                         AssetRequestManager& assetRequests, bool prepareInitialWindowAsync)
+    : mapDefinition_(map), impl_(std::make_unique<Impl>()),
+      scriptsEnabled_(!prepareInitialWindowAsync), asyncInitialLoad_(prepareInitialWindowAsync) {
     TraceScope trace("map", "MapRenderer::MapRenderer");
     assetRequests_ = &assetRequests;
     impl_->simulationState = &simulationState;
     impl_->omsiRoot = omsiRoot;
-    impl_->coordinates = map.coordinates;
-    for (const auto& tile : map.tiles) {
-        const auto transform = map.coordinates.tile(tile.x, tile.y);
+    impl_->coordinates = mapDefinition_.coordinates;
+    for (const auto& tile : mapDefinition_.tiles) {
+        const auto transform = mapDefinition_.coordinates.tile(tile.x, tile.y);
         impl_->sceneryProjectionRadiusScale =
             std::max({impl_->sceneryProjectionRadiusScale, transform.scaleX, transform.scaleY});
     }
-    impl_->leftHandTraffic = map.metadata.hasLeftHandTraffic;
-    sceneLoader_ = std::make_unique<MapSceneLoader>(map, centerTileIndex, groundTextureIndex,
-                                                    omsiRoot, *impl_, assetRequests);
+    impl_->leftHandTraffic = mapDefinition_.metadata.hasLeftHandTraffic;
+    sceneLoader_ = std::make_unique<MapSceneLoader>(
+        mapDefinition_, centerTileIndex, groundTextureIndex, omsiRoot, *impl_, assetRequests);
     sceneLoader_->load();
     updateStreaming(spawnWorldX, spawnWorldY);
-    sceneLoader_->logSummary();
 }
 
 MapRenderer::~MapRenderer() = default;
@@ -113,6 +113,15 @@ bool MapRenderer::leftHandTraffic() const noexcept {
 
 double MapRenderer::tileSize() const noexcept {
     return impl_->coordinates.tileSize;
+}
+
+void MapRenderer::enableScripts() {
+    scriptsEnabled_ = true;
+    initializeActiveScripts();
+}
+
+bool MapRenderer::initialWindowReady() const noexcept {
+    return impl_->activeCenterTile.has_value();
 }
 
 void MapRenderer::updateScripts() {
@@ -133,6 +142,9 @@ void MapRenderer::updateScripts() {
 }
 
 void MapRenderer::initializeActiveScripts() {
+    if (!scriptsEnabled_) {
+        return;
+    }
     for (const std::size_t stateIndex : impl_->activeSceneryScriptStateIndices) {
         Impl::SceneryScriptState& scriptState = *impl_->sceneryScriptStates[stateIndex];
         if (!scriptState.definition || !scriptState.definition->hasRuntime) {
@@ -162,6 +174,10 @@ void MapRenderer::initializeActiveScripts() {
 }
 
 void MapRenderer::updateStreaming(double worldX, double worldY) {
+    const bool waitForInitialLoad = !impl_->activeCenterTile.has_value() && !asyncInitialLoad_;
+    if (!sceneLoader_->finishLoad(waitForInitialLoad)) {
+        return;
+    }
     const int centerX = openbus::map::mapWorldTile(worldX, impl_->coordinates.tileSize);
     const int centerY = openbus::map::mapWorldTile(worldY, impl_->coordinates.tileSize);
     const openbus::map::MapTileCoordinate center{centerX, centerY};
@@ -171,9 +187,9 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
             impl_->coordinates.tileSize);
         impl_->requestedCenterTile = center;
     }
-    const MapSceneLoader::TileLoadStatus loadStatus =
-        sceneLoader_->loadActiveTiles(impl_->requestedTileCoordinates, *impl_->requestedCenterTile,
-                                      !impl_->activeCenterTile.has_value());
+    const MapSceneLoader::TileLoadStatus loadStatus = sceneLoader_->loadActiveTiles(
+        impl_->requestedTileCoordinates, *impl_->requestedCenterTile, waitForInitialLoad,
+        !impl_->activeCenterTile.has_value() && asyncInitialLoad_);
     if (loadStatus == MapSceneLoader::TileLoadStatus::Pending) {
         return;
     }
@@ -196,6 +212,8 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
     stats.totalTerrainTiles = impl_->terrainBuffers.size();
     stats.totalSceneryObjects = impl_->sceneryObjectCount;
     stats.totalRoadBatches = impl_->roadBatches.size();
+    stats.totalWaterBatches = impl_->waterBatches.size();
+    stats.totalTextures = impl_->ownedTextures.size();
     const auto countForTile = [](const auto& counts, std::uint64_t key) {
         const auto found = counts.find(key);
         return found == counts.end() ? std::size_t{0} : found->second;
@@ -231,13 +249,13 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
             active[0].chunk = &chunk->second;
             active[1].chunk = &chunk->second;
             const bool typeFour = impl_->sceneryBatches[instance.batchIndex].renderType == 4;
-            active[typeFour ? 1 : 0].instances.push_back(&instance);
+            active[typeFour ? 1 : 0].instanceIndexes.push_back(reference.instanceIndex);
         }
     }
     for (auto& [key, active] : activeByChunk) {
         static_cast<void>(key);
         for (std::size_t pass = 0; pass < active.size(); ++pass) {
-            if (!active[pass].instances.empty()) {
+            if (!active[pass].instanceIndexes.empty()) {
                 impl_->activeSceneryChunks[pass].push_back(std::move(active[pass]));
             }
         }
@@ -251,7 +269,13 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
                 states->second.end());
         }
     }
-    initializeActiveScripts();
+    if (scriptsEnabled_) {
+        initializeActiveScripts();
+    }
+    if (!loadSummaryLogged_) {
+        sceneLoader_->logSummary();
+        loadSummaryLogged_ = true;
+    }
     gameLog.Log("Map active render window: center=" + tileLabel(centerX, centerY) +
                 ", active tiles=" + std::to_string(impl_->activeTileCoordinates.size()) +
                 ", radius=" + std::to_string(MAP_ACTIVE_TILE_RADIUS) + " tiles.");
@@ -935,6 +959,9 @@ std::optional<openbus::map::MapTrafficRoute> MapRenderer::buildDrivingRoute(
     const std::vector<std::optional<std::size_t>>& requiredSceneryPathSequence,
     bool stopAtRequiredSequenceEnd, bool allowIntermediarySegmentsBetweenRequired,
     bool allowReverseTraversalForRequired) const {
+    if (!sceneLoader_->roadTrafficLaneNetworkReady()) {
+        return std::nullopt;
+    }
     return impl_->roadTrafficLaneNetwork.buildRoute(
         splineId, laneSelector, routeSeed, minimumTurnRadiusMeters, vehicle, requiredSplineSequence,
         requiredSceneryPathSequence, stopAtRequiredSequenceEnd,
@@ -944,6 +971,9 @@ std::optional<openbus::map::MapTrafficRoute> MapRenderer::buildDrivingRoute(
 std::vector<openbus::map::MapTrafficLaneStart>
 MapRenderer::lanesForTimetableEntry(int splineId,
                                     std::optional<std::size_t> sceneryPathIndex) const {
+    if (!sceneLoader_->roadTrafficLaneNetworkReady()) {
+        return {};
+    }
     return impl_->roadTrafficLaneNetwork.lanesForTimetableEntry(splineId, sceneryPathIndex);
 }
 
@@ -952,27 +982,42 @@ MapRenderer::nearestTrafficLaneConnectionGap(int fromSplineId,
                                              std::optional<std::size_t> fromPathIndex,
                                              int toSplineId,
                                              std::optional<std::size_t> toPathIndex) const {
+    if (!sceneLoader_->roadTrafficLaneNetworkReady()) {
+        return std::nullopt;
+    }
     return impl_->roadTrafficLaneNetwork.nearestConnectionGap(fromSplineId, fromPathIndex,
                                                               toSplineId, toPathIndex);
 }
 
 std::vector<openbus::map::MapTrafficLaneStart> MapRenderer::trafficEntryLanes() const {
+    if (!sceneLoader_->roadTrafficLaneNetworkReady()) {
+        return {};
+    }
     return impl_->roadTrafficLaneNetwork.entryLanes();
 }
 
 std::optional<openbus::map::MapTrafficLaneStart>
 MapRenderer::selectTrafficEntryLane(openbus::map::MapTrafficVehicleFilter vehicle,
                                     std::size_t selectionSeed) const {
+    if (!sceneLoader_->roadTrafficLaneNetworkReady()) {
+        return std::nullopt;
+    }
     return impl_->roadTrafficLaneNetwork.selectEntryLane(vehicle, selectionSeed);
 }
 
 std::vector<openbus::map::MapTrafficLaneStart> MapRenderer::trafficSpawnLanes() const {
+    if (!sceneLoader_->roadTrafficLaneNetworkReady()) {
+        return {};
+    }
     return impl_->roadTrafficLaneNetwork.spawnLanes();
 }
 
 std::optional<openbus::map::MapTrafficLaneStart>
 MapRenderer::selectTrafficSpawnLane(openbus::map::MapTrafficVehicleFilter vehicle,
                                     std::size_t selectionSeed) const {
+    if (!sceneLoader_->roadTrafficLaneNetworkReady()) {
+        return std::nullopt;
+    }
     return impl_->roadTrafficLaneNetwork.selectSpawnLane(vehicle, selectionSeed);
 }
 

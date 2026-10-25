@@ -28,17 +28,19 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
     TraceScope trace("map", "MapRenderer.loadSceneryAsset");
     std::vector<std::size_t> batchIndexes;
     try {
-        const std::filesystem::path objectRoot = configPath.parent_path();
         PreparedSceneryAsset prepared;
         auto preparation = preparedSceneryAssetConfigs.find(cacheKey);
         if (preparation == preparedSceneryAssetConfigs.end()) {
-            prepared = prepareSceneryAsset(configPath);
+            prepared = prepareSceneryAsset(configPath, omsiRoot);
         } else {
-            prepared = std::move(preparation->second);
+            prepared = std::move(*preparation->second);
             preparedSceneryAssetConfigs.erase(preparation);
         }
         if (prepared.preparationError) {
             std::rethrow_exception(prepared.preparationError);
+        }
+        for (auto& [path, image] : prepared.decodedTextures) {
+            preparedTextureImages.try_emplace(path, std::move(image));
         }
         const SceneryObjectConfig& objectConfiguration = prepared.objectConfiguration;
         sceneryAttachmentPoints[cacheKey] = objectConfiguration.attachmentPoints;
@@ -65,7 +67,6 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             return sceneryAssetBatches.emplace(cacheKey, std::move(batchIndexes)).first->second;
         }
         const std::filesystem::path& modelConfigPath = prepared.modelConfigPath;
-        const std::filesystem::path& modelRoot = prepared.modelRoot;
         if (prepared.externalModelConfigMissing) {
             recordSkipped(skipped, "scenery external model configs not found",
                           configPath.filename().string() +
@@ -81,30 +82,22 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                               diagnostic.keyword + "] " + severity + ": " + diagnostic.message);
         }
         if (!objectConfiguration.trees.empty()) {
-            for (const SceneryTreeDefinition& tree : objectConfiguration.trees) {
-                const std::filesystem::path treeTexture =
-                    findSceneryTexture(objectRoot, modelRoot, omsiRoot, tree.texturePath);
-                if (treeTexture.empty()) {
+            for (const PreparedSceneryTreeBatch& preparedTree : prepared.treeBatches) {
+                if (preparedTree.texturePath.empty()) {
                     recordSkipped(skipped, "tree scenery definitions with missing textures",
-                                  configPath.filename().string() + " texture=" + tree.texturePath);
+                                  configPath.filename().string() +
+                                      " texture=" + preparedTree.textureName);
                     continue;
                 }
-                const double height = (tree.minimumHeight + tree.maximumHeight) * 0.5;
-                const double ratio = (tree.minimumRatio + tree.maximumRatio) * 0.5;
-                std::vector<ModelVertex> vertices = makeTreePreview(height, height * 0.55 * ratio);
-                Impl::ModelBatch batch;
-                batch.vertexCount = vertices.size();
-                batch.boundingRadius = vertexBoundingRadius(vertices);
-                batch.renderType = objectConfiguration.renderType;
-                batch.material.texture = getTexture(treeTexture);
+                Impl::ModelBatch batch = preparedTree.batch;
+                batch.material.texture = getTexture(preparedTree.texturePath);
                 batch.material.textured = true;
-                batch.material.flipTextureY = true;
-                batch.alphaMode = 1;
                 pglGenBuffers(1, &batch.buffer);
                 pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-                pglBufferData(GL_ARRAY_BUFFER,
-                              static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
-                              vertices.data(), GL_STATIC_DRAW);
+                pglBufferData(
+                    GL_ARRAY_BUFFER,
+                    static_cast<std::ptrdiff_t>(preparedTree.vertices.size() * sizeof(ModelVertex)),
+                    preparedTree.vertices.data(), GL_STATIC_DRAW);
                 if (batch.buffer == 0 || glGetError() != GL_NO_ERROR) {
                     if (batch.buffer != 0) {
                         pglDeleteBuffers(1, &batch.buffer);
@@ -205,145 +198,88 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                 continue;
             }
             const PreparedSceneryMesh& mesh = preparedMesh->second;
-            const std::shared_ptr<ParsedObj>& parsed = mesh.parsed;
             if (mesh.invalidPositionIndices > 0) {
                 recordSkipped(skipped, "scenery mesh vertices with invalid position indices",
                               part.objPath.filename().string(), mesh.invalidPositionIndices);
             }
-            const auto statesByMaterial = openbus::map::resolveSceneryMaterialStates(*parsed, part);
             for (const auto& [materialIndex, vertices] : mesh.verticesByMaterial) {
+                static_cast<void>(materialIndex);
                 if (vertices.empty()) {
                     recordSkipped(skipped, "empty scenery material batches",
                                   part.objPath.filename().string());
-                    continue;
                 }
-                const auto sourceMaterial =
-                    parsed->materials.find("matl_" + std::to_string(materialIndex));
-                const auto stateFound = statesByMaterial.find(materialIndex);
-                const ModelMaterialState* state =
-                    stateFound == statesByMaterial.end() ? nullptr : stateFound->second;
-                std::string textureName = sourceMaterial == parsed->materials.end()
-                                              ? std::string{}
-                                              : sourceMaterial->second.textureName;
-                std::array<double, 3> color = sourceMaterial == parsed->materials.end()
-                                                  ? std::array<double, 3>{1.0, 1.0, 1.0}
-                                                  : sourceMaterial->second.color;
-                if (state != nullptr && !state->textureName.empty()) {
-                    textureName = state->textureName;
-                }
-                if (state != nullptr && !state->textureName.empty()) {
-                    const std::string stateTexture =
-                        std::filesystem::path(state->textureName).filename().string();
-                    const auto materialForTexture = std::find_if(
-                        parsed->materials.begin(), parsed->materials.end(), [&](const auto& entry) {
-                            return std::filesystem::path(entry.second.textureName).filename() ==
-                                   stateTexture;
-                        });
-                    if (materialForTexture != parsed->materials.end()) {
-                        color = materialForTexture->second.color;
-                    }
-                }
-                ModelMaterial material;
-                if (sourceMaterial != parsed->materials.end()) {
-                    for (std::size_t index = 0; index < 3; ++index) {
-                        material.specularColor[index] =
-                            static_cast<float>(sourceMaterial->second.specular[index]);
-                        material.emissionColor[index] =
-                            static_cast<float>(sourceMaterial->second.emission[index]);
-                    }
-                    material.specularPower =
-                        static_cast<float>(sourceMaterial->second.specularPower);
-                }
-                const std::filesystem::path materialTexture =
-                    findSceneryTexture(objectRoot, modelRoot, omsiRoot, textureName);
-                if (!materialTexture.empty()) {
-                    material.texture = getTexture(materialTexture);
-                    material.textured = true;
-                } else if (!textureName.empty()) {
-                    recordSkipped(skipped, "scenery material textures not found",
-                                  modelConfigPath.filename().string() + " mesh=" +
-                                      part.objPath.filename().string() + " texture=" + textureName);
-                }
-                if (state != nullptr && !state->transmapTextureName.empty()) {
-                    const std::filesystem::path transmapTexture = findSceneryTexture(
-                        objectRoot, modelRoot, omsiRoot, state->transmapTextureName);
-                    if (transmapTexture.empty()) {
-                        recordSkipped(skipped, "scenery transmap textures not found",
-                                      modelConfigPath.filename().string() +
-                                          " mesh=" + part.objPath.filename().string() +
-                                          " transmap=" + state->transmapTextureName);
-                    } else {
-                        material.transmap = getTexture(transmapTexture);
-                        material.useTransmap = material.transmap != 0;
-                    }
-                }
-                if (state != nullptr && !state->freeTextureName.empty()) {
-                    const std::filesystem::path freeTexture =
-                        findSceneryTexture(objectRoot, modelRoot, omsiRoot, state->freeTextureName);
-                    if (freeTexture.empty()) {
-                        recordSkipped(skipped, "scenery free textures not found",
-                                      modelConfigPath.filename().string() +
-                                          " mesh=" + part.objPath.filename().string() +
-                                          " texture=" + state->freeTextureName);
-                    } else {
-                        material.freeTexture = getTexture(freeTexture);
-                        material.useFreeTexture = material.freeTexture != 0;
-                    }
-                }
-                Impl::ModelBatch batch;
-                batch.cullBackFaces = true;
-                batch.vertexCount = vertices.size();
-                batch.boundingRadius = vertexBoundingRadius(vertices);
-                batch.sceneryLodIndex =
-                    part.lodIndex < 0 ? 0U : static_cast<std::size_t>(part.lodIndex);
-                batch.material = material;
-                if (state != nullptr) {
-                    batch.scriptTextureIndex = state->scriptTextureIndex;
-                    batch.textTextureIndex = state->textTextureIndex;
-                    batch.freeTextureName = state->freeTextureName;
-                    batch.freeTextureVariable = state->freeTextureVariable;
-                    batch.textureObjectRoot = objectRoot;
-                    batch.textureModelRoot = modelRoot;
-                    batch.material.textureWrapS = textureAddressModeToGl(state->textureAddressS);
-                    batch.material.textureWrapT = textureAddressModeToGl(state->textureAddressT);
-                }
-                batch.color = color;
-                batch.alpha = sourceMaterial == parsed->materials.end()
-                                  ? 1.0
-                                  : std::clamp(sourceMaterial->second.alpha, 0.0, 1.0);
-                batch.alphaMode = state == nullptr ? 0 : state->alphaMode;
-                batch.noZwrite = state != nullptr && state->noZwrite;
-                batch.noZcheck = state != nullptr && state->noZcheck;
-                batch.renderType = resolveSceneryRenderType(part, objectConfiguration.renderType);
-                batch.visibilityVariable = part.visibleVariable;
-                batch.visibilityValue = part.visibleValue;
-                if (batch.alphaMode == 0 && batch.alpha < 1.0 - 1.0e-6) {
-                    batch.alphaMode = 2;
-                }
-                if (verboseAlphaMaterials && batch.alphaMode != 0) {
-                    gameLog.Log(
-                        "Map scenery alpha material: asset=" + modelConfigPath.filename().string() +
-                        " mesh=" + part.objPath.filename().string() + " index=" +
-                        std::to_string(materialIndex) + " mode=" + std::to_string(batch.alphaMode) +
-                        " state=" + (state == nullptr ? "none" : std::to_string(state->alphaMode)) +
-                        " texture=" + materialTexture.generic_string());
-                }
-                pglGenBuffers(1, &batch.buffer);
-                pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-                pglBufferData(GL_ARRAY_BUFFER,
-                              static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
-                              vertices.data(), GL_STATIC_DRAW);
-                if (batch.buffer == 0 || glGetError() != GL_NO_ERROR) {
-                    if (batch.buffer != 0) {
-                        pglDeleteBuffers(1, &batch.buffer);
-                    }
-                    recordSkipped(skipped, "scenery model batches rejected by OpenGL upload",
-                                  part.objPath.filename().string());
-                    continue;
-                }
-                batchIndexes.push_back(impl_->sceneryBatches.size());
-                impl_->sceneryBatches.push_back(batch);
             }
+        }
+        for (const PreparedSceneryBatch& preparedBatch : prepared.batches) {
+            const auto mesh = prepared.meshes.find(preparedBatch.meshKey);
+            if (mesh == prepared.meshes.end()) {
+                throw std::logic_error("Prepared scenery batch mesh was not retained");
+            }
+            const auto materialVertices =
+                mesh->second.verticesByMaterial.find(preparedBatch.materialIndex);
+            if (materialVertices == mesh->second.verticesByMaterial.end()) {
+                throw std::logic_error("Prepared scenery batch vertices were not retained");
+            }
+            const std::vector<ModelVertex>& vertices = materialVertices->second;
+            Impl::ModelBatch batch = preparedBatch.batch;
+            if (!preparedBatch.texturePath.empty()) {
+                batch.material.texture = getTexture(preparedBatch.texturePath);
+                batch.material.textured = true;
+            } else if (!preparedBatch.textureName.empty()) {
+                recordSkipped(skipped, "scenery material textures not found",
+                              modelConfigPath.filename().string() + " mesh=" +
+                                  std::filesystem::path(preparedBatch.meshKey).filename().string() +
+                                  " texture=" + preparedBatch.textureName);
+            }
+            if (!preparedBatch.transmapTextureName.empty()) {
+                if (preparedBatch.transmapTexturePath.empty()) {
+                    recordSkipped(
+                        skipped, "scenery transmap textures not found",
+                        modelConfigPath.filename().string() + " mesh=" +
+                            std::filesystem::path(preparedBatch.meshKey).filename().string() +
+                            " transmap=" + preparedBatch.transmapTextureName);
+                } else {
+                    batch.material.transmap = getTexture(preparedBatch.transmapTexturePath);
+                    batch.material.useTransmap = batch.material.transmap != 0;
+                }
+            }
+            if (!preparedBatch.freeTextureName.empty()) {
+                if (preparedBatch.freeTexturePath.empty()) {
+                    recordSkipped(
+                        skipped, "scenery free textures not found",
+                        modelConfigPath.filename().string() + " mesh=" +
+                            std::filesystem::path(preparedBatch.meshKey).filename().string() +
+                            " texture=" + preparedBatch.freeTextureName);
+                } else {
+                    batch.material.freeTexture = getTexture(preparedBatch.freeTexturePath);
+                    batch.material.useFreeTexture = batch.material.freeTexture != 0;
+                }
+            }
+            if (verboseAlphaMaterials && batch.alphaMode != 0) {
+                gameLog.Log(
+                    "Map scenery alpha material: asset=" + modelConfigPath.filename().string() +
+                    " mesh=" + std::filesystem::path(preparedBatch.meshKey).filename().string() +
+                    " index=" + std::to_string(preparedBatch.materialIndex) +
+                    " mode=" + std::to_string(batch.alphaMode) + " state=" +
+                    (preparedBatch.hasMaterialState ? std::to_string(preparedBatch.stateAlphaMode)
+                                                    : "none") +
+                    " texture=" + preparedBatch.texturePath.generic_string());
+            }
+            pglGenBuffers(1, &batch.buffer);
+            pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+            pglBufferData(GL_ARRAY_BUFFER,
+                          static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
+                          vertices.data(), GL_STATIC_DRAW);
+            if (batch.buffer == 0 || glGetError() != GL_NO_ERROR) {
+                if (batch.buffer != 0) {
+                    pglDeleteBuffers(1, &batch.buffer);
+                }
+                recordSkipped(skipped, "scenery model batches rejected by OpenGL upload",
+                              std::filesystem::path(preparedBatch.meshKey).filename().string());
+                continue;
+            }
+            batchIndexes.push_back(impl_->sceneryBatches.size());
+            impl_->sceneryBatches.push_back(batch);
         }
     } catch (const std::exception& error) {
         // Unsupported scenery configuration syntax/assets are skipped; they must not prevent

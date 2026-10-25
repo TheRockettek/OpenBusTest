@@ -7,6 +7,7 @@
 #include "render/AssetRequestManager.h"
 
 #include <exception>
+#include <future>
 #include <tuple>
 
 namespace openbus::rendering {
@@ -22,13 +23,20 @@ class MapSceneLoader {
     MapSceneLoader(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
                    std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot,
                    MapRenderer::Impl& impl, AssetRequestManager& assetRequests);
+    ~MapSceneLoader();
 
     // Loads map-wide indexes and shared textures.
     void load();
+    bool finishLoad(bool waitForCompletion);
+    bool roadTrafficLaneNetworkReady() const noexcept {
+        return loadFinished_ && !roadTrafficLaneNetworkDirty &&
+               !pendingRoadTrafficLaneNetworkFinalization_.valid();
+    }
     // Loads render assets for active tiles that have not been loaded yet.
     TileLoadStatus loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoordinates,
                                    const openbus::map::MapTileCoordinate& priorityCenter,
-                                   bool waitForCompletion = false);
+                                   bool waitForCompletion = false,
+                                   bool failOnExhaustedRetries = false);
     // Logs totals and skip summaries; call after the initial streaming update.
     void logSummary() const;
 
@@ -39,6 +47,8 @@ class MapSceneLoader {
         openbus::map::TerrainGrid grid;
         std::vector<TerrainVertex> vertices;
         std::vector<std::uint32_t> indices;
+        std::unordered_map<std::string, std::shared_ptr<Image>> decodedTextures;
+        std::unordered_map<std::string, std::string> textureErrors;
         float minimumHeight = 0.0F;
         float maximumHeight = 0.0F;
     };
@@ -50,11 +60,36 @@ class MapSceneLoader {
         std::exception_ptr preparationError;
     };
 
+    struct PreparedSceneryBatch {
+        std::string meshKey;
+        int materialIndex = 0;
+        Impl::ModelBatch batch;
+        std::string textureName;
+        std::string transmapTextureName;
+        std::string freeTextureName;
+        std::filesystem::path texturePath;
+        std::filesystem::path transmapTexturePath;
+        std::filesystem::path freeTexturePath;
+        bool hasMaterialState = false;
+        int stateAlphaMode = 0;
+    };
+
+    struct PreparedSceneryTreeBatch {
+        std::vector<ModelVertex> vertices;
+        std::string textureName;
+        std::filesystem::path texturePath;
+        Impl::ModelBatch batch;
+    };
+
     struct PreparedSceneryAsset {
         SceneryObjectConfig objectConfiguration;
         ModelConfig modelConfiguration;
         openbus::scripting::SceneryObject variables;
         std::unordered_map<std::string, PreparedSceneryMesh> meshes;
+        std::vector<PreparedSceneryBatch> batches;
+        std::vector<PreparedSceneryTreeBatch> treeBatches;
+        std::unordered_map<std::string, std::filesystem::path> resolvedTexturePaths;
+        std::unordered_map<std::string, std::shared_ptr<Image>> decodedTextures;
         std::filesystem::path modelConfigPath;
         std::filesystem::path modelRoot;
         std::filesystem::path externalModelConfigPath;
@@ -64,15 +99,39 @@ class MapSceneLoader {
         std::exception_ptr preparationError;
     };
 
+    struct PendingSceneryAsset {
+        std::string key;
+        std::shared_future<std::shared_ptr<PreparedSceneryAsset>> result;
+    };
+
+    struct TilePreparationFailure {
+        std::size_t attempts = 0;
+        std::chrono::steady_clock::time_point retryAfter;
+        bool exhausted = false;
+        bool terrainPreparation = false;
+        std::string diagnostic;
+    };
+
     struct PreparedRoadTile {
         std::map<std::string, RoadMeshGeometry> geometryByBatch;
         std::vector<std::tuple<std::string, std::string, std::size_t>> skipped;
         std::unordered_set<std::string> editorOnlyProfileKeys;
+        std::unordered_map<std::string, std::shared_ptr<Image>> decodedTextures;
+        std::unordered_map<std::string, std::string> textureErrors;
+        std::vector<ModelVertex> waterVertices;
+        std::vector<std::uint32_t> waterIndices;
+        double waterMinimumHeight = 0.0;
+        double waterMaximumHeight = 0.0;
+        double waterMeanHeight = 0.0;
+        std::string waterError;
+        std::optional<openbus::map::WaterData> waterData;
     };
 
     struct RoadSplineInput {
         openbus::map::MapSplinePlacement spline;
         openbus::map::MapRoadSplineJoins joins;
+        std::filesystem::path profilePath;
+        std::optional<openbus::map::MapSplineProfile> profile;
     };
 
     struct IndexedSceneryObject {
@@ -100,30 +159,39 @@ class MapSceneLoader {
     };
 
     // Phases, in execution order.
+    void configureGroundTextures();
     void loadGroundTextures();
     bool loadTerrainTiles(const std::unordered_set<std::uint64_t>& tileKeys,
                           const openbus::map::MapTileCoordinate& priorityCenter,
                           bool waitForCompletion);
     void indexMapContent();
+    bool finishTrafficLaneNetworkPreparation(bool waitForCompletion);
     void buildTileContent(const openbus::map::MapTileReference& tileReference,
-                          const openbus::map::MapTileData& tile,
-                          const PreparedRoadTile& preparedRoads);
+                          const openbus::map::MapTileData& tile, PreparedRoadTile& preparedRoads);
     bool requestTileRoadPreparation(const openbus::map::MapTileData& tile,
+                                    const openbus::map::MapTileReference& tileReference,
                                     std::uint64_t tileKeyValue);
     static PreparedRoadTile prepareRoadTile(const std::vector<RoadSplineInput>& splines,
-                                            const std::filesystem::path& mapRoot,
                                             const std::filesystem::path& omsiRoot, int tileX,
                                             int tileY,
-                                            const openbus::map::MapCoordinates& coordinates);
-    std::optional<std::vector<std::string>>
-    requestTileSceneryAssets(const openbus::map::MapTileData& tile, std::uint64_t tileKeyValue);
+                                            const openbus::map::MapCoordinates& coordinates,
+                                            bool hasWaterMarker,
+                                            const std::filesystem::path& waterPath);
+    std::vector<std::string> requestTileSceneryAssets(const openbus::map::MapTileData& tile,
+                                                      std::uint64_t tileKeyValue);
     bool completeSceneryAssetPreparation(std::uint64_t tileKeyValue, bool waitForCompletion);
     bool sceneryAssetPreparationsReady(const std::vector<std::string>& assetKeys) const;
-    static PreparedSceneryAsset prepareSceneryAsset(const std::filesystem::path& configPath);
+    bool tilePreparationRetryReady(std::uint64_t tileKeyValue) const;
+    void recordTilePreparationFailure(std::uint64_t tileKeyValue, bool terrainPreparation,
+                                      const std::string& stage, const std::filesystem::path& path,
+                                      std::exception_ptr error, bool waitForCompletion);
+    static PreparedSceneryAsset prepareSceneryAsset(const std::filesystem::path& configPath,
+                                                    const std::filesystem::path& omsiRoot);
     static PreparedSceneryMesh prepareSceneryMesh(const std::filesystem::path& meshPath);
     void resolveTrafficLightVariableParents();
-    void uploadRoadBatches();
+    bool uploadRoadBatches(bool waitForCompletion);
 
+    GLuint uploadPreparedTexture(const std::filesystem::path& path, bool repeat) const;
     GLuint getTexture(const std::filesystem::path& path, bool repeat = true);
     [[nodiscard]] std::optional<double> sampleTerrainHeight(int tileX, int tileY, double localX,
                                                             double localY) const;
@@ -151,17 +219,27 @@ class MapSceneLoader {
     std::unordered_map<std::uint64_t, std::vector<std::string>> pendingTileAssetKeys;
     std::unordered_map<std::uint64_t, std::future<PreparedRoadTile>> pendingTileRoadRequests;
     std::unordered_map<std::uint64_t, PreparedRoadTile> preparedTileRoads;
-    std::unordered_map<std::uint64_t,
-                       std::future<std::vector<std::pair<std::string, PreparedSceneryAsset>>>>
-        pendingTileSceneryRequests;
-    std::unordered_map<std::string, PreparedSceneryAsset> preparedSceneryAssetConfigs;
+    std::unordered_map<std::uint64_t, std::vector<PendingSceneryAsset>> pendingTileSceneryRequests;
+    std::unordered_map<std::string, std::shared_future<std::shared_ptr<PreparedSceneryAsset>>>
+        pendingSceneryAssetRequests;
+    std::unordered_map<std::string, std::shared_ptr<PreparedSceneryAsset>>
+        preparedSceneryAssetConfigs;
+    std::unordered_map<std::uint64_t, TilePreparationFailure> tilePreparationFailures;
 
     std::chrono::steady_clock::time_point mapLoadStart = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point lastTileProgressLog{};
     bool uniformGroundTexturePreview = false;
     std::size_t baseGroundTextureIndex = 0;
     double baseTextureRepeatsPerTile = 1.0;
     SkipSummaries skipped;
     std::unordered_map<std::string, GLuint> textureCache;
+    std::unordered_map<std::string, std::shared_ptr<Image>> preparedTextureImages;
+    std::unordered_map<std::string, std::string> preparedTextureErrors;
+    std::filesystem::path baseTexturePath_;
+    std::future<Image> baseTextureRequest_;
+    std::future<void> mapIndexRequest_;
+    bool loadStarted_ = false;
+    bool loadFinished_ = false;
 
     std::unordered_map<std::string, std::vector<std::size_t>> sceneryAssetBatches;
     std::unordered_map<std::string, std::size_t> sceneryLodThresholdSetByAsset;
@@ -197,6 +275,9 @@ class MapSceneLoader {
     std::size_t splinePlacementsParsed = 0;
     bool roadTrafficLaneNetworkDirty = false;
     bool humanTrafficLaneNetworkDirty = false;
+    std::future<openbus::map::MapTrafficLaneNetwork> pendingRoadTrafficLaneNetworkFinalization_;
+    std::future<openbus::map::MapTrafficLaneNetwork> pendingHumanTrafficLaneNetworkFinalization_;
+    bool terrainLoadPhaseLogged = false;
     std::unordered_map<int, IndexedSceneryObject> sceneryObjectsById;
     std::unordered_map<int, IndexedAttachedObject> attachedObjectsById;
     std::unordered_map<int, std::size_t> splineAttachmentTileById;

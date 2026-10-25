@@ -6,6 +6,7 @@
 #include "osc/OscConverter.h"
 #include "ProbeTempDirectory.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -317,6 +318,30 @@ int main() {
         conditional.collisionMeshes[0].partIndex != 0 || !conditional.hasBoundingBox ||
         conditional.boundingBox != std::array<double, 6>{2.5, 13.5, 3.66, 0.0, 0.0, 2.23}) {
         std::cerr << "conditional material fixture failed to parse\n";
+        return 1;
+    }
+    const std::filesystem::path twoValueChangePath = root / "two_value_change.cfg";
+    std::ofstream twoValueChangeConfig(twoValueChangePath);
+    twoValueChangeConfig << "[mesh]\ndisplay.obj\n"
+                            "[matl]\ndisplay.bmp\n0\n"
+                            "[matl_change]\nrollband_L.bmp\n0\n"
+                            "--------------------\n"
+                            "[mesh]\ndisplay.obj\n";
+    twoValueChangeConfig.close();
+    const ModelConfig twoValueChange =
+        loadModelConfig(twoValueChangePath, root, ModelConfigKind::Bus, variables);
+    const bool warnedForTwoValueChange =
+        std::any_of(twoValueChange.diagnostics.entries.begin(),
+                    twoValueChange.diagnostics.entries.end(),
+                    [](const ConfigurationDiagnostic& diagnostic) {
+                        return diagnostic.severity == ConfigurationDiagnostic::Severity::Warning &&
+                               diagnostic.keyword == "matl_change";
+                    });
+    if (twoValueChange.diagnostics.hasErrors() || !warnedForTwoValueChange ||
+        twoValueChange.parts.size() != 2 ||
+        twoValueChange.parts[0].materialStatesInOrder.size() != 1 ||
+        !twoValueChange.parts[0].materialStatesInOrder[0].textureChanges.empty()) {
+        std::cerr << "two-value matl_change was not discarded with a warning\n";
         return 1;
     }
     const std::filesystem::path treeConfigPath = root / "tree.sco";

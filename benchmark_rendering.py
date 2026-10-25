@@ -20,7 +20,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent
-BUILD_DIR = ROOT / "build-benchmark"
+BUILD_DIR = ROOT / "build-benchmark-ninja"
 EXECUTABLE = BUILD_DIR / "OpenBus.exe"
 CACHE_FILE = BUILD_DIR / "CMakeCache.txt"
 DEFAULT_RESOLUTIONS = ("1280x720", "1920x1080", "2560x1440", "3840x2160", "5120x1440")
@@ -411,7 +411,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--build-directory",
         default=None,
-        help="CMake build directory containing OpenBus.exe (defaults to build-benchmark)",
+        help="CMake build directory containing OpenBus.exe (defaults to build-benchmark-ninja)",
     )
     return parser
 
@@ -447,7 +447,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         re.MULTILINE,
     ) is None:
         raise RuntimeError(
-            "Performance tracing is not enabled in build-benchmark. "
+            "Performance tracing is not enabled in build-benchmark-ninja. "
             "Run benchmark_rendering.bat to configure and build with tracing."
         )
 

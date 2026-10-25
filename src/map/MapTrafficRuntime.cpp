@@ -2201,7 +2201,6 @@ std::size_t advanceMapTrafficActors(std::vector<MapTrafficActor>& actors, double
             trafficInputError("Map traffic update time must be finite and non-negative",
                               "elapsedSeconds=", elapsedSeconds));
     }
-
     std::vector<MapTrafficActor> remaining;
     remaining.reserve(actors.size());
     std::size_t removedActors = 0;
@@ -5232,13 +5231,22 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     priorities[highIndex] > priorities[lowIndex] || tieBreaksInFavorOfHigh;
                 const bool committedTurnPrecedenceDiffers =
                     committedTurningInJunction[highIndex] != committedTurningInJunction[lowIndex];
+                const bool lowYieldingOnJunction =
+                    actorCommittedInJunction[lowIndex] && low.speedMetersPerSecond < 0.3 &&
+                    (low.blockReason == MapTrafficBlockReason::CrossingReservation ||
+                     low.blockReason == MapTrafficBlockReason::JunctionTraffic);
+                const bool highPrecedesJunctionYielder =
+                    actorCommittedInJunction[highIndex] && lowYieldingOnJunction;
                 const bool highIsEstablishedInJunction =
                     actorCenterInJunction[highIndex] && !actorCenterInJunction[lowIndex] &&
                     movementTurnClass[lowIndex] > 0 && highHasAuthoredPriority;
                 const bool highHasPriority =
-                    highIsEstablishedInJunction ||
-                    (committedTurnPrecedenceDiffers ? committedTurningInJunction[highIndex] != 0
-                                                    : highHasAuthoredPriority);
+                    highPrecedesJunctionYielder
+                        ? highHasAuthoredPriority
+                        : highIsEstablishedInJunction ||
+                              (committedTurnPrecedenceDiffers
+                                   ? committedTurningInJunction[highIndex] != 0
+                                   : highHasAuthoredPriority);
                 if (highIndex == lowIndex || !highHasPriority || highHeld) {
                     continue;
                 }
@@ -5299,7 +5307,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         }
                     }
                 }
-                if (conflict.has_value() && !committedTurningInJunction[lowIndex] &&
+                if (conflict.has_value() &&
+                    (!committedTurningInJunction[lowIndex] || highPrecedesJunctionYielder) &&
                     *conflict - low.distanceMeters >=
                         low.speedMetersPerSecond * low.speedMetersPerSecond / (2.0 * braking) +
                             low.lengthMeters * 0.5 + priorityYieldClearanceMeters) {

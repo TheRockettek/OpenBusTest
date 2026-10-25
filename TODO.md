@@ -1108,7 +1108,12 @@ the outstanding implementation and validation tasks:
   uploaded on the renderer thread, keeping OpenGL operations on the
   context-owning thread. The old active window remains visible until the new
   window is ready, and at most one terrain tile and one scene tile are published
-  per frame. Tile jobs are prioritized by distance to the requested center and
+  per frame. The start menu now submits the initial active window's tile,
+  terrain, scenery, and road preparation to asset workers, publishes prepared
+  resources on the GL-owning thread, and stays open until the spawn window is
+  ready; gameplay then keeps later tile requests asynchronous. Initial startup
+  preparation failures are reported to the menu instead of leaving it waiting
+  indefinitely. Tile jobs are prioritized by distance to the requested center and
   capped to eight pending preparations per job type; map and terrain decoding
   overlap. Per-tile `.sco` and model configuration resolution/parsing is now
   scheduled on workers before scene publication; results are consumed and
@@ -1116,24 +1121,50 @@ the outstanding implementation and validation tasks:
   Scenery O3D/X mesh parsing and material-group vertex expansion are included
   in those worker results.
   Initial map load waits for configuration prep needed by the first active
-  window. Scenery batch material/texture setup, road mesh construction, GL
-  uploads, and some cross-tile dependency reads remain synchronous, so boundary
-  stalls are still possible.
-  Scenery-config preparation is capped at eight tile-level worker jobs; work
-  already queued for a stale tile is allowed to finish, but results are
-  discarded unless that tile is still requested.
-- [ ] Move road mesh CPU construction and remaining dependency reads into
-  immutable worker results. Keep shared cache mutation, placement state, and
-  OpenGL resource creation/upload/destruction on their owning thread; preserve
-  cross-tile attachment resolution.
-- [ ] Decode referenced textures on workers. Keep OpenGL object creation,
-  upload, and destruction on a valid context-owning thread; use bounded
-  publication work per frame and keep the previous active window drawable
-  while new tile results are incomplete.
-- [ ] Add prioritization and stale-request handling for tile jobs, avoid
-  duplicate config/model reads across placements, and define explicit error
-  reporting/retry behavior. Measure tile-boundary p95/p99 frame time, memory,
-  and upload cost; validate visual and collision continuity in-game.
+  window. Road profile tessellation, road mesh generation, and texture path
+  lookup plus water-sidecar parsing and surface geometry are now prepared on
+  workers from tile/profile snapshots. Scenery texture path resolution is also
+  captured in worker-prepared assets. Scenery material interpretation,
+  bounding-radius calculation, and tree-preview geometry are prepared by asset
+  workers; material batches reference existing mesh vertex storage rather than
+  copying it. Later streamed road-buffer publication is limited to four
+  batches per frame and the previous active window remains drawable until
+  pending road batches drain. Menu startup also publishes incrementally; the
+  non-menu startup path retains its synchronous initial-window wait.
+  Scenery and terrain texture binding/creation, GL buffer creation/uploads,
+  scene-tile publication, and batch registration remain synchronous on the
+  renderer thread, so boundary stalls are still possible.
+  Base ground-texture decoding now runs on the asset workers concurrently with
+  map-wide indexing. Scenery- and road-referenced image decoding also runs
+  during worker preparation. Active terrain jobs include ground-layer, detail,
+  and mask image decoding in their prepared results; texture object creation
+  and upload remain on the renderer thread.
+  Road-geometry preparation is capped at eight tile-level worker jobs. Scenery
+  configuration/model preparation is capped at eight unique asset jobs shared
+  across tile requests, so assets referenced by multiple active tiles reuse the
+  same in-flight result. Work already queued for a stale tile is allowed to
+  finish, but results are discarded unless another requested tile still needs
+  the result.
+- [x] Prepare cross-tile spline-attachment parent records during map indexing
+  and retain only records referenced by attached objects. Tile placement now
+  resolves these immutable snapshots without synchronously rereading a parent
+  `.map` file.
+- [x] Report background tile parsing, terrain, and road-preparation failures
+  with tile-stage and file context. Streaming retains the previous active window
+  and retries up to three times with backoff; retry exhaustion is reported and
+  retried after the tile leaves the requested window. Initial map-load failures
+  remain fail-fast.
+- [ ] Keep shared-cache mutation, placement state, and OpenGL resource
+  creation/upload/destruction on their owning threads; bound publication work
+  per frame and keep the previous active window drawable while new tile results
+  are incomplete.
+- [x] Add bounded retry and contextual logging for thrown scenery/model asset
+  preparation failures. Failed shared results are not published as successful
+  cache entries; active tiles retry up to three times with backoff, then retry
+  after leaving and re-entering the requested window. Initial map-load failures
+  remain fail-fast.
+- [ ] Measure tile-boundary p95/p99 frame time, memory, and upload cost;
+  validate visual and collision continuity in-game.
 - [ ] Move AI traffic route/decision calculations to a dedicated worker using
   immutable simulation, route, signal, and obstacle snapshots. Publish results
   at a defined fixed-step boundary on the simulation/main owner thread; do not

@@ -38,21 +38,134 @@ MapSceneLoader::MapSceneLoader(const openbus::map::MapDefinition& mapDefinition,
     };
 }
 
+MapSceneLoader::~MapSceneLoader() {
+    if (mapIndexRequest_.valid()) {
+        mapIndexRequest_.wait();
+    }
+    if (pendingRoadTrafficLaneNetworkFinalization_.valid()) {
+        pendingRoadTrafficLaneNetworkFinalization_.wait();
+    }
+    if (pendingHumanTrafficLaneNetworkFinalization_.valid()) {
+        pendingHumanTrafficLaneNetworkFinalization_.wait();
+    }
+}
+
 void MapSceneLoader::load() {
+    if (loadStarted_) {
+        throw std::logic_error("Map scene loading was already started");
+    }
+    loadStarted_ = true;
     gameLog.Log("Map scene loading started: root=" + map.rootPath.string() +
                 ", tiles=" + std::to_string(map.tiles.size()) + ".");
+    configureGroundTextures();
     gameLog.Log("Map phase: loading ground textures.");
-    loadGroundTextures();
     if (std::none_of(
             map.tiles.begin(), map.tiles.end(),
             [](const openbus::map::MapTileReference& tile) { return tile.hasTerrainFile; })) {
         throw std::runtime_error("No terrain files found in the selected map");
     }
     gameLog.Log("Map phase: indexing tile placements and traffic paths.");
-    assetRequests_->submit([this] { indexMapContent(); }).get();
+    baseTexturePath_ =
+        groundTexturePath(map, omsiRoot, map.groundTextures[baseGroundTextureIndex].texturePath);
+    baseTextureRequest_ = assetRequests_->submit([baseTexturePath = baseTexturePath_] {
+        Image image;
+        if (!TextureLoader::readImage(baseTexturePath, image)) {
+            throw std::runtime_error("Could not decode map ground texture: " +
+                                     baseTexturePath.string());
+        }
+        return image;
+    });
+    mapIndexRequest_ = assetRequests_->submit([this] { indexMapContent(); });
 }
 
-std::optional<std::vector<std::string>>
+bool MapSceneLoader::finishLoad(bool waitForCompletion) {
+    if (loadFinished_) {
+        return true;
+    }
+    if (!loadStarted_) {
+        throw std::logic_error("Map scene loading was not started");
+    }
+    if (waitForCompletion) {
+        baseTextureRequest_.wait();
+        mapIndexRequest_.wait();
+    } else if (baseTextureRequest_.wait_for(std::chrono::seconds(0)) != std::future_status::ready ||
+               mapIndexRequest_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        return false;
+    }
+
+    std::exception_ptr preparationError;
+    try {
+        Image image = baseTextureRequest_.get();
+        preparedTextureImages.emplace(baseTexturePath_.lexically_normal().generic_string(),
+                                      std::make_shared<Image>(std::move(image)));
+    } catch (...) {
+        preparationError = std::current_exception();
+    }
+    try {
+        mapIndexRequest_.get();
+    } catch (...) {
+        if (!preparationError) {
+            preparationError = std::current_exception();
+        }
+    }
+    if (preparationError) {
+        loadFinished_ = true;
+        std::rethrow_exception(preparationError);
+    }
+    loadGroundTextures();
+    loadFinished_ = true;
+    return true;
+}
+
+bool MapSceneLoader::finishTrafficLaneNetworkPreparation(bool waitForCompletion) {
+    const auto finishNetwork = [this, waitForCompletion](
+                                   bool& dirty,
+                                   std::future<openbus::map::MapTrafficLaneNetwork>& request,
+                                   openbus::map::MapTrafficLaneNetwork& network,
+                                   const char* networkName, bool roadNetwork) {
+        if (dirty) {
+            if (request.valid()) {
+                throw std::logic_error(
+                    "Traffic lane network changed during background finalization");
+            }
+            dirty = false;
+            auto networkToFinalize = std::move(network);
+            request = assetRequests_->submit([network = std::move(networkToFinalize)]() mutable {
+                network.finalize();
+                return network;
+            });
+            gameLog.Log("Map phase: preparing " + std::string(networkName) +
+                        " traffic lane network asynchronously.");
+        }
+        if (!request.valid()) {
+            return true;
+        }
+        if (waitForCompletion) {
+            request.wait();
+        } else if (request.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            return false;
+        }
+        network = request.get();
+        if (roadNetwork) {
+            const openbus::map::MapTrafficLaneNetworkStats laneStats = network.stats();
+            gameLog.Log("Map road lane network: lanes=" + std::to_string(laneStats.lanes) +
+                        ", unconnected lane ends=" + std::to_string(laneStats.deadEnds) +
+                        ", unconnected ends within 3 m of an aligned lane start=" +
+                        std::to_string(laneStats.nearMissDeadEnds) + ".");
+        }
+        return true;
+    };
+
+    const bool roadReady =
+        finishNetwork(roadTrafficLaneNetworkDirty, pendingRoadTrafficLaneNetworkFinalization_,
+                      impl_->roadTrafficLaneNetwork, "road", true);
+    const bool humanReady =
+        finishNetwork(humanTrafficLaneNetworkDirty, pendingHumanTrafficLaneNetworkFinalization_,
+                      impl_->humanTrafficLaneNetwork, "human", false);
+    return roadReady && humanReady;
+}
+
+std::vector<std::string>
 MapSceneLoader::requestTileSceneryAssets(const openbus::map::MapTileData& tile,
                                          std::uint64_t tileKeyValue) {
     std::vector<std::string> assetKeys;
@@ -67,7 +180,8 @@ MapSceneLoader::requestTileSceneryAssets(const openbus::map::MapTileData& tile,
         const std::string key = configPath.lexically_normal().generic_string();
         if (requestedKeys.insert(key).second) {
             assetKeys.push_back(key);
-            if (!sceneryAssetBatches.contains(key) && !preparedSceneryAssetConfigs.contains(key)) {
+            if (!sceneryAssetBatches.contains(key) && !preparedSceneryAssetConfigs.contains(key) &&
+                !pendingSceneryAssetRequests.contains(key)) {
                 configPaths.emplace_back(key, configPath);
             }
         }
@@ -96,27 +210,47 @@ MapSceneLoader::requestTileSceneryAssets(const openbus::map::MapTileData& tile,
         addAsset(attachment.assetPath);
     }
     std::sort(assetKeys.begin(), assetKeys.end());
-    constexpr std::size_t maxPendingSceneryTilePreparations = 8;
-    if (!configPaths.empty() && !pendingTileSceneryRequests.contains(tileKeyValue) &&
-        pendingTileSceneryRequests.size() >= maxPendingSceneryTilePreparations) {
-        return std::nullopt;
+    constexpr std::size_t maxPendingSceneryAssetPreparations = 8;
+    std::size_t availablePreparations =
+        pendingSceneryAssetRequests.size() < maxPendingSceneryAssetPreparations
+            ? maxPendingSceneryAssetPreparations - pendingSceneryAssetRequests.size()
+            : 0;
+    std::vector<PendingSceneryAsset> requests;
+    for (const std::string& key : assetKeys) {
+        if (sceneryAssetBatches.contains(key) || preparedSceneryAssetConfigs.contains(key)) {
+            continue;
+        }
+        auto request = pendingSceneryAssetRequests.find(key);
+        if (request == pendingSceneryAssetRequests.end()) {
+            const auto configPath =
+                std::find_if(configPaths.begin(), configPaths.end(),
+                             [&key](const auto& entry) { return entry.first == key; });
+            if (configPath == configPaths.end()) {
+                throw std::logic_error("Scenery asset preparation path was not captured");
+            }
+            if (availablePreparations == 0) {
+                continue;
+            }
+            const std::filesystem::path path = configPath->second;
+            const std::filesystem::path omsiRootPath = omsiRoot;
+            auto future = assetRequests_
+                              ->submit([path, omsiRootPath] {
+                                  auto prepared = std::make_shared<PreparedSceneryAsset>();
+                                  try {
+                                      *prepared = prepareSceneryAsset(path, omsiRootPath);
+                                  } catch (...) {
+                                      prepared->preparationError = std::current_exception();
+                                  }
+                                  return prepared;
+                              })
+                              .share();
+            request = pendingSceneryAssetRequests.emplace(key, std::move(future)).first;
+            --availablePreparations;
+        }
+        requests.push_back({key, request->second});
     }
-    if (!configPaths.empty() && !pendingTileSceneryRequests.contains(tileKeyValue)) {
-        pendingTileSceneryRequests.emplace(
-            tileKeyValue, assetRequests_->submit([configPaths = std::move(configPaths)]() mutable {
-                std::vector<std::pair<std::string, PreparedSceneryAsset>> preparedAssets;
-                preparedAssets.reserve(configPaths.size());
-                for (const auto& [key, configPath] : configPaths) {
-                    PreparedSceneryAsset prepared;
-                    try {
-                        prepared = prepareSceneryAsset(configPath);
-                    } catch (...) {
-                        prepared.preparationError = std::current_exception();
-                    }
-                    preparedAssets.emplace_back(key, std::move(prepared));
-                }
-                return preparedAssets;
-            }));
+    if (!requests.empty()) {
+        pendingTileSceneryRequests.insert_or_assign(tileKeyValue, std::move(requests));
     }
     return assetKeys;
 }
@@ -127,22 +261,71 @@ bool MapSceneLoader::completeSceneryAssetPreparation(std::uint64_t tileKeyValue,
     if (request == pendingTileSceneryRequests.end()) {
         return true;
     }
-    if (waitForCompletion) {
-        request->second.wait();
-    } else if (request->second.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
-        return false;
-    }
-    std::vector<std::pair<std::string, PreparedSceneryAsset>> preparedAssets =
-        request->second.get();
-    pendingTileSceneryRequests.erase(request);
-    if (pendingTileAssetKeys.contains(tileKeyValue)) {
-        for (auto& [key, prepared] : preparedAssets) {
-            if (!sceneryAssetBatches.contains(key) && !preparedSceneryAssetConfigs.contains(key)) {
-                preparedSceneryAssetConfigs.emplace(key, std::move(prepared));
-            }
+    for (const PendingSceneryAsset& assetRequest : request->second) {
+        if (waitForCompletion) {
+            assetRequest.result.wait();
+        } else if (assetRequest.result.wait_for(std::chrono::seconds(0)) !=
+                   std::future_status::ready) {
+            return false;
         }
     }
-    return true;
+    const bool requestedByActiveTile = pendingTileAssetKeys.contains(tileKeyValue);
+    bool preparationSucceeded = true;
+    std::exception_ptr batchPreparationError;
+    std::filesystem::path failedAssetPath;
+    std::vector<std::string> completedAssetKeys;
+    completedAssetKeys.reserve(request->second.size());
+    for (const PendingSceneryAsset& assetRequest : request->second) {
+        std::shared_ptr<PreparedSceneryAsset> prepared;
+        std::exception_ptr preparationError;
+        try {
+            prepared = assetRequest.result.get();
+            if (!prepared) {
+                throw std::runtime_error("worker returned no prepared asset");
+            }
+            preparationError = prepared->preparationError;
+        } catch (...) {
+            preparationError = std::current_exception();
+        }
+        if (preparationError) {
+            preparationSucceeded = false;
+            if (!batchPreparationError) {
+                batchPreparationError = preparationError;
+                failedAssetPath = assetRequest.key;
+            }
+        } else if (requestedByActiveTile && prepared &&
+                   !sceneryAssetBatches.contains(assetRequest.key) &&
+                   !preparedSceneryAssetConfigs.contains(assetRequest.key)) {
+            preparedSceneryAssetConfigs.emplace(assetRequest.key, std::move(prepared));
+        }
+        completedAssetKeys.push_back(assetRequest.key);
+    }
+    if (batchPreparationError && requestedByActiveTile) {
+        recordTilePreparationFailure(tileKeyValue, false, "scenery/model asset preparation",
+                                     failedAssetPath, batchPreparationError, waitForCompletion);
+    }
+    pendingTileSceneryRequests.erase(request);
+    for (const std::string& key : completedAssetKeys) {
+        if (sceneryAssetBatches.contains(key) || preparedSceneryAssetConfigs.contains(key)) {
+            pendingSceneryAssetRequests.erase(key);
+            continue;
+        }
+        const bool stillRequested =
+            std::any_of(pendingTileSceneryRequests.begin(), pendingTileSceneryRequests.end(),
+                        [&key](const auto& tileRequest) {
+                            return std::any_of(tileRequest.second.begin(), tileRequest.second.end(),
+                                               [&key](const PendingSceneryAsset& assetRequest) {
+                                                   return assetRequest.key == key;
+                                               });
+                        });
+        if (!stillRequested) {
+            pendingSceneryAssetRequests.erase(key);
+        }
+    }
+    if (!preparationSucceeded && requestedByActiveTile) {
+        pendingTileAssetKeys.erase(tileKeyValue);
+    }
+    return preparationSucceeded;
 }
 
 bool MapSceneLoader::sceneryAssetPreparationsReady(
@@ -152,8 +335,58 @@ bool MapSceneLoader::sceneryAssetPreparationsReady(
     });
 }
 
+bool MapSceneLoader::tilePreparationRetryReady(std::uint64_t tileKeyValue) const {
+    const auto failure = tilePreparationFailures.find(tileKeyValue);
+    return failure == tilePreparationFailures.end() ||
+           (!failure->second.exhausted &&
+            std::chrono::steady_clock::now() >= failure->second.retryAfter);
+}
+
+void MapSceneLoader::recordTilePreparationFailure(std::uint64_t tileKeyValue,
+                                                  bool terrainPreparation, const std::string& stage,
+                                                  const std::filesystem::path& path,
+                                                  std::exception_ptr error,
+                                                  bool waitForCompletion) {
+    std::string detail = "unknown error";
+    try {
+        if (error) {
+            std::rethrow_exception(error);
+        }
+    } catch (const std::exception& exception) {
+        detail = exception.what();
+    } catch (...) {
+    }
+
+    if (waitForCompletion) {
+        gameLog.Log("Map " + stage + " failed for " + path.string() + ": " + detail);
+        std::rethrow_exception(error);
+    }
+
+    TilePreparationFailure& failure = tilePreparationFailures[tileKeyValue];
+    if (failure.attempts == 0) {
+        failure.terrainPreparation = terrainPreparation;
+    }
+    ++failure.attempts;
+    failure.exhausted = failure.attempts >= 3;
+    failure.diagnostic = stage + " failed for " + path.string() + ": " + detail;
+    if (!failure.exhausted) {
+        const auto retryDelay = std::chrono::milliseconds(250 * (1U << (failure.attempts - 1U)));
+        failure.retryAfter = std::chrono::steady_clock::now() + retryDelay;
+    }
+    gameLog.Log("Map " + stage + " failed for " + path.string() + ": " + detail +
+                (failure.exhausted
+                     ? "; automatic retries exhausted, retry after the tile leaves the active "
+                       "window."
+                     : "; retrying in " +
+                           std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                              failure.retryAfter - std::chrono::steady_clock::now())
+                                              .count()) +
+                           " ms (attempt " + std::to_string(failure.attempts) + " of 3)."));
+}
+
 MapSceneLoader::PreparedSceneryAsset
-MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath) {
+MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
+                                    const std::filesystem::path& omsiRootPath) {
     PreparedSceneryAsset prepared;
     prepared.objectConfiguration = loadSceneryObjectFile(configPath);
     prepared.modelConfigPath = resolveSceneryObjectModelConfigPath(prepared.objectConfiguration);
@@ -194,6 +427,177 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath) {
                     }
                 }
             }
+        }
+    }
+    const auto decodeTexture = [&](const std::string& textureName) {
+        if (textureName.empty()) {
+            return;
+        }
+        const std::filesystem::path texturePath = map_detail::findSceneryTexture(
+            configPath.parent_path(), prepared.modelRoot, omsiRootPath, textureName);
+        prepared.resolvedTexturePaths.try_emplace(textureName, texturePath);
+        if (texturePath.empty()) {
+            return;
+        }
+        const std::string key = texturePath.lexically_normal().generic_string();
+        if (prepared.decodedTextures.contains(key)) {
+            return;
+        }
+        Image image;
+        if (!TextureLoader::readImage(texturePath, image)) {
+            throw std::runtime_error("Could not decode scenery texture: " + texturePath.string());
+        }
+        prepared.decodedTextures.emplace(key, std::make_shared<Image>(std::move(image)));
+    };
+    for (const SceneryTreeDefinition& tree : prepared.objectConfiguration.trees) {
+        decodeTexture(tree.texturePath);
+    }
+    for (const auto& [meshKey, mesh] : prepared.meshes) {
+        static_cast<void>(meshKey);
+        if (!mesh.parsed) {
+            continue;
+        }
+        for (const auto& [materialName, material] : mesh.parsed->materials) {
+            static_cast<void>(materialName);
+            decodeTexture(material.textureName);
+        }
+    }
+    for (const ModelPart& part : prepared.modelConfiguration.parts) {
+        for (const ModelMaterialState& state : part.materialStatesInOrder) {
+            decodeTexture(state.textureName);
+            decodeTexture(state.transmapTextureName);
+            decodeTexture(state.freeTextureName);
+        }
+    }
+    const auto resolvedTexture = [&prepared](const std::string& textureName) {
+        if (textureName.empty()) {
+            return std::filesystem::path{};
+        }
+        const auto texture = prepared.resolvedTexturePaths.find(textureName);
+        if (texture == prepared.resolvedTexturePaths.end()) {
+            throw std::logic_error("Scenery texture path was not prepared: " + textureName);
+        }
+        return texture->second;
+    };
+    for (const SceneryTreeDefinition& tree : prepared.objectConfiguration.trees) {
+        const std::filesystem::path texturePath = resolvedTexture(tree.texturePath);
+        if (texturePath.empty()) {
+            prepared.treeBatches.push_back({{}, tree.texturePath, {}, {}});
+            continue;
+        }
+        const double height = (tree.minimumHeight + tree.maximumHeight) * 0.5;
+        const double ratio = (tree.minimumRatio + tree.maximumRatio) * 0.5;
+        PreparedSceneryTreeBatch batch;
+        batch.vertices = makeTreePreview(height, height * 0.55 * ratio);
+        batch.textureName = tree.texturePath;
+        batch.texturePath = texturePath;
+        batch.batch.vertexCount = batch.vertices.size();
+        batch.batch.boundingRadius = vertexBoundingRadius(batch.vertices);
+        batch.batch.renderType = prepared.objectConfiguration.renderType;
+        batch.batch.material.textured = true;
+        batch.batch.material.flipTextureY = true;
+        batch.batch.alphaMode = 1;
+        prepared.treeBatches.push_back(std::move(batch));
+    }
+    for (const ModelPart& part : prepared.modelConfiguration.parts) {
+        if (part.objPath.empty()) {
+            continue;
+        }
+        std::string meshExtension = part.objPath.extension().string();
+        std::transform(meshExtension.begin(), meshExtension.end(), meshExtension.begin(),
+                       [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        if (meshExtension != ".o3d" && meshExtension != ".x") {
+            continue;
+        }
+        const std::string meshKey = part.objPath.lexically_normal().generic_string();
+        const auto preparedMesh = prepared.meshes.find(meshKey);
+        if (preparedMesh == prepared.meshes.end() || !preparedMesh->second.parsed ||
+            preparedMesh->second.preparationError) {
+            continue;
+        }
+        const PreparedSceneryMesh& mesh = preparedMesh->second;
+        const ParsedObj& parsed = *mesh.parsed;
+        const auto statesByMaterial = openbus::map::resolveSceneryMaterialStates(parsed, part);
+        for (const auto& [materialIndex, vertices] : mesh.verticesByMaterial) {
+            if (vertices.empty()) {
+                continue;
+            }
+            const auto sourceMaterial =
+                parsed.materials.find("matl_" + std::to_string(materialIndex));
+            const auto stateFound = statesByMaterial.find(materialIndex);
+            const ModelMaterialState* state =
+                stateFound == statesByMaterial.end() ? nullptr : stateFound->second;
+            std::string textureName = sourceMaterial == parsed.materials.end()
+                                          ? std::string{}
+                                          : sourceMaterial->second.textureName;
+            std::array<double, 3> color = sourceMaterial == parsed.materials.end()
+                                              ? std::array<double, 3>{1.0, 1.0, 1.0}
+                                              : sourceMaterial->second.color;
+            if (state != nullptr && !state->textureName.empty()) {
+                textureName = state->textureName;
+                const std::string stateTexture =
+                    std::filesystem::path(state->textureName).filename().string();
+                const auto materialForTexture = std::find_if(
+                    parsed.materials.begin(), parsed.materials.end(), [&](const auto& entry) {
+                        return std::filesystem::path(entry.second.textureName).filename() ==
+                               stateTexture;
+                    });
+                if (materialForTexture != parsed.materials.end()) {
+                    color = materialForTexture->second.color;
+                }
+            }
+            PreparedSceneryBatch preparedBatch;
+            preparedBatch.meshKey = meshKey;
+            preparedBatch.materialIndex = materialIndex;
+            preparedBatch.textureName = textureName;
+            preparedBatch.texturePath = resolvedTexture(textureName);
+            if (state != nullptr) {
+                preparedBatch.transmapTextureName = state->transmapTextureName;
+                preparedBatch.transmapTexturePath = resolvedTexture(state->transmapTextureName);
+                preparedBatch.freeTextureName = state->freeTextureName;
+                preparedBatch.freeTexturePath = resolvedTexture(state->freeTextureName);
+                preparedBatch.hasMaterialState = true;
+                preparedBatch.stateAlphaMode = state->alphaMode;
+            }
+            Impl::ModelBatch& batch = preparedBatch.batch;
+            batch.cullBackFaces = true;
+            batch.vertexCount = vertices.size();
+            batch.boundingRadius = vertexBoundingRadius(vertices);
+            batch.sceneryLodIndex =
+                part.lodIndex < 0 ? 0U : static_cast<std::size_t>(part.lodIndex);
+            if (sourceMaterial != parsed.materials.end()) {
+                for (std::size_t index = 0; index < 3; ++index) {
+                    batch.material.specularColor[index] =
+                        static_cast<float>(sourceMaterial->second.specular[index]);
+                    batch.material.emissionColor[index] =
+                        static_cast<float>(sourceMaterial->second.emission[index]);
+                }
+                batch.material.specularPower =
+                    static_cast<float>(sourceMaterial->second.specularPower);
+                batch.alpha = std::clamp(sourceMaterial->second.alpha, 0.0, 1.0);
+            }
+            batch.color = color;
+            batch.renderType =
+                resolveSceneryRenderType(part, prepared.objectConfiguration.renderType);
+            batch.visibilityVariable = part.visibleVariable;
+            batch.visibilityValue = part.visibleValue;
+            if (state != nullptr) {
+                batch.scriptTextureIndex = state->scriptTextureIndex;
+                batch.textTextureIndex = state->textTextureIndex;
+                batch.freeTextureName = state->freeTextureName;
+                batch.freeTextureVariable = state->freeTextureVariable;
+                batch.textureObjectRoot = configPath.parent_path();
+                batch.textureModelRoot = prepared.modelRoot;
+                batch.material.textureWrapS = textureAddressModeToGl(state->textureAddressS);
+                batch.material.textureWrapT = textureAddressModeToGl(state->textureAddressT);
+                batch.alphaMode = state->alphaMode;
+                batch.noZwrite = state->noZwrite;
+                batch.noZcheck = state->noZcheck;
+            }
+            if (batch.alphaMode == 0 && batch.alpha < 1.0 - 1.0e-6) {
+                batch.alphaMode = 2;
+            }
+            prepared.batches.push_back(std::move(preparedBatch));
         }
     }
     return prepared;
@@ -261,16 +665,219 @@ MapSceneLoader::prepareSceneryMesh(const std::filesystem::path& meshPath) {
     return prepared;
 }
 
+bool MapSceneLoader::requestTileRoadPreparation(const openbus::map::MapTileData& tile,
+                                                const openbus::map::MapTileReference& tileReference,
+                                                std::uint64_t tileKeyValue) {
+    if (pendingTileRoadRequests.contains(tileKeyValue) ||
+        preparedTileRoads.contains(tileKeyValue)) {
+        return true;
+    }
+    constexpr std::size_t maxPendingRoadPreparations = 8;
+    if (pendingTileRoadRequests.size() >= maxPendingRoadPreparations) {
+        return false;
+    }
+    std::vector<RoadSplineInput> splines;
+    splines.reserve(tile.splines.size());
+    for (const openbus::map::MapSplinePlacement& spline : tile.splines) {
+        RoadSplineInput input;
+        input.spline = spline;
+        input.joins = roadConnections.joinsFor(spline, tile.reference.x, tile.reference.y);
+        input.profilePath = resolveSplineProfile(map, omsiRoot, spline.assetPath);
+        const std::string profileKey = input.profilePath.lexically_normal().generic_string();
+        const auto profile = splineProfiles.find(profileKey);
+        if (profile != splineProfiles.end()) {
+            input.profile = profile->second;
+        }
+        splines.push_back(std::move(input));
+    }
+    const int tileX = tile.reference.x;
+    const int tileY = tile.reference.y;
+    const std::filesystem::path omsiRootPath = omsiRoot;
+    const openbus::map::MapCoordinates coordinates = map.coordinates;
+    const bool hasWaterMarker = tile.hasWaterMarker;
+    const std::filesystem::path waterPath = tileReference.waterPath;
+    const bool hasWaterFile = tileReference.hasWaterFile;
+    pendingTileRoadRequests.emplace(
+        tileKeyValue,
+        assetRequests_->submit([splines = std::move(splines), omsiRootPath, tileX, tileY,
+                                coordinates, hasWaterMarker, waterPath, hasWaterFile] {
+            return prepareRoadTile(splines, omsiRootPath, tileX, tileY, coordinates,
+                                   hasWaterMarker && hasWaterFile, waterPath);
+        }));
+    return true;
+}
+
+MapSceneLoader::PreparedRoadTile
+MapSceneLoader::prepareRoadTile(const std::vector<RoadSplineInput>& splines,
+                                const std::filesystem::path& omsiRootPath, int tileX, int tileY,
+                                const openbus::map::MapCoordinates& coordinates, bool loadWater,
+                                const std::filesystem::path& waterPath) {
+    PreparedRoadTile prepared;
+    for (const RoadSplineInput& input : splines) {
+        const openbus::map::MapSplinePlacement& spline = input.spline;
+        const std::string description =
+            map_detail::tileLabel(tileX, tileY) +
+            (spline.elevated ? " [spline_h] asset=" : " [spline] asset=") + spline.assetPath;
+        if (!spline.geometryValid) {
+            prepared.skipped.emplace_back("[spline] sections with invalid numeric geometry",
+                                          description, 1);
+            continue;
+        }
+        const std::filesystem::path& profilePath = input.profilePath;
+        if (profilePath.empty()) {
+            prepared.skipped.emplace_back("spline profile files not found", description, 1);
+            continue;
+        }
+        if (!input.profile.has_value()) {
+            continue;
+        }
+        const openbus::map::MapSplineProfile& profile = *input.profile;
+        const std::string profileKey = profilePath.lexically_normal().generic_string();
+        if (profile.editorOnly) {
+            prepared.editorOnlyProfileKeys.insert(profileKey);
+            continue;
+        }
+        if (profile.sections.empty()) {
+            prepared.skipped.emplace_back("spline profiles with no graphical cross-section strips",
+                                          profilePath.filename().string(), 1);
+            continue;
+        }
+        const double startX = static_cast<double>(tileX) * coordinates.tileSize + spline.localX;
+        const double startY = static_cast<double>(tileY) * coordinates.tileSize + spline.localY;
+        const std::vector<openbus::map::MapSplineSample> centerline =
+            openbus::map::tessellateMapSpline(startX, startY, spline.rotationDegrees, spline.length,
+                                              spline.radius);
+        if (centerline.size() < 2) {
+            prepared.skipped.emplace_back("[spline] sections that failed geometry tessellation",
+                                          description, 1);
+            continue;
+        }
+        const std::optional<double> cantHalfWidth =
+            openbus::map::mapSplineProfileCantHalfWidth(profile);
+        for (const openbus::map::MapSplineProfileSection& section : profile.sections) {
+            if (section.points.size() < 2) {
+                prepared.skipped.emplace_back("spline profile strips with fewer than two points",
+                                              profilePath.filename().string(), 1);
+                continue;
+            }
+            if (section.textureIndex < 0 ||
+                static_cast<std::size_t>(section.textureIndex) >= profile.textures.size()) {
+                prepared.skipped.emplace_back("spline profile strips with invalid texture indices",
+                                              profilePath.filename().string() +
+                                                  " index=" + std::to_string(section.textureIndex),
+                                              1);
+                continue;
+            }
+            const std::string& textureName =
+                profile.textures[static_cast<std::size_t>(section.textureIndex)];
+            const std::filesystem::path texturePath =
+                map_detail::findSplineTexture(profilePath, omsiRootPath, textureName);
+            const int alphaMode =
+                static_cast<std::size_t>(section.textureIndex) < profile.textureAlphaModes.size()
+                    ? profile.textureAlphaModes[static_cast<std::size_t>(section.textureIndex)]
+                    : 0;
+            const bool textured = !texturePath.empty();
+            if (!textured) {
+                prepared.skipped.emplace_back(
+                    "spline profile textures not found (geometry rendered untextured)",
+                    profilePath.filename().string() + " texture=" + textureName, 1);
+            } else {
+                const std::string textureKey = texturePath.lexically_normal().generic_string();
+                if (!prepared.decodedTextures.contains(textureKey) &&
+                    !prepared.textureErrors.contains(textureKey)) {
+                    Image image;
+                    try {
+                        if (!TextureLoader::readImage(texturePath, image)) {
+                            prepared.textureErrors.emplace(textureKey, "image decode failed");
+                        } else {
+                            prepared.decodedTextures.emplace(
+                                textureKey, std::make_shared<Image>(std::move(image)));
+                        }
+                    } catch (const std::exception& error) {
+                        prepared.textureErrors.emplace(textureKey, error.what());
+                    } catch (...) {
+                        prepared.textureErrors.emplace(textureKey, "unknown error");
+                    }
+                }
+            }
+            const std::string batchKey = std::to_string(tileX) + "," + std::to_string(tileY) + "|" +
+                                         (textured ? texturePath.lexically_normal().generic_string()
+                                                   : "untextured:" + profileKey + "#" +
+                                                         std::to_string(section.textureIndex)) +
+                                         "|alpha:" + std::to_string(alphaMode);
+            RoadMeshGeometry& road = prepared.geometryByBatch[batchKey];
+            if (road.vertices.empty()) {
+                road.texturePath = texturePath;
+                road.textured = textured;
+                road.tileX = tileX;
+                road.tileY = tileY;
+                road.alphaMode = alphaMode;
+            }
+            map_detail::appendRoadProfile(road, spline, centerline, section, input.joins,
+                                          cantHalfWidth, coordinates);
+        }
+    }
+    if (loadWater) {
+        try {
+            prepared.waterData = openbus::map::loadWaterData(waterPath);
+            const openbus::map::WaterData& water = *prepared.waterData;
+            prepared.waterVertices.reserve(water.surfaces.size() * 4);
+            prepared.waterIndices.reserve(water.surfaces.size() * 6);
+            double minimumHeight = std::numeric_limits<double>::infinity();
+            double maximumHeight = -std::numeric_limits<double>::infinity();
+            double heightSum = 0.0;
+            std::size_t heightCount = 0;
+            const double tileOriginX = static_cast<double>(tileX) * coordinates.tileSize;
+            const double tileOriginY = static_cast<double>(tileY) * coordinates.tileSize;
+            for (const openbus::map::WaterSurface& surface : water.surfaces) {
+                const auto corners = openbus::map::buildMapWaterSurfaceVertices(
+                    tileX, tileY, surface, coordinates.tileSize);
+                const std::uint32_t base =
+                    static_cast<std::uint32_t>(prepared.waterVertices.size());
+                for (std::size_t corner = 0; corner < corners.size(); ++corner) {
+                    const openbus::map::MapWaterVertex& vertex = corners[corner];
+                    prepared.waterVertices.push_back(
+                        {static_cast<float>(vertex.x - tileOriginX),
+                         static_cast<float>(vertex.y - tileOriginY), static_cast<float>(vertex.z),
+                         corner == 1 || corner == 2 ? 1.0F : 0.0F, corner >= 2 ? 1.0F : 0.0F, 0.0F,
+                         0.0F, 0.0F, 1.0F});
+                    minimumHeight = (std::min)(minimumHeight, vertex.z);
+                    maximumHeight = (std::max)(maximumHeight, vertex.z);
+                    heightSum += vertex.z;
+                    ++heightCount;
+                }
+                prepared.waterIndices.insert(prepared.waterIndices.end(),
+                                             {base, base + 1, base + 2, base, base + 2, base + 3});
+            }
+            if (heightCount > 0) {
+                prepared.waterMinimumHeight = minimumHeight;
+                prepared.waterMaximumHeight = maximumHeight;
+                prepared.waterMeanHeight = heightSum / static_cast<double>(heightCount);
+            }
+        } catch (const std::exception& error) {
+            prepared.waterError = error.what();
+        } catch (...) {
+            prepared.waterError = "unknown error";
+        }
+    }
+    return prepared;
+}
+
 MapSceneLoader::TileLoadStatus
 MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoordinates,
                                 const openbus::map::MapTileCoordinate& priorityCenter,
-                                bool waitForCompletion) {
+                                bool waitForCompletion, bool failOnExhaustedRetries) {
     std::unordered_set<std::uint64_t> activeTileKeys;
     activeTileKeys.reserve(tileCoordinates.size());
     for (const auto& [tileX, tileY] : tileCoordinates) {
         activeTileKeys.insert(tileKey(tileX, tileY));
     }
-
+    const auto activeContentReady = [&] {
+        return std::all_of(
+            tileCoordinates.begin(), tileCoordinates.end(), [this](const auto& coordinate) {
+                return loadedContentTileKeys.contains(tileKey(coordinate.first, coordinate.second));
+            });
+    };
     std::unordered_set<std::uint64_t> terrainTileKeys = activeTileKeys;
     for (const auto& [tileX, tileY] : tileCoordinates) {
         for (int offsetY = -1; offsetY <= 1; ++offsetY) {
@@ -279,9 +886,31 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
             }
         }
     }
+    for (auto failure = tilePreparationFailures.begin();
+         failure != tilePreparationFailures.end();) {
+        const bool stillRequested = failure->second.terrainPreparation
+                                        ? terrainTileKeys.contains(failure->first)
+                                        : activeTileKeys.contains(failure->first);
+        if (!stillRequested) {
+            failure = tilePreparationFailures.erase(failure);
+        } else {
+            ++failure;
+        }
+    }
+    if (failOnExhaustedRetries) {
+        for (const auto& [key, failure] : tilePreparationFailures) {
+            const bool stillRequested = failure.terrainPreparation ? terrainTileKeys.contains(key)
+                                                                   : activeTileKeys.contains(key);
+            if (stillRequested && failure.exhausted) {
+                throw std::runtime_error("Initial map tile loading failed: " + failure.diagnostic);
+            }
+        }
+    }
     for (auto request = pendingTileDataRequests.begin();
          request != pendingTileDataRequests.end();) {
-        if (!activeTileKeys.contains(request->first)) {
+        if (!activeTileKeys.contains(request->first) ||
+            loadedContentTileKeys.contains(request->first) ||
+            pendingTileContentData.contains(request->first)) {
             request = pendingTileDataRequests.erase(request);
         } else {
             ++request;
@@ -290,7 +919,23 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
     for (auto request = pendingTileContentData.begin(); request != pendingTileContentData.end();) {
         if (!activeTileKeys.contains(request->first)) {
             pendingTileAssetKeys.erase(request->first);
+            preparedTileRoads.erase(request->first);
             request = pendingTileContentData.erase(request);
+        } else {
+            ++request;
+        }
+    }
+    for (auto request = preparedTileRoads.begin(); request != preparedTileRoads.end();) {
+        if (!activeTileKeys.contains(request->first)) {
+            request = preparedTileRoads.erase(request);
+        } else {
+            ++request;
+        }
+    }
+    for (auto request = pendingTileRoadRequests.begin();
+         request != pendingTileRoadRequests.end();) {
+        if (!activeTileKeys.contains(request->first)) {
+            request = pendingTileRoadRequests.erase(request);
         } else {
             ++request;
         }
@@ -302,7 +947,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
         sceneryPreparations.push_back(key);
     }
     for (const std::uint64_t key : sceneryPreparations) {
-        completeSceneryAssetPreparation(key, false);
+        completeSceneryAssetPreparation(key, waitForCompletion);
     }
     for (auto request = pendingTerrainRequests.begin(); request != pendingTerrainRequests.end();) {
         if (!terrainTileKeys.contains(request->first)) {
@@ -334,7 +979,8 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
     constexpr std::size_t maxPendingTileParses = 8;
     for (const openbus::map::MapTileReference* tileReference : prioritizedActiveTiles) {
         const std::uint64_t key = tileKey(tileReference->x, tileReference->y);
-        if (pendingTileDataRequests.contains(key) ||
+        if (!tilePreparationRetryReady(key) || pendingTileDataRequests.contains(key) ||
+            pendingTileContentData.contains(key) ||
             (!waitForCompletion && pendingTileDataRequests.size() >= maxPendingTileParses)) {
             continue;
         }
@@ -344,26 +990,93 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
                                         }));
     }
 
-    gameLog.Log("Map phase: loading terrain for the active tile window.");
+    if (!terrainLoadPhaseLogged) {
+        gameLog.Log("Map phase: loading terrain for the active tile window.");
+        terrainLoadPhaseLogged = true;
+    }
     bool contentChanged = loadTerrainTiles(terrainTileKeys, priorityCenter, waitForCompletion);
     const bool terrainReady =
         std::all_of(map.tiles.begin(), map.tiles.end(), [this, &terrainTileKeys](const auto& tile) {
             const std::uint64_t key = tileKey(tile.x, tile.y);
             return !terrainTileKeys.contains(key) || loadedTerrainTileKeys.contains(key);
         });
-    if (!terrainReady) {
+    const auto reportTileProgress = [&](const char* phase) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - lastTileProgressLog < std::chrono::seconds(1)) {
+            return;
+        }
+        lastTileProgressLog = now;
+        const auto countActive = [&activeTileKeys](const auto& requests) {
+            return static_cast<std::size_t>(std::count_if(
+                requests.begin(), requests.end(), [&activeTileKeys](const auto& entry) {
+                    return activeTileKeys.contains(entry.first);
+                }));
+        };
+        const std::size_t contentReady = static_cast<std::size_t>(std::count_if(
+            tileCoordinates.begin(), tileCoordinates.end(), [this](const auto& coordinate) {
+                return loadedContentTileKeys.contains(tileKey(coordinate.first, coordinate.second));
+            }));
+        std::size_t parseReady = 0;
+        for (const auto& [key, request] : pendingTileDataRequests) {
+            if (activeTileKeys.contains(key) &&
+                request.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                ++parseReady;
+            }
+        }
+        std::size_t terrainReadyCount = 0;
+        for (const std::uint64_t key : terrainTileKeys) {
+            terrainReadyCount += loadedTerrainTileKeys.contains(key) ? 1U : 0U;
+        }
+        gameLog.Log("Map active tile progress: phase=" + std::string(phase) +
+                    ", terrain=" + std::to_string(terrainReadyCount) + "/" +
+                    std::to_string(terrainTileKeys.size()) + ", content=" +
+                    std::to_string(contentReady) + "/" + std::to_string(tileCoordinates.size()) +
+                    ", parse futures=" + std::to_string(countActive(pendingTileDataRequests)) +
+                    " (" + std::to_string(parseReady) + " ready), parsed waiting for assets=" +
+                    std::to_string(countActive(pendingTileContentData)) +
+                    ", scenery batches=" + std::to_string(countActive(pendingTileSceneryRequests)) +
+                    ", road preparations=" + std::to_string(countActive(pendingTileRoadRequests)) +
+                    ", prepared roads=" + std::to_string(countActive(preparedTileRoads)) + ".");
+    };
+    if (!finishTrafficLaneNetworkPreparation(waitForCompletion)) {
+        reportTileProgress("traffic lane preparation");
         return TileLoadStatus::Pending;
+    }
+    if (!terrainReady) {
+        reportTileProgress("terrain");
+        return TileLoadStatus::Pending;
+    }
+    if (!roadVertices.empty()) {
+        static_cast<void>(uploadRoadBatches(waitForCompletion));
+        if (!waitForCompletion) {
+            if (!roadVertices.empty() || !activeContentReady()) {
+                if (!finishTrafficLaneNetworkPreparation(waitForCompletion)) {
+                    reportTileProgress("traffic lane preparation");
+                    return TileLoadStatus::Pending;
+                }
+                reportTileProgress("road upload");
+                return TileLoadStatus::Pending;
+            }
+            if (!finishTrafficLaneNetworkPreparation(waitForCompletion)) {
+                reportTileProgress("traffic lane preparation");
+                return TileLoadStatus::Pending;
+            }
+            return TileLoadStatus::Updated;
+        }
     }
     for (const openbus::map::MapTileReference* tileReference : prioritizedActiveTiles) {
         const std::uint64_t key = tileKey(tileReference->x, tileReference->y);
         if (!activeTileKeys.contains(key) || loadedContentTileKeys.contains(key)) {
             continue;
         }
+        if (!tilePreparationRetryReady(key)) {
+            continue;
+        }
         auto tileData = pendingTileContentData.find(key);
         if (tileData == pendingTileContentData.end()) {
             auto request = pendingTileDataRequests.find(key);
             if (request == pendingTileDataRequests.end()) {
-                throw std::logic_error("Active map tile has no pending parse request");
+                continue;
             }
             if (waitForCompletion) {
                 request->second.wait();
@@ -371,69 +1084,124 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
                        std::future_status::ready) {
                 continue;
             }
-            openbus::map::MapTileData parsedTile = request->second.get();
+            openbus::map::MapTileData parsedTile;
+            try {
+                parsedTile = request->second.get();
+            } catch (...) {
+                const std::exception_ptr error = std::current_exception();
+                pendingTileDataRequests.erase(request);
+                recordTilePreparationFailure(key, false, "tile parsing", tileReference->textPath,
+                                             error, waitForCompletion);
+                continue;
+            }
             pendingTileDataRequests.erase(request);
+            tilePreparationFailures.erase(key);
             tileData = pendingTileContentData.emplace(key, std::move(parsedTile)).first;
         }
         auto assetKeys = pendingTileAssetKeys.find(key);
         if (assetKeys == pendingTileAssetKeys.end()) {
-            std::optional<std::vector<std::string>> requestedAssets =
-                requestTileSceneryAssets(tileData->second, key);
-            if (!requestedAssets.has_value()) {
-                continue;
-            }
-            assetKeys = pendingTileAssetKeys.emplace(key, std::move(*requestedAssets)).first;
+            assetKeys =
+                pendingTileAssetKeys.emplace(key, requestTileSceneryAssets(tileData->second, key))
+                    .first;
         }
         if (assetKeys != pendingTileAssetKeys.end() &&
             !sceneryAssetPreparationsReady(assetKeys->second)) {
             if (waitForCompletion) {
-                completeSceneryAssetPreparation(key, true);
+                while (!sceneryAssetPreparationsReady(assetKeys->second)) {
+                    if (!pendingTileSceneryRequests.contains(key)) {
+                        static_cast<void>(requestTileSceneryAssets(tileData->second, key));
+                    }
+                    if (pendingTileSceneryRequests.contains(key)) {
+                        static_cast<void>(completeSceneryAssetPreparation(key, true));
+                    }
+                }
             } else {
+                if (!pendingTileSceneryRequests.contains(key)) {
+                    static_cast<void>(requestTileSceneryAssets(tileData->second, key));
+                }
                 continue;
             }
         }
+        if (!requestTileRoadPreparation(tileData->second, *tileReference, key)) {
+            continue;
+        }
+        if (!preparedTileRoads.contains(key)) {
+            auto roadRequest = pendingTileRoadRequests.find(key);
+            if (roadRequest == pendingTileRoadRequests.end()) {
+                throw std::logic_error("Active map tile has no road preparation request");
+            }
+            if (waitForCompletion) {
+                roadRequest->second.wait();
+            } else if (roadRequest->second.wait_for(std::chrono::seconds(0)) !=
+                       std::future_status::ready) {
+                continue;
+            }
+            try {
+                preparedTileRoads.emplace(key, roadRequest->second.get());
+            } catch (...) {
+                const std::exception_ptr error = std::current_exception();
+                pendingTileRoadRequests.erase(roadRequest);
+                recordTilePreparationFailure(key, false, "road geometry preparation",
+                                             tileReference->textPath, error, waitForCompletion);
+                continue;
+            }
+            pendingTileRoadRequests.erase(roadRequest);
+        }
+        tilePreparationFailures.erase(key);
         gameLog.Log("Map phase: loading active tile " +
                     tileLabel(tileReference->x, tileReference->y) + ".");
-        buildTileContent(*tileReference, tileData->second);
+        const auto roadData = preparedTileRoads.find(key);
+        if (roadData == preparedTileRoads.end()) {
+            throw std::logic_error("Active map tile road data was not prepared");
+        }
+        buildTileContent(*tileReference, tileData->second, roadData->second);
         loadedContentTileKeys.insert(key);
         pendingTileContentData.erase(tileData);
         pendingTileAssetKeys.erase(key);
+        preparedTileRoads.erase(roadData);
         contentChanged = true;
-        uploadRoadBatches();
+        static_cast<void>(uploadRoadBatches(waitForCompletion));
+        if (!waitForCompletion && !roadVertices.empty()) {
+            if (!finishTrafficLaneNetworkPreparation(waitForCompletion)) {
+                reportTileProgress("traffic lane preparation");
+                return TileLoadStatus::Pending;
+            }
+            reportTileProgress("road upload");
+            return TileLoadStatus::Pending;
+        }
         if (!waitForCompletion) {
             break;
         }
     }
     if (!contentChanged) {
+        if (!finishTrafficLaneNetworkPreparation(waitForCompletion)) {
+            reportTileProgress("traffic lane preparation");
+            return TileLoadStatus::Pending;
+        }
         const bool activeTilesReady = std::all_of(
             tileCoordinates.begin(), tileCoordinates.end(), [this](const auto& coordinate) {
                 return loadedContentTileKeys.contains(tileKey(coordinate.first, coordinate.second));
             });
-        return activeTilesReady ? TileLoadStatus::Ready : TileLoadStatus::Pending;
+        if (!activeTilesReady) {
+            reportTileProgress("tile content");
+            return TileLoadStatus::Pending;
+        }
+        return TileLoadStatus::Ready;
     }
-    if (roadTrafficLaneNetworkDirty || humanTrafficLaneNetworkDirty) {
-        gameLog.Log("Map phase: finalizing traffic lane networks.");
-        if (roadTrafficLaneNetworkDirty) {
-            impl_->roadTrafficLaneNetwork.finalize();
-            roadTrafficLaneNetworkDirty = false;
-        }
-        if (humanTrafficLaneNetworkDirty) {
-            impl_->humanTrafficLaneNetwork.finalize();
-            humanTrafficLaneNetworkDirty = false;
-        }
-        const openbus::map::MapTrafficLaneNetworkStats laneStats =
-            impl_->roadTrafficLaneNetwork.stats();
-        gameLog.Log("Map road lane network: lanes=" + std::to_string(laneStats.lanes) +
-                    ", unconnected lane ends=" + std::to_string(laneStats.deadEnds) +
-                    ", unconnected ends within 3 m of an aligned lane start=" +
-                    std::to_string(laneStats.nearMissDeadEnds) + ".");
+    if (!finishTrafficLaneNetworkPreparation(waitForCompletion)) {
+        reportTileProgress("traffic lane preparation");
+        return TileLoadStatus::Pending;
     }
     resolveTrafficLightVariableParents();
     const bool activeTilesReady =
         std::all_of(tileCoordinates.begin(), tileCoordinates.end(), [this](const auto& coordinate) {
             return loadedContentTileKeys.contains(tileKey(coordinate.first, coordinate.second));
         });
-    return activeTilesReady ? TileLoadStatus::Updated : TileLoadStatus::Pending;
+    if (!activeTilesReady) {
+        reportTileProgress("tile content");
+        return TileLoadStatus::Pending;
+    }
+    return TileLoadStatus::Updated;
 }
 
 void MapSceneLoader::resolveTrafficLightVariableParents() {
@@ -503,7 +1271,7 @@ void MapSceneLoader::resolveTrafficLightVariableParents() {
     }
 }
 
-void MapSceneLoader::loadGroundTextures() {
+void MapSceneLoader::configureGroundTextures() {
     if (map.groundTextures.empty()) {
         throw std::runtime_error("Map has no [groundtex] records");
     }
@@ -529,6 +1297,9 @@ void MapSceneLoader::loadGroundTextures() {
     baseTextureRepeatsPerTile =
         openbus::map::mapGroundTextureTiling(map.groundTextures[baseGroundTextureIndex])
             .textureRepeatsPerTile;
+}
+
+void MapSceneLoader::loadGroundTextures() {
     const std::filesystem::path texturePath =
         groundTexturePath(map, omsiRoot, map.groundTextures[baseGroundTextureIndex].texturePath);
     if (uniformGroundTexturePreview) {
@@ -541,7 +1312,7 @@ void MapSceneLoader::loadGroundTextures() {
     }
     {
         TraceScope phase("map", "MapRenderer.loadGroundTexture");
-        impl_->texture = loadTexture(texturePath);
+        impl_->texture = uploadPreparedTexture(texturePath, true);
     }
 
     terrainByCoordinate.reserve(map.tiles.size());
@@ -608,17 +1379,85 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                 terrainChanged = true;
                 continue;
             }
+            if (!tilePreparationRetryReady(key)) {
+                continue;
+            }
             auto request = pendingTerrainRequests.find(key);
             if (request == pendingTerrainRequests.end() &&
                 (waitForCompletion ||
                  pendingTerrainRequests.size() < maxPendingTerrainPreparations)) {
                 const std::filesystem::path terrainPath = tile.terrainPath;
                 const double tileSize = map.coordinates.tileSize;
+                const std::filesystem::path mapRootPath = map.rootPath;
+                const std::filesystem::path omsiRootPath = omsiRoot;
+                const std::vector<openbus::map::GroundTextureDefinition> groundTextures =
+                    map.groundTextures;
+                const std::vector<openbus::map::MapGroundTextureSidecar> groundTextureSidecars =
+                    tile.groundTextureSidecars;
                 request =
                     pendingTerrainRequests
-                        .emplace(key, assetRequests_->submit([terrainPath, tileSize] {
+                        .emplace(key, assetRequests_->submit([terrainPath, tileSize, mapRootPath,
+                                                              omsiRootPath, groundTextures,
+                                                              groundTextureSidecars] {
                             PreparedTerrainTile prepared;
                             prepared.grid = openbus::map::loadTerrainGrid(terrainPath);
+                            if (!groundTextureSidecars.empty()) {
+                                openbus::map::MapDefinition textureMap;
+                                textureMap.rootPath = mapRootPath;
+                                std::map<std::size_t, const openbus::map::MapGroundTextureSidecar*>
+                                    layersByIndex;
+                                for (const auto& sidecar : groundTextureSidecars) {
+                                    const auto textureIndex =
+                                        openbus::map::resolveMapGroundTextureSidecarIndex(
+                                            sidecar.ordinalSuffix, groundTextures.size());
+                                    if (textureIndex) {
+                                        layersByIndex.emplace(*textureIndex, &sidecar);
+                                    }
+                                }
+                                std::unordered_set<std::string> requestedTexturePaths;
+                                const auto decodeTexture = [&](const std::filesystem::path& path) {
+                                    const std::string imageKey =
+                                        path.lexically_normal().generic_string();
+                                    if (!requestedTexturePaths.insert(imageKey).second) {
+                                        return;
+                                    }
+                                    Image image;
+                                    try {
+                                        if (!TextureLoader::readImage(path, image)) {
+                                            prepared.textureErrors.emplace(imageKey,
+                                                                           "image decode failed");
+                                        } else {
+                                            prepared.decodedTextures.emplace(
+                                                imageKey,
+                                                std::make_shared<Image>(std::move(image)));
+                                        }
+                                    } catch (const std::exception& error) {
+                                        prepared.textureErrors.emplace(imageKey, error.what());
+                                    } catch (...) {
+                                        prepared.textureErrors.emplace(
+                                            imageKey, "unknown image decode error");
+                                    }
+                                };
+                                for (const auto& [textureIndex, sidecar] : layersByIndex) {
+                                    const auto& groundTexture = groundTextures[textureIndex];
+                                    try {
+                                        decodeTexture(groundTexturePath(textureMap, omsiRootPath,
+                                                                        groundTexture.texturePath));
+                                    } catch (const std::exception&) {
+                                        // The renderer reports unresolved paths with tile context.
+                                    }
+                                    if (!groundTexture.detailTexturePath.empty()) {
+                                        try {
+                                            decodeTexture(
+                                                groundTexturePath(textureMap, omsiRootPath,
+                                                                  groundTexture.detailTexturePath));
+                                        } catch (const std::exception&) {
+                                            // Detail paths are optional and logged at publication.
+                                        }
+                                    }
+                                    decodeTexture(sidecar->path);
+                                }
+                            }
                             const auto& grid = prepared.grid;
                             const std::size_t side = grid.intervals + 1;
                             const double step = tileSize / grid.intervals;
@@ -670,8 +1509,26 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
             if (!waitForCompletion && terrainUploads >= 1) {
                 continue;
             }
-            PreparedTerrainTile prepared = request->second.get();
+            PreparedTerrainTile prepared;
+            try {
+                prepared = request->second.get();
+            } catch (...) {
+                const std::exception_ptr error = std::current_exception();
+                pendingTerrainRequests.erase(request);
+                recordTilePreparationFailure(key, true, "terrain preparation", tile.terrainPath,
+                                             error, waitForCompletion);
+                continue;
+            }
             pendingTerrainRequests.erase(request);
+            tilePreparationFailures.erase(key);
+            for (auto& [imageKey, image] : prepared.decodedTextures) {
+                preparedTextureImages.try_emplace(imageKey, std::move(image));
+            }
+            for (auto& [imageKey, error] : prepared.textureErrors) {
+                if (!preparedTextureImages.contains(imageKey)) {
+                    preparedTextureErrors.try_emplace(imageKey, std::move(error));
+                }
+            }
             gameLog.Log("Map terrain tile " + std::to_string(terrainTilesVisited) + ": " +
                         tile.terrainPath.string() +
                         "; meshes uploaded=" + std::to_string(impl_->terrainBuffers.size()) +
@@ -794,15 +1651,18 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
             ++terrainUploads;
         }
     }
-    gameLog.Log("Map active terrain load complete: " + std::to_string(terrainTilesVisited) +
-                " tiles visited, " + std::to_string(impl_->terrainBuffers.size()) +
-                " total meshes in " + std::to_string(elapsedMilliseconds(terrainLoadStart)) +
-                " ms.");
+    if (terrainTilesVisited > 0 || terrainUploads > 0) {
+        gameLog.Log("Map active terrain load progress: " + std::to_string(terrainTilesVisited) +
+                    " tiles visited, " + std::to_string(terrainUploads) + " uploaded, " +
+                    std::to_string(impl_->terrainBuffers.size()) + " total meshes in " +
+                    std::to_string(elapsedMilliseconds(terrainLoadStart)) + " ms.");
+    }
     return terrainChanged;
 }
 
 void MapSceneLoader::indexMapContent() {
     const auto indexStart = std::chrono::steady_clock::now();
+    std::unordered_set<int> referencedSplineAttachmentIds;
     const auto registerObjectId = [&](int objectId, MapObjectRecordKind kind,
                                       const std::string& tileName, int tileX, int tileY) {
         mapObjectTileKeysById.try_emplace(objectId, tileKey(tileX, tileY));
@@ -938,6 +1798,7 @@ void MapSceneLoader::indexMapContent() {
             }
         }
         for (const openbus::map::MapAttachedObject& object : tile.attachedObjects) {
+            referencedSplineAttachmentIds.insert(object.attachedToObjectId);
             registerObjectId(object.id, MapObjectRecordKind::Attached, tileName, tileReference.x,
                              tileReference.y);
             mapObjectAssetPathsById.try_emplace(object.id, object.assetPath);
@@ -964,6 +1825,26 @@ void MapSceneLoader::indexMapContent() {
                                   " spline attachment ID=" + std::to_string(attachment.id));
             }
         }
+        if (!tile.splineAttachments.empty()) {
+            openbus::map::MapTileData parentData;
+            parentData.reference = tile.reference;
+            parentData.splines = tile.splines;
+            parentData.splineAttachments = tile.splineAttachments;
+            splineAttachmentParentTiles.emplace(tileReferenceIndex, std::move(parentData));
+        }
+    }
+    for (auto tile = splineAttachmentParentTiles.begin();
+         tile != splineAttachmentParentTiles.end();) {
+        auto& attachments = tile->second.splineAttachments;
+        std::erase_if(attachments, [&referencedSplineAttachmentIds](
+                                       const openbus::map::MapSplineAttachment& attachment) {
+            return !referencedSplineAttachmentIds.contains(attachment.id);
+        });
+        if (attachments.empty()) {
+            tile = splineAttachmentParentTiles.erase(tile);
+        } else {
+            ++tile;
+        }
     }
     gameLog.Log("Map tile index parsed; connecting road and traffic route networks.");
     roadConnections.finalize();
@@ -980,13 +1861,21 @@ void MapSceneLoader::indexMapContent() {
                 std::to_string(elapsedMilliseconds(indexStart)) + " ms.");
 }
 
-void MapSceneLoader::uploadRoadBatches() {
+bool MapSceneLoader::uploadRoadBatches(bool waitForCompletion) {
     const auto roadUploadStart = std::chrono::steady_clock::now();
     TraceScope roadUploadPhase("map", "MapRenderer.uploadRoadBatches");
-    for (auto& [batchKey, geometry] : roadVertices) {
+    constexpr std::size_t maxRoadBatchesPerFrame = 4;
+    std::size_t processedBatches = 0;
+    for (auto geometryIt = roadVertices.begin(); geometryIt != roadVertices.end();) {
+        auto& [batchKey, geometry] = *geometryIt;
         if (geometry.vertices.empty()) {
+            geometryIt = roadVertices.erase(geometryIt);
             continue;
         }
+        if (!waitForCompletion && processedBatches >= maxRoadBatchesPerFrame) {
+            break;
+        }
+        ++processedBatches;
         Impl::ModelBatch batch;
         batch.vertexCount = geometry.vertices.size();
         batch.indexCount = geometry.indices.size();
@@ -1031,15 +1920,19 @@ void MapSceneLoader::uploadRoadBatches() {
                 pglDeleteBuffers(1, &batch.indexBuffer);
             }
             recordSkipped(skipped, "road batches rejected by OpenGL upload", batchKey);
+            geometryIt = roadVertices.erase(geometryIt);
             continue;
         }
         impl_->roadBatches.push_back(batch);
         ++impl_->roadBatchesByTile[tileKey(batch.tileX, batch.tileY)];
+        geometryIt = roadVertices.erase(geometryIt);
     }
-    gameLog.Log("Map road upload complete: geometry groups=" + std::to_string(roadVertices.size()) +
-                ", uploaded batches=" + std::to_string(impl_->roadBatches.size()) + " in " +
-                std::to_string(elapsedMilliseconds(roadUploadStart)) + " ms.");
-    roadVertices.clear();
+    if (roadVertices.empty()) {
+        gameLog.Log("Map road upload complete: uploaded batches=" +
+                    std::to_string(impl_->roadBatches.size()) + " in " +
+                    std::to_string(elapsedMilliseconds(roadUploadStart)) + " ms.");
+    }
+    return processedBatches != 0;
 }
 
 void MapSceneLoader::logSummary() const {
@@ -1056,6 +1949,25 @@ void MapSceneLoader::logSummary() const {
                 " ms.");
 }
 
+GLuint MapSceneLoader::uploadPreparedTexture(const std::filesystem::path& path, bool repeat) const {
+    const std::string imageKey = path.lexically_normal().generic_string();
+    const auto textureError = preparedTextureErrors.find(imageKey);
+    if (textureError != preparedTextureErrors.end()) {
+        throw std::runtime_error("Could not decode map texture " + path.string() + ": " +
+                                 textureError->second);
+    }
+    const auto preparedImage = preparedTextureImages.find(imageKey);
+    if (preparedImage != preparedTextureImages.end() && preparedImage->second) {
+        try {
+            return uploadTextureImage(*preparedImage->second, repeat);
+        } catch (const std::exception& error) {
+            throw std::runtime_error("Could not upload map texture " + path.string() + ": " +
+                                     error.what());
+        }
+    }
+    return loadTexture(path, repeat);
+}
+
 GLuint MapSceneLoader::getTexture(const std::filesystem::path& path, bool repeat) {
     const std::string key =
         path.lexically_normal().generic_string() + (repeat ? "|repeat" : "|clamp");
@@ -1063,7 +1975,7 @@ GLuint MapSceneLoader::getTexture(const std::filesystem::path& path, bool repeat
     if (found != textureCache.end()) {
         return found->second;
     }
-    const GLuint texture = loadTexture(path, repeat);
+    const GLuint texture = uploadPreparedTexture(path, repeat);
     textureCache.emplace(key, texture);
     impl_->ownedTextures.push_back(texture);
     return texture;

@@ -119,12 +119,9 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
         splineAttachment->second >= map.tiles.size()) {
         return std::nullopt;
     }
-    auto parentTile = splineAttachmentParentTiles.find(splineAttachment->second);
+    const auto parentTile = splineAttachmentParentTiles.find(splineAttachment->second);
     if (parentTile == splineAttachmentParentTiles.end()) {
-        const std::size_t tileIndex = splineAttachment->second;
-        parentTile = splineAttachmentParentTiles
-                         .emplace(tileIndex, openbus::map::loadMapTile(map.tiles[tileIndex]))
-                         .first;
+        throw std::logic_error("Cross-tile spline attachment parent was not prepared");
     }
     const auto& splineAttachmentRecord = parentTile->second.splineAttachments;
     const auto record =
@@ -150,7 +147,8 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
 }
 
 void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tileReference,
-                                      const openbus::map::MapTileData& tile) {
+                                      const openbus::map::MapTileData& tile,
+                                      PreparedRoadTile& preparedRoads) {
     const auto tileStart = std::chrono::steady_clock::now();
     const int tileX = tileReference.x;
     const int tileY = tileReference.y;
@@ -198,82 +196,44 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                           tileName + " spline=" + std::to_string(spline.splineId));
         }
     }
-    std::optional<openbus::map::WaterData> tileWater;
+    const std::optional<openbus::map::WaterData>& tileWater = preparedRoads.waterData;
     if (tile.hasWaterMarker) {
         if (!tileReference.hasWaterFile) {
             recordSkipped(skipped, "[water] markers without a .map.water sidecar",
                           tileName + " " + tileReference.textPath.filename().string());
-        } else {
-            try {
-                tileWater = openbus::map::loadWaterData(tileReference.waterPath);
-                const openbus::map::WaterData& water = *tileWater;
-                std::vector<ModelVertex> vertices;
-                std::vector<std::uint32_t> indices;
-                vertices.reserve(water.surfaces.size() * 4);
-                indices.reserve(water.surfaces.size() * 6);
-                double minimumHeight = std::numeric_limits<double>::infinity();
-                double maximumHeight = -std::numeric_limits<double>::infinity();
-                double heightSum = 0.0;
-                std::size_t heightCount = 0;
-                const double tileOriginX = static_cast<double>(tileX) * map.coordinates.tileSize;
-                const double tileOriginY = static_cast<double>(tileY) * map.coordinates.tileSize;
-                for (const openbus::map::WaterSurface& surface : water.surfaces) {
-                    const auto corners = openbus::map::buildMapWaterSurfaceVertices(
-                        tileX, tileY, surface, map.coordinates.tileSize);
-                    const std::uint32_t base = static_cast<std::uint32_t>(vertices.size());
-                    for (std::size_t corner = 0; corner < corners.size(); ++corner) {
-                        const openbus::map::MapWaterVertex& vertex = corners[corner];
-                        vertices.push_back({static_cast<float>(vertex.x - tileOriginX),
-                                            static_cast<float>(vertex.y - tileOriginY),
-                                            static_cast<float>(vertex.z),
-                                            corner == 1 || corner == 2 ? 1.0F : 0.0F,
-                                            corner >= 2 ? 1.0F : 0.0F, 0.0F, 0.0F, 0.0F, 1.0F});
-                        minimumHeight = (std::min)(minimumHeight, vertex.z);
-                        maximumHeight = (std::max)(maximumHeight, vertex.z);
-                        heightSum += vertex.z;
-                        ++heightCount;
-                    }
-                    // SW, SE, NE, NW gives upward-facing triangles in the map XY plane.
-                    indices.insert(indices.end(),
-                                   {base, base + 1, base + 2, base, base + 2, base + 3});
+        } else if (!preparedRoads.waterError.empty()) {
+            recordSkipped(skipped, "invalid .map.water sidecars",
+                          tileName + ": " + preparedRoads.waterError);
+        } else if (!preparedRoads.waterVertices.empty()) {
+            Impl::WaterBatch batch;
+            batch.indexCount = preparedRoads.waterIndices.size();
+            batch.tileX = tileX;
+            batch.tileY = tileY;
+            batch.minZ = preparedRoads.waterMinimumHeight;
+            batch.maxZ = preparedRoads.waterMaximumHeight;
+            batch.meanZ = preparedRoads.waterMeanHeight;
+            pglGenBuffers(1, &batch.buffer);
+            pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+            pglBufferData(GL_ARRAY_BUFFER,
+                          static_cast<std::ptrdiff_t>(preparedRoads.waterVertices.size() *
+                                                      sizeof(ModelVertex)),
+                          preparedRoads.waterVertices.data(), GL_STATIC_DRAW);
+            pglGenBuffers(1, &batch.indexBuffer);
+            pglBindBuffer(GL_ARRAY_BUFFER, batch.indexBuffer);
+            pglBufferData(GL_ARRAY_BUFFER,
+                          static_cast<std::ptrdiff_t>(preparedRoads.waterIndices.size() *
+                                                      sizeof(std::uint32_t)),
+                          preparedRoads.waterIndices.data(), GL_STATIC_DRAW);
+            if (batch.buffer == 0 || batch.indexBuffer == 0 || glGetError() != GL_NO_ERROR) {
+                if (batch.buffer != 0) {
+                    pglDeleteBuffers(1, &batch.buffer);
                 }
-                if (!vertices.empty()) {
-                    Impl::WaterBatch batch;
-                    batch.indexCount = indices.size();
-                    batch.tileX = tileX;
-                    batch.tileY = tileY;
-                    batch.minZ = minimumHeight;
-                    batch.maxZ = maximumHeight;
-                    batch.meanZ = heightSum / static_cast<double>(heightCount);
-                    pglGenBuffers(1, &batch.buffer);
-                    pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
-                    pglBufferData(
-                        GL_ARRAY_BUFFER,
-                        static_cast<std::ptrdiff_t>(vertices.size() * sizeof(ModelVertex)),
-                        vertices.data(), GL_STATIC_DRAW);
-                    pglGenBuffers(1, &batch.indexBuffer);
-                    pglBindBuffer(GL_ARRAY_BUFFER, batch.indexBuffer);
-                    pglBufferData(
-                        GL_ARRAY_BUFFER,
-                        static_cast<std::ptrdiff_t>(indices.size() * sizeof(std::uint32_t)),
-                        indices.data(), GL_STATIC_DRAW);
-                    if (batch.buffer == 0 || batch.indexBuffer == 0 ||
-                        glGetError() != GL_NO_ERROR) {
-                        if (batch.buffer != 0) {
-                            pglDeleteBuffers(1, &batch.buffer);
-                        }
-                        if (batch.indexBuffer != 0) {
-                            pglDeleteBuffers(1, &batch.indexBuffer);
-                        }
-                        recordSkipped(skipped, "water surfaces rejected by OpenGL upload",
-                                      tileName);
-                    } else {
-                        impl_->waterBatches.push_back(batch);
-                    }
+                if (batch.indexBuffer != 0) {
+                    pglDeleteBuffers(1, &batch.indexBuffer);
                 }
-            } catch (const std::exception& error) {
-                recordSkipped(skipped, "invalid .map.water sidecars",
-                              tileName + ": " + error.what());
+                recordSkipped(skipped, "water surfaces rejected by OpenGL upload", tileName);
+            } else {
+                impl_->waterBatches.push_back(batch);
             }
         }
     }
@@ -615,97 +575,23 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                 &attachment.rules, attachment.id, attachment.variableParentId);
         }
     }
-    for (const openbus::map::MapSplinePlacement& spline : tile.splines) {
-        const std::string splineDescription =
-            tileName + (spline.elevated ? " [spline_h] asset=" : " [spline] asset=") +
-            spline.assetPath;
-        if (!spline.geometryValid) {
-            recordSkipped(skipped, "[spline] sections with invalid numeric geometry",
-                          splineDescription);
-            continue;
+    for (const auto& [reason, example, count] : preparedRoads.skipped) {
+        recordSkipped(skipped, reason, example, count);
+    }
+    for (const std::string& profileKey : preparedRoads.editorOnlyProfileKeys) {
+        if (editorOnlySplineProfiles.insert(profileKey).second) {
+            recordSkipped(skipped, "editor-only spline profiles",
+                          std::filesystem::path(profileKey).filename().string());
         }
-        const std::filesystem::path profilePath =
-            resolveSplineProfile(map, omsiRoot, spline.assetPath);
-        if (profilePath.empty()) {
-            recordSkipped(skipped, "spline profile files not found", splineDescription);
-            continue;
-        }
-        const std::string profileKey = profilePath.lexically_normal().generic_string();
-        const auto* loadedProfile = cachedSplineProfile(profilePath);
-        if (loadedProfile == nullptr) {
-            continue;
-        }
-        const openbus::map::MapSplineProfile& profile = *loadedProfile;
-        if (profile.editorOnly) {
-            if (editorOnlySplineProfiles.insert(profileKey).second) {
-                recordSkipped(skipped, "editor-only spline profiles",
-                              profilePath.filename().string());
-            }
-            continue;
-        }
-        if (profile.sections.empty()) {
-            recordSkipped(skipped, "spline profiles with no graphical cross-section strips",
-                          profilePath.filename().string());
-            continue;
-        }
-        const double startX = static_cast<double>(tileX) * map.coordinates.tileSize + spline.localX;
-        const double startY = static_cast<double>(tileY) * map.coordinates.tileSize + spline.localY;
-        const std::vector<openbus::map::MapSplineSample> centerline =
-            openbus::map::tessellateMapSpline(startX, startY, spline.rotationDegrees, spline.length,
-                                              spline.radius);
-        if (centerline.size() < 2) {
-            recordSkipped(skipped, "[spline] sections that failed geometry tessellation",
-                          splineDescription);
-            continue;
-        }
-        const std::optional<double> cantHalfWidth =
-            openbus::map::mapSplineProfileCantHalfWidth(profile);
-        for (const openbus::map::MapSplineProfileSection& section : profile.sections) {
-            if (section.points.size() < 2) {
-                recordSkipped(skipped, "spline profile strips with fewer than two points",
-                              profilePath.filename().string());
-                continue;
-            }
-            if (section.textureIndex < 0 ||
-                static_cast<std::size_t>(section.textureIndex) >= profile.textures.size()) {
-                recordSkipped(skipped, "spline profile strips with invalid texture indices",
-                              profilePath.filename().string() +
-                                  " index=" + std::to_string(section.textureIndex));
-                continue;
-            }
-            const std::string& textureName =
-                profile.textures[static_cast<std::size_t>(section.textureIndex)];
-            const std::filesystem::path roadTexture =
-                findSplineTexture(profilePath, omsiRoot, textureName);
-            const int alphaMode =
-                static_cast<std::size_t>(section.textureIndex) < profile.textureAlphaModes.size()
-                    ? profile.textureAlphaModes[static_cast<std::size_t>(section.textureIndex)]
-                    : 0;
-            const bool textured = !roadTexture.empty();
-            if (!textured) {
-                recordSkipped(skipped,
-                              "spline profile textures not found (geometry rendered untextured)",
-                              profilePath.filename().string() + " texture=" + textureName);
-            }
-            const std::string tileBatchPrefix =
-                std::to_string(tileX) + "," + std::to_string(tileY) + "|";
-            const std::string batchKey = tileBatchPrefix +
-                                         (textured ? roadTexture.lexically_normal().generic_string()
-                                                   : "untextured:" + profileKey + "#" +
-                                                         std::to_string(section.textureIndex)) +
-                                         "|alpha:" + std::to_string(alphaMode);
-            RoadMeshGeometry& road = roadVertices[batchKey];
-            if (road.vertices.empty()) {
-                road.texturePath = roadTexture;
-                road.textured = textured;
-                road.tileX = tileX;
-                road.tileY = tileY;
-                road.alphaMode = alphaMode;
-            }
-            appendRoadProfile(road, spline, centerline, section,
-                              roadConnections.joinsFor(spline, tileX, tileY), cantHalfWidth,
-                              map.coordinates);
-        }
+    }
+    for (const auto& [path, image] : preparedRoads.decodedTextures) {
+        preparedTextureImages.try_emplace(path, image);
+    }
+    for (const auto& [path, error] : preparedRoads.textureErrors) {
+        preparedTextureErrors.try_emplace(path, error);
+    }
+    for (auto& [batchKey, geometry] : preparedRoads.geometryByBatch) {
+        roadVertices.emplace(batchKey, std::move(geometry));
     }
     gameLog.Log("Map content tile loaded: " + tileName +
                 "; loaded tiles=" + std::to_string(tilesProcessed) +

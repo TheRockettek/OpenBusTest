@@ -29,6 +29,8 @@ struct MapRenderStats {
     std::size_t totalSceneryObjects = 0;
     std::size_t activeRoadBatches = 0;
     std::size_t totalRoadBatches = 0;
+    std::size_t totalWaterBatches = 0;
+    std::size_t totalTextures = 0;
 };
 
 struct TrafficSignalDebugStats {
@@ -55,7 +57,7 @@ class MapRenderer {
     MapRenderer(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
                 double spawnWorldX, double spawnWorldY, std::size_t groundTextureIndex,
                 const std::filesystem::path& omsiRoot, SimulationState& simulationState,
-                AssetRequestManager& assetRequests);
+                AssetRequestManager& assetRequests, bool prepareInitialWindowAsync = false);
     ~MapRenderer();
 
     MapRenderer(const MapRenderer&) = delete;
@@ -63,6 +65,8 @@ class MapRenderer {
 
     void updateScripts();
     void updateStreaming(double worldX, double worldY);
+    void enableScripts();
+    bool initialWindowReady() const noexcept;
     void updatePoleStates(const std::vector<MapPoleState>& states);
     bool leftHandTraffic() const noexcept;
     double tileSize() const noexcept;
@@ -134,10 +138,14 @@ class MapRenderer {
         double waistYHeightFraction, double waistZHeightFraction, double fingerXHeightFraction,
         double fingerZHeightFraction) const;
 
+    openbus::map::MapDefinition mapDefinition_;
     struct Impl;
     std::unique_ptr<Impl> impl_;
     std::unique_ptr<MapSceneLoader> sceneLoader_;
     AssetRequestManager* assetRequests_ = nullptr;
+    bool scriptsEnabled_ = true;
+    bool loadSummaryLogged_ = false;
+    bool asyncInitialLoad_ = false;
 };
 
 } // namespace openbus::rendering

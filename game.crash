@@ -1,0 +1,13 @@
+OpenBus crash report
+Reason: unhandled Windows exception
+Exception: access violation (0xc0000005)
+Exception address: 00007FF605F987C0
+Access: read at FFFFFFFFFFFFFFFF
+Exception flags: 0x0
+Exception parameters: 2
+  parameter[0]: 0x0
+  parameter[1]: 0xffffffffffffffff
+Thread ID: 42032
+Registers: RIP=0x7ff605f987c0 RSP=0x84c5d8ae30 RBP=0x84c5d8aeb0 RAX=0x0 RBX=0xe8 RCX=0x0 RDX=0x0 RSI=0x26771a50bf0 RDI=0x267052a2f00 R8=0x7fffffffffffff00 R9=0x8d80 R10=0x2665644bc80 R11=0x2665644bcc8 R12=0x266c2c41030 R13=0x266c2adeea0 R14=0x2665644bc80 R15=0xd2ce6563d0ae0
+Stack trace:
+  #0 0x7ff605f987c0 OpenBus!openbus::rendering::MapRenderer::draw+0x2870 (C:\Users\blane\Desktop\OpenBusTest\src\render\map\MapRendererDraw.cpp:570) [C:\Users\blane\Desktop\OpenBusTest\build-ninja\OpenBus.exe]

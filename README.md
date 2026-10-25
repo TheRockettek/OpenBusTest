@@ -1017,7 +1017,8 @@ interaction. Benchmark mode currently creates a visible GLFW window, uses a
 fixed 60 Hz simulation step, and disables VSync. Actual dimensions are checked
 and mismatched runs are skipped before warm-up and measurement.
 Normal simulator launches remain visible and retain the standard `build-ode`
-build and `profile.bat` settings.
+build. `profile.bat` uses the separate `build-benchmark-ninja` directory for
+its tracing-enabled benchmark build.
 
 `--warmup-frames` is a total distributed across the five phases (60 by default,
 12 per phase). Each phase is then measured twice per resolution run, with 120

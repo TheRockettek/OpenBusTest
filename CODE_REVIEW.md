@@ -106,31 +106,54 @@ still costly.
 **Locations:** `src/render/map/MapRenderer.cpp` (`updateStreaming`);
 `src/render/map/MapSceneLoader.cpp` (`loadActiveTiles`); `MapRenderer::Impl` resource vectors.
 
-The constructor waits for the initial active window. Map-wide placement/traffic indexing, map-tile
-file parsing, terrain-file parsing, and terrain vertex/index construction run on the asset worker
-pool. Later tile activation polls those jobs, retains the old active window until the requested
-window is ready, prioritizes jobs near the requested center, caps pending tile decode/preparation
+Map-wide placement/traffic indexing, map-tile file parsing, terrain-file parsing, and terrain
+vertex/index construction run on the asset worker pool. The start menu now remains open while the
+initial window is prepared/published and exits only when that window is ready; OpenGL publication
+remains on the context-owning thread. Later tile activation polls worker jobs, retains the old
+active window until the requested window is ready, prioritizes jobs near the requested center,
+caps pending tile decode/preparation
 jobs, and limits terrain uploads and scene-tile publication to one tile of each per frame. Map and
-terrain decoding overlap. Per-tile scenery and model configuration parsing is also scheduled on
-workers before publication, with at most eight tile-level config-preparation jobs outstanding.
-Attached-object parent assets are included. Scenery O3D/X files are parsed and expanded into
-material-group vertex data in those jobs; parsed configuration and geometry results plus placement
-state are consumed on the renderer thread. Work already queued for a tile that leaves the
-requested window cannot be cancelled, but its results are discarded when harvested. OpenGL
-publication remains on the renderer thread. Road mesh construction, scenery material/texture
-setup, and GPU upload still run synchronously during publication, so boundary stalls remain
-possible. Already loaded tile content is retained rather than rebuilt or evicted, and
+terrain decoding overlap. Scenery and model configuration parsing is also scheduled on workers
+before publication, with at most eight unique asset-preparation jobs shared across tile requests
+and eight road-geometry jobs outstanding per tile window. Assets referenced by multiple active
+tiles reuse the same in-flight preparation result. Attached-object parent assets are included.
+Scenery O3D/X files are parsed and expanded into material-group vertex data in those jobs, and
+tree/material/transmap/free-texture paths are resolved and captured there instead of redoing
+filesystem lookup during publication. Road
+profile tessellation
+and mesh construction, plus water-sidecar parsing and surface geometry, also run on workers from
+tile/profile snapshots. Prepared configuration and geometry results plus placement state are
+consumed on the renderer thread. Work already queued for a tile
+that leaves the requested window cannot be cancelled, but its results are discarded when
+harvested. OpenGL publication remains on the renderer thread. Scenery material interpretation,
+batch descriptor construction, bounding-radius calculation, and tree-preview geometry now run
+during worker preparation; descriptors reference the already prepared mesh vertices without
+duplicating them. Streamed road-buffer publication is limited to four batches per frame, and the
+old active window remains until pending road batches drain; initial-load publication still waits
+synchronously. Scenery/terrain texture binding and creation, GPU uploads, and scene-tile
+publication remain synchronous during streaming. Base ground-texture decoding now runs on
+workers concurrently with map-wide indexing, active terrain worker results include decoded
+ground-layer, detail, and mask images, and scenery- and road-referenced image decoding is
+performed during worker preparation. Cross-tile spline-attachment parent records are prepared
+during map indexing and reused as immutable snapshots, avoiding synchronous parent-tile rereads.
+Background tile parsing, terrain, and road-preparation exceptions now include stage/file context,
+preserve the old active window, and retry up to three times with backoff. Retry exhaustion is
+reported; a later request after leaving the active window resets it. Initial-load errors still
+fail fast. Thrown scenery/model worker-preparation errors now use the same bounded retry policy;
+failed shared futures are not cached as successful assets. Non-throwing parser diagnostics and
+individual mesh parse failures remain handled as skipped/partial scenery rather than retried.
+Boundary stalls therefore remain possible.
+Already loaded tile content is retained rather than rebuilt or evicted, and
 obsolete pending requests are discarded from the loader when their tiles leave the desired
 window. Global parsed map records remain resident for cross-tile attachment resolution. Collision
 CPU preparation is asynchronous, but ODE publication/removal remains on the simulation thread.
 These are scaling risks; no current boundary hitch duration or memory-growth rate was measured.
 
-**Recommendation:** Move road mesh construction and remaining dependency reads into immutable
-worker results, while keeping shared-cache mutation and GL resource creation/destruction on their
-owning threads. Keep parsed map data available for dependency resolution. Measure boundary-frame
-latency and CPU/GPU residency during a repeatable route before undertaking tile-resource eviction
-or a broader streaming rewrite. Add a GL-context integration smoke test and in-game
-visual/contact validation.
+**Recommendation:** Move remaining dependency reads into immutable worker results, while keeping
+shared-cache mutation and GL resource creation/destruction on their owning threads. Keep parsed
+map data available for dependency resolution. Measure boundary-frame latency and CPU/GPU
+residency during a repeatable route before undertaking tile-resource eviction or a broader
+streaming rewrite. Add a GL-context integration smoke test and in-game visual/contact validation.
 
 `MapRenderer::updateScripts()` now initializes and ticks scenery runtimes only when their owner
 tile is active; each placement keeps independent mutable state, and native compiled programs are

@@ -375,9 +375,10 @@ struct MapRenderer::Impl {
 
     // Instances of one chunk that belong to active tiles, split by whether the
     // batch is render type 4 so each draw pass only visits its own candidates.
+    // Indexes survive vector reallocation when streamed tiles append instances.
     struct ActiveSceneryChunk {
         const SceneryChunk* chunk = nullptr;
-        std::vector<const SceneryInstance*> instances;
+        std::vector<std::size_t> instanceIndexes;
     };
 
     struct SceneryDraw {

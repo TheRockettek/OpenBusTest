@@ -28,17 +28,17 @@ set "OPENBUS_SCRIPT_BACKEND=native"
 set "OPENBUS_SCRIPT_HZ=60"
 set "OPENBUS_ASSET_WORKERS=4"
 set "OPENBUS_DOPPLER=1"
-set "OPENBUS_TRACE=0"
+set "OPENBUS_TRACE=1"
 set "OPENBUS_TRACE_FILE=openbus_trace.json"
 set "OPENBUS_TRACE_MAX_EVENTS=10000000"
 set "OPENBUS_TRACE_MIN_US=1"
 set "OPENBUS_CULLING_BACKEND=cpu"
 
-cmake -S "%~dp0" -B "%~dp0build-ode" -G "NMake Makefiles" -DCMAKE_CXX_COMPILER="%OPENBUS_CLANG_COMPILER%" -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%OPENBUS_VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake" -DOPENBUS_ENABLE_PERF_TRACE=ON
+cmake --preset windows-clang-benchmark
 if errorlevel 1 goto :failed
-cmake --build "%~dp0build-ode" --target OpenBus
+cmake --build --preset windows-clang-benchmark --target OpenBus
 if errorlevel 1 goto :failed
-"%~dp0build-ode\OpenBus.exe"
+"%~dp0build-benchmark-ninja\OpenBus.exe"
 set "RESULT=%ERRORLEVEL%"
 goto :cleanup
 

@@ -171,8 +171,10 @@ class RenderLoop {
     void SetNoBusSpawnPoint(const VehiclePlacement& placement);
     bool consumeSpawnBusRequest();
     void SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
-                std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot);
+                std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot,
+                bool prepareInitialWindowAsync = false);
     void updateMapStreaming(double worldX, double worldY);
+    bool initialMapWindowReady() const noexcept;
     void updateMapPoleStates(const std::vector<MapPoleState>& states);
     std::vector<std::pair<int, int>> loadedMapTiles() const;
     std::vector<std::pair<int, int>> activeMapTiles() const;

@@ -34,7 +34,7 @@
       "name": "windows-clang-benchmark",
       "displayName": "Windows Clang Release (Benchmark Tracing)",
       "inherits": "windows-clang-release",
-      "binaryDir": "${sourceDir}/build-benchmark",
+      "binaryDir": "${sourceDir}/build-benchmark-ninja",
       "cacheVariables": {
         "OPENBUS_ENABLE_PERF_TRACE": "ON"
       }
