@@ -16,11 +16,16 @@
 
 namespace {
 
+std::string pathToUtf8(const std::filesystem::path& path) {
+    const std::u8string utf8 = path.u8string();
+    return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+}
+
 std::vector<std::filesystem::path> discoverMaps(const std::filesystem::path& omsiRoot) {
     const std::filesystem::path mapsDirectory = omsiRoot / "maps";
     std::error_code error;
     if (!std::filesystem::is_directory(mapsDirectory, error) || error) {
-        throw std::runtime_error("OMSI maps directory is unavailable: " + mapsDirectory.string());
+        throw std::runtime_error("OMSI maps directory is unavailable: " + pathToUtf8(mapsDirectory));
     }
 
     std::vector<std::filesystem::path> maps;
@@ -34,7 +39,7 @@ std::vector<std::filesystem::path> discoverMaps(const std::filesystem::path& oms
         }
     }
     if (error) {
-        throw std::runtime_error("Failed to list OMSI maps directory '" + mapsDirectory.string() +
+        throw std::runtime_error("Failed to list OMSI maps directory '" + pathToUtf8(mapsDirectory) +
                                  "': " + error.message());
     }
     std::sort(maps.begin(), maps.end());
@@ -68,14 +73,14 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
     const std::vector<std::filesystem::path> maps = discoverMaps(omsiRoot);
     if (maps.empty()) {
         throw std::runtime_error("No OMSI maps containing global.cfg were found under '" +
-                                 (omsiRoot / "maps").string() + "'");
+                                 pathToUtf8(omsiRoot / "maps") + "'");
     }
     const std::filesystem::path vehiclesDirectory = omsiRoot / "Vehicles";
     const std::vector<openbus::config::VehicleCatalogEntry> vehicles =
         openbus::config::discoverVehicleCatalog(vehiclesDirectory);
     if (vehicles.empty()) {
         throw std::runtime_error("No OMSI .bus files were found under '" +
-                                 vehiclesDirectory.string() + "'");
+                                 pathToUtf8(vehiclesDirectory) + "'");
     }
 
     std::size_t selectedMapIndex = 0;
@@ -85,7 +90,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
     if (!configuredMap.empty()) {
         const auto configured =
             std::find_if(maps.begin(), maps.end(), [&](const std::filesystem::path& path) {
-                return path.filename().string() == configuredMap;
+                return pathToUtf8(path.filename()) == configuredMap;
             });
         if (configured != maps.end()) {
             selectedMapIndex = static_cast<std::size_t>(configured - maps.begin());
@@ -140,7 +145,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         } catch (const std::exception& error) {
             vehicleLoadError = error.what();
             gameLog.Log("Unable to load bus '" +
-                        vehicles[selectedVehicleIndex].configurationPath.string() +
+                        pathToUtf8(vehicles[selectedVehicleIndex].configurationPath) +
                         "': " + error.what());
         }
     };
@@ -154,7 +159,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
             selectedDefinition = openbus::map::loadMapDefinition(maps[selectedMapIndex]);
         } catch (const std::exception& error) {
             mapLoadError = error.what();
-            gameLog.Log("Unable to load map '" + maps[selectedMapIndex].string() +
+            gameLog.Log("Unable to load map '" + pathToUtf8(maps[selectedMapIndex]) +
                         "': " + error.what());
         }
     };
@@ -212,16 +217,16 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         const std::string selectedType = vehicles[selectedVehicleIndex].type;
         const std::string currentVehicleLabel =
             selectedType + " (" +
-            vehicles[selectedVehicleIndex].configurationPath.filename().string() + ")";
+            pathToUtf8(vehicles[selectedVehicleIndex].configurationPath.filename()) + ")";
         if (ImGui::BeginCombo("Type", currentVehicleLabel.c_str())) {
             for (std::size_t index = 0; index < vehicles.size(); ++index) {
                 if (normalizedText(vehicles[index].manufacturer) !=
                     normalizedText(vehicles[selectedVehicleIndex].manufacturer)) {
                     continue;
                 }
-                const std::string label = vehicles[index].type + " (" +
-                                          vehicles[index].configurationPath.filename().string() +
-                                          ")";
+                const std::string label =
+                    vehicles[index].type + " (" +
+                    pathToUtf8(vehicles[index].configurationPath.filename()) + ")";
                 const bool selected = index == selectedVehicleIndex;
                 if (ImGui::Selectable(label.c_str(), selected) && !selected) {
                     selectedVehicleIndex = index;
@@ -277,7 +282,8 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                 for (std::size_t index = 0; index < depots.size(); ++index) {
                     const bool selected = selectedDepotIndex == index + 1;
                     const std::string label =
-                        depots[index].name + " (" + depots[index].path.filename().string() + ")";
+                        depots[index].name + " (" +
+                        pathToUtf8(depots[index].path.filename()) + ")";
                     if (ImGui::Selectable(label.c_str(), selected)) {
                         selectedDepotIndex = index + 1;
                     }
@@ -337,10 +343,10 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         }
 
         ImGui::Spacing();
-        const std::string selectedMapName = maps[selectedMapIndex].filename().string();
+        const std::string selectedMapName = pathToUtf8(maps[selectedMapIndex].filename());
         if (ImGui::BeginCombo("Map", selectedMapName.c_str())) {
             for (std::size_t index = 0; index < maps.size(); ++index) {
-                const std::string label = maps[index].filename().string();
+                const std::string label = pathToUtf8(maps[index].filename());
                 const bool selected = index == selectedMapIndex;
                 if (ImGui::Selectable(label.c_str(), selected) && !selected) {
                     selectedMapIndex = index;

@@ -22,6 +22,27 @@ namespace openbus::map {
 
 namespace {
 
+std::string pathToUtf8(const std::filesystem::path& path) {
+    const std::u8string utf8 = path.u8string();
+    return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+}
+
+std::filesystem::path pathFromUtf8(std::string_view value) {
+    std::u8string utf8;
+    utf8.reserve(value.size());
+    for (const unsigned char character : value) {
+        utf8.push_back(static_cast<char8_t>(character));
+    }
+    return std::filesystem::path(utf8);
+}
+
+std::filesystem::path pathWithSuffix(const std::filesystem::path& path,
+                                     std::string_view suffix) {
+    std::filesystem::path result = path;
+    result += suffix;
+    return result;
+}
+
 std::string trim(std::string_view value) {
     const std::size_t first = value.find_first_not_of(" \t\r\n");
     if (first == std::string_view::npos) {
@@ -52,13 +73,13 @@ void appendUtf8(std::string& output, std::uint32_t codepoint) {
 std::string decodeText(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("Could not open map text file: " + path.string());
+        throw std::runtime_error("Could not open map text file: " + pathToUtf8(path));
     }
     const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(input)),
                                            std::istreambuf_iterator<char>());
     if (bytes.size() >= 2 && bytes[0] == 0xffU && bytes[1] == 0xfeU) {
         if ((bytes.size() - 2) % 2 != 0) {
-            throw std::runtime_error("Odd-length UTF-16LE map text file: " + path.string());
+            throw std::runtime_error("Odd-length UTF-16LE map text file: " + pathToUtf8(path));
         }
         std::string output;
         for (std::size_t offset = 2; offset < bytes.size(); offset += 2) {
@@ -66,24 +87,24 @@ std::string decodeText(const std::filesystem::path& path) {
                                       (static_cast<std::uint32_t>(bytes[offset + 1]) << 8U);
             if (codepoint >= 0xd800U && codepoint <= 0xdbffU) {
                 if (offset + 3 >= bytes.size()) {
-                    throw std::runtime_error("Unpaired UTF-16 surrogate in: " + path.string());
+                    throw std::runtime_error("Unpaired UTF-16 surrogate in: " + pathToUtf8(path));
                 }
                 const std::uint32_t low = static_cast<std::uint32_t>(bytes[offset + 2]) |
                                           (static_cast<std::uint32_t>(bytes[offset + 3]) << 8U);
                 if (low < 0xdc00U || low > 0xdfffU) {
-                    throw std::runtime_error("Unpaired UTF-16 surrogate in: " + path.string());
+                    throw std::runtime_error("Unpaired UTF-16 surrogate in: " + pathToUtf8(path));
                 }
                 codepoint = 0x10000U + ((codepoint - 0xd800U) << 10U) + (low - 0xdc00U);
                 offset += 2;
             } else if (codepoint >= 0xdc00U && codepoint <= 0xdfffU) {
-                throw std::runtime_error("Unpaired UTF-16 surrogate in: " + path.string());
+                throw std::runtime_error("Unpaired UTF-16 surrogate in: " + pathToUtf8(path));
             }
             appendUtf8(output, codepoint);
         }
         return output;
     }
     if (bytes.size() >= 2 && bytes[0] == 0xfeU && bytes[1] == 0xffU) {
-        throw std::runtime_error("UTF-16BE map text is not supported: " + path.string());
+        throw std::runtime_error("UTF-16BE map text is not supported: " + pathToUtf8(path));
     }
     std::size_t offset =
         bytes.size() >= 3 && bytes[0] == 0xefU && bytes[1] == 0xbbU && bytes[2] == 0xbfU ? 3 : 0;
@@ -115,7 +136,7 @@ std::vector<std::string> splitLines(const std::string& text) {
 std::string readField(const std::vector<std::string>& lines, std::size_t& cursor,
                       const std::filesystem::path& path, const std::string& section) {
     if (cursor >= lines.size()) {
-        throw std::runtime_error("Truncated [" + section + "] record in " + path.string());
+        throw std::runtime_error("Truncated [" + section + "] record in " + pathToUtf8(path));
     }
     return trim(lines[cursor++]);
 }
@@ -504,16 +525,16 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
         if (!entry.is_regular_file()) {
             continue;
         }
-        std::string extension = lowerAscii(entry.path().extension().string());
+        std::string extension = lowerAscii(pathToUtf8(entry.path().extension()));
         if (extension == ".ttr") {
-            trackFiles.emplace(lowerAscii(entry.path().stem().string()), entry.path());
+            trackFiles.emplace(lowerAscii(pathToUtf8(entry.path().stem())), entry.path());
         } else if (extension == ".ttp") {
             tripFiles.push_back(entry.path());
         } else if (extension == ".ttl") {
             lineFiles.push_back(entry.path());
-        } else if (lowerAscii(entry.path().filename().string()) == "busstops.cfg") {
+        } else if (lowerAscii(pathToUtf8(entry.path().filename())) == "busstops.cfg") {
             busStopsPath = entry.path();
-        } else if (lowerAscii(entry.path().filename().string()) == "stnlinks.cfg") {
+        } else if (lowerAscii(pathToUtf8(entry.path().filename())) == "stnlinks.cfg") {
             stationLinksPath = entry.path();
         }
     }
@@ -564,7 +585,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
             } else {
                 diagnostics.warning(lineIndex + 1, "busstop",
                                     "invalid or incomplete bus-stop record in " +
-                                        busStopsPath->filename().string());
+                                        pathToUtf8(busStopsPath->filename()));
             }
         }
     }
@@ -606,7 +627,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 } else {
                     diagnostics.warning(lineIndex + 1, "StnLink",
                                         "invalid or incomplete station-link record in " +
-                                            stationLinksPath->filename().string());
+                                            pathToUtf8(stationLinksPath->filename()));
                 }
             } else if (section == "[stnlink_entry]") {
                 std::array<std::string, 7> entryValues;
@@ -641,7 +662,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 } else {
                     diagnostics.warning(lineIndex + 1, "StnLink_entry",
                                         "invalid or orphaned station-link path entry in " +
-                                            stationLinksPath->filename().string());
+                                            pathToUtf8(stationLinksPath->filename()));
                 }
             }
         }
@@ -651,7 +672,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
         const std::vector<std::string> tripLines = splitLines(decodeText(tripPath));
         MapAiTimetableRoute route;
         MapAiPassengerTimetable passengerTimetable;
-        route.timetableKey = lowerAscii(tripPath.stem().string());
+        route.timetableKey = lowerAscii(pathToUtf8(tripPath.stem()));
         passengerTimetable.timetableKey = route.timetableKey;
         std::size_t routeHeaderFields = 0;
         for (std::size_t lineIndex = 0; lineIndex < tripLines.size(); ++lineIndex) {
@@ -706,7 +727,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 } else {
                     diagnostics.warning(lineIndex + 1, "station",
                                         "invalid or truncated timetable station record in " +
-                                            tripPath.filename().string());
+                                            pathToUtf8(tripPath.filename()));
                 }
                 lineIndex = next > 0 ? next - 1 : lineIndex;
             } else if (section == "[station_typ2]") {
@@ -722,7 +743,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 } else {
                     diagnostics.warning(lineIndex + 1, "station_typ2",
                                         "invalid or truncated timetable station ID in " +
-                                            tripPath.filename().string());
+                                            pathToUtf8(tripPath.filename()));
                 }
             }
         }
@@ -744,7 +765,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
             } else {
                 diagnostics.warning(0, "trip",
                                     "no matching timetable track file for " + route.tripName +
-                                        " in " + tripPath.filename().string());
+                                        " in " + pathToUtf8(tripPath.filename()));
             }
             continue;
         }
@@ -765,7 +786,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 malformedTrackEntry = true;
                 diagnostics.warning(lineIndex + 1, "track_entry",
                                     "invalid timetable spline ID in " +
-                                        trackFile->second.filename().string());
+                                        pathToUtf8(trackFile->second.filename()));
                 continue;
             }
             std::array<std::string, 5> remainingFields;
@@ -790,7 +811,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 malformedTrackEntry = true;
                 diagnostics.warning(lineIndex + 1, "track_entry",
                                     "invalid or truncated timetable path entry in " +
-                                        trackFile->second.filename().string());
+                                        pathToUtf8(trackFile->second.filename()));
                 continue;
             }
             route.trackEntries.push_back({splineId, pathIndex, tileIndex, lengthMeters});
@@ -833,7 +854,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 !parseReal(fields[2], departureMinutes) || departureMinutes < 0.0) {
                 diagnostics.warning(lineIndex + 1, "addtrip",
                                     "invalid or truncated timetable departure in " +
-                                        linePath.filename().string());
+                                        pathToUtf8(linePath.filename()));
                 lineIndex = next > 0 ? next - 1 : lineIndex;
                 continue;
             }
@@ -852,7 +873,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 passengerTimetable == aiTraffic.passengerTimetables.end()) {
                 diagnostics.warning(lineIndex + 1, "addtrip",
                                     "departure references missing trip " + fields[0] + " in " +
-                                        linePath.filename().string());
+                                        pathToUtf8(linePath.filename()));
             } else {
                 if (route != aiTraffic.timetableRoutes.end()) {
                     route->scheduledDepartureMinutes.push_back(departureMinutes);
@@ -1002,7 +1023,7 @@ discoverGroundTextureSidecars(const std::filesystem::path& mapDirectory) {
         if (!iterator->is_regular_file(statusError) || statusError) {
             continue;
         }
-        const std::string candidate = iterator->path().filename().string();
+        const std::string candidate = pathToUtf8(iterator->path().filename());
         constexpr std::string_view extension = ".dds";
         if (!candidate.starts_with("tile_") || !candidate.ends_with(extension)) {
             continue;
@@ -1046,7 +1067,7 @@ parseChronoDate(std::string_view value, const std::filesystem::path& configPath)
         !std::all_of(value.begin(), value.end(),
                      [](unsigned char character) { return std::isdigit(character) != 0; }) ||
         !parseInteger(std::string(value), date)) {
-        throw std::runtime_error("Invalid Chrono date in " + configPath.string() +
+        throw std::runtime_error("Invalid Chrono date in " + pathToUtf8(configPath) +
                                  "; expected YYYYMMDD");
     }
     const int year = date / 10000;
@@ -1055,7 +1076,7 @@ parseChronoDate(std::string_view value, const std::filesystem::path& configPath)
     const std::chrono::year_month_day parsed{std::chrono::year{year}, std::chrono::month{month},
                                              std::chrono::day{day}};
     if (!parsed.ok()) {
-        throw std::runtime_error("Invalid Chrono calendar date in " + configPath.string());
+        throw std::runtime_error("Invalid Chrono calendar date in " + pathToUtf8(configPath));
     }
     return parsed;
 }
@@ -1115,22 +1136,22 @@ bool mapChronoDateRangeContains(const MapChronoDateRange& range, std::chrono::ye
 void applyChronoTileSidecars(
     MapTileReference& tile, const std::filesystem::path& variantPath,
     const std::unordered_map<std::string, std::vector<MapGroundTextureSidecar>>& sidecarsByTile) {
-    const std::filesystem::path terrainPath(variantPath.string() + ".terrain");
+    const std::filesystem::path terrainPath = pathWithSuffix(variantPath, ".terrain");
     if (std::filesystem::is_regular_file(terrainPath)) {
         tile.terrainPath = terrainPath;
         tile.hasTerrainFile = true;
     }
-    const std::filesystem::path waterPath(variantPath.string() + ".water");
+    const std::filesystem::path waterPath = pathWithSuffix(variantPath, ".water");
     if (std::filesystem::is_regular_file(waterPath)) {
         tile.waterPath = waterPath;
         tile.hasWaterFile = true;
     }
-    const std::filesystem::path lightmapPath(variantPath.string() + ".LM.bmp");
+    const std::filesystem::path lightmapPath = pathWithSuffix(variantPath, ".LM.bmp");
     if (std::filesystem::is_regular_file(lightmapPath)) {
         tile.lightmapPath = lightmapPath;
         tile.hasLightmapFile = true;
     }
-    const auto sidecars = sidecarsByTile.find(lowerAscii(variantPath.filename().string()));
+    const auto sidecars = sidecarsByTile.find(lowerAscii(pathToUtf8(variantPath.filename())));
     if (sidecars != sidecarsByTile.end()) {
         tile.groundTextureSidecars = sidecars->second;
     }
@@ -1171,7 +1192,7 @@ std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
         }
         std::error_code statusError;
         if (iterator->is_regular_file(statusError) && !statusError &&
-            lowerAscii(iterator->path().filename().string()) == "chrono.cfg") {
+            lowerAscii(pathToUtf8(iterator->path().filename())) == "chrono.cfg") {
             configPaths.push_back(iterator->path());
         }
     }
@@ -1181,12 +1202,12 @@ std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
     }
     std::sort(configPaths.begin(), configPaths.end(),
               [](const std::filesystem::path& left, const std::filesystem::path& right) {
-                  return lowerAscii(left.generic_string()) < lowerAscii(right.generic_string());
+                  return lowerAscii(pathToUtf8(left)) < lowerAscii(pathToUtf8(right));
               });
 
     std::unordered_map<std::string, std::size_t> tileIndexByFilename;
     for (std::size_t index = 0; index < map.tiles.size(); ++index) {
-        tileIndexByFilename.emplace(lowerAscii(map.tiles[index].textPath.filename().string()),
+        tileIndexByFilename.emplace(lowerAscii(pathToUtf8(map.tiles[index].textPath.filename())),
                                     index);
     }
     std::size_t appliedTileCount = 0;
@@ -1204,10 +1225,10 @@ std::size_t applyMapChronoTiles(MapDefinition& map, int dateYyyyMmDd) {
              !directoryError && tileIterator != tileEnd; tileIterator.increment(directoryError)) {
             std::error_code statusError;
             if (!tileIterator->is_regular_file(statusError) || statusError ||
-                lowerAscii(tileIterator->path().extension().string()) != ".map") {
+                lowerAscii(pathToUtf8(tileIterator->path().extension())) != ".map") {
                 continue;
             }
-            const std::string tileFilename = lowerAscii(tileIterator->path().filename().string());
+            const std::string tileFilename = lowerAscii(pathToUtf8(tileIterator->path().filename()));
             const auto tileIndex = tileIndexByFilename.find(tileFilename);
             if (tileIndex == tileIndexByFilename.end()) {
                 continue;
@@ -1232,11 +1253,12 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     MapDefinition definition;
     definition.rootPath = mapDirectory;
     const std::filesystem::path globalPath = mapDirectory / "global.cfg";
-    mapLog.Log("Reading manifest: " + globalPath.string());
+    mapLog.Log("Reading manifest: " + pathToUtf8(globalPath));
     const std::vector<std::string> lines = splitLines(decodeText(globalPath));
-    mapLog.Log("Discovering ground-texture sidecars in " + mapDirectory.string());
+    mapLog.Log("Discovering ground-texture sidecars in " + pathToUtf8(mapDirectory));
     const auto groundTextureSidecarsByTile = discoverGroundTextureSidecars(mapDirectory);
     std::unordered_map<std::uint64_t, std::size_t> tileIndicesByCoordinates;
+    constexpr std::size_t missingTileIndex = std::numeric_limits<std::size_t>::max();
     std::vector<std::size_t> tileOrdinalToUniqueIndex;
     std::size_t cursor = 0;
     const auto isSectionHeader = [](const std::string& value) {
@@ -1282,7 +1304,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
                 firstLine = false;
             }
             if (!foundEnd) {
-                throw std::runtime_error("Unterminated [description] in " + globalPath.string());
+                throw std::runtime_error("Unterminated [description] in " + pathToUtf8(globalPath));
             }
         } else if (section == "[worldcoordinates]") {
             definition.metadata.hasWorldCoordinates = true;
@@ -1354,14 +1376,15 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             }
             if (groundTexture.texturePath.empty()) {
                 throw std::runtime_error("Empty base texture in [groundtex] in " +
-                                         globalPath.string());
+                                         pathToUtf8(globalPath));
             }
             definition.groundTextures.push_back(std::move(groundTexture));
         } else if (section == "[entrypoints]") {
             const std::string countText = readField(lines, cursor, globalPath, "entrypoints");
             int count = 0;
             if (!parseInteger(countText, count) || count < 0 || count > 100000) {
-                throw std::runtime_error("Invalid [entrypoints] count in " + globalPath.string());
+                throw std::runtime_error("Invalid [entrypoints] count in " +
+                                         pathToUtf8(globalPath));
             }
             definition.entryPoints.reserve(static_cast<std::size_t>(count));
             for (int index = 0; index < count; ++index) {
@@ -1373,7 +1396,8 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
                     !parseInteger(entryPoint.rawFields[1], entryPoint.id) ||
                     !parseInteger(entryPoint.rawFields[10], entryPoint.tileIndex)) {
                     throw std::runtime_error("Invalid integer in [entrypoints] record " +
-                                             std::to_string(index) + " in " + globalPath.string());
+                                             std::to_string(index) + " in " +
+                                             pathToUtf8(globalPath));
                 }
                 entryPoint.name = entryPoint.rawFields[11];
                 definition.entryPoints.push_back(std::move(entryPoint));
@@ -1385,14 +1409,16 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             MapTileReference tile;
             if (!parseInteger(xText, tile.x) || !parseInteger(yText, tile.y)) {
                 throw std::runtime_error("Invalid tile coordinates in [map] in " +
-                                         globalPath.string());
+                                         pathToUtf8(globalPath));
             }
             int filenameX = 0;
             int filenameY = 0;
             parseTileFilename(filename, filenameX, filenameY);
             if (filenameX != tile.x || filenameY != tile.y) {
-                throw std::runtime_error("[map] coordinates do not match tile filename: " +
-                                         filename);
+                definition.diagnostics.warning(
+                    sectionLine + 1, "map",
+                    "[map] coordinates do not match tile filename; manifest coordinates used: " +
+                        filename);
             }
             const std::uint64_t key =
                 (static_cast<std::uint64_t>(static_cast<std::uint32_t>(tile.x)) << 32U) |
@@ -1406,19 +1432,21 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
                 tileOrdinalToUniqueIndex.push_back(existingTile->second);
                 continue;
             }
-            tile.textPath = mapDirectory / filename;
+            tile.textPath = mapDirectory / pathFromUtf8(filename);
             if (!std::filesystem::is_regular_file(tile.textPath)) {
-                throw std::runtime_error("Listed map tile does not exist: " +
-                                         tile.textPath.string());
+                definition.diagnostics.warning(sectionLine + 1, "map",
+                                               "listed map tile does not exist: " +
+                                                   pathToUtf8(tile.textPath));
+                tileOrdinalToUniqueIndex.push_back(missingTileIndex);
+                continue;
             }
-            tile.terrainPath = std::filesystem::path(tile.textPath.string() + ".terrain");
+            tile.terrainPath = pathWithSuffix(tile.textPath, ".terrain");
             tile.hasTerrainFile = std::filesystem::is_regular_file(tile.terrainPath);
-            tile.waterPath = std::filesystem::path(tile.textPath.string() + ".water");
+            tile.waterPath = pathWithSuffix(tile.textPath, ".water");
             tile.hasWaterFile = std::filesystem::is_regular_file(tile.waterPath);
-            tile.lightmapPath = std::filesystem::path(tile.textPath.string() + ".LM.bmp");
+            tile.lightmapPath = pathWithSuffix(tile.textPath, ".LM.bmp");
             tile.hasLightmapFile = std::filesystem::is_regular_file(tile.lightmapPath);
-            tile.terrainReadinessPath =
-                std::filesystem::path(tile.textPath.string() + ".terrain_0.rdy");
+            tile.terrainReadinessPath = pathWithSuffix(tile.textPath, ".terrain_0.rdy");
             tile.hasTerrainReadinessFile =
                 std::filesystem::is_regular_file(tile.terrainReadinessPath);
             const auto sidecars = groundTextureSidecarsByTile.find(filename);
@@ -1445,7 +1473,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     }
 
     if (definition.tiles.empty()) {
-        throw std::runtime_error("No [map] tile records found in " + globalPath.string());
+        throw std::runtime_error("No [map] tile records found in " + pathToUtf8(globalPath));
     }
     std::vector<int> tileRows;
     tileRows.reserve(definition.tiles.size());
@@ -1454,11 +1482,22 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     }
     definition.coordinates =
         MapCoordinates::forRows(definition.metadata.hasWorldCoordinates, std::move(tileRows));
+    std::erase_if(definition.entryPoints, [&](const MapEntryPoint& entryPoint) {
+        if (entryPoint.tileIndex >= 0 &&
+            static_cast<std::size_t>(entryPoint.tileIndex) < tileOrdinalToUniqueIndex.size() &&
+            tileOrdinalToUniqueIndex[static_cast<std::size_t>(entryPoint.tileIndex)] ==
+                missingTileIndex) {
+            definition.diagnostics.warning(0, "entrypoints",
+                                           "entry point references a missing tile; ignored");
+            return true;
+        }
+        return false;
+    });
     for (MapEntryPoint& entryPoint : definition.entryPoints) {
         if (entryPoint.tileIndex < 0 ||
             static_cast<std::size_t>(entryPoint.tileIndex) >= tileOrdinalToUniqueIndex.size()) {
             throw std::runtime_error("[entrypoints] tile index is outside the [map] list in " +
-                                     globalPath.string());
+                                     pathToUtf8(globalPath));
         }
         entryPoint.tileIndex = static_cast<int>(
             tileOrdinalToUniqueIndex[static_cast<std::size_t>(entryPoint.tileIndex)]);
@@ -1477,13 +1516,13 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             !parseReal(entryPoint.rawFields[8], quaternionZ) ||
             !parseReal(entryPoint.rawFields[9], quaternionW)) {
             throw std::runtime_error("Invalid position or orientation in [entrypoints] record in " +
-                                     globalPath.string());
+                                     pathToUtf8(globalPath));
         }
         const double quaternionNorm =
             std::hypot(std::hypot(quaternionX, quaternionY), std::hypot(quaternionZ, quaternionW));
         if (quaternionNorm <= std::numeric_limits<double>::epsilon()) {
             throw std::runtime_error("Zero orientation quaternion in [entrypoints] record in " +
-                                     globalPath.string());
+                                     pathToUtf8(globalPath));
         }
         quaternionX /= quaternionNorm;
         quaternionY /= quaternionNorm;
@@ -1498,7 +1537,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
             1.0 - 2.0 * (quaternionX * quaternionX + quaternionY * quaternionY);
         if (std::hypot(forwardEast, forwardNorth) <= std::numeric_limits<double>::epsilon()) {
             throw std::runtime_error("Vertical orientation in [entrypoints] record in " +
-                                     globalPath.string());
+                                     pathToUtf8(globalPath));
         }
         const MapTileReference& tile = definition.tiles[entryPoint.tileIndex];
         const auto transform = definition.coordinates.tile(tile.x, tile.y);
@@ -1546,7 +1585,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
         parseUnscheduledTrafficDensities(unscheduledTrafficDensityPath, definition.aiTraffic,
                                          definition.diagnostics);
     }
-    mapLog.Log("Loading AI timetables: " + (mapDirectory / "TTData").string());
+    mapLog.Log("Loading AI timetables: " + pathToUtf8(mapDirectory / "TTData"));
     parseAiTimetableRoutes(mapDirectory / "TTData", definition.aiTraffic, definition.diagnostics);
     mapLog.Log("AI timetables loaded; loading driver and pedestrian lists.");
     const std::filesystem::path driverListPath = mapDirectory / "drivers.txt";
@@ -1567,7 +1606,7 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
 
 MapTicketPackDefinition loadMapTicketPackDefinition(const std::filesystem::path& ticketPackPath) {
     if (!std::filesystem::is_regular_file(ticketPackPath)) {
-        throw std::runtime_error("Ticket pack is missing: " + ticketPackPath.string());
+        throw std::runtime_error("Ticket pack is missing: " + pathToUtf8(ticketPackPath));
     }
     const std::vector<std::string> lines = splitLines(decodeText(ticketPackPath));
     MapTicketPackDefinition definition;
@@ -1609,7 +1648,7 @@ MapTicketPackDefinition loadMapTicketPackDefinition(const std::filesystem::path&
         } else {
             definition.diagnostics.warning(lineIndex + 1, "ticket",
                                            "invalid or incomplete ticket entry in " +
-                                               ticketPackPath.filename().string());
+                                               pathToUtf8(ticketPackPath.filename()));
         }
     }
     return definition;
@@ -1617,7 +1656,7 @@ MapTicketPackDefinition loadMapTicketPackDefinition(const std::filesystem::path&
 
 MapCurrencyDefinition loadMapCurrencyDefinition(const std::filesystem::path& currencyPath) {
     if (!std::filesystem::is_regular_file(currencyPath)) {
-        throw std::runtime_error("Currency configuration is missing: " + currencyPath.string());
+        throw std::runtime_error("Currency configuration is missing: " + pathToUtf8(currencyPath));
     }
     const std::vector<std::string> lines = splitLines(decodeText(currencyPath));
     MapCurrencyDefinition definition;
@@ -1636,7 +1675,7 @@ MapCurrencyDefinition loadMapCurrencyDefinition(const std::filesystem::path& cur
             } else {
                 definition.diagnostics.warning(lineIndex + 1, "currency",
                                                "incomplete currency header in " +
-                                                   currencyPath.filename().string());
+                                                   pathToUtf8(currencyPath.filename()));
             }
         } else if (section == "[coin]") {
             std::size_t next = lineIndex + 1;
@@ -1653,7 +1692,7 @@ MapCurrencyDefinition loadMapCurrencyDefinition(const std::filesystem::path& cur
             } else {
                 definition.diagnostics.warning(lineIndex + 1, "coin",
                                                "invalid or incomplete coin entry in " +
-                                                   currencyPath.filename().string());
+                                                   pathToUtf8(currencyPath.filename()));
             }
         }
     }
@@ -2416,7 +2455,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
         }
         if (section == "[version]") {
             if (cursor + 1 >= lines.size()) {
-                throw std::runtime_error("Truncated [version] in " + tile.textPath.string());
+                throw std::runtime_error("Truncated [version] in " + pathToUtf8(tile.textPath));
             }
             data.version = trim(lines[++cursor]);
             if (chronoData != nullptr) {
@@ -2466,7 +2505,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             const bool elevated = section == "[spline_h]";
             int tileVersion = 0;
             if (!data.version.empty() && !parseInteger(data.version, tileVersion)) {
-                throw std::runtime_error("Invalid [version] in " + tile.textPath.string());
+                throw std::runtime_error("Invalid [version] in " + pathToUtf8(tile.textPath));
             }
             const auto hasField = [tileVersion](int version) {
                 return tileVersion == 0 || tileVersion >= version;
@@ -2478,7 +2517,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             const auto readSplineField = [&]() -> const std::string& {
                 if (field >= lines.size()) {
                     throw std::runtime_error("Truncated " + section + " record in " +
-                                             tile.textPath.string());
+                                             pathToUtf8(tile.textPath));
                 }
                 const std::string& value = lines[field++];
                 if (rawFieldCount < spline.rawFields.size()) {
@@ -2492,7 +2531,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             spline.assetPath = trim(readSplineField());
             if (hasField(6)) {
                 if (!parseInteger(trim(readSplineField()), spline.splineId)) {
-                    throw std::runtime_error("Invalid spline ID in " + tile.textPath.string());
+                    throw std::runtime_error("Invalid spline ID in " + pathToUtf8(tile.textPath));
                 }
             } else {
                 spline.splineId = -static_cast<int>(++automaticRecordId);
@@ -2500,13 +2539,13 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             if (hasField(11)) {
                 if (!parseInteger(trim(readSplineField()), spline.previousSplineId) ||
                     !parseInteger(trim(readSplineField()), spline.nextSplineId)) {
-                    throw std::runtime_error("Invalid spline links in " + tile.textPath.string());
+                    throw std::runtime_error("Invalid spline links in " + pathToUtf8(tile.textPath));
                 }
             } else {
                 int linkedToPrevious = -1;
                 if (!parseInteger(trim(readSplineField()), linkedToPrevious)) {
                     throw std::runtime_error("Invalid legacy spline link in " +
-                                             tile.textPath.string());
+                                             pathToUtf8(tile.textPath));
                 }
                 if (linkedToPrevious != -1 && !data.splines.empty()) {
                     spline.previousSplineId = data.splines.back().splineId;
@@ -2562,7 +2601,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             ++data.objectCount;
             int tileVersion = 0;
             if (!data.version.empty() && !parseInteger(data.version, tileVersion)) {
-                throw std::runtime_error("Invalid [version] in " + tile.textPath.string());
+                throw std::runtime_error("Invalid [version] in " + pathToUtf8(tile.textPath));
             }
             const auto hasField = [tileVersion](int version) {
                 return tileVersion == 0 || tileVersion >= version;
@@ -2571,7 +2610,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             const auto requireObjectField = [&](std::size_t at) -> const std::string& {
                 if (at >= lines.size()) {
                     throw std::runtime_error("Truncated [object] record in " +
-                                             tile.textPath.string());
+                                             pathToUtf8(tile.textPath));
                 }
                 return lines[at];
             };
@@ -2582,13 +2621,13 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             if (hasField(9)) {
                 if (!parseInteger(trim(requireObjectField(field++)), object.detailLevel)) {
                     throw std::runtime_error("Invalid [object] detail level in " +
-                                             tile.textPath.string());
+                                             pathToUtf8(tile.textPath));
                 }
             }
             object.assetPath = trim(requireObjectField(field++));
             if (hasField(6)) {
                 if (!parseInteger(trim(requireObjectField(field++)), object.id)) {
-                    throw std::runtime_error("Invalid [object] ID in " + tile.textPath.string());
+                    throw std::runtime_error("Invalid [object] ID in " + pathToUtf8(tile.textPath));
                 }
             } else {
                 object.id = -static_cast<int>(++automaticRecordId);
@@ -2617,7 +2656,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 if (!parseSize(object.trailingField, labelCount) || labelCount > 4096 ||
                     labelCount > lines.size() - std::min(field, lines.size())) {
                     throw std::runtime_error("Invalid [object] label count in " +
-                                             tile.textPath.string());
+                                             pathToUtf8(tile.textPath));
                 }
                 object.labels.reserve(labelCount);
                 for (std::size_t index = 0; index < labelCount; ++index) {
@@ -2631,13 +2670,13 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
         } else if (section == "[attachObj]") {
             int tileVersion = 0;
             if (!data.version.empty() && !parseInteger(data.version, tileVersion)) {
-                throw std::runtime_error("Invalid [version] in " + tile.textPath.string());
+                throw std::runtime_error("Invalid [version] in " + pathToUtf8(tile.textPath));
             }
             std::size_t field = cursor + 1;
             const auto requireField = [&](std::size_t at) -> const std::string& {
                 if (at >= lines.size()) {
                     throw std::runtime_error("Truncated [attachObj] record in " +
-                                             tile.textPath.string());
+                                             pathToUtf8(tile.textPath));
                 }
                 return lines[at];
             };
@@ -2649,14 +2688,14 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             object.hasExplicitId = tileVersion >= 6;
             if (object.hasExplicitId) {
                 if (!parseInteger(trim(requireField(field++)), object.id)) {
-                    throw std::runtime_error("Invalid [attachObj] ID in " + tile.textPath.string());
+                    throw std::runtime_error("Invalid [attachObj] ID in " + pathToUtf8(tile.textPath));
                 }
             } else {
                 object.id = -static_cast<int>(++automaticRecordId);
             }
             if (!parseInteger(trim(requireField(field++)), object.attachedToObjectId)) {
                 throw std::runtime_error("Invalid [attachObj] parent object ID in " +
-                                         tile.textPath.string());
+                                         pathToUtf8(tile.textPath));
             }
             object.line5 = trim(requireField(field++));
             object.attachPointIndex = trim(requireField(field++));
@@ -2715,7 +2754,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             const auto requireField = [&](std::size_t at) -> const std::string& {
                 if (at >= lines.size()) {
                     throw std::runtime_error("Truncated " + section + " record in " +
-                                             tile.textPath.string());
+                                             pathToUtf8(tile.textPath));
                 }
                 return lines[at];
             };
@@ -2727,14 +2766,14 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 if (!parseInteger(trim(requireField(field++)),
                                   attachment.repeaterMasterTileIndex) ||
                     !parseSize(trim(requireField(field++)), attachment.repeaterFirstObjectIndex)) {
-                    throw std::runtime_error("Invalid repeater index in " + tile.textPath.string());
+                    throw std::runtime_error("Invalid repeater index in " + pathToUtf8(tile.textPath));
                 }
             }
             attachment.assetPath = trim(requireField(field++));
             if (!parseInteger(trim(requireField(field++)), attachment.id) ||
                 !parseInteger(trim(requireField(field++)), attachment.splineIndex)) {
                 throw std::runtime_error("Invalid ID or spline index in " + section + " in " +
-                                         tile.textPath.string());
+                                         pathToUtf8(tile.textPath));
             }
             attachment.transformValid = true;
             for (double& offset : attachment.offset) {
@@ -2762,7 +2801,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 if (!parseSize(trim(requireField(field++)), stringCount) || stringCount > 4096 ||
                     stringCount > lines.size() - std::min(field, lines.size())) {
                     throw std::runtime_error("Invalid label count in " + section + " in " +
-                                             tile.textPath.string());
+                                             pathToUtf8(tile.textPath));
                 }
                 field += stringCount;
             }
@@ -2772,11 +2811,11 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
             cursor = field - 1;
         } else if (section == "[varparent]") {
             if (cursor + 1 >= lines.size()) {
-                throw std::runtime_error("Truncated [varparent] in " + tile.textPath.string());
+                throw std::runtime_error("Truncated [varparent] in " + pathToUtf8(tile.textPath));
             }
             int parentId = 0;
             if (!parseInteger(trim(lines[cursor + 1]), parentId)) {
-                throw std::runtime_error("Invalid [varparent] ID in " + tile.textPath.string());
+                throw std::runtime_error("Invalid [varparent] ID in " + pathToUtf8(tile.textPath));
             }
             switch (modifierTarget) {
             case ModifierTarget::SceneryObject:
@@ -2821,7 +2860,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 "record is retained but its runtime behavior is not implemented");
             if (cursor + 1 >= lines.size()) {
                 throw std::runtime_error("Truncated [spline_terrain_align_2] in " +
-                                         tile.textPath.string());
+                                         pathToUtf8(tile.textPath));
             }
             if (modifierTarget == ModifierTarget::Spline) {
                 data.splines[modifierTargetIndex].splineTerrainAlign2 = lines[cursor + 1];
@@ -2837,7 +2876,7 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
                 const std::size_t field = cursor + index + 1;
                 if (field >= lines.size()) {
                     throw std::runtime_error("Truncated " + section + " record in " +
-                                             tile.textPath.string());
+                                             pathToUtf8(tile.textPath));
                 }
                 rule.fields[index] = lines[field];
             }
@@ -2882,10 +2921,10 @@ static MapTileData loadMapTileInternal(const MapTileReference& tile,
         }
     }
     if (data.version.empty()) {
-        throw std::runtime_error("No [version] section found in " + tile.textPath.string());
+        throw std::runtime_error("No [version] section found in " + pathToUtf8(tile.textPath));
     }
     if (chronoData == nullptr && !data.hasTerrainMarker) {
-        throw std::runtime_error("No [terrain] section found in " + tile.textPath.string());
+        throw std::runtime_error("No [terrain] section found in " + pathToUtf8(tile.textPath));
     }
     if (chronoData != nullptr) {
         chronoData->diagnostics = data.diagnostics;
@@ -2909,23 +2948,24 @@ TerrainGrid loadTerrainGrid(const std::filesystem::path& terrainPath) {
     openbus::rendering::TraceScope trace("map", "MapConfigLoader::loadTerrainGrid");
     std::ifstream input(terrainPath, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("Could not open terrain file: " + terrainPath.string());
+        throw std::runtime_error("Could not open terrain file: " + pathToUtf8(terrainPath));
     }
     const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(input)),
                                            std::istreambuf_iterator<char>());
     if (bytes.size() < 4) {
         throw std::runtime_error("Terrain file is shorter than its header: " +
-                                 terrainPath.string());
+                                 pathToUtf8(terrainPath));
     }
     const std::uint32_t intervals = readU32(bytes, 0);
     if (intervals == 0 || intervals > 1024U) {
-        throw std::runtime_error("Invalid terrain grid interval count in " + terrainPath.string());
+        throw std::runtime_error("Invalid terrain grid interval count in " +
+                                 pathToUtf8(terrainPath));
     }
     const std::uint64_t vertexCount = static_cast<std::uint64_t>(intervals + 1U) * (intervals + 1U);
     const std::uint64_t expectedBytes = 4U + vertexCount * 4U;
     if (expectedBytes != bytes.size()) {
         throw std::runtime_error("Terrain file size does not match its grid header: " +
-                                 terrainPath.string());
+                                 pathToUtf8(terrainPath));
     }
 
     TerrainGrid grid;
@@ -2934,7 +2974,8 @@ TerrainGrid loadTerrainGrid(const std::filesystem::path& terrainPath) {
     for (std::size_t offset = 4; offset < bytes.size(); offset += 4) {
         const float height = std::bit_cast<float>(readU32(bytes, offset));
         if (!std::isfinite(height)) {
-            throw std::runtime_error("Non-finite terrain height in " + terrainPath.string());
+            throw std::runtime_error("Non-finite terrain height in " +
+                                     pathToUtf8(terrainPath));
         }
         grid.heights.push_back(height);
     }
@@ -2945,23 +2986,24 @@ WaterData loadWaterData(const std::filesystem::path& waterPath) {
     openbus::rendering::TraceScope trace("map", "MapConfigLoader::loadWaterData");
     std::ifstream input(waterPath, std::ios::binary);
     if (!input) {
-        throw std::runtime_error("Could not open water file: " + waterPath.string());
+        throw std::runtime_error("Could not open water file: " + pathToUtf8(waterPath));
     }
     const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(input)),
                                            std::istreambuf_iterator<char>());
     if (bytes.size() < 4) {
-        throw std::runtime_error("Water file is shorter than its header: " + waterPath.string());
+        throw std::runtime_error("Water file is shorter than its header: " +
+                                 pathToUtf8(waterPath));
     }
     const std::uint32_t surfaceCount = readU32(bytes, 0);
     constexpr std::uint32_t MAX_WATER_SURFACES = 1'000'000;
     if (surfaceCount > MAX_WATER_SURFACES) {
         throw std::runtime_error("Water surface count exceeds the supported limit in " +
-                                 waterPath.string());
+                                 pathToUtf8(waterPath));
     }
     const std::uint64_t expectedBytes = 4U + static_cast<std::uint64_t>(surfaceCount) * 16U;
     if (bytes.size() != expectedBytes) {
         throw std::runtime_error("Water file size does not match its surface count: " +
-                                 waterPath.string());
+                                 pathToUtf8(waterPath));
     }
 
     WaterData water;
@@ -2973,7 +3015,8 @@ WaterData loadWaterData(const std::filesystem::path& waterPath) {
             height = std::bit_cast<float>(readU32(bytes, offset));
             offset += 4;
             if (!std::isfinite(height)) {
-                throw std::runtime_error("Non-finite water height in " + waterPath.string());
+                throw std::runtime_error("Non-finite water height in " +
+                                         pathToUtf8(waterPath));
             }
         }
         water.surfaces.push_back(surface);

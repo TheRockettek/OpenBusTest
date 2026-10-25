@@ -1,6 +1,7 @@
 #include "map/MapConfigLoader.h"
 #include "ProbeTempDirectory.h"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -182,6 +183,40 @@ void runFixtureProbe() {
         }
 
         const openbus::map::MapDefinition definition = openbus::map::loadMapDefinition(root);
+        const std::filesystem::path unicodeMapDirectory =
+            root / std::filesystem::path(std::u8string(u8"map-\u00e9"));
+        std::filesystem::create_directories(unicodeMapDirectory);
+        writeUtf16Le(unicodeMapDirectory / "global.cfg",
+                     "[entrypoints]\n1\n2\n11\n0\n10\n20\n0\n0\n0\n0\n1\n1\nMissing tile spawn\n"
+                     "[map]\n-10\n-15\ntile_-10_-15.map\n"
+                     "[map]\n2413\n11273\ntile_100_100.map\n");
+        writeUtf16Le(unicodeMapDirectory / "tile_-10_-15.map", "");
+        openbus::map::MapDefinition edgeCaseDefinition =
+            openbus::map::loadMapDefinition(unicodeMapDirectory);
+        const auto hasWarning = [&](const std::string& text) {
+            return std::any_of(
+                edgeCaseDefinition.diagnostics.entries.begin(),
+                edgeCaseDefinition.diagnostics.entries.end(),
+                [&](const auto& diagnostic) {
+                    return diagnostic.message.find(text) != std::string::npos;
+                });
+        };
+        require(edgeCaseDefinition.tiles.size() == 1 &&
+                    edgeCaseDefinition.tiles[0].x == -10 &&
+                    edgeCaseDefinition.tiles[0].y == -15 &&
+                    edgeCaseDefinition.entryPoints.empty() &&
+                    !edgeCaseDefinition.diagnostics.hasErrors() &&
+                    hasWarning("coordinates do not match tile filename") &&
+                    hasWarning("listed map tile does not exist") &&
+                    hasWarning("entry point references a missing tile"),
+                "missing and mismatched tile records warn while UTF-8 map paths still load");
+        const std::filesystem::path chronoScenarioDirectory =
+            unicodeMapDirectory / "Chrono" / "scenario";
+        std::filesystem::create_directories(chronoScenarioDirectory);
+        writeUtf16Le(chronoScenarioDirectory / "chrono.cfg", "[startdate]\n20200101\n");
+        writeUtf16Le(chronoScenarioDirectory / "tile_-10_-15.map", "");
+        require(openbus::map::applyMapChronoTiles(edgeCaseDefinition, 20200101) == 1,
+                "Chrono tile application handles Unicode map paths");
         require(definition.metadata.name == "Fixture map" &&
                     definition.metadata.friendlyName == "Friendly fixture" &&
                     definition.metadata.description == "First line\n\nSecond line" &&

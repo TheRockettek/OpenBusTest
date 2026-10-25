@@ -1097,18 +1097,12 @@ struct BusSimulation::Impl {
                 std::isfinite(projectedCompression)
                     ? std::clamp(-projectedCompression, -SUSP_MAX_TRAVEL, SUSP_MAX_TRAVEL)
                     : 0.0;
-            const dReal* wheelRotation = dBodyGetRotation(corner.wheelBody);
-            const dReal* wheelAngularVelocity = dBodyGetAngularVel(corner.wheelBody);
-            const dReal wheelAxisX = wheelRotation[2];
-            const dReal wheelAxisY = wheelRotation[6];
-            const dReal wheelAxisZ = wheelRotation[10];
-            corner.wheelOmega = wheelAngularVelocity[0] * wheelAxisX +
-                                wheelAngularVelocity[1] * wheelAxisY +
-                                wheelAngularVelocity[2] * wheelAxisZ;
             const dReal wheelHingeAngle = dJointGetHingeAngle(corner.wheelJoint);
             corner.wheelRotation -=
                 std::remainder(wheelHingeAngle - corner.previousWheelHingeAngle, 2.0 * PI);
             corner.previousWheelHingeAngle = wheelHingeAngle;
+            // Wheel telemetry follows the same forward-positive sign as wheelRotation.
+            corner.wheelOmega = -dJointGetHingeAngleRate(corner.wheelJoint);
             corner.wheelSurfaceSpeed = corner.wheelOmega * corner.wheelRadius;
 
             const dReal* steeringRotation = dBodyGetRotation(corner.steeringBody);

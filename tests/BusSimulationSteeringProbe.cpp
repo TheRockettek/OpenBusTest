@@ -286,7 +286,7 @@ int main() {
     openbus::scripting::Vehicle wheelSpeedVariables;
     wheelSpeedCheck.updateVariables(wheelSpeedVariables, 0.0, 0.0, 0.0);
     const double expectedWheelSpeedRpm =
-        std::abs(wheelSpeedCheck.wheelRotation(2) - rotationBeforeFinalStep) *
+        (wheelSpeedCheck.wheelRotation(2) - rotationBeforeFinalStep) *
         wheelSpeedCheck.physicsHz() * 60.0 /
         (2.0 * 3.141592653589793);
     const double actualWheelSpeedRpm = wheelSpeedVariables.get("wheel_rotationspeed_1_l");
@@ -295,6 +295,7 @@ int main() {
          wheelSpeedVariables.get("wheel_rotationspeed_1_r")) /
         2.0;
     if (expectedWheelSpeedRpm < 1.0 || actualWheelSpeedRpm <= 0.0 ||
+        wheelSpeedCheck.speed() <= 0.0 ||
         std::abs(actualWheelSpeedRpm - expectedWheelSpeedRpm) >
             std::max(0.5, expectedWheelSpeedRpm * 0.1) ||
         std::abs(wheelSpeedVariables.get("n_wheel") - averageDrivenWheelRpm) > 1.0e-4) {

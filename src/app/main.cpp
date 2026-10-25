@@ -34,6 +34,11 @@
 
 namespace {
 
+std::string pathToUtf8(const std::filesystem::path& path) {
+    const std::u8string utf8 = path.u8string();
+    return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+}
+
 std::string environmentValue(const char* name) {
     const char* value = openbus::getEnvironment(name);
     return value == nullptr ? std::string{} : std::string(value);
@@ -789,7 +794,7 @@ int main() {
             mapDirectory = startupSelection.mapDirectory;
         }
 
-        applicationLog.Log("Using selected map manifest: " + mapDirectory.string());
+        applicationLog.Log("Using selected map manifest: " + pathToUtf8(mapDirectory));
         openbus::map::MapDefinition mapDefinition = std::move(startupSelection.mapDefinition);
         SystemVariables mapCalendar;
         const double mapAiStartHour = startupSelection.timeSeconds / 3600.0;
@@ -844,7 +849,7 @@ int main() {
         if (!benchmarkMode) {
             renderer.SetNoBusSpawnPoint(busPlacement);
         }
-        applicationLog.Log("Map " + mapDirectory.string() + " spawn: [" +
+        applicationLog.Log("Map " + pathToUtf8(mapDirectory) + " spawn: [" +
                            std::to_string(spawnEntryPoint) + "] " +
                            mapDefinition.entryPoints[spawnEntryPoint].name + " at " +
                            formatPlacement(busPlacement) + " m, yaw " +
