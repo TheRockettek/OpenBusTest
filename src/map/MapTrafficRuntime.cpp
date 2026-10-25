@@ -26,8 +26,10 @@
 namespace openbus::map {
 
 bool mapTrafficPoseOnActiveTile(const MapTrafficPose& pose,
-                                const std::vector<std::pair<int, int>>& activeTiles) {
-    const MapTileCoordinate tile{mapWorldTile(pose.position[0]), mapWorldTile(pose.position[1])};
+                                const std::vector<std::pair<int, int>>& activeTiles,
+                                double tileSize) {
+    const MapTileCoordinate tile{mapWorldTile(pose.position[0], tileSize),
+                                 mapWorldTile(pose.position[1], tileSize)};
     return std::find(activeTiles.begin(), activeTiles.end(), tile) != activeTiles.end();
 }
 
@@ -126,7 +128,8 @@ bool mapTrafficRoutePositionOnJunctionPath(const MapTrafficRoute& route, double 
         route.totalLength <= 0.0) {
         throw std::invalid_argument("Traffic junction-path query inputs are invalid");
     }
-    return !routeSegmentAtDistance(route, distanceMeters).points.empty();
+    const MapTrafficRouteSegment& segment = routeSegmentAtDistance(route, distanceMeters);
+    return !segment.points.empty() || segment.pathRules.roundabout;
 }
 
 bool mapTrafficActorOnJunctionPath(const MapTrafficActor& actor, double distanceMeters) {
@@ -638,7 +641,8 @@ double mapTrafficSpawnSpeedMetersPerSecond(const MapTrafficActor& actor, double 
     if (!std::isfinite(distanceMeters) || !std::isfinite(actor.cruiseSpeedMetersPerSecond) ||
         actor.cruiseSpeedMetersPerSecond < 0.0 || actor.route.segments.empty() ||
         actor.route.cumulativeEndDistances.size() != actor.route.segments.size()) {
-        throw std::invalid_argument("Traffic spawn speed requires a valid actor and route position");
+        throw std::invalid_argument(
+            "Traffic spawn speed requires a valid actor and route position");
     }
     const MapTrafficVehicleFilter vehicle{actor.vehicleType, actor.unscheduledGroupIndex,
                                           actor.scheduled, actor.trafficRuleGroupIndex};
@@ -652,6 +656,9 @@ double mapTrafficSpawnSpeedMetersPerSecond(const MapTrafficActor& actor, double 
 
 double mapTrafficPathPriorityForVehicle(const MapTrafficPathRules& rules,
                                         const MapTrafficVehicleFilter& vehicle) noexcept {
+    if (rules.roundabout) {
+        return 256.0;
+    }
     if (const MapTrafficGroupRules* group = mapTrafficRulesForVehicleGroup(rules, vehicle);
         group != nullptr && group->priority.has_value()) {
         return *group->priority;
@@ -1027,6 +1034,149 @@ bool placeMapTrafficActorNearLooping(MapTrafficActor& actor, double startDistanc
                                     maximumDistanceMeters, endpointMarginMeters, true);
 }
 
+namespace {
+
+bool trafficRouteLooksLikeRoundabout(const MapTrafficRoute& route) {
+    constexpr double minimumLengthMeters = 20.0;
+    constexpr double maximumLengthMeters = 600.0;
+    constexpr double minimumTurnRadians = 5.1;
+    constexpr double maximumTurnRadians = 7.5;
+    if (!route.closed || route.segments.empty() ||
+        route.segments.size() != route.cumulativeEndDistances.size() ||
+        !std::isfinite(route.totalLength) || route.totalLength < minimumLengthMeters ||
+        route.totalLength > maximumLengthMeters) {
+        return false;
+    }
+
+    const auto first = sampleMapTrafficRoute(route, 0.0, 0.0);
+    if (!first) {
+        return false;
+    }
+    double minX = first->position[0];
+    double maxX = first->position[0];
+    double minY = first->position[1];
+    double maxY = first->position[1];
+    double signedTurn = 0.0;
+    double absoluteTurn = 0.0;
+    double previousHeading = first->headingRadians;
+    for (double distance = 1.0; distance < route.totalLength; distance += 1.0) {
+        const auto sample = sampleMapTrafficRoute(route, distance, 0.0);
+        if (!sample) {
+            return false;
+        }
+        const double turn =
+            std::remainder(sample->headingRadians - previousHeading, 2.0 * std::numbers::pi);
+        signedTurn += turn;
+        absoluteTurn += std::abs(turn);
+        previousHeading = sample->headingRadians;
+        minX = std::min(minX, sample->position[0]);
+        maxX = std::max(maxX, sample->position[0]);
+        minY = std::min(minY, sample->position[1]);
+        maxY = std::max(maxY, sample->position[1]);
+    }
+    const auto last = sampleMapTrafficRoute(route, route.totalLength - 1.0e-4, 0.0);
+    if (!last) {
+        return false;
+    }
+    const double closingTurn =
+        std::remainder(first->headingRadians - last->headingRadians, 2.0 * std::numbers::pi);
+    signedTurn += closingTurn;
+    absoluteTurn += std::abs(closingTurn);
+
+    const double width = maxX - minX;
+    const double height = maxY - minY;
+    const double diagonal = std::hypot(width, height);
+    const double smallerExtent = std::min(width, height);
+    const double largerExtent = std::max(width, height);
+    const double perimeterToDiagonal = route.totalLength / std::max(diagonal, 1.0e-6);
+    return absoluteTurn > 1.0e-6 && std::abs(signedTurn) >= minimumTurnRadians &&
+           std::abs(signedTurn) <= maximumTurnRadians &&
+           std::abs(signedTurn) / absoluteTurn >= 0.8 && smallerExtent >= 5.0 &&
+           largerExtent <= 200.0 && smallerExtent / largerExtent >= 0.55 &&
+           perimeterToDiagonal >= 1.8 && perimeterToDiagonal <= 2.6;
+}
+
+void markRoundaboutRoute(MapTrafficRoute& route) {
+    if (!trafficRouteLooksLikeRoundabout(route)) {
+        return;
+    }
+    for (MapTrafficRouteSegment& segment : route.segments) {
+        segment.pathRules.roundabout = true;
+    }
+}
+
+void detectRoundaboutLanes(std::vector<MapTrafficRouteSegment>& segments,
+                           const std::vector<double>& lengths,
+                           const std::vector<std::vector<std::size_t>>& next,
+                           const std::vector<MapTrafficPose>& starts,
+                           const std::vector<MapTrafficPose>& ends) {
+    constexpr std::size_t maximumCycleSegments = 64;
+    constexpr double maximumCycleLengthMeters = 600.0;
+    constexpr double minimumContinuationAlignment = 0.5;
+    for (std::size_t start = 0; start < segments.size(); ++start) {
+        if (segments[start].pathRules.roundabout) {
+            continue;
+        }
+        std::vector<std::size_t> cycle;
+        std::unordered_set<std::size_t> visited;
+        std::size_t current = start;
+        double cycleLength = 0.0;
+        bool closed = false;
+        for (std::size_t count = 0; count < maximumCycleSegments; ++count) {
+            if (!visited.insert(current).second) {
+                break;
+            }
+            cycle.push_back(current);
+            cycleLength += lengths[current];
+            if (cycleLength > maximumCycleLengthMeters || next[current].empty()) {
+                break;
+            }
+            std::optional<std::size_t> continuation;
+            double bestAlignment = minimumContinuationAlignment;
+            for (const std::size_t candidate : next[current]) {
+                const double alignment =
+                    std::cos(ends[current].headingRadians - starts[candidate].headingRadians);
+                if (alignment < bestAlignment ||
+                    (visited.contains(candidate) && candidate != start)) {
+                    continue;
+                }
+                if (!continuation.has_value() || alignment > bestAlignment) {
+                    continuation = candidate;
+                    bestAlignment = alignment;
+                }
+            }
+            if (!continuation.has_value()) {
+                break;
+            }
+            if (*continuation == start) {
+                closed = true;
+                break;
+            }
+            current = *continuation;
+        }
+        if (!closed) {
+            continue;
+        }
+
+        MapTrafficRoute route;
+        route.closed = true;
+        route.segments.reserve(cycle.size());
+        route.cumulativeEndDistances.reserve(cycle.size());
+        for (const std::size_t lane : cycle) {
+            route.segments.push_back(segments[lane]);
+            route.totalLength += lengths[lane];
+            route.cumulativeEndDistances.push_back(route.totalLength);
+        }
+        if (trafficRouteLooksLikeRoundabout(route)) {
+            for (const std::size_t lane : cycle) {
+                segments[lane].pathRules.roundabout = true;
+            }
+        }
+    }
+}
+
+} // namespace
+
 std::optional<MapTrafficRoute> buildMapTrafficRoute(const MapSplinePlacementReference& start,
                                                     const MapSplineChainResolver& chainResolver,
                                                     std::size_t segmentLimit) {
@@ -1082,6 +1232,7 @@ std::optional<MapTrafficRoute> buildMapTrafficRoute(const MapSplinePlacementRefe
     if (route.segments.empty() || route.totalLength <= 0.0) {
         return std::nullopt;
     }
+    markRoundaboutRoute(route);
     return route;
 }
 
@@ -1267,10 +1418,10 @@ std::optional<MapTrafficPose> sampleMapTrafficRouteRaw(const MapTrafficRoute& ro
         return std::nullopt;
     }
     const double boundedSplineDistance = std::clamp(splineDistance, 0.0, spline.length);
-    const double tileOriginX =
-        static_cast<double>(routeSegment.spline.tileX) * OMSI_TILE_SIZE_METERS;
-    const double tileOriginY =
-        static_cast<double>(routeSegment.spline.tileY) * OMSI_TILE_SIZE_METERS;
+    const auto transform =
+        routeSegment.spline.coordinates.tile(routeSegment.spline.tileX, routeSegment.spline.tileY);
+    const double tileOriginX = transform.originX;
+    const double tileOriginY = transform.originY;
     const auto center = sampleMapSpline(tileOriginX + spline.localX, tileOriginY + spline.localY,
                                         spline.rotationDegrees, spline.length, spline.radius,
                                         boundedSplineDistance);
@@ -1313,13 +1464,16 @@ std::optional<MapTrafficPose> sampleMapTrafficRouteRaw(const MapTrafficRoute& ro
             distance + surfaceSkewShift);
         const auto surfaceOffset =
             mapSplineRightOffset(surfaceCenter->headingRadians, splineLateral);
-        return std::array<double, 3>{surfaceCenter->x + surfaceOffset[0] +
-                                         std::sin(surfaceCenter->headingRadians) * surfaceSkewShift,
-                                     surfaceCenter->y + surfaceOffset[1] +
-                                         std::cos(surfaceCenter->headingRadians) * surfaceSkewShift,
-                                     surfaceElevation +
-                                         mapSplineCantHeightOffset(splineLateral, surfaceCant) +
-                                         routeSegment.pathHeightMeters};
+        std::array<double, 3> point{surfaceCenter->x + surfaceOffset[0] +
+                                        std::sin(surfaceCenter->headingRadians) * surfaceSkewShift,
+                                    surfaceCenter->y + surfaceOffset[1] +
+                                        std::cos(surfaceCenter->headingRadians) * surfaceSkewShift,
+                                    surfaceElevation +
+                                        mapSplineCantHeightOffset(splineLateral, surfaceCant) +
+                                        routeSegment.pathHeightMeters};
+        point[0] = tileOriginX + (point[0] - tileOriginX) * transform.scaleX;
+        point[1] = tileOriginY + (point[1] - tileOriginY) * transform.scaleY;
+        return point;
     };
     const double routeDirection = routeSegment.reversed ? -1.0 : 1.0;
     const double beforeDistance =
@@ -1337,14 +1491,19 @@ std::optional<MapTrafficPose> sampleMapTrafficRouteRaw(const MapTrafficRoute& ro
     const double bank = mapSplineCantBankRadians(splineLateral, cant);
     const double roll = routeSegment.reversed ? bank : -bank;
 
-    return MapTrafficPose{{center->x + offset[0] + std::sin(center->headingRadians) * skewShift,
-                           center->y + offset[1] + std::cos(center->headingRadians) * skewShift,
-                           elevation + mapSplineCantHeightOffset(splineLateral, cant) +
-                               routeSegment.pathHeightMeters},
-                          std::remainder(heading, 2.0 * std::numbers::pi),
-                          spline.splineId,
-                          pitch,
-                          roll};
+    return MapTrafficPose{
+        {tileOriginX +
+             (center->x - tileOriginX + offset[0] + std::sin(center->headingRadians) * skewShift) *
+                 transform.scaleX,
+         tileOriginY +
+             (center->y - tileOriginY + offset[1] + std::cos(center->headingRadians) * skewShift) *
+                 transform.scaleY,
+         elevation + mapSplineCantHeightOffset(splineLateral, cant) +
+             routeSegment.pathHeightMeters},
+        std::atan2(std::sin(heading) * transform.scaleX, std::cos(heading) * transform.scaleY),
+        spline.splineId,
+        pitch,
+        roll};
 }
 
 } // namespace
@@ -1824,7 +1983,8 @@ std::size_t advanceMapTrafficActors(std::vector<MapTrafficActor>& actors, double
 }
 
 void MapTrafficRouteNetwork::addTileSplines(const std::vector<MapSplinePlacement>& splines,
-                                            int tileX, int tileY) {
+                                            int tileX, int tileY,
+                                            const MapCoordinates& coordinates) {
     if (finalized_) {
         throw std::logic_error("Cannot add splines to a finalized traffic route network");
     }
@@ -1833,7 +1993,7 @@ void MapTrafficRouteNetwork::addTileSplines(const std::vector<MapSplinePlacement
             continue;
         }
         const auto [entry, inserted] = splinesById_.emplace(
-            spline.splineId, MapSplinePlacementReference{spline, tileX, tileY});
+            spline.splineId, MapSplinePlacementReference{spline, tileX, tileY, coordinates});
         if (!inserted) {
             splinesById_.erase(entry);
             ambiguousSplineIds_.insert(spline.splineId);
@@ -2172,6 +2332,7 @@ void MapTrafficLaneNetwork::finalize() {
     std::sort(spawnLanes_.begin(), spawnLanes_.end(), [](const auto& a, const auto& b) {
         return std::pair{a.splineId, a.laneSelector} < std::pair{b.splineId, b.laneSelector};
     });
+    detectRoundaboutLanes(segments_, lengths_, next_, laneStarts_, laneEnds_);
     finalizedSegmentCount_ = segments_.size();
     finalized_ = true;
 }
@@ -2415,6 +2576,7 @@ void MapTrafficLaneNetwork::finalizeAppendedSegments() {
     std::sort(spawnLanes_.begin(), spawnLanes_.end(), [](const auto& a, const auto& b) {
         return std::pair{a.splineId, a.laneSelector} < std::pair{b.splineId, b.laneSelector};
     });
+    detectRoundaboutLanes(segments_, lengths_, next_, laneStarts_, laneEnds_);
     finalizedSegmentCount_ = segmentCount;
     finalized_ = true;
 }
@@ -3196,9 +3358,11 @@ bool mapTrafficRouteSamplingCannotFail(const MapTrafficRoute& route, double late
         } else {
             const MapSplinePlacement& spline = segment.spline.placement;
             const double startX =
-                static_cast<double>(segment.spline.tileX) * OMSI_TILE_SIZE_METERS + spline.localX;
+                static_cast<double>(segment.spline.tileX) * segment.spline.coordinates.tileSize +
+                spline.localX;
             const double startY =
-                static_cast<double>(segment.spline.tileY) * OMSI_TILE_SIZE_METERS + spline.localY;
+                static_cast<double>(segment.spline.tileY) * segment.spline.coordinates.tileSize +
+                spline.localY;
             // Magnitudes this small keep every intermediate in sampleMapSpline finite
             // (distance / radius <= 1e23 because curved radii exceed 1e-8).
             constexpr double safeMagnitude = 1.0e15;
@@ -3874,14 +4038,17 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                                           std::size_t segmentIndex) {
         const auto& segments = candidate.route.segments;
         const auto& ends = candidate.route.cumulativeEndDistances;
+        const auto isJunctionPath = [](const MapTrafficRouteSegment& segment) {
+            return !segment.points.empty() || segment.pathRules.roundabout;
+        };
         std::size_t endIndex = segmentIndex;
         while (true) {
             std::size_t next = endIndex + 1;
-            while (next < segments.size() && segments[next].points.empty() &&
+            while (next < segments.size() && !isJunctionPath(segments[next]) &&
                    ends[next] - ends[endIndex] < candidate.lengthMeters + 4.0) {
                 ++next;
             }
-            if (next == segments.size() || segments[next].points.empty()) {
+            if (next == segments.size() || !isJunctionPath(segments[next])) {
                 return endIndex;
             }
             endIndex = next;
@@ -3924,12 +4091,18 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         const MapTrafficVehicleFilter vehicle{candidate.vehicleType,
                                               candidate.unscheduledGroupIndex, candidate.scheduled,
                                               candidate.trafficRuleGroupIndex};
+        const std::size_t current = currentSegmentIndex(candidate);
+        if (segments[current].pathRules.roundabout) {
+            return 256.0;
+        }
         const auto explicitPriority = [&](std::size_t index) -> std::optional<double> {
             const MapTrafficPathRules& rules = segments[index].pathRules;
+            if (rules.roundabout) {
+                return std::nullopt;
+            }
             const double priority = mapTrafficPathPriorityForVehicle(rules, vehicle);
             return priority != 128.0 ? std::optional<double>{priority} : std::nullopt;
         };
-        const std::size_t current = currentSegmentIndex(candidate);
         if (const auto priority = explicitPriority(current)) {
             return *priority;
         }
@@ -4167,7 +4340,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 const double segmentStart =
                     segmentIndex == 0 ? 0.0
                                       : candidate.route.cumulativeEndDistances[segmentIndex - 1];
-                if (candidate.route.segments[segmentIndex].points.empty() ||
+                if ((candidate.route.segments[segmentIndex].points.empty() &&
+                     !candidate.route.segments[segmentIndex].pathRules.roundabout) ||
                     (cycle > 0 && segmentStart < loopStart) ||
                     base + candidate.route.cumulativeEndDistances[segmentIndex] <
                         candidate.distanceMeters) {
@@ -4188,7 +4362,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                  {0.0, candidate.lengthMeters * 0.5, -candidate.lengthMeters * 0.5}) {
                 const double referenceDistance = candidate.distanceMeters + offset;
                 const auto& segment = routeSegmentAtDistance(candidate.route, referenceDistance);
-                if (segment.points.empty()) {
+                if (segment.points.empty() && !segment.pathRules.roundabout) {
                     continue;
                 }
                 const std::size_t index =
@@ -4838,7 +5012,11 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         yieldsForPriority(other - obstacles.size(), index);
                     const double pairClearance =
                         bothOnJunction || otherYieldsToCommittedActor ? 0.1 : clearance;
-                    if (!trafficFootprintsOverlap(footprint, occupied[other], pairClearance)) {
+                    const MapTrafficObstacle& candidateFootprint =
+                        otherActor == nullptr ? physicalFootprint : footprint;
+                    const double candidateClearance = otherActor == nullptr ? 0.5 : pairClearance;
+                    if (!trafficFootprintsOverlap(candidateFootprint, occupied[other],
+                                                  candidateClearance)) {
                         return false;
                     }
                     if (allowFollowingVehicleLookahead && other < obstacles.size() &&
@@ -5284,7 +5462,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                                               2.0 * braking * std::max(0.0, ahead - 2.0)),
                                     MapTrafficBlockReason::None);
                     }
-                    const double clearance = 2.0;
+                    constexpr double clearance = 2.0;
                     if (!clearAt(distance, clearance, true)) {
                         const double approachBuffer =
                             committedToJunction && junctionAtDistance ? 0.0 : 1.0;

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <unordered_set>
 
 namespace {
@@ -420,6 +421,35 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                                                       "unknown scenery-object keyword");
     }
 
+    const std::size_t originalTrafficLightCount = result.trafficLights.size();
+    const std::size_t unreferencedLight = (std::numeric_limits<std::size_t>::max)();
+    std::vector<std::size_t> trafficLightIndexRemap(originalTrafficLightCount, unreferencedLight);
+    for (const SceneryObjectTrafficPath& path : result.trafficPaths) {
+        if (path.trafficLightIndex >= 0 &&
+            static_cast<std::size_t>(path.trafficLightIndex) < originalTrafficLightCount) {
+            trafficLightIndexRemap[static_cast<std::size_t>(path.trafficLightIndex)] = 0;
+        }
+    }
+    std::vector<SceneryObjectTrafficLight> referencedTrafficLights;
+    referencedTrafficLights.reserve(result.trafficLights.size());
+    for (std::size_t lightIndex = 0; lightIndex < originalTrafficLightCount; ++lightIndex) {
+        if (trafficLightIndexRemap[lightIndex] == unreferencedLight) {
+            continue;
+        }
+        trafficLightIndexRemap[lightIndex] = referencedTrafficLights.size();
+        referencedTrafficLights.push_back(std::move(result.trafficLights[lightIndex]));
+    }
+    result.trafficLights = std::move(referencedTrafficLights);
+    for (SceneryObjectTrafficPath& path : result.trafficPaths) {
+        if (path.trafficLightIndex >= 0 &&
+            static_cast<std::size_t>(path.trafficLightIndex) < trafficLightIndexRemap.size() &&
+            trafficLightIndexRemap[static_cast<std::size_t>(path.trafficLightIndex)] !=
+                unreferencedLight) {
+            path.trafficLightIndex = static_cast<int>(
+                trafficLightIndexRemap[static_cast<std::size_t>(path.trafficLightIndex)]);
+        }
+    }
+
     auto signalProgram = std::make_shared<openbus::map::MapTrafficSignalProgram>();
     signalProgram->cycleDurationSeconds = result.trafficLightsGroupDurationSeconds;
     for (const SceneryObjectTrafficLight& light : result.trafficLights) {
@@ -427,25 +457,19 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         signalProgram->approachDistancesMeters.push_back(light.approachDistanceMeters);
     }
     signalProgram->busPriorityRules = result.trafficLightBusPriorityRules;
-    std::vector<bool> referencedTrafficLights(result.trafficLights.size(), false);
-    for (const SceneryObjectTrafficPath& path : result.trafficPaths) {
-        if (path.trafficLightIndex >= 0 &&
-            static_cast<std::size_t>(path.trafficLightIndex) < referencedTrafficLights.size()) {
-            referencedTrafficLights[static_cast<std::size_t>(path.trafficLightIndex)] = true;
-        }
-    }
     const auto addControlPoint = [&](double rawLightIndex, double timeSeconds, double ifRequest,
                                      const char* keyword) {
         if (!std::isfinite(rawLightIndex) || rawLightIndex < 0.0 ||
             std::floor(rawLightIndex) != rawLightIndex ||
-            rawLightIndex >= static_cast<double>(result.trafficLights.size()) ||
+            rawLightIndex >= static_cast<double>(originalTrafficLightCount) ||
             !std::isfinite(timeSeconds) || timeSeconds < 0.0 || !std::isfinite(ifRequest)) {
             result.diagnostics.warning(
                 0, keyword, "expected an existing light index and finite non-negative times");
             return;
         }
-        const std::size_t lightIndex = static_cast<std::size_t>(rawLightIndex);
-        if (!referencedTrafficLights[lightIndex]) {
+        const std::size_t originalLightIndex = static_cast<std::size_t>(rawLightIndex);
+        const std::size_t lightIndex = trafficLightIndexRemap[originalLightIndex];
+        if (lightIndex == unreferencedLight) {
             return;
         }
         signalProgram->controlPoints.push_back({lightIndex, timeSeconds, ifRequest > 0.5});
@@ -482,6 +506,22 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             result.trafficLightSchedules[lightIndex] = std::move(schedule);
         }
     }
+    std::vector<std::array<double, 3>> referencedTrafficLightStops;
+    referencedTrafficLightStops.reserve(result.trafficLightStops.size());
+    for (std::array<double, 3> stop : result.trafficLightStops) {
+        if (!std::isfinite(stop[0]) || stop[0] < 0.0 || std::floor(stop[0]) != stop[0] ||
+            stop[0] >= static_cast<double>(trafficLightIndexRemap.size())) {
+            continue;
+        }
+        const std::size_t originalLightIndex = static_cast<std::size_t>(stop[0]);
+        const std::size_t lightIndex = trafficLightIndexRemap[originalLightIndex];
+        if (lightIndex == unreferencedLight) {
+            continue;
+        }
+        stop[0] = static_cast<double>(lightIndex);
+        referencedTrafficLightStops.push_back(stop);
+    }
+    result.trafficLightStops = std::move(referencedTrafficLightStops);
 
     for (SceneryObjectTrafficPath& path : result.trafficPaths) {
         if (path.trafficLightIndex < 0) {

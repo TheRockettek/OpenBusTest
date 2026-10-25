@@ -47,14 +47,12 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
             return std::nullopt;
         }
         openbus::map::MapSceneryPose pose = object.pose;
-        const int terrainTileX =
-            static_cast<int>(std::floor(pose.x / openbus::map::OMSI_TILE_SIZE_METERS));
-        const int terrainTileY =
-            static_cast<int>(std::floor(pose.y / openbus::map::OMSI_TILE_SIZE_METERS));
+        const int terrainTileX = static_cast<int>(std::floor(pose.x / map.coordinates.tileSize));
+        const int terrainTileY = static_cast<int>(std::floor(pose.y / map.coordinates.tileSize));
         const std::optional<double> ground = sampleTerrainHeight(
             terrainTileX, terrainTileY,
-            pose.x - static_cast<double>(terrainTileX) * openbus::map::OMSI_TILE_SIZE_METERS,
-            pose.y - static_cast<double>(terrainTileY) * openbus::map::OMSI_TILE_SIZE_METERS);
+            pose.x - static_cast<double>(terrainTileX) * map.coordinates.tileSize,
+            pose.y - static_cast<double>(terrainTileY) * map.coordinates.tileSize);
         const std::filesystem::path configPath = resolveSceneryConfigPath(object.assetPath);
         bool absoluteHeight = false;
         if (!configPath.empty()) {
@@ -140,7 +138,7 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
     const std::optional<openbus::map::MapSceneryPose> parentPose =
         openbus::map::placeMapSplineAttachmentParent(
             *record, parentTile->second.splines, parentTile->second.reference.x,
-            parentTile->second.reference.y, mapSplineResolver, splineCantWidth);
+            parentTile->second.reference.y, mapSplineResolver, splineCantWidth, map.coordinates);
     if (!parentPose.has_value()) {
         return std::nullopt;
     }
@@ -216,21 +214,19 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                 double maximumHeight = -std::numeric_limits<double>::infinity();
                 double heightSum = 0.0;
                 std::size_t heightCount = 0;
-                const double tileOriginX =
-                    static_cast<double>(tileX) * openbus::map::OMSI_TILE_SIZE_METERS;
-                const double tileOriginY =
-                    static_cast<double>(tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
+                const double tileOriginX = static_cast<double>(tileX) * map.coordinates.tileSize;
+                const double tileOriginY = static_cast<double>(tileY) * map.coordinates.tileSize;
                 for (const openbus::map::WaterSurface& surface : water.surfaces) {
-                    const auto corners =
-                        openbus::map::buildMapWaterSurfaceVertices(tileX, tileY, surface);
+                    const auto corners = openbus::map::buildMapWaterSurfaceVertices(
+                        tileX, tileY, surface, map.coordinates.tileSize);
                     const std::uint32_t base = static_cast<std::uint32_t>(vertices.size());
                     for (std::size_t corner = 0; corner < corners.size(); ++corner) {
                         const openbus::map::MapWaterVertex& vertex = corners[corner];
-                        vertices.push_back(
-                            {static_cast<float>(vertex.x - tileOriginX),
-                             static_cast<float>(vertex.y - tileOriginY),
-                             static_cast<float>(vertex.z), corner == 1 || corner == 2 ? 1.0F : 0.0F,
-                             corner >= 2 ? 1.0F : 0.0F, 0.0F, 0.0F, 0.0F, 1.0F});
+                        vertices.push_back({static_cast<float>(vertex.x - tileOriginX),
+                                            static_cast<float>(vertex.y - tileOriginY),
+                                            static_cast<float>(vertex.z),
+                                            corner == 1 || corner == 2 ? 1.0F : 0.0F,
+                                            corner >= 2 ? 1.0F : 0.0F, 0.0F, 0.0F, 0.0F, 1.0F});
                         minimumHeight = (std::min)(minimumHeight, vertex.z);
                         maximumHeight = (std::max)(maximumHeight, vertex.z);
                         heightSum += vertex.z;
@@ -492,7 +488,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             if (batchIndex >= impl_->sceneryBatches.size()) {
                 continue;
             }
-            const double radius = impl_->sceneryBatches[batchIndex].boundingRadius;
+            const double radius = impl_->sceneryBatches[batchIndex].boundingRadius *
+                                  impl_->sceneryProjectionRadiusScale;
             Impl::SceneryInstance instance;
             instance.batchIndex = batchIndex;
             instance.x = worldX;
@@ -505,10 +502,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             instance.lodThresholdSetIndex = lodThresholdSetIndex;
             instance.sourceTileX = tileX;
             instance.sourceTileY = tileY;
-            const int chunkX =
-                static_cast<int>(std::floor(worldX / openbus::map::OMSI_TILE_SIZE_METERS));
-            const int chunkY =
-                static_cast<int>(std::floor(worldY / openbus::map::OMSI_TILE_SIZE_METERS));
+            const int chunkX = static_cast<int>(std::floor(worldX / map.coordinates.tileSize));
+            const int chunkY = static_cast<int>(std::floor(worldY / map.coordinates.tileSize));
             Impl::SceneryChunk& chunk = impl_->sceneryChunks[tileKey(chunkX, chunkY)];
             chunk.instances.push_back(instance);
             chunk.minX = std::min(chunk.minX, worldX - radius);
@@ -583,7 +578,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
         }
         const std::vector<openbus::map::MapSceneryPose> poses =
             openbus::map::placeMapSplineAttachment(attachment, tile.splines, tileX, tileY,
-                                                   mapSplineResolver, splineCantWidth);
+                                                   mapSplineResolver, splineCantWidth,
+                                                   map.coordinates);
         if (poses.empty()) {
             recordSkipped(skipped, "spline attachment records with no local placement",
                           description);
@@ -632,10 +628,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                           profilePath.filename().string());
             continue;
         }
-        const double startX =
-            static_cast<double>(tileX) * openbus::map::OMSI_TILE_SIZE_METERS + spline.localX;
-        const double startY =
-            static_cast<double>(tileY) * openbus::map::OMSI_TILE_SIZE_METERS + spline.localY;
+        const double startX = static_cast<double>(tileX) * map.coordinates.tileSize + spline.localX;
+        const double startY = static_cast<double>(tileY) * map.coordinates.tileSize + spline.localY;
         const std::vector<openbus::map::MapSplineSample> centerline =
             openbus::map::tessellateMapSpline(startX, startY, spline.rotationDegrees, spline.length,
                                               spline.radius);
@@ -689,7 +683,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                 road.alphaMode = alphaMode;
             }
             appendRoadProfile(road, spline, centerline, section,
-                              roadConnections.joinsFor(spline, tileX, tileY), cantHalfWidth);
+                              roadConnections.joinsFor(spline, tileX, tileY), cantHalfWidth,
+                              map.coordinates);
         }
     }
     gameLog.Log("Map content tile loaded: " + tileName +

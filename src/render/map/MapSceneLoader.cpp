@@ -11,7 +11,8 @@ MapSceneLoader::MapSceneLoader(const openbus::map::MapDefinition& mapDefinition,
     : map(mapDefinition), centerTileIndex(centerTile), groundTextureIndex(groundTexture),
       omsiRoot(omsiRootDirectory), impl_(&impl), terrainByCoordinate(impl.terrainByCoordinate),
       verboseAlphaMaterials(
-          parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_READ"))) {
+          parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_READ"))),
+      roadConnections(mapDefinition.coordinates) {
     splineCantWidth =
         [this](const openbus::map::MapSplinePlacement& spline) -> std::optional<double> {
         const auto found = splineCantWidths.find(spline.assetPath);
@@ -255,7 +256,7 @@ void MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
             const openbus::map::TerrainGrid grid = openbus::map::loadTerrainGrid(tile.terrainPath);
             terrainByCoordinate.emplace(key, grid);
             const std::size_t side = grid.intervals + 1;
-            const double step = openbus::map::OMSI_TILE_SIZE_METERS / grid.intervals;
+            const double step = map.coordinates.tileSize / grid.intervals;
             std::vector<TerrainVertex> vertices;
             vertices.reserve(side * side);
             // Preserve sub-meter precision by keeping GPU vertices tile-local.
@@ -423,7 +424,8 @@ void MapSceneLoader::indexMapContent() {
                     "; elapsed=" + std::to_string(elapsedMilliseconds(indexStart)) + " ms.");
         const openbus::map::MapTileData tile = openbus::map::loadMapTile(tileReference);
         const std::string tileName = tileLabel(tileReference.x, tileReference.y);
-        impl_->trafficRouteNetwork.addTileSplines(tile.splines, tileReference.x, tileReference.y);
+        impl_->trafficRouteNetwork.addTileSplines(tile.splines, tileReference.x, tileReference.y,
+                                                  map.coordinates);
         std::vector<openbus::map::MapSplinePlacement> roadTrafficSplines;
         std::vector<openbus::map::MapSplinePlacement> humanTrafficSplines;
         for (const auto& spline : tile.splines) {
@@ -441,7 +443,8 @@ void MapSceneLoader::indexMapContent() {
                         for (const auto& lane :
                              impl_->roadTrafficSplinePathOffsets[spline.splineId]) {
                             openbus::map::MapTrafficRouteSegment segment;
-                            segment.spline = {spline, tileReference.x, tileReference.y};
+                            segment.spline = {spline, tileReference.x, tileReference.y,
+                                              map.coordinates};
                             segment.reversed = lane.reversed;
                             segment.pathLateralMeters = lane.lateralMeters;
                             segment.pathHeightMeters = lane.heightMeters;
@@ -468,7 +471,8 @@ void MapSceneLoader::indexMapContent() {
                         spline.length > 0.0) {
                         for (const auto& pathOffset : pathOffsets) {
                             openbus::map::MapTrafficRouteSegment segment;
-                            segment.spline = {spline, tileReference.x, tileReference.y};
+                            segment.spline = {spline, tileReference.x, tileReference.y,
+                                              map.coordinates};
                             segment.reversed = pathOffset.reversed;
                             segment.pathLateralMeters = pathOffset.lateralMeters;
                             segment.pathHeightMeters = pathOffset.heightMeters;
@@ -487,8 +491,9 @@ void MapSceneLoader::indexMapContent() {
                                                            : std::nullopt);
             if (spline.splineId != 0 && !ambiguousMapSplineIds.contains(spline.splineId)) {
                 const auto [existing, inserted] = mapSplinesById.try_emplace(
-                    spline.splineId, openbus::map::MapSplinePlacementReference{
-                                         spline, tileReference.x, tileReference.y});
+                    spline.splineId,
+                    openbus::map::MapSplinePlacementReference{spline, tileReference.x,
+                                                              tileReference.y, map.coordinates});
                 if (!inserted) {
                     mapSplinesById.erase(existing);
                     ambiguousMapSplineIds.insert(spline.splineId);
@@ -496,9 +501,9 @@ void MapSceneLoader::indexMapContent() {
             }
         }
         impl_->roadTrafficRouteNetwork.addTileSplines(roadTrafficSplines, tileReference.x,
-                                                      tileReference.y);
+                                                      tileReference.y, map.coordinates);
         impl_->humanTrafficRouteNetwork.addTileSplines(humanTrafficSplines, tileReference.x,
-                                                       tileReference.y);
+                                                       tileReference.y, map.coordinates);
         for (const openbus::map::MapSceneryPlacement& object : tile.sceneryObjects) {
             registerObjectId(object.id, MapObjectRecordKind::Scenery, tileName, tileReference.x,
                              tileReference.y);
@@ -506,8 +511,8 @@ void MapSceneLoader::indexMapContent() {
             indexed.assetPath = object.assetPath;
             indexed.transformValid = object.transformValid;
             indexed.splineTerrainAlign = object.splineTerrainAlign;
-            if (const auto pose =
-                    openbus::map::placeMapSceneryObject(object, tileReference.x, tileReference.y)) {
+            if (const auto pose = openbus::map::placeMapSceneryObject(
+                    object, tileReference.x, tileReference.y, map.coordinates)) {
                 indexed.pose = *pose;
             }
             if (!sceneryObjectsById.try_emplace(object.id, std::move(indexed)).second) {
@@ -648,20 +653,22 @@ std::optional<double> MapSceneLoader::sampleTerrainHeight(int tileX, int tileY, 
     if (found == terrainByCoordinate.end()) {
         return std::nullopt;
     }
-    return openbus::map::sampleMapTerrainHeight(found->second, localX, localY);
+    return openbus::map::sampleMapTerrainHeight(found->second, localX, localY,
+                                                map.coordinates.tileSize);
 }
 
 std::optional<std::array<double, 3>> MapSceneLoader::sampleTerrainNormal(double worldX,
                                                                          double worldY) const {
-    const int tileX = static_cast<int>(std::floor(worldX / openbus::map::OMSI_TILE_SIZE_METERS));
-    const int tileY = static_cast<int>(std::floor(worldY / openbus::map::OMSI_TILE_SIZE_METERS));
+    const int tileX = static_cast<int>(std::floor(worldX / map.coordinates.tileSize));
+    const int tileY = static_cast<int>(std::floor(worldY / map.coordinates.tileSize));
     const auto found = terrainByCoordinate.find(tileKey(tileX, tileY));
     if (found == terrainByCoordinate.end()) {
         return std::nullopt;
     }
-    const double localX = worldX - static_cast<double>(tileX) * openbus::map::OMSI_TILE_SIZE_METERS;
-    const double localY = worldY - static_cast<double>(tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
-    return openbus::map::sampleMapTerrainNormal(found->second, localX, localY);
+    const double localX = worldX - static_cast<double>(tileX) * map.coordinates.tileSize;
+    const double localY = worldY - static_cast<double>(tileY) * map.coordinates.tileSize;
+    return openbus::map::sampleMapTerrainNormal(found->second, localX, localY,
+                                                map.coordinates.tileSize);
 }
 
 } // namespace openbus::rendering

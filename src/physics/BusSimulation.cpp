@@ -1227,12 +1227,13 @@ void BusSimulation::setFrozen(bool frozen) {
 }
 
 void BusSimulation::updateOnFoot(OnFootState& state, double elapsedSeconds, double yawRadians,
-                                  double forward, double right, bool jump) const {
-    if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
-        !std::isfinite(yawRadians) || !std::isfinite(forward) || !std::isfinite(right) ||
+                                 double forward, double right, bool jump) const {
+    if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 || !std::isfinite(yawRadians) ||
+        !std::isfinite(forward) || !std::isfinite(right) ||
         !std::isfinite(state.verticalVelocity) ||
-        !std::all_of(state.feetPosition.begin(), state.feetPosition.end(),
-                     [](double value) { return std::isfinite(value); })) {
+        !std::all_of(
+            state.feetPosition.begin(), state.feetPosition.end(),
+            [](double value) { return std::isfinite(value); })) {
         throw std::invalid_argument("On-foot movement contains non-finite or invalid values");
     }
     constexpr double radius = 0.3;

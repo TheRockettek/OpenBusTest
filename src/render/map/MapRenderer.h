@@ -64,6 +64,7 @@ class MapRenderer {
     void updateScripts();
     void updateStreaming(double worldX, double worldY);
     bool leftHandTraffic() const noexcept;
+    double tileSize() const noexcept;
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;
     MapRenderStats renderStats() const;
     TrafficSignalDebugStats trafficSignalDebugStats() const;
@@ -121,20 +122,16 @@ class MapRenderer {
 
     void initializeActiveScripts();
     bool finishHumanTrafficModelLoad(const std::string& cacheKey) const;
-    void loadHumanTrafficModelNow(const std::filesystem::path& humanConfigPath,
-                                  const std::filesystem::path& modelConfigPath,
-                                  const ModelConfig& configuration, double heightMeters,
-                                  double upperArmBetaDegrees, double armSwing, double hipSway,
-                                  double waistAnimation, double shoulderXHeightFraction,
-                                  double shoulderZHeightFraction, double hipXHeightFraction,
-                                  double hipZHeightFraction, double kneeXHeightFraction,
-                                  double kneeYHeightFraction, double kneeZHeightFraction,
-                                  double elbowXHeightFraction,
-                                  double elbowZHeightFraction, double handXHeightFraction,
-                                  double handZHeightFraction, double neckYHeightFraction,
-                                  double neckZHeightFraction, double waistYHeightFraction,
-                                  double waistZHeightFraction, double fingerXHeightFraction,
-                                  double fingerZHeightFraction) const;
+    void loadHumanTrafficModelNow(
+        const std::filesystem::path& humanConfigPath, const std::filesystem::path& modelConfigPath,
+        const ModelConfig& configuration, double heightMeters, double upperArmBetaDegrees,
+        double armSwing, double hipSway, double waistAnimation, double shoulderXHeightFraction,
+        double shoulderZHeightFraction, double hipXHeightFraction, double hipZHeightFraction,
+        double kneeXHeightFraction, double kneeYHeightFraction, double kneeZHeightFraction,
+        double elbowXHeightFraction, double elbowZHeightFraction, double handXHeightFraction,
+        double handZHeightFraction, double neckYHeightFraction, double neckZHeightFraction,
+        double waistYHeightFraction, double waistZHeightFraction, double fingerXHeightFraction,
+        double fingerZHeightFraction) const;
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

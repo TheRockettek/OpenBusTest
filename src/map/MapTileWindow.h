@@ -13,11 +13,14 @@ namespace openbus::map {
 
 using MapTileCoordinate = std::pair<int, int>;
 
-inline int mapWorldTile(double coordinate) {
+inline int mapWorldTile(double coordinate, double tileSize = OMSI_TILE_SIZE_METERS) {
     if (!std::isfinite(coordinate)) {
         throw std::invalid_argument("Map tile position must be finite");
     }
-    const double tile = std::floor(coordinate / OMSI_TILE_SIZE_METERS);
+    if (!std::isfinite(tileSize) || tileSize <= 0.0) {
+        throw std::invalid_argument("Map tile size must be finite and positive");
+    }
+    const double tile = std::floor(coordinate / tileSize);
     if (tile < static_cast<double>(std::numeric_limits<int>::min()) ||
         tile > static_cast<double>(std::numeric_limits<int>::max())) {
         throw std::out_of_range("Map position exceeds tile coordinates");
@@ -32,12 +35,12 @@ inline bool mapTileWithinRadius(int x, int y, int centerX, int centerY, int radi
 
 inline std::vector<MapTileCoordinate>
 selectMapTilesWithinRadius(const std::vector<MapTileCoordinate>& mapTiles, double worldX,
-                           double worldY, int radius) {
+                           double worldY, int radius, double tileSize = OMSI_TILE_SIZE_METERS) {
     if (radius < 0) {
         throw std::invalid_argument("Map tile window radius must not be negative");
     }
-    const int centerX = mapWorldTile(worldX);
-    const int centerY = mapWorldTile(worldY);
+    const int centerX = mapWorldTile(worldX, tileSize);
+    const int centerY = mapWorldTile(worldY, tileSize);
     std::vector<MapTileCoordinate> selected;
     selected.reserve(mapTiles.size());
     for (const MapTileCoordinate& tile : mapTiles) {

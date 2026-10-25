@@ -156,8 +156,9 @@ struct MapCollisionStreamer::WorkerState {
                 }
                 if (tile->hasTerrainFile && !preloadedTerrainKeys.contains(job.key)) {
                     const TerrainGrid grid = loadTerrainGrid(tile->terrainPath);
-                    result.terrain = TerrainCollisionGrid{
-                        job.tileX, job.tileY, OMSI_TILE_SIZE_METERS, grid.intervals, grid.heights};
+                    result.terrain =
+                        TerrainCollisionGrid{job.tileX, job.tileY, map.coordinates.tileSize,
+                                             grid.intervals, grid.heights};
                 }
             } catch (...) {
                 result.error = std::current_exception();
@@ -221,8 +222,8 @@ MapCollisionStreamer::~MapCollisionStreamer() = default;
 
 void MapCollisionStreamer::update(double worldX, double worldY,
                                   const std::vector<MapTileCoordinate>& loadedGeometryTiles) {
-    const int centerX = mapWorldTile(worldX);
-    const int centerY = mapWorldTile(worldY);
+    const int centerX = mapWorldTile(worldX, map_.coordinates.tileSize);
+    const int centerY = mapWorldTile(worldY, map_.coordinates.tileSize);
 
     std::unordered_set<std::uint64_t> loadedGeometryTileKeys;
     loadedGeometryTileKeys.reserve(loadedGeometryTiles.size());

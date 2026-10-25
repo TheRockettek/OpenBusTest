@@ -172,7 +172,8 @@ void appendRoadProfile(RoadMeshGeometry& road, const openbus::map::MapSplinePlac
                        const std::vector<openbus::map::MapSplineSample>& centerline,
                        const openbus::map::MapSplineProfileSection& section,
                        const openbus::map::MapRoadSplineJoins& joins,
-                       std::optional<double> cantHalfWidth);
+                       std::optional<double> cantHalfWidth,
+                       const openbus::map::MapCoordinates& coordinates);
 
 Matrix4 makeSceneryInstanceTransform(double x, double y, double z,
                                      const std::array<double, 6>& rotationDegrees,
@@ -184,6 +185,8 @@ Matrix4 makeSceneryInstanceTransform(double x, double y, double z,
 using namespace map_detail;
 
 struct MapRenderer::Impl {
+    openbus::map::MapCoordinates coordinates;
+    double sceneryProjectionRadiusScale = 1.0;
     struct DynamicSceneryTexture {
         GLuint texture = 0;
         int width = 0;

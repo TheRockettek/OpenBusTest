@@ -904,9 +904,8 @@ int main() {
         openbus::map::MapDefinition mapDefinition = std::move(startupSelection.mapDefinition);
         SystemVariables mapCalendar;
         const double mapAiStartHour = startupSelection.timeSeconds / 3600.0;
-        mapCalendar.configureSimulationClock(
-            startupSelection.year, startupSelection.month, startupSelection.day,
-            startupSelection.timeSeconds);
+        mapCalendar.configureSimulationClock(startupSelection.year, startupSelection.month,
+                                             startupSelection.day, startupSelection.timeSeconds);
         const int mapCalendarYear = static_cast<int>(mapCalendar.get("year"));
         const int mapCalendarMonth = static_cast<int>(mapCalendar.get("month"));
         const int mapCalendarDay = static_cast<int>(mapCalendar.get("day"));
@@ -1000,9 +999,9 @@ int main() {
         }
 
         const int spawnTileX = static_cast<int>(
-            std::floor(busPlacement.position[0] / openbus::map::OMSI_TILE_SIZE_METERS));
+            std::floor(busPlacement.position[0] / mapDefinition.coordinates.tileSize));
         const int spawnTileY = static_cast<int>(
-            std::floor(busPlacement.position[1] / openbus::map::OMSI_TILE_SIZE_METERS));
+            std::floor(busPlacement.position[1] / mapDefinition.coordinates.tileSize));
         std::vector<TerrainCollisionGrid> spawnTerrain;
         std::vector<std::pair<int, int>> preloadedTerrainTiles;
         applicationLog.Log("Loading spawn terrain collision.");
@@ -1014,7 +1013,7 @@ int main() {
             try {
                 const openbus::map::TerrainGrid grid =
                     openbus::map::loadTerrainGrid(tile.terrainPath);
-                spawnTerrain.push_back({tile.x, tile.y, openbus::map::OMSI_TILE_SIZE_METERS,
+                spawnTerrain.push_back({tile.x, tile.y, mapDefinition.coordinates.tileSize,
                                         grid.intervals, grid.heights});
                 preloadedTerrainTiles.emplace_back(tile.x, tile.y);
             } catch (const std::exception& error) {
@@ -1058,9 +1057,9 @@ int main() {
         Vehicle* playerVehicle = nullptr;
         if (benchmarkMode) {
             applicationLog.Log("Loading player vehicle: " + busConfigPath.string());
-            playerVehicle = renderer.AddVehicle(
-                busConfigPath, modelConfigPath, busPlacement,
-                {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+            playerVehicle =
+                renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
+                                    {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
             simulation.setFrozen(false);
             renderer.SetPlayerVehicle(playerVehicle);
             applicationLog.Log("Player vehicle initialized; preparing AI traffic and pedestrians.");
@@ -1905,9 +1904,9 @@ int main() {
                 renderer.updateOnFoot(simulation, elapsed);
                 if (renderer.consumeSpawnBusRequest() && playerVehicle == nullptr) {
                     applicationLog.Log("Spawning player bus: " + busConfigPath.string());
-                    playerVehicle = renderer.AddVehicle(
-                        busConfigPath, modelConfigPath, busPlacement,
-                        {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
+                    playerVehicle =
+                        renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
+                                            {AssetLoadingMode::Deferred, AssetLoadingMode::Eager});
                     renderer.SetPlayerVehicle(playerVehicle);
                     simulation.setFrozen(false);
                     applicationLog.Log("Player bus spawned; physics simulation resumed.");

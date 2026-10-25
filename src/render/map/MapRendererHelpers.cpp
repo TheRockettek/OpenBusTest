@@ -266,26 +266,28 @@ void appendRoadProfile(RoadMeshGeometry& road, const openbus::map::MapSplinePlac
                        const std::vector<openbus::map::MapSplineSample>& centerline,
                        const openbus::map::MapSplineProfileSection& section,
                        const openbus::map::MapRoadSplineJoins& joins,
-                       std::optional<double> cantHalfWidth) {
-    const openbus::map::MapRoadSectionGeometry geometry = openbus::map::buildMapRoadSectionGeometry(
-        spline, centerline, section, joins, cantHalfWidth);
+                       std::optional<double> cantHalfWidth,
+                       const openbus::map::MapCoordinates& coordinates) {
+    const openbus::map::MapRoadSectionGeometry geometry =
+        openbus::map::buildMapRoadSectionGeometry(spline, centerline, section, joins, cantHalfWidth,
+                                                  coordinates.tile(road.tileX, road.tileY));
     const std::vector<std::array<double, 3>> normals =
         openbus::map::computeMapRoadVertexNormals(geometry);
     const std::uint32_t baseVertex = static_cast<std::uint32_t>(road.vertices.size());
-    const double tileOriginX =
-        static_cast<double>(road.tileX) * openbus::map::OMSI_TILE_SIZE_METERS;
-    const double tileOriginY =
-        static_cast<double>(road.tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
+    const double tileOriginX = static_cast<double>(road.tileX) * coordinates.tileSize;
+    const double tileOriginY = static_cast<double>(road.tileY) * coordinates.tileSize;
     for (std::size_t vertexIndex = 0; vertexIndex < geometry.vertices.size(); ++vertexIndex) {
         const openbus::map::MapRoadVertex& vertex = geometry.vertices[vertexIndex];
         const std::array<double, 3>& normal = normals[vertexIndex];
-        const ModelVertex generated{
-            static_cast<float>(vertex.x - tileOriginX),
-            static_cast<float>(vertex.y - tileOriginY),
-            static_cast<float>(vertex.z),        static_cast<float>(vertex.textureU),
-            static_cast<float>(vertex.textureV), 0.0F,
-            static_cast<float>(normal[0]),       static_cast<float>(normal[1]),
-            static_cast<float>(normal[2])};
+        const ModelVertex generated{static_cast<float>(vertex.x - tileOriginX),
+                                    static_cast<float>(vertex.y - tileOriginY),
+                                    static_cast<float>(vertex.z),
+                                    static_cast<float>(vertex.textureU),
+                                    static_cast<float>(vertex.textureV),
+                                    0.0F,
+                                    static_cast<float>(normal[0]),
+                                    static_cast<float>(normal[1]),
+                                    static_cast<float>(normal[2])};
         road.minX = std::min(road.minX, vertex.x);
         road.minY = std::min(road.minY, vertex.y);
         road.maxX = std::max(road.maxX, vertex.x);

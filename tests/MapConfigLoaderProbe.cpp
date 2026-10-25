@@ -729,6 +729,12 @@ void runFixtureProbe() {
                     "invalid ground texture preview selector is rejected");
         }
         require(definition.entryPoints.size() == 2, "entrypoint list parsed");
+        const double equatorWidth = 40075016.69 / 65536.0;
+        const double equatorUpperWidth =
+            equatorWidth / std::cosh(2.0 * 3.14159265358979323846 / 65536.0);
+        require(definition.coordinates.worldCoordinates &&
+                    std::abs(definition.coordinates.tileSize - equatorWidth) < 1.0e-5,
+                "world-coordinate maps derive a metric grid from their tile rows");
         require(definition.entryPoints[0].tileIndex == 0 &&
                     definition.entryPoints[0].name == "Depot",
                 "entrypoint fields mapped");
@@ -737,11 +743,15 @@ void runFixtureProbe() {
                     definition.entryPoints[0].placement.position[2] == 20.0,
                 "entrypoint placement maps tile-local coordinates into map coordinates");
         require(definition.entryPoints[1].tileIndex == 1 &&
-                definition.entryPoints[1].placement.position[0] == 330.0 &&
-                    definition.entryPoints[1].placement.position[1] == 40.0 &&
+                    std::abs(definition.entryPoints[1].placement.position[0] -
+                             (definition.coordinates.tileSize + 30.0)) < 1.0e-8 &&
+                    std::abs(definition.entryPoints[1].placement.position[1] -
+                             40.0 * definition.coordinates.tileSize / equatorUpperWidth) < 1.0e-8 &&
                     definition.entryPoints[1].placement.position[2] == 5.0 &&
                     std::abs(definition.entryPoints[1].placement.yawDegrees -
-                             std::atan2(29.0, 82.0) * 180.0 / 3.14159265358979323846) < 1.0e-9,
+                             std::atan2(29.0 * definition.coordinates.tileSize / equatorUpperWidth,
+                                        82.0) *
+                                 180.0 / 3.14159265358979323846) < 1.0e-9,
                 "indexed entrypoint placement includes tile offset, elevation, and quaternion yaw");
         require(openbus::map::selectMapSpawnPoint(definition, "") == 0 &&
                     openbus::map::selectMapSpawnPoint(definition, "1") == 1,

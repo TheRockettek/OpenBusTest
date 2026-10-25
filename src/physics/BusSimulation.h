@@ -53,8 +53,8 @@ class BusSimulation {
                                            const std::vector<double>& wheelBrakeForces,
                                            const std::vector<double>& wheelSpringFactors = {});
     void setFrozen(bool frozen);
-    void updateOnFoot(OnFootState& state, double elapsedSeconds, double yawRadians,
-                      double forward, double right, bool jump) const;
+    void updateOnFoot(OnFootState& state, double elapsedSeconds, double yawRadians, double forward,
+                      double right, bool jump) const;
     void updateVariables(openbus::scripting::Vehicle& variables, double throttle, double steering,
                          double brake) const;
     double positionX() const;

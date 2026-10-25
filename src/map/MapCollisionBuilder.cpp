@@ -16,7 +16,6 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <numbers>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -75,8 +74,8 @@ std::uint64_t tileKey(int x, int y) {
 
 double sampleTerrainHeight(const MapDefinition& map, double worldX, double worldY,
                            std::unordered_map<std::uint64_t, TerrainGrid>& terrainCache) {
-    const int tileX = static_cast<int>(std::floor(worldX / OMSI_TILE_SIZE_METERS));
-    const int tileY = static_cast<int>(std::floor(worldY / OMSI_TILE_SIZE_METERS));
+    const int tileX = static_cast<int>(std::floor(worldX / map.coordinates.tileSize));
+    const int tileY = static_cast<int>(std::floor(worldY / map.coordinates.tileSize));
     const std::uint64_t key = tileKey(tileX, tileY);
     auto found = terrainCache.find(key);
     if (found == terrainCache.end()) {
@@ -98,11 +97,11 @@ double sampleTerrainHeight(const MapDefinition& map, double worldX, double world
         return 0.0;
     }
     const std::size_t side = grid.intervals + 1;
-    const double localX = worldX - static_cast<double>(tileX) * OMSI_TILE_SIZE_METERS;
-    const double localY = worldY - static_cast<double>(tileY) * OMSI_TILE_SIZE_METERS;
-    const double gridX = std::clamp(localX / OMSI_TILE_SIZE_METERS * grid.intervals, 0.0,
+    const double localX = worldX - static_cast<double>(tileX) * map.coordinates.tileSize;
+    const double localY = worldY - static_cast<double>(tileY) * map.coordinates.tileSize;
+    const double gridX = std::clamp(localX / map.coordinates.tileSize * grid.intervals, 0.0,
                                     static_cast<double>(grid.intervals));
-    const double gridY = std::clamp(localY / OMSI_TILE_SIZE_METERS * grid.intervals, 0.0,
+    const double gridY = std::clamp(localY / map.coordinates.tileSize * grid.intervals, 0.0,
                                     static_cast<double>(grid.intervals));
     const std::size_t x0 = static_cast<std::size_t>(gridX);
     const std::size_t y0 = static_cast<std::size_t>(gridY);
@@ -119,26 +118,17 @@ double sampleTerrainHeight(const MapDefinition& map, double worldX, double world
 
 std::array<double, 3> transformSceneryVertex(const openbus::rendering::ObjPosition& source,
                                              const MapSceneryPose& pose, double worldZ) {
-    const double radians = std::numbers::pi / 180.0;
-    const double ax = -pose.rotationDegrees[1] * radians;
-    const double ay = -pose.rotationDegrees[2] * radians;
-    const double az = -pose.rotationDegrees[0] * radians;
-    const double x1 = source.x;
-    const double y1 = source.y * std::cos(ax) - source.z * std::sin(ax);
-    const double z1 = source.y * std::sin(ax) + source.z * std::cos(ax);
-    const double x2 = x1 * std::cos(ay) + z1 * std::sin(ay);
-    const double y2 = y1;
-    const double z2 = -x1 * std::sin(ay) + z1 * std::cos(ay);
-    return {pose.x + x2 * std::cos(az) - y2 * std::sin(az),
-            pose.y + x2 * std::sin(az) + y2 * std::cos(az), worldZ + z2};
+    const auto offset = transformMapSceneryVector(pose, {source.x, source.y, source.z});
+    return {pose.x + offset[0], pose.y + offset[1], worldZ + offset[2]};
 }
 
 std::vector<std::array<double, 3>> clipPolygonToTile(std::vector<std::array<double, 3>> polygon,
-                                                     int tileX, int tileY) {
-    const double minX = static_cast<double>(tileX) * OMSI_TILE_SIZE_METERS;
-    const double minY = static_cast<double>(tileY) * OMSI_TILE_SIZE_METERS;
-    const double maxX = minX + OMSI_TILE_SIZE_METERS;
-    const double maxY = minY + OMSI_TILE_SIZE_METERS;
+                                                     int tileX, int tileY,
+                                                     const MapDefinition& map) {
+    const double minX = static_cast<double>(tileX) * map.coordinates.tileSize;
+    const double minY = static_cast<double>(tileY) * map.coordinates.tileSize;
+    const double maxX = minX + map.coordinates.tileSize;
+    const double maxY = minY + map.coordinates.tileSize;
     const auto clip = [](const std::vector<std::array<double, 3>>& input, std::size_t axis,
                          double boundary, bool keepGreater) {
         std::vector<std::array<double, 3>> output;
@@ -181,16 +171,16 @@ std::vector<std::array<double, 3>> clipPolygonToTile(std::vector<std::array<doub
 
 void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
                                    const MapSceneryCollisionIndex& index, int tileX, int tileY,
-                                   MapRoadCollisionResult& result) {
+                                   MapRoadCollisionResult& result, const MapDefinition& map) {
     const auto found = index.objectsByTile.find(tileKey(tileX, tileY));
     if (found == index.objectsByTile.end()) {
         return;
     }
     bool objectAdded = false;
-    const double minX = static_cast<double>(tileX) * OMSI_TILE_SIZE_METERS;
-    const double minY = static_cast<double>(tileY) * OMSI_TILE_SIZE_METERS;
-    const double maxX = minX + OMSI_TILE_SIZE_METERS;
-    const double maxY = minY + OMSI_TILE_SIZE_METERS;
+    const double minX = static_cast<double>(tileX) * map.coordinates.tileSize;
+    const double minY = static_cast<double>(tileY) * map.coordinates.tileSize;
+    const double maxX = minX + map.coordinates.tileSize;
+    const double maxY = minY + map.coordinates.tileSize;
     for (const std::size_t objectIndex : found->second) {
         if (objectIndex >= index.objects.size()) {
             continue;
@@ -249,7 +239,7 @@ void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
                     polygon.push_back(
                         worldPositions[static_cast<std::size_t>(vertex.position - 1)]);
                 }
-                polygon = clipPolygonToTile(std::move(polygon), tileX, tileY);
+                polygon = clipPolygonToTile(std::move(polygon), tileX, tileY, map);
                 if (polygon.size() < 3) {
                     continue;
                 }
@@ -369,7 +359,7 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
                 continue;
             }
             const std::optional<MapSceneryPose> pose =
-                placeMapSceneryObject(placement, tileReference.x, tileReference.y);
+                placeMapSceneryObject(placement, tileReference.x, tileReference.y, map.coordinates);
             if (!pose) {
                 continue;
             }
@@ -453,10 +443,14 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
             const std::size_t objectIndex = index->objects.size();
             index->objects.push_back(std::move(object));
             const MapSceneryCollisionObject& stored = index->objects.back();
-            const int minTileX = static_cast<int>(std::floor(stored.minX / OMSI_TILE_SIZE_METERS));
-            const int minTileY = static_cast<int>(std::floor(stored.minY / OMSI_TILE_SIZE_METERS));
-            const int maxTileX = static_cast<int>(std::floor(stored.maxX / OMSI_TILE_SIZE_METERS));
-            const int maxTileY = static_cast<int>(std::floor(stored.maxY / OMSI_TILE_SIZE_METERS));
+            const int minTileX =
+                static_cast<int>(std::floor(stored.minX / map.coordinates.tileSize));
+            const int minTileY =
+                static_cast<int>(std::floor(stored.minY / map.coordinates.tileSize));
+            const int maxTileX =
+                static_cast<int>(std::floor(stored.maxX / map.coordinates.tileSize));
+            const int maxTileY =
+                static_cast<int>(std::floor(stored.maxY / map.coordinates.tileSize));
             for (int tileY = minTileY; tileY <= maxTileY; ++tileY) {
                 for (int tileX = minTileX; tileX <= maxTileX; ++tileX) {
                     const std::uint64_t key = tileKey(tileX, tileY);
@@ -521,9 +515,9 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
             }
 
             const double startX =
-                static_cast<double>(tileReference.x) * OMSI_TILE_SIZE_METERS + spline.localX;
+                static_cast<double>(tileReference.x) * map.coordinates.tileSize + spline.localX;
             const double startY =
-                static_cast<double>(tileReference.y) * OMSI_TILE_SIZE_METERS + spline.localY;
+                static_cast<double>(tileReference.y) * map.coordinates.tileSize + spline.localY;
             const std::vector<MapSplineSample> centerline = tessellateMapSpline(
                 startX, startY, spline.rotationDegrees, spline.length, spline.radius);
             if (centerline.size() < 2) {
@@ -543,7 +537,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                     sectionGeometry = buildMapRoadSectionGeometry(
                         spline, centerline, section,
                         connections.joinsFor(spline, tileReference.x, tileReference.y),
-                        cantHalfWidth);
+                        cantHalfWidth, map.coordinates.tile(tileReference.x, tileReference.y));
                 } catch (const std::exception&) {
                     ++result.skippedSplines;
                     continue;
@@ -576,7 +570,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
 
         if (scenery != nullptr) {
             appendSceneryCollisionForTile(tileMesh, *scenery, tileReference.x, tileReference.y,
-                                          result);
+                                          result, map);
         }
         if (!tileMesh.indices.empty()) {
             result.meshes.push_back(std::move(tileMesh));
@@ -636,7 +630,7 @@ MapRoadCollisionResult buildMapSplineCollisionTile(const MapDefinition& map,
 
 MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map,
                                               const std::filesystem::path& omsiRoot) {
-    MapRoadConnectionIndex connections;
+    MapRoadConnectionIndex connections(map.coordinates);
     std::unordered_map<std::string, std::optional<double>> cantHalfWidths;
     for (const auto& reference : map.tiles) {
         try {

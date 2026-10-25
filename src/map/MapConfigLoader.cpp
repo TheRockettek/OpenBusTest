@@ -1450,6 +1450,13 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
     if (definition.tiles.empty()) {
         throw std::runtime_error("No [map] tile records found in " + globalPath.string());
     }
+    std::vector<int> tileRows;
+    tileRows.reserve(definition.tiles.size());
+    for (const MapTileReference& tile : definition.tiles) {
+        tileRows.push_back(tile.y);
+    }
+    definition.coordinates =
+        MapCoordinates::forRows(definition.metadata.hasWorldCoordinates, std::move(tileRows));
     for (MapEntryPoint& entryPoint : definition.entryPoints) {
         if (entryPoint.tileIndex < 0 ||
             static_cast<std::size_t>(entryPoint.tileIndex) >= tileOrdinalToUniqueIndex.size()) {
@@ -1497,10 +1504,12 @@ MapDefinition loadMapDefinition(const std::filesystem::path& mapDirectory) {
                                      globalPath.string());
         }
         const MapTileReference& tile = definition.tiles[entryPoint.tileIndex];
+        const auto transform = definition.coordinates.tile(tile.x, tile.y);
+        const auto position = transform.toWorld(localX, localY);
         entryPoint.placement = {
-            {static_cast<double>(tile.x) * OMSI_TILE_SIZE_METERS + localX,
-             static_cast<double>(tile.y) * OMSI_TILE_SIZE_METERS + localY, elevation},
-            std::atan2(forwardNorth, forwardEast) * 180.0 / 3.14159265358979323846};
+            {position[0], position[1], elevation},
+            std::atan2(forwardNorth * transform.scaleY, forwardEast * transform.scaleX) * 180.0 /
+                3.14159265358979323846};
     }
     const std::filesystem::path aiListPath = mapDirectory / "ailists.cfg";
     mapLog.Log("Manifest parsed: " + std::to_string(definition.tiles.size()) +

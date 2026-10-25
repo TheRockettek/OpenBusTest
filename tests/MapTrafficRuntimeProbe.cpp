@@ -2451,6 +2451,30 @@ void verifyDrivingBehavior() {
                 minimumUnobstructedTurnSpeed > 1.5 &&
                 unobstructedTurn.junctionWaitSeconds == 0.0,
             "an unblocked turning request crosses the spline boundary without stopping");
+    auto closePassingTurn =
+        makeMapTrafficActor(rightTurnRoute, "close-passing-turn.ovh", 8.0, 0.0, false);
+    closePassingTurn.speedMetersPerSecond = 8.0;
+    const auto nearbyTurnPose = sampleMapTrafficRoute(
+        rightTurnRoute, 30.0 + connectorLength * 0.5, 0.0);
+    require(nearbyTurnPose.has_value(), "sample a turning vehicle's path for clearance test");
+    MapTrafficPose nearbyBusPose = *nearbyTurnPose;
+    nearbyBusPose.position[0] += std::cos(nearbyBusPose.headingRadians) * 3.5;
+    nearbyBusPose.position[1] -= std::sin(nearbyBusPose.headingRadians) * 3.5;
+    const MapTrafficObstacle nearbyBus{nearbyBusPose, 4.5, 1.8};
+    double minimumClosePassingTurnSpeed = std::numeric_limits<double>::infinity();
+    for (int frame = 0; frame < 160; ++frame) {
+        advanceMapTrafficDriving({&closePassingTurn}, {nearbyBus}, 0.1);
+        require(mapTrafficHasClearance(footprint(closePassingTurn), {nearbyBus}, 0.49),
+                "a turn maintains physical clearance from a nearby but non-conflicting vehicle");
+        if (closePassingTurn.distanceMeters >= 27.0 &&
+            closePassingTurn.distanceMeters <= 30.0 + connectorLength) {
+            minimumClosePassingTurnSpeed =
+                std::min(minimumClosePassingTurnSpeed, closePassingTurn.speedMetersPerSecond);
+        }
+    }
+    require(closePassingTurn.distanceMeters > 60.0 &&
+                minimumClosePassingTurnSpeed >= minimumUnobstructedTurnSpeed - 0.1,
+            "a nearby vehicle with physical clearance does not cause extra turn slowdown");
     auto tightTurnFollower =
         makeMapTrafficActor(rightTurnRoute, "tight-turn-follower.ovh", 8.0, 0.0, false);
     auto tightTurnLeader =
@@ -3566,6 +3590,47 @@ void benchmarkDrivingJunctionGrid() {
               << " state_hash=" << std::hex << stateHash << std::dec << '\n';
 }
 
+void verifyAutomaticRoundaboutPriority() {
+    using namespace openbus::map;
+    MapTrafficRouteSegment ring;
+    ring.spline.placement.splineId = 9500;
+    ring.points.reserve(65);
+    constexpr double radius = 12.0;
+    for (int index = 0; index <= 64; ++index) {
+        const double angle = 2.0 * std::numbers::pi * index / 64.0;
+        ring.points.push_back({radius * std::cos(angle), radius * std::sin(angle), 0.0});
+    }
+    MapTrafficGroupRules lowGroupPriority;
+    lowGroupPriority.groupIndex = 0;
+    lowGroupPriority.priority = 0.0;
+    ring.pathRules.groups.push_back(lowGroupPriority);
+
+    MapTrafficLaneNetwork network;
+    network.addSegment(ring);
+    network.finalize();
+    const auto route = network.buildRoute(9500);
+    require(route.has_value() && route->closed && route->segments.size() == 1 &&
+                route->segments.front().pathRules.roundabout &&
+                mapTrafficRoutePositionOnJunctionPath(*route, 10.0),
+            "a closed circular lane is automatically detected as a roundabout");
+    MapTrafficVehicleFilter vehicle;
+    vehicle.trafficRuleGroupIndex = 0;
+    require(mapTrafficPathPriorityForVehicle(route->segments.front().pathRules, vehicle) == 256.0,
+            "roundabout priority overrides lower vehicle-group priorities");
+
+    MapTrafficRouteSegment square;
+    square.spline.placement.splineId = 9501;
+    square.points = {{0.0, 0.0, 0.0}, {10.0, 0.0, 0.0}, {10.0, 10.0, 0.0},
+                     {0.0, 10.0, 0.0}, {0.0, 0.0, 0.0}};
+    MapTrafficLaneNetwork nonRoundaboutNetwork;
+    nonRoundaboutNetwork.addSegment(square);
+    nonRoundaboutNetwork.finalize();
+    const auto squareRoute = nonRoundaboutNetwork.buildRoute(9501);
+    require(squareRoute.has_value() && squareRoute->closed &&
+                !squareRoute->segments.front().pathRules.roundabout,
+            "a closed square loop is not misclassified as a roundabout");
+}
+
 // Deferred/skipped sampling queries are only allowed on routes that cannot fail to sample, so
 // malformed routes must still raise the same exception, from the same update, as eager evaluation.
 void verifyMalformedRouteErrors() {
@@ -4178,6 +4243,7 @@ int main(int argc, char** argv) {
         verifyPassengerServiceBehavior();
         verifyDrivingBehavior();
         verifyTrafficRules();
+        verifyAutomaticRoundaboutPriority();
         verifyMalformedRouteErrors();
         verifyRealisticTrafficBehavior();
         const auto spawnPopulation = [](const MapTrafficRouteNetwork& routeNetwork,

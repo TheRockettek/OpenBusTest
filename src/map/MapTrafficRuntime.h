@@ -37,6 +37,7 @@ struct MapTrafficPathRules {
     bool busesAllowed = false;
     bool trucksAllowed = true;
     bool overtakingProhibited = false;
+    bool roundabout = false;
     // Higher authored traffic-priority values have right-of-way.
     double priority = 128.0;
 };
@@ -140,8 +141,7 @@ struct MapTrafficActor {
     std::optional<std::size_t> committedSignalSegmentIndex;
 };
 
-double mapTrafficSpawnSpeedMetersPerSecond(const MapTrafficActor& actor,
-                                           double distanceMeters);
+double mapTrafficSpawnSpeedMetersPerSecond(const MapTrafficActor& actor, double distanceMeters);
 
 struct MapTrafficPose {
     std::array<double, 3> position = {};
@@ -176,7 +176,8 @@ struct MapTrafficSplineEndpointStatus {
 };
 
 bool mapTrafficPoseOnActiveTile(const MapTrafficPose& pose,
-                                const std::vector<std::pair<int, int>>& activeTiles);
+                                const std::vector<std::pair<int, int>>& activeTiles,
+                                double tileSize = OMSI_TILE_SIZE_METERS);
 
 // Returns a signed lateral offset relative to travel direction: positive is right, negative
 // is left. The supplied distance is a non-negative magnitude.
@@ -409,7 +410,8 @@ void advanceMapTrafficSignalControllers(
 
 class MapTrafficRouteNetwork {
   public:
-    void addTileSplines(const std::vector<MapSplinePlacement>& splines, int tileX, int tileY);
+    void addTileSplines(const std::vector<MapSplinePlacement>& splines, int tileX, int tileY,
+                        const MapCoordinates& coordinates = {});
     void finalize();
     std::optional<MapTrafficRoute> buildRoute(int splineId, std::size_t segmentLimit = 1024) const;
     std::vector<int> splineIds() const;

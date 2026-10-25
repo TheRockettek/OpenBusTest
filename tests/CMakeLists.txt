@@ -80,6 +80,7 @@ openbus_add_probe(OpenBusMapConfigProbe MapConfigLoaderProbe.cpp LIBS openbus_ma
 openbus_add_probe(OpenBusMapChronoTileProbe MapChronoTileProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapSplineGeometryProbe MapSplineGeometryProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapRoadGeometryProbe MapRoadGeometryProbe.cpp LIBS openbus_map)
+openbus_add_probe(OpenBusMapCoordinatesProbe MapCoordinatesProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapWaterGeometryProbe MapWaterGeometryProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapSceneryPlacementProbe MapSceneryPlacementProbe.cpp
     LIBS openbus_map)

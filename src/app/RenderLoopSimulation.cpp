@@ -308,7 +308,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
     finishPendingTrafficVehicleLoads();
     const auto poseOnActiveTile = [&](const MapTrafficPose& pose) {
         return mapRenderer_ != nullptr &&
-               mapTrafficPoseOnActiveTile(pose, mapRenderer_->activeTileCoordinates());
+               mapTrafficPoseOnActiveTile(pose, mapRenderer_->activeTileCoordinates(),
+                                          mapRenderer_->tileSize());
     };
     {
         TraceScope tileTrace("traffic", "RenderLoop::updateTrafficDriving.activeTileSync");
@@ -387,7 +388,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
     }
     std::vector<MapTrafficObstacle> external;
     std::size_t externalVehicleObstacleCount = 0;
-    std::optional<std::size_t> playerBusObstacleIndex;
+    std::optional<std::size_t> playerObstacleIndex;
     {
         TraceScope obstacleTrace("traffic",
                                  "RenderLoop::updateTrafficDriving.externalObstacleCollection");
@@ -407,10 +408,17 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
             external.push_back({pose, vehicle->trafficLengthMeters, vehicle->trafficWidthMeters});
             if (vehicle.get() == playerVehicle_) {
-                playerBusObstacleIndex = external.size() - 1;
+                playerObstacleIndex = external.size() - 1;
             }
         }
         externalVehicleObstacleCount = external.size();
+        if (playerVehicle_ == nullptr) {
+            MapTrafficPose pose;
+            pose.position = onFootState_.feetPosition;
+            pose.headingRadians = freeCameraPose_.yawRadians;
+            external.push_back({pose, 0.6, 0.6});
+            playerObstacleIndex = external.size() - 1;
+        }
     }
     std::unordered_map<const MapTrafficActor*, const TrafficVehicleState*> trafficStateByActor;
     for (const TrafficVehicleState& state : trafficVehicles_) {
@@ -432,7 +440,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
             if (mapTrafficActorWaitingAtSignal(actor, currentSimulationTime) ||
                 (actor.blockingObstacleIndex.has_value() &&
-                 actor.blockingObstacleIndex == playerBusObstacleIndex)) {
+                 actor.blockingObstacleIndex == playerObstacleIndex)) {
                 return true;
             }
             const bool stoppedBusAtRouteEnd =
@@ -977,13 +985,12 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             trafficVehicle.vehicle->variables.set(
                 "ai_blinker_r",
                 turnSignal == openbus::map::MapTrafficTurnSignal::Right && indicatorBlinkOn ? 1.0
-                                                                                             : 0.0);
+                                                                                            : 0.0);
             trafficVehicle.vehicle->variables.set(
-                "ai_brakelight",
-                trafficVehicle.actor.targetSpeedMetersPerSecond + 0.05 <
-                        trafficVehicle.actor.speedMetersPerSecond
-                    ? 1.0
-                    : 0.0);
+                "ai_brakelight", trafficVehicle.actor.targetSpeedMetersPerSecond + 0.05 <
+                                         trafficVehicle.actor.speedMetersPerSecond
+                                     ? 1.0
+                                     : 0.0);
             if (!trafficVehicle.vehicle->mapTrafficTileActive || atUnconnectedRouteEnd) {
                 trafficVehicle.lastProgressDistanceMeters = trafficVehicle.actor.distanceMeters;
                 trafficVehicle.stoppedSecondsSinceProgress = 0.0;
@@ -1058,13 +1065,12 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 const auto& blockingObstacleIndex = trafficVehicle.actor.blockingObstacleIndex;
                 if (blockingObstacleIndex.has_value() && *blockingObstacleIndex < external.size()) {
                     const auto& obstacle = external[*blockingObstacleIndex];
-                    blocker =
-                        std::string(playerBusObstacleIndex == blockingObstacleIndex ? "player bus"
-                                    : *blockingObstacleIndex < externalVehicleObstacleCount
-                                        ? "static vehicle"
-                                        : "pedestrian") +
-                        " at (" + std::to_string(obstacle.pose.position[0]) + ", " +
-                        std::to_string(obstacle.pose.position[1]) + ")";
+                    blocker = std::string(playerObstacleIndex == blockingObstacleIndex ? "player"
+                                          : *blockingObstacleIndex < externalVehicleObstacleCount
+                                              ? "static vehicle"
+                                              : "pedestrian") +
+                              " at (" + std::to_string(obstacle.pose.position[0]) + ", " +
+                              std::to_string(obstacle.pose.position[1]) + ")";
                 } else if (const auto found =
                                trafficStateByActor.find(trafficVehicle.actor.blockingActor);
                            trafficVehicle.actor.blockingActor != nullptr &&

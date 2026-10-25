@@ -49,8 +49,10 @@ int main(int argc, char** argv) {
 
     const std::filesystem::path directory =
         openbus::probe::makeProbeDirectory("openbus-scenery-object-config-probe");
-    const std::filesystem::path path = directory / "paths.sco";
+    const std::filesystem::path path = directory / "north-parade-pulteney-road.sco";
     const std::filesystem::path singleStopPath = directory / "single-stop.sco";
+    const std::filesystem::path remappedPath = directory / "remapped-light.sco";
+    const std::filesystem::path bathRoundaboutPath = directory / "bath-roundabout.sco";
     {
         std::ofstream output(path);
         if (!output) {
@@ -68,7 +70,7 @@ int main(int argc, char** argv) {
                   "[traffic_light]\nCrossing\n"
                   "[phase]\n3\n5\n"
                   "[phase]\n9\n5\n"
-                  "[traffic_light]\nUnlinked\n"
+                  "[traffic_light]\nDoNotUse\n"
                   "[phase]\n0\n4\n"
                   "[phase]\n6\n4\n"
                   "[path]\n"
@@ -100,12 +102,52 @@ int main(int argc, char** argv) {
                   "[use_traffic_light]\n0\n"
                   "[traffic_light_stop]\n0\n1\n2\n";
     }
+    {
+        std::ofstream output(remappedPath);
+        if (!output) {
+            std::cerr << "failed: create remapped scenery fixture\n";
+            openbus::probe::removeProbeDirectory(directory);
+            return 1;
+        }
+        output << "[mesh]\nmesh.x\n"
+                  "[trafficlight]\n"
+                  "[traffic_lights_group]\n10\n"
+                  "[traffic_light]\nDoNotUse\n"
+                  "[phase]\n0\n3\n"
+                  "[phase]\n6\n7\n"
+                  "[traffic_light]\nRoad\n"
+                  "[phase]\n0\n3\n"
+                  "[phase]\n6\n7\n"
+                  "[path]\n"
+                  "1\n2\n3\n4\n5\n6\n7\n8\n0\n2.5\n0\n0\n"
+                  "[use_traffic_light]\n1\n"
+                  "[traffic_light_stop]\n1\n1\n2\n"
+                  "[traffic_light_stop]\n1\n2\n2\n";
+    }
+    {
+        std::ofstream output(bathRoundaboutPath);
+        if (!output) {
+            std::cerr << "failed: create Bath Roundabout scenery fixture\n";
+            openbus::probe::removeProbeDirectory(directory);
+            return 1;
+        }
+        output << "[mesh]\nmesh.x\n"
+                  "[trafficlight]\n"
+                  "[traffic_lights_group]\n10\n"
+                  "[traffic_light]\nUnreferenced roundabout light\n"
+                  "[phase]\n0\n3\n"
+                  "[phase]\n6\n7\n";
+    }
     const SceneryObjectConfig configuration = loadSceneryObjectFile(path);
     const SceneryObjectConfig singleStopConfiguration = loadSceneryObjectFile(singleStopPath);
+    const SceneryObjectConfig remappedConfiguration = loadSceneryObjectFile(remappedPath);
+    const SceneryObjectConfig bathRoundaboutConfiguration =
+        loadSceneryObjectFile(bathRoundaboutPath);
     openbus::probe::removeProbeDirectory(directory);
 
     bool valid = require(configuration.trafficPaths.size() == 2, "path sections parsed");
     valid &= require(singleStopConfiguration.trafficLightSchedules.size() == 1 &&
+                         singleStopConfiguration.trafficLights.size() == 1 &&
                          singleStopConfiguration.trafficLightSchedules.front().has_value() &&
                          !singleStopConfiguration.trafficLightSchedules.front()
                               ->hasConditionalOverrides &&
@@ -114,6 +156,26 @@ int main(int argc, char** argv) {
                          openbus::map::mapTrafficSignalStateAtTime(
                              *singleStopConfiguration.trafficLightSchedules.front(), 3.0) == 6,
                      "a traffic-light group with one stop ignores its conditional program");
+    valid &= require(remappedConfiguration.trafficLights.size() == 1 &&
+                         remappedConfiguration.trafficLightSchedules.size() == 1 &&
+                         remappedConfiguration.trafficLights.front().name == "Road" &&
+                         remappedConfiguration.trafficLightSchedules.front().has_value() &&
+                         remappedConfiguration.trafficLightSchedules.front()->lightIndex == 0 &&
+                         remappedConfiguration.trafficLightSchedules.front()
+                             ->hasConditionalOverrides &&
+                         remappedConfiguration.trafficPaths.size() == 1 &&
+                         remappedConfiguration.trafficPaths.front().trafficLightIndex == 0 &&
+                         remappedConfiguration.trafficPaths.front().trafficSignal.has_value() &&
+                         remappedConfiguration.trafficLightStops.size() == 2 &&
+                         remappedConfiguration.trafficLightStops[0][0] == 0.0 &&
+                         remappedConfiguration.trafficPaths.front()
+                                 .trafficSignal->program->controlPoints[0]
+                                 .lightIndex == 0,
+                     "unreferenced preceding light and its stops are discarded and indices remapped");
+    valid &= require(bathRoundaboutConfiguration.trafficLight &&
+                         bathRoundaboutConfiguration.trafficLights.empty() &&
+                         bathRoundaboutConfiguration.trafficLightSchedules.empty(),
+                     "Bath Roundabout light with no referencing path is discarded");
     valid &= require(configuration.trafficLight,
                      "standalone [trafficlight] model marker is recognized");
     if (configuration.trafficPaths.size() == 2) {
@@ -131,12 +193,11 @@ int main(int argc, char** argv) {
                              configuration.trafficPaths[1].pathTypeCode == 1.0,
                          "path categories preserved");
         const bool hasExpectedSignal =
-            configuration.trafficLights.size() == 3 &&
-            configuration.trafficLightSchedules.size() == 3 &&
+            configuration.trafficLights.size() == 2 &&
+            configuration.trafficLightSchedules.size() == 2 &&
+            configuration.trafficLights[1].name == "Crossing" &&
             configuration.trafficLightSchedules[1].has_value() &&
             configuration.trafficLightSchedules[1]->lightIndex == 1 &&
-            configuration.trafficLightSchedules[2].has_value() &&
-            configuration.trafficLightSchedules[2]->lightIndex == 2 &&
             configuration.trafficPaths[0].trafficLightIndex == 0 &&
             configuration.trafficPaths[0].trafficSignal.has_value() &&
             configuration.trafficPaths[0].trafficSignal->cycleDurationSeconds == 10.0 &&
@@ -148,9 +209,9 @@ int main(int argc, char** argv) {
         valid &= require(
             hasExpectedSignal,
             "traffic-light phases and path association are retained");
-        valid &= require(configuration.trafficLightStops.size() == 3 &&
+        valid &= require(configuration.trafficLightStops.size() == 2 &&
                              configuration.trafficLightBusPriorityRules.size() == 1,
-                         "conditional traffic-light records are parsed");
+                         "conditional records for discarded lights are removed");
         if (hasExpectedSignal) {
             const auto& program = configuration.trafficPaths[0].trafficSignal->program;
             valid &= require(program != nullptr && program->controlPoints.size() == 2 &&
@@ -160,13 +221,12 @@ int main(int argc, char** argv) {
                                  program->controlPoints[1].lightIndex == 1 &&
                                  program->controlPoints[1].timeSeconds == 2.0 &&
                                  program->controlPoints[1].ifRequest &&
-                                 configuration.trafficLightSchedules[2]->program == program &&
                                  program->busPriorityRules.size() == 1 &&
                                  program->busPriorityRules[0].phaseToInterrupt == 0 &&
                                  program->busPriorityRules[0].triggerDistanceMeters == 25.0 &&
                                  program->busPriorityRules[0].targetPhase == 6 &&
                                  program->busPriorityRules[0].minimumGreenSeconds == 3.0,
-                             "unreferenced signal stop points are ignored while bus-preemption rules remain");
+                             "unreferenced signal stops are discarded while bus-preemption rules remain");
         }
         if (hasExpectedSignal) {
             valid &= require(
@@ -181,10 +241,6 @@ int main(int argc, char** argv) {
                     openbus::map::mapTrafficSignalStateAtTime(
                         *configuration.trafficLightSchedules[1], 5.0) == 9,
                 "all traffic-light groups retain independent phase schedules");
-            valid &= require(
-                openbus::map::mapTrafficSignalStateAtTime(
-                    *configuration.trafficLightSchedules[2], 8.0) == 6,
-                "unlinked signal groups retain their final phase through the cycle remainder");
         }
         valid &= require(configuration.diagnostics.entries.empty(),
                          "valid conditional signal timing is not reported unsupported");

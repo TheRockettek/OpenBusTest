@@ -97,29 +97,32 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             if (isTransparent != transparent) {
                 continue;
             }
-            drawModelBatch(
-                batch.buffer, batch.vertexCount, batch.material, batch.color, batch.alpha,
-                batch.alphaMode, batch.cullBackFaces,
-                HumanGaitParameters{gaitPhaseRadians, gaitWeight, model->second.heightMeters,
-                                    model->second.upperArmBetaDegrees, model->second.armSwing,
-                                    model->second.hipSway, model->second.waistAnimation,
-                                    model->second.shoulderXHeightFraction,
-                                    model->second.shoulderZHeightFraction,
-                                    model->second.hipXHeightFraction,
-                                    model->second.hipZHeightFraction,
-                                    model->second.kneeXHeightFraction,
-                                    model->second.kneeYHeightFraction,
-                                    model->second.kneeZHeightFraction,
-                                    model->second.elbowXHeightFraction,
-                                    model->second.elbowZHeightFraction,
-                                    model->second.handXHeightFraction,
-                                    model->second.handZHeightFraction,
-                                    model->second.neckYHeightFraction,
-                                    model->second.neckZHeightFraction,
-                                    model->second.waistYHeightFraction,
-                                    model->second.waistZHeightFraction,
-                                    model->second.fingerXHeightFraction,
-                                    model->second.fingerZHeightFraction});
+            drawModelBatch(batch.buffer, batch.vertexCount, batch.material, batch.color,
+                           batch.alpha, batch.alphaMode, batch.cullBackFaces,
+                           HumanGaitParameters{gaitPhaseRadians,
+                                               gaitWeight,
+                                               model->second.heightMeters,
+                                               model->second.upperArmBetaDegrees,
+                                               model->second.armSwing,
+                                               model->second.hipSway,
+                                               model->second.waistAnimation,
+                                               model->second.shoulderXHeightFraction,
+                                               model->second.shoulderZHeightFraction,
+                                               model->second.hipXHeightFraction,
+                                               model->second.hipZHeightFraction,
+                                               model->second.kneeXHeightFraction,
+                                               model->second.kneeYHeightFraction,
+                                               model->second.kneeZHeightFraction,
+                                               model->second.elbowXHeightFraction,
+                                               model->second.elbowZHeightFraction,
+                                               model->second.handXHeightFraction,
+                                               model->second.handZHeightFraction,
+                                               model->second.neckYHeightFraction,
+                                               model->second.neckZHeightFraction,
+                                               model->second.waistYHeightFraction,
+                                               model->second.waistZHeightFraction,
+                                               model->second.fingerXHeightFraction,
+                                               model->second.fingerZHeightFraction});
         }
     };
     drawBatches(false);
@@ -185,10 +188,10 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         const auto addTile = [&](const auto& tile) {
             if (!impl_->activeTileKeys.contains(tileKey(tile.tileX, tile.tileY)))
                 return;
-            const double x = tile.tileX * openbus::map::OMSI_TILE_SIZE_METERS;
-            const double y = tile.tileY * openbus::map::OMSI_TILE_SIZE_METERS;
-            addBounds(&tile, x, y, tile.minZ, x + openbus::map::OMSI_TILE_SIZE_METERS,
-                      y + openbus::map::OMSI_TILE_SIZE_METERS, tile.maxZ, tile.indexCount);
+            const double x = tile.tileX * impl_->coordinates.tileSize;
+            const double y = tile.tileY * impl_->coordinates.tileSize;
+            addBounds(&tile, x, y, tile.minZ, x + impl_->coordinates.tileSize,
+                      y + impl_->coordinates.tileSize, tile.maxZ, tile.indexCount);
         };
         if (!renderTypeFourOnly) {
             for (const auto& tile : impl_->terrainBuffers)
@@ -366,21 +369,18 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             if (!impl_->activeTileKeys.contains(tileKey(tile.tileX, tile.tileY))) {
                 continue;
             }
-            const double minX =
-                static_cast<double>(tile.tileX) * openbus::map::OMSI_TILE_SIZE_METERS;
-            const double minY =
-                static_cast<double>(tile.tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
+            const double minX = static_cast<double>(tile.tileX) * impl_->coordinates.tileSize;
+            const double minY = static_cast<double>(tile.tileY) * impl_->coordinates.tileSize;
             if (gpuCulling && !gpuVisible(&tile))
                 continue;
             if (!gpuCulling &&
-                outsideVisibilityBounds(minX, minY, minX + openbus::map::OMSI_TILE_SIZE_METERS,
-                                        minY + openbus::map::OMSI_TILE_SIZE_METERS)) {
+                outsideVisibilityBounds(minX, minY, minX + impl_->coordinates.tileSize,
+                                        minY + impl_->coordinates.tileSize)) {
                 continue;
             }
             if (!gpuCulling &&
-                outsideFrustumBounds(minX, minY, tile.minZ,
-                                     minX + openbus::map::OMSI_TILE_SIZE_METERS,
-                                     minY + openbus::map::OMSI_TILE_SIZE_METERS, tile.maxZ)) {
+                outsideFrustumBounds(minX, minY, tile.minZ, minX + impl_->coordinates.tileSize,
+                                     minY + impl_->coordinates.tileSize, tile.maxZ)) {
                 continue;
             }
             material.textureScale = tile.baseTextureScale;
@@ -413,12 +413,10 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             if (!impl_->activeTileKeys.contains(tileKey(water.tileX, water.tileY))) {
                 continue;
             }
-            const double minX =
-                static_cast<double>(water.tileX) * openbus::map::OMSI_TILE_SIZE_METERS;
-            const double minY =
-                static_cast<double>(water.tileY) * openbus::map::OMSI_TILE_SIZE_METERS;
-            const double maxX = minX + openbus::map::OMSI_TILE_SIZE_METERS;
-            const double maxY = minY + openbus::map::OMSI_TILE_SIZE_METERS;
+            const double minX = static_cast<double>(water.tileX) * impl_->coordinates.tileSize;
+            const double minY = static_cast<double>(water.tileY) * impl_->coordinates.tileSize;
+            const double maxX = minX + impl_->coordinates.tileSize;
+            const double maxY = minY + impl_->coordinates.tileSize;
             if (gpuCulling
                     ? !gpuVisible(&water)
                     : (outsideVisibilityBounds(minX, minY, maxX, maxY) ||
@@ -449,8 +447,8 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             selectIndirect(water);
             pushMatrix();
             multiplyMatrix(translationMatrix(
-                {static_cast<double>(water->tileX) * openbus::map::OMSI_TILE_SIZE_METERS,
-                 static_cast<double>(water->tileY) * openbus::map::OMSI_TILE_SIZE_METERS, 0.0}));
+                {static_cast<double>(water->tileX) * impl_->coordinates.tileSize,
+                 static_cast<double>(water->tileY) * impl_->coordinates.tileSize, 0.0}));
             drawIndexedModelBatch(water->buffer, water->indexBuffer, water->indexCount, material,
                                   waterColor, 0.62, 0);
             popMatrix();
@@ -479,8 +477,8 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             selectIndirect(&road);
             pushMatrix();
             multiplyMatrix(translationMatrix(
-                {static_cast<double>(road.tileX) * openbus::map::OMSI_TILE_SIZE_METERS,
-                 static_cast<double>(road.tileY) * openbus::map::OMSI_TILE_SIZE_METERS, 0.0}));
+                {static_cast<double>(road.tileX) * impl_->coordinates.tileSize,
+                 static_cast<double>(road.tileY) * impl_->coordinates.tileSize, 0.0}));
             drawIndexedModelBatch(road.buffer, road.indexBuffer, road.indexCount, road.material,
                                   road.color, 1.0, road.alphaMode, road.cullBackFaces);
             popMatrix();

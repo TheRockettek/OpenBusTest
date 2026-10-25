@@ -85,14 +85,24 @@ void MapRoadConnectionIndex::addSpline(const MapSplinePlacement& spline, int til
 
 void MapRoadConnectionIndex::finalize() {
     joins_.clear();
-    const auto sampleEndpoint = [](const Placement& placement, bool end) {
+    const auto sampleEndpoint = [this](const Placement& placement, bool end) {
         const auto& spline = placement.spline;
         return spline.geometryValid
-                   ? sampleMapSpline(placement.tileX * OMSI_TILE_SIZE_METERS + spline.localX,
-                                     placement.tileY * OMSI_TILE_SIZE_METERS + spline.localY,
+                   ? sampleMapSpline(placement.tileX * coordinates_.tileSize + spline.localX,
+                                     placement.tileY * coordinates_.tileSize + spline.localY,
                                      spline.rotationDegrees, spline.length, spline.radius,
                                      end ? spline.length : 0.0)
                    : std::nullopt;
+    };
+    const auto projectFrame = [this](MapRoadEndpointFrame frame, const Placement& placement) {
+        const auto transform = coordinates_.tile(placement.tileX, placement.tileY);
+        frame.center[0] =
+            transform.originX + (frame.center[0] - transform.originX) * transform.scaleX;
+        frame.center[1] =
+            transform.originY + (frame.center[1] - transform.originY) * transform.scaleY;
+        frame.lateralAxis[0] *= transform.scaleX;
+        frame.lateralAxis[1] *= transform.scaleY;
+        return frame;
     };
     for (const auto& [id, placement] : placements_) {
         const auto& spline = placement.spline;
@@ -107,7 +117,8 @@ void MapRoadConnectionIndex::finalize() {
             if (other == placements_.end() || !sample) {
                 continue;
             }
-            const auto ownFrame = endpointFrame(spline, *sample, end, placement.cantHalfWidth);
+            const auto ownFrame = projectFrame(
+                endpointFrame(spline, *sample, end, placement.cantHalfWidth), placement);
             if (!finiteFrame(ownFrame)) {
                 continue;
             }
@@ -123,8 +134,9 @@ void MapRoadConnectionIndex::finalize() {
                 if (!candidate) {
                     continue;
                 }
-                const auto frame =
-                    endpointFrame(neighbor, *candidate, candidateEnd, other->second.cantHalfWidth);
+                const auto frame = projectFrame(
+                    endpointFrame(neighbor, *candidate, candidateEnd, other->second.cantHalfWidth),
+                    other->second);
                 if (!finiteFrame(frame)) {
                     continue;
                 }
@@ -151,8 +163,8 @@ void MapRoadConnectionIndex::finalize() {
             if (oppositeLink == otherId) {
                 const auto opposite = sampleEndpoint(placement, !end);
                 if (opposite) {
-                    const auto oppositeFrame =
-                        endpointFrame(spline, *opposite, !end, placement.cantHalfWidth);
+                    const auto oppositeFrame = projectFrame(
+                        endpointFrame(spline, *opposite, !end, placement.cantHalfWidth), placement);
                     if (finiteFrame(oppositeFrame) &&
                         std::hypot(oppositeFrame.center[0] - neighborFrame.center[0],
                                    oppositeFrame.center[1] - neighborFrame.center[1],
@@ -238,14 +250,32 @@ MapRoadSplineJoins MapRoadConnectionIndex::joinsFor(const MapSplinePlacement& sp
         return {};
     }
     const auto found = joins_.find(spline.splineId);
-    return found == joins_.end() ? MapRoadSplineJoins{} : found->second;
+    if (found == joins_.end()) {
+        return {};
+    }
+    auto result = found->second;
+    const auto transform = coordinates_.tile(tileX, tileY);
+    for (auto* frame : {&result.start, &result.end}) {
+        if (!frame->has_value()) {
+            continue;
+        }
+        auto& value = frame->value();
+        value.center[0] =
+            transform.originX + (value.center[0] - transform.originX) / transform.scaleX;
+        value.center[1] =
+            transform.originY + (value.center[1] - transform.originY) / transform.scaleY;
+        value.lateralAxis[0] /= transform.scaleX;
+        value.lateralAxis[1] /= transform.scaleY;
+    }
+    return result;
 }
 
 MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spline,
                                                    const std::vector<MapSplineSample>& centerline,
                                                    const MapSplineProfileSection& section,
                                                    const MapRoadSplineJoins& joins,
-                                                   std::optional<double> cantHalfWidth) {
+                                                   std::optional<double> cantHalfWidth,
+                                                   const MapTileTransform& transform) {
     MapRoadSectionGeometry geometry;
     if (!spline.geometryValid || !std::isfinite(spline.length) || spline.length <= 0.0 ||
         centerline.size() < 2 || section.points.size() < 2) {
@@ -341,6 +371,8 @@ MapRoadSectionGeometry buildMapRoadSectionGeometry(const MapSplinePlacement& spl
             };
             applyJoin(joins.start, startFrame, sample.distance, false);
             applyJoin(joins.end, endFrame, spline.length - sample.distance, true);
+            vertex.x = transform.originX + (vertex.x - transform.originX) * transform.scaleX;
+            vertex.y = transform.originY + (vertex.y - transform.originY) * transform.scaleY;
             if (!std::isfinite(vertex.x) || !std::isfinite(vertex.y) || !std::isfinite(vertex.z) ||
                 !std::isfinite(vertex.textureU) || !std::isfinite(vertex.textureV)) {
                 throw std::invalid_argument("Map road section contains non-finite geometry");

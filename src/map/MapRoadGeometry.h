@@ -48,12 +48,16 @@ struct MapRoadSplineJoins {
 // links with unique nonzero IDs are joined. Values are owned; tile residency is irrelevant.
 class MapRoadConnectionIndex {
   public:
+    explicit MapRoadConnectionIndex(MapCoordinates coordinates = {}) : coordinates_(coordinates) {}
     void addSpline(const MapSplinePlacement& spline, int tileX, int tileY,
                    std::optional<double> cantHalfWidth = std::nullopt);
     void finalize();
+    // Frames are expressed in the requested tile's unscaled metric frame, with its grid
+    // origin retained, ready for buildMapRoadSectionGeometry's final projection.
     MapRoadSplineJoins joinsFor(const MapSplinePlacement& spline, int tileX, int tileY) const;
 
   private:
+    MapCoordinates coordinates_;
     struct Placement {
         MapSplinePlacement spline;
         int tileX = 0;
@@ -68,10 +72,12 @@ class MapRoadConnectionIndex {
 // Builds one visible .sli cross-section strip in world coordinates. Rendering and collision
 // consume this same geometry so road physics cannot drift from the displayed profile.
 // A supplied cant half-width clamps lateral cant displacement; nullopt keeps it unbounded.
+// Centerline samples use authored metres plus the tile's grid origin. Apply transform only
+// after constructing the profile and joining endpoints, so widths, cant and UVs stay authored.
 MapRoadSectionGeometry buildMapRoadSectionGeometry(
     const MapSplinePlacement& spline, const std::vector<MapSplineSample>& centerline,
     const MapSplineProfileSection& section, const MapRoadSplineJoins& joins = {},
-    std::optional<double> cantHalfWidth = std::nullopt);
+    std::optional<double> cantHalfWidth = std::nullopt, const MapTileTransform& transform = {});
 
 // Computes smooth, map-up-facing normals from the final rendered strip triangles.
 std::vector<std::array<double, 3>>

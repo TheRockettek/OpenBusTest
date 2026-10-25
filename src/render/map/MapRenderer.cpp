@@ -45,6 +45,12 @@ MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t cen
     assetRequests_ = &assetRequests;
     impl_->simulationState = &simulationState;
     impl_->omsiRoot = omsiRoot;
+    impl_->coordinates = map.coordinates;
+    for (const auto& tile : map.tiles) {
+        const auto transform = map.coordinates.tile(tile.x, tile.y);
+        impl_->sceneryProjectionRadiusScale =
+            std::max({impl_->sceneryProjectionRadiusScale, transform.scaleX, transform.scaleY});
+    }
     impl_->leftHandTraffic = map.metadata.hasLeftHandTraffic;
     sceneLoader_ = std::make_unique<MapSceneLoader>(map, centerTileIndex, groundTextureIndex,
                                                     omsiRoot, *impl_);
@@ -57,6 +63,10 @@ MapRenderer::~MapRenderer() = default;
 
 bool MapRenderer::leftHandTraffic() const noexcept {
     return impl_->leftHandTraffic;
+}
+
+double MapRenderer::tileSize() const noexcept {
+    return impl_->coordinates.tileSize;
 }
 
 void MapRenderer::updateScripts() {
@@ -106,14 +116,15 @@ void MapRenderer::initializeActiveScripts() {
 }
 
 void MapRenderer::updateStreaming(double worldX, double worldY) {
-    const int centerX = openbus::map::mapWorldTile(worldX);
-    const int centerY = openbus::map::mapWorldTile(worldY);
+    const int centerX = openbus::map::mapWorldTile(worldX, impl_->coordinates.tileSize);
+    const int centerY = openbus::map::mapWorldTile(worldY, impl_->coordinates.tileSize);
     const openbus::map::MapTileCoordinate center{centerX, centerY};
     if (impl_->activeCenterTile == center) {
         return;
     }
     impl_->activeTileCoordinates = openbus::map::selectMapTilesWithinRadius(
-        impl_->mapTileCoordinates, worldX, worldY, MAP_ACTIVE_TILE_RADIUS);
+        impl_->mapTileCoordinates, worldX, worldY, MAP_ACTIVE_TILE_RADIUS,
+        impl_->coordinates.tileSize);
     impl_->activeTileKeys.clear();
     impl_->activeTileKeys.reserve(impl_->activeTileCoordinates.size());
     for (const auto& [tileX, tileY] : impl_->activeTileCoordinates) {
@@ -363,64 +374,44 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
             throw std::runtime_error("Human traffic model has no first-LOD meshes: " +
                                      modelConfigPath.string());
         }
-        return Impl::HumanModelConfiguration{modelConfigPath,
-                                             std::move(configuration),
-                                             geometry->values[1],
-                                             humanConfig.walkUpperArmBetaDegrees,
-                                             humanConfig.walkArmSwing,
-                                             humanConfig.walkHipSway,
-                                             humanConfig.walkWaistAnimation,
-                                             humanConfig.rightShoulderHeightFractions
-                                                 ? (*humanConfig.rightShoulderHeightFractions)[0]
-                                                 : 0.105,
-                                             humanConfig.rightShoulderHeightFractions
-                                                 ? (*humanConfig.rightShoulderHeightFractions)[1]
-                                                 : 0.76,
-                                             humanConfig.rightHipHeightFractions
-                                                 ? (*humanConfig.rightHipHeightFractions)[0]
-                                                 : 0.06,
-                                             humanConfig.rightHipHeightFractions
-                                                 ? (*humanConfig.rightHipHeightFractions)[1]
-                                                 : 0.5,
-                                             humanConfig.rightKneePositionFractions
-                                                 ? (*humanConfig.rightKneePositionFractions)[0]
-                                                 : 0.08,
-                                             humanConfig.rightKneePositionFractions
-                                                 ? (*humanConfig.rightKneePositionFractions)[1]
-                                                 : 0.0,
-                                             humanConfig.rightKneePositionFractions
-                                                 ? (*humanConfig.rightKneePositionFractions)[2]
-                                                 : 0.25,
-                                             humanConfig.rightElbowHeightFractions
-                                                 ? (*humanConfig.rightElbowHeightFractions)[0]
-                                                 : 0.25,
-                                             humanConfig.rightElbowHeightFractions
-                                                 ? (*humanConfig.rightElbowHeightFractions)[1]
-                                                 : 0.76,
-                                             humanConfig.rightHandHeightFractions
-                                                 ? (*humanConfig.rightHandHeightFractions)[0]
+        return Impl::HumanModelConfiguration{
+            modelConfigPath,
+            std::move(configuration),
+            geometry->values[1],
+            humanConfig.walkUpperArmBetaDegrees,
+            humanConfig.walkArmSwing,
+            humanConfig.walkHipSway,
+            humanConfig.walkWaistAnimation,
+            humanConfig.rightShoulderHeightFractions
+                ? (*humanConfig.rightShoulderHeightFractions)[0]
+                : 0.105,
+            humanConfig.rightShoulderHeightFractions
+                ? (*humanConfig.rightShoulderHeightFractions)[1]
+                : 0.76,
+            humanConfig.rightHipHeightFractions ? (*humanConfig.rightHipHeightFractions)[0] : 0.06,
+            humanConfig.rightHipHeightFractions ? (*humanConfig.rightHipHeightFractions)[1] : 0.5,
+            humanConfig.rightKneePositionFractions ? (*humanConfig.rightKneePositionFractions)[0]
+                                                   : 0.08,
+            humanConfig.rightKneePositionFractions ? (*humanConfig.rightKneePositionFractions)[1]
+                                                   : 0.0,
+            humanConfig.rightKneePositionFractions ? (*humanConfig.rightKneePositionFractions)[2]
+                                                   : 0.25,
+            humanConfig.rightElbowHeightFractions ? (*humanConfig.rightElbowHeightFractions)[0]
+                                                  : 0.25,
+            humanConfig.rightElbowHeightFractions ? (*humanConfig.rightElbowHeightFractions)[1]
+                                                  : 0.76,
+            humanConfig.rightHandHeightFractions ? (*humanConfig.rightHandHeightFractions)[0]
                                                  : 0.40,
-                                             humanConfig.rightHandHeightFractions
-                                                 ? (*humanConfig.rightHandHeightFractions)[1]
+            humanConfig.rightHandHeightFractions ? (*humanConfig.rightHandHeightFractions)[1]
                                                  : 0.76,
-                                             humanConfig.rightFingerHeightFractions
-                                                 ? (*humanConfig.rightFingerHeightFractions)[0]
-                                                 : 0.5,
-                                             humanConfig.rightFingerHeightFractions
-                                                 ? (*humanConfig.rightFingerHeightFractions)[1]
-                                                 : 0.76,
-                                             humanConfig.neckHeightFractions
-                                                 ? (*humanConfig.neckHeightFractions)[0]
-                                                 : 0.0,
-                                             humanConfig.neckHeightFractions
-                                                 ? (*humanConfig.neckHeightFractions)[1]
-                                                 : 0.85,
-                                             humanConfig.waistHeightFractions
-                                                 ? (*humanConfig.waistHeightFractions)[0]
-                                                 : 0.0,
-                                             humanConfig.waistHeightFractions
-                                                 ? (*humanConfig.waistHeightFractions)[1]
-                                                 : 0.6};
+            humanConfig.rightFingerHeightFractions ? (*humanConfig.rightFingerHeightFractions)[0]
+                                                   : 0.5,
+            humanConfig.rightFingerHeightFractions ? (*humanConfig.rightFingerHeightFractions)[1]
+                                                   : 0.76,
+            humanConfig.neckHeightFractions ? (*humanConfig.neckHeightFractions)[0] : 0.0,
+            humanConfig.neckHeightFractions ? (*humanConfig.neckHeightFractions)[1] : 0.85,
+            humanConfig.waistHeightFractions ? (*humanConfig.waistHeightFractions)[0] : 0.0,
+            humanConfig.waistHeightFractions ? (*humanConfig.waistHeightFractions)[1] : 0.6};
     });
     impl_->pendingHumanTrafficModels.emplace(cacheKey, std::move(pending));
 }
@@ -477,28 +468,16 @@ bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey) const
     return impl_->humanTrafficModels.contains(cacheKey);
 }
 
-void MapRenderer::loadHumanTrafficModelNow(const std::filesystem::path& humanConfigPath,
-                                           const std::filesystem::path& modelConfigPath,
-                                           const ModelConfig& configuration, double heightMeters,
-                                           double upperArmBetaDegrees, double armSwing,
-                                           double hipSway, double waistAnimation,
-                                           double shoulderXHeightFraction,
-                                           double shoulderZHeightFraction,
-                                           double hipXHeightFraction,
-                                           double hipZHeightFraction,
-                                           double kneeXHeightFraction,
-                                           double kneeYHeightFraction,
-                                           double kneeZHeightFraction,
-                                           double elbowXHeightFraction,
-                                           double elbowZHeightFraction,
-                                           double handXHeightFraction,
-                                           double handZHeightFraction,
-                                           double neckYHeightFraction,
-                                           double neckZHeightFraction,
-                                           double waistYHeightFraction,
-                                           double waistZHeightFraction,
-                                           double fingerXHeightFraction,
-                                           double fingerZHeightFraction) const {
+void MapRenderer::loadHumanTrafficModelNow(
+    const std::filesystem::path& humanConfigPath, const std::filesystem::path& modelConfigPath,
+    const ModelConfig& configuration, double heightMeters, double upperArmBetaDegrees,
+    double armSwing, double hipSway, double waistAnimation, double shoulderXHeightFraction,
+    double shoulderZHeightFraction, double hipXHeightFraction, double hipZHeightFraction,
+    double kneeXHeightFraction, double kneeYHeightFraction, double kneeZHeightFraction,
+    double elbowXHeightFraction, double elbowZHeightFraction, double handXHeightFraction,
+    double handZHeightFraction, double neckYHeightFraction, double neckZHeightFraction,
+    double waistYHeightFraction, double waistZHeightFraction, double fingerXHeightFraction,
+    double fingerZHeightFraction) const {
     const std::string cacheKey = humanConfigPath.lexically_normal().generic_string();
     if (impl_->humanTrafficModels.contains(cacheKey)) {
         return;
@@ -923,8 +902,8 @@ std::optional<double> MapRenderer::terrainHeightAt(double worldX, double worldY)
     if (!std::isfinite(worldX) || !std::isfinite(worldY)) {
         return std::nullopt;
     }
-    const double tileXValue = std::floor(worldX / openbus::map::OMSI_TILE_SIZE_METERS);
-    const double tileYValue = std::floor(worldY / openbus::map::OMSI_TILE_SIZE_METERS);
+    const double tileXValue = std::floor(worldX / impl_->coordinates.tileSize);
+    const double tileYValue = std::floor(worldY / impl_->coordinates.tileSize);
     if (tileXValue < static_cast<double>(std::numeric_limits<int>::min()) ||
         tileXValue > static_cast<double>(std::numeric_limits<int>::max()) ||
         tileYValue < static_cast<double>(std::numeric_limits<int>::min()) ||
@@ -937,9 +916,10 @@ std::optional<double> MapRenderer::terrainHeightAt(double worldX, double worldY)
     if (found == impl_->terrainByCoordinate.end()) {
         return std::nullopt;
     }
-    const double localX = worldX - tileXValue * openbus::map::OMSI_TILE_SIZE_METERS;
-    const double localY = worldY - tileYValue * openbus::map::OMSI_TILE_SIZE_METERS;
-    return openbus::map::sampleMapTerrainHeight(found->second, localX, localY);
+    const double localX = worldX - tileXValue * impl_->coordinates.tileSize;
+    const double localY = worldY - tileYValue * impl_->coordinates.tileSize;
+    return openbus::map::sampleMapTerrainHeight(found->second, localX, localY,
+                                                impl_->coordinates.tileSize);
 }
 
 } // namespace openbus::rendering

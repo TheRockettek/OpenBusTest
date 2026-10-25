@@ -71,6 +71,20 @@ RotationMatrix poseRotation(const MapSceneryPose& pose) {
                                      : mapRotation(pose.rotationDegrees, pose.rotationCount);
 }
 
+void projectPose(MapSceneryPose& pose, const MapTileTransform& transform) {
+    pose.x = transform.originX + (pose.x - transform.originX) * transform.scaleX;
+    pose.y = transform.originY + (pose.y - transform.originY) * transform.scaleY;
+    if (transform.scaleX == 1.0 && transform.scaleY == 1.0) {
+        return;
+    }
+    pose.orientationMatrix = poseRotation(pose);
+    for (std::size_t column = 0; column < 3; ++column) {
+        pose.orientationMatrix[column * 3] *= transform.scaleX;
+        pose.orientationMatrix[column * 3 + 1] *= transform.scaleY;
+    }
+    pose.hasOrientationMatrix = true;
+}
+
 std::array<double, 3> rotateVector(const RotationMatrix& matrix,
                                    const std::array<double, 3>& vector) {
     return {matrix[0] * vector[0] + matrix[3] * vector[1] + matrix[6] * vector[2],
@@ -81,17 +95,18 @@ std::array<double, 3> rotateVector(const RotationMatrix& matrix,
 } // namespace
 
 std::optional<MapSceneryPose> placeMapSceneryObject(const MapSceneryPlacement& object, int tileX,
-                                                    int tileY) {
+                                                    int tileY, const MapCoordinates& coordinates) {
     if (!object.transformValid) {
         return std::nullopt;
     }
     MapSceneryPose pose;
-    pose.x = static_cast<double>(tileX) * OMSI_TILE_SIZE_METERS + object.localPosition[0];
-    pose.y = static_cast<double>(tileY) * OMSI_TILE_SIZE_METERS + object.localPosition[1];
+    pose.x = static_cast<double>(tileX) * coordinates.tileSize + object.localPosition[0];
+    pose.y = static_cast<double>(tileY) * coordinates.tileSize + object.localPosition[1];
     pose.z = object.localPosition[2];
     std::copy(object.rotationDegrees.begin(), object.rotationDegrees.end(),
               pose.rotationDegrees.begin());
     pose.rotationCount = object.rotationDegrees.size();
+    projectPose(pose, coordinates.tile(tileX, tileY));
     if (!std::isfinite(pose.x) || !std::isfinite(pose.y) || !std::isfinite(pose.z)) {
         return std::nullopt;
     }
@@ -103,7 +118,10 @@ double mapSceneryWorldHeight(double authoredZ, double terrainHeight, bool absolu
 }
 
 std::optional<double> sampleMapTerrainHeight(const TerrainGrid& terrain, double localX,
-                                             double localY) {
+                                             double localY, double tileSize) {
+    if (!std::isfinite(tileSize) || tileSize <= 0.0) {
+        throw std::invalid_argument("Terrain tile size must be finite and positive");
+    }
     if (terrain.intervals == 0 || !std::isfinite(localX) || !std::isfinite(localY)) {
         return std::nullopt;
     }
@@ -112,10 +130,10 @@ std::optional<double> sampleMapTerrainHeight(const TerrainGrid& terrain, double 
     if (terrain.heights.size() < side * side) {
         return std::nullopt;
     }
-    const double gridX = std::clamp(localX / OMSI_TILE_SIZE_METERS * static_cast<double>(last), 0.0,
-                                    static_cast<double>(last));
-    const double gridY = std::clamp(localY / OMSI_TILE_SIZE_METERS * static_cast<double>(last), 0.0,
-                                    static_cast<double>(last));
+    const double gridX =
+        std::clamp(localX / tileSize * static_cast<double>(last), 0.0, static_cast<double>(last));
+    const double gridY =
+        std::clamp(localY / tileSize * static_cast<double>(last), 0.0, static_cast<double>(last));
     const std::size_t column = static_cast<std::size_t>(gridX);
     const std::size_t row = static_cast<std::size_t>(gridY);
     const std::size_t nextColumn = std::min(column + 1, last);
@@ -141,8 +159,11 @@ std::optional<std::size_t> mapSceneryAttachmentPointOffset(int attachmentPointNu
     return static_cast<std::size_t>(attachmentPointNumber);
 }
 
-std::optional<std::array<double, 3>> sampleMapTerrainNormal(const TerrainGrid& terrain,
-                                                            double localX, double localY) {
+std::optional<std::array<double, 3>>
+sampleMapTerrainNormal(const TerrainGrid& terrain, double localX, double localY, double tileSize) {
+    if (!std::isfinite(tileSize) || tileSize <= 0.0) {
+        throw std::invalid_argument("Terrain tile size must be finite and positive");
+    }
     if (terrain.intervals == 0 || !std::isfinite(localX) || !std::isfinite(localY)) {
         return std::nullopt;
     }
@@ -151,7 +172,7 @@ std::optional<std::array<double, 3>> sampleMapTerrainNormal(const TerrainGrid& t
     if (terrain.heights.size() < side * side) {
         return std::nullopt;
     }
-    const double step = OMSI_TILE_SIZE_METERS / static_cast<double>(terrain.intervals);
+    const double step = tileSize / static_cast<double>(terrain.intervals);
     const double gridX = std::clamp(localX / step, 0.0, static_cast<double>(last));
     const double gridY = std::clamp(localY / step, 0.0, static_cast<double>(last));
     const std::size_t column = std::min(static_cast<std::size_t>(gridX), last - 1);
@@ -271,11 +292,10 @@ std::size_t selectMapSceneryLod(const std::vector<double>& thresholds, double di
 
 namespace {
 
-std::vector<MapSceneryPose>
-placeMapSplineAttachmentImpl(const MapSplineAttachment& attachment,
-                             const std::vector<MapSplinePlacement>& splines, int tileX, int tileY,
-                             const MapSplineChainResolver& chainResolver, bool firstPlacementOnly,
-                             const MapSplineCantWidthResolver& cantWidth) {
+std::vector<MapSceneryPose> placeMapSplineAttachmentImpl(
+    const MapSplineAttachment& attachment, const std::vector<MapSplinePlacement>& splines,
+    int tileX, int tileY, const MapSplineChainResolver& chainResolver, bool firstPlacementOnly,
+    const MapSplineCantWidthResolver& cantWidth, const MapCoordinates& coordinates) {
     std::vector<MapSceneryPose> placements;
     if (!attachment.transformValid || attachment.splineIndex < 0 ||
         static_cast<std::size_t>(attachment.splineIndex) >= splines.size()) {
@@ -320,10 +340,8 @@ placeMapSplineAttachmentImpl(const MapSplineAttachment& attachment,
             }
             const double along = std::clamp(distanceOnChainDirection, 0.0, spline.length);
             const double segmentDistance = backwards ? spline.length - along : along;
-            const double segmentOriginX =
-                static_cast<double>(current.tileX) * OMSI_TILE_SIZE_METERS;
-            const double segmentOriginY =
-                static_cast<double>(current.tileY) * OMSI_TILE_SIZE_METERS;
+            const double segmentOriginX = static_cast<double>(current.tileX) * coordinates.tileSize;
+            const double segmentOriginY = static_cast<double>(current.tileY) * coordinates.tileSize;
             const auto center = sampleMapSpline(
                 segmentOriginX + spline.localX, segmentOriginY + spline.localY,
                 spline.rotationDegrees, spline.length, spline.radius, segmentDistance);
@@ -364,6 +382,7 @@ placeMapSplineAttachmentImpl(const MapSplineAttachment& attachment,
                  {headingDegrees, pitch, bank, attachment.rotationDegrees[0] + reverseTurn,
                   attachment.rotationDegrees[1], attachment.rotationDegrees[2]},
                  6});
+            projectPose(placements.back(), coordinates.tile(current.tileX, current.tileY));
             if (firstPlacementOnly) {
                 return placements;
             }
@@ -396,7 +415,8 @@ placeMapSplineAttachmentImpl(const MapSplineAttachment& attachment,
 std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& attachment,
                                                      const std::vector<MapSplinePlacement>& splines,
                                                      int tileX, int tileY,
-                                                     const MapSplineCantWidthResolver& cantWidth) {
+                                                     const MapSplineCantWidthResolver& cantWidth,
+                                                     const MapCoordinates& coordinates) {
     const MapSplineChainResolver localResolver =
         [&splines, tileX, tileY](int splineId) -> std::optional<MapSplinePlacementReference> {
         const auto found = std::find_if(splines.begin(), splines.end(),
@@ -409,22 +429,22 @@ std::vector<MapSceneryPose> placeMapSplineAttachment(const MapSplineAttachment& 
         return MapSplinePlacementReference{*found, tileX, tileY};
     };
     return placeMapSplineAttachmentImpl(attachment, splines, tileX, tileY, localResolver, false,
-                                        cantWidth);
+                                        cantWidth, coordinates);
 }
 
-std::vector<MapSceneryPose>
-placeMapSplineAttachment(const MapSplineAttachment& attachment,
-                         const std::vector<MapSplinePlacement>& sourceTileSplines, int tileX,
-                         int tileY, const MapSplineChainResolver& chainResolver,
-                         const MapSplineCantWidthResolver& cantWidth) {
+std::vector<MapSceneryPose> placeMapSplineAttachment(
+    const MapSplineAttachment& attachment, const std::vector<MapSplinePlacement>& sourceTileSplines,
+    int tileX, int tileY, const MapSplineChainResolver& chainResolver,
+    const MapSplineCantWidthResolver& cantWidth, const MapCoordinates& coordinates) {
     return placeMapSplineAttachmentImpl(attachment, sourceTileSplines, tileX, tileY, chainResolver,
-                                        false, cantWidth);
+                                        false, cantWidth, coordinates);
 }
 
 std::optional<MapSceneryPose>
 placeMapSplineAttachmentParent(const MapSplineAttachment& attachment,
                                const std::vector<MapSplinePlacement>& splines, int tileX, int tileY,
-                               const MapSplineCantWidthResolver& cantWidth) {
+                               const MapSplineCantWidthResolver& cantWidth,
+                               const MapCoordinates& coordinates) {
     const std::vector<MapSceneryPose> placements = placeMapSplineAttachmentImpl(
         attachment, splines, tileX, tileY,
         [&splines, tileX, tileY](int splineId) -> std::optional<MapSplinePlacementReference> {
@@ -437,20 +457,19 @@ placeMapSplineAttachmentParent(const MapSplineAttachment& attachment,
             }
             return MapSplinePlacementReference{*found, tileX, tileY};
         },
-        true, cantWidth);
+        true, cantWidth, coordinates);
     if (placements.empty()) {
         return std::nullopt;
     }
     return placements.front();
 }
 
-std::optional<MapSceneryPose>
-placeMapSplineAttachmentParent(const MapSplineAttachment& attachment,
-                               const std::vector<MapSplinePlacement>& sourceTileSplines, int tileX,
-                               int tileY, const MapSplineChainResolver& chainResolver,
-                               const MapSplineCantWidthResolver& cantWidth) {
+std::optional<MapSceneryPose> placeMapSplineAttachmentParent(
+    const MapSplineAttachment& attachment, const std::vector<MapSplinePlacement>& sourceTileSplines,
+    int tileX, int tileY, const MapSplineChainResolver& chainResolver,
+    const MapSplineCantWidthResolver& cantWidth, const MapCoordinates& coordinates) {
     const std::vector<MapSceneryPose> placements = placeMapSplineAttachmentImpl(
-        attachment, sourceTileSplines, tileX, tileY, chainResolver, true, cantWidth);
+        attachment, sourceTileSplines, tileX, tileY, chainResolver, true, cantWidth, coordinates);
     if (placements.empty()) {
         return std::nullopt;
     }

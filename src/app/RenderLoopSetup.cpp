@@ -16,8 +16,7 @@ std::vector<std::filesystem::path> discoverMaps(const std::filesystem::path& oms
     const std::filesystem::path mapsDirectory = omsiRoot / "maps";
     std::error_code error;
     if (!std::filesystem::is_directory(mapsDirectory, error) || error) {
-        throw std::runtime_error("OMSI maps directory is unavailable: " +
-                                 mapsDirectory.string());
+        throw std::runtime_error("OMSI maps directory is unavailable: " + mapsDirectory.string());
     }
 
     std::vector<std::filesystem::path> maps;
@@ -31,8 +30,8 @@ std::vector<std::filesystem::path> discoverMaps(const std::filesystem::path& oms
         }
     }
     if (error) {
-        throw std::runtime_error("Failed to list OMSI maps directory '" +
-                                 mapsDirectory.string() + "': " + error.message());
+        throw std::runtime_error("Failed to list OMSI maps directory '" + mapsDirectory.string() +
+                                 "': " + error.message());
     }
     std::sort(maps.begin(), maps.end());
     return maps;
@@ -46,7 +45,7 @@ std::string spawnLabel(std::size_t index, const openbus::map::MapEntryPoint& ent
 } // namespace
 
 bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
-                               StartupSelection& selection) {
+                                StartupSelection& selection) {
     imguiEnabled_ = true;
     glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     const std::vector<std::filesystem::path> maps = discoverMaps(omsiRoot);
@@ -60,8 +59,8 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                                           ? std::string{}
                                           : openbus::getEnvironment("OPENBUS_MAP_PATH");
     if (!configuredMap.empty()) {
-        const auto configured = std::find_if(
-            maps.begin(), maps.end(), [&](const std::filesystem::path& path) {
+        const auto configured =
+            std::find_if(maps.begin(), maps.end(), [&](const std::filesystem::path& path) {
                 return path.filename().string() == configuredMap;
             });
         if (configured != maps.end()) {
@@ -110,8 +109,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
 
         ImGui::SetNextWindowSize(ImVec2(560.0F, 500.0F), ImGuiCond_Once);
         ImGui::SetNextWindowPos(
-            ImVec2(static_cast<float>(windowWidth) * 0.5F,
-                   static_cast<float>(windowHeight) * 0.5F),
+            ImVec2(static_cast<float>(windowWidth) * 0.5F, static_cast<float>(windowHeight) * 0.5F),
             ImGuiCond_Always, ImVec2(0.5F, 0.5F));
         ImGui::Begin("OpenBus setup", nullptr,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
@@ -152,14 +150,12 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         if (!mapLoadError.empty()) {
             ImGui::Spacing();
             ImGui::TextWrapped("Unable to load this map: %s", mapLoadError.c_str());
-        } else if (selectedDefinition.has_value() &&
-                   selectedDefinition->entryPoints.empty()) {
+        } else if (selectedDefinition.has_value() && selectedDefinition->entryPoints.empty()) {
             ImGui::Spacing();
             ImGui::TextWrapped("This map does not define any spawn locations.");
         } else if (selectedDefinition.has_value()) {
             const auto& entryPoints = selectedDefinition->entryPoints;
-            selectedSpawn = std::clamp(selectedSpawn, 0,
-                                       static_cast<int>(entryPoints.size()) - 1);
+            selectedSpawn = std::clamp(selectedSpawn, 0, static_cast<int>(entryPoints.size()) - 1);
             const std::string currentSpawn =
                 spawnLabel(static_cast<std::size_t>(selectedSpawn),
                            entryPoints[static_cast<std::size_t>(selectedSpawn)]);
@@ -188,8 +184,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         const bool canStart = selectedDefinition.has_value() &&
                               !selectedDefinition->entryPoints.empty() && validDateTime;
         if (!validDateTime) {
-            ImGui::TextColored(ImVec4(1.0F, 0.45F, 0.35F, 1.0F),
-                               "Enter a valid date and time.");
+            ImGui::TextColored(ImVec4(1.0F, 0.45F, 0.35F, 1.0F), "Enter a valid date and time.");
         }
         ImGui::Spacing();
         ImGui::BeginDisabled(!canStart);
@@ -230,8 +225,8 @@ void RenderLoop::updateOnFoot(const BusSimulation& simulation, double elapsedSec
         return;
     }
     const bool focused = glfwGetWindowAttrib(window_, GLFW_FOCUSED) == GLFW_TRUE;
-    const bool acceptInput = focused &&
-        (mouseLookEnabled_ || !imguiEnabled_ || !ImGui::GetIO().WantCaptureKeyboard);
+    const bool acceptInput =
+        focused && (mouseLookEnabled_ || !imguiEnabled_ || !ImGui::GetIO().WantCaptureKeyboard);
     const auto pressed = [&](int key) {
         return acceptInput && glfwGetKey(window_, key) == GLFW_PRESS;
     };

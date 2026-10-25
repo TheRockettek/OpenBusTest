@@ -196,8 +196,8 @@ HumanConfig loadHumanConfig(const std::filesystem::path& configPath) {
             configuration.neckHeightFractions =
                 std::array<double, 2>{neckY / height, neckZ / height};
         } else {
-            configuration.diagnostics.warning(
-                0, "links", "neck coordinates are outside the human geometry");
+            configuration.diagnostics.warning(0, "links",
+                                              "neck coordinates are outside the human geometry");
         }
         const double waistY = links->values[6];
         const double waistZ = links->values[7];
@@ -206,8 +206,8 @@ HumanConfig loadHumanConfig(const std::filesystem::path& configPath) {
             configuration.waistHeightFractions =
                 std::array<double, 2>{waistY / height, waistZ / height};
         } else {
-            configuration.diagnostics.warning(
-                0, "links", "waist coordinates are outside the human geometry");
+            configuration.diagnostics.warning(0, "links",
+                                              "waist coordinates are outside the human geometry");
         }
         if (shoulderX <= height * 0.5 && shoulderZ > 0.0 && shoulderZ <= height) {
             configuration.rightShoulderHeightFractions =

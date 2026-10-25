@@ -723,10 +723,11 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   lane offsets and scenery-object junction paths. SCO `[path]` records are
   tessellated as local spline segments from their position, heading, radius,
   and length fields. Road/AI paths are cyan and human paths are magenta. Orange
-  Xs show map-spline endpoints without reciprocal links or a matching map or
-  scenery path endpoint within 0.5 m horizontally and vertically. Matching
-  endpoints are joined in the overlay with a short colored connector when a
-  visible gap remains; this does not change AI route connectivity.
+  squares mark unconnected directed starts, and orange Xs mark unconnected
+  directed ends. Connected endpoints have no marker: they have reciprocal links
+  or a matching map or scenery path endpoint within 0.5 m horizontally and
+  vertically. Matching endpoints are joined in the overlay with a short colored
+  connector when a visible gap remains; this does not change AI route connectivity.
   Signalized road paths show a stopline across the authored path width, placed
   0.75 m before the controlled path entry (the AI stopping boundary). A nearby
   billboard lists junction/object ID (`J`), path (`P`), light (`L`), current

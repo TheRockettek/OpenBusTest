@@ -2,6 +2,7 @@
 
 #include "core/BusTypes.h"
 #include "config/ConfigurationTypes.h"
+#include "map/MapCoordinates.h"
 
 #include <array>
 #include <cstddef>
@@ -12,8 +13,6 @@
 #include <vector>
 
 namespace openbus::map {
-
-inline constexpr double OMSI_TILE_SIZE_METERS = 300.0;
 
 struct GroundTextureDefinition {
     std::string texturePath;
@@ -403,6 +402,7 @@ struct MapAttachedObject {
 struct MapDefinition {
     std::filesystem::path rootPath;
     MapGlobalMetadata metadata;
+    MapCoordinates coordinates;
     MapAiTrafficData aiTraffic;
     std::vector<GroundTextureDefinition> groundTextures;
     std::vector<MapEntryPoint> entryPoints;
