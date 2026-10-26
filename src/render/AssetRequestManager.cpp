@@ -110,6 +110,7 @@ void AssetRequestManager::enqueue(std::function<void()> task) {
             throw std::runtime_error("asset worker pool is stopping");
         }
         workerQueue_.push(std::move(task));
+        peakQueuedTasks_ = (std::max)(peakQueuedTasks_, workerQueue_.size());
     }
     workerCondition_.notify_one();
 }
@@ -126,9 +127,21 @@ void AssetRequestManager::workerLoop() {
             }
             task = std::move(workerQueue_.front());
             workerQueue_.pop();
+            ++activeWorkers_;
+            peakActiveWorkers_ = (std::max)(peakActiveWorkers_, activeWorkers_);
         }
         task();
+        {
+            std::lock_guard<std::mutex> lock(workerMutex_);
+            --activeWorkers_;
+        }
     }
+}
+
+AssetRequestManager::QueueStats AssetRequestManager::queueStats() const {
+    std::lock_guard<std::mutex> lock(workerMutex_);
+    return {workerQueue_.size(), activeWorkers_, workers_.size(), peakQueuedTasks_,
+            peakActiveWorkers_};
 }
 
 std::string AssetRequestManager::normalizedPathKey(const std::filesystem::path& path) {

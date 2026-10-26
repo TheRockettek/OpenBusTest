@@ -984,16 +984,31 @@ int main() {
         applicationLog.Log("Loading map scene: terrain, tile index, scenery and roads.");
         renderer.showStartupStatus("Loading map assets and preparing the spawn-area render tiles.");
         openbus::rendering::TraceScope mapSceneTrace("startup", "main.initializeMapScene");
-        renderer.SetMap(mapDefinition, spawnEntryPoint, groundTextureIndex, omsiRootPath());
+        {
+            openbus::rendering::TraceScope mapSetupTrace("startup", "main.startMapSceneLoading");
+            renderer.SetMap(mapDefinition, spawnEntryPoint, groundTextureIndex, omsiRootPath());
+        }
         applicationLog.Log("Map scene loaded; initializing spawn render window.");
-        renderer.updateMapStreaming(busPlacement.position[0], busPlacement.position[1]);
+        {
+            openbus::rendering::TraceScope renderTileTrace("startup",
+                                                           "main.prepareSpawnRenderTiles");
+            renderer.updateMapStreaming(busPlacement.position[0], busPlacement.position[1]);
+        }
         const std::vector<std::pair<int, int>> spawnLoadedGeometryTiles = renderer.loadedMapTiles();
         std::vector<std::pair<int, int>> roadTrafficPoolLoadedTiles = spawnLoadedGeometryTiles;
         renderer.showStartupStatus("Building collision for the spawn tile.");
-        collisionStreamer->update(busPlacement.position[0], busPlacement.position[1],
-                                  spawnLoadedGeometryTiles);
-        collisionStreamer->waitForTileCollision(busPlacement.position[0], busPlacement.position[1],
-                                                spawnLoadedGeometryTiles);
+        {
+            openbus::rendering::TraceScope scheduleCollisionTrace("startup",
+                                                                  "main.scheduleSpawnCollision");
+            collisionStreamer->update(busPlacement.position[0], busPlacement.position[1],
+                                      spawnLoadedGeometryTiles);
+        }
+        {
+            openbus::rendering::TraceScope waitCollisionTrace("startup",
+                                                              "main.waitForSpawnCollision");
+            collisionStreamer->waitForTileCollision(
+                busPlacement.position[0], busPlacement.position[1], spawnLoadedGeometryTiles);
+        }
         applicationLog.Log("Map collision streaming started asynchronously with spawn terrain "
                            "already active and spawn tile collision ready: resident tiles=" +
                            std::to_string(collisionStreamer->loadedTileCount()) +

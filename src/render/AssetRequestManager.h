@@ -3,6 +3,7 @@
 #include "assets/ObjLoader.h"
 #include "assets/TextureAssetLoader.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <condition_variable>
 #include <queue>
@@ -24,6 +25,14 @@ class AssetRequestManager {
     using TextureHandle = unsigned int;
     using TextureResolver = std::function<std::filesystem::path(
         const std::filesystem::path&, const std::filesystem::path&, const std::string&)>;
+
+    struct QueueStats {
+        std::size_t queuedTasks = 0;
+        std::size_t activeWorkers = 0;
+        std::size_t workerCount = 0;
+        std::size_t peakQueuedTasks = 0;
+        std::size_t peakActiveWorkers = 0;
+    };
 
     struct TextureRequest {
         std::filesystem::path root;
@@ -80,6 +89,7 @@ class AssetRequestManager {
     void trackTexture(TextureHandle texture);
     void trackBuffer(unsigned int buffer);
     void join();
+    QueueStats queueStats() const;
 
   private:
     struct DecodedTexture {
@@ -106,9 +116,12 @@ class AssetRequestManager {
     std::unordered_map<std::string, std::shared_ptr<DecodedTexture>> decodedTextureCache_;
     std::vector<TextureHandle> textures_;
     std::vector<unsigned int> buffers_;
-    std::mutex workerMutex_;
+    mutable std::mutex workerMutex_;
     std::condition_variable workerCondition_;
     std::queue<std::function<void()>> workerQueue_;
+    std::size_t activeWorkers_ = 0;
+    std::size_t peakQueuedTasks_ = 0;
+    std::size_t peakActiveWorkers_ = 0;
     bool stoppingWorkers_ = false;
     std::vector<std::thread> workers_;
 };

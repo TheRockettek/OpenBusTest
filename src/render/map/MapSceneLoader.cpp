@@ -251,6 +251,8 @@ MapSceneLoader::requestTileSceneryAssets(const openbus::map::MapTileData& tile,
             const std::filesystem::path omsiRootPath = omsiRoot;
             auto future = assetRequests_
                               ->submit([path, omsiRootPath] {
+                                  TraceScope preparationTrace(
+                                      "map", "MapSceneLoader.prepareSceneryAsset.work");
                                   auto prepared = std::make_shared<PreparedSceneryAsset>();
                                   try {
                                       *prepared = prepareSceneryAsset(path, omsiRootPath);
@@ -717,6 +719,7 @@ bool MapSceneLoader::requestTileRoadPreparation(const openbus::map::MapTileData&
         tileKeyValue,
         assetRequests_->submit([splines = std::move(splines), omsiRootPath, tileX, tileY,
                                 coordinates, hasWaterMarker, waterPath, hasWaterFile] {
+            TraceScope preparationTrace("map", "MapSceneLoader.prepareRoadTile.work");
             return prepareRoadTile(splines, omsiRootPath, tileX, tileY, coordinates,
                                    hasWaterMarker && hasWaterFile, waterPath);
         }));
@@ -1009,10 +1012,11 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
             (!waitForCompletion && pendingTileDataRequests.size() >= maxPendingTileParses)) {
             continue;
         }
-        pendingTileDataRequests.emplace(key,
-                                        assetRequests_->submit([tileReference = *tileReference] {
-                                            return openbus::map::loadMapTile(tileReference);
-                                        }));
+        pendingTileDataRequests.emplace(
+            key, assetRequests_->submit([tileReference = *tileReference] {
+                TraceScope parseTrace("map", "MapSceneLoader.parseActiveTile.work");
+                return openbus::map::loadMapTile(tileReference);
+            }));
     }
     if (parseSubmissionTrace.has_value()) {
         parseSubmissionTrace->finish();
@@ -1046,6 +1050,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
                     return activeTileKeys.contains(entry.first);
                 }));
         };
+        const AssetRequestManager::QueueStats workerStats = assetRequests_->queueStats();
         const std::size_t contentReady = static_cast<std::size_t>(std::count_if(
             tileCoordinates.begin(), tileCoordinates.end(), [this](const auto& coordinate) {
                 return loadedContentTileKeys.contains(tileKey(coordinate.first, coordinate.second));
@@ -1070,7 +1075,12 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
                     std::to_string(countActive(pendingTileContentData)) +
                     ", scenery batches=" + std::to_string(countActive(pendingTileSceneryRequests)) +
                     ", road preparations=" + std::to_string(countActive(pendingTileRoadRequests)) +
-                    ", prepared roads=" + std::to_string(countActive(preparedTileRoads)) + ".");
+                    ", prepared roads=" + std::to_string(countActive(preparedTileRoads)) +
+                    ", asset workers active/total=" + std::to_string(workerStats.activeWorkers) +
+                    "/" + std::to_string(workerStats.workerCount) +
+                    ", queued=" + std::to_string(workerStats.queuedTasks) +
+                    ", peak active/queued=" + std::to_string(workerStats.peakActiveWorkers) + "/" +
+                    std::to_string(workerStats.peakQueuedTasks) + ".");
     };
     bool laneNetworksReady = false;
     if (initialLoad) {
@@ -1153,6 +1163,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
             !sceneryAssetPreparationsReady(assetKeys->second)) {
             if (waitForCompletion) {
                 while (!sceneryAssetPreparationsReady(assetKeys->second)) {
+                    reportTileProgress("scenery/model preparation");
                     if (!pendingTileSceneryRequests.contains(key)) {
                         static_cast<void>(requestTileSceneryAssets(tileData->second, key));
                     }
@@ -1447,6 +1458,8 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                         .emplace(key, assetRequests_->submit([terrainPath, tileSize, mapRootPath,
                                                               omsiRootPath, groundTextures,
                                                               groundTextureSidecars] {
+                            TraceScope preparationTrace("map",
+                                                        "MapSceneLoader.prepareTerrainTile.work");
                             PreparedTerrainTile prepared;
                             prepared.grid = openbus::map::loadTerrainGrid(terrainPath);
                             if (!groundTextureSidecars.empty()) {

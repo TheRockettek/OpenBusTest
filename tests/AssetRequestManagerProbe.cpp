@@ -2,12 +2,15 @@
 #include "ProbeTempDirectory.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <future>
 #include <iostream>
 #include <mutex>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -69,6 +72,43 @@ int main() {
         releaseTask.set_value();
         if (task.wait_for(5s) != std::future_status::ready || task.get() != 42) {
             std::cerr << "asset worker task did not publish its result\n";
+            passed = false;
+        }
+
+        const std::size_t workerCount = assets.queueStats().workerCount;
+        std::atomic<std::size_t> enteredWorkers = 0;
+        std::promise<void> releaseWorkers;
+        const std::shared_future<void> workersRelease = releaseWorkers.get_future().share();
+        std::vector<std::future<void>> blockedTasks;
+        blockedTasks.reserve(workerCount);
+        for (std::size_t index = 0; index < workerCount; ++index) {
+            blockedTasks.push_back(assets.submit([&] {
+                enteredWorkers.fetch_add(1, std::memory_order_release);
+                workersRelease.wait();
+            }));
+        }
+        const auto workersStartedBy = std::chrono::steady_clock::now() + 5s;
+        while (enteredWorkers.load(std::memory_order_acquire) < workerCount &&
+               std::chrono::steady_clock::now() < workersStartedBy) {
+            std::this_thread::sleep_for(1ms);
+        }
+        std::future<int> queuedTask = assets.submit([] { return 7; });
+        const auto saturatedStats = assets.queueStats();
+        if (enteredWorkers.load(std::memory_order_acquire) != workerCount ||
+            saturatedStats.activeWorkers != workerCount || saturatedStats.queuedTasks == 0 ||
+            saturatedStats.peakActiveWorkers < workerCount || saturatedStats.peakQueuedTasks == 0) {
+            std::cerr << "asset worker queue statistics did not report saturation\n";
+            passed = false;
+        }
+        releaseWorkers.set_value();
+        for (std::future<void>& blockedTask : blockedTasks) {
+            if (blockedTask.wait_for(5s) != std::future_status::ready) {
+                std::cerr << "blocked asset worker task did not complete after release\n";
+                passed = false;
+            }
+        }
+        if (queuedTask.wait_for(5s) != std::future_status::ready || queuedTask.get() != 7) {
+            std::cerr << "queued asset worker task did not complete after release\n";
             passed = false;
         }
 
