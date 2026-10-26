@@ -762,6 +762,7 @@ int main() {
             return 0;
         }
 
+        renderer.showStartupStatus("Resolving the selected map, bus, and vehicle configurations.");
         // Resolve configuration paths for the bus and model.
         std::filesystem::path busConfigPath;
         std::filesystem::path modelConfigPath;
@@ -859,6 +860,7 @@ int main() {
         BusConfiguration configuration;
         ModelConfig modelConfiguration;
         {
+            renderer.showStartupStatus("Loading the initial bus physics and model configuration.");
             openbus::rendering::TraceScope trace("config", "main.loadInitialSimulationBus");
             std::vector<std::filesystem::path> candidates =
                 benchmarkMode ? std::vector<std::filesystem::path>{busConfigPath}
@@ -899,6 +901,7 @@ int main() {
         }
 
         {
+            renderer.showStartupStatus("Writing configuration snapshots.");
             applicationLog.Log("Loading: writing configuration snapshots.");
             openbus::rendering::TraceScope trace("config", "main.writeConfigurationSnapshots");
             std::ofstream configurationOutput("OpenBus_configuration.json", std::ios::trunc);
@@ -950,6 +953,7 @@ int main() {
             }
             return loaded;
         };
+        renderer.showStartupStatus("Loading terrain collision around the selected spawn point.");
         applicationLog.Log("Loading spawn terrain collision.");
         openbus::rendering::TraceScope spawnTerrainTrace("startup",
                                                          "main.loadSpawnCollisionTerrain");
@@ -957,6 +961,7 @@ int main() {
         spawnTerrainTrace.finish();
         applicationLog.Log("Spawn terrain collision preloaded: " +
                            std::to_string(spawnTerrain.size()) + " tiles.");
+        renderer.showStartupStatus("Initializing physics and starting map collision streaming.");
         applicationLog.Log("Loading: initializing bus simulation and collision streaming.");
         openbus::rendering::TraceScope simulationTrace("startup",
                                                        "main.initializeSimulationAndCollision");
@@ -977,22 +982,27 @@ int main() {
         applicationLog.Log("Weather initialized: " + std::string(weatherName) +
                            ", precipitation rate=" + std::to_string(precipitationRate) + ".");
         applicationLog.Log("Loading map scene: terrain, tile index, scenery and roads.");
+        renderer.showStartupStatus("Loading map assets and preparing the spawn-area render tiles.");
         openbus::rendering::TraceScope mapSceneTrace("startup", "main.initializeMapScene");
         renderer.SetMap(mapDefinition, spawnEntryPoint, groundTextureIndex, omsiRootPath());
         applicationLog.Log("Map scene loaded; initializing spawn render window.");
         renderer.updateMapStreaming(busPlacement.position[0], busPlacement.position[1]);
         const std::vector<std::pair<int, int>> spawnLoadedGeometryTiles = renderer.loadedMapTiles();
         std::vector<std::pair<int, int>> roadTrafficPoolLoadedTiles = spawnLoadedGeometryTiles;
+        renderer.showStartupStatus("Building collision for the spawn tile.");
         collisionStreamer->update(busPlacement.position[0], busPlacement.position[1],
                                   spawnLoadedGeometryTiles);
+        collisionStreamer->waitForTileCollision(busPlacement.position[0], busPlacement.position[1],
+                                                spawnLoadedGeometryTiles);
         applicationLog.Log("Map collision streaming started asynchronously with spawn terrain "
-                           "already active: resident tiles=" +
+                           "already active and spawn tile collision ready: resident tiles=" +
                            std::to_string(collisionStreamer->loadedTileCount()) +
                            "; map manifest tiles=" + std::to_string(mapDefinition.tiles.size()) +
                            ".");
         mapSceneTrace.finish();
         std::size_t reportedCollisionTileCount = collisionStreamer->loadedTileCount();
         Vehicle* playerVehicle = nullptr;
+        renderer.showStartupStatus("Preparing the player vehicle and map traffic.");
         openbus::rendering::TraceScope preFrameSetupTrace("startup",
                                                           "main.prepareInitialVehiclesAndTraffic");
         if (benchmarkMode) {
@@ -1834,6 +1844,16 @@ int main() {
                     openbus::rendering::TraceScope spawnTrace("startup",
                                                               "main.spawnSelectedMapBus");
                     try {
+                        renderer.updateMapStreaming(spawnRequest->placement.position[0],
+                                                    spawnRequest->placement.position[1]);
+                        const std::vector<std::pair<int, int>> spawnGeometryTiles =
+                            renderer.loadedMapTiles();
+                        collisionStreamer->update(spawnRequest->placement.position[0],
+                                                  spawnRequest->placement.position[1],
+                                                  spawnGeometryTiles);
+                        collisionStreamer->waitForTileCollision(spawnRequest->placement.position[0],
+                                                                spawnRequest->placement.position[1],
+                                                                spawnGeometryTiles);
                         std::filesystem::path selectedBusConfig;
                         std::filesystem::path selectedModelConfig;
                         {

@@ -407,6 +407,57 @@ void MapCollisionStreamer::waitForPendingBuilds() {
     });
 }
 
+void MapCollisionStreamer::waitForTileCollision(
+    double worldX, double worldY, const std::vector<MapTileCoordinate>& loadedGeometryTiles) {
+    const int centerX = mapWorldTile(worldX, map_.coordinates.tileSize);
+    const int centerY = mapWorldTile(worldY, map_.coordinates.tileSize);
+    const std::uint64_t key = tileKey(centerX, centerY);
+    const auto geometryTile = std::find(loadedGeometryTiles.begin(), loadedGeometryTiles.end(),
+                                        MapTileCoordinate{centerX, centerY});
+    if (geometryTile == loadedGeometryTiles.end()) {
+        throw std::runtime_error("Spawn map geometry is not resident for tile (" +
+                                 std::to_string(centerX) + "," + std::to_string(centerY) + ")");
+    }
+    const auto mapTile = std::find_if(map_.tiles.begin(), map_.tiles.end(), [&](const auto& tile) {
+        return tile.x == centerX && tile.y == centerY;
+    });
+    if (mapTile == map_.tiles.end()) {
+        throw std::runtime_error("Spawn position references missing map tile (" +
+                                 std::to_string(centerX) + "," + std::to_string(centerY) + ")");
+    }
+
+    update(worldX, worldY, loadedGeometryTiles);
+    while (true) {
+        if (failedTiles_.contains(key)) {
+            throw std::runtime_error("Spawn collision could not be built for tile (" +
+                                     std::to_string(centerX) + "," + std::to_string(centerY) + ")");
+        }
+        if (mapTile->hasTerrainFile && failedTerrainTiles_.contains(key)) {
+            throw std::runtime_error("Spawn terrain collision could not be loaded for tile (" +
+                                     std::to_string(centerX) + "," + std::to_string(centerY) + ")");
+        }
+        if (completedCollisionKeys_.contains(key) &&
+            (!mapTile->hasTerrainFile || terrainLoadedKeys_.contains(key))) {
+            return;
+        }
+
+        {
+            std::unique_lock<std::mutex> lock(worker_->mutex);
+            worker_->condition.wait(lock, [this, key] {
+                return worker_->stopping ||
+                       std::any_of(
+                           worker_->completed.begin(), worker_->completed.end(),
+                           [key](const WorkerState::Result& result) { return result.key == key; });
+            });
+            if (worker_->stopping) {
+                throw std::runtime_error(
+                    "Map collision streaming stopped before spawn tile was ready");
+            }
+        }
+        update(worldX, worldY, loadedGeometryTiles);
+    }
+}
+
 std::size_t MapCollisionStreamer::loadedTileCount() const {
     std::size_t count = preloadedTerrainKeys_.size();
     for (const auto& [key, coordinates] : loadedTiles_) {

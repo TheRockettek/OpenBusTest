@@ -181,7 +181,8 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                                         ImGuiCond_Always, ImVec2(0.5F, 0.5F));
                 ImGui::Begin("OpenBus setup", nullptr,
                              ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
-                ImGui::TextUnformatted("Loading initial map tiles...");
+                ImGui::TextUnformatted(
+                    "Preparing map index, shared textures, and spawn-area assets...");
                 ImGui::TextUnformatted("The setup menu will close when the spawn area is ready.");
                 ImGui::End();
                 imguiLayer_->render();
@@ -394,6 +395,31 @@ std::optional<SpawnBusRequest> RenderLoop::consumeSpawnBusRequest() {
 
 void RenderLoop::SetSpawnBusError(std::string error) {
     spawnBusError_ = std::move(error);
+}
+
+void RenderLoop::showStartupStatus(const std::string& status) {
+    if (shouldClose()) {
+        return;
+    }
+    glfwPollEvents();
+    const auto [framebufferWidth, framebufferHeight] = framebufferSize();
+    const auto [windowWidth, windowHeight] = windowSize();
+    glViewport(0, 0, framebufferWidth, framebufferHeight);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    imguiLayer_->beginFrame();
+    ImGui::SetNextWindowSize(ImVec2(520.0F, 145.0F), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(
+        ImVec2(static_cast<float>(windowWidth) * 0.5F, static_cast<float>(windowHeight) * 0.5F),
+        ImGuiCond_Always, ImVec2(0.5F, 0.5F));
+    ImGui::Begin("OpenBus startup", nullptr,
+                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+    ImGui::TextUnformatted("Preparing your session");
+    ImGui::Separator();
+    ImGui::TextWrapped("%s", status.c_str());
+    ImGui::TextUnformatted("Please wait...");
+    ImGui::End();
+    imguiLayer_->render();
+    glfwSwapBuffers(window_);
 }
 
 void RenderLoop::loadMapVehicleOptions() {

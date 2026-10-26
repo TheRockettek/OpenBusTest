@@ -187,6 +187,7 @@ class RenderLoop {
     void SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
                 std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot,
                 bool prepareInitialWindowAsync = false);
+    void showStartupStatus(const std::string& status);
     void updateMapStreaming(double worldX, double worldY);
     bool initialMapWindowReady() const noexcept;
     void updateMapPoleStates(const std::vector<MapPoleState>& states);

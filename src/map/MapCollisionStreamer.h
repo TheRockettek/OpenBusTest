@@ -27,6 +27,8 @@ class MapCollisionStreamer {
     void update(double worldX, double worldY,
                 const std::vector<MapTileCoordinate>& loadedGeometryTiles);
     void waitForPendingBuilds();
+    void waitForTileCollision(double worldX, double worldY,
+                              const std::vector<MapTileCoordinate>& loadedGeometryTiles);
     std::size_t loadedTileCount() const;
 
   private:

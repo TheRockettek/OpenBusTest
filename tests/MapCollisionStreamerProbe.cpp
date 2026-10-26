@@ -166,14 +166,19 @@ void runProbe() {
         require(false, message);
     };
 
-    updateUntilSettled(5.0, 5.0, {{0, 0}}, 1,
-                       "collision must load only geometry-resident map tiles");
-    for (int attempt = 0; attempt < 4 && world.collisionDebugMeshes().empty(); ++attempt) {
-        streamer.update(5.0, 5.0, {{0, 0}});
-        streamer.waitForPendingBuilds();
+    bool rejectedMissingGeometry = false;
+    try {
+        streamer.waitForTileCollision(5.0, 5.0, {});
+    } catch (const std::runtime_error&) {
+        rejectedMissingGeometry = true;
     }
+    require(rejectedMissingGeometry,
+            "spawn collision wait rejects a tile without resident map geometry");
+    streamer.waitForTileCollision(5.0, 5.0, {{0, 0}});
+    require(streamer.loadedTileCount() == 1 && world.loadedMapCollisionTileCount() == 1,
+            "spawn collision wait makes the current tile resident before returning");
     require(!world.collisionDebugMeshes().empty(),
-            "terrain collision should publish independently while static collision builds");
+            "spawn terrain collision is published before collision readiness returns");
     const auto hasStationCollision = [&]() {
         const std::vector<StaticCollisionMesh> collisionMeshes = world.collisionDebugMeshes();
         return std::any_of(collisionMeshes.begin(), collisionMeshes.end(),
@@ -181,21 +186,14 @@ void runProbe() {
                                return mesh.vertices.size() == 9 && mesh.indices.size() == 3;
                            });
     };
-    const auto collisionDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (!hasStationCollision() && std::chrono::steady_clock::now() < collisionDeadline) {
-        streamer.update(5.0, 5.0, {{0, 0}});
-        streamer.waitForPendingBuilds();
-    }
     require(hasStationCollision(),
-            "streamed SCO model collision meshes are published to physics");
+            "spawn tile SCO collision is published before collision readiness returns");
     updateUntilSettled(
-        605.0, 5.0,
-        openbus::map::selectMapTilesWithinRadius(mapTileCoordinates, 605.0, 5.0, 2), 4,
+        605.0, 5.0, openbus::map::selectMapTilesWithinRadius(mapTileCoordinates, 605.0, 5.0, 2), 4,
         "tiles should load ahead while the previous tile remains in the hysteresis ring");
-    updateUntilSettled(
-        905.0, 5.0,
-        openbus::map::selectMapTilesWithinRadius(mapTileCoordinates, 905.0, 5.0, 2), 3,
-        "tiles outside the unload radius should be removed as the bus advances");
+    updateUntilSettled(905.0, 5.0,
+                       openbus::map::selectMapTilesWithinRadius(mapTileCoordinates, 905.0, 5.0, 2),
+                       3, "tiles outside the unload radius should be removed as the bus advances");
     updateUntilSettled(
         -0.01, 5.0,
         openbus::map::selectMapTilesWithinRadius(mapTileCoordinates, -0.01, 5.0, 2), 4,
