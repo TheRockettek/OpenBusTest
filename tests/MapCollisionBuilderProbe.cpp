@@ -539,7 +539,7 @@ void runSceneryGeometryFallbackProbe() {
     writeJunctionO3D(sceneryRoot / "model" / "model.o3d");
 
     writeText(sceneryRoot / "SurfaceFallback.sco",
-              "[surface]\n[nocollision]\n[mesh]\nmodel.o3d\n");
+              "[mesh]\nmodel.o3d\n[nocollision]\n[surface]\n");
     writeText(sceneryRoot / "GeometryFallback.sco", "[mesh]\nmodel.o3d\n");
     writeText(sceneryRoot / "BoundingBox.sco",
               "[boundingbox]\n2\n4\n6\n1\n0\n0\n[mesh]\nmodel.o3d\n");

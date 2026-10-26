@@ -183,6 +183,35 @@ void runFixtureProbe() {
         }
 
         const openbus::map::MapDefinition definition = openbus::map::loadMapDefinition(root);
+        const std::filesystem::path standardAiListDirectory = root / "standard-ai-list";
+        std::filesystem::create_directories(standardAiListDirectory);
+        std::filesystem::copy_file(root / "global.cfg", standardAiListDirectory / "global.cfg");
+        std::filesystem::copy_file(root / "tile_0_0.map",
+                                   standardAiListDirectory / "tile_0_0.map");
+        std::filesystem::copy_file(root / "tile_1_0.map",
+                                   standardAiListDirectory / "tile_1_0.map");
+        writeUtf16Le(standardAiListDirectory / "ailists.cfg",
+                     "[ailist]\n0\n-1\n4\n"
+                     "vehicles\\car.ovh\n"
+                     "vehicles\\city_bus.bus\n"
+                     "vehicles\\van.ovh\n"
+                     "vehicles\\articulated.bus\n"
+                     "[aigroup_depot]\nCentral Depot\nFixture HOF\n"
+                     "[aigroup_depot_typgroup]\n1\n1234\tBlue livery\nFixture HOF\n[end]\n"
+                     "[aigroup_depot_typgroup]\n3\n5678\tRed livery\nFixture HOF\n[end]\n");
+        const openbus::map::MapDefinition standardAiListDefinition =
+            openbus::map::loadMapDefinition(standardAiListDirectory);
+        require(standardAiListDefinition.aiTraffic.vehicleGroups.size() == 1 &&
+                    standardAiListDefinition.aiTraffic.vehicleGroups[0].name == "NormalCars" &&
+                    openbus::map::mapAiRoadVehicleAssetPaths(
+                        standardAiListDefinition.aiTraffic) ==
+                        std::vector<std::string>{"vehicles\\car.ovh", "vehicles\\city_bus.bus",
+                                                 "vehicles\\van.ovh",
+                                                 "vehicles\\articulated.bus"} &&
+                    openbus::map::mapAiBusAssetPaths(standardAiListDefinition.aiTraffic) ==
+                        std::vector<std::string>{"vehicles\\city_bus.bus",
+                                                 "vehicles\\articulated.bus"},
+                "standard [ailist] assets provide road traffic and depot typgroups resolve bus indices");
         const std::filesystem::path unicodeMapDirectory =
             root / std::filesystem::path(std::u8string(u8"map-\u00e9"));
         std::filesystem::create_directories(unicodeMapDirectory);

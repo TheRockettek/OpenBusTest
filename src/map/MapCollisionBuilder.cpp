@@ -451,13 +451,14 @@ SceneryCollisionDefinition readSceneryCollisionDefinition(const std::filesystem:
     openbus::scripting::SceneryObject variables;
     const ModelConfig model =
         loadModelConfig(modelConfigPath, modelRoot, ModelConfigKind::SceneryObject, variables);
+    const bool surfaceOverridesNoCollision = scenery.surface;
     definition.absoluteHeight = definition.absoluteHeight || model.absoluteHeight;
     if (!definition.boundingBox && model.hasBoundingBox) {
         definition.boundingBox = model.boundingBox;
     }
     for (const ModelCollisionMesh& collision : model.collisionMeshes) {
         if (collision.hasPart && collision.partIndex < model.parts.size() &&
-            (model.parts[collision.partIndex].noCollision ||
+            ((!surfaceOverridesNoCollision && model.parts[collision.partIndex].noCollision) ||
              model.parts[collision.partIndex].isShadow)) {
             continue;
         }
@@ -478,7 +479,8 @@ SceneryCollisionDefinition readSceneryCollisionDefinition(const std::filesystem:
     }
 
     for (const ModelPart& part : model.parts) {
-        if (part.noCollision || part.isShadow || part.lodIndex > 0) {
+        if ((!surfaceOverridesNoCollision && part.noCollision) || part.isShadow ||
+            part.lodIndex > 0) {
             continue;
         }
         std::filesystem::path meshPath = part.objPath;

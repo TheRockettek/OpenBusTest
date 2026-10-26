@@ -275,10 +275,36 @@ std::optional<int> parseAiBusTypeSection(const std::string& section) {
 
 void parseAiListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraffic) {
     const std::vector<std::string> lines = splitLines(decodeText(path));
+    std::vector<MapAiVehicleEntry> aiListVehicles;
+    std::optional<MapAiVehicleGroup> standardRoadGroup;
     std::optional<std::size_t> currentDepotIndex;
     for (std::size_t cursor = 0; cursor < lines.size();) {
         const std::string section = lowerAscii(trim(lines[cursor]));
         ++cursor;
+        if (section == "[ailist]") {
+            MapAiVehicleGroup group;
+            group.name = "NormalCars";
+            while (cursor < lines.size()) {
+                const std::string& sourceLine = lines[cursor];
+                if (isSectionHeaderLine(trim(sourceLine))) {
+                    break;
+                }
+                ++cursor;
+                const std::optional<std::string> assetPath = parseAiVehicleAssetPath(sourceLine);
+                if (!assetPath) {
+                    continue;
+                }
+                MapAiVehicleEntry entry{*assetPath, sourceLine};
+                aiListVehicles.push_back(entry);
+                group.rawLines.push_back(sourceLine);
+                group.vehicles.push_back(std::move(entry));
+            }
+            if (!group.vehicles.empty()) {
+                standardRoadGroup = std::move(group);
+            }
+            currentDepotIndex.reset();
+            continue;
+        }
         if (section == "[aigroup_2]") {
             currentDepotIndex.reset();
             MapAiVehicleGroup group;
@@ -305,6 +331,47 @@ void parseAiListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraf
             }
             if (!group.vehicles.empty()) {
                 aiTraffic.vehicleGroups.push_back(std::move(group));
+            }
+            continue;
+        }
+
+        if (section == "[aigroup_depot_typgroup]") {
+            MapAiBusTypeDefinition definition;
+            definition.depotIndex = currentDepotIndex;
+            bool hasType = false;
+            while (cursor < lines.size()) {
+                const std::string& sourceLine = lines[cursor];
+                const std::string line = trim(sourceLine);
+                if (isSectionHeaderLine(line)) {
+                    if (lowerAscii(line) == "[end]") {
+                        ++cursor;
+                    }
+                    break;
+                }
+                ++cursor;
+                definition.rawLines.push_back(sourceLine);
+                if (isIgnoredAiListLine(line)) {
+                    continue;
+                }
+                if (!hasType) {
+                    hasType = parseInteger(line, definition.type);
+                    if (hasType && definition.type >= 0 &&
+                        static_cast<std::size_t>(definition.type) < aiListVehicles.size()) {
+                        const std::string& assetPath =
+                            aiListVehicles[static_cast<std::size_t>(definition.type)].assetPath;
+                        if (hasExtension(assetPath, ".bus")) {
+                            definition.assetPath = assetPath;
+                        }
+                    }
+                }
+            }
+            if (!definition.assetPath.empty()) {
+                const std::size_t definitionIndex = aiTraffic.busTypes.size();
+                aiTraffic.busTypes.push_back(std::move(definition));
+                if (currentDepotIndex.has_value()) {
+                    aiTraffic.depots[*currentDepotIndex].busTypeDefinitionIndices.push_back(
+                        definitionIndex);
+                }
             }
             continue;
         }
@@ -372,6 +439,9 @@ void parseAiListFile(const std::filesystem::path& path, MapAiTrafficData& aiTraf
                     definitionIndex);
             }
         }
+    }
+    if (aiTraffic.vehicleGroups.empty() && standardRoadGroup.has_value()) {
+        aiTraffic.vehicleGroups.push_back(std::move(*standardRoadGroup));
     }
 }
 

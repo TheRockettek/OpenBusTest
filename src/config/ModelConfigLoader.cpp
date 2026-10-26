@@ -435,6 +435,10 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             continue;
         }
         const std::string keyword = lower(line.keyword());
+        if (kind == ModelConfigKind::SceneryObject &&
+            lower(configPath.extension().string()) == ".sco" && keyword == "surface") {
+            continue;
+        }
         if (!isKnownKeyword(keyword)) {
             openbus::config::logUnhandledConfigurationTag("model.cfg", configPath, line.number,
                                                           line.keyword(), "unknown keyword");
