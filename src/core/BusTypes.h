@@ -88,7 +88,7 @@ struct TerrainCollisionGrid {
 };
 
 struct StaticCollisionMesh {
-    // World-space XYZ triples and zero-based triangle indices. The simulation retains these
+    // World-space XYZ triples and zero-based triangle indices. The world retains these
     // buffers for the lifetime of the corresponding ODE trimesh.
     std::vector<double> vertices;
     std::vector<int> indices;

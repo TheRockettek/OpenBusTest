@@ -3,6 +3,7 @@
 #include "render/OpenGLFunctions.h"
 #include "render/RendererReflection.h"
 #include "physics/BusSimulation.h"
+#include "physics/World.h"
 
 #include <GLFW/glfw3.h>
 
@@ -816,7 +817,8 @@ int main() {
         configuration.centerOfGravityHeight = 1;
         configuration.axles = {{3, 2, 2, 1.5, 1, 240000, 90000, 20000, true, false},
                                 {-3, 2, 2, 1.5, 1, 240000, 90000, 20000, false, true}};
-        BusSimulation simulation(configuration, VehiclePlacement{{0, 0, 0}, 0});
+        World world;
+        BusSimulation simulation(world, configuration, VehiclePlacement{{0, 0, 0}, 0});
         ModelMaterial sceneMaterial;
         sceneMaterial.texture = blue;
         sceneMaterial.textured = true;

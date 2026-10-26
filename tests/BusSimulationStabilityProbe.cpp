@@ -1,4 +1,5 @@
 #include "physics/BusSimulation.h"
+#include "physics/World.h"
 
 #include <cmath>
 #include <iostream>
@@ -51,11 +52,10 @@ int main(int argc, char** argv) {
     terrain.tileY = 2;
     terrain.intervals = 2;
     terrain.heights = {3.0F, 3.5F, 4.0F, 3.0F, 3.5F, 4.0F, 3.0F, 3.5F, 4.0F};
-    BusSimulation terrainSimulation(caetanoConfiguration(true),
-                                    VehiclePlacement{{-150.0, 750.0, 3.5}, 0.0}, 60.0, 8, 0.0,
-                                    {terrain});
-    const std::vector<StaticCollisionMesh> terrainDebugMeshes =
-        terrainSimulation.collisionDebugMeshes();
+    World terrainWorld(0.0, {terrain}, {}, false);
+    BusSimulation terrainSimulation(terrainWorld, caetanoConfiguration(true),
+                                   VehiclePlacement{{-150.0, 750.0, 3.5}, 0.0});
+    const std::vector<StaticCollisionMesh> terrainDebugMeshes = terrainWorld.collisionDebugMeshes();
     if (terrainDebugMeshes.size() != 1 || terrainDebugMeshes[0].vertices.size() != 27 ||
         terrainDebugMeshes[0].indices.size() != 24 ||
         terrainDebugMeshes[0].vertices[0] != -300.0 ||
@@ -76,29 +76,29 @@ int main(int argc, char** argv) {
     raisedRoad.vertices = {-162.0, 735.0, 4.0, -138.0, 735.0, 4.0,
                            -138.0, 765.0, 4.0, -162.0, 765.0, 4.0};
     raisedRoad.indices = {0, 1, 2, 0, 2, 3};
-    BusSimulation roadSimulation(caetanoConfiguration(true),
-                                 VehiclePlacement{{-150.0, 750.0, 4.0}, 0.0}, 60.0, 8, 0.0,
-                                 {terrain}, {raisedRoad});
-    const std::vector<StaticCollisionMesh> roadDebugMeshes = roadSimulation.collisionDebugMeshes();
+    World roadWorld(0.0, {terrain}, {raisedRoad}, false);
+    BusSimulation roadSimulation(roadWorld, caetanoConfiguration(true),
+                                 VehiclePlacement{{-150.0, 750.0, 4.0}, 0.0});
+    const std::vector<StaticCollisionMesh> roadDebugMeshes = roadWorld.collisionDebugMeshes();
     if (roadDebugMeshes.size() != 2 || roadDebugMeshes[1].vertices != raisedRoad.vertices ||
         roadDebugMeshes[1].indices != raisedRoad.indices) {
         std::cerr << "Map road collision debug mesh did not expose the active ODE geometry\n";
         return 1;
     }
-    BusSimulation streamedSimulation(caetanoConfiguration(true),
-                                      VehiclePlacement{{-150.0, 750.0, 4.0}, 0.0},
-                                      60.0, 8, 0.0, {}, {}, false);
-    streamedSimulation.addMapTileCollision(-1, 2, terrain, {raisedRoad});
-    if (streamedSimulation.loadedMapCollisionTileCount() != 1 ||
-        streamedSimulation.collisionDebugMeshes().size() != 2 ||
-        streamedSimulation.collisionDebugRevision() != 1) {
+    World streamedWorld(0.0, {}, {}, false);
+    BusSimulation streamedSimulation(streamedWorld, caetanoConfiguration(true),
+                                     VehiclePlacement{{-150.0, 750.0, 4.0}, 0.0});
+    streamedWorld.addMapTileCollision(-1, 2, terrain, {raisedRoad});
+    if (streamedWorld.loadedMapCollisionTileCount() != 1 ||
+        streamedWorld.collisionDebugMeshes().size() != 2 ||
+        streamedWorld.collisionDebugRevision() != 1) {
         std::cerr << "Streamed map tile collision was not registered as one active tile\n";
         return 1;
     }
-    streamedSimulation.removeMapTileCollision(-1, 2);
-    if (streamedSimulation.loadedMapCollisionTileCount() != 0 ||
-        !streamedSimulation.collisionDebugMeshes().empty() ||
-        streamedSimulation.collisionDebugRevision() != 2) {
+    streamedWorld.removeMapTileCollision(-1, 2);
+    if (streamedWorld.loadedMapCollisionTileCount() != 0 ||
+        !streamedWorld.collisionDebugMeshes().empty() ||
+        streamedWorld.collisionDebugRevision() != 2) {
         std::cerr << "Streamed map tile collision was not fully removed\n";
         return 1;
     }
@@ -116,15 +116,18 @@ int main(int argc, char** argv) {
                                                          1.0, -1.0, 0.0,
                                                          0.0, 1.0, 0.0};
     meshCollisionConfiguration.collisionMeshIndices = {0, 1, 2};
-    BusSimulation meshCollisionSimulation(meshCollisionConfiguration,
-                                           VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    World meshCollisionWorld;
+    BusSimulation meshCollisionSimulation(
+        meshCollisionWorld, meshCollisionConfiguration,
+        VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
     const ChassisCollisionBox meshCollision = meshCollisionSimulation.chassisCollisionBox();
     if (!meshCollision.enabled || !meshCollision.mesh) {
         std::cerr << "Configured triangle mesh was not selected as the chassis collider\n";
         return 1;
     }
 
-    BusSimulation liftSimulation(caetanoConfiguration(true),
+    World liftWorld;
+    BusSimulation liftSimulation(liftWorld, caetanoConfiguration(true),
                                  VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
     const BodyPose chassisBeforeLift = liftSimulation.chassisPose();
     std::vector<BodyPose> wheelsBeforeLift;
@@ -150,7 +153,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    BusSimulation frozenSimulation(caetanoConfiguration(true),
+    World frozenWorld;
+    BusSimulation frozenSimulation(frozenWorld, caetanoConfiguration(true),
                                    VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
     const BodyPose frozenStartPose = frozenSimulation.chassisPose();
     frozenSimulation.setFrozen(true);
@@ -174,10 +178,13 @@ int main(int argc, char** argv) {
     const int steeringArgument = useConfiguredInertia ? 1 : 2;
     const double steeringCommand =
         argc > steeringArgument ? std::stod(argv[steeringArgument]) : 1.0;
-    BusSimulation simulation(caetanoConfiguration(useConfiguredInertia),
+    World simulationWorld;
+    BusSimulation simulation(simulationWorld, caetanoConfiguration(useConfiguredInertia),
                              VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
-    BusSimulation scriptTorqueSimulation(caetanoConfiguration(useConfiguredInertia),
-                                          VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    World scriptTorqueWorld;
+    BusSimulation scriptTorqueSimulation(
+        scriptTorqueWorld, caetanoConfiguration(useConfiguredInertia),
+        VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
     const double scriptTorqueStartX = scriptTorqueSimulation.positionX();
     scriptTorqueSimulation.setFrozen(true);
     for (int step = 0; step < 120; ++step) {

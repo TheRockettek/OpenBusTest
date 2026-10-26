@@ -11,7 +11,7 @@
 #include <vector>
 #include <utility>
 
-class BusSimulation;
+class World;
 
 namespace openbus::map {
 
@@ -20,7 +20,7 @@ namespace openbus::map {
 class MapCollisionStreamer {
   public:
     MapCollisionStreamer(const MapDefinition& map, const std::filesystem::path& omsiRoot,
-                         BusSimulation& simulation, int loadRadius = 1, int unloadRadius = 2,
+                         World& world, int loadRadius = 1, int unloadRadius = 2,
                          std::vector<std::pair<int, int>> preloadedTerrainTiles = {});
     ~MapCollisionStreamer();
 
@@ -34,7 +34,7 @@ class MapCollisionStreamer {
 
     const MapDefinition& map_;
     std::filesystem::path omsiRoot_;
-    BusSimulation& simulation_;
+    World& world_;
     int loadRadius_;
     int unloadRadius_;
     std::optional<std::pair<int, int>> lastCenterTile_;

@@ -1,4 +1,5 @@
 #include "physics/BusSimulation.h"
+#include "physics/World.h"
 #include "map/MapCollisionStreamer.h"
 #include "ProbeTempDirectory.h"
 
@@ -144,9 +145,10 @@ void runProbe() {
         mapTileCoordinates.emplace_back(tile.x, tile.y);
     }
 
-    BusSimulation simulation(probeConfiguration(), VehiclePlacement{{5.0, 5.0, 0.0}, 0.0},
-                             60.0, 8, 0.0, {}, {}, false);
-    openbus::map::MapCollisionStreamer streamer(map, omsiRoot, simulation);
+    World world(0.0, {}, {}, false);
+    BusSimulation simulation(world, probeConfiguration(),
+                             VehiclePlacement{{5.0, 5.0, 0.0}, 0.0});
+    openbus::map::MapCollisionStreamer streamer(map, omsiRoot, world);
     const auto updateUntilSettled = [&](double worldX, double worldY,
                                         const std::vector<openbus::map::MapTileCoordinate>& tiles,
                                         std::size_t expectedCount, const char* message) {
@@ -156,7 +158,7 @@ void runProbe() {
             streamer.waitForPendingBuilds();
             streamer.update(worldX, worldY, tiles);
             if (streamer.loadedTileCount() == expectedCount &&
-                simulation.loadedMapCollisionTileCount() == expectedCount) {
+                world.loadedMapCollisionTileCount() == expectedCount) {
                 return;
             }
             std::this_thread::yield();
@@ -166,14 +168,14 @@ void runProbe() {
 
     updateUntilSettled(5.0, 5.0, {{0, 0}}, 1,
                        "collision must load only geometry-resident map tiles");
-    for (int attempt = 0; attempt < 4 && simulation.collisionDebugMeshes().empty(); ++attempt) {
+    for (int attempt = 0; attempt < 4 && world.collisionDebugMeshes().empty(); ++attempt) {
         streamer.update(5.0, 5.0, {{0, 0}});
         streamer.waitForPendingBuilds();
     }
-    require(!simulation.collisionDebugMeshes().empty(),
+    require(!world.collisionDebugMeshes().empty(),
             "terrain collision should publish independently while static collision builds");
     const auto hasStationCollision = [&]() {
-        const std::vector<StaticCollisionMesh> collisionMeshes = simulation.collisionDebugMeshes();
+        const std::vector<StaticCollisionMesh> collisionMeshes = world.collisionDebugMeshes();
         return std::any_of(collisionMeshes.begin(), collisionMeshes.end(),
                            [](const StaticCollisionMesh& mesh) {
                                return mesh.vertices.size() == 9 && mesh.indices.size() == 3;

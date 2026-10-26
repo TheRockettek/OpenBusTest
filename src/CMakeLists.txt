@@ -79,6 +79,7 @@ openbus_add_module(openbus_physics
         physics/BusConfiguration.cpp
         physics/BusSimulation.cpp
         physics/RoadFeatures.cpp
+        physics/World.cpp
     DEPENDS
         openbus_config
         openbus_assets

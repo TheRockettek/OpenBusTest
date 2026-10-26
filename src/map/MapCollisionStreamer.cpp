@@ -1,6 +1,6 @@
 #include "map/MapCollisionStreamer.h"
 
-#include "physics/BusSimulation.h"
+#include "physics/World.h"
 #include "map/MapCollisionBuilder.h"
 #include "map/MapTileWindow.h"
 
@@ -211,11 +211,10 @@ struct MapCollisionStreamer::WorkerState {
 };
 
 MapCollisionStreamer::MapCollisionStreamer(const MapDefinition& map,
-                                           const std::filesystem::path& omsiRoot,
-                                           BusSimulation& simulation, int loadRadius,
-                                           int unloadRadius,
+                                           const std::filesystem::path& omsiRoot, World& world,
+                                           int loadRadius, int unloadRadius,
                                            std::vector<std::pair<int, int>> preloadedTerrainTiles)
-    : map_(map), omsiRoot_(omsiRoot), simulation_(simulation), loadRadius_(loadRadius),
+    : map_(map), omsiRoot_(omsiRoot), world_(world), loadRadius_(loadRadius),
       unloadRadius_(unloadRadius) {
     if (loadRadius_ < 0 || unloadRadius_ < loadRadius_) {
         throw std::invalid_argument("Map collision unload radius must be at least the load radius");
@@ -337,24 +336,23 @@ void MapCollisionStreamer::update(double worldX, double worldY,
             if (result.terrainOnly) {
                 if (result.terrain.has_value() && !terrainLoadedKeys_.contains(result.key)) {
                     if (loaded == loadedTiles_.end()) {
-                        simulation_.addMapTileCollision(result.tileX, result.tileY,
-                                                        std::move(result.terrain), {});
+                        world_.addMapTileCollision(result.tileX, result.tileY,
+                                                   std::move(result.terrain), {});
                         loadedTiles_.emplace(result.key, std::pair{result.tileX, result.tileY});
                     } else {
-                        simulation_.addMapTileTerrainCollision(result.tileX, result.tileY,
-                                                               std::move(*result.terrain));
+                        world_.addMapTileTerrainCollision(result.tileX, result.tileY,
+                                                          std::move(*result.terrain));
                     }
                     terrainLoadedKeys_.insert(result.key);
                 }
             } else {
                 if (loaded != loadedTiles_.end()) {
-                    simulation_.addMapTileStaticCollision(result.tileX, result.tileY,
-                                                          std::move(result.meshes),
-                                                          std::move(result.poles));
+                    world_.addMapTileStaticCollision(result.tileX, result.tileY,
+                                                     std::move(result.meshes),
+                                                     std::move(result.poles));
                 } else {
-                    simulation_.addMapTileCollision(result.tileX, result.tileY, std::nullopt,
-                                                    std::move(result.meshes),
-                                                    std::move(result.poles));
+                    world_.addMapTileCollision(result.tileX, result.tileY, std::nullopt,
+                                               std::move(result.meshes), std::move(result.poles));
                     loadedTiles_.emplace(result.key, std::pair{result.tileX, result.tileY});
                 }
                 completedCollisionKeys_.insert(result.key);
@@ -392,7 +390,7 @@ void MapCollisionStreamer::update(double worldX, double worldY,
             ++tile;
             continue;
         }
-        simulation_.removeMapTileCollision(tileX, tileY);
+        world_.removeMapTileCollision(tileX, tileY);
         completedCollisionKeys_.erase(tile->first);
         terrainLoadedKeys_.erase(tile->first);
         tile = loadedTiles_.erase(tile);

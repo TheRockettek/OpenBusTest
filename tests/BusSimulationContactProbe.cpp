@@ -1,4 +1,5 @@
 #include "physics/BusSimulation.h"
+#include "physics/World.h"
 
 #include <algorithm>
 #include <array>
@@ -69,8 +70,9 @@ struct ContactMetrics {
 };
 
 ContactMetrics runCrossing(WheelStaticContactSettings settings) {
-    BusSimulation simulation(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0},
-                             60.0, 8, 0.0, {}, {makeRaisedMarking()}, true, settings);
+    World world(0.0, {}, {makeRaisedMarking()});
+    BusSimulation simulation(world, testConfiguration(),
+                             VehiclePlacement{{0.0, 0.0, 0.0}, 0.0}, 60.0, 8, settings);
     constexpr double fixedStep = 1.0 / 60.0;
     for (int step = 0; step < 300; ++step) {
         simulation.step(0.0, 0.0, 1.0);
@@ -123,8 +125,9 @@ ContactMetrics runCrossing(WheelStaticContactSettings settings) {
 }
 
 ContactMetrics runCurbCrossing(WheelStaticContactSettings settings) {
-    BusSimulation simulation(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0},
-                             60.0, 8, 0.0, {}, {makeCurb()}, true, settings);
+    World world(0.0, {}, {makeCurb()});
+    BusSimulation simulation(world, testConfiguration(),
+                             VehiclePlacement{{0.0, 0.0, 0.0}, 0.0}, 60.0, 8, settings);
     for (int step = 0; step < 300; ++step) {
         simulation.step(0.0, 0.0, 1.0);
     }
@@ -171,8 +174,9 @@ struct PoleImpactResult {
 };
 
 PoleImpactResult runPoleImpact(double resistance, double breakAngle) {
-    BusSimulation simulation(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0},
-                             60.0, 8, 0.0, {}, {}, true);
+    World world;
+    BusSimulation simulation(world, testConfiguration(),
+                             VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
     MapPoleCollision pole;
     pole.mapObjectId = 101;
     pole.tileX = 0;
@@ -181,7 +185,7 @@ PoleImpactResult runPoleImpact(double resistance, double breakAngle) {
     pole.radiusMeters = 0.25;
     pole.resistanceRadiansPerTonneMeterPerSecond = resistance;
     pole.breakAngleRadians = breakAngle;
-    simulation.addMapTileCollision(0, 0, std::nullopt, {}, {pole});
+    world.addMapTileCollision(0, 0, std::nullopt, {}, {pole});
     PoleImpactResult result;
     int stepsSinceImpact = 0;
     for (int step = 0; step < 300; ++step) {
@@ -189,7 +193,7 @@ PoleImpactResult runPoleImpact(double resistance, double breakAngle) {
     }
     for (int step = 0; step < 900; ++step) {
         simulation.step(0.55, 0.0, 0.0);
-        const auto states = simulation.mapPoleStates();
+        const auto states = world.mapPoleStates();
         if (states.empty()) {
             continue;
         }

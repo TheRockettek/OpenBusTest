@@ -325,7 +325,7 @@ void RenderLoop::SetNoBusSpawnPoint(const VehiclePlacement& placement) {
     freeCameraEnabled_ = true;
 }
 
-void RenderLoop::updateOnFoot(const BusSimulation& simulation, double elapsedSeconds) {
+void RenderLoop::updateOnFoot(const World& world, double elapsedSeconds) {
     if (playerVehicle_ != nullptr) {
         return;
     }
@@ -336,7 +336,7 @@ void RenderLoop::updateOnFoot(const BusSimulation& simulation, double elapsedSec
         return acceptInput && glfwGetKey(window_, key) == GLFW_PRESS;
     };
     const bool jump = pressed(GLFW_KEY_SPACE);
-    simulation.updateOnFoot(
+    world.updateOnFoot(
         onFootState_, elapsedSeconds, freeCameraPose_.yawRadians,
         static_cast<double>(pressed(GLFW_KEY_W)) - static_cast<double>(pressed(GLFW_KEY_S)),
         static_cast<double>(pressed(GLFW_KEY_D)) - static_cast<double>(pressed(GLFW_KEY_A)),

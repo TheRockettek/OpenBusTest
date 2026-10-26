@@ -1,4 +1,5 @@
 #include "physics/BusSimulation.h"
+#include "physics/World.h"
 
 #include <algorithm>
 #include <array>
@@ -162,8 +163,8 @@ struct StressMetrics {
 
 bool runStressCase(const std::string& name, BusConfiguration configuration) {
     const BusConfiguration alignmentConfiguration = configuration;
-    BusSimulation simulation(std::move(configuration), VehiclePlacement{{15.0, -72.0, 0.0}, 0.0},
-                             60.0, 8, 0.0, {makeTerrain()});
+    World simulationWorld(0.0, {makeTerrain()});
+    BusSimulation simulation(simulationWorld, std::move(configuration), VehiclePlacement{{15.0, -72.0, 0.0}, 0.0}, 60.0, 8);
     constexpr double fixedStep = 1.0 / 60.0;
     StressMetrics metrics;
     BodyPose previousChassis = simulation.chassisPose();

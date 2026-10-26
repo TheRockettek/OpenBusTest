@@ -13,6 +13,7 @@
 #include "core/Viewpoint.h"
 #include "core/Variables.h"
 #include "physics/BusSimulation.h"
+#include "physics/World.h"
 
 #include <array>
 #include <chrono>
@@ -103,7 +104,7 @@ class RenderLoop {
     RenderLoop& operator=(const RenderLoop&) = delete;
 
     bool shouldClose() const;
-    void updateOnFoot(const BusSimulation& simulation, double elapsedSeconds);
+    void updateOnFoot(const World& world, double elapsedSeconds);
     std::array<double, 3> streamingPosition(const BusSimulation& simulation) const;
     void requestClose();
     std::array<int, 2> windowSize() const;
@@ -196,9 +197,10 @@ class RenderLoop {
     void updatePlayerVariables(const BusSimulation& simulation, double throttle, double steering,
                                double brake);
     void updatePostPhysicsVariables(const BusSimulation& simulation);
-    void draw(const BusSimulation& simulation);
+    void draw(const BusSimulation& simulation, const World& world);
     void endFrame();
-    void captureViews(const BusSimulation& simulation, const std::filesystem::path& directory);
+    void captureViews(const BusSimulation& simulation, const World& world,
+                      const std::filesystem::path& directory);
     bool consumeCaptureRequest();
     bool consumeRaisePlayerRequest();
     bool isCaptureReady() const;
@@ -222,7 +224,7 @@ class RenderLoop {
     void logDiagnosticVariables() const;
     void logDrivetrainDiagnosticVariables() const;
     double currentFieldOfView() const;
-    void renderReflectionViews(const BusSimulation& simulation);
+    void renderReflectionViews(const BusSimulation& simulation, const World& world);
     void drawOnFootUi();
     void loadMapVehicleOptions();
 

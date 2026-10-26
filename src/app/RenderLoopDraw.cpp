@@ -725,7 +725,7 @@ samplePassengerTravelPath(const std::vector<std::array<double, 3>>& path, double
 
 } // namespace
 
-void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
+void RenderLoop::renderReflectionViews(const BusSimulation& simulation, const World& world) {
     if (renderingReflection_ || reflectionRenderer_->empty()) {
         return;
     }
@@ -752,7 +752,7 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
             }
             return result;
         },
-        [this, &reflectionTrianglesReset,
+        [this, &world, &reflectionTrianglesReset,
          &reflectionTrafficViewsReset](const BusSimulation& reflectionSimulation,
                                        std::size_t cameraIndex, int width, int height) {
             if (!reflectionTrianglesReset) {
@@ -767,7 +767,7 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
             viewLookPitch_ = 0.0;
             setPerspective(static_cast<double>(width), static_cast<double>(height),
                            currentFieldOfView());
-            draw(reflectionSimulation);
+            draw(reflectionSimulation, world);
             if (!reflectionTrafficViewsReset) {
                 trafficReflectionCameraViews_.clear();
                 reflectionTrafficViewsReset = true;
@@ -795,7 +795,7 @@ void RenderLoop::renderReflectionViews(const BusSimulation& simulation) {
     renderingReflection_ = false;
 }
 
-void RenderLoop::draw(const BusSimulation& simulation) {
+void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
     TraceScope trace("frame", "RenderLoop::draw");
     if (!renderingReflection_) {
         openbus::rendering::resetFrameTriangleCount();
@@ -1208,7 +1208,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     }
     {
         TraceScope phase("render", "RenderLoop::draw.reflections");
-        renderReflectionViews(simulation);
+        renderReflectionViews(simulation, world);
     }
     openbus::rendering::setLightingViewMatrix(modelViewMatrix());
     {
@@ -1670,11 +1670,11 @@ void RenderLoop::draw(const BusSimulation& simulation) {
     }
     if (!renderingReflection_ && collisionDebugOverlay_) {
         TraceScope phase("render", "RenderLoop::draw.collisionDebug");
-        const std::uint64_t collisionRevision = simulation.collisionDebugRevision();
+        const std::uint64_t collisionRevision = world.collisionDebugRevision();
         if (!collisionWireframeBuilt_ || collisionWireframeRevision_ != collisionRevision) {
             TraceScope phase("render", "RenderLoop::draw.collisionDebug.build");
             collisionWireframeVertices_.clear();
-            const std::vector<StaticCollisionMesh> meshes = simulation.collisionDebugMeshes();
+            const std::vector<StaticCollisionMesh> meshes = world.collisionDebugMeshes();
             std::size_t triangleCount = 0;
             for (const StaticCollisionMesh& mesh : meshes) {
                 if (mesh.vertices.size() % 3 != 0 || mesh.indices.size() % 3 != 0) {
@@ -2191,7 +2191,7 @@ void RenderLoop::draw(const BusSimulation& simulation) {
                        << mapStats.totalTerrainTiles << " OBJECTS " << mapStats.activeSceneryObjects
                        << '/' << mapStats.totalSceneryObjects << '\n'
                        << "ROADS " << mapStats.activeRoadBatches << '/' << mapStats.totalRoadBatches
-                       << " COLLISION TILES " << simulation.loadedMapCollisionTileCount()
+                       << " COLLISION TILES " << world.loadedMapCollisionTileCount()
                        << " AI VEHICLES " << spawnedAiVehicleCount << " HUMANS " << activeHumanCount
                        << " AI " << std::fixed << std::setprecision(1) << currentAiSimulationRateHz_
                        << " HZ / " << currentAiWorkerTickMilliseconds_ << " MS";
@@ -2469,7 +2469,7 @@ void RenderLoop::endFrame() {
     }
 }
 
-void RenderLoop::captureViews(const BusSimulation& simulation,
+void RenderLoop::captureViews(const BusSimulation& simulation, const World& world,
                               const std::filesystem::path& directory) {
     TraceScope trace("capture", "RenderLoop::captureViews");
     std::filesystem::create_directories(directory);
@@ -2517,7 +2517,7 @@ void RenderLoop::captureViews(const BusSimulation& simulation,
             glViewport(viewport_[0], viewport_[1], viewport_[2], viewport_[3]);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             setPerspective(static_cast<double>(width), static_cast<double>(height), 60.0);
-            draw(simulation);
+            draw(simulation, world);
             glFinish();
         }
         const std::filesystem::path path = directory / (std::string(view.name) + ".png");

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "physics/BusConfiguration.h"
+#include "physics/World.h"
 
 #include <cstdint>
 #include <memory>
@@ -17,20 +18,10 @@ struct WheelStaticContactSettings {
     double cfm = 1.0e-5;
 };
 
-struct OnFootState {
-    std::array<double, 3> feetPosition = {};
-    double verticalVelocity = 0.0;
-    bool grounded = false;
-};
-
 class BusSimulation {
   public:
-    explicit BusSimulation(BusConfiguration configuration, VehiclePlacement placement,
+    explicit BusSimulation(World& world, BusConfiguration configuration, VehiclePlacement placement,
                            double physicsHz = 60.0, int maxCatchUpSteps = 8,
-                           double groundPlaneZ = 0.0,
-                           std::vector<TerrainCollisionGrid> terrain = {},
-                           std::vector<StaticCollisionMesh> staticCollision = {},
-                           bool createDefaultGround = true,
                            WheelStaticContactSettings wheelStaticContact = {});
     ~BusSimulation();
 
@@ -53,26 +44,12 @@ class BusSimulation {
                                            const std::vector<double>& wheelBrakeForces,
                                            const std::vector<double>& wheelSpringFactors = {});
     void setFrozen(bool frozen);
-    void updateOnFoot(OnFootState& state, double elapsedSeconds, double yawRadians, double forward,
-                      double right, bool jump) const;
     void updateVariables(openbus::scripting::Vehicle& variables, double throttle, double steering,
                          double brake) const;
     double positionX() const;
     double positionY() const;
     double positionZ() const;
     void translateVertically(double meters);
-    void addMapTileCollision(int tileX, int tileY, std::optional<TerrainCollisionGrid> terrain,
-                             std::vector<StaticCollisionMesh> staticCollision,
-                             std::vector<MapPoleCollision> poles = {});
-    void addMapTileTerrainCollision(int tileX, int tileY, TerrainCollisionGrid terrain);
-    void addMapTileStaticCollision(int tileX, int tileY,
-                                   std::vector<StaticCollisionMesh> staticCollision,
-                                   std::vector<MapPoleCollision> poles = {});
-    void removeMapTileCollision(int tileX, int tileY);
-    std::uint64_t collisionDebugRevision() const;
-    std::size_t loadedMapCollisionTileCount() const;
-    std::vector<StaticCollisionMesh> collisionDebugMeshes() const;
-    std::vector<MapPoleState> mapPoleStates() const;
     double yaw() const;
     double steeringAngle() const;
     std::array<double, 3> centerOfGravity() const;

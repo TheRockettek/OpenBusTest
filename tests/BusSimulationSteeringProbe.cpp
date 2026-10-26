@@ -1,4 +1,5 @@
 #include "physics/BusSimulation.h"
+#include "physics/World.h"
 #include "input/MouseControlMapping.h"
 #include "core/Variables.h"
 
@@ -46,9 +47,8 @@ int main() {
                                      std::numeric_limits<double>::denorm_min()}) {
         bool rejected = false;
         try {
-            BusSimulation invalidSimulation(testConfiguration(),
-                                            VehiclePlacement{{0.0, 0.0, 0.0}, 0.0},
-                                            invalidRate);
+            World invalidSimulationWorld;
+            BusSimulation invalidSimulation(invalidSimulationWorld, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0}, invalidRate);
         } catch (const std::invalid_argument&) {
             rejected = true;
         }
@@ -97,7 +97,9 @@ int main() {
         return 1;
     }
 
-    BusSimulation simulation(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    World simulationWorld;
+
+    BusSimulation simulation(simulationWorld, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
     {
         BusConfiguration zeroResistanceConfiguration = testConfiguration();
         zeroResistanceConfiguration.rollingResistanceForceNewtons = 0.0;
@@ -105,12 +107,10 @@ int main() {
         BusConfiguration highResistanceConfiguration = testConfiguration();
         highResistanceConfiguration.rollingResistanceForceNewtons = 8000.0;
         highResistanceConfiguration.collisionEnabled = false;
-        BusSimulation zeroResistance(zeroResistanceConfiguration,
-                                    VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0},
-                                    60.0, 8, 0.0, {}, {}, false);
-        BusSimulation highResistance(highResistanceConfiguration,
-                                     VehiclePlacement{{-2000.0, 0.0, 0.0}, 0.0},
-                                     60.0, 8, 0.0, {}, {}, false);
+        World zeroResistanceWorld(0.0, {}, {}, false);
+        BusSimulation zeroResistance(zeroResistanceWorld, zeroResistanceConfiguration, VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0}, 60.0, 8);
+        World highResistanceWorld(0.0, {}, {}, false);
+        BusSimulation highResistance(highResistanceWorld, highResistanceConfiguration, VehiclePlacement{{-2000.0, 0.0, 0.0}, 0.0}, 60.0, 8);
         for (int step = 0; step < 180; ++step) {
             zeroResistance.stepWithWheelTorque(25000.0, 0.0, 0.0);
             highResistance.stepWithWheelTorque(25000.0, 0.0, 0.0);
@@ -128,10 +128,10 @@ int main() {
     }
     BusConfiguration wheelContactConfiguration = testConfiguration();
     wheelContactConfiguration.collisionEnabled = false;
-    BusSimulation softSuspension(wheelContactConfiguration,
-                                 VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
-    BusSimulation stiffSuspension(wheelContactConfiguration,
-                                  VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    World softSuspensionWorld;
+    BusSimulation softSuspension(softSuspensionWorld, wheelContactConfiguration, VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    World stiffSuspensionWorld;
+    BusSimulation stiffSuspension(stiffSuspensionWorld, wheelContactConfiguration, VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
     const std::vector<double> noWheelBrakes(softSuspension.wheelCount(), 0.0);
     const std::vector<double> softSpringFactors(softSuspension.wheelCount(), 0.5);
     const std::vector<double> stiffSpringFactors(softSuspension.wheelCount(), 2.0);
@@ -152,8 +152,9 @@ int main() {
         return 1;
     }
 
-    BusSimulation lowFactorGroundCheck(wheelContactConfiguration,
-                                       VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
+    World lowFactorGroundCheckWorld;
+
+    BusSimulation lowFactorGroundCheck(lowFactorGroundCheckWorld, wheelContactConfiguration, VehiclePlacement{{-1000.0, 0.0, 0.0}, 0.0});
     const std::vector<double> lowSpringFactors(lowFactorGroundCheck.wheelCount(), 0.3);
     const std::vector<double> groundCheckBrakes(lowFactorGroundCheck.wheelCount(), 0.0);
     double minimumWheelGroundClearance = std::numeric_limits<double>::max();
@@ -212,8 +213,8 @@ int main() {
         std::atan(steeringLimitConfiguration.inverseMinimumTurnRadius *
                   std::abs(steeringLimitConfiguration.axles[0].position -
                            steeringLimitConfiguration.axles[2].position));
-    BusSimulation steeringLimitCheck(steeringLimitConfiguration,
-                                     VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    World steeringLimitCheckWorld;
+    BusSimulation steeringLimitCheck(steeringLimitCheckWorld, steeringLimitConfiguration, VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
     for (int step = 0; step < 600; ++step) {
         steeringLimitCheck.step(0.0, 1.0, 0.0);
     }
@@ -224,8 +225,9 @@ int main() {
         return 1;
     }
 
-    BusSimulation immediateSteeringCheck(testConfiguration(),
-                                         VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    World immediateSteeringCheckWorld;
+
+    BusSimulation immediateSteeringCheck(immediateSteeringCheckWorld, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
     immediateSteeringCheck.step(0.0, 1.0, 0.0);
     if (immediateSteeringCheck.wheelSteeringAngle(0) < 0.20) {
         std::cerr << "steering actuator response was too slow in one physics tick: got "
@@ -274,7 +276,9 @@ int main() {
         return 1;
     }
 
-    BusSimulation wheelSpeedCheck(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    World wheelSpeedCheckWorld;
+
+    BusSimulation wheelSpeedCheck(wheelSpeedCheckWorld, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
     for (int step = 0; step < 600; ++step) {
         wheelSpeedCheck.stepWithWheelTorque(0.0, 0.0, 0.0);
     }
@@ -316,7 +320,9 @@ int main() {
         return 1;
     }
 
-    BusSimulation brakeCheck(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    World brakeCheckWorld;
+
+    BusSimulation brakeCheck(brakeCheckWorld, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
     for (int step = 0; step < 600; ++step) {
         brakeCheck.stepWithWheelTorque(0.0, 0.0, 0.0);
     }
@@ -340,10 +346,10 @@ int main() {
     hill.vertices = {-40.0, -10.0, 2.0, 40.0, -10.0, -2.0,
                      40.0, 10.0, -2.0, -40.0, 10.0, 2.0};
     hill.indices = {0, 1, 2, 0, 2, 3};
-    BusSimulation rollingHill(hillConfiguration, VehiclePlacement{{0.0, 0.0, 0.0}, 0.0},
-                              60.0, 8, 0.0, {}, {hill}, false);
-    BusSimulation brakedHill(hillConfiguration, VehiclePlacement{{0.0, 0.0, 0.0}, 0.0},
-                             60.0, 8, 0.0, {}, {hill}, false);
+    World rollingHillWorld(0.0, {}, {hill}, false);
+    BusSimulation rollingHill(rollingHillWorld, hillConfiguration, VehiclePlacement{{0.0, 0.0, 0.0}, 0.0}, 60.0, 8);
+    World brakedHillWorld(0.0, {}, {hill}, false);
+    BusSimulation brakedHill(brakedHillWorld, hillConfiguration, VehiclePlacement{{0.0, 0.0, 0.0}, 0.0}, 60.0, 8);
     const double rollingHillStartX = rollingHill.positionX();
     const double brakedHillStartX = brakedHill.positionX();
     for (int step = 0; step < 600; ++step) {
@@ -362,7 +368,9 @@ int main() {
         return 1;
     }
 
-    BusSimulation parkingBrakeCheck(testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    World parkingBrakeCheckWorld;
+
+    BusSimulation parkingBrakeCheck(parkingBrakeCheckWorld, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
     for (int step = 0; step < 600; ++step) {
         parkingBrakeCheck.stepWithWheelTorque(0.0, 0.0, 0.0);
     }

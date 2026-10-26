@@ -1,4 +1,5 @@
 #include "physics/BusSimulation.h"
+#include "physics/World.h"
 
 #include <cmath>
 #include <iostream>
@@ -35,10 +36,10 @@ void require(bool condition, const char* message) {
     }
 }
 
-void advance(const BusSimulation& simulation, OnFootState& state, int frames,
+void advance(const World& world, OnFootState& state, int frames,
              double yaw = 0.0, double forward = 0.0, double right = 0.0) {
     for (int frame = 0; frame < frames; ++frame) {
-        simulation.updateOnFoot(state, 1.0 / 60.0, yaw, forward, right, false);
+        world.updateOnFoot(state, 1.0 / 60.0, yaw, forward, right, false);
     }
 }
 
@@ -46,41 +47,43 @@ void advance(const BusSimulation& simulation, OnFootState& state, int frames,
 
 int main() {
     try {
-        BusSimulation simulation(configuration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+        World world;
+        BusSimulation simulation(world, configuration(),
+                                 VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
         simulation.setFrozen(true);
         const auto busPosition = simulation.chassisPose().position;
         OnFootState state{{0.0, 0.0, 0.0}};
-        advance(simulation, state, 60);
+        advance(world, state, 60);
         require(state.grounded && std::abs(state.feetPosition[2]) < 0.002,
                 "Walker must stand on the ground, ignoring the hidden bus body");
-        advance(simulation, state, 60, 0.0, 1.0, 0.0);
+        advance(world, state, 60, 0.0, 1.0, 0.0);
         require(std::abs(state.feetPosition[0] - 1.5) < 0.01,
                 "W must walk forward at 1.5 m/s");
-        advance(simulation, state, 60, 0.0, -1.0, 0.0);
+        advance(world, state, 60, 0.0, -1.0, 0.0);
         require(std::abs(state.feetPosition[0]) < 0.01, "S must walk backward");
-        advance(simulation, state, 60, std::numbers::pi / 2.0, 1.0, 0.0);
+        advance(world, state, 60, std::numbers::pi / 2.0, 1.0, 0.0);
         require(std::abs(state.feetPosition[1] - 1.5) < 0.01,
                 "Walking forward must turn with the camera heading");
-        advance(simulation, state, 60, std::numbers::pi / 2.0, -1.0, 0.0);
-        advance(simulation, state, 60, std::numbers::pi / 2.0, 0.0, 1.0);
+        advance(world, state, 60, std::numbers::pi / 2.0, -1.0, 0.0);
+        advance(world, state, 60, std::numbers::pi / 2.0, 0.0, 1.0);
         require(std::abs(state.feetPosition[0] - 1.5) < 0.01,
                 "D must strafe right relative to the camera heading");
-        advance(simulation, state, 60, std::numbers::pi / 2.0, 0.0, -1.0);
+        advance(world, state, 60, std::numbers::pi / 2.0, 0.0, -1.0);
         require(std::abs(state.feetPosition[0]) < 0.01, "A must strafe left");
         const auto beforeDiagonal = state.feetPosition;
-        advance(simulation, state, 60, 0.0, 1.0, 1.0);
+        advance(world, state, 60, 0.0, 1.0, 1.0);
         require(std::abs(std::hypot(state.feetPosition[0] - beforeDiagonal[0],
                                     state.feetPosition[1] - beforeDiagonal[1]) - 1.5) < 0.01,
                 "Diagonal movement must not exceed straight walking speed");
 
-        simulation.updateOnFoot(state, 1.0 / 60.0, 0.0, 0.0, 0.0, true);
+        world.updateOnFoot(state, 1.0 / 60.0, 0.0, 0.0, 0.0, true);
         require(!state.grounded && state.verticalVelocity > 0.0, "Space must start a jump");
         const double jumpVelocity = state.verticalVelocity;
-        simulation.updateOnFoot(state, 1.0 / 60.0, 0.0, 0.0, 0.0, true);
+        world.updateOnFoot(state, 1.0 / 60.0, 0.0, 0.0, 0.0, true);
         require(state.verticalVelocity < jumpVelocity, "Airborne jumps must not reset velocity");
-        advance(simulation, state, 20);
+        advance(world, state, 20);
         require(state.feetPosition[2] > 0.9, "Jump must lift the walker off the ground");
-        advance(simulation, state, 120);
+        advance(world, state, 120);
         require(state.grounded && std::abs(state.feetPosition[2]) < 0.002,
                 "Gravity must land the walker");
         require(simulation.chassisPose().position == busPosition,
@@ -92,37 +95,37 @@ int main() {
         StaticCollisionMesh wall;
         wall.vertices = {2, -10, 0, 2, 10, 0, 2, 10, 5, 2, -10, 5};
         wall.indices = {0, 2, 1, 0, 3, 2};
-        simulation.addMapTileCollision(0, 0, std::nullopt, {platform, wall});
+        world.addMapTileCollision(0, 0, std::nullopt, {platform, wall});
         state = {{0.0, 0.0, 2.0}};
-        advance(simulation, state, 120, 0.0, 1.0, 0.0);
+        advance(world, state, 120, 0.0, 1.0, 0.0);
         require(state.grounded && std::abs(state.feetPosition[2] - 2.0) < 0.002,
                 "Walker must use an elevated road rather than the terrain below");
         require(state.feetPosition[0] <= 1.701 && state.feetPosition[0] >= 1.65,
                 "Capsule must stop at static walls");
-        simulation.removeMapTileCollision(0, 0);
-        advance(simulation, state, 120);
+        world.removeMapTileCollision(0, 0);
+        advance(world, state, 120);
         require(state.grounded && std::abs(state.feetPosition[2]) < 0.002,
                 "Walker must fall when streamed support is removed");
 
         StaticCollisionMesh ceiling;
         ceiling.vertices = {-10, -10, 2.2, 10, -10, 2.2, 10, 10, 2.2, -10, 10, 2.2};
         ceiling.indices = {0, 2, 1, 0, 3, 2};
-        simulation.addMapTileCollision(0, 0, std::nullopt, {ceiling});
+        world.addMapTileCollision(0, 0, std::nullopt, {ceiling});
         state = {{0.0, 0.0, 0.0}};
-        advance(simulation, state, 1);
-        simulation.updateOnFoot(state, 1.0 / 60.0, 0.0, 0.0, 0.0, true);
-        advance(simulation, state, 12);
+        advance(world, state, 1);
+        world.updateOnFoot(state, 1.0 / 60.0, 0.0, 0.0, 0.0, true);
+        advance(world, state, 12);
         require(state.feetPosition[2] <= 0.401 && state.verticalVelocity <= 0.0,
                 "Jumping must stop at a low ceiling");
-        advance(simulation, state, 60);
+        advance(world, state, 60);
         require(state.grounded, "Walker must land after hitting a ceiling");
-        simulation.removeMapTileCollision(0, 0);
+        world.removeMapTileCollision(0, 0);
 
         const auto beforePause = state.feetPosition;
-        simulation.updateOnFoot(state, 0.0, 0.0, 1.0, 0.0, true);
+        world.updateOnFoot(state, 0.0, 0.0, 1.0, 0.0, true);
         require(state.feetPosition == beforePause && state.verticalVelocity == 0.0,
                 "A zero-duration update must not move or jump");
-        simulation.updateOnFoot(state, 10.0, 0.0, 1.0, 0.0, false);
+        world.updateOnFoot(state, 10.0, 0.0, 1.0, 0.0, false);
         require(std::abs(state.feetPosition[0] - beforePause[0] - 0.15) < 0.001,
                 "A long frame must be capped to avoid teleporting through collision");
 
@@ -132,23 +135,23 @@ int main() {
         terrain.tileSizeMeters = 300.0;
         terrain.intervals = 1;
         terrain.heights = {0, 30, 0, 30};
-        simulation.addMapTileTerrainCollision(terrain.tileX, 0, terrain);
+        world.addMapTileTerrainCollision(terrain.tileX, 0, terrain);
         const double origin = terrain.tileX * terrain.tileSizeMeters;
         state = {{origin + 10.0, 10.0, 1.2}};
-        advance(simulation, state, 60);
-        advance(simulation, state, 120, 0.0, 1.0, 0.0);
+        advance(world, state, 60);
+        advance(world, state, 120, 0.0, 1.0, 0.0);
         require(state.feetPosition[0] > origin + 12.5 &&
                     std::abs(state.feetPosition[2] -
                              (state.feetPosition[0] - origin) * 0.1) < 0.02,
                 "Walking must climb terrain at large map coordinates");
-        advance(simulation, state, 120, 0.0, -1.0, 0.0);
+        advance(world, state, 120, 0.0, -1.0, 0.0);
         require(std::abs(state.feetPosition[2] -
                          (state.feetPosition[0] - origin) * 0.1) < 0.02,
                 "Walking must descend terrain without falling through it");
 
         bool invalidRejected = false;
         try {
-            simulation.updateOnFoot(state, std::numeric_limits<double>::quiet_NaN(),
+            world.updateOnFoot(state, std::numeric_limits<double>::quiet_NaN(),
                                     0.0, 0.0, 0.0, false);
         } catch (const std::invalid_argument&) {
             invalidRejected = true;
