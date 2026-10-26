@@ -5,6 +5,7 @@
 #include "render/map/MapSceneLoader.h"
 #include "render/AssetRequestManager.h"
 #include "config/HumanConfigLoader.h"
+#include "core/Utf8Path.h"
 
 #include <cmath>
 
@@ -455,7 +456,7 @@ MapRenderer::createTrafficActor(int splineId, std::string modelPath, double spee
 }
 
 void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfigPath) {
-    const std::string cacheKey = humanConfigPath.lexically_normal().generic_string();
+    const std::string cacheKey = openbus::pathToUtf8(humanConfigPath.lexically_normal());
     if (impl_->humanTrafficModels.contains(cacheKey) ||
         impl_->pendingHumanTrafficModels.contains(cacheKey) ||
         impl_->failedHumanTrafficModels.contains(cacheKey)) {
@@ -470,13 +471,13 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
     pending.configurationRequest = assetRequests_->submit([humanConfigPath] {
         if (!std::filesystem::is_regular_file(humanConfigPath)) {
             throw std::runtime_error("Human traffic configuration is missing: " +
-                                     humanConfigPath.string());
+                                     openbus::pathToUtf8(humanConfigPath));
         }
         const openbus::config::HumanConfig humanConfig =
             openbus::config::loadHumanConfig(humanConfigPath);
         if (humanConfig.diagnostics.hasErrors() || humanConfig.modelConfigPath.empty()) {
             throw std::runtime_error("Human traffic configuration is invalid: " +
-                                     humanConfigPath.string());
+                                     openbus::pathToUtf8(humanConfigPath));
         }
         const auto geometry =
             std::find_if(humanConfig.numericRecords.begin(), humanConfig.numericRecords.end(),
@@ -488,13 +489,13 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
                          });
         if (geometry == humanConfig.numericRecords.end()) {
             throw std::runtime_error("Human traffic configuration has no valid [humangeom]: " +
-                                     humanConfigPath.string());
+                                     openbus::pathToUtf8(humanConfigPath));
         }
         const std::filesystem::path modelConfigPath =
             openbus::assets::resolveReferencedPath(humanConfigPath, humanConfig.modelConfigPath);
         if (!std::filesystem::is_regular_file(modelConfigPath)) {
             throw std::runtime_error("Human traffic model configuration is missing: " +
-                                     modelConfigPath.string());
+                                     openbus::pathToUtf8(modelConfigPath));
         }
         openbus::scripting::SceneryObject variables;
         ModelConfig configuration = loadModelConfig(modelConfigPath, modelConfigPath.parent_path(),
@@ -509,14 +510,14 @@ void MapRenderer::loadHumanTrafficModel(const std::filesystem::path& humanConfig
                                      diagnostic.keyword + "] " + diagnostic.message;
             }
             throw std::runtime_error("Human traffic model configuration is invalid: " +
-                                     modelConfigPath.string() + diagnosticDetails);
+                                     openbus::pathToUtf8(modelConfigPath) + diagnosticDetails);
         }
         const bool hasFirstLodMesh = std::any_of(
             configuration.parts.begin(), configuration.parts.end(),
             [](const ModelPart& part) { return part.lodIndex == 0 && !part.objPath.empty(); });
         if (!hasFirstLodMesh) {
             throw std::runtime_error("Human traffic model has no first-LOD meshes: " +
-                                     modelConfigPath.string());
+                                     openbus::pathToUtf8(modelConfigPath));
         }
         return Impl::HumanModelConfiguration{
             modelConfigPath,
@@ -585,8 +586,9 @@ bool MapRenderer::finishHumanTrafficModelLoad(const std::string& cacheKey) const
             }
         }
         if (pendingModel.meshRequests.empty()) {
-            throw std::runtime_error("Human traffic model has no first-LOD meshes: " +
-                                     pendingModel.configuration->modelConfigPath.string());
+            throw std::runtime_error(
+                "Human traffic model has no first-LOD meshes: " +
+                openbus::pathToUtf8(pendingModel.configuration->modelConfigPath));
         }
     }
     for (const auto& request : pendingModel.meshRequests) {
@@ -622,21 +624,21 @@ void MapRenderer::loadHumanTrafficModelNow(
     double handZHeightFraction, double neckYHeightFraction, double neckZHeightFraction,
     double waistYHeightFraction, double waistZHeightFraction, double fingerXHeightFraction,
     double fingerZHeightFraction) const {
-    const std::string cacheKey = humanConfigPath.lexically_normal().generic_string();
+    const std::string cacheKey = openbus::pathToUtf8(humanConfigPath.lexically_normal());
     if (impl_->humanTrafficModels.contains(cacheKey)) {
         return;
     }
     const std::filesystem::path modelRoot = modelConfigPath.parent_path();
     for (const ConfigurationDiagnostic& diagnostic : configuration.diagnostics.entries) {
         if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error) {
-            gameLog.Log("Human model configuration error: " + modelConfigPath.generic_string() +
+            gameLog.Log("Human model configuration error: " + openbus::pathToUtf8(modelConfigPath) +
                         " line=" + std::to_string(diagnostic.line) + " [" + diagnostic.keyword +
                         "] " + diagnostic.message);
         }
     }
     if (configuration.diagnostics.hasErrors()) {
         throw std::runtime_error("Human traffic model configuration is invalid: " +
-                                 modelConfigPath.string());
+                                 openbus::pathToUtf8(modelConfigPath));
     }
 
     struct ParsedHumanPart {
@@ -669,7 +671,7 @@ void MapRenderer::loadHumanTrafficModelNow(
             }
             if (!mesh) {
                 gameLog.Log("Skipping unsupported or empty human model mesh: " +
-                            part.objPath.generic_string());
+                            openbus::pathToUtf8(part.objPath));
                 continue;
             }
             for (const ObjPosition& position : mesh->positions) {
@@ -681,14 +683,14 @@ void MapRenderer::loadHumanTrafficModelNow(
             }
             parsedParts.push_back({&part, std::move(mesh)});
         } catch (const std::exception& error) {
-            gameLog.Log("Could not load human model mesh " + part.objPath.generic_string() + ": " +
-                        error.what());
+            gameLog.Log("Could not load human model mesh " + openbus::pathToUtf8(part.objPath) +
+                        ": " + error.what());
         }
     }
     if (parsedParts.empty() || !std::isfinite(minimum[0]) || !std::isfinite(minimum[1]) ||
         !std::isfinite(minimum[2])) {
         throw std::runtime_error("Human traffic model has no loadable mesh: " +
-                                 modelConfigPath.string());
+                                 openbus::pathToUtf8(modelConfigPath));
     }
     if (pglGenBuffers == nullptr || pglBindBuffer == nullptr || pglBufferData == nullptr) {
         throw std::runtime_error("OpenGL buffer functions are unavailable for human models");
@@ -698,7 +700,7 @@ void MapRenderer::loadHumanTrafficModelNow(
                                           maximum[2] - minimum[2]};
     if (!std::isfinite(heightMeters) || heightMeters <= 0.0 || extent[2] <= 1.0e-6) {
         throw std::runtime_error("Human traffic model has invalid height geometry: " +
-                                 modelConfigPath.string());
+                                 openbus::pathToUtf8(modelConfigPath));
     }
     const double modelScale = heightMeters / extent[2];
     const std::array<double, 2> horizontalCenter = {(minimum[0] + maximum[0]) * 0.5,
@@ -831,7 +833,7 @@ void MapRenderer::loadHumanTrafficModelNow(
                 findSceneryTexture(modelRoot, modelRoot, impl_->omsiRoot, textureName);
             std::shared_future<std::shared_ptr<Image>> textureImage;
             if (!texturePath.empty()) {
-                const std::string textureKey = texturePath.lexically_normal().generic_string();
+                const std::string textureKey = openbus::pathToUtf8(texturePath.lexically_normal());
                 auto texture = impl_->dynamicSceneryTextures.find(textureKey);
                 if (texture != impl_->dynamicSceneryTextures.end()) {
                     batch.material.texture = texture->second;
@@ -845,7 +847,7 @@ void MapRenderer::loadHumanTrafficModelNow(
                                                if (!TextureLoader::readImage(texturePath, *image)) {
                                                    throw std::runtime_error(
                                                        "Could not decode human model texture: " +
-                                                       texturePath.string());
+                                                       openbus::pathToUtf8(texturePath));
                                                }
                                                return image;
                                            })
@@ -875,7 +877,8 @@ void MapRenderer::loadHumanTrafficModelNow(
                 if (batch.buffer != 0) {
                     pglDeleteBuffers(1, &batch.buffer);
                 }
-                gameLog.Log("Could not upload human model mesh '" + part.objPath.generic_string() +
+                gameLog.Log("Could not upload human model mesh '" +
+                            openbus::pathToUtf8(part.objPath) +
                             "', material=" + std::to_string(materialIndex) +
                             ", OpenGL error=" + std::to_string(uploadError));
                 continue;
@@ -887,7 +890,7 @@ void MapRenderer::loadHumanTrafficModelNow(
     }
     if (batches.empty()) {
         throw std::runtime_error("Human traffic model contains no renderable mesh: " +
-                                 modelConfigPath.string());
+                                 openbus::pathToUtf8(modelConfigPath));
     }
 
     Impl::HumanModelAsset asset;

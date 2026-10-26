@@ -1,6 +1,7 @@
 #include "config/ModelConfigLoader.h"
 
 #include "core/AssetPath.h"
+#include "core/Utf8Path.h"
 #include "config/ConfigurationParser.h"
 #include "core/PerfTrace.h"
 #include "config/ScriptTextureLimits.h"
@@ -213,9 +214,10 @@ std::filesystem::path resolveMesh(const std::filesystem::path& modelRoot,
     if (!modelRoot.parent_path().empty()) {
         roots.push_back(modelRoot.parent_path());
         std::filesystem::path sourceDirectory = modelRoot.filename();
-        const std::string directoryName = sourceDirectory.string();
+        const std::string directoryName = openbus::pathToUtf8(sourceDirectory);
         if (directoryName.size() > 4 && directoryName.substr(directoryName.size() - 4) == "_obj") {
-            sourceDirectory = directoryName.substr(0, directoryName.size() - 4);
+            sourceDirectory =
+                openbus::pathFromUtf8(directoryName.substr(0, directoryName.size() - 4));
             roots.push_back(modelRoot.parent_path() / sourceDirectory);
         }
     }
@@ -411,7 +413,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
     ModelConfig result;
     openbus::config::Reader reader(configPath);
     if (!reader.isOpen()) {
-        result.diagnostics.error(0, "file", "unable to open " + configPath.string());
+        result.diagnostics.error(0, "file", "unable to open " + openbus::pathToUtf8(configPath));
         return result;
     }
 
@@ -560,7 +562,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             } else if (std::filesystem::exists(bundlePath)) {
                 std::filesystem::path relativeMesh = meshValue;
                 relativeMesh.replace_extension(".obj");
-                bundleEntry = lower(relativeMesh.generic_string());
+                bundleEntry = lower(openbus::pathToUtf8(relativeMesh));
                 objPath = bundlePath;
             } else {
                 objPath = resolveMesh(modelRoot, meshValue, true, allowXMesh);
@@ -1258,7 +1260,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     if (std::filesystem::exists(bundlePath)) {
                         std::filesystem::path relativeMesh = collisionMesh.sourcePath;
                         relativeMesh.replace_extension(".obj");
-                        collisionMesh.bundleEntry = lower(relativeMesh.generic_string());
+                        collisionMesh.bundleEntry = lower(openbus::pathToUtf8(relativeMesh));
                         collisionMesh.resolvedPath = bundlePath;
                     }
                 }
@@ -1412,7 +1414,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 state.textureName.empty() ? state.texturePath
                                           : std::filesystem::path(state.textureName);
             const std::string key =
-                lower(texturePath.filename().string()) + "#" + std::to_string(index);
+                lower(openbus::pathToUtf8(texturePath.filename())) + "#" + std::to_string(index);
             part.materialStates[key] = state;
         }
     }

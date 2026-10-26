@@ -3,6 +3,7 @@
 #include "core/AssetPath.h"
 #include "config/ConfigurationParser.h"
 #include "config/ModelConfigLoader.h"
+#include "core/Utf8Path.h"
 #include "core/Variables.h"
 
 #include <algorithm>
@@ -56,7 +57,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
     result.sourcePath = configPath;
     Reader reader(configPath);
     if (!reader.isOpen()) {
-        result.diagnostics.error(0, "file", "unable to open " + configPath.string());
+        result.diagnostics.error(0, "file", "unable to open " + openbus::pathToUtf8(configPath));
         return result;
     }
 
@@ -577,9 +578,7 @@ resolveSceneryObjectModelConfigPath(const SceneryObjectConfig& configuration) {
         return configuration.sourcePath.lexically_normal();
     }
 
-    std::string normalized = configuration.modelPath.generic_string();
-    std::replace(normalized.begin(), normalized.end(), '\\', '/');
-    const std::filesystem::path modelPath(normalized);
+    const std::filesystem::path modelPath = configuration.modelPath.lexically_normal();
     if (modelPath.is_absolute()) {
         return openbus::assets::resolveCaseInsensitivePath(modelPath);
     }

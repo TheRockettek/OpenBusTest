@@ -2,12 +2,14 @@
 
 #include "render/map/MapRendererInternal.h"
 
+#include "core/Utf8Path.h"
+
 namespace openbus::rendering {
 
 void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfigPath,
                                         const openbus::map::MapTrafficPose& pose,
                                         double gaitPhaseRadians, double gaitWeight) const {
-    const std::string cacheKey = humanConfigPath.lexically_normal().generic_string();
+    const std::string cacheKey = openbus::pathToUtf8(humanConfigPath.lexically_normal());
     auto model = impl_->humanTrafficModels.find(cacheKey);
     if (model == impl_->humanTrafficModels.end()) {
         if (impl_->failedHumanTrafficModels.contains(cacheKey)) {
@@ -24,7 +26,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             impl_->pendingHumanTrafficModels.erase(cacheKey);
             impl_->failedHumanTrafficModels.insert(cacheKey);
             gameLog.Log("Could not asynchronously load human traffic model '" +
-                        humanConfigPath.generic_string() + "': " + error.what());
+                        openbus::pathToUtf8(humanConfigPath) + "': " + error.what());
             return;
         }
         model = impl_->humanTrafficModels.find(cacheKey);
@@ -45,7 +47,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
         }
 
         const std::filesystem::path& texturePath = model->second.texturePaths[index];
-        const std::string textureKey = texturePath.lexically_normal().generic_string();
+        const std::string textureKey = openbus::pathToUtf8(texturePath.lexically_normal());
         Impl::ModelBatch& batch = impl_->sceneryBatches[model->second.batchIndexes[index]];
         try {
             const auto existingTexture = impl_->dynamicSceneryTextures.find(textureKey);
@@ -69,7 +71,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             batch.material.textured = batch.material.texture != 0;
         } catch (const std::exception& error) {
             gameLog.Log("Could not asynchronously load human model texture " +
-                        texturePath.generic_string() + ": " + error.what());
+                        openbus::pathToUtf8(texturePath) + ": " + error.what());
         }
         imageRequest = {};
         impl_->humanTextureRequests.erase(textureKey);
@@ -506,10 +508,9 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         const std::filesystem::path texturePath = findSceneryTexture(
             batch.textureObjectRoot, batch.textureModelRoot, impl_->omsiRoot, selectedTexture);
         const std::string textureKey =
-            texturePath.empty()
-                ? lowercasePathComponent(
-                      normalizedAssetPath(selectedTexture).lexically_normal().generic_string())
-                : texturePath.lexically_normal().generic_string();
+            texturePath.empty() ? lowercasePathComponent(openbus::pathToUtf8(
+                                      normalizedAssetPath(selectedTexture).lexically_normal()))
+                                : openbus::pathToUtf8(texturePath.lexically_normal());
         if (impl_->unavailableSceneryTextures.contains(textureKey)) {
             return std::nullopt;
         }
@@ -527,7 +528,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             } catch (const std::exception& error) {
                 impl_->unavailableSceneryTextures.insert(textureKey);
                 gameLog.Log("Could not load map scenery free texture " +
-                            texturePath.generic_string() + ": " + error.what());
+                            openbus::pathToUtf8(texturePath) + ": " + error.what());
                 return std::nullopt;
             }
         }

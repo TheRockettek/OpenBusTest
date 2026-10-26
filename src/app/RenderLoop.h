@@ -95,6 +95,12 @@ struct SpawnBusRequest {
     VehicleSetupOptions setupOptions;
 };
 
+struct TrafficSplineDebugLabel {
+    int splineId = 0;
+    int pathTypeCode = 0;
+    std::array<double, 3> position = {};
+};
+
 class RenderLoop {
   public:
     RenderLoop(int width, int height, const char* title);
@@ -307,10 +313,13 @@ class RenderLoop {
     bool collisionDebugOverlay_ = false;
     bool previousTrafficSplineDebugKeyState_ = false;
     bool trafficSplineDebugOverlay_ = false;
+    Vehicle* trafficDebugHotVehicle_ = nullptr;
+    double trafficDebugHotHoldSeconds_ = 0.0;
     bool trafficSplineDebugBuilt_ = false;
     double trafficSplineDebugOriginX_ = 0.0;
     double trafficSplineDebugOriginY_ = 0.0;
     std::vector<std::pair<int, int>> trafficSplineDebugTiles_;
+    std::vector<TrafficSplineDebugLabel> trafficSplineDebugLabels_;
     std::uint64_t trafficSplineDebugRevision_ = 0;
     bool collisionWireframeBuilt_ = false;
     std::uint64_t collisionWireframeRevision_ = 0;
@@ -386,6 +395,12 @@ class RenderLoop {
         std::shared_ptr<const openbus::map::MapTrafficActor> workerActorTemplate;
         std::optional<std::size_t> blockingActorStateIndex;
         std::optional<std::uint64_t> blockingActorGeneration;
+        openbus::map::MapTrafficBlockReason debugDisplayedBlockReason =
+            openbus::map::MapTrafficBlockReason::None;
+        openbus::map::MapTrafficBlockReason debugCandidateBlockReason =
+            openbus::map::MapTrafficBlockReason::None;
+        double debugCandidateBlockSeconds = 0.0;
+        double debugBlockReasonHoldSeconds = 0.0;
         std::optional<openbus::map::MapTrafficPose> cachedPose;
         double cachedPoseDistanceMeters = 0.0;
         double cachedPoseLateralOffsetMeters = 0.0;

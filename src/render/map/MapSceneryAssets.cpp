@@ -2,6 +2,8 @@
 
 #include "render/map/MapSceneLoader.h"
 
+#include "core/Utf8Path.h"
+
 namespace openbus::rendering {
 
 std::filesystem::path MapSceneLoader::resolveSceneryConfigPath(const std::string& assetPath) const {
@@ -20,7 +22,7 @@ std::filesystem::path MapSceneLoader::resolveSceneryConfigPath(const std::string
 
 const std::vector<std::size_t>&
 MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
-    const std::string cacheKey = configPath.lexically_normal().generic_string();
+    const std::string cacheKey = openbus::pathToUtf8(configPath.lexically_normal());
     const auto cached = sceneryAssetBatches.find(cacheKey);
     if (cached != sceneryAssetBatches.end()) {
         return cached->second;
@@ -69,15 +71,15 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
         const std::filesystem::path& modelConfigPath = prepared.modelConfigPath;
         if (prepared.externalModelConfigMissing) {
             recordSkipped(skipped, "scenery external model configs not found",
-                          configPath.filename().string() +
-                              " model=" + prepared.externalModelConfigPath.generic_string());
+                          openbus::pathToUtf8(configPath.filename()) +
+                              " model=" + openbus::pathToUtf8(prepared.externalModelConfigPath));
         }
         for (const ConfigurationDiagnostic& diagnostic : objectConfiguration.diagnostics.entries) {
             const std::string severity =
                 diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error"
                                                                                 : "warning";
             recordSkipped(skipped, "scenery config diagnostics",
-                          configPath.filename().string() +
+                          openbus::pathToUtf8(configPath.filename()) +
                               " line=" + std::to_string(diagnostic.line) + " [" +
                               diagnostic.keyword + "] " + severity + ": " + diagnostic.message);
         }
@@ -85,7 +87,7 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             for (const PreparedSceneryTreeBatch& preparedTree : prepared.treeBatches) {
                 if (preparedTree.texturePath.empty()) {
                     recordSkipped(skipped, "tree scenery definitions with missing textures",
-                                  configPath.filename().string() +
+                                  openbus::pathToUtf8(configPath.filename()) +
                                       " texture=" + preparedTree.textureName);
                     continue;
                 }
@@ -103,7 +105,7 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                         pglDeleteBuffers(1, &batch.buffer);
                     }
                     recordSkipped(skipped, "tree scenery batches rejected by OpenGL upload",
-                                  configPath.filename().string());
+                                  openbus::pathToUtf8(configPath.filename()));
                     continue;
                 }
                 batchIndexes.push_back(impl_->sceneryBatches.size());
@@ -140,7 +142,7 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                 diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error"
                                                                                 : "warning";
             recordSkipped(skipped, "scenery model config diagnostics",
-                          modelConfigPath.filename().string() +
+                          openbus::pathToUtf8(modelConfigPath.filename()) +
                               " line=" + std::to_string(diagnostic.line) + " [" +
                               diagnostic.keyword + "] " + severity + ": " + diagnostic.message);
         }
@@ -164,7 +166,7 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             }
             if (part.objPath.empty()) {
                 recordSkipped(skipped, "scenery model parts with no resolved mesh path",
-                              modelConfigPath.filename().string());
+                              openbus::pathToUtf8(modelConfigPath.filename()));
                 continue;
             }
             std::string meshExtension = part.objPath.extension().string();
@@ -173,40 +175,42 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                 [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
             if (meshExtension != ".o3d" && meshExtension != ".x") {
                 recordSkipped(skipped, "scenery model parts with unsupported mesh formats",
-                              modelConfigPath.filename().string() + " " +
-                                  part.objPath.generic_string());
+                              openbus::pathToUtf8(modelConfigPath.filename()) + " " +
+                                  openbus::pathToUtf8(part.objPath));
                 continue;
             }
-            const std::string meshKey = part.objPath.lexically_normal().generic_string();
+            const std::string meshKey = openbus::pathToUtf8(part.objPath.lexically_normal());
             const auto preparedMesh = prepared.meshes.find(meshKey);
             if (preparedMesh != prepared.meshes.end() && preparedMesh->second.preparationError) {
                 try {
                     std::rethrow_exception(preparedMesh->second.preparationError);
                 } catch (const std::exception& error) {
                     recordSkipped(skipped, "scenery O3D meshes that failed to prepare",
-                                  part.objPath.filename().string() + ": " + error.what());
+                                  openbus::pathToUtf8(part.objPath.filename()) + ": " +
+                                      error.what());
                 } catch (...) {
                     recordSkipped(skipped, "scenery O3D meshes that failed to prepare",
-                                  part.objPath.filename().string() + ": unknown error");
+                                  openbus::pathToUtf8(part.objPath.filename()) + ": unknown error");
                 }
                 continue;
             }
             if (preparedMesh == prepared.meshes.end() || !preparedMesh->second.parsed) {
                 recordSkipped(skipped, "scenery O3D meshes that failed to parse",
-                              configPath.filename().string() + " " +
-                                  part.objPath.filename().string());
+                              openbus::pathToUtf8(configPath.filename()) + " " +
+                                  openbus::pathToUtf8(part.objPath.filename()));
                 continue;
             }
             const PreparedSceneryMesh& mesh = preparedMesh->second;
             if (mesh.invalidPositionIndices > 0) {
                 recordSkipped(skipped, "scenery mesh vertices with invalid position indices",
-                              part.objPath.filename().string(), mesh.invalidPositionIndices);
+                              openbus::pathToUtf8(part.objPath.filename()),
+                              mesh.invalidPositionIndices);
             }
             for (const auto& [materialIndex, vertices] : mesh.verticesByMaterial) {
                 static_cast<void>(materialIndex);
                 if (vertices.empty()) {
                     recordSkipped(skipped, "empty scenery material batches",
-                                  part.objPath.filename().string());
+                                  openbus::pathToUtf8(part.objPath.filename()));
                 }
             }
         }
@@ -227,17 +231,18 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                 batch.material.textured = true;
             } else if (!preparedBatch.textureName.empty()) {
                 recordSkipped(skipped, "scenery material textures not found",
-                              modelConfigPath.filename().string() + " mesh=" +
-                                  std::filesystem::path(preparedBatch.meshKey).filename().string() +
+                              openbus::pathToUtf8(modelConfigPath.filename()) + " mesh=" +
+                                  openbus::pathToUtf8(
+                                      openbus::pathFromUtf8(preparedBatch.meshKey).filename()) +
                                   " texture=" + preparedBatch.textureName);
             }
             if (!preparedBatch.transmapTextureName.empty()) {
                 if (preparedBatch.transmapTexturePath.empty()) {
-                    recordSkipped(
-                        skipped, "scenery transmap textures not found",
-                        modelConfigPath.filename().string() + " mesh=" +
-                            std::filesystem::path(preparedBatch.meshKey).filename().string() +
-                            " transmap=" + preparedBatch.transmapTextureName);
+                    recordSkipped(skipped, "scenery transmap textures not found",
+                                  openbus::pathToUtf8(modelConfigPath.filename()) + " mesh=" +
+                                      openbus::pathToUtf8(
+                                          openbus::pathFromUtf8(preparedBatch.meshKey).filename()) +
+                                      " transmap=" + preparedBatch.transmapTextureName);
                 } else {
                     batch.material.transmap = getTexture(preparedBatch.transmapTexturePath);
                     batch.material.useTransmap = batch.material.transmap != 0;
@@ -245,11 +250,11 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             }
             if (!preparedBatch.freeTextureName.empty()) {
                 if (preparedBatch.freeTexturePath.empty()) {
-                    recordSkipped(
-                        skipped, "scenery free textures not found",
-                        modelConfigPath.filename().string() + " mesh=" +
-                            std::filesystem::path(preparedBatch.meshKey).filename().string() +
-                            " texture=" + preparedBatch.freeTextureName);
+                    recordSkipped(skipped, "scenery free textures not found",
+                                  openbus::pathToUtf8(modelConfigPath.filename()) + " mesh=" +
+                                      openbus::pathToUtf8(
+                                          openbus::pathFromUtf8(preparedBatch.meshKey).filename()) +
+                                      " texture=" + preparedBatch.freeTextureName);
                 } else {
                     batch.material.freeTexture = getTexture(preparedBatch.freeTexturePath);
                     batch.material.useFreeTexture = batch.material.freeTexture != 0;
@@ -257,13 +262,14 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             }
             if (verboseAlphaMaterials && batch.alphaMode != 0) {
                 gameLog.Log(
-                    "Map scenery alpha material: asset=" + modelConfigPath.filename().string() +
-                    " mesh=" + std::filesystem::path(preparedBatch.meshKey).filename().string() +
+                    "Map scenery alpha material: asset=" +
+                    openbus::pathToUtf8(modelConfigPath.filename()) + " mesh=" +
+                    openbus::pathToUtf8(openbus::pathFromUtf8(preparedBatch.meshKey).filename()) +
                     " index=" + std::to_string(preparedBatch.materialIndex) +
                     " mode=" + std::to_string(batch.alphaMode) + " state=" +
                     (preparedBatch.hasMaterialState ? std::to_string(preparedBatch.stateAlphaMode)
                                                     : "none") +
-                    " texture=" + preparedBatch.texturePath.generic_string());
+                    " texture=" + openbus::pathToUtf8(preparedBatch.texturePath));
             }
             pglGenBuffers(1, &batch.buffer);
             pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
@@ -274,8 +280,9 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                 if (batch.buffer != 0) {
                     pglDeleteBuffers(1, &batch.buffer);
                 }
-                recordSkipped(skipped, "scenery model batches rejected by OpenGL upload",
-                              std::filesystem::path(preparedBatch.meshKey).filename().string());
+                recordSkipped(
+                    skipped, "scenery model batches rejected by OpenGL upload",
+                    openbus::pathToUtf8(openbus::pathFromUtf8(preparedBatch.meshKey).filename()));
                 continue;
             }
             batchIndexes.push_back(impl_->sceneryBatches.size());
@@ -285,7 +292,7 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
         // Unsupported scenery configuration syntax/assets are skipped; they must not prevent
         // the map terrain and supported static scenery from rendering.
         recordSkipped(skipped, "scenery assets rejected while loading",
-                      configPath.filename().string() + ": " + error.what());
+                      openbus::pathToUtf8(configPath.filename()) + ": " + error.what());
     }
     return sceneryAssetBatches.emplace(cacheKey, std::move(batchIndexes)).first->second;
 }
@@ -295,7 +302,7 @@ MapSceneLoader::cachedSplineProfile(const std::filesystem::path& path) {
     if (path.empty()) {
         return nullptr;
     }
-    const std::string key = path.lexically_normal().generic_string();
+    const std::string key = openbus::pathToUtf8(path.lexically_normal());
     if (failedSplineProfiles.contains(key)) {
         return nullptr;
     }
@@ -306,7 +313,7 @@ MapSceneLoader::cachedSplineProfile(const std::filesystem::path& path) {
         } catch (const std::exception& error) {
             failedSplineProfiles.insert(key);
             recordSkipped(skipped, "spline profile files that failed to parse",
-                          path.filename().string() + ": " + error.what());
+                          openbus::pathToUtf8(path.filename()) + ": " + error.what());
             return nullptr;
         }
     }

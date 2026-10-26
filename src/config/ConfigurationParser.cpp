@@ -1,6 +1,7 @@
 #include "config/ConfigurationParser.h"
 
 #include "core/Logger.h"
+#include "core/Utf8Path.h"
 
 #include <charconv>
 #include <cctype>
@@ -118,7 +119,7 @@ void logUnhandledConfigurationTag(const std::string& format,
             normalizedPath = sourcePath.lexically_normal();
         }
     }
-    const std::string location = normalizedPath.generic_string();
+    const std::string location = openbus::pathToUtf8(normalizedPath);
     const std::string key =
         format + "\n" + location + "\n" + std::to_string(line) + "\n" + tag + "\n" + disposition;
     {

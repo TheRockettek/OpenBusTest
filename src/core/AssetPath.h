@@ -8,6 +8,8 @@
 #include <system_error>
 #include <utility>
 
+#include "core/Utf8Path.h"
+
 namespace openbus::assets {
 
 inline std::filesystem::path
@@ -38,15 +40,16 @@ resolveCaseInsensitivePath(const std::filesystem::path& requestedPath) {
         if (!std::filesystem::is_directory(resolved, error) || error) {
             return requested;
         }
-        const std::string targetName = lowercase(component.string());
+        const std::string targetName = lowercase(openbus::pathToUtf8(component));
         std::filesystem::path matchedPath;
         std::filesystem::directory_iterator entry(resolved, error), end;
         for (; !error && entry != end; entry.increment(error)) {
-            if (lowercase(entry->path().filename().string()) != targetName) {
+            if (lowercase(openbus::pathToUtf8(entry->path().filename())) != targetName) {
                 continue;
             }
-            const std::string candidateName = entry->path().filename().string();
-            if (matchedPath.empty() || candidateName < matchedPath.filename().string()) {
+            const std::string candidateName = openbus::pathToUtf8(entry->path().filename());
+            if (matchedPath.empty() ||
+                candidateName < openbus::pathToUtf8(matchedPath.filename())) {
                 matchedPath = entry->path();
             }
         }

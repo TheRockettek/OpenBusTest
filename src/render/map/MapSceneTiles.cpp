@@ -2,6 +2,8 @@
 
 #include "render/map/MapSceneLoader.h"
 
+#include "core/Utf8Path.h"
+
 namespace openbus::rendering {
 
 void MapSceneLoader::applyTerrainAlignment(openbus::map::MapSceneryPose& pose, bool requested,
@@ -58,7 +60,7 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
         if (!configPath.empty()) {
             static_cast<void>(loadSceneryAsset(configPath));
             absoluteHeight = absoluteHeightSceneryAssets.contains(
-                configPath.lexically_normal().generic_string());
+                openbus::pathToUtf8(configPath.lexically_normal()));
         }
         pose.z = openbus::map::mapSceneryWorldHeight(pose.z, ground.value_or(0.0), absoluteHeight);
         applyTerrainAlignment(pose, object.splineTerrainAlign,
@@ -87,7 +89,7 @@ MapSceneLoader::resolveMapSceneryPlacement(int objectId) {
         if (!parentConfig.empty()) {
             static_cast<void>(loadSceneryAsset(parentConfig));
             const auto attachmentDefinitions =
-                sceneryAttachmentPoints.find(parentConfig.lexically_normal().generic_string());
+                sceneryAttachmentPoints.find(openbus::pathToUtf8(parentConfig.lexically_normal()));
             if (attachmentDefinitions != sceneryAttachmentPoints.end() &&
                 !attachmentDefinitions->second.empty()) {
                 const std::optional<std::size_t> attachmentOffset =
@@ -153,7 +155,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
     const int tileX = tileReference.x;
     const int tileY = tileReference.y;
     gameLog.Log("Map content tile " + tileLabel(tileX, tileY) + ": " +
-                tileReference.textPath.string());
+                openbus::pathToUtf8(tileReference.textPath));
     TraceScope tileTrace("map", "MapRenderer.processTile");
     ++tilesProcessed;
     sceneryPlacementsParsed +=
@@ -200,7 +202,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
     if (tile.hasWaterMarker) {
         if (!tileReference.hasWaterFile) {
             recordSkipped(skipped, "[water] markers without a .map.water sidecar",
-                          tileName + " " + tileReference.textPath.filename().string());
+                          tileName + " " + openbus::pathToUtf8(tileReference.textPath.filename()));
         } else if (!preparedRoads.waterError.empty()) {
             recordSkipped(skipped, "invalid .map.water sidecars",
                           tileName + ": " + preparedRoads.waterError);
@@ -239,12 +241,12 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
     }
     if (tile.hasVariableTerrainMarker) {
         recordSkipped(skipped, "[variable_terrain] tiles (dynamic terrain not rendered)",
-                      tileName + " " + tileReference.textPath.filename().string());
+                      tileName + " " + openbus::pathToUtf8(tileReference.textPath.filename()));
     }
     if (tile.hasVariableTerrainLightmapMarker) {
         recordSkipped(skipped,
                       "[variable_terrainlightmap] tiles (dynamic terrain lightmaps not rendered)",
-                      tileName + " " + tileReference.textPath.filename().string());
+                      tileName + " " + openbus::pathToUtf8(tileReference.textPath.filename()));
     }
     const auto addSceneryInstance = [&](const std::string& assetPath,
                                         const std::string& description, double worldX,
@@ -264,7 +266,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             return;
         }
         const std::vector<std::size_t>& batchIndexes = loadSceneryAsset(configPath);
-        const std::string assetKey = configPath.lexically_normal().generic_string();
+        const std::string assetKey = openbus::pathToUtf8(configPath.lexically_normal());
         const bool absoluteHeight = absoluteHeightSceneryAssets.contains(assetKey);
         const double worldZ =
             openbus::map::mapSceneryWorldHeight(localZ, terrainHeightOffset, absoluteHeight);
@@ -325,7 +327,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                                                       path.radius);
                 if (samples.size() < 2) {
                     recordSkipped(skipped, "scenery traffic paths with invalid geometry",
-                                  description + " config=" + configPath.filename().string());
+                                  description +
+                                      " config=" + openbus::pathToUtf8(configPath.filename()));
                     continue;
                 }
                 TrafficPathDebugSegment segment;
@@ -447,12 +450,12 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
         // Editor-only junctions still own the schedules referenced by visible heads.
         if (editorOnlySceneryAssets.contains(assetKey)) {
             recordSkipped(skipped, "map scenery placements marked [onlyeditor]",
-                          description + " config=" + configPath.filename().string());
+                          description + " config=" + openbus::pathToUtf8(configPath.filename()));
             return;
         }
         if (batchIndexes.empty()) {
             recordSkipped(skipped, "scenery placements with no renderable asset batches",
-                          description + " config=" + configPath.filename().string());
+                          description + " config=" + openbus::pathToUtf8(configPath.filename()));
         } else {
             ++impl_->sceneryObjectCount;
             ++impl_->sceneryObjectsByTile[tileKey(tileX, tileY)];
@@ -581,7 +584,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
     for (const std::string& profileKey : preparedRoads.editorOnlyProfileKeys) {
         if (editorOnlySplineProfiles.insert(profileKey).second) {
             recordSkipped(skipped, "editor-only spline profiles",
-                          std::filesystem::path(profileKey).filename().string());
+                          openbus::pathToUtf8(openbus::pathFromUtf8(profileKey).filename()));
         }
     }
     for (const auto& [path, image] : preparedRoads.decodedTextures) {

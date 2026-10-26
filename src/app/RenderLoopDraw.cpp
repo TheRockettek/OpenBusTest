@@ -33,6 +33,35 @@ struct ActiveTrafficSplineRoute {
     openbus::map::MapTrafficRouteSegment firstSegment;
 };
 
+std::optional<ImVec2> projectTrafficDebugLabel(const openbus::rendering::Matrix4& viewProjection,
+                                               const std::array<double, 3>& position,
+                                               const ImVec2& displaySize) {
+    const double x = position[0];
+    const double y = position[1];
+    const double z = position[2];
+    const double clipX =
+        viewProjection[0] * x + viewProjection[4] * y + viewProjection[8] * z + viewProjection[12];
+    const double clipY =
+        viewProjection[1] * x + viewProjection[5] * y + viewProjection[9] * z + viewProjection[13];
+    const double clipZ =
+        viewProjection[2] * x + viewProjection[6] * y + viewProjection[10] * z + viewProjection[14];
+    const double clipW =
+        viewProjection[3] * x + viewProjection[7] * y + viewProjection[11] * z + viewProjection[15];
+    if (!std::isfinite(clipW) || clipW <= 1.0e-6) {
+        return std::nullopt;
+    }
+    const double normalizedX = clipX / clipW;
+    const double normalizedY = clipY / clipW;
+    const double normalizedZ = clipZ / clipW;
+    if (!std::isfinite(normalizedX) || !std::isfinite(normalizedY) || !std::isfinite(normalizedZ) ||
+        normalizedX < -1.0 || normalizedX > 1.0 || normalizedY < -1.0 || normalizedY > 1.0 ||
+        normalizedZ < -1.0 || normalizedZ > 1.0) {
+        return std::nullopt;
+    }
+    return ImVec2(static_cast<float>((normalizedX * 0.5 + 0.5) * displaySize.x),
+                  static_cast<float>((-normalizedY * 0.5 + 0.5) * displaySize.y));
+}
+
 void appendPoleCollisionOutline(std::vector<openbus::rendering::PrimitiveVertex>& vertices,
                                 const MapPoleState& pole) {
     const std::array<double, 3> axis = {pole.topPosition[0] - pole.basePosition[0],
@@ -1880,6 +1909,26 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             trafficSplineDebugVertices_.clear();
             const std::vector<ActiveTrafficSplineRoute> activeTrafficRoutes =
                 activeTrafficSplineRoutes(*mapRenderer_, activeTiles);
+            trafficSplineDebugLabels_.clear();
+            trafficSplineDebugLabels_.reserve(activeTrafficRoutes.size());
+            for (const ActiveTrafficSplineRoute& activeRoute : activeTrafficRoutes) {
+                const double splineLength = activeRoute.firstSegment.spline.placement.length;
+                if (!std::isfinite(splineLength) || splineLength <= 0.0) {
+                    continue;
+                }
+                openbus::map::MapTrafficRoute singleSplineRoute;
+                singleSplineRoute.segments.push_back(activeRoute.firstSegment);
+                singleSplineRoute.cumulativeEndDistances.push_back(splineLength);
+                singleSplineRoute.totalLength = splineLength;
+                const auto pose =
+                    openbus::map::sampleMapTrafficRoute(singleSplineRoute, splineLength * 0.5, 0.0);
+                if (pose.has_value()) {
+                    std::array<double, 3> labelPosition = pose->position;
+                    labelPosition[2] += 2.2;
+                    trafficSplineDebugLabels_.push_back(
+                        {activeRoute.splineId, activeRoute.pathTypeCode, labelPosition});
+                }
+            }
             const SceneryTrafficEndpointIndex sceneryEndpoints(
                 *mapRenderer_, activeSceneryTrafficSegments, activeTrafficRoutes);
             appendTrafficSplineDebugVertices(*mapRenderer_, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD,
@@ -2330,6 +2379,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                        << " AI " << std::fixed << std::setprecision(1) << currentAiSimulationRateHz_
                        << " HZ / " << currentAiWorkerTickMilliseconds_ << " MS";
             if (trafficSplineDebugOverlay_) {
+                const double debugDeltaSeconds = std::clamp(frameTimeStep_, 0.0, 0.25);
                 std::size_t clearCount = 0;
                 std::size_t followingCount = 0;
                 std::size_t yieldCount = 0;
@@ -2338,11 +2388,50 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 std::size_t blockedCount = 0;
                 std::size_t junctionCount = 0;
                 std::size_t claimCount = 0;
-                const TrafficVehicleState* hottestBlock = nullptr;
-                for (const TrafficVehicleState& state : trafficVehicles_) {
+                std::size_t deadlockedCount = 0;
+                TrafficVehicleState* hottestBlock = nullptr;
+                TrafficVehicleState* heldHotBlock = nullptr;
+                int hottestRank = 0;
+                for (TrafficVehicleState& state : trafficVehicles_) {
                     if (!state.populationEnabled || state.vehicle == nullptr ||
                         !state.vehicle->mapTrafficTileActive) {
+                        state.debugDisplayedBlockReason = openbus::map::MapTrafficBlockReason::None;
+                        state.debugCandidateBlockReason = openbus::map::MapTrafficBlockReason::None;
+                        state.debugCandidateBlockSeconds = 0.0;
+                        state.debugBlockReasonHoldSeconds = 0.0;
                         continue;
+                    }
+                    const openbus::map::MapTrafficBlockReason currentReason =
+                        state.actor.blockReason;
+                    if (currentReason == state.debugDisplayedBlockReason) {
+                        state.debugCandidateBlockReason = openbus::map::MapTrafficBlockReason::None;
+                        state.debugCandidateBlockSeconds = 0.0;
+                        if (currentReason != openbus::map::MapTrafficBlockReason::None) {
+                            state.debugBlockReasonHoldSeconds = 0.6;
+                        }
+                    } else if (currentReason == openbus::map::MapTrafficBlockReason::None) {
+                        state.debugCandidateBlockReason = openbus::map::MapTrafficBlockReason::None;
+                        state.debugCandidateBlockSeconds = 0.0;
+                        state.debugBlockReasonHoldSeconds =
+                            std::max(0.0, state.debugBlockReasonHoldSeconds - debugDeltaSeconds);
+                        if (state.debugBlockReasonHoldSeconds == 0.0) {
+                            state.debugDisplayedBlockReason =
+                                openbus::map::MapTrafficBlockReason::None;
+                        }
+                    } else {
+                        if (state.debugCandidateBlockReason == currentReason) {
+                            state.debugCandidateBlockSeconds += debugDeltaSeconds;
+                        } else {
+                            state.debugCandidateBlockReason = currentReason;
+                            state.debugCandidateBlockSeconds = 0.0;
+                        }
+                        if (state.debugCandidateBlockSeconds >= 0.15) {
+                            state.debugDisplayedBlockReason = currentReason;
+                            state.debugBlockReasonHoldSeconds = 0.6;
+                            state.debugCandidateBlockReason =
+                                openbus::map::MapTrafficBlockReason::None;
+                            state.debugCandidateBlockSeconds = 0.0;
+                        }
                     }
                     switch (state.actor.blockReason) {
                     case openbus::map::MapTrafficBlockReason::None:
@@ -2371,50 +2460,105 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                          ? 1U
                                          : 0U;
                     claimCount += state.actor.junctionClaimEndMeters.has_value() ? 1U : 0U;
-                    if (state.actor.blockReason != openbus::map::MapTrafficBlockReason::None &&
-                        (hottestBlock == nullptr || state.actor.speedMetersPerSecond <
-                                                        hottestBlock->actor.speedMetersPerSecond)) {
-                        hottestBlock = &state;
+                    deadlockedCount += state.deadlocked ? 1U : 0U;
+                    const bool stoppedWithoutConstraint =
+                        state.actor.speedMetersPerSecond <= 0.1 &&
+                        state.actor.targetSpeedMetersPerSecond <= 0.1;
+                    const int diagnosticRank = state.deadlocked ? 3
+                                               : state.debugDisplayedBlockReason !=
+                                                       openbus::map::MapTrafficBlockReason::None
+                                                   ? 2
+                                               : stoppedWithoutConstraint ? 1
+                                                                          : 0;
+                    if (state.vehicle == trafficDebugHotVehicle_ && diagnosticRank > 0) {
+                        heldHotBlock = &state;
                     }
+                    if (diagnosticRank > hottestRank ||
+                        (diagnosticRank > 0 && diagnosticRank == hottestRank &&
+                         (hottestBlock == nullptr ||
+                          state.actor.speedMetersPerSecond <
+                              hottestBlock->actor.speedMetersPerSecond))) {
+                        hottestBlock = &state;
+                        hottestRank = diagnosticRank;
+                    }
+                }
+                if (heldHotBlock != nullptr && trafficDebugHotHoldSeconds_ > 0.0) {
+                    hottestBlock = heldHotBlock;
+                    trafficDebugHotHoldSeconds_ =
+                        std::max(0.0, trafficDebugHotHoldSeconds_ - debugDeltaSeconds);
+                } else if (hottestBlock != nullptr) {
+                    trafficDebugHotVehicle_ = hottestBlock->vehicle;
+                    trafficDebugHotHoldSeconds_ = 1.5;
+                } else {
+                    trafficDebugHotVehicle_ = nullptr;
+                    trafficDebugHotHoldSeconds_ = 0.0;
                 }
                 statusText << '\n'
                            << "F2 C" << clearCount << " F" << followingCount << " Y" << yieldCount
                            << " R" << reservationCount << " S" << signalCount << " B"
-                           << blockedCount << " J" << junctionCount << " L" << claimCount
-                           << " HOT ";
+                           << blockedCount << " J" << junctionCount << " L" << claimCount << " D"
+                           << deadlockedCount << " HOT~ ";
                 if (hottestBlock == nullptr) {
                     statusText << "NONE";
                 } else {
                     const auto pose = openbus::map::sampleMapTrafficRoute(
                         hottestBlock->actor.route, hottestBlock->actor.distanceMeters,
                         hottestBlock->actor.lateralOffsetMeters);
-                    const char* reason = "BLOCK";
-                    switch (hottestBlock->actor.blockReason) {
-                    case openbus::map::MapTrafficBlockReason::Leader:
-                        reason = "FLW";
-                        break;
-                    case openbus::map::MapTrafficBlockReason::JunctionTraffic:
-                        reason = "YLD";
-                        break;
-                    case openbus::map::MapTrafficBlockReason::CrossingReservation:
-                        reason = "RSV";
-                        break;
-                    case openbus::map::MapTrafficBlockReason::Signal:
-                        reason = "SIG";
-                        break;
-                    case openbus::map::MapTrafficBlockReason::None:
-                        reason = "CLR";
-                        break;
-                    case openbus::map::MapTrafficBlockReason::Vehicle:
-                    case openbus::map::MapTrafficBlockReason::Obstacle:
-                    case openbus::map::MapTrafficBlockReason::Collision:
-                        reason = "BLK";
-                        break;
+                    const char* reason = "DEAD";
+                    if (!hottestBlock->deadlocked) {
+                        reason = hottestBlock->debugDisplayedBlockReason ==
+                                         openbus::map::MapTrafficBlockReason::None
+                                     ? "HOLD"
+                                     : "BLOCK";
+                        switch (hottestBlock->debugDisplayedBlockReason) {
+                        case openbus::map::MapTrafficBlockReason::Leader:
+                            reason = "FLW";
+                            break;
+                        case openbus::map::MapTrafficBlockReason::JunctionTraffic:
+                            reason = "YLD";
+                            break;
+                        case openbus::map::MapTrafficBlockReason::CrossingReservation:
+                            reason = "RSV";
+                            break;
+                        case openbus::map::MapTrafficBlockReason::Signal:
+                            reason = "SIG";
+                            break;
+                        case openbus::map::MapTrafficBlockReason::None:
+                            break;
+                        case openbus::map::MapTrafficBlockReason::Vehicle:
+                        case openbus::map::MapTrafficBlockReason::Obstacle:
+                        case openbus::map::MapTrafficBlockReason::Collision:
+                            reason = "BLK";
+                            break;
+                        }
                     }
                     statusText << 'S' << (pose ? pose->splineId : 0) << ' ' << reason << ' '
                                << std::fixed << std::setprecision(0)
                                << hottestBlock->actor.speedMetersPerSecond * 3.6 << "KMH T"
-                               << hottestBlock->actor.targetSpeedMetersPerSecond * 3.6 << "KMH";
+                               << hottestBlock->actor.targetSpeedMetersPerSecond * 3.6 << "KMH W"
+                               << std::setprecision(1) << hottestBlock->actor.junctionWaitSeconds
+                               << "S";
+                    if (hottestBlock->actor.blockingActor != nullptr) {
+                        const auto blockerPose = openbus::map::sampleMapTrafficRoute(
+                            hottestBlock->actor.blockingActor->route,
+                            hottestBlock->actor.blockingActor->distanceMeters,
+                            hottestBlock->actor.blockingActor->lateralOffsetMeters);
+                        statusText << " BY S" << (blockerPose ? blockerPose->splineId : 0) << ' '
+                                   << std::fixed << std::setprecision(0)
+                                   << hottestBlock->actor.blockingActor->speedMetersPerSecond * 3.6
+                                   << "KMH";
+                    } else if (hottestBlock->actor.blockingObstacleIndex.has_value()) {
+                        statusText << " BY OBS#" << *hottestBlock->actor.blockingObstacleIndex;
+                    }
+                }
+            } else {
+                trafficDebugHotVehicle_ = nullptr;
+                trafficDebugHotHoldSeconds_ = 0.0;
+                for (TrafficVehicleState& state : trafficVehicles_) {
+                    state.debugDisplayedBlockReason = openbus::map::MapTrafficBlockReason::None;
+                    state.debugCandidateBlockReason = openbus::map::MapTrafficBlockReason::None;
+                    state.debugCandidateBlockSeconds = 0.0;
+                    state.debugBlockReasonHoldSeconds = 0.0;
                 }
             }
             if (trafficSplineDebugOverlay_ && mapRenderer_ != nullptr) {
@@ -2530,6 +2674,85 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             }
             ImGui::EndChild();
             ImGui::End();
+
+            ImDrawList* debugLabelDrawList = ImGui::GetForegroundDrawList();
+            const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+            const auto drawWorldLabel = [&](const std::array<double, 3>& worldPosition,
+                                            const std::string& label, ImU32 textColor,
+                                            ImU32 backgroundColor) {
+                const std::optional<ImVec2> screenPosition = projectTrafficDebugLabel(
+                    trafficCameraViewProjection_, worldPosition, displaySize);
+                if (!screenPosition.has_value()) {
+                    return;
+                }
+                const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
+                const ImVec2 topLeft(screenPosition->x - textSize.x * 0.5F - 4.0F,
+                                     screenPosition->y - textSize.y - 4.0F);
+                const ImVec2 bottomRight(screenPosition->x + textSize.x * 0.5F + 4.0F,
+                                         screenPosition->y + 2.0F);
+                debugLabelDrawList->AddRectFilled(topLeft, bottomRight, backgroundColor, 3.0F);
+                debugLabelDrawList->AddText(ImVec2(screenPosition->x - textSize.x * 0.5F,
+                                                   screenPosition->y - textSize.y - 2.0F),
+                                            textColor, label.c_str());
+            };
+            for (const TrafficSplineDebugLabel& label : trafficSplineDebugLabels_) {
+                const char prefix =
+                    label.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN ? 'H' : 'S';
+                drawWorldLabel(label.position,
+                               std::string(1, prefix) + std::to_string(label.splineId),
+                               IM_COL32(255, 255, 255, 255), IM_COL32(15, 30, 38, 210));
+            }
+            for (const TrafficVehicleState& state : trafficVehicles_) {
+                if (!state.populationEnabled || state.vehicle == nullptr ||
+                    !state.vehicle->mapTrafficTileActive) {
+                    continue;
+                }
+                const auto pose = openbus::map::sampleMapTrafficRoute(
+                    state.actor.route, state.actor.distanceMeters, state.actor.lateralOffsetMeters);
+                if (!pose.has_value()) {
+                    continue;
+                }
+                const char* status = "GO";
+                if (state.deadlocked) {
+                    status = "DEAD";
+                } else if (state.actor.blockReason != openbus::map::MapTrafficBlockReason::None) {
+                    switch (state.actor.blockReason) {
+                    case openbus::map::MapTrafficBlockReason::Leader:
+                        status = "FOLLOW";
+                        break;
+                    case openbus::map::MapTrafficBlockReason::Vehicle:
+                    case openbus::map::MapTrafficBlockReason::Obstacle:
+                    case openbus::map::MapTrafficBlockReason::Collision:
+                        status = "BLOCK";
+                        break;
+                    case openbus::map::MapTrafficBlockReason::CrossingReservation:
+                        status = "RESV";
+                        break;
+                    case openbus::map::MapTrafficBlockReason::JunctionTraffic:
+                        status = "YIELD";
+                        break;
+                    case openbus::map::MapTrafficBlockReason::Signal:
+                        status = "SIGNAL";
+                        break;
+                    case openbus::map::MapTrafficBlockReason::None:
+                        break;
+                    }
+                } else if (state.actor.speedMetersPerSecond <= 0.1 &&
+                           state.actor.targetSpeedMetersPerSecond <= 0.1) {
+                    status = "HOLD";
+                }
+                std::ostringstream vehicleLabel;
+                vehicleLabel << status << ' ' << std::fixed << std::setprecision(0)
+                             << state.actor.speedMetersPerSecond * 3.6 << " km/h";
+                const bool isHot = state.vehicle == trafficDebugHotVehicle_;
+                if (isHot) {
+                    vehicleLabel << " HOT";
+                }
+                std::array<double, 3> labelPosition = pose->position;
+                labelPosition[2] += std::max(state.vehicle->trafficHeightMeters, 2.0) + 0.5;
+                drawWorldLabel(labelPosition, vehicleLabel.str(), IM_COL32(255, 255, 255, 255),
+                               isHot ? IM_COL32(185, 72, 8, 235) : IM_COL32(20, 24, 30, 220));
+            }
         }
     }
     {

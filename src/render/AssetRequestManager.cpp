@@ -6,6 +6,7 @@
 
 #include "core/Environment.h"
 #include "core/Logger.h"
+#include "core/Utf8Path.h"
 #include "render/OpenGLFunctions.h"
 
 #include <algorithm>
@@ -145,7 +146,7 @@ AssetRequestManager::QueueStats AssetRequestManager::queueStats() const {
 }
 
 std::string AssetRequestManager::normalizedPathKey(const std::filesystem::path& path) {
-    return lower(std::filesystem::absolute(path).lexically_normal().generic_string());
+    return lower(openbus::pathToUtf8(std::filesystem::absolute(path).lexically_normal()));
 }
 
 std::string AssetRequestManager::textureKey(const std::filesystem::path& root,
@@ -160,8 +161,8 @@ std::string AssetRequestManager::textureAliasKey(const std::filesystem::path& ro
                                                  const std::string& name) {
     const std::string normalizedRoot = normalizedPathKey(root);
     const std::filesystem::path identity = path.empty() ? std::filesystem::path(name) : path;
-    return normalizedRoot + "|" + lower(identity.parent_path().generic_string()) + "/" +
-           lower(identity.stem().generic_string());
+    return normalizedRoot + "|" + lower(openbus::pathToUtf8(identity.parent_path())) + "/" +
+           lower(openbus::pathToUtf8(identity.stem()));
 }
 
 std::shared_future<std::shared_ptr<ParsedObj>>
@@ -335,13 +336,13 @@ void AssetRequestManager::requestDxt5Fallback(const std::shared_ptr<TextureReque
                     std::lock_guard<std::mutex> lock(request->mutex);
                     request->image = std::make_shared<Image>(std::move(image));
                 } else {
-                    gameLog.Log("DXT5 fallback decode failed: " + path.generic_string());
+                    gameLog.Log("DXT5 fallback decode failed: " + openbus::pathToUtf8(path));
                 }
             } catch (const std::exception& error) {
-                gameLog.Log("DXT5 fallback decode failed for " + path.generic_string() + ": " +
+                gameLog.Log("DXT5 fallback decode failed for " + openbus::pathToUtf8(path) + ": " +
                             error.what());
             } catch (...) {
-                gameLog.Log("DXT5 fallback decode failed for " + path.generic_string() +
+                gameLog.Log("DXT5 fallback decode failed for " + openbus::pathToUtf8(path) +
                             " with an unknown error");
             }
             std::lock_guard<std::mutex> lock(request->mutex);

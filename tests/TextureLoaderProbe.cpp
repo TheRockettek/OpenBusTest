@@ -12,11 +12,10 @@
 #include <limits>
 #include <vector>
 
-
 namespace {
 
-void writeU32(std::array<std::uint8_t, 128>& header, std::size_t offset,
-              std::uint32_t value) {
+template <std::size_t Size>
+void writeU32(std::array<std::uint8_t, Size>& header, std::size_t offset, std::uint32_t value) {
     header[offset + 0] = static_cast<std::uint8_t>(value & 0xffU);
     header[offset + 1] = static_cast<std::uint8_t>((value >> 8) & 0xffU);
     header[offset + 2] = static_cast<std::uint8_t>((value >> 16) & 0xffU);
@@ -79,6 +78,32 @@ int main() {
                          std::numeric_limits<std::size_t>::max(), 2, 4, bufferSize),
                      "texture buffer overflow");
 
+    openbus::rendering::Image unicodeImage;
+    const std::filesystem::path unicodeImagePath =
+        std::filesystem::temp_directory_path() / std::filesystem::path(u8"openbus_\u4e2d.bmp");
+    std::array<std::uint8_t, 58> unicodeBmp = {};
+    unicodeBmp[0] = 'B';
+    unicodeBmp[1] = 'M';
+    writeU32(unicodeBmp, 2, static_cast<std::uint32_t>(unicodeBmp.size()));
+    writeU32(unicodeBmp, 10, 54);
+    writeU32(unicodeBmp, 14, 40);
+    writeU32(unicodeBmp, 18, 1);
+    writeU32(unicodeBmp, 22, 1);
+    unicodeBmp[26] = 1;
+    unicodeBmp[28] = 16;
+    writeU32(unicodeBmp, 34, 4);
+    unicodeBmp[54] = 0xff;
+    unicodeBmp[55] = 0xff;
+    valid &= require(writeBytes(unicodeImagePath,
+                                std::vector<std::uint8_t>(unicodeBmp.begin(), unicodeBmp.end())),
+                     "write Unicode-named image");
+    valid &= require(openbus::rendering::TextureLoader::readImage(unicodeImagePath, unicodeImage),
+                     "stb image loader reads an image with a Unicode path");
+    valid &= require(unicodeImage.width == 1 && unicodeImage.height == 1 &&
+                         unicodeImage.rgba.size() == 4,
+                     "Unicode-named image dimensions are decoded");
+    openbus::probe::removeProbeFile(unicodeImagePath);
+
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() / "openbus_invalid_dimensions.dds";
     std::array<std::uint8_t, 128> header = {};
@@ -125,8 +150,8 @@ int main() {
     valid &= require(openbus::rendering::TextureLoader::readImage(alphaMaskPath, image),
                      "DDS alpha-only ground-texture mask loads");
     valid &= require(image.width == 2 && image.height == 1 && image.rgba.size() == 8 &&
-                         image.rgba[0] == 255 && image.rgba[1] == 255 &&
-                         image.rgba[2] == 255 && image.rgba[3] == 255 && image.rgba[7] == 0,
+                         image.rgba[0] == 255 && image.rgba[1] == 255 && image.rgba[2] == 255 &&
+                         image.rgba[3] == 255 && image.rgba[7] == 0,
                      "DDS alpha-only mask preserves coverage values");
     openbus::probe::removeProbeFile(alphaMaskPath);
 
@@ -148,8 +173,8 @@ int main() {
         std::ofstream output(dxt1Path, std::ios::binary);
         output.write(reinterpret_cast<const char*>(dxt1Header.data()),
                      static_cast<std::streamsize>(dxt1Header.size()));
-        constexpr std::array<std::uint8_t, 8> block = {
-            0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+        constexpr std::array<std::uint8_t, 8> block = {0x00, 0x00, 0xff, 0xff,
+                                                       0xff, 0xff, 0xff, 0xff};
         output.write(reinterpret_cast<const char*>(block.data()),
                      static_cast<std::streamsize>(block.size()));
     }
@@ -178,8 +203,8 @@ int main() {
         std::ofstream output(dxt4Path, std::ios::binary);
         output.write(reinterpret_cast<const char*>(dxt4Header.data()),
                      static_cast<std::streamsize>(dxt4Header.size()));
-        constexpr std::array<std::uint8_t, 16> block = {
-            255, 0, 0, 0, 0, 0, 0, 0, 0x00, 0xf8, 0xe0, 0x07, 0, 0, 0, 0};
+        constexpr std::array<std::uint8_t, 16> block = {255,  0,    0,    0,    0, 0, 0, 0,
+                                                        0x00, 0xf8, 0xe0, 0x07, 0, 0, 0, 0};
         output.write(reinterpret_cast<const char*>(block.data()),
                      static_cast<std::streamsize>(block.size()));
     }
@@ -204,22 +229,22 @@ int main() {
     dxt5Header[86] = 'T';
     dxt5Header[87] = '5';
     std::vector<std::uint8_t> dxt5Bytes(dxt5Header.begin(), dxt5Header.end());
-    constexpr std::array<std::uint8_t, 16> dxt5Block = {
-        200, 100, 0x3a, 0, 0, 0, 0, 0, 0x00, 0xf8, 0xe0, 0x07, 0, 0, 0, 0};
+    constexpr std::array<std::uint8_t, 16> dxt5Block = {200,  100,  0x3a, 0,    0, 0, 0, 0,
+                                                        0x00, 0xf8, 0xe0, 0x07, 0, 0, 0, 0};
     dxt5Bytes.insert(dxt5Bytes.end(), dxt5Block.begin(), dxt5Block.end());
     valid &= require(writeBytes(dxt5Path, dxt5Bytes), "write DXT5 DDS fixture");
     valid &= require(openbus::rendering::TextureLoader::readImage(dxt5Path, image),
                      "DXT5 interpolated-alpha DDS loads");
     valid &= require(image.width == 4 && image.height == 4 && image.rgba.size() == 64 &&
-                         image.rgba[0] == 255 && image.rgba[1] == 0 &&
-                         image.rgba[3] == 185 && image.rgba[7] == 114,
+                         image.rgba[0] == 255 && image.rgba[1] == 0 && image.rgba[3] == 185 &&
+                         image.rgba[7] == 114,
                      "DXT5 alpha selectors decode interpolated values");
     openbus::rendering::CompressedDds compressedDds;
-    valid &= require(openbus::rendering::TextureLoader::isSafeCompressedDds(dxt5Path) &&
-                         openbus::rendering::TextureLoader::isDxt5Dds(dxt5Path) &&
-                         openbus::rendering::TextureLoader::readDxt5CompressedDds(
-                             dxt5Path, compressedDds),
-                     "DXT5 DDS compressed texture path accepts a valid block");
+    valid &= require(
+        openbus::rendering::TextureLoader::isSafeCompressedDds(dxt5Path) &&
+            openbus::rendering::TextureLoader::isDxt5Dds(dxt5Path) &&
+            openbus::rendering::TextureLoader::readDxt5CompressedDds(dxt5Path, compressedDds),
+        "DXT5 DDS compressed texture path accepts a valid block");
     valid &= require(compressedDds.width == 4 && compressedDds.height == 4 &&
                          compressedDds.levels.size() == 1 &&
                          compressedDds.levels[0] ==
@@ -291,15 +316,14 @@ int main() {
     const std::filesystem::path pngPath =
         std::filesystem::temp_directory_path() / "openbus_rgba.png";
     const std::vector<std::uint8_t> pngBytes = {
-         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-         0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-         0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
-         0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xe0, 0x51, 0xb2, 0xf0,
-         0x03, 0x00, 0x01, 0x59, 0x00, 0xb5, 0x46, 0xcb, 0x2a, 0x07, 0x00, 0x00,
-         0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+        0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+        0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78,
+        0x9c, 0x63, 0xe0, 0x51, 0xb2, 0xf0, 0x03, 0x00, 0x01, 0x59, 0x00, 0xb5, 0x46, 0xcb,
+        0x2a, 0x07, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
     valid &= require(writeBytes(pngPath, pngBytes), "write PNG fixture");
-    valid &= require(openbus::rendering::TextureLoader::readImage(pngPath, image),
-                     "PNG image loads");
+    valid &=
+        require(openbus::rendering::TextureLoader::readImage(pngPath, image), "PNG image loads");
     valid &= require(image.width == 1 && image.height == 1 && image.rgba.size() == 4 &&
                          image.rgba[0] == 12 && image.rgba[1] == 34 && image.rgba[2] == 56 &&
                          image.rgba[3] == 78,
@@ -309,26 +333,25 @@ int main() {
     const std::filesystem::path jpegPath =
         std::filesystem::temp_directory_path() / "openbus_grayscale.jpg";
     const std::vector<std::uint8_t> jpegBytes = {
-        0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00,
-        0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x03, 0x02, 0x02,
-        0x03, 0x02, 0x02, 0x03, 0x03, 0x03, 0x03, 0x04, 0x03, 0x03, 0x04, 0x05, 0x08, 0x05,
-        0x05, 0x04, 0x04, 0x05, 0x0a, 0x07, 0x07, 0x06, 0x08, 0x0c, 0x0a, 0x0c, 0x0c, 0x0b,
-        0x0a, 0x0b, 0x0b, 0x0d, 0x0e, 0x12, 0x10, 0x0d, 0x0e, 0x11, 0x0e, 0x0b, 0x0b, 0x10,
-        0x16, 0x10, 0x11, 0x13, 0x14, 0x15, 0x15, 0x15, 0x0c, 0x0f, 0x17, 0x18, 0x16, 0x14,
-        0x18, 0x12, 0x14, 0x15, 0x14, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x04, 0x00, 0x04,
-        0x01, 0x01, 0x11, 0x00, 0xff, 0xc4, 0x00, 0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0xff, 0xc4,
-        0x00, 0x14, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00,
-        0x3f, 0x00, 0x2a, 0x7f, 0xff, 0xd9};
+        0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00,
+        0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0x03, 0x02, 0x02, 0x03, 0x02,
+        0x02, 0x03, 0x03, 0x03, 0x03, 0x04, 0x03, 0x03, 0x04, 0x05, 0x08, 0x05, 0x05, 0x04, 0x04,
+        0x05, 0x0a, 0x07, 0x07, 0x06, 0x08, 0x0c, 0x0a, 0x0c, 0x0c, 0x0b, 0x0a, 0x0b, 0x0b, 0x0d,
+        0x0e, 0x12, 0x10, 0x0d, 0x0e, 0x11, 0x0e, 0x0b, 0x0b, 0x10, 0x16, 0x10, 0x11, 0x13, 0x14,
+        0x15, 0x15, 0x15, 0x0c, 0x0f, 0x17, 0x18, 0x16, 0x14, 0x18, 0x12, 0x14, 0x15, 0x14, 0xff,
+        0xc0, 0x00, 0x0b, 0x08, 0x00, 0x04, 0x00, 0x04, 0x01, 0x01, 0x11, 0x00, 0xff, 0xc4, 0x00,
+        0x14, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x07, 0xff, 0xc4, 0x00, 0x14, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xda, 0x00, 0x08,
+        0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0x2a, 0x7f, 0xff, 0xd9};
     valid &= require(writeBytes(jpegPath, jpegBytes), "write JPEG fixture");
-    valid &= require(openbus::rendering::TextureLoader::readImage(jpegPath, image),
-                     "JPEG image loads");
-    valid &= require(image.width == 4 && image.height == 4 && image.rgba.size() == 64 &&
-                         image.rgba[0] > 80 && image.rgba[0] < 112 &&
-                         image.rgba[0] == image.rgba[1] && image.rgba[1] == image.rgba[2] &&
-                         image.rgba[3] == 255,
-                     "JPEG decodes to opaque grayscale RGBA pixels");
+    valid &=
+        require(openbus::rendering::TextureLoader::readImage(jpegPath, image), "JPEG image loads");
+    valid &=
+        require(image.width == 4 && image.height == 4 && image.rgba.size() == 64 &&
+                    image.rgba[0] > 80 && image.rgba[0] < 112 && image.rgba[0] == image.rgba[1] &&
+                    image.rgba[1] == image.rgba[2] && image.rgba[3] == 255,
+                "JPEG decodes to opaque grayscale RGBA pixels");
     openbus::probe::removeProbeFile(jpegPath);
 
     const std::filesystem::path indexedTgaPath =

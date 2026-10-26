@@ -1,10 +1,15 @@
 #include "assets/TextureAssetLoader.h"
 
 #include "core/Logger.h"
+#include "core/Utf8Path.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <exception>
+#include <fstream>
+#include <stdexcept>
+#include <vector>
 
 namespace openbus::rendering {
 
@@ -25,14 +30,28 @@ bool loadTextureAsset(const std::filesystem::path& path, TextureAsset& asset) {
             }
         } else {
             try {
-                gli::texture loadedTexture = gli::load(path.string());
+                std::ifstream input(path, std::ios::binary | std::ios::ate);
+                if (!input) {
+                    throw std::runtime_error("could not open file");
+                }
+                const std::streamoff fileSize = input.tellg();
+                if (fileSize <= 0 ||
+                    static_cast<std::uintmax_t>(fileSize) > MAX_TEXTURE_BUFFER_BYTES) {
+                    throw std::runtime_error("file size is invalid or exceeds the texture limit");
+                }
+                std::vector<char> fileContents(static_cast<std::size_t>(fileSize));
+                input.seekg(0, std::ios::beg);
+                if (!input.read(fileContents.data(), static_cast<std::streamsize>(fileSize))) {
+                    throw std::runtime_error("could not read complete file");
+                }
+                gli::texture loadedTexture = gli::load(fileContents.data(), fileContents.size());
                 if (!loadedTexture.empty() && gli::is_compressed(loadedTexture.format())) {
                     asset.compressedTexture =
                         std::make_shared<gli::texture>(std::move(loadedTexture));
                     return true;
                 }
             } catch (const std::exception& error) {
-                gameLog.Log("GLI failed to load compressed texture " + path.generic_string() +
+                gameLog.Log("GLI failed to load compressed texture " + openbus::pathToUtf8(path) +
                             ": " + error.what());
             }
         }

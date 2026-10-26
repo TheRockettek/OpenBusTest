@@ -47,8 +47,11 @@ int main() {
               "0.025\ndoor_light_1\n0.5\n0.1\n3\n0.01\n"
               "[light_enh]\n-0.998942\n4.05412\n2.33734\n243\n243\n243\n"
               "0.025\ndoor_light_1\n0.5\n0.1\n3\n0.01\nalpha_mask.bmp\n"
-              "[light_enh_2]\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\nEnhanced_Controller\n19\n20\n21\n22\n23\n"
-              "[light_enh_2]\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\nBitmap_Controller\n49\n50\n51\n52\n53\nlight_mask.bmp\n"
+              "[light_enh_2]\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\nEnhanced_"
+              "Controller\n19\n20\n21\n22\n23\n"
+              "[light_enh_2]"
+              "\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\nBitmap_"
+              "Controller\n49\n50\n51\n52\n53\nlight_mask.bmp\n"
               "[texttexture]\nident\nfont\n128\n32\n"
               "[usetexttexture]\n0\n";
     config.close();
@@ -59,16 +62,16 @@ int main() {
     ParsedObj undergroundMesh;
     undergroundMesh.materials.emplace(
         "matl_0", ObjMaterial{.materialIndex = 0, .textureName = "underground subway.dds"});
-    undergroundMesh.materials.emplace("matl_1",
-                                      ObjMaterial{.materialIndex = 1, .textureName = "kerb_low.jpg"});
+    undergroundMesh.materials.emplace(
+        "matl_1", ObjMaterial{.materialIndex = 1, .textureName = "kerb_low.jpg"});
     undergroundMesh.materials.emplace(
         "matl_2", ObjMaterial{.materialIndex = 2, .textureName = "tactile_red.jpg"});
     undergroundMesh.materials.emplace(
         "matl_3", ObjMaterial{.materialIndex = 3, .textureName = "SubwayEntrance.dds"});
-    undergroundMesh.materials.emplace("matl_4",
-                                      ObjMaterial{.materialIndex = 4, .textureName = "Fence_3.dds"});
-    undergroundMesh.materials.emplace("matl_5",
-                                      ObjMaterial{.materialIndex = 5, .textureName = "Fence_3.dds"});
+    undergroundMesh.materials.emplace(
+        "matl_4", ObjMaterial{.materialIndex = 4, .textureName = "Fence_3.dds"});
+    undergroundMesh.materials.emplace(
+        "matl_5", ObjMaterial{.materialIndex = 5, .textureName = "Fence_3.dds"});
     ModelPart undergroundPart;
     ModelMaterialState fenceCutout;
     fenceCutout.materialIndex = 0;
@@ -87,8 +90,8 @@ int main() {
         return 1;
     }
     ParsedObj replacementMesh;
-    replacementMesh.materials.emplace("matl_0", ObjMaterial{.materialIndex = 0,
-                                                              .textureName = "base.dds"});
+    replacementMesh.materials.emplace("matl_0",
+                                      ObjMaterial{.materialIndex = 0, .textureName = "base.dds"});
     ModelPart replacementPart;
     ModelMaterialState replacementState;
     replacementState.materialIndex = 0;
@@ -96,23 +99,21 @@ int main() {
     replacementPart.materialStatesInOrder.push_back(replacementState);
     const auto replacementBindings =
         openbus::map::resolveSceneryMaterialStates(replacementMesh, replacementPart);
-    if (!replacementBindings.contains(0) || replacementBindings.at(0) !=
-                                                  &replacementPart.materialStatesInOrder[0]) {
-        std::cerr << "numeric SCO material override was not retained when it names a replacement texture\n";
+    if (!replacementBindings.contains(0) ||
+        replacementBindings.at(0) != &replacementPart.materialStatesInOrder[0]) {
+        std::cerr << "numeric SCO material override was not retained when it names a replacement "
+                     "texture\n";
         return 1;
     }
-    openbus::rendering::Matrix4 rootModelView = {1.0, 0.0, 0.0, 0.0,
-                                                  0.0, 1.0, 0.0, 0.0,
-                                                  0.0, 0.0, 1.0, 0.0,
-                                                  10.0, 20.0, 30.0, 1.0};
+    openbus::rendering::Matrix4 rootModelView = {1.0, 0.0, 0.0, 0.0, 0.0,  1.0,  0.0,  0.0,
+                                                 0.0, 0.0, 1.0, 0.0, 10.0, 20.0, 30.0, 1.0};
     const std::array<double, 3> lightViewPosition =
         openbus::rendering::interiorLightPositionInViewSpace(rootModelView, {-0.6, -5.0, 7.0});
     if (lightViewPosition != std::array<double, 3>{5.0, 20.6, 37.0}) {
         std::cerr << "interior light model/view coordinate conversion failed\n";
         return 1;
     }
-    const ModelConfig result =
-        loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
+    const ModelConfig result = loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
     const std::filesystem::path addressConfigPath = root / "texture_address.cfg";
     std::ofstream addressConfig(addressConfigPath);
     addressConfig << "[mesh]\ndisplay.obj\n"
@@ -146,9 +147,8 @@ int main() {
                         "[setbone]\nHip\n-10\n";
     pedestrianConfig.close();
     Variables pedestrianVariables(ScriptObjectKind::SceneryObject);
-    const ModelConfig pedestrianResult =
-        loadModelConfig(pedestrianConfigPath, root, ModelConfigKind::SceneryObject,
-                        pedestrianVariables);
+    const ModelConfig pedestrianResult = loadModelConfig(
+        pedestrianConfigPath, root, ModelConfigKind::SceneryObject, pedestrianVariables);
     if (pedestrianResult.diagnostics.hasErrors() || pedestrianResult.parts.size() != 1 ||
         pedestrianResult.parts.front().lodIndex != 0) {
         std::cerr << "negative pedestrian [setbone] indices invalidated the drawable mesh\n";
@@ -159,17 +159,15 @@ int main() {
     freeTextureSCO << "[mesh]\ndisplay.obj\n[matl]\ndisplay.bmp\n0\n"
                       "[matl_freetex]\nbase_logo.bmp\nlogo_path\n";
     freeTextureSCO.close();
-    const SceneryObjectConfig freeTextureSCOConfig =
-        loadSceneryObjectFile(freeTextureSCOPath);
+    const SceneryObjectConfig freeTextureSCOConfig = loadSceneryObjectFile(freeTextureSCOPath);
     if (freeTextureSCOConfig.diagnostics.hasErrors() ||
         !freeTextureSCOConfig.diagnostics.entries.empty()) {
         std::cerr << "SCO [matl_freetex] was reported as an unknown or invalid directive\n";
         return 1;
     }
     Variables freeTextureVariables(ScriptObjectKind::SceneryObject);
-    const ModelConfig freeTextureConfig =
-        loadModelConfig(freeTextureSCOPath, root, ModelConfigKind::SceneryObject,
-                        freeTextureVariables);
+    const ModelConfig freeTextureConfig = loadModelConfig(
+        freeTextureSCOPath, root, ModelConfigKind::SceneryObject, freeTextureVariables);
     if (freeTextureConfig.parts.size() != 1 ||
         freeTextureConfig.parts[0].materialStatesInOrder.size() != 1 ||
         freeTextureConfig.parts[0].materialStatesInOrder[0].freeTextureName != "base_logo.bmp" ||
@@ -203,19 +201,39 @@ int main() {
         std::cerr << "case-mismatched O3D/X model paths were not resolved to the fixture files\n";
         return 1;
     }
-    if (result.enhancedLights.size() != 4 ||
-        !result.enhancedLights[0].textureName.empty() ||
+    const std::filesystem::path unicodeModelRoot =
+        root / std::filesystem::path(u8"Schranke_\u00fc_obj");
+    const std::filesystem::path unicodeSourceRoot =
+        root / std::filesystem::path(u8"Schranke_\u00fc");
+    std::filesystem::create_directories(unicodeModelRoot);
+    std::filesystem::create_directories(unicodeSourceRoot);
+    const std::filesystem::path unicodeMesh = unicodeSourceRoot / "pole.obj";
+    std::ofstream unicodeMeshFile(unicodeMesh);
+    unicodeMeshFile << "mesh fixture\n";
+    unicodeMeshFile.close();
+    const std::filesystem::path unicodeConfigPath = unicodeModelRoot / "model.cfg";
+    std::ofstream unicodeConfig(unicodeConfigPath);
+    unicodeConfig << "[mesh]\npole.o3d\n";
+    unicodeConfig.close();
+    const ModelConfig unicodeConfigResult =
+        loadModelConfig(unicodeConfigPath, unicodeModelRoot, ModelConfigKind::Bus, variables);
+    std::error_code unicodeMeshEquivalenceError;
+    if (unicodeConfigResult.parts.size() != 1 ||
+        !std::filesystem::equivalent(unicodeConfigResult.parts[0].objPath, unicodeMesh,
+                                     unicodeMeshEquivalenceError)) {
+        std::cerr << "Unicode _obj model directory did not resolve its source mesh sibling\n";
+        return 1;
+    }
+    if (result.enhancedLights.size() != 4 || !result.enhancedLights[0].textureName.empty() ||
         result.enhancedLights[1].textureName != "alpha_mask.bmp" ||
         result.enhancedLights[0].parameters.size() != 11 ||
-        result.enhancedLights[1].parameters.size() != 11 ||
-        !result.enhancedLights[2].enhanced ||
+        result.enhancedLights[1].parameters.size() != 11 || !result.enhancedLights[2].enhanced ||
         result.enhancedLights[2].controller != "enhanced_controller" ||
         !result.enhancedLights[2].textureName.empty() ||
         result.enhancedLights[2].parameters.size() != 22 ||
         result.enhancedLights[2].parameters[16] != 17.0 ||
         result.enhancedLights[2].parameters[17] != 19.0 ||
-        result.enhancedLights[2].parameters[21] != 23.0 ||
-        !result.enhancedLights[3].enhanced ||
+        result.enhancedLights[2].parameters[21] != 23.0 || !result.enhancedLights[3].enhanced ||
         result.enhancedLights[3].controller != "bitmap_controller" ||
         result.enhancedLights[3].textureName != "light_mask.bmp" ||
         result.enhancedLights[3].parameters.size() != 22 ||
@@ -243,9 +261,9 @@ int main() {
         duplicateIdentifierConfig.parts[3].animationParent != "Enginebaydoor" ||
         !duplicateIdentifierConfig.parts[3].fixed ||
         !modelPartInheritsAnimationParent(duplicateIdentifierConfig.parts[2].fixed,
-                         duplicateIdentifierConfig.parts[2].animationParent) ||
+                                          duplicateIdentifierConfig.parts[2].animationParent) ||
         modelPartInheritsAnimationParent(duplicateIdentifierConfig.parts[3].fixed,
-                         duplicateIdentifierConfig.parts[3].animationParent)) {
+                                         duplicateIdentifierConfig.parts[3].animationParent)) {
         std::cerr << "reused mesh identifiers were not accepted for variant meshes\n";
         return 1;
     }
@@ -261,9 +279,9 @@ int main() {
     const SceneryObjectConfig labelSCOConfiguration = loadSceneryObjectFile(labelSCOPath);
     Variables labelSceneryVariables(ScriptObjectKind::SceneryObject);
     const ModelConfig labelModelConfiguration =
-        loadModelConfig(labelSCOPath, root, ModelConfigKind::SceneryObject,
-                        labelSceneryVariables);
-    if (labelSCOConfiguration.diagnostics.hasErrors() || labelModelConfiguration.parts.size() != 1 ||
+        loadModelConfig(labelSCOPath, root, ModelConfigKind::SceneryObject, labelSceneryVariables);
+    if (labelSCOConfiguration.diagnostics.hasErrors() ||
+        labelModelConfiguration.parts.size() != 1 ||
         labelModelConfiguration.textTextures.size() != 1 ||
         !labelModelConfiguration.textTextures[0].placementLabel ||
         labelModelConfiguration.textTextures[0].slot != 0 ||
@@ -308,14 +326,13 @@ int main() {
     variants.close();
     const ModelConfig conditional =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
-    if (conditional.diagnostics.hasErrors() ||
-        conditional.absoluteHeight ||
+    if (conditional.diagnostics.hasErrors() || conditional.absoluteHeight ||
         conditional.parts[0].materialStatesInOrder.size() != 3 ||
         conditional.collisionMeshes.size() != 1 ||
         conditional.collisionMeshes[0].sourcePath != "collision.obj" ||
         conditional.collisionMeshes[0].resolvedPath != root / "collision.obj" ||
-        !conditional.collisionMeshes[0].hasPart ||
-        conditional.collisionMeshes[0].partIndex != 0 || !conditional.hasBoundingBox ||
+        !conditional.collisionMeshes[0].hasPart || conditional.collisionMeshes[0].partIndex != 0 ||
+        !conditional.hasBoundingBox ||
         conditional.boundingBox != std::array<double, 6>{2.5, 13.5, 3.66, 0.0, 0.0, 2.23}) {
         std::cerr << "conditional material fixture failed to parse\n";
         return 1;
@@ -330,13 +347,12 @@ int main() {
     twoValueChangeConfig.close();
     const ModelConfig twoValueChange =
         loadModelConfig(twoValueChangePath, root, ModelConfigKind::Bus, variables);
-    const bool warnedForTwoValueChange =
-        std::any_of(twoValueChange.diagnostics.entries.begin(),
-                    twoValueChange.diagnostics.entries.end(),
-                    [](const ConfigurationDiagnostic& diagnostic) {
-                        return diagnostic.severity == ConfigurationDiagnostic::Severity::Warning &&
-                               diagnostic.keyword == "matl_change";
-                    });
+    const bool warnedForTwoValueChange = std::any_of(
+        twoValueChange.diagnostics.entries.begin(), twoValueChange.diagnostics.entries.end(),
+        [](const ConfigurationDiagnostic& diagnostic) {
+            return diagnostic.severity == ConfigurationDiagnostic::Severity::Warning &&
+                   diagnostic.keyword == "matl_change";
+        });
     if (twoValueChange.diagnostics.hasErrors() || !warnedForTwoValueChange ||
         twoValueChange.parts.size() != 2 ||
         twoValueChange.parts[0].materialStatesInOrder.size() != 1 ||
@@ -374,9 +390,8 @@ int main() {
                            "[friendlyname]\nLondon Route Helper Bus Stop\n"
                            "[helparrow]\n[mesh]\ndisplay.obj\n";
     londonCombinedModel.close();
-    const ModelConfig londonCombinedModelConfiguration =
-        loadModelConfig(londonCombinedModelPath, root, ModelConfigKind::SceneryObject,
-                        sceneryVariables);
+    const ModelConfig londonCombinedModelConfiguration = loadModelConfig(
+        londonCombinedModelPath, root, ModelConfigKind::SceneryObject, sceneryVariables);
     bool modelMetadataWarned = false;
     for (const ConfigurationDiagnostic& diagnostic :
          londonCombinedModelConfiguration.diagnostics.entries) {
@@ -385,8 +400,7 @@ int main() {
                               diagnostic.keyword == "helparrow";
     }
     if (londonMetadataConfiguration.diagnostics.hasErrors() || sceneryMetadataWarned ||
-        !londonMetadataConfiguration.helpArrow ||
-        londonMetadataConfiguration.renderType != 4 ||
+        !londonMetadataConfiguration.helpArrow || londonMetadataConfiguration.renderType != 4 ||
         londonCombinedModelConfiguration.parts.size() != 1 || modelMetadataWarned) {
         std::cerr << "London SCO render type or metadata was not retained/ignored correctly\n";
         return 1;
@@ -402,8 +416,7 @@ int main() {
                         "attach_trans\n0\n0.04\n0.8\n"
                         "[new_attachment]\nright\nattach_trans\n1\n2\n3\n";
     attachmentConfig.close();
-    const SceneryObjectConfig attachmentConfiguration =
-        loadSceneryObjectFile(attachmentConfigPath);
+    const SceneryObjectConfig attachmentConfiguration = loadSceneryObjectFile(attachmentConfigPath);
     if (attachmentConfiguration.diagnostics.hasErrors() ||
         attachmentConfiguration.attachmentPoints.size() != 2 ||
         attachmentConfiguration.attachmentPoints[0].name != "left" ||
@@ -465,8 +478,7 @@ int main() {
     treeWithHelper.close();
     const SceneryObjectConfig treeWithHelperConfiguration =
         loadSceneryObjectFile(treeWithHelperPath);
-    if (!treeWithHelperConfiguration.onlyEditor ||
-        treeWithHelperConfiguration.trees.size() != 1 ||
+    if (!treeWithHelperConfiguration.onlyEditor || treeWithHelperConfiguration.trees.size() != 1 ||
         treeWithHelperConfiguration.diagnostics.hasErrors()) {
         std::cerr << "tree definition was not retained with an editor-only helper mesh\n";
         return 1;
@@ -475,8 +487,7 @@ int main() {
     std::ofstream editorOnlySCO(editorOnlySCOPath);
     editorOnlySCO << "[onlyeditor]\n[model]\nmodel.cfg\n";
     editorOnlySCO.close();
-    const SceneryObjectConfig editorOnlyConfiguration =
-        loadSceneryObjectFile(editorOnlySCOPath);
+    const SceneryObjectConfig editorOnlyConfiguration = loadSceneryObjectFile(editorOnlySCOPath);
     if (!editorOnlyConfiguration.onlyEditor || editorOnlyConfiguration.diagnostics.hasErrors()) {
         std::cerr << "SCO [onlyeditor] marker was not retained\n";
         return 1;
@@ -485,8 +496,7 @@ int main() {
     std::ofstream externalModelSCO(externalModelSCOPath);
     externalModelSCO << "[model]\nmodel\\model_parked.cfg\n";
     externalModelSCO.close();
-    const SceneryObjectConfig externalModelSCOConfig =
-        loadSceneryObjectFile(externalModelSCOPath);
+    const SceneryObjectConfig externalModelSCOConfig = loadSceneryObjectFile(externalModelSCOPath);
     if (resolveSceneryObjectModelConfigPath(externalModelSCOConfig) !=
         root / "model" / "model_parked.cfg") {
         std::cerr << "relative SCO [model] reference was not resolved from its config directory\n";
@@ -509,9 +519,8 @@ int main() {
                     "attach_trans\n2\n3\n4\n[mesh]\ntree.x\n";
     xModelConfig.close();
     Variables xSceneryVariables(ScriptObjectKind::SceneryObject);
-    const ModelConfig xModelConfiguration =
-        loadModelConfig(xModelConfigPath, xModelRoot, ModelConfigKind::SceneryObject,
-                        xSceneryVariables);
+    const ModelConfig xModelConfiguration = loadModelConfig(
+        xModelConfigPath, xModelRoot, ModelConfigKind::SceneryObject, xSceneryVariables);
     if (xModelConfiguration.parts.size() != 1 ||
         xModelConfiguration.parts[0].objPath != xModelRoot / "tree.x" ||
         xModelConfiguration.attachmentPoints.size() != 1 ||
@@ -533,9 +542,8 @@ int main() {
                         "[mesh]\ndisplay.obj\n";
     renderTypeConfig.close();
     Variables renderTypeVariables(ScriptObjectKind::SceneryObject);
-    const ModelConfig renderTypeConfiguration =
-        loadModelConfig(renderTypeConfigPath, root, ModelConfigKind::SceneryObject,
-                        renderTypeVariables);
+    const ModelConfig renderTypeConfiguration = loadModelConfig(
+        renderTypeConfigPath, root, ModelConfigKind::SceneryObject, renderTypeVariables);
     if (!renderTypeConfiguration.diagnostics.hasErrors() ||
         renderTypeConfiguration.parts.size() != 6 ||
         !renderTypeConfiguration.parts[0].hasRenderType ||
@@ -559,17 +567,15 @@ int main() {
     std::ofstream renderTypeSCO(renderTypeSCOPath);
     renderTypeSCO << "[rendertype]\non_surface\n[mesh]\ndisplay.obj\n";
     renderTypeSCO.close();
-    const SceneryObjectConfig renderTypeSCOConfiguration =
-        loadSceneryObjectFile(renderTypeSCOPath);
+    const SceneryObjectConfig renderTypeSCOConfiguration = loadSceneryObjectFile(renderTypeSCOPath);
     if (renderTypeSCOConfiguration.diagnostics.hasErrors() ||
         renderTypeSCOConfiguration.renderType != -3) {
         std::cerr << "SCO named render category did not parse consistently\n";
         return 1;
     }
     Variables inlineRenderTypeVariables(ScriptObjectKind::SceneryObject);
-    const ModelConfig inlineRenderTypeConfiguration =
-        loadModelConfig(renderTypeSCOPath, root, ModelConfigKind::SceneryObject,
-                        inlineRenderTypeVariables);
+    const ModelConfig inlineRenderTypeConfiguration = loadModelConfig(
+        renderTypeSCOPath, root, ModelConfigKind::SceneryObject, inlineRenderTypeVariables);
     if (inlineRenderTypeConfiguration.diagnostics.hasErrors() ||
         inlineRenderTypeConfiguration.parts.size() != 1 ||
         inlineRenderTypeConfiguration.parts[0].hasRenderType ||
@@ -581,13 +587,13 @@ int main() {
     const auto& base = conditional.parts[0].materialStatesInOrder[0];
     const auto selected = [&](double mode) -> const ModelMaterialState& {
         variables.set("displaymode", mode);
-        return selectModelMaterial(base, [&](const std::string& name) { return variables.get(name); });
+        return selectModelMaterial(base,
+                                   [&](const std::string& name) { return variables.get(name); });
     };
     if (!base.nightmapTextureName.empty() || !base.lightmapTextureName.empty() ||
         &selected(0) != &base || selected(1).nightmapTextureName != "on.bmp" ||
         selected(1).textTextureIndex != 7 || selected(1).alphaMode != 2 ||
-        selected(0.9).nightmapTextureName != "on.bmp" ||
-        !selected(2).nightmapTextureName.empty() ||
+        selected(0.9).nightmapTextureName != "on.bmp" || !selected(2).nightmapTextureName.empty() ||
         selected(2).lightmapTextureName != "warning.bmp" ||
         selected(2).lightmapStrengthVariable != "brightness" || !selected(2).noZwrite ||
         &selected(-1) != &base || &selected(3) != &base || &selected(0) != &base ||
@@ -616,8 +622,7 @@ int main() {
         lax.parts[0].materialStatesInOrder.size() != 1 ||
         lax.parts[0].materialStatesInOrder[0].materialIndex != 0 ||
         lax.parts[0].materialStatesInOrder[0].environmentTextureName != "envmap.bmp" ||
-        lax.parts[0].animations.size() != 3 ||
-        lax.parts[0].animations[0].variable != "flap1_pos" ||
+        lax.parts[0].animations.size() != 3 || lax.parts[0].animations[0].variable != "flap1_pos" ||
         lax.parts[0].animations[0].originRotation[1] != 90.0 ||
         lax.parts[0].animations[1].variable != "second_rotation" ||
         lax.parts[0].animations[2].variable != "second_translation") {
@@ -669,17 +674,16 @@ int main() {
     if (result.diagnostics.hasErrors() || shadowMarkerWarned || result.parts.size() != 1 ||
         !result.parts[0].isShadow || !result.parts[0].noCollision ||
         result.collisionMeshes.size() != 1 || !result.collisionMeshes[0].hasPart ||
-        !result.hasBoundingBox ||
-        result.scriptTextures.size() != 1 || result.scriptTextures[0].slot != 0 ||
-        result.scriptTextures[0].width != 64 || result.scriptTextures[0].height != 16 ||
-        result.textTextures.size() != 1 || result.textTextures[0].slot != 0 ||
-        result.textTextures[0].values.empty() || result.textTextures[0].values[0] != "ident" ||
-        result.ctcTemplates.size() != 1 || result.ctcTemplates[0].name != "Colorscheme" ||
-        result.ctcTemplates[0].texturePath != "Texture\\Advert" ||
-        result.ctcTextures.size() != 1 || result.ctcTextures[0].slot != "farbschema_tex1" ||
+        !result.hasBoundingBox || result.scriptTextures.size() != 1 ||
+        result.scriptTextures[0].slot != 0 || result.scriptTextures[0].width != 64 ||
+        result.scriptTextures[0].height != 16 || result.textTextures.size() != 1 ||
+        result.textTextures[0].slot != 0 || result.textTextures[0].values.empty() ||
+        result.textTextures[0].values[0] != "ident" || result.ctcTemplates.size() != 1 ||
+        result.ctcTemplates[0].name != "Colorscheme" ||
+        result.ctcTemplates[0].texturePath != "Texture\\Advert" || result.ctcTextures.size() != 1 ||
+        result.ctcTextures[0].slot != "farbschema_tex1" ||
         result.ctcTextures[0].textureName != "3803_l.tga" ||
-        result.parts[0].mouseEvent != "routedisplay" ||
-        sceneryResult.parts.size() != 1 ||
+        result.parts[0].mouseEvent != "routedisplay" || sceneryResult.parts.size() != 1 ||
         sceneryResult.parts[0].visibleVariable != "scenery_lamp" ||
         sceneryResult.parts[0].visibleValue != 1 || !sceneryVariables.has("scenery_lamp") ||
         result.parts[0].interiorLightIndexes != std::array<int, 4>{2, -1, 4, 5} ||
@@ -693,7 +697,8 @@ int main() {
         result.parts[0].materialStatesInOrder[0].textTextureIndex != 0 ||
         result.parts[0].materialStatesInOrder[0].textureChanges.size() != 1 ||
         result.parts[0].materialStatesInOrder[0].textureChanges[0].activationVariable !=
-            "cockpit_lights" || !sceneryResult.absoluteHeight) {
+            "cockpit_lights" ||
+        !sceneryResult.absoluteHeight) {
         std::cerr << "model texture records were not retained and bound\n";
         return 1;
     }

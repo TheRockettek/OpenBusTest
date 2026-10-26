@@ -3,6 +3,7 @@
 #include "core/Environment.h"
 #include "core/Logger.h"
 #include "core/PerfTrace.h"
+#include "core/Utf8Path.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
@@ -18,6 +19,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
@@ -68,9 +70,22 @@ std::uint32_t readU32(const std::vector<std::uint8_t>& data, std::size_t offset)
 }
 
 bool readStbImage(const std::filesystem::path& path, Image& image) {
+    const auto openFile = [&path]() {
+#ifdef _WIN32
+        return _wfopen(path.c_str(), L"rb");
+#else
+        return std::fopen(path.c_str(), "rb");
+#endif
+    };
     int width = 0;
     int height = 0;
-    if (stbi_info(path.string().c_str(), &width, &height, nullptr) == 0) {
+    std::FILE* infoFile = openFile();
+    if (infoFile == nullptr) {
+        return false;
+    }
+    const int infoLoaded = stbi_info_from_file(infoFile, &width, &height, nullptr);
+    std::fclose(infoFile);
+    if (infoLoaded == 0) {
         return false;
     }
     std::size_t rgbaSize = 0;
@@ -79,7 +94,12 @@ bool readStbImage(const std::filesystem::path& path, Image& image) {
                            rgbaSize)) {
         return false;
     }
-    stbi_uc* pixels = stbi_load(path.string().c_str(), &width, &height, nullptr, 4);
+    std::FILE* imageFile = openFile();
+    if (imageFile == nullptr) {
+        return false;
+    }
+    stbi_uc* pixels = stbi_load_from_file(imageFile, &width, &height, nullptr, 4);
+    std::fclose(imageFile);
     if (pixels == nullptr || width <= 0 || height <= 0) {
         if (pixels != nullptr) {
             stbi_image_free(pixels);
@@ -592,7 +612,7 @@ bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
     static const bool verboseTextureReadLogs =
         parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_READ"));
     if (verboseTextureReadLogs) {
-        gameLog.Log("Reading image from path: " + path.string());
+        gameLog.Log("Reading image from path: " + openbus::pathToUtf8(path));
     }
     const std::string extension = lower(path.extension().string());
     if (extension == ".surf") {

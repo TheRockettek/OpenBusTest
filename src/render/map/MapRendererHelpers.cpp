@@ -2,6 +2,8 @@
 
 #include "render/map/MapRendererInternal.h"
 
+#include "core/Utf8Path.h"
+
 namespace openbus::rendering::map_detail {
 
 double squaredDistanceToBounds(double x, double y, double minX, double minY, double maxX,
@@ -62,13 +64,14 @@ std::filesystem::path groundTexturePath(const openbus::map::MapDefinition& map,
 GLuint loadTexture(const std::filesystem::path& path, bool repeat) {
     Image image;
     if (!TextureLoader::readImage(path, image)) {
-        throw std::runtime_error("Could not decode map ground texture: " + path.string());
+        throw std::runtime_error("Could not decode map ground texture: " +
+                                 openbus::pathToUtf8(path));
     }
     try {
         return uploadTextureImage(image, repeat);
     } catch (const std::exception& error) {
-        throw std::runtime_error("Could not upload map ground texture " + path.string() + ": " +
-                                 error.what());
+        throw std::runtime_error("Could not upload map ground texture " +
+                                 openbus::pathToUtf8(path) + ": " + error.what());
     }
 }
 
@@ -125,11 +128,12 @@ std::filesystem::path findCaseInsensitiveFile(const std::filesystem::path& path)
         if (!std::filesystem::is_directory(resolved, error) || error) {
             return {};
         }
-        const std::string targetName = lowercasePathComponent(component.string());
+        const std::string targetName = lowercasePathComponent(openbus::pathToUtf8(component));
         bool matched = false;
         for (std::filesystem::directory_iterator entry(resolved, error), end;
              !error && entry != end; entry.increment(error)) {
-            if (lowercasePathComponent(entry->path().filename().string()) == targetName) {
+            if (lowercasePathComponent(openbus::pathToUtf8(entry->path().filename())) ==
+                targetName) {
                 resolved = entry->path();
                 matched = true;
                 break;
