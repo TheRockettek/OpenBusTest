@@ -170,13 +170,13 @@ ContactMetrics runCurbCrossing(WheelStaticContactSettings settings) {
 
 struct PoleImpactResult {
     double initialAngleRadians = 0.0;
+    bool contactAtFirstBend = false;
     MapPoleState finalState;
 };
 
 PoleImpactResult runPoleImpact(double resistance, double breakAngle) {
     World world;
-    BusSimulation simulation(world, testConfiguration(),
-                             VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    BusSimulation simulation(world, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
     MapPoleCollision pole;
     pole.mapObjectId = 101;
     pole.tileX = 0;
@@ -199,11 +199,19 @@ PoleImpactResult runPoleImpact(double resistance, double breakAngle) {
         }
         if (result.initialAngleRadians == 0.0 && states.front().angleRadians > 0.0) {
             result.initialAngleRadians = states.front().angleRadians;
+            result.contactAtFirstBend =
+                states.front().touchingBus &&
+                std::abs(states.front().radiusMeters - pole.radiusMeters) < 1.0e-9 &&
+                std::abs(
+                    std::hypot(states.front().topPosition[0] - states.front().basePosition[0],
+                               states.front().topPosition[1] - states.front().basePosition[1],
+                               states.front().topPosition[2] - states.front().basePosition[2]) -
+                    4.0) < 1.0e-9;
         }
         if (result.initialAngleRadians > 0.0) {
             ++stepsSinceImpact;
             if (states.front().broken || stepsSinceImpact >= 90) {
-                return {result.initialAngleRadians, states.front()};
+                return {result.initialAngleRadians, result.contactAtFirstBend, states.front()};
             }
         }
     }
@@ -234,6 +242,7 @@ int main() {
         printMetrics("firm-curb", firmCurb);
         printMetrics("compliant-curb", compliantCurb);
         if (bentPole.finalState.broken || bentPole.finalState.angleRadians <= 0.0 ||
+            !bentPole.contactAtFirstBend ||
             !brokenPole.finalState.broken ||
             brokenPole.finalState.angleRadians < std::acos(-1.0) * 0.5 ||
             brokenPole.initialAngleRadians >= brokenPole.finalState.angleRadians ||

@@ -38,7 +38,6 @@ constexpr dReal BODY_ROLL_STIFFNESS = 600000.0;
 constexpr dReal BODY_PITCH_STIFFNESS = 250000.0;
 constexpr dReal BODY_ATTITUDE_DAMPING = 100000.0;
 constexpr dReal MAX_CHASSIS_ANGULAR_SPEED = 2.0;
-constexpr double POLE_BEND_SPEED_RADIANS_PER_SECOND = 4.0;
 constexpr dReal STOP_LATERAL_DAMPING = 90000.0;
 constexpr dReal STOP_YAW_DAMPING = 300000.0;
 constexpr dReal MAX_STEER_ANGLE = 0.45;
@@ -65,9 +64,6 @@ constexpr dReal DOWNSHIFT_RPM = 950.0;
 constexpr dReal SHIFT_LOCKOUT = 0.0;
 constexpr dReal PI = 3.14159265358979323846;
 constexpr dReal MAX_FRAME_SECONDS = 0.25;
-constexpr int ROAD_BUMP_SEGMENTS = 12;
-constexpr int ROAD_INCLINE_SEGMENTS = 128;
-
 bool hasValidMomentOfInertia(const BusConfiguration& configuration) {
     return std::all_of(configuration.momentOfInertia.begin(), configuration.momentOfInertia.end(),
                        [](double value) { return std::isfinite(value) && value > 0.0; });
@@ -193,6 +189,11 @@ struct BusSimulation::Impl {
         dContact contacts[4] = {};
         const int count = dCollide(first, second, 4, &contacts[0].geom, sizeof(dContact));
         for (int index = 0; index < count; ++index) {
+            if (firstIsPole && secondHasBody && !secondIsPole) {
+                world.recordMapPoleContact(first);
+            } else if (secondIsPole && firstHasBody && !firstIsPole) {
+                world.recordMapPoleContact(second);
+            }
             if (firstIsPole && dGeomGetBody(second) == simulation->chassis) {
                 world.recordMapPoleImpact(first, simulation->chassis, contacts[index].geom);
             } else if (secondIsPole && dGeomGetBody(first) == simulation->chassis) {

@@ -835,6 +835,17 @@ the outstanding implementation and validation tasks:
   visual evidence remain incomplete. Road UV V includes a valid parsed v11+
   spline chain offset; continuity and OMSI
   parity still need validation against installed linked spline assets.
+  Road collision now looks beside every referenced profile texture for the
+  appended `.surf` companion (for example, `White.dds.surf`), decodes bitmap
+  red-channel height data, and applies the provisional -2 cm to +2 cm range
+  through UV-based collision subdivision. A generated black/white marking
+  fixture verifies depression, elevation, and collision tessellation; native
+  asset orientation, scale, filtering, and OMSI suspension parity remain to
+  validate. The `C` collision wireframe outlines `.surf`-mapped road triangles
+  in cyan for visual inspection and shows dynamic `[crashmode_pole]` capsules,
+  turning red while in contact. Pole radii are capped to keep collision close
+  to the post shaft. `.cfg` surface behavior and material/friction semantics
+  are not implemented.
 - [~] Ordinary object rotation and same-tile spline attachment/repeater
   placement have runtime paths and parser/placement probes. A deterministic
   probe covers ordinary object x/y/z order, tile-origin translation, rotation

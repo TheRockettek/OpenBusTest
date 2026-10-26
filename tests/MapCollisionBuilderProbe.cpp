@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -45,6 +46,43 @@ void writeU32(std::ofstream& output, std::uint32_t value) {
 
 void writeF32(std::ofstream& output, float value) {
     writeU32(output, std::bit_cast<std::uint32_t>(value));
+}
+
+void writeSurfaceBitmap(const std::filesystem::path& path) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path, std::ios::binary);
+    if (!output) {
+        throw std::runtime_error("failed to write surface-height fixture");
+    }
+    const auto writeU16 = [&](std::uint16_t value) {
+        output.put(static_cast<char>(value & 0xffU));
+        output.put(static_cast<char>((value >> 8) & 0xffU));
+    };
+    const auto writeU32 = [&](std::uint32_t value) {
+        for (unsigned int byte = 0; byte < 4; ++byte) {
+            output.put(static_cast<char>((value >> (byte * 8)) & 0xffU));
+        }
+    };
+    output.put('B');
+    output.put('M');
+    writeU32(62);
+    writeU16(0);
+    writeU16(0);
+    writeU32(54);
+    writeU32(40);
+    writeU32(2);
+    writeU32(1);
+    writeU16(1);
+    writeU16(24);
+    writeU32(0);
+    writeU32(8);
+    writeU32(0);
+    writeU32(0);
+    writeU32(0);
+    writeU32(0);
+    constexpr std::array<unsigned char, 8> row = {0, 0, 0, 255, 255, 255, 0, 0};
+    output.write(reinterpret_cast<const char*>(row.data()),
+                 static_cast<std::streamsize>(row.size()));
 }
 
 void writeJunctionO3D(const std::filesystem::path& path) {
@@ -289,15 +327,90 @@ void runNoCollisionProbe() {
     openbus::probe::removeProbeDirectory(root);
 }
 
+void runSurfaceHeightMapProbe() {
+    using namespace openbus::map;
+    const auto root = openbus::probe::makeProbeDirectory("OpenBusMapSurfaceHeightMapProbe");
+    const auto mapRoot = root / "map";
+    const auto omsiRoot = root / "omsi";
+    const auto profilePath = omsiRoot / "Splines" / "Markings.sli";
+    const auto texturePath = omsiRoot / "Texture" / "Markings" / "White.dds";
+    const auto surfacePath = omsiRoot / "Texture" / "Markings" / "White.dds.surf";
+    writeText(profilePath, "[texture]\nMarkings/White.dds\n[profile]\n0\n"
+                           "[profilepnt]\n-2\n0\n0\n0.1\n"
+                           "[profilepnt]\n2\n0\n1\n0.1\n");
+    writeText(texturePath, "fixture texture");
+    writeSurfaceBitmap(surfacePath);
+
+    MapDefinition map;
+    map.rootPath = mapRoot;
+    MapTileReference tile;
+    tile.textPath = mapRoot / "tile_0_0.map";
+    std::string tileText = splineMapText();
+    const std::string originalProfile = "Splines/Test.sli";
+    const std::size_t profileOffset = tileText.find(originalProfile);
+    require(profileOffset != std::string::npos, "surface fixture has a spline profile path");
+    tileText.replace(profileOffset, originalProfile.size(), "Splines/Markings.sli");
+    writeText(tile.textPath, tileText);
+    map.tiles.push_back(tile);
+
+    const MapRoadCollisionResult result = buildMapSplineCollisionTile(map, omsiRoot, 0, 0);
+    require(result.splineSectionsAdded == 1 && result.meshes.size() == 1,
+            "surface height map retains road marking collision");
+    const StaticCollisionMesh& mesh = result.meshes.front();
+    double minimumHeight = std::numeric_limits<double>::infinity();
+    double maximumHeight = -std::numeric_limits<double>::infinity();
+    for (std::size_t index = 2; index < mesh.vertices.size(); index += 3) {
+        minimumHeight = std::min(minimumHeight, mesh.vertices[index]);
+        maximumHeight = std::max(maximumHeight, mesh.vertices[index]);
+    }
+    require(mesh.vertices.size() > 3 * (11 * 2),
+            "surface height map subdivides road collision to sample texture details");
+    require(!mesh.surfaceHeightMapIndices.empty() && mesh.surfaceHeightMapIndices.size() % 3 == 0 &&
+                std::all_of(mesh.surfaceHeightMapIndices.begin(),
+                            mesh.surfaceHeightMapIndices.end(),
+                            [&](int index) {
+                                return index >= 0 &&
+                                       static_cast<std::size_t>(index) < mesh.vertices.size() / 3;
+                            }),
+            "surface-height-map triangles are separately identified for the collision outline");
+    if (!(minimumHeight < 1.985 && maximumHeight > 2.015)) {
+        throw std::runtime_error("surface-map collision heights are " +
+                                 std::to_string(minimumHeight) + " to " +
+                                 std::to_string(maximumHeight));
+    }
+
+    writeText(tile.textPath,
+              "[version]\n12\n[terrain]\n[spline]\ntest spline\nSplines/Markings.sli\n"
+              "1\n0\n0\n10\n2\n20\n0\n10\n0\n0\n0\n0\n0\n0\nmirror\n");
+    const MapRoadCollisionResult mirroredResult = buildMapSplineCollisionTile(map, omsiRoot, 0, 0);
+    require(mirroredResult.meshes.size() == 1 &&
+                !mirroredResult.meshes.front().surfaceHeightMapIndices.empty(),
+            "mirrored surface-height-map road keeps tagged collision geometry");
+    const StaticCollisionMesh& mirroredMesh = mirroredResult.meshes.front();
+    for (std::size_t index = 0; index + 2 < mirroredMesh.indices.size(); index += 3) {
+        const std::size_t first = static_cast<std::size_t>(mirroredMesh.indices[index]) * 3;
+        const std::size_t second = static_cast<std::size_t>(mirroredMesh.indices[index + 1]) * 3;
+        const std::size_t third = static_cast<std::size_t>(mirroredMesh.indices[index + 2]) * 3;
+        const double firstEdgeX = mirroredMesh.vertices[second] - mirroredMesh.vertices[first];
+        const double firstEdgeY =
+            mirroredMesh.vertices[second + 1] - mirroredMesh.vertices[first + 1];
+        const double secondEdgeX = mirroredMesh.vertices[third] - mirroredMesh.vertices[first];
+        const double secondEdgeY =
+            mirroredMesh.vertices[third + 1] - mirroredMesh.vertices[first + 1];
+        require(firstEdgeX * secondEdgeY - firstEdgeY * secondEdgeX > 0.0,
+                "mirrored .surf collision winding remains upward-facing for ODE");
+    }
+    openbus::probe::removeProbeDirectory(root);
+}
+
 void runProbe() {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("OpenBusMapCollisionBuilderProbe");
     const std::filesystem::path mapRoot = root / "map";
     const std::filesystem::path omsiRoot = root / "omsi";
-    writeText(omsiRoot / "Splines" / "Test.sli",
-              "Test profile\n[texture]\nroad.bmp\n[profile]\n0\n"
-              "[profilepnt]\n-2\n0\n0\n0\n"
-              "[profilepnt]\n2\n0\n1\n0\n");
+    writeText(omsiRoot / "Splines" / "Test.sli", "Test profile\n[texture]\nroad.bmp\n[profile]\n0\n"
+                                                 "[profilepnt]\n-2\n0\n0\n0\n"
+                                                 "[profilepnt]\n2\n0\n1\n0\n");
 
     openbus::map::MapDefinition map;
     map.rootPath = mapRoot;
@@ -502,32 +615,33 @@ void runProbe() {
                   "[collision_mesh]\npole.o3d\n");
         writePoleO3D(omsiRoot / "Sceneryobjects" / "Test" / "pole.o3d");
         const auto poleCollisions = buildMapPoleCollisionTile(poleMap, omsiRoot, 0, 0);
-        require(poleCollisions.size() == 2 && poleCollisions.front().mapObjectId == 77 &&
-                    poleCollisions.front().radiusMeters > 0.0 &&
-                    std::hypot(poleCollisions.front().topPosition[0] -
-                                   poleCollisions.front().basePosition[0],
-                               poleCollisions.front().topPosition[1] -
-                                   poleCollisions.front().basePosition[1],
-                               poleCollisions.front().topPosition[2] -
-                                   poleCollisions.front().basePosition[2]) > 0.1 &&
-                    poleCollisions.front().resistanceRadiansPerTonneMeterPerSecond == 0.25 &&
-                        poleCollisions.front().breakAngleRadians == 1.2 &&
-                        poleCollisions.back().mapObjectId == 78 &&
-                        poleCollisions.back().radiusMeters > 0.0 &&
-                        std::hypot(poleCollisions.back().topPosition[0] -
-                                       poleCollisions.back().basePosition[0],
-                                   poleCollisions.back().topPosition[1] -
-                                       poleCollisions.back().basePosition[1],
-                                   poleCollisions.back().topPosition[2] -
-                                       poleCollisions.back().basePosition[2]) > 0.1,
-                    "[crashmode_pole] produces streamed collisions from mesh or bounding-box bounds");
+        require(
+            poleCollisions.size() == 2 && poleCollisions.front().mapObjectId == 77 &&
+                poleCollisions.front().radiusMeters > 0.0 &&
+                poleCollisions.front().radiusMeters <= 0.12 &&
+                std::hypot(
+                    poleCollisions.front().topPosition[0] - poleCollisions.front().basePosition[0],
+                    poleCollisions.front().topPosition[1] - poleCollisions.front().basePosition[1],
+                    poleCollisions.front().topPosition[2] -
+                        poleCollisions.front().basePosition[2]) > 0.1 &&
+                poleCollisions.front().resistanceRadiansPerTonneMeterPerSecond == 0.25 &&
+                poleCollisions.front().breakAngleRadians == 1.2 &&
+                poleCollisions.back().mapObjectId == 78 &&
+                poleCollisions.back().radiusMeters > 0.0 &&
+                poleCollisions.back().radiusMeters <= 0.12 &&
+                std::hypot(
+                    poleCollisions.back().topPosition[0] - poleCollisions.back().basePosition[0],
+                    poleCollisions.back().topPosition[1] - poleCollisions.back().basePosition[1],
+                    poleCollisions.back().topPosition[2] - poleCollisions.back().basePosition[2]) >
+                    0.1,
+            "[crashmode_pole] produces streamed collisions from mesh or bounding-box bounds");
         const auto poleTileCollision = buildMapRoadCollisionTile(poleMap, omsiRoot, 0, 0);
         require(poleTileCollision.poles.size() == 2 &&
                     poleTileCollision.sceneryCollisionObjectsAdded == 0 &&
                     poleTileCollision.meshes.empty(),
                 "mesh and bounding-box poles stay dynamic instead of entering the static mesh");
 
-    openbus::probe::removeProbeDirectory(root);
+        openbus::probe::removeProbeDirectory(root);
 }
 
 void runSceneryGeometryFallbackProbe() {
@@ -584,6 +698,7 @@ int main() {
         runProbe();
         runLinkedProbe();
         runNoCollisionProbe();
+        runSurfaceHeightMapProbe();
         runSceneryGeometryFallbackProbe();
     } catch (const std::exception& error) {
         std::cerr << "map collision builder probe failed: " << error.what() << '\n';

@@ -33,6 +33,75 @@ struct ActiveTrafficSplineRoute {
     openbus::map::MapTrafficRouteSegment firstSegment;
 };
 
+void appendPoleCollisionOutline(std::vector<openbus::rendering::PrimitiveVertex>& vertices,
+                                const MapPoleState& pole) {
+    const std::array<double, 3> axis = {pole.topPosition[0] - pole.basePosition[0],
+                                        pole.topPosition[1] - pole.basePosition[1],
+                                        pole.topPosition[2] - pole.basePosition[2]};
+    const double length = std::hypot(axis[0], axis[1], axis[2]);
+    if (!std::isfinite(length) || length <= 1.0e-6 || !std::isfinite(pole.radiusMeters) ||
+        pole.radiusMeters <= 0.0) {
+        return;
+    }
+    const std::array<double, 3> up = {axis[0] / length, axis[1] / length, axis[2] / length};
+    const std::array<double, 3> reference = std::abs(up[2]) < 0.9
+                                                ? std::array<double, 3>{0.0, 0.0, 1.0}
+                                                : std::array<double, 3>{1.0, 0.0, 0.0};
+    std::array<double, 3> across = {up[1] * reference[2] - up[2] * reference[1],
+                                    up[2] * reference[0] - up[0] * reference[2],
+                                    up[0] * reference[1] - up[1] * reference[0]};
+    const double acrossLength = std::hypot(across[0], across[1], across[2]);
+    across = {across[0] / acrossLength, across[1] / acrossLength, across[2] / acrossLength};
+    const std::array<double, 3> around = {up[1] * across[2] - up[2] * across[1],
+                                          up[2] * across[0] - up[0] * across[2],
+                                          up[0] * across[1] - up[1] * across[0]};
+    const std::array<float, 3> color = pole.broken        ? std::array<float, 3>{0.5F, 0.5F, 0.5F}
+                                       : pole.touchingBus ? std::array<float, 3>{1.0F, 0.12F, 0.08F}
+                                                          : std::array<float, 3>{0.1F, 0.9F, 1.0F};
+    constexpr std::size_t AXIAL_SEGMENTS = 16;
+    constexpr std::size_t CIRCUMFERENTIAL_SEGMENTS = 16;
+    const auto pointAt = [&](std::size_t axialStep, std::size_t aroundStep) {
+        const double along =
+            length * static_cast<double>(axialStep) / static_cast<double>(AXIAL_SEGMENTS);
+        const double radius = std::min(pole.radiusMeters, length * 0.5);
+        double radialDistance = radius;
+        if (along < radius) {
+            radialDistance =
+                std::sqrt(std::max(0.0, radius * radius - (radius - along) * (radius - along)));
+        } else if (along > length - radius) {
+            const double fromTop = length - along;
+            radialDistance =
+                std::sqrt(std::max(0.0, radius * radius - (radius - fromTop) * (radius - fromTop)));
+        }
+        const double angle = 2.0 * std::numbers::pi * static_cast<double>(aroundStep) /
+                             static_cast<double>(CIRCUMFERENTIAL_SEGMENTS);
+        const double radialAcross = radialDistance * std::cos(angle);
+        const double radialAround = radialDistance * std::sin(angle);
+        return std::array<double, 3>{pole.basePosition[0] + up[0] * along +
+                                         across[0] * radialAcross + around[0] * radialAround,
+                                     pole.basePosition[1] + up[1] * along +
+                                         across[1] * radialAcross + around[1] * radialAround,
+                                     pole.basePosition[2] + up[2] * along +
+                                         across[2] * radialAcross + around[2] * radialAround};
+    };
+    const auto appendLine = [&](const std::array<double, 3>& start,
+                                const std::array<double, 3>& end) {
+        vertices.push_back({static_cast<float>(start[0]), static_cast<float>(start[1]),
+                            static_cast<float>(start[2]), color[0], color[1], color[2]});
+        vertices.push_back({static_cast<float>(end[0]), static_cast<float>(end[1]),
+                            static_cast<float>(end[2]), color[0], color[1], color[2]});
+    };
+    for (std::size_t axialStep = 0; axialStep <= AXIAL_SEGMENTS; ++axialStep) {
+        for (std::size_t aroundStep = 0; aroundStep < CIRCUMFERENTIAL_SEGMENTS; ++aroundStep) {
+            appendLine(pointAt(axialStep, aroundStep),
+                       pointAt(axialStep, (aroundStep + 1) % CIRCUMFERENTIAL_SEGMENTS));
+            if (axialStep < AXIAL_SEGMENTS) {
+                appendLine(pointAt(axialStep, aroundStep), pointAt(axialStep + 1, aroundStep));
+            }
+        }
+    }
+}
+
 std::vector<ActiveTrafficSplineRoute>
 activeTrafficSplineRoutes(const openbus::rendering::MapRenderer& mapRenderer,
                           const std::vector<std::pair<int, int>>& activeTiles) {
@@ -1686,8 +1755,10 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         if (!collisionWireframeBuilt_ || collisionWireframeRevision_ != collisionRevision) {
             TraceScope phase("render", "RenderLoop::draw.collisionDebug.build");
             collisionWireframeVertices_.clear();
+            collisionSurfaceWireframeVertices_.clear();
             const std::vector<StaticCollisionMesh> meshes = world.collisionDebugMeshes();
             std::size_t triangleCount = 0;
+            std::size_t surfaceTriangleCount = 0;
             for (const StaticCollisionMesh& mesh : meshes) {
                 if (mesh.vertices.size() % 3 != 0 || mesh.indices.size() % 3 != 0) {
                     continue;
@@ -1714,12 +1785,41 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         }
                     }
                 }
+                if (mesh.surfaceHeightMapIndices.size() % 3 != 0) {
+                    continue;
+                }
+                surfaceTriangleCount += mesh.surfaceHeightMapIndices.size() / 3;
+                for (std::size_t index = 0; index + 2 < mesh.surfaceHeightMapIndices.size();
+                     index += 3) {
+                    const std::array<int, 3> triangle = {mesh.surfaceHeightMapIndices[index],
+                                                         mesh.surfaceHeightMapIndices[index + 1],
+                                                         mesh.surfaceHeightMapIndices[index + 2]};
+                    for (int edge = 0; edge < 3; ++edge) {
+                        for (const int vertexIndex :
+                             {triangle[static_cast<std::size_t>(edge)],
+                              triangle[static_cast<std::size_t>((edge + 1) % 3)]}) {
+                            if (vertexIndex < 0 || static_cast<std::size_t>(vertexIndex) * 3 + 2 >=
+                                                       mesh.vertices.size()) {
+                                continue;
+                            }
+                            const std::size_t vertexOffset =
+                                static_cast<std::size_t>(vertexIndex) * 3;
+                            collisionSurfaceWireframeVertices_.push_back(
+                                {static_cast<float>(mesh.vertices[vertexOffset]),
+                                 static_cast<float>(mesh.vertices[vertexOffset + 1]),
+                                 static_cast<float>(mesh.vertices[vertexOffset + 2] + 0.03), 0.10F,
+                                 0.90F, 1.0F});
+                        }
+                    }
+                }
             }
             collisionWireframeBuilt_ = true;
             collisionWireframeRevision_ = collisionRevision;
             gameLog.Log("Collision wireframe cached: " + std::to_string(triangleCount) +
                         " triangles across " + std::to_string(meshes.size()) +
-                        " active terrain/road/scenery meshes");
+                        " active terrain/road/scenery meshes; " +
+                        std::to_string(surfaceTriangleCount) +
+                        " road triangles use .surf (cyan outline)");
         }
 
         GLboolean depthWasEnabled = GL_FALSE;
@@ -1734,6 +1834,15 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         openbus::rendering::drawStaticPrimitives(collisionWireframeBuffer_,
                                                  collisionWireframeVertices_, GL_LINES, 1.5F,
                                                  collisionRevision);
+        openbus::rendering::drawStaticPrimitives(collisionSurfaceWireframeBuffer_,
+                                                 collisionSurfaceWireframeVertices_, GL_LINES, 2.5F,
+                                                 collisionRevision);
+        std::vector<openbus::rendering::PrimitiveVertex> poleCollisionVertices;
+        const std::vector<MapPoleState> poles = world.mapPoleStates();
+        for (const MapPoleState& pole : poles) {
+            appendPoleCollisionOutline(poleCollisionVertices, pole);
+        }
+        openbus::rendering::drawPrimitives(poleCollisionVertices, GL_LINES, 2.0F);
         if (playerVehicle_ != nullptr && collision.enabled && !collision.mesh) {
             pushMatrix();
             applyPose(chassis);

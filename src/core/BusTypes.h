@@ -92,6 +92,7 @@ struct StaticCollisionMesh {
     // buffers for the lifetime of the corresponding ODE trimesh.
     std::vector<double> vertices;
     std::vector<int> indices;
+    std::vector<int> surfaceHeightMapIndices;
 };
 
 struct MapPoleCollision {
@@ -109,8 +110,12 @@ struct MapPoleState {
     int mapObjectId = 0;
     int tileX = 0;
     int tileY = 0;
+    std::array<double, 3> basePosition = {};
+    std::array<double, 3> topPosition = {};
+    double radiusMeters = 0.0;
     std::array<double, 3> rotationAxis = {};
     double angleRadians = 0.0;
+    bool touchingBus = false;
     bool broken = false;
 };
 

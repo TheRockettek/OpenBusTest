@@ -314,7 +314,10 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         if (collisionDebugKeyPressed && !previousCollisionDebugKeyState_) {
             collisionDebugOverlay_ = !collisionDebugOverlay_;
             gameLog.Log(std::string("Collision wireframe overlay ") +
-                        (collisionDebugOverlay_ ? "enabled" : "disabled"));
+                        (collisionDebugOverlay_
+                             ? "enabled (cyan = .surf roads/pole colliders, red = pole contact, "
+                               "gray = broken pole)"
+                             : "disabled"));
         }
         previousCollisionDebugKeyState_ = collisionDebugKeyPressed;
     }

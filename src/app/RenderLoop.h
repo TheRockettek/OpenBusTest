@@ -355,6 +355,8 @@ class RenderLoop {
     int framebufferHeight_ = 1;
     openbus::rendering::StaticPrimitiveBuffer collisionWireframeBuffer_;
     std::vector<openbus::rendering::PrimitiveVertex> collisionWireframeVertices_;
+    openbus::rendering::StaticPrimitiveBuffer collisionSurfaceWireframeBuffer_;
+    std::vector<openbus::rendering::PrimitiveVertex> collisionSurfaceWireframeVertices_;
     openbus::rendering::StaticPrimitiveBuffer trafficSplineDebugBuffer_;
     std::vector<openbus::rendering::PrimitiveVertex> trafficSplineDebugVertices_;
     openbus::rendering::StaticPrimitiveBuffer trafficBehaviorDebugBuffer_;

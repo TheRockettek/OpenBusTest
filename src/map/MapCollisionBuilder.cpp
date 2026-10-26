@@ -5,10 +5,12 @@
 #include "map/MapRoadGeometry.h"
 #include "map/MapSplineGeometry.h"
 #include "map/MapSplineProfile.h"
+#include "assets/TextureLoader.h"
 #include "config/ModelConfigLoader.h"
 #include "assets/O3DLoader.h"
 #include "config/SceneryObjectConfigLoader.h"
 #include "core/Variables.h"
+#include "core/Logger.h"
 
 #include <algorithm>
 #include <array>
@@ -28,6 +30,8 @@ namespace openbus::map {
 namespace {
 
 constexpr std::size_t MAX_VERTICES_PER_TILE = 1'000'000;
+constexpr std::size_t MAX_SURFACE_SUBDIVISIONS = 16;
+
 std::filesystem::path normalizedAssetPath(const std::string& source) {
     std::string normalized = source;
     std::replace(normalized.begin(), normalized.end(), '\\', '/');
@@ -55,6 +59,150 @@ std::filesystem::path resolveProfile(const MapDefinition& map,
         }
     }
     return {};
+}
+
+std::filesystem::path resolveSurfaceMap(const MapDefinition& map,
+                                        const std::filesystem::path& omsiRoot,
+                                        const std::filesystem::path& profilePath,
+                                        const std::string& texturePath) {
+    const std::filesystem::path relative = normalizedAssetPath(texturePath);
+    const std::filesystem::path profileRoot = profilePath.parent_path();
+    for (const std::filesystem::path& textureCandidate :
+         {profileRoot / "texture" / relative, profileRoot / relative,
+          omsiRoot / "Texture" / relative, omsiRoot / "texture" / relative, omsiRoot / relative,
+          map.rootPath / relative}) {
+        std::filesystem::path surfaceCandidate = textureCandidate;
+        surfaceCandidate += ".surf";
+        const std::filesystem::path resolved =
+            openbus::assets::resolveCaseInsensitivePath(surfaceCandidate);
+        if (std::filesystem::is_regular_file(resolved)) {
+            return resolved.lexically_normal();
+        }
+    }
+    return {};
+}
+
+std::size_t surfaceSubdivisions(double uvSpan, int pixels) {
+    const double requested = std::ceil(std::abs(uvSpan) * static_cast<double>(pixels) * 2.0);
+    if (!std::isfinite(requested) || requested >= static_cast<double>(MAX_SURFACE_SUBDIVISIONS)) {
+        return MAX_SURFACE_SUBDIVISIONS;
+    }
+    return std::max<std::size_t>(1, static_cast<std::size_t>(requested));
+}
+
+std::uint8_t sampleSurfaceRed(const openbus::rendering::Image& image, double u, double v) {
+    const double wrappedU = u - std::floor(u);
+    const double wrappedV = v - std::floor(v);
+    const double pixelX = wrappedU * static_cast<double>(image.width) - 0.5;
+    const double pixelY = wrappedV * static_cast<double>(image.height) - 0.5;
+    const int x0 = static_cast<int>(std::floor(pixelX));
+    const int y0 = static_cast<int>(std::floor(pixelY));
+    const double xBlend = pixelX - static_cast<double>(x0);
+    const double yBlend = pixelY - static_cast<double>(y0);
+    const auto wrap = [](int value, int size) {
+        const int remainder = value % size;
+        return remainder < 0 ? remainder + size : remainder;
+    };
+    const auto redAt = [&](int x, int y) {
+        const std::size_t offset = (static_cast<std::size_t>(wrap(y, image.height)) *
+                                        static_cast<std::size_t>(image.width) +
+                                    static_cast<std::size_t>(wrap(x, image.width))) *
+                                   4;
+        return static_cast<double>(image.rgba[offset]);
+    };
+    const double top = std::lerp(redAt(x0, y0), redAt(x0 + 1, y0), xBlend);
+    const double bottom = std::lerp(redAt(x0, y0 + 1), redAt(x0 + 1, y0 + 1), xBlend);
+    return static_cast<std::uint8_t>(
+        std::clamp(std::lround(std::lerp(top, bottom, yBlend)), 0L, 255L));
+}
+
+bool applySurfaceHeightMap(MapRoadSectionGeometry& geometry, std::size_t rowCount,
+                           std::size_t columnCount, bool mirrored,
+                           const openbus::rendering::Image& image) {
+    if (image.width <= 0 || image.height <= 0 ||
+        image.rgba.size() !=
+            static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4 ||
+        geometry.vertices.size() != rowCount * columnCount || rowCount < 2 || columnCount < 2) {
+        return false;
+    }
+
+    std::vector<MapRoadVertex> vertices;
+    std::vector<int> indices;
+    for (std::size_t row = 0; row + 1 < rowCount; ++row) {
+        for (std::size_t column = 0; column + 1 < columnCount; ++column) {
+            const MapRoadVertex& topLeft = geometry.vertices[row * columnCount + column];
+            const MapRoadVertex& topRight = geometry.vertices[row * columnCount + column + 1];
+            const MapRoadVertex& bottomLeft = geometry.vertices[(row + 1) * columnCount + column];
+            const MapRoadVertex& bottomRight =
+                geometry.vertices[(row + 1) * columnCount + column + 1];
+            const std::size_t horizontal =
+                surfaceSubdivisions(std::max(std::abs(topRight.textureU - topLeft.textureU),
+                                             std::abs(bottomRight.textureU - bottomLeft.textureU)),
+                                    image.width);
+            const std::size_t longitudinal =
+                surfaceSubdivisions(std::max(std::abs(bottomLeft.textureV - topLeft.textureV),
+                                             std::abs(bottomRight.textureV - topRight.textureV)),
+                                    image.height);
+            if (horizontal + 1 > MAX_VERTICES_PER_TILE / (longitudinal + 1) ||
+                vertices.size() > MAX_VERTICES_PER_TILE - (horizontal + 1) * (longitudinal + 1)) {
+                throw std::length_error("Road surface height map exceeds collision vertex limit");
+            }
+            const std::size_t base = vertices.size();
+            for (std::size_t y = 0; y <= longitudinal; ++y) {
+                const double fy = static_cast<double>(y) / static_cast<double>(longitudinal);
+                for (std::size_t x = 0; x <= horizontal; ++x) {
+                    const double fx = static_cast<double>(x) / static_cast<double>(horizontal);
+                    const auto interpolate = [&](double a, double b, double c, double d) {
+                        return std::lerp(std::lerp(a, b, fx), std::lerp(c, d, fx), fy);
+                    };
+                    MapRoadVertex vertex;
+                    vertex.x = interpolate(topLeft.x, topRight.x, bottomLeft.x, bottomRight.x);
+                    vertex.y = interpolate(topLeft.y, topRight.y, bottomLeft.y, bottomRight.y);
+                    vertex.z = interpolate(topLeft.z, topRight.z, bottomLeft.z, bottomRight.z);
+                    vertex.textureU = interpolate(topLeft.textureU, topRight.textureU,
+                                                  bottomLeft.textureU, bottomRight.textureU);
+                    vertex.textureV = interpolate(topLeft.textureV, topRight.textureV,
+                                                  bottomLeft.textureV, bottomRight.textureV);
+                    const double heightOffset = (static_cast<double>(sampleSurfaceRed(
+                                                     image, vertex.textureU, vertex.textureV)) /
+                                                     255.0 -
+                                                 0.5) *
+                                                0.04;
+                    vertex.z += heightOffset;
+                    vertices.push_back(vertex);
+                }
+            }
+            for (std::size_t y = 0; y < longitudinal; ++y) {
+                for (std::size_t x = 0; x < horizontal; ++x) {
+                    const std::size_t topLeftIndex = base + y * (horizontal + 1) + x;
+                    const std::size_t topRightIndex = topLeftIndex + 1;
+                    const std::size_t bottomLeftIndex = topLeftIndex + horizontal + 1;
+                    const std::size_t bottomRightIndex = bottomLeftIndex + 1;
+                    if (bottomRightIndex >
+                        static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+                        throw std::length_error(
+                            "Road surface height map exceeds collision index limit");
+                    }
+                    if (mirrored) {
+                        indices.insert(
+                            indices.end(),
+                            {static_cast<int>(topLeftIndex), static_cast<int>(bottomRightIndex),
+                             static_cast<int>(bottomLeftIndex), static_cast<int>(topLeftIndex),
+                             static_cast<int>(topRightIndex), static_cast<int>(bottomRightIndex)});
+                    } else {
+                        indices.insert(
+                            indices.end(),
+                            {static_cast<int>(topLeftIndex), static_cast<int>(bottomLeftIndex),
+                             static_cast<int>(bottomRightIndex), static_cast<int>(topLeftIndex),
+                             static_cast<int>(bottomRightIndex), static_cast<int>(topRightIndex)});
+                    }
+                }
+            }
+        }
+    }
+    geometry.vertices = std::move(vertices);
+    geometry.indices = std::move(indices);
+    return true;
 }
 
 std::filesystem::path resolveAsset(const std::filesystem::path& relative,
@@ -275,12 +423,20 @@ std::optional<MapPoleCollision> makeMapPoleCollision(const MapSceneryCollisionOb
                          object.worldZ + bottomOffset[2]};
     pole.topPosition = {object.pose.x + topOffset[0], object.pose.y + topOffset[1],
                         object.worldZ + topOffset[2]};
-    const double localRadius = 0.5 * std::max(object.localBounds[3] - object.localBounds[0],
-                                              object.localBounds[4] - object.localBounds[1]);
+    const double horizontalWidth = object.localBounds[3] - object.localBounds[0];
+    const double horizontalDepth = object.localBounds[4] - object.localBounds[1];
+    const double narrowestWidth = std::min(horizontalWidth, horizontalDepth) > 1.0e-4
+                                      ? std::min(horizontalWidth, horizontalDepth)
+                                      : std::max(horizontalWidth, horizontalDepth);
     const auto xAxis = transformMapSceneryVector(object.pose, {1.0, 0.0, 0.0});
     const auto yAxis = transformMapSceneryVector(object.pose, {0.0, 1.0, 0.0});
-    pole.radiusMeters =
-        localRadius * std::max(std::hypot(xAxis[0], xAxis[1]), std::hypot(yAxis[0], yAxis[1]));
+    const double boundRadius =
+        0.5 * narrowestWidth *
+        std::max(std::hypot(xAxis[0], xAxis[1]), std::hypot(yAxis[0], yAxis[1]));
+    const double poleLength = std::hypot(pole.topPosition[0] - pole.basePosition[0],
+                                         pole.topPosition[1] - pole.basePosition[1],
+                                         pole.topPosition[2] - pole.basePosition[2]);
+    pole.radiusMeters = std::min({boundRadius, 0.12, poleLength * 0.05});
     pole.resistanceRadiansPerTonneMeterPerSecond =
         object.poleCrash->resistanceRadiansPerTonneMeterPerSecond;
     pole.breakAngleRadians = object.poleCrash->breakAngleRadians;
@@ -668,6 +824,8 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
     MapRoadCollisionResult result;
     std::unordered_map<std::string, MapSplineProfile> profiles;
     std::unordered_set<std::string> failedProfiles;
+    std::unordered_map<std::string, std::optional<std::filesystem::path>> surfaceMapPaths;
+    std::unordered_map<std::string, std::optional<openbus::rendering::Image>> surfaceMaps;
 
     for (const MapTileReference& tileReference : map.tiles) {
         if (selectedTile != nullptr &&
@@ -738,6 +896,48 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                     ++result.skippedSplines;
                     continue;
                 }
+                const std::string& texturePath =
+                    profile.textures[static_cast<std::size_t>(section.textureIndex)];
+                bool surfaceHeightMapApplied = false;
+                const std::string surfaceRequestKey = profileKey + '\0' + texturePath;
+                auto surfacePath = surfaceMapPaths.find(surfaceRequestKey);
+                if (surfacePath == surfaceMapPaths.end()) {
+                    std::filesystem::path resolved =
+                        resolveSurfaceMap(map, omsiRoot, profilePath, texturePath);
+                    surfacePath =
+                        surfaceMapPaths
+                            .emplace(surfaceRequestKey, resolved.empty()
+                                                            ? std::nullopt
+                                                            : std::optional<std::filesystem::path>(
+                                                                  std::move(resolved)))
+                            .first;
+                }
+                if (surfacePath->second.has_value()) {
+                    const std::string surfaceKey =
+                        surfacePath->second->lexically_normal().generic_string();
+                    auto surface = surfaceMaps.find(surfaceKey);
+                    if (surface == surfaceMaps.end()) {
+                        openbus::rendering::Image image;
+                        if (openbus::rendering::TextureLoader::readImage(*surfacePath->second,
+                                                                         image)) {
+                            surface = surfaceMaps.emplace(surfaceKey, std::move(image)).first;
+                        } else {
+                            gameLog.Log("Map road surface height map could not be decoded: " +
+                                        surfacePath->second->string());
+                            surface = surfaceMaps.emplace(surfaceKey, std::nullopt).first;
+                        }
+                    }
+                    if (surface->second.has_value()) {
+                        surfaceHeightMapApplied = applySurfaceHeightMap(
+                            sectionGeometry, centerline.size(), section.points.size(),
+                            spline.mirrored, *surface->second);
+                        if (!surfaceHeightMapApplied) {
+                            gameLog.Log(
+                                "Map road surface height map has invalid image dimensions: " +
+                                surfacePath->second->string());
+                        }
+                    }
+                }
                 if (sectionGeometry.vertices.empty() || sectionGeometry.indices.empty()) {
                     continue;
                 }
@@ -756,9 +956,17 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                 // The renderer's road-strip winding is clockwise from above. ODE trimesh
                 // contacts need the opposite orientation so surface normals point upward.
                 for (std::size_t index = 0; index < sectionGeometry.indices.size(); index += 3) {
-                    tileMesh.indices.push_back(baseVertex + sectionGeometry.indices[index]);
-                    tileMesh.indices.push_back(baseVertex + sectionGeometry.indices[index + 2]);
-                    tileMesh.indices.push_back(baseVertex + sectionGeometry.indices[index + 1]);
+                    const std::array<int, 3> triangle = {
+                        baseVertex + sectionGeometry.indices[index],
+                        baseVertex + sectionGeometry.indices[index + 2],
+                        baseVertex + sectionGeometry.indices[index + 1]};
+                    tileMesh.indices.insert(tileMesh.indices.end(), triangle.begin(),
+                                            triangle.end());
+                    if (surfaceHeightMapApplied) {
+                        tileMesh.surfaceHeightMapIndices.insert(
+                            tileMesh.surfaceHeightMapIndices.end(), triangle.begin(),
+                            triangle.end());
+                    }
                 }
                 ++result.splineSectionsAdded;
             }

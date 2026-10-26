@@ -129,6 +129,7 @@ struct World::Impl {
     std::unordered_map<dGeomID, std::unique_ptr<PoleRuntime>> mapPoles;
     std::unordered_set<dGeomID> poleContactsPrevious;
     std::unordered_set<dGeomID> poleContactsCurrent;
+    std::unordered_set<dGeomID> poleCollisionContactsCurrent;
     std::unordered_map<dGeomID, PoleImpact> poleImpactsCurrent;
     std::uint64_t collisionRevision = 0;
 
@@ -376,6 +377,13 @@ struct World::Impl {
 
     bool isPole(dGeomID geometry) const {
         return mapPoles.contains(geometry);
+    }
+
+    void recordPoleContact(dGeomID geometry) {
+        const auto pole = mapPoles.find(geometry);
+        if (pole != mapPoles.end() && !pole->second->broken) {
+            poleCollisionContactsCurrent.insert(geometry);
+        }
     }
 
     void recordPoleImpact(dGeomID geometry, dBodyID vehicleBody, const dContactGeom& contact) {
@@ -853,6 +861,7 @@ void World::removeMapTileCollision(int tileX, int tileY) {
         impl_->mapPoles.erase(geometry);
         impl_->poleContactsPrevious.erase(geometry);
         impl_->poleContactsCurrent.erase(geometry);
+        impl_->poleCollisionContactsCurrent.erase(geometry);
         impl_->poleImpactsCurrent.erase(geometry);
         dGeomDestroy(geometry);
     }
@@ -884,13 +893,13 @@ std::vector<StaticCollisionMesh> World::collisionDebugMeshes() const {
     meshes.reserve(impl_->terrainVertices.size() + impl_->staticMeshes.size() +
                    impl_->streamedTiles.size());
     for (std::size_t index = 0; index < impl_->terrainVertices.size(); ++index) {
-        meshes.push_back({impl_->terrainVertices[index], impl_->terrainIndices[index]});
+        meshes.push_back({impl_->terrainVertices[index], impl_->terrainIndices[index], {}});
     }
     meshes.insert(meshes.end(), impl_->staticMeshes.begin(), impl_->staticMeshes.end());
     for (const auto& [key, tile] : impl_->streamedTiles) {
         static_cast<void>(key);
         for (std::size_t index = 0; index < tile.terrainVertices.size(); ++index) {
-            meshes.push_back({tile.terrainVertices[index], tile.terrainIndices[index]});
+            meshes.push_back({tile.terrainVertices[index], tile.terrainIndices[index], {}});
         }
         meshes.insert(meshes.end(), tile.staticMeshes.begin(), tile.staticMeshes.end());
     }
@@ -901,10 +910,15 @@ std::vector<MapPoleState> World::mapPoleStates() const {
     std::vector<MapPoleState> states;
     states.reserve(impl_->mapPoles.size());
     for (const auto& [geometry, pole] : impl_->mapPoles) {
-        static_cast<void>(geometry);
+        const std::array<double, 3> up =
+            Impl::rotatedVector(pole->up, pole->rotationAxis, pole->angleRadians);
+        const std::array<double, 3> top = {pole->definition.basePosition[0] + up[0] * pole->length,
+                                           pole->definition.basePosition[1] + up[1] * pole->length,
+                                           pole->definition.basePosition[2] + up[2] * pole->length};
         states.push_back({pole->definition.mapObjectId, pole->definition.tileX,
-                          pole->definition.tileY, pole->rotationAxis, pole->angleRadians,
-                          pole->broken});
+                          pole->definition.tileY, pole->definition.basePosition, top,
+                          pole->definition.radiusMeters, pole->rotationAxis, pole->angleRadians,
+                          impl_->poleCollisionContactsCurrent.contains(geometry), pole->broken});
     }
     std::sort(states.begin(), states.end(),
               [](const MapPoleState& left, const MapPoleState& right) {
@@ -928,6 +942,10 @@ bool World::isMapPoleGeometry(dGeomID geometry) const {
     return impl_->isPole(geometry);
 }
 
+void World::recordMapPoleContact(dGeomID geometry) {
+    impl_->recordPoleContact(geometry);
+}
+
 void World::recordMapPoleImpact(dGeomID geometry, dBodyID vehicleBody,
                                 const dContactGeom& contact) {
     impl_->recordPoleImpact(geometry, vehicleBody, contact);
@@ -935,6 +953,7 @@ void World::recordMapPoleImpact(dGeomID geometry, dBodyID vehicleBody,
 
 void World::collideAndStep(dReal fixedStep, void* context, dNearCallback callback) {
     impl_->poleContactsCurrent.clear();
+    impl_->poleCollisionContactsCurrent.clear();
     impl_->poleImpactsCurrent.clear();
     dSpaceCollide(impl_->ode.space, context, callback);
     impl_->applyPoleImpacts();

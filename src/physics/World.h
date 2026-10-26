@@ -46,6 +46,7 @@ class World {
     dSpaceID collisionSpace() const;
     dJointGroupID contactGroup() const;
     bool isMapPoleGeometry(dGeomID geometry) const;
+    void recordMapPoleContact(dGeomID geometry);
     void recordMapPoleImpact(dGeomID geometry, dBodyID vehicleBody, const dContactGeom& contact);
     void collideAndStep(dReal fixedStep, void* context, dNearCallback callback);
 

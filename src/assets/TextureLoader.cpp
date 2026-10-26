@@ -595,6 +595,9 @@ bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
         gameLog.Log("Reading image from path: " + path.string());
     }
     const std::string extension = lower(path.extension().string());
+    if (extension == ".surf") {
+        return readBmpImage(path, image);
+    }
     if (extension == ".dds") {
         std::ifstream signature(path, std::ios::binary);
         std::array<char, 2> magic = {};
