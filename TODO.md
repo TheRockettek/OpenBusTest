@@ -12,38 +12,12 @@ configuration behavior, and regression evidence all exist.
 - `[ ]` Not implemented, or currently only parsed/consumed for compatibility.
 - `[o]` Explicitly outside the currently supported scope.
 
-## 0. Establish the completion baseline
-
-- [x] Make `Docs/SCREENSHOT_VALIDATION_PLAN.md` truthful: environment maps and
-  any other features marked fully supported must either have evidence or be
-  moved to the incomplete section. Environment maps are now explicitly
-  exploratory, and the alpha mode-2 depth gap is called out.
-- [x] Add a short compatibility/status table to the README linking each major
-  feature to its implementation and test evidence.
-
-Done when a fresh checkout can be configured, built, launched, and evaluated
-against one unambiguous support matrix.
-
 ## 1. Lock down physics and wheel stability
 
-- [x] Fixed-rate ODE stepping with bounded catch-up.
-- [x] Per-wheel suspension, steering, wheel rotation, braking, and telemetry.
-- [x] Script-authored `Axle_Springfactor_*` values scale each ODE wheel's
-  configured spring rate while preserving damper and anti-roll forces.
-- [x] Independent axle suspension and live ODE wheel rendering mode.
-- [x] Raw W/A/S/D input seeds player throttle, steering, and brake variables
-  before each physics update. The live vehicle path runs scripts first, then
-  applies the script-produced `M_Wheel` as wheel torque; the E400 scripts own
-  engine state and Voith gear selection. The legacy throttle-based drivetrain
-  remains only for standalone physics probes.
 - [~] High-speed bump stability: local-axis damping, softened contact response,
   and steering-rate damping are implemented. A deterministic stress probe now
   exercises bump traversal, steering reversals, braking, and fast wheel contact
   with two- and three-axle configurations; broader solver/contact tuning remains.
-- [x] Add a deterministic physics stress probe covering straight-line bumps,
-  alternating bumps, hard steering transitions, braking over bumps, and
-  high-speed wheel contact. Assert finite poses/velocities, bounded angular
-  speed, no excessive suspension travel, and left/right symmetry.
 - [~] The wheel/static contact defaults use the more compliant settings, and
   the deterministic stress probe passes for both axle configurations (maximum
   angular speed 0.227 rad/s; suspension travel 0.237 m or less). Further solver
@@ -59,18 +33,12 @@ both supported vehicles pass it without wheel shake or explosive motion.
 
 ## 2. Complete the live wheel contract
 
-- [x] Wheel bindings, axle mapping, steering, suspension, and rotation are
-  connected to the live ODE wheel bodies.
-- [x] Optional `OPENBUS_WHEELS_FROM_ODE=1` mode is documented and runnable.
 - [~] ODE wheel translation and orientation were corrected and smoke-tested.
   Static default/ODE app captures of MAN DL05 and Studio Polygon 400MMC show no
   obvious wheel-to-arch mismatch. `OpenBusCameraMathProbe` now asserts that the
   ODE wheel-render transform places each mesh center on its wheel mount under
   four chassis orientations; authored tire-to-arch clearance remains
   asset-specific and unverified.
-- [x] Extend the deterministic two-/three-axle stress probe with authored
-  wheel-pivot alignment bounds throughout steering, pitch, roll, and suspension
-  motion; stationary alignment is checked separately.
 - [~] Deterministic two-/three-axle pose bounds cover dynamic wheel placement,
   and static default/ODE captures now run from isolated working directories.
   Model-specific steering, bump, and motion comparisons remain unverified; the
@@ -81,9 +49,6 @@ motion checks in both supported rendering modes.
 
 ## 3. Finish material and texture behavior
 
-- [x] Base OBJ materials, alpha modes, no-Z flags, texture addressing,
-  lightmaps, nightmaps, transmaps, free/script textures, UV translation,
-  material changes, and environment-map shader plumbing have runtime paths.
 - [~] Environment maps are wired through texture loading and a reflection
   shader; a GPU probe now verifies directional sampling and blend opacity with
   a generated map. Representative assets and in-game visual parity remain.
@@ -92,9 +57,6 @@ motion checks in both supported rendering modes.
   overlapping alpha/no-Z-write behavior, both ordering rules, and separate
   reflection triangle accounting; asset-level glass/decal overlaps and actual
   mirror-framebuffer parity remain to validate.
-- [x] Match `[matl_alpha]` mode-2 depth writes unless `[matl_noZwrite]` is
-  authored; the OpenGL overlap probe verifies that a blended surface occludes
-  later geometry and that the explicit no-depth-write override still works.
 - [~] Bump-map rendering now has GPU regression coverage for generated-map
   directional shading, zero strength, and strength clamping. Representative
   OMSI visual parity and parallax semantics still need validation.
@@ -121,25 +83,6 @@ it.
 
 ## 4. Implement dynamic displays and lighting
 
-- [x] Lua script texture storage and pixel operations exist in `ScriptRuntime`,
-  and authored script-texture dimensions are initialized before scripts run.
-- [x] Retain and connect `[scripttexture]` definitions to model materials,
-  including dimensions, slot/index, and texture lifetime through the live
-  script-texture upload path. Update cadence remains script-driven.
-- [x] Implement `[texttexture]` and `[texttexture_enh]` runtime surfaces:
-  bitmap text layout, color/alpha, sizing, material binding, and updates from
-  script string variables. OFT fonts are loaded by internal name from the
-  direct `Fonts/` directory, including glyph rectangles, color/alpha bitmaps,
-  block-color mode, fallback glyphs, and `@` line breaks.
-- [x] Implement `[usescripttexture]` and `[usetexttexture]` material binding
-  to live texture surfaces, including Lua/native pixel, rectangle, text, load,
-  lock, readback, and filtering operations.
-- [x] Cache text source values and dynamic surface revisions so unchanged text
-  is not rasterized or uploaded to OpenGL every frame.
-- [x] Bind scenery `[usetexttexture]` and `[usescripttexture]` materials to
-  independent per-placement runtime surfaces; generated text glyphs blend over
-  transparent backgrounds. Runtime probes cover isolated text data, but visual
-  validation against installed directional-sign assets remains.
 - [~] Implemented the basic `[illumination_interior]`/`[interiorlight]`
   runtime path: assigned mesh groups receive controller-driven point-light
   shading. A GPU probe verifies light color isolation, zero strength, and
@@ -152,16 +95,6 @@ it.
   not reproduce it and the affected light source (interior, nightmap, exterior,
   or scenery) is not identified. Diagnose against the installed model/map
   assets before changing light-controller timing or shader behavior.
-- [x] Fix reproduced graphics-binding leaks: mirror target initialization and
-  resizing now invalidate the texture cache, and primitive uploads explicitly
-  bind their destination buffer after asset streaming. Reset the human-gait
-  shader uniform before indexed scene draws so terrain and other indexed
-  geometry cannot inherit pedestrian motion. GPU regressions verify that
-  repeated mirror resizes preserve HUD/scene pixels, dynamic and cached
-  overlays neither use nor overwrite streamed mesh geometry, and indexed scene
-  geometry remains static after an animated human draw. These regressions do
-  not establish that every reported in-game disappearance has the same cause;
-  keep the separate lighting-flicker investigation open.
 
 Done when a configured display changes from script input and interior lights
 change from their controlling variables without manual texture replacement.
@@ -191,10 +124,6 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
 
 ## 5. Complete vehicle/model configuration coverage
 
-- [x] Core bus identity metadata (`[friendlyname]`, `[description]`, and
-  `[type]`), mass, bounding box, center of gravity, axles, cameras, model
-  assembly, animations, parents, visibility, and wheel data are loaded and
-  exposed through `VehicleConfig` for the current vehicles.
 - [~] `[mouseevent]` identifiers are retained on model parts, and W/A/S/D
   transitions are dispatched to the player script runtime as key state and
   optional key-specific entry points. Exact transformed triangle picking is
@@ -335,22 +264,13 @@ for alignment is not mistaken for supporting it.
 
 #### BUS vehicle configuration
 
-- [x] Preserve and expose `[friendlyname]`, `[description]`, and `[type]` in
-  `VehicleConfig`.
 - [ ] Implement BUS-level `[fixed]` and `[scriptshare]` semantics.
 - [ ] Retain the labels and implement the view selection behavior for
   `[view_schedule]` and `[view_ticketselling]`; current parsing only records
   that the keyword occurred and validates that a driver camera exists.
 - [ ] Parse and use `[cog]` in a consistent way with `[schwerpunkt]`.
-- [x] Apply `[rollwiderstand]` as an authored non-negative longitudinal force;
-  absent values retain the legacy mass-scaled fallback, and explicit zero is
-  preserved. Native OMSI physics parity remains unverified.
 - [ ] Store and apply `[rot_pnt_long]`; it is currently consumed without
   physics semantics.
-- [x] Apply the parsed `[inv_min_turnradius]` steering constraint to the live
-  physics steering limit.
-- [x] Apply `[ai_deltaheight]` to initial and map-route AI vehicle placement;
-  player vehicles remain unaffected.
 - [ ] Add the documented vehicle-family records `[rowdy_factor]`, `[boogies]`,
   `[ai_brakeperformance]`, `[ai_veh_type]`, and `[sinus]`, or explicitly mark
   them unsupported when their family-specific semantics cannot be preserved.
@@ -362,9 +282,6 @@ for alignment is not mistaken for supporting it.
 - [ ] Implement `[new_attachment]` attachment transforms and the rail/trolley
   records `[contact_shoe]` and `[rail_body_osc]`, or explicitly scope them out
   with diagnostics.
-- [x] Select `[sound_ai]` for AI vehicle sound-bank loading, falling back to
-  `[sound]` when no AI-specific path is authored. Full AI ambient/spatial sound
-  behavior remains unverified.
 - [ ] Complete `[registration_automatic]`, `[registration_free]`, and
   `[kmcounter_init]` runtime selection/persistence as tracked in the E400
   comparison section.
@@ -397,13 +314,6 @@ for alignment is not mistaken for supporting it.
   `[light_enh]` and `[light_enh_2]` preserve all required numeric fields and
   accept their optional bitmap when present; enhanced-light runtime behavior is
   still pending.
-- [x] Correct `[viewpoint]` filtering: player exterior, player interior, and
-  non-player vehicles now use their individual documented bits (`1`, `2`, and
-  `4`). Model visibility and sound playback share zero-means-all,
-  any-overlapping-bit mask matching; triggered sounds and ambient loops are
-  filtered against the active player view. `OpenBusViewpointProbe` covers
-  individual and combined masks, including exclusion of non-player-only meshes
-  from player exterior views.
 - [ ] Apply `origin_from_mesh` from mesh transformation metadata in every
   supported mesh path; the current origin operation is identity when that
   metadata is unavailable.
@@ -436,8 +346,6 @@ for alignment is not mistaken for supporting it.
   `[ticket_sale]`, `[ticket_sale_money_point_2]`, and
   `[ticket_sale_change_point_2]` ticket-machine behavior/locations; these
   interactions are currently unhandled.
-- [x] Resolve scenery-object `[model]` CFG references for static map geometry
-  and material loading.
 - [~] Scenery SCO `[script]`, `[varnamelist]`, `[stringvarnamelist]`, and
   `[constfile]` resources now feed per-placement `init`/`frame` runtimes, and
   scenery `[visible]` controllers are checked during map drawing. Script-driven
@@ -610,9 +518,6 @@ for the explicit boundary.
 
 #### AI vehicle and human traffic
 
-- [x] Use `[sound_ai]` for AI vehicles and apply `[ai_deltaheight]` to their
-  placement. Focused vehicle configuration coverage verifies AI/player
-  selection and preserves fallback to `[sound]`.
 - [~] Spawn random road traffic from configured `.ovh` entries in modern
   `ailists.cfg` road groups on `[path]` type-0 road splines; `.bus` vehicles
   are reserved for the separate timetable-route AI bus pool. `.ttl` departure
@@ -679,10 +584,6 @@ for the explicit boundary.
   fidelity, signs, native right-of-way and deadlock recovery at live junctions,
   overtaking, lane changing, articulated dynamics, and physical player-to-AI
   collision response are listed in the remaining-work checklist below.
-- [x] Hold road AI vehicles at visible unconnected route ends and unload them
-  only after the endpoint is outside the camera view and beyond the spawn
-  distance threshold. Regression coverage verifies visible-end retention and
-  hidden-end retirement.
 - [~] Match timetable bus paths against the complete ordered `.ttr` track-entry
   sequence, including repeated scenery-object IDs and their path selectors, and
   try up to 16 feasible route seeds per endpoint using each bus model's minimum
@@ -728,8 +629,6 @@ for the explicit boundary.
   either. This points to an absent map source record and a real graph break,
   rather than a turn-radius limit; do not silently skip it and label the route
   complete.
-- [x] Parse `drivers.txt` model paths and `.hum` fields, and distinguish
-  type-1 human paths from type-0 road paths.
 - [~] Spawn and move human actors on nearby type-1 spline routes using
   passenger-density settings. Configured `.hum` model first-LOD meshes now
   render at actor poses, uniformly scaled to the declared human height while
@@ -796,130 +695,11 @@ for the explicit boundary.
   interpolation, and time-of-day policy before treating the behavior as
   OMSI-compatible.
 
-#### Implemented AI traffic enhancements
-
-These enhancements are implemented and covered by synthetic probes, but do not
-constitute full OMSI parity or in-game visual validation:
-
-- [x] Admit road vehicles on clear, off-screen interior positions across
-  connected road routes in the active tile window; connected internal lanes
-  and circuits are eligible, while isolated splines and terminal dead ends
-  are not. Scheduled buses remain endpoint-only. Retain vehicles at visible
-  unconnected route ends and recycle them only after those ends are hidden.
-  Reevaluate road candidates as tiles become active; vehicles are hidden and
-  paused when their current tile becomes inactive.
-- [x] Follow directed authored lanes and scenery junction paths, filter turns
-  by vehicle turning radius, and apply bend-speed, acceleration, braking, and
-  headway limits. Swept footprints make vehicles yield to the player, other AI,
-  static vehicles, and pedestrians; any part of a vehicle entering a junction
-  commits it to clear under physical swept-footprint checks, with reduced
-  lookahead headway until it exits. Junction reservations age waiting movements,
-  while committed actors clear before new approaches regardless of authored
-  priority. Before entering, a vehicle must claim the junction group
-  (scenery junction paths joined by connectors shorter than the vehicle):
-  it waits at the entry line while any vehicle inside or already admitted
-  would cross or merge into its swept path, so conflicting approaches never
-  meet inside the box; same-lane followers share the leader's claim. Claims
-  follow queue order: a vehicle cannot claim while an unclaimed leader is
-  still between it and the entry, and never waits on a claim held by a
-  vehicle queued behind it in its lane. A red
-  signal ahead of the entry releases an unused claim. Routine vehicle queue, spawn, unload, and
-  junction-entry logs are suppressed; a single stuck diagnostic, naming the
-  blocking constraint, the exact blocking vehicle or obstacle, and world
-  position, is emitted after 15 seconds without route progress, excluding
-  detected red-signal waits and queues behind a bus.
-  Following targets only leaders projected onto the vehicle's own path, so
-  vehicles in adjacent lanes or on roads straight ahead of a turn are ignored.
-  Moving in-lane leaders are handled by the damped following model rather than
-  the parked-obstacle lookahead, so followers no longer brake to a crawl behind
-  a moving car or stop short of a junction it is still driving through.
-  The F2 overlay marks those active stalled vehicles red, excluding inactive
-  tiles, route-end holding, and signal waits; deadlocked vehicles are removed
-  from active traffic and not recycled into the population. A stopped vehicle
-  is only treated as deadlocked when its chain of blockers ends in a cycle or
-  an unknown blocker; chains ending at moving traffic, a signal, an AI bus, or
-  the player bus are legitimate queues.
-- [x] Show the number of currently spawned map AI vehicles in the on-screen
-  status HUD.
-- [x] Extend the F2 traffic overlay with vehicle and pedestrian behavior
-  footprints, signal stop boxes colored by current permission, and sampled
-  junction-path reservations; vehicle body boxes require drawable model
-  geometry and depth-test against the scene, while signal and reservation
-  diagnostics remain visible through objects. Deadlocked AI bodies are red,
-  junction actors blue, and ordinary AI bodies green. The overlay log describes
-  the color legend.
-- [x] Attach timetable departures to complete endpoint-matched bus routes,
-  handle midnight rollover, skip missed trips, and partition departures across
-  pool buses without assigning a trip twice.
-- [x] Parse fixed-cycle SCO traffic lights and attach them to linked paths.
-  AI stops on non-green or invalid phases and resumes on states 6-8, including
-  signalized route starts and loop-wrap approaches. Conditional stop controls
-  use vehicle/pedestrian requests; `[traffic_light_jump]` bus-priority rules
-  trigger from player/AI bus approaches, apply their target phase for the
-  configured minimum, and wait for conflicting green groups to clear. Cycle
-  origin and native stop-line fidelity remain open.
-- [x] Move pedestrian actors on type-1 human paths, use parsed `[humangeom]`
-  dimensions for proxy sizing and collision footprints, and stop pedestrians
-  around occupied vehicle/human footprints. Configured `.hum` first-LOD models
-  render asynchronously; a shader-driven walking gait follows actual route
-  movement. Model `[smoothskin]`/`[setbone]` records are recognized, but native
-  weighted skeletal animation and in-game visual validation remain open.
-- [x] Defer population decreases until actors are off-screen and admit
-  preallocated actors only at clear off-screen route positions. Density
-  interpolation/native unit parity and active-population cap policy remain
-  provisional; unscheduled group peak capacity is regression-tested.
-- [x] Keep map AI vehicles out of unloaded tiles: admit them only from active
-  entry tiles, hide and pause them outside the active tile window, and exclude
-  paused vehicles from pedestrian obstacles and signal/junction actor updates.
-
 #### Remaining AI traffic implementation
 
 The entries above describe current behavior and its test coverage. These are
 the outstanding implementation and validation tasks:
 
-- [x] Recognize `.ovh` road vehicles in `NormalCar`/`NormalCars`, `Trucks`,
-  `Commercial`/`Commercials`, and `Ambulance` AI-list groups. Preserve their
-  `unsched_vehgroups.txt` indices and use the configured AI vehicle type (with
-  trucks-group fallback) for route access checks.
-- [x] Decode and apply group-specific map `[rule]` / `[kill_rule]` values on
-  spline-profile and scenery-object paths: km/h speed limits, per-group
-  traffic-density factors (zero excludes the group; positive factors weight
-  entry and junction choices), authored priorities before wait-age tie-breaking
-  among equal priorities,
-  `no_cars`, `bus`, `trucks`, and `overtaking_prohib`. Scheduled buses bypass
-  unscheduled access/density filters. Overtaking/lane changes are not
-  implemented, so vehicles currently never overtake. `unsched_trafficdens.txt`
-  group/day curves now drive the capped, time-varying road population target
-  and weight startup selection; active group targets are recomputed as curves
-  change, with safe off-screen admission and retirement. The startup pool is
-  queued even when the starting hour has zero group density, so groups becoming
-  active later in the day are not lost. The startup pool uses a rounding-safe
-  upper bound for each group's active target across configured hours and
-  weekday classes instead of sampling only the aggregate peak composition.
-  Its queued pool may exceed the active population cap when group peaks happen
-  at different times; only the simultaneously active population is capped.
-  Sampled split-peak
-  regressions verify reservations across weekday classes, and a targeted
-  threshold regression covers an interior peak caused by integer
-  apportionment at the active-cap transition. Where wildcard and
-  day-specific schedules coexist, the most-specific valid matching curve
-  takes precedence; an invalid curve does not suppress the wildcard fallback.
-  Weekday masks with unknown bits are rejected with a diagnostic rather than
-  silently treated as a schedule that never matches.
-  Weekday selection comes from the map system calendar, which starts with the
-  host local date and advances with simulation time.
-  Native visual density-category parity remains unverified.
-  Focused probes cover path and group indexing, parsing/validation, scheduled
-  group selection/rebalancing and pool capacity, access, density weighting,
-  zero-at-start/future-positive pool scheduling, disjoint peaks above the
-  active cap, reservation coverage across sampled hours/weekdays, speed caps,
-  priority ordering/fairness, and kill rules.
-- [x] **Maintain target population:** recycle preallocated vehicle entries when
-  routes end or the target increases, up to the startup pool cap. Re-entry is
-  limited to clear, off-screen connected road positions in active tiles;
-  scheduled buses remain limited to incoming endpoints and wait for their
-  owned departure. Recycled actors reset route progress, speed, and
-  junction-wait state.
 - [~] **Complete scheduled bus routes:** complete timetable matches are now
   preferred over endpoint-only partial matches. Cotterell startup has queued
   endpoint buses for line 12, U28, and one complete U18 route; other trips
@@ -1015,10 +795,6 @@ the outstanding implementation and validation tasks:
 - [ ] Resolve Chrono map variants using `[selobject]`, `[selspline]`,
   `[delete]`, `[typ]`, and `[relabel]`; these records are currently parser-only
   or have no independent runtime effect.
-- [x] Support Cotterell's intended `.map.8.dds` ground-texture layers: when a
-  sidecar suffix equals the number of `[groundtex]` records, map it to the final
-  record. Existing suffixes 1..N-1 retain their direct mapping; format semantics
-  remain reverse-engineered rather than normative.
 - [ ] Investigate why Cotterell visited 27 terrain tiles but uploaded only 26
   terrain meshes, despite the manifest reporting 27 terrain sidecars; identify
   the missing/rejected tile and ensure it is surfaced in diagnostics.
@@ -1031,21 +807,11 @@ the outstanding implementation and validation tasks:
   threshold-to-distance mapping. Validate distance transitions and visual
   parity with representative installed scenery; 9 parts were skipped in the
   Cotterell run, including Streetobjects_RUE light models.
-- [x] Recognize SCO `[groups]`, `[friendlyname]`, and `[helparrow]` as
-  metadata/editor fields rather than malformed fixed-width model records. A
-  parser regression covers the route-arrow-style one-line friendly name and
-  group list. Route-arrow `text.bmp` textures were among 27 missing scenery
-  textures; verify whether these should be generated by the text-texture path.
 - [~] An empty-name/empty-path texture request is now treated as an intentionally
   untextured batch instead of a decode failure, and decode failures include the
   source mesh path. The parked Opel Manta DDS remains unverified because its
   model asset is not present in this checkout.
 
-- [x] Add curved centerline tessellation for the recognized Freyfurt asphalt
-  profiles. Signed-radius geometry is checked by `OpenBusMapSplineGeometryProbe`
-  against linked Grande Porto spline endpoints in both turn directions; a
-  zero-radius straight case and invalid inputs are covered. This verifies the
-  centerline only, not cross-section sidewalks, markings, seams, or lighting.
 - [ ] Add targeted, repeatable in-context screenshot evidence for curved-road
   geometry, sidewalks, markings, texture phase, and seams at linked spline
   boundaries.
@@ -1066,12 +832,6 @@ the outstanding implementation and validation tasks:
   visual evidence remain incomplete. Road UV V includes a valid parsed v11+
   spline chain offset; continuity and OMSI
   parity still need validation against installed linked spline assets.
-- [x] Decode `[object]`, `[spline]`, and `[spline_h]` field layouts by tile
-  version, including legacy spline links and v11+ chain offsets; version 5/7/11
-  and current-version fixtures are covered by `OpenBusMapConfigProbe`.
-- [x] Apply SCO/model `[absheight]` to ordinary map scenery so its vertical
-  placement is not offset by terrain height; model and tree-SCO parsing have
-  regression coverage in `OpenBusModelConfigProbe`.
 - [~] Ordinary object rotation and same-tile spline attachment/repeater
   placement have runtime paths and parser/placement probes. A deterministic
   probe covers ordinary object x/y/z order, tile-origin translation, rotation
@@ -1088,10 +848,6 @@ the outstanding implementation and validation tasks:
   validate contact while crossing representative installed tile seams and tune
   duplicate contacts where road strips overlap terrain. `[boundingbox]`-only
   scenery and non-O3D collision formats remain unsupported.
-- [x] Bind per-placement `[usetexttexture]` and `[usescripttexture]` scenery
-  materials to independent live runtime surfaces; generated text glyphs blend
-  over transparent backgrounds. Runtime probes cover isolated text state, but
-  visual validation against installed directional-sign assets remains.
 - [~] Extend the per-placement scenery `init`/`frame` and `[visible]` path with
   script-driven animations, dynamic material changes, sound dispatch, and
   mouse events after those runtime semantics are verified. `[varparent]`
@@ -1145,24 +901,10 @@ the outstanding implementation and validation tasks:
   same in-flight result. Work already queued for a stale tile is allowed to
   finish, but results are discarded unless another requested tile still needs
   the result.
-- [x] Prepare cross-tile spline-attachment parent records during map indexing
-  and retain only records referenced by attached objects. Tile placement now
-  resolves these immutable snapshots without synchronously rereading a parent
-  `.map` file.
-- [x] Report background tile parsing, terrain, and road-preparation failures
-  with tile-stage and file context. Streaming retains the previous active window
-  and retries up to three times with backoff; retry exhaustion is reported and
-  retried after the tile leaves the requested window. Initial map-load failures
-  remain fail-fast.
 - [ ] Keep shared-cache mutation, placement state, and OpenGL resource
   creation/upload/destruction on their owning threads; bound publication work
   per frame and keep the previous active window drawable while new tile results
   are incomplete.
-- [x] Add bounded retry and contextual logging for thrown scenery/model asset
-  preparation failures. Failed shared results are not published as successful
-  cache entries; active tiles retry up to three times with backoff, then retry
-  after leaving and re-entering the requested window. Initial map-load failures
-  remain fail-fast.
 - [ ] Measure tile-boundary p95/p99 frame time, memory, and upload cost;
   validate visual and collision continuity in-game.
 - [ ] Move AI traffic route/decision calculations to a dedicated worker using
@@ -1176,12 +918,6 @@ the outstanding implementation and validation tasks:
   then define safe behavior for fast travel, teleports, worker failures, and
   contact continuity. Validate live driving across representative tile seams
   before claiming hitch-free streaming.
-- [x] Select map entrypoints at startup by zero-based index or case-insensitive
-  name through `OPENBUS_MAP_ENTRY`; the default remains the first entrypoint.
-  Selection and invalid-index behavior are covered by `OpenBusMapConfigProbe`.
-- [x] List map entrypoints with zero-based indexes and their resolved world
-  coordinates/yaw when `OPENBUS_MAP_SPAWN` is unset; select and spawn by index
-  when it is set. `OPENBUS_MAP_ENTRY` remains a compatibility fallback.
 - [ ] Complete HOF-backed map state and validate remaining timetable/traffic
   control semantics. Scheduled AI dispatch uses parsed departures only when a
   route matches an endpoint. Linked SCO fixed-cycle signals are enforced from
@@ -1189,19 +925,15 @@ the outstanding implementation and validation tasks:
   semantics remain unverified. The inspected Grande Porto signal-route file is
   only a header/template.
 
-- [x] OpenGL 3.3 renderer, VBO model path, cameras, mirrors, frustum culling,
-  LOD selection, texture cache, crash reports, tracing, and profiling hooks
-  are present.
-- [x] Load deferred vehicle LODs from the camera eye (matching draw-time LOD
-  selection), prefetch other LODs of the current view, and always load parts
-  outside any `[LOD]` section. AI cars far from the bus but near the camera
-  previously loaded only their far LOD and drew nothing while still blocking
-  traffic; covered by `OpenBusVehiclePartLoadingProbe`.
 - [~] Reflection, async loading, texture scaling, and material batching are
   opt-in/performance-sensitive paths and need repeatable comparison runs.
 - [ ] Compare the vehicle draw-list/material-selection reuse and static
   ground/grid VBO changes using repeated, uninstrumented runs; report frame
   p50/p95 and keep traced scope totals separate from frame time.
+- [ ] Reduce repeated traffic-debug processing in `RenderLoopDraw.cpp`: avoid
+  building spline routes before active-tile filtering and building them again
+  for endpoint/debug geometry; reuse sampled AI actor poses and avoid rescanning
+  scenery traffic segments for each debug overlay pass.
 - [ ] Add renderer regression coverage for opaque/transparent list reuse,
   script-driven material changes, and view-specific reflection culling and
   transparent sorting before broadening those caches.
@@ -1217,11 +949,6 @@ the outstanding implementation and validation tasks:
   submission time is not mistaken for GPU execution or swap/present wait.
 - [ ] Add repeatable performance captures for startup time, frame time, GPU
   workload, reflection intervals, texture scaling, and material batching.
-- [x] Audit the renderer for OpenGL compatibility-profile API use; see
-  `Docs/OPENGL_API_AUDIT.md` (no active compatibility API calls found).
-- [x] Remove unused compatibility-era texture-environment enum fallback
-  definitions from `src/render/GlCompat.h` after confirming no source or
-  generated code uses them; active core-GL constants remain available.
 - [ ] Validate Windows and Linux helper scripts from clean build directories.
 - [~] Focused clang-format checks pass for changed ranges, and clang-tidy runs
   using the exported Windows compile database. The repository-wide checks still
@@ -1233,9 +960,6 @@ platforms have a reproducible build-and-smoke procedure.
 
 ## 7. Final release gate
 
-- [x] Run all configured probes, physics stress tests, parser/configuration
-  tests, and material/display tests from a fresh Windows Clang release build;
-  all 43 CTest tests pass.
 - [ ] Run the complete screenshot matrix for MAN DL05 and E400, retaining the
   build revision, asset revision, logs, and expected results.
 - [ ] Remove or label stale claims in README and the reference documents.
@@ -1243,19 +967,3 @@ platforms have a reproducible build-and-smoke procedure.
   for accidental repository artifacts.
 - [ ] Mark this file complete only after every remaining item is either done or
   explicitly moved into an approved out-of-scope list.
-
-## Already implemented baseline
-
-The current code already provides the following baseline and these should not
-be reimplemented as new work:
-
-- ODE world, fixed stepping, bounded catch-up, configurable axle layouts, and
-  simplified chassis/wheel physics.
-- Suspension, anti-roll, steering, wheel rotation, braking, tyre friction,
-  telemetry, and recent wheel/contact stability changes.
-- OMSI bus/model parsing for the current MAN DL05 and E400 assets.
-- OBJ conversion/loading, coordinate conversion, animation origins,
-  `animparent`, visibility variables, LOD/viewpoint filtering, and live ODE
-  wheel rendering.
-- OpenGL VBO/shader rendering, base/auxiliary textures, alpha/no-Z behavior,
-  mirrors, camera controls, tracing, profiling, and crash reporting.
