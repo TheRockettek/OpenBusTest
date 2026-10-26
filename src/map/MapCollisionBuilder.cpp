@@ -11,6 +11,7 @@
 #include "config/SceneryObjectConfigLoader.h"
 #include "core/Variables.h"
 #include "core/Logger.h"
+#include "core/PerfTrace.h"
 
 #include <algorithm>
 #include <array>
@@ -243,6 +244,8 @@ double sampleTerrainHeight(const MapDefinition& map, double worldX, double world
             return 0.0;
         }
         try {
+            openbus::rendering::TraceScope trace(
+                "map_collision", "MapCollisionBuilder.loadSceneryCollisionTerrainGrid");
             found = terrainCache.emplace(key, loadTerrainGrid(reference->terrainPath)).first;
         } catch (const std::exception&) {
             return 0.0;
@@ -574,6 +577,8 @@ struct SceneryCollisionDefinition {
 SceneryCollisionDefinition readSceneryCollisionDefinition(const std::filesystem::path& configPath,
                                                           const std::filesystem::path& omsiRoot,
                                                           const std::filesystem::path& mapRoot) {
+    openbus::rendering::TraceScope trace(
+        "map_collision", "MapCollisionBuilder.readSceneryCollisionDefinition");
     SceneryCollisionDefinition definition;
     const SceneryObjectConfig scenery = loadSceneryObjectFile(configPath);
     definition.noCollision = scenery.noCollision;
@@ -661,6 +666,8 @@ SceneryCollisionDefinition readSceneryCollisionDefinition(const std::filesystem:
 
 std::shared_ptr<const MapSceneryCollisionIndex>
 buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::path& omsiRoot) {
+    openbus::rendering::TraceScope trace(
+        "map_collision", "MapCollisionBuilder.buildMapSceneryCollisionIndex");
     struct ConfigCollision {
         std::vector<std::filesystem::path> paths;
         std::vector<std::filesystem::path> modelGeometryPaths;
@@ -673,6 +680,7 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
     };
     auto index = std::make_shared<MapSceneryCollisionIndex>();
     std::unordered_map<std::string, ConfigCollision> configCache;
+    std::unordered_map<std::string, std::filesystem::path> sceneryConfigPathCache;
     std::unordered_map<std::string, std::shared_ptr<openbus::rendering::ParsedObj>> meshCache;
     std::unordered_map<std::string, std::array<double, 6>> meshLocalBoundsCache;
     std::unordered_map<std::uint64_t, TerrainGrid> terrainCache;
@@ -689,6 +697,8 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
         } catch (const std::exception&) {
             continue;
         }
+        openbus::rendering::TraceScope tileTrace(
+            "map_collision", "MapCollisionBuilder.processSceneryTilePlacements");
         for (const MapSceneryPlacement& placement : tile.sceneryObjects) {
             if (!placement.transformValid) {
                 continue;
@@ -698,8 +708,24 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
             if (!pose) {
                 continue;
             }
-            const std::filesystem::path configPath = resolveAsset(
-                normalizedAssetPath(placement.assetPath), map.rootPath, omsiRoot, map.rootPath);
+            std::filesystem::path configPath;
+            {
+                openbus::rendering::TraceScope resolveConfigTrace(
+                    "map_collision", "MapCollisionBuilder.resolveSceneryConfigPath");
+                const std::filesystem::path normalizedPath =
+                    normalizedAssetPath(placement.assetPath);
+                const std::string assetKey = normalizedPath.generic_string();
+                const auto cachedPath = sceneryConfigPathCache.find(assetKey);
+                if (cachedPath != sceneryConfigPathCache.end()) {
+                    configPath = cachedPath->second;
+                } else {
+                    openbus::rendering::TraceScope filesystemResolveTrace(
+                        "map_collision",
+                        "MapCollisionBuilder.resolveSceneryConfigPathFilesystem");
+                    configPath = resolveAsset(normalizedPath, map.rootPath, omsiRoot, map.rootPath);
+                    sceneryConfigPathCache.emplace(assetKey, configPath);
+                }
+            }
             if (configPath.empty()) {
                 continue;
             }
@@ -760,6 +786,9 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
                     auto mesh = meshCache.find(meshKey);
                     if (mesh == meshCache.end()) {
                         try {
+                            openbus::rendering::TraceScope parseMeshTrace(
+                                "map_collision",
+                                "MapCollisionBuilder.parseSceneryCollisionMesh");
                             mesh = meshCache
                                        .emplace(meshKey,
                                                 openbus::rendering::O3DLoader::parse(meshPath))
@@ -821,6 +850,10 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                                                         const MapTileReference* selectedTile,
                                                         const MapRoadConnectionIndex& connections,
                                                         const MapSceneryCollisionIndex* scenery) {
+    openbus::rendering::TraceScope trace(
+        "map_collision", selectedTile == nullptr
+                             ? "MapCollisionBuilder.buildAllRoadCollision"
+                             : "MapCollisionBuilder.buildSelectedTileRoadCollision");
     MapRoadCollisionResult result;
     std::unordered_map<std::string, MapSplineProfile> profiles;
     std::unordered_set<std::string> failedProfiles;
@@ -996,6 +1029,8 @@ MapRoadCollisionResult buildMapRoadCollisionTile(const MapDefinition& map,
                                                  int tileY,
                                                  const MapRoadConnectionIndex* connections,
                                                  const MapSceneryCollisionIndex* scenery) {
+    openbus::rendering::TraceScope trace(
+        "map_collision", "MapCollisionBuilder.buildMapRoadCollisionTile");
     const auto tile = std::find_if(map.tiles.begin(), map.tiles.end(), [&](const auto& reference) {
         return reference.x == tileX && reference.y == tileY;
     });
@@ -1063,6 +1098,8 @@ std::vector<MapPoleCollision> buildMapPoleCollisionTile(const MapDefinition& map
 
 MapRoadConnectionIndex loadMapRoadConnections(const MapDefinition& map,
                                               const std::filesystem::path& omsiRoot) {
+    openbus::rendering::TraceScope trace(
+        "map_collision", "MapCollisionBuilder.loadMapRoadConnections");
     MapRoadConnectionIndex connections(map.coordinates);
     std::unordered_map<std::string, std::optional<double>> cantHalfWidths;
     for (const auto& reference : map.tiles) {

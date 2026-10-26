@@ -30,6 +30,21 @@ int main(int argc, char** argv) {
         if (!condition) std::cerr << message << '\n';
         return condition;
     };
+    auto screenProjection = identity;
+    screenProjection[5] = 1.0;
+    const auto identityView = identity;
+    if (!require(sphereBelowMinimumViewportFraction(identityView, screenProjection, {0, 0, -10},
+                                                    0.1, 0.02),
+                 "Small projected sphere retained")) return 1;
+    if (!require(!sphereBelowMinimumViewportFraction(identityView, screenProjection, {0, 0, -10},
+                                                     0.1, 0.01),
+                 "Sphere above the minimum projected size culled")) return 1;
+    if (!require(!sphereBelowMinimumViewportFraction(identityView, screenProjection, {0, 0, -0.5},
+                                                     1.0, 0.10),
+                 "Near-plane sphere rejected by projected-size test")) return 1;
+    if (!require(!sphereBelowMinimumViewportFraction(identityView, screenProjection, {0, 0, -10},
+                                                     0.0, 0.02),
+                 "Zero-radius sphere rejected by projected-size test")) return 1;
     auto item = makeCullingItem(identity, {0, 0, 0}, 0.5);
     if (!require(cullingItemVisible(item, planes, {}), "Inside sphere rejected")) return 1;
     for (int axis = 0; axis < 3; ++axis) {

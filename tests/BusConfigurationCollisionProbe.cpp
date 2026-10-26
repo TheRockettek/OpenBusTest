@@ -139,7 +139,7 @@ int main() {
     std::filesystem::create_directories(nestedConfigDirectory);
     {
         std::ofstream bus(root / "nested.bus");
-        bus << "[model]\nModel\\Configuration Files\\Regional\\model.cfg\n"
+        bus << "[model]\nmodel\\configuration files\\regional\\model.cfg\n"
                "[mass]\n12.0\n"
                "[boundingbox]\n2.4\n12.0\n3.2\n0\n0\n1.6\n"
                "[schwerpunkt]\n1.2\n"
@@ -163,7 +163,10 @@ int main() {
     }
     const ModelConfig nestedModelConfiguration =
         loadBusModelConfiguration(root / "nested.bus");
+    const std::filesystem::path resolvedNestedModelPath =
+        modelConfigurationPathForBusFromConfig(root / "nested.bus");
     const bool nestedModelMeshResolved =
+        resolvedNestedModelPath == nestedConfigDirectory / "model.cfg" &&
         !nestedModelConfiguration.diagnostics.hasErrors() &&
         nestedModelConfiguration.parts.size() == 1 &&
         nestedModelConfiguration.parts.front().objPath == nestedMeshPath;

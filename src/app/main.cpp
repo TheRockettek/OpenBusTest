@@ -1003,14 +1003,9 @@ int main() {
             collisionStreamer->update(busPlacement.position[0], busPlacement.position[1],
                                       spawnLoadedGeometryTiles);
         }
-        {
-            openbus::rendering::TraceScope waitCollisionTrace("startup",
-                                                              "main.waitForSpawnCollision");
-            collisionStreamer->waitForTileCollision(
-                busPlacement.position[0], busPlacement.position[1], spawnLoadedGeometryTiles);
-        }
-        applicationLog.Log("Map collision streaming started asynchronously with spawn terrain "
-                           "already active and spawn tile collision ready: resident tiles=" +
+        applicationLog.Log("Map collision streaming scheduled with spawn terrain already active; "
+                           "spawn tile collision will be ready before the first frame: resident "
+                           "tiles=" +
                            std::to_string(collisionStreamer->loadedTileCount()) +
                            "; map manifest tiles=" + std::to_string(mapDefinition.tiles.size()) +
                            ".");
@@ -1028,7 +1023,6 @@ int main() {
                 renderer.AddVehicle(busConfigPath, modelConfigPath, busPlacement,
                                     {AssetLoadingMode::Deferred, AssetLoadingMode::Eager}, false,
                                     startupSelection.vehicleSetup);
-            simulation->setFrozen(false);
             renderer.SetPlayerVehicle(playerVehicle);
             applicationLog.Log("Player vehicle initialized; preparing AI traffic and pedestrians.");
         } else {
@@ -1725,6 +1719,18 @@ int main() {
         updateMapTrafficPopulation();
         populationTrace.finish();
         preFrameSetupTrace.finish();
+
+        renderer.showStartupStatus("Finishing spawn-area collision before the first frame.");
+        {
+            openbus::rendering::TraceScope waitCollisionTrace("startup",
+                                                              "main.waitForSpawnCollision");
+            collisionStreamer->waitForTileCollision(
+                busPlacement.position[0], busPlacement.position[1], spawnLoadedGeometryTiles);
+        }
+        if (benchmarkMode) {
+            simulation->setFrozen(false);
+        }
+        reportedCollisionTileCount = collisionStreamer->loadedTileCount();
 
         double previousTime = glfwGetTime();
         if (benchmarkMode) {

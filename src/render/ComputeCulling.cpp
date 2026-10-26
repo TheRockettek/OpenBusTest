@@ -109,6 +109,28 @@ CullingItem makeCullingItem(const std::array<double, 16>& modelView,
     return item;
 }
 
+bool sphereBelowMinimumViewportFraction(const std::array<double, 16>& modelView,
+                                        const std::array<double, 16>& projection,
+                                        const std::array<double, 3>& center, double radius,
+                                        double minimumFraction) {
+    if (!std::isfinite(minimumFraction) || minimumFraction <= 0.0 ||
+        !std::isfinite(radius) || radius <= 0.0) {
+        return false;
+    }
+
+    const double eyeDepth = -(modelView[2] * center[0] + modelView[6] * center[1] +
+                              modelView[10] * center[2] + modelView[14]);
+    const double verticalProjectionScale = std::abs(projection[5]);
+    if (!std::isfinite(eyeDepth) || !std::isfinite(verticalProjectionScale) ||
+        verticalProjectionScale <= 0.0 || eyeDepth <= radius) {
+        return false;
+    }
+
+    const double projectedFraction =
+        verticalProjectionScale * radius / (eyeDepth - radius);
+    return std::isfinite(projectedFraction) && projectedFraction < minimumFraction;
+}
+
 std::uint32_t appendCullingLodBoundaries(std::vector<float>& boundaries,
                                          std::span<const double> thresholds) {
     const auto offset = static_cast<std::uint32_t>(boundaries.size());

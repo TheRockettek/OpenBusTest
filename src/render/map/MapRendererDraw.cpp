@@ -140,7 +140,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
     glDisable(GL_BLEND);
 }
 
-void MapRenderer::draw(bool renderTypeFourOnly) const {
+void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFraction) const {
     TraceScope trace("map", "MapRenderer::draw");
     IndirectCullingBatch indirectBatch;
     IndirectCullingScope indirectScope;
@@ -231,6 +231,11 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                     instance.x - instance.boundingRadius, instance.y - instance.boundingRadius,
                     instance.x + instance.boundingRadius, instance.y + instance.boundingRadius,
                     batch.vertexCount);
+                if (sphereBelowMinimumViewportFraction(
+                        view, projectionMatrix(), {instance.x, instance.y, instance.z},
+                        instance.boundingRadius, minimumObjectViewportFraction)) {
+                    item.metadata[0] |= CullReject;
+                }
                 item.metadata[0] |= CullLod;
                 item.metadata[1] = static_cast<std::uint32_t>(batch.sceneryLodIndex);
                 if (instance.lodThresholdSetIndex < lodOffsets.size()) {
@@ -552,6 +557,9 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
                                                    instance.y - instance.boundingRadius,
                                                    instance.x + instance.boundingRadius,
                                                    instance.y + instance.boundingRadius) ||
+                           sphereBelowMinimumViewportFraction(
+                               view, projectionMatrix(), {instance.x, instance.y, instance.z},
+                               instance.boundingRadius, minimumObjectViewportFraction) ||
                            outsideMapFrustum(frustum, view, {instance.x, instance.y, instance.z},
                                              instance.boundingRadius))) {
                     continue;
@@ -675,7 +683,8 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             // OMSI shadow overlays commonly request both flags: they must not
             // write depth, but still need depth testing so they cannot bleed
             // through foreground scenery or vehicles.
-            const bool skipDepthCheck = scenery->batch->noZcheck && !scenery->batch->noZwrite;
+            const bool skipDepthCheck = scenery->batch->noZcheck &&
+                                        !scenery->batch->noZwrite && scenery->alphaMode == 0;
             if (skipDepthCheck) {
                 glDisable(GL_DEPTH_TEST);
             }
@@ -699,8 +708,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
         const bool hasTransmapDepthPrepass = std::any_of(
             transparentScenery.begin(), transparentScenery.end(), [](const SceneryDraw* scenery) {
                 return scenery->alphaMode == 2 && scenery->material.useTransmap &&
-                       !scenery->material.useTextTexture && !scenery->batch->noZwrite &&
-                       !scenery->batch->noZcheck;
+                           !scenery->material.useTextTexture && !scenery->batch->noZwrite;
             });
         if (hasTransmapDepthPrepass) {
             GLboolean previousColorMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
@@ -712,8 +720,7 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
             for (const SceneryDraw* scenery : transparentScenery) {
                 if (scenery->alphaMode != 2 || !scenery->material.useTransmap ||
-                    scenery->material.useTextTexture || scenery->batch->noZwrite ||
-                    scenery->batch->noZcheck) {
+                    scenery->material.useTextTexture || scenery->batch->noZwrite) {
                     continue;
                 }
                 // The shader's alpha-mode-3 threshold keeps only fully opaque
@@ -735,20 +742,14 @@ void MapRenderer::draw(bool renderTypeFourOnly) const {
             // transparent for the rest of the scene.
             const bool hasOpaqueTransmapDepth =
                 scenery->alphaMode == 2 && scenery->material.useTransmap &&
-                !scenery->material.useTextTexture && !scenery->batch->noZwrite &&
-                !scenery->batch->noZcheck;
+                !scenery->material.useTextTexture && !scenery->batch->noZwrite;
             glDepthFunc(hasOpaqueTransmapDepth ? GL_LEQUAL : GL_LESS);
             glDepthMask(scenery->material.useTextTexture && !scenery->batch->noZwrite ? GL_TRUE
                                                                                       : GL_FALSE);
-            const bool skipDepthCheck = scenery->batch->noZcheck && !scenery->batch->noZwrite;
-            if (skipDepthCheck) {
-                glDisable(GL_DEPTH_TEST);
-            }
+            // Transparent scenery such as windows must remain occluded by solid geometry,
+            // even when an asset requests noZcheck. Keep noZwrite semantics for blending.
             drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material,
                                 scenery->alphaMode);
-            if (skipDepthCheck) {
-                glEnable(GL_DEPTH_TEST);
-            }
         }
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);

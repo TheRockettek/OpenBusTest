@@ -165,7 +165,7 @@ void Vehicle::sortTransparentBatch(Batch& batch) {
 }
 
 void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
-                   const Matrix4* groundShadowTransform) {
+                   const Matrix4* groundShadowTransform, double minimumObjectViewportFraction) {
     TraceScope trace("render", "Vehicle::draw");
     openbus::rendering::IndirectCullingBatch indirectBatch;
     openbus::rendering::IndirectCullingScope indirectScope;
@@ -228,6 +228,11 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                 continue;
             auto item = makeCullingItem(modelView, animatedPartCenter(part), part.radius);
             item.metadata[0] = frustumCulling ? CullFrustum : 0U;
+            if (openbus::rendering::sphereBelowMinimumViewportFraction(
+                    modelView, projection, animatedPartCenter(part), part.radius,
+                    minimumObjectViewportFraction)) {
+                item.metadata[0] |= CullReject;
+            }
             if (part.lodIndex >= 0 && !boundaries.empty()) {
                 item.metadata[0] |= CullLod;
                 item.metadata[1] = static_cast<std::uint32_t>(part.lodIndex);
@@ -249,7 +254,9 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
             indirectBatch.select(indirectSlots.at(&batch));
     };
     const auto computeVisibility =
-        reusePreparedDraw ? std::vector<std::uint32_t>{} : computePartVisibility(true);
+        reusePreparedDraw
+            ? std::vector<std::uint32_t>{}
+            : computePartVisibility(true, minimumObjectViewportFraction);
     const auto visible = [&](const DisplayPart& part, std::size_t partIndex) {
         // TraceScope phase("render", "Vehicle::draw.visible");
         if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex]) {
@@ -265,6 +272,10 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
         const std::array<double, 4> eye = transformPoint(modelView, local);
         part.cachedViewDepth = -eye[2];
         part.viewDepthCacheGeneration = viewDepthGeneration;
+        if (openbus::rendering::sphereBelowMinimumViewportFraction(
+                modelView, projection, center, part.radius, minimumObjectViewportFraction)) {
+            return false;
+        }
         const double distance = std::sqrt(eye[0] * eye[0] + eye[1] * eye[1] + eye[2] * eye[2]);
         if (!lodThresholds.empty() && part.lodIndex >= 0) {
             std::size_t selectedLod = lodThresholds.size() - 1;

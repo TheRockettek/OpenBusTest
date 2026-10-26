@@ -121,7 +121,7 @@ class MapRenderer {
     std::size_t updateTrafficActors(double elapsedSeconds);
     const std::vector<openbus::map::MapTrafficActor>& trafficActors() const;
     std::optional<double> terrainHeightAt(double worldX, double worldY) const;
-    void draw(bool renderTypeFourOnly = false) const;
+    void draw(bool renderTypeFourOnly = false, double minimumObjectViewportFraction = 0.0) const;
 
   private:
     friend class MapSceneLoader;

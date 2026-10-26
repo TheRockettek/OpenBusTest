@@ -459,6 +459,8 @@ class RenderLoop {
     std::size_t targetBusTrafficCount_ = 0;
     double mapTrafficStartHour_ = 12.0;
     bool mapTrafficSpawnInView_ = false;
+    bool trafficSpawnDiagnosticsEnabled_ = false;
+    double trafficSpawnDiagnosticElapsedSeconds_ = 0.0;
     double aiSimulationRateHz_ = 0.0;
     double aiMaximumRateHz_ = 0.0;
     double aiRateDivisor_ = 1.0;

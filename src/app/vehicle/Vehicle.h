@@ -467,9 +467,11 @@ struct Vehicle {
 
     void cacheReflectionTextureIndices(DisplayPart& part) const;
 
-    std::vector<std::uint32_t> computePartVisibility(bool selectLod) const;
+    std::vector<std::uint32_t> computePartVisibility(bool selectLod,
+                                                     double minimumObjectViewportFraction) const;
 
-    void prepareFrameVisibility(RenderViewContext context, int viewportWidth, int viewportHeight);
+    void prepareFrameVisibility(RenderViewContext context, int viewportWidth, int viewportHeight,
+                                double minimumObjectViewportFraction);
 
     bool needsReflectionTexture(std::size_t reflectionIndex) const;
 
@@ -745,7 +747,8 @@ struct Vehicle {
     void sortTransparentBatch(Batch& batch);
 
     void draw(RenderViewContext context, VehicleRenderPass renderPass = VehicleRenderPass::All,
-              const Matrix4* groundShadowTransform = nullptr);
+              const Matrix4* groundShadowTransform = nullptr,
+              double minimumObjectViewportFraction = 0.0);
 
     bool areObjectsLoaded() const;
 

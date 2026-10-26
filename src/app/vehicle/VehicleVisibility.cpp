@@ -28,7 +28,8 @@ void Vehicle::cacheReflectionTextureIndices(DisplayPart& part) const {
                                          uniqueReflectionIndices.end());
 }
 
-std::vector<std::uint32_t> Vehicle::computePartVisibility(bool selectLod) const {
+std::vector<std::uint32_t>
+Vehicle::computePartVisibility(bool selectLod, double minimumObjectViewportFraction) const {
     using namespace openbus::rendering;
     std::vector<std::uint32_t> result;
     if (!computeCullingAvailable())
@@ -40,6 +41,11 @@ std::vector<std::uint32_t> Vehicle::computePartVisibility(bool selectLod) const 
     for (const DisplayPart& part : displayLists) {
         auto item = makeCullingItem(modelViewMatrix(), animatedPartCenter(part), part.radius);
         item.metadata[0] = frustumCulling ? CullFrustum : 0U;
+        if (sphereBelowMinimumViewportFraction(modelViewMatrix(), projectionMatrix(),
+                                               animatedPartCenter(part), part.radius,
+                                               minimumObjectViewportFraction)) {
+            item.metadata[0] |= CullReject;
+        }
         if (selectLod && part.lodIndex >= 0 && !boundaries.empty()) {
             item.metadata[0] |= CullLod;
             item.metadata[1] = static_cast<std::uint32_t>(part.lodIndex);
@@ -52,7 +58,8 @@ std::vector<std::uint32_t> Vehicle::computePartVisibility(bool selectLod) const 
 }
 
 void Vehicle::prepareFrameVisibility(RenderViewContext context, int viewportWidth,
-                                     int viewportHeight) {
+                                     int viewportHeight,
+                                     double minimumObjectViewportFraction) {
     TraceScope trace("render", "Vehicle::prepareFrameVisibility");
     ++materialSelectionGeneration;
     {
@@ -98,6 +105,10 @@ void Vehicle::prepareFrameVisibility(RenderViewContext context, int viewportWidt
                 continue;
             }
             const std::array<double, 3> center = animatedPartCenter(part);
+            if (openbus::rendering::sphereBelowMinimumViewportFraction(
+                    modelView, projection, center, part.radius, minimumObjectViewportFraction)) {
+                continue;
+            }
             const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
             const std::array<double, 4> eye = transformPoint(modelView, local);
             if (frustumCulling && sphereOutsideFrustum(frustum, eye, part.radius)) {

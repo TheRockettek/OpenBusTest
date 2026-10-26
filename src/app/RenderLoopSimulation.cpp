@@ -770,17 +770,40 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             MapTrafficPose pose;
             std::size_t candidateIndex = 0;
         };
+        struct RoadSpawnDiagnostics {
+            std::size_t vehiclesChecked = 0;
+            std::size_t candidatesChecked = 0;
+            std::size_t rejectedCandidates = 0;
+            std::size_t inactiveCandidateTiles = 0;
+            std::size_t posesOutsideActiveTiles = 0;
+            std::size_t visibleCandidates = 0;
+            std::size_t obstructedCandidates = 0;
+            std::size_t clearCandidates = 0;
+        };
         const auto findRoadSpawn =
-            [&](const TrafficVehicleState& state) -> std::optional<RoadSpawnLocation> {
+            [&](const TrafficVehicleState& state,
+                RoadSpawnDiagnostics* diagnostics) -> std::optional<RoadSpawnLocation> {
+            if (diagnostics != nullptr) {
+                ++diagnostics->vehiclesChecked;
+            }
             const MapTrafficRoute& route = state.actor.route;
             for (std::size_t candidateIndex = 0; candidateIndex < state.spawnCandidates.size();
                  ++candidateIndex) {
                 if (std::ranges::find(state.rejectedSpawnCandidateIndices, candidateIndex) !=
                     state.rejectedSpawnCandidateIndices.end()) {
+                    if (diagnostics != nullptr) {
+                        ++diagnostics->rejectedCandidates;
+                    }
                     continue;
                 }
                 const MapTrafficSpawnCandidate& spawn = state.spawnCandidates[candidateIndex];
+                if (diagnostics != nullptr) {
+                    ++diagnostics->candidatesChecked;
+                }
                 if (!activeTiles.contains({spawn.tileX, spawn.tileY})) {
+                    if (diagnostics != nullptr) {
+                        ++diagnostics->inactiveCandidateTiles;
+                    }
                     continue;
                 }
                 const auto pose = sampleMapTrafficRoute(route, spawn.distanceMeters,
@@ -788,14 +811,28 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 if (!pose) {
                     throw std::runtime_error("Could not sample a road traffic spawn position");
                 }
-                if (!poseOnActiveTile(*pose) ||
-                    (!mapTrafficSpawnInView_ && !hiddenAtPose(state.actor, *pose))) {
+                if (!poseOnActiveTile(*pose)) {
+                    if (diagnostics != nullptr) {
+                        ++diagnostics->posesOutsideActiveTiles;
+                    }
+                    continue;
+                }
+                if (!mapTrafficSpawnInView_ && !hiddenAtPose(state.actor, *pose)) {
+                    if (diagnostics != nullptr) {
+                        ++diagnostics->visibleCandidates;
+                    }
                     continue;
                 }
                 const MapTrafficObstacle candidate{*pose, state.actor.lengthMeters,
                                                    state.actor.widthMeters};
                 if (mapTrafficHasClearance(candidate, occupied, 3.0)) {
+                    if (diagnostics != nullptr) {
+                        ++diagnostics->clearCandidates;
+                    }
                     return RoadSpawnLocation{spawn.distanceMeters, *pose, candidateIndex};
+                }
+                if (diagnostics != nullptr) {
+                    ++diagnostics->obstructedCandidates;
                 }
             }
             return std::nullopt;
@@ -875,7 +912,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     }
                     spawn = RoadSpawnLocation{0.0, *entryPose, 0};
                 } else {
-                    spawn = findRoadSpawn(state);
+                    spawn = findRoadSpawn(state, nullptr);
                     if (!spawn.has_value()) {
                         continue;
                     }
@@ -974,10 +1011,22 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
         }
 
+        RoadSpawnDiagnostics roadSpawnDiagnostics;
+        std::size_t loadedRoadVehicles = 0;
+        std::size_t pendingRoadVehicleLoads = 0;
+        std::size_t failedRoadVehicleLoads = 0;
+        std::size_t activeRoadVehicles = 0;
         TraceScope candidateTrace("traffic",
                                   "RenderLoop::updateTrafficDriving.buildPopulationPlan");
         for (std::size_t stateIndex = 0; stateIndex < trafficVehicles_.size(); ++stateIndex) {
             TrafficVehicleState& state = trafficVehicles_[stateIndex];
+            if (!state.isBus) {
+                loadedRoadVehicles += state.vehicle != nullptr;
+                pendingRoadVehicleLoads += state.pendingVehicle.valid() ||
+                                           state.pendingInitializationVehicle != nullptr;
+                failedRoadVehicleLoads += state.vehicleLoadFailed;
+                activeRoadVehicles += state.populationEnabled;
+            }
             if (state.vehicle == nullptr || state.vehicleLoadFailed ||
                 state.deadlockRemovalCommitted) {
                 continue;
@@ -1003,7 +1052,11 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                         }
                     }
                 } else {
-                    canSpawn = findRoadSpawn(state).has_value();
+                    canSpawn =
+                        findRoadSpawn(state, trafficSpawnDiagnosticsEnabled_
+                                                 ? &roadSpawnDiagnostics
+                                                 : nullptr)
+                            .has_value();
                 }
             }
             const bool canDespawn =
@@ -1015,6 +1068,32 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         trafficWorker_->submitPopulationPlan(
             std::move(populationCandidates), targetRoadTrafficCount_, targetBusTrafficCount_,
             targetHumanTrafficCount_, targetRoadGroupPopulations_, useGroupRoadPopulation_);
+        if (trafficSpawnDiagnosticsEnabled_) {
+            trafficSpawnDiagnosticElapsedSeconds_ += trafficInputElapsedSeconds;
+            if (trafficSpawnDiagnosticElapsedSeconds_ >= 1.0) {
+                gameLog.Log(
+                    "Map road AI spawn admission: target=" +
+                    std::to_string(targetRoadTrafficCount_) +
+                    ", queued=" + std::to_string(trafficVehicles_.size()) +
+                    ", loaded=" + std::to_string(loadedRoadVehicles) +
+                    ", pendingLoads=" + std::to_string(pendingRoadVehicleLoads) +
+                    ", failedLoads=" + std::to_string(failedRoadVehicleLoads) +
+                    ", active=" + std::to_string(activeRoadVehicles) +
+                    ", activeTiles=" + std::to_string(activeTiles.size()) +
+                    ", checkedVehicles=" + std::to_string(roadSpawnDiagnostics.vehiclesChecked) +
+                    ", candidates=" + std::to_string(roadSpawnDiagnostics.candidatesChecked) +
+                    ", rejected=" + std::to_string(roadSpawnDiagnostics.rejectedCandidates) +
+                    ", inactiveCandidateTiles=" +
+                    std::to_string(roadSpawnDiagnostics.inactiveCandidateTiles) +
+                    ", posesOutsideActiveTiles=" +
+                    std::to_string(roadSpawnDiagnostics.posesOutsideActiveTiles) +
+                    ", visible=" + std::to_string(roadSpawnDiagnostics.visibleCandidates) +
+                    ", obstructed=" +
+                    std::to_string(roadSpawnDiagnostics.obstructedCandidates) +
+                    ", clear=" + std::to_string(roadSpawnDiagnostics.clearCandidates));
+                trafficSpawnDiagnosticElapsedSeconds_ = 0.0;
+            }
+        }
     }
     std::vector<std::shared_ptr<MapTrafficSignalController>> signalControllers;
     std::vector<MapTrafficSignalBusPriorityRequest> busPriorityRequests;

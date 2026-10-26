@@ -260,7 +260,8 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                     batch.material.useFreeTexture = batch.material.freeTexture != 0;
                 }
             }
-            if (verboseAlphaMaterials && batch.alphaMode != 0) {
+            if (verboseAlphaMaterials &&
+                (batch.alphaMode != 0 || batch.noZcheck || batch.noZwrite)) {
                 gameLog.Log(
                     "Map scenery alpha material: asset=" +
                     openbus::pathToUtf8(modelConfigPath.filename()) + " mesh=" +
@@ -269,6 +270,8 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                     " mode=" + std::to_string(batch.alphaMode) + " state=" +
                     (preparedBatch.hasMaterialState ? std::to_string(preparedBatch.stateAlphaMode)
                                                     : "none") +
+                    " noZcheck=" + (batch.noZcheck ? "true" : "false") +
+                    " noZwrite=" + (batch.noZwrite ? "true" : "false") +
                     " texture=" + openbus::pathToUtf8(preparedBatch.texturePath));
             }
             pglGenBuffers(1, &batch.buffer);

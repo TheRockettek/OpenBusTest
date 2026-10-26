@@ -18,6 +18,8 @@ inline constexpr double DEFAULT_FIELD_OF_VIEW = 60.0;
 inline constexpr double MIN_FIELD_OF_VIEW = 20.0;
 inline constexpr double MAX_FIELD_OF_VIEW = 120.0;
 inline constexpr double GROUND_SHADOW_OFFSET_Z = 0.015;
+inline constexpr double MAIN_VIEW_MIN_OBJECT_VIEWPORT_FRACTION = 0.02;
+inline constexpr double REFLECTION_VIEW_MIN_OBJECT_VIEWPORT_FRACTION = 0.10;
 
 } // namespace openbus::app
 

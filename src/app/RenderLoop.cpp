@@ -64,6 +64,12 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     if (const char* diagnostics = openbus::getEnvironment("OPENBUS_SCRIPT_DIAGNOSTICS")) {
         drivetrainDiagnosticsEnabled_ = std::string(diagnostics) == "1";
     }
+    if (const char* diagnostics = openbus::getEnvironment("OPENBUS_MAP_AI_SPAWN_DIAGNOSTICS")) {
+        trafficSpawnDiagnosticsEnabled_ = std::string(diagnostics) == "1";
+    }
+    if (trafficSpawnDiagnosticsEnabled_) {
+        gameLog.Log("Map AI spawn-admission diagnostics enabled (1 Hz)");
+    }
     if (drivetrainDiagnosticsEnabled_) {
         gameLog.Log("Native drivetrain variable diagnostics enabled (1 Hz)");
     }

@@ -37,6 +37,14 @@ allocation, or dispatch failures retain the CPU visibility implementation.
 - This replaces spatial visibility tests, not rasterizer back-face selection or
   depth testing. It does not add occlusion/Hi-Z culling.
 
+Map scenery instances and vehicle parts also use a projected-size cutoff:
+objects smaller than 2% of the main viewport height are skipped, and objects
+smaller than 10% are skipped in mirror/camera reflection views. The cutoff is
+applied consistently before CPU submission and as an explicit rejection in the
+optional GPU visibility path. Spheres reaching the camera plane and degenerate
+bounds are retained conservatively. This is not occlusion culling; fully covered
+objects can still be submitted when they exceed the size threshold.
+
 Centers are transformed into eye space in double precision before packing the
 SSBO, preventing large map origins from erasing local detail. Normalized frustum
 planes use a conservative 1 mm margin. LOD decisions use float precision on GPU,
