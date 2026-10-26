@@ -795,9 +795,12 @@ the outstanding implementation and validation tasks:
 - [ ] Resolve Chrono map variants using `[selobject]`, `[selspline]`,
   `[delete]`, `[typ]`, and `[relabel]`; these records are currently parser-only
   or have no independent runtime effect.
-- [ ] Investigate why Cotterell visited 27 terrain tiles but uploaded only 26
-  terrain meshes, despite the manifest reporting 27 terrain sidecars; identify
-  the missing/rejected tile and ensure it is surfaced in diagnostics.
+- [x] Cotterell's retained runtime log shows the apparent terrain discrepancy
+  was an intermediate progress count: the progress line reports 26 uploads,
+  but the immediately following terrain-phase completion and final render
+  summary both report 27 meshes from 27 map tiles. Rebuilt
+  `OpenBusMapConfigProbe` against the installed map and confirmed all 27 terrain
+  sidecars decode and pass grid-size validation.
 - [ ] Investigate the 7 spline attachments with no local placement in the
   Cotterell run (examples reference `splineIndex=154`, `102`, and `5`); determine
   whether they are unresolved repeater-master references, invalid local spline
@@ -930,10 +933,15 @@ the outstanding implementation and validation tasks:
 - [ ] Compare the vehicle draw-list/material-selection reuse and static
   ground/grid VBO changes using repeated, uninstrumented runs; report frame
   p50/p95 and keep traced scope totals separate from frame time.
-- [ ] Reduce repeated traffic-debug processing in `RenderLoopDraw.cpp`: avoid
-  building spline routes before active-tile filtering and building them again
-  for endpoint/debug geometry; reuse sampled AI actor poses and avoid rescanning
-  scenery traffic segments for each debug overlay pass.
+- [~] `RenderLoopDraw.cpp` now filters scenery traffic segments to the active
+  tile window once per debug draw and reuses that ordered view for endpoint
+  lookup, path geometry, signal stop lines, and signal details. Traffic routes
+  are built once per overlay rebuild and their active first segments are reused
+  for endpoint lookup and debug geometry. Routes still must be built before
+  their active-tile membership can be checked because `MapRenderer` exposes
+  tile coordinates only on the built route; avoiding those out-of-window builds
+  needs a pre-build spline-to-tile lookup. Sampled AI actor poses are also still
+  recomputed.
 - [ ] Add renderer regression coverage for opaque/transparent list reuse,
   script-driven material changes, and view-specific reflection culling and
   transparent sorting before broadening those caches.

@@ -15,67 +15,91 @@
 #include <numbers>
 #include <sstream>
 #include <thread>
+#include <utility>
 
 namespace {
 
 constexpr double waitingPassengerIdleGaitWeight = 0.08;
 constexpr double waitingPassengerIdleCycleRadiansPerSecond = 0.7;
 
+struct ActiveSceneryTrafficSegment {
+    std::size_t index;
+    const openbus::rendering::TrafficPathDebugSegment* segment;
+};
+
+struct ActiveTrafficSplineRoute {
+    int splineId;
+    int pathTypeCode;
+    openbus::map::MapTrafficRouteSegment firstSegment;
+};
+
+std::vector<ActiveTrafficSplineRoute>
+activeTrafficSplineRoutes(const openbus::rendering::MapRenderer& mapRenderer,
+                          const std::vector<std::pair<int, int>>& activeTiles) {
+    std::vector<ActiveTrafficSplineRoute> activeRoutes;
+    for (const int pathTypeCode :
+         {openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN}) {
+        for (const int splineId : mapRenderer.trafficSplineIds(pathTypeCode)) {
+            std::optional<openbus::map::MapTrafficRoute> route =
+                mapRenderer.buildTrafficRoute(splineId, pathTypeCode);
+            if (!route.has_value() || route->segments.empty()) {
+                continue;
+            }
+            openbus::map::MapTrafficRouteSegment& firstSegment = route->segments.front();
+            const openbus::map::MapSplinePlacementReference& splineReference = firstSegment.spline;
+            if (std::find(activeTiles.begin(), activeTiles.end(),
+                          std::pair{splineReference.tileX, splineReference.tileY}) ==
+                activeTiles.end()) {
+                continue;
+            }
+            activeRoutes.push_back({splineId, pathTypeCode, std::move(firstSegment)});
+        }
+    }
+    return activeRoutes;
+}
+
 class SceneryTrafficEndpointIndex {
   public:
     SceneryTrafficEndpointIndex(const openbus::rendering::MapRenderer& mapRenderer,
-                                const std::vector<std::pair<int, int>>& activeTiles) {
-        for (const openbus::rendering::TrafficPathDebugSegment& segment :
-             mapRenderer.sceneryTrafficPathSegments()) {
-            if (segment.points.empty() ||
-                std::find(activeTiles.begin(), activeTiles.end(),
-                          std::pair{segment.tileX, segment.tileY}) == activeTiles.end()) {
+                                const std::vector<ActiveSceneryTrafficSegment>& activeSegments,
+                                const std::vector<ActiveTrafficSplineRoute>& activeRoutes) {
+        for (const ActiveSceneryTrafficSegment& activeSegment : activeSegments) {
+            const openbus::rendering::TrafficPathDebugSegment& segment = *activeSegment.segment;
+            if (segment.points.empty()) {
                 continue;
             }
             addEndpoint(segment.points.front(), segment.pathTypeCode);
             addEndpoint(segment.points.back(), segment.pathTypeCode);
         }
-        for (const int pathTypeCode :
-             {openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN}) {
-            for (const int splineId : mapRenderer.trafficSplineIds(pathTypeCode)) {
-                const std::optional<openbus::map::MapTrafficRoute> route =
-                    mapRenderer.buildTrafficRoute(splineId, pathTypeCode);
-                if (!route.has_value() || route->segments.empty()) {
-                    continue;
-                }
-                const openbus::map::MapTrafficRouteSegment& firstSegment = route->segments.front();
-                const openbus::map::MapSplinePlacementReference& splineReference =
-                    firstSegment.spline;
-                if (std::find(activeTiles.begin(), activeTiles.end(),
-                              std::pair{splineReference.tileX, splineReference.tileY}) ==
-                    activeTiles.end()) {
-                    continue;
-                }
-                const double splineLength = splineReference.placement.length;
-                if (!std::isfinite(splineLength) || splineLength <= 0.0) {
-                    continue;
-                }
-                openbus::map::MapTrafficRoute singleSplineRoute;
-                singleSplineRoute.segments.push_back(firstSegment);
-                singleSplineRoute.cumulativeEndDistances.push_back(splineLength);
-                singleSplineRoute.totalLength = splineLength;
-                std::vector<openbus::map::MapSplinePathOffset> pathOffsets =
-                    mapRenderer.trafficSplinePathOffsets(splineId, pathTypeCode);
-                if (pathOffsets.empty()) {
-                    pathOffsets.push_back({});
-                }
-                for (const openbus::map::MapSplinePathOffset& pathOffset : pathOffsets) {
-                    for (const double distance : {0.0, splineLength}) {
-                        const std::optional<openbus::map::MapTrafficPose> pose =
-                            openbus::map::sampleMapTrafficRoute(singleSplineRoute, distance,
-                                                                pathOffset.lateralMeters);
-                        if (!pose.has_value()) {
-                            continue;
-                        }
-                        std::array<double, 3> position = pose->position;
-                        position[2] += pathOffset.heightMeters;
-                        addEndpoint(position, static_cast<double>(pathTypeCode), splineId);
+        for (const ActiveTrafficSplineRoute& activeRoute : activeRoutes) {
+            const int pathTypeCode = activeRoute.pathTypeCode;
+            const int splineId = activeRoute.splineId;
+            const openbus::map::MapSplinePlacementReference& splineReference =
+                activeRoute.firstSegment.spline;
+            const double splineLength = splineReference.placement.length;
+            if (!std::isfinite(splineLength) || splineLength <= 0.0) {
+                continue;
+            }
+            openbus::map::MapTrafficRoute singleSplineRoute;
+            singleSplineRoute.segments.push_back(activeRoute.firstSegment);
+            singleSplineRoute.cumulativeEndDistances.push_back(splineLength);
+            singleSplineRoute.totalLength = splineLength;
+            std::vector<openbus::map::MapSplinePathOffset> pathOffsets =
+                mapRenderer.trafficSplinePathOffsets(splineId, pathTypeCode);
+            if (pathOffsets.empty()) {
+                pathOffsets.push_back({});
+            }
+            for (const openbus::map::MapSplinePathOffset& pathOffset : pathOffsets) {
+                for (const double distance : {0.0, splineLength}) {
+                    const std::optional<openbus::map::MapTrafficPose> pose =
+                        openbus::map::sampleMapTrafficRoute(singleSplineRoute, distance,
+                                                            pathOffset.lateralMeters);
+                    if (!pose.has_value()) {
+                        continue;
                     }
+                    std::array<double, 3> position = pose->position;
+                    position[2] += pathOffset.heightMeters;
+                    addEndpoint(position, static_cast<double>(pathTypeCode), splineId);
                 }
             }
         }
@@ -370,26 +394,19 @@ double trafficPriorityDebugValue(const openbus::map::MapTrafficPathRules& rules)
 
 void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& mapRenderer,
                                       int pathTypeCode,
-                                      const std::vector<std::pair<int, int>>& activeTiles,
+                                      const std::vector<ActiveTrafficSplineRoute>& activeRoutes,
                                       const std::array<float, 3>& color,
                                       const SceneryTrafficEndpointIndex& sceneryEndpoints,
                                       std::vector<openbus::rendering::PrimitiveVertex>& vertices,
                                       const std::array<double, 2>& origin) {
-    for (const int splineId : mapRenderer.trafficSplineIds(pathTypeCode)) {
-        const std::optional<openbus::map::MapTrafficRoute> route =
-            mapRenderer.buildTrafficRoute(splineId, pathTypeCode);
-        if (!route.has_value() || route->segments.empty()) {
+    for (const ActiveTrafficSplineRoute& activeRoute : activeRoutes) {
+        if (activeRoute.pathTypeCode != pathTypeCode) {
             continue;
         }
 
-        const openbus::map::MapTrafficRouteSegment& firstSegment = route->segments.front();
+        const int splineId = activeRoute.splineId;
+        const openbus::map::MapTrafficRouteSegment& firstSegment = activeRoute.firstSegment;
         const openbus::map::MapSplinePlacementReference& splineReference = firstSegment.spline;
-        if (std::find(activeTiles.begin(), activeTiles.end(),
-                      std::pair{splineReference.tileX, splineReference.tileY}) ==
-            activeTiles.end()) {
-            continue;
-        }
-
         const double splineLength = splineReference.placement.length;
         if (!std::isfinite(splineLength) || splineLength <= 0.0) {
             continue;
@@ -550,16 +567,11 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
 }
 
 void appendSceneryTrafficPathDebugVertices(
-    const openbus::rendering::MapRenderer& mapRenderer,
-    const std::vector<std::pair<int, int>>& activeTiles,
+    const std::vector<ActiveSceneryTrafficSegment>& activeSegments,
     std::vector<openbus::rendering::PrimitiveVertex>& vertices,
     const std::array<double, 2>& origin) {
-    for (const openbus::rendering::TrafficPathDebugSegment& segment :
-         mapRenderer.sceneryTrafficPathSegments()) {
-        if (std::find(activeTiles.begin(), activeTiles.end(),
-                      std::pair{segment.tileX, segment.tileY}) == activeTiles.end()) {
-            continue;
-        }
+    for (const ActiveSceneryTrafficSegment& activeSegment : activeSegments) {
+        const openbus::rendering::TrafficPathDebugSegment& segment = *activeSegment.segment;
         const bool roadPath = segment.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD;
         const std::array<float, 3> color =
             roadPath ? trafficPriorityDebugColor(trafficPriorityDebugValue(segment.pathRules))
@@ -1735,8 +1747,19 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             glDisable(GL_DEPTH_TEST);
         }
     }
+    std::vector<ActiveSceneryTrafficSegment> activeSceneryTrafficSegments;
     if (!renderingReflection_ && trafficSplineDebugOverlay_ && mapRenderer_ != nullptr) {
         const std::vector<std::pair<int, int>>& activeTiles = mapRenderer_->activeTileCoordinates();
+        const std::vector<openbus::rendering::TrafficPathDebugSegment>& scenerySegments =
+            mapRenderer_->sceneryTrafficPathSegments();
+        activeSceneryTrafficSegments.reserve(scenerySegments.size());
+        for (std::size_t index = 0; index < scenerySegments.size(); ++index) {
+            const openbus::rendering::TrafficPathDebugSegment& segment = scenerySegments[index];
+            if (std::find(activeTiles.begin(), activeTiles.end(),
+                          std::pair{segment.tileX, segment.tileY}) != activeTiles.end()) {
+                activeSceneryTrafficSegments.push_back({index, &segment});
+            }
+        }
         const double tileSize = mapRenderer_->tileSize();
         // Keep world-space debug vertices close to zero before converting them to floats.
         const std::array<double, 2> trafficDebugOrigin = {
@@ -1746,15 +1769,19 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             trafficSplineDebugOriginX_ != trafficDebugOrigin[0] ||
             trafficSplineDebugOriginY_ != trafficDebugOrigin[1]) {
             trafficSplineDebugVertices_.clear();
-            const SceneryTrafficEndpointIndex sceneryEndpoints(*mapRenderer_, activeTiles);
+            const std::vector<ActiveTrafficSplineRoute> activeTrafficRoutes =
+                activeTrafficSplineRoutes(*mapRenderer_, activeTiles);
+            const SceneryTrafficEndpointIndex sceneryEndpoints(
+                *mapRenderer_, activeSceneryTrafficSegments, activeTrafficRoutes);
             appendTrafficSplineDebugVertices(*mapRenderer_, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD,
-                                             activeTiles, {0.15F, 0.9F, 1.0F}, sceneryEndpoints,
-                                             trafficSplineDebugVertices_, trafficDebugOrigin);
-            appendTrafficSplineDebugVertices(*mapRenderer_,
-                                             openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN, activeTiles,
-                                             {1.0F, 0.25F, 0.9F}, sceneryEndpoints,
-                                             trafficSplineDebugVertices_, trafficDebugOrigin);
-            appendSceneryTrafficPathDebugVertices(*mapRenderer_, activeTiles,
+                                             activeTrafficRoutes, {0.15F, 0.9F, 1.0F},
+                                             sceneryEndpoints, trafficSplineDebugVertices_,
+                                             trafficDebugOrigin);
+            appendTrafficSplineDebugVertices(
+                *mapRenderer_, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN, activeTrafficRoutes,
+                {1.0F, 0.25F, 0.9F}, sceneryEndpoints, trafficSplineDebugVertices_,
+                trafficDebugOrigin);
+            appendSceneryTrafficPathDebugVertices(activeSceneryTrafficSegments,
                                                   trafficSplineDebugVertices_, trafficDebugOrigin);
             trafficSplineDebugTiles_ = activeTiles;
             trafficSplineDebugOriginX_ = trafficDebugOrigin[0];
@@ -1784,13 +1811,11 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
         std::vector<openbus::rendering::PrimitiveVertex> behaviorVertices;
         std::vector<openbus::rendering::PrimitiveVertex> vehicleBodyVertices;
         std::vector<openbus::map::MapTrafficPose> renderedSignalStops;
-        for (const openbus::rendering::TrafficPathDebugSegment& segment :
-             mapRenderer_->sceneryTrafficPathSegments()) {
+        for (const ActiveSceneryTrafficSegment& activeSegment : activeSceneryTrafficSegments) {
+            const openbus::rendering::TrafficPathDebugSegment& segment = *activeSegment.segment;
             if (!segment.trafficSignal.has_value() ||
                 segment.pathTypeCode != openbus::map::MAP_SPLINE_PATH_TYPE_ROAD ||
-                segment.points.size() < 2 ||
-                std::find(activeTiles.begin(), activeTiles.end(),
-                          std::pair{segment.tileX, segment.tileY}) == activeTiles.end()) {
+                segment.points.size() < 2) {
                 continue;
             }
             const auto& start = segment.points.front();
@@ -2361,18 +2386,14 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             ImGui::NewLine();
             ImGui::Separator();
             if (ImGui::BeginChild("F2 traffic light details", ImVec2(0.0F, 0.0F), false)) {
-                const std::vector<std::pair<int, int>>& activeTiles =
-                    mapRenderer_->activeTileCoordinates();
-                std::size_t signalPathIndex = 0;
-                for (const openbus::rendering::TrafficPathDebugSegment& segment :
-                     mapRenderer_->sceneryTrafficPathSegments()) {
-                    const std::size_t fallbackId = signalPathIndex + 1;
-                    ++signalPathIndex;
+                for (const ActiveSceneryTrafficSegment& activeSegment :
+                     activeSceneryTrafficSegments) {
+                    const openbus::rendering::TrafficPathDebugSegment& segment =
+                        *activeSegment.segment;
+                    const std::size_t fallbackId = activeSegment.index + 1;
                     if (!segment.trafficSignal.has_value() ||
                         segment.pathTypeCode != openbus::map::MAP_SPLINE_PATH_TYPE_ROAD ||
-                        segment.points.size() < 2 ||
-                        std::find(activeTiles.begin(), activeTiles.end(),
-                                  std::pair{segment.tileX, segment.tileY}) == activeTiles.end()) {
+                        segment.points.size() < 2) {
                         continue;
                     }
                     const auto lines =
