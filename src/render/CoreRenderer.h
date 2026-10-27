@@ -108,6 +108,9 @@ struct HumanGaitParameters {
 bool initializeCoreRenderer();
 void shutdownCoreRenderer();
 void invalidateTextureBindings();
+// Use for renderer-visible buffers so cached VAO and compute bindings cannot
+// retain a deleted name that OpenGL may later reuse.
+void deleteRendererBuffers(GLsizei count, const GLuint* buffers);
 // Call with the camera view before applying any object transforms.
 void setLightingViewMatrix(const Matrix4& view);
 void configureModelAlphaState(int alphaMode, bool noZwrite);
@@ -131,9 +134,11 @@ void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
 void drawEnvironmentBatch(GLuint buffer, std::size_t vertexCount, GLuint texture, double alpha);
 void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primitive,
                     float lineWidth = 1.0f);
-void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
+bool drawStaticPrimitives(StaticPrimitiveBuffer& cache,
                           const std::vector<PrimitiveVertex>& vertices, GLenum primitive,
-                          float lineWidth = 1.0f, std::uint64_t contentRevision = 0);
+                          float lineWidth = 1.0f, std::uint64_t contentRevision = 0,
+                          bool useIndirectOcclusionProxy = false);
+void releaseStaticPrimitiveBuffer(StaticPrimitiveBuffer& cache);
 void drawTextureQuad(GLuint texture, float x, float y, float width, float height,
                      bool flipTextureY = false);
 

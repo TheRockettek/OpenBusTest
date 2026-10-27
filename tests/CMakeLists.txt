@@ -137,6 +137,9 @@ add_test(NAME OpenBusComputeCullingGpuProbe COMMAND OpenBusComputeCullingProbe -
 set_tests_properties(OpenBusComputeCullingGpuProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusViewpointProbe ViewpointProbe.cpp LIBS openbus_core)
 openbus_add_probe(OpenBusMaterialRenderingProbe MaterialRenderingProbe.cpp LIBS openbus_render)
+openbus_add_probe(OpenBusMapOcclusionRenderingProbe MapOcclusionRenderingProbe.cpp
+    LIBS openbus_render)
+set_tests_properties(OpenBusMapOcclusionRenderingProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusMapTrafficLightRenderingProbe MapTrafficLightRenderingProbe.cpp
     LIBS openbus_render)
 add_test(NAME OpenBusMapTrafficLightRenderingProbe.conditional
@@ -144,12 +147,40 @@ add_test(NAME OpenBusMapTrafficLightRenderingProbe.conditional
 set_tests_properties(OpenBusMapTrafficLightRenderingProbe
     OpenBusMapTrafficLightRenderingProbe.conditional PROPERTIES
     SKIP_RETURN_CODE 77
-    ENVIRONMENT "OPENBUS_SCRIPT_BACKEND=native;OPENBUS_CULLING_BACKEND=cpu")
+    ENVIRONMENT "OPENBUS_SCRIPT_BACKEND=native;OPENBUS_CULLING_BACKEND=cpu;OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT=0;OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT=0")
+foreach(backend IN ITEMS cpu compute-indirect)
+    foreach(mode IN ITEMS ordinary conditional)
+        if(mode STREQUAL "conditional")
+            add_test(NAME OpenBusMapTrafficLightRenderingProbe.${backend}.${mode}
+                COMMAND OpenBusMapTrafficLightRenderingProbe --conditional)
+        else()
+            add_test(NAME OpenBusMapTrafficLightRenderingProbe.${backend}.${mode}
+                COMMAND OpenBusMapTrafficLightRenderingProbe)
+        endif()
+        set_tests_properties(OpenBusMapTrafficLightRenderingProbe.${backend}.${mode}
+            PROPERTIES SKIP_RETURN_CODE 77
+            ENVIRONMENT "OPENBUS_SCRIPT_BACKEND=native;OPENBUS_CULLING_BACKEND=${backend};OPENBUS_OCCLUSION_CULLING=queries;OPENBUS_OCCLUSION_TRANSPARENT=1;OPENBUS_OCCLUSION_MAP_GEOMETRY=1;OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT=0;OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT=0")
+    endforeach()
+endforeach()
 set_tests_properties(OpenBusMaterialRenderingProbe PROPERTIES
     SKIP_RETURN_CODE 77
     ENVIRONMENT "OPENBUS_REFLECTION_SIZE=1024;OPENBUS_REFLECTION_INTERVAL=1;OPENBUS_REFLECTION_MAX_FPS=0")
 openbus_add_probe(OpenBusVehicleDrawSortingProbe VehicleDrawSortingProbe.cpp
     LIBS openbus_render)
+openbus_add_probe(OpenBusVehicleIndirectReuseProbe VehicleIndirectReuseProbe.cpp
+    LIBS openbus_audio openbus_input openbus_map openbus_physics openbus_render openbus_scripting)
+target_sources(OpenBusVehicleIndirectReuseProbe PRIVATE
+    "${OPENBUS_SOURCE_ROOT}/app/vehicle/Vehicle.cpp"
+    "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleAnimation.cpp"
+    "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleDefinition.cpp"
+    "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleDraw.cpp"
+    "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleInteraction.cpp"
+    "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleMaterials.cpp"
+    "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleMeshLoading.cpp"
+    "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleTextures.cpp"
+    "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleVisibility.cpp")
+openbus_copy_lua_runtime(OpenBusVehicleIndirectReuseProbe)
+set_tests_properties(OpenBusVehicleIndirectReuseProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusVehiclePartLoadingProbe VehiclePartLoadingProbe.cpp
     LIBS openbus_render)
 openbus_add_probe(OpenBusVehicleMaterialSelectionProbe VehicleMaterialSelectionProbe.cpp

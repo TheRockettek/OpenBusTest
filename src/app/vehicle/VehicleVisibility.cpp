@@ -28,38 +28,8 @@ void Vehicle::cacheReflectionTextureIndices(DisplayPart& part) const {
                                          uniqueReflectionIndices.end());
 }
 
-std::vector<std::uint32_t>
-Vehicle::computePartVisibility(bool selectLod, double minimumObjectViewportFraction) const {
-    using namespace openbus::rendering;
-    std::vector<std::uint32_t> result;
-    if (!computeCullingAvailable())
-        return result;
-    std::vector<CullingItem> items;
-    std::vector<float> boundaries;
-    appendCullingLodBoundaries(boundaries, lodThresholds);
-    items.reserve(displayLists.size());
-    for (const DisplayPart& part : displayLists) {
-        auto item = makeCullingItem(modelViewMatrix(), animatedPartCenter(part), part.radius);
-        item.metadata[0] = frustumCulling ? CullFrustum : 0U;
-        if (sphereBelowMinimumViewportFraction(modelViewMatrix(), projectionMatrix(),
-                                               animatedPartCenter(part), part.radius,
-                                               minimumObjectViewportFraction)) {
-            item.metadata[0] |= CullReject;
-        }
-        if (selectLod && part.lodIndex >= 0 && !boundaries.empty()) {
-            item.metadata[0] |= CullLod;
-            item.metadata[1] = static_cast<std::uint32_t>(part.lodIndex);
-            item.metadata[3] = static_cast<std::uint32_t>(boundaries.size());
-        }
-        items.push_back(item);
-    }
-    computeCull(items, makeCullingPlanes(projectionMatrix()), boundaries, result);
-    return result;
-}
-
 void Vehicle::prepareFrameVisibility(RenderViewContext context, int viewportWidth,
-                                     int viewportHeight,
-                                     double minimumObjectViewportFraction) {
+                                     int viewportHeight, double minimumObjectViewportFraction) {
     TraceScope trace("render", "Vehicle::prepareFrameVisibility");
     ++materialSelectionGeneration;
     {
@@ -199,6 +169,7 @@ int Vehicle::lodForDistance(double distance) const {
 }
 
 void Vehicle::rebuildDisplayOrder() {
+    preparedDrawListsValid = false;
     std::stable_sort(displayLists.begin(), displayLists.end(),
                      [](const DisplayPart& first, const DisplayPart& second) {
                          return first.transparent < second.transparent;

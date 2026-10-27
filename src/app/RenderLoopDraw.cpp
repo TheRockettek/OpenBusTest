@@ -1139,13 +1139,13 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 if (vehicle.get() == playerVehicle_) {
                     applyPose(chassis);
                     vehicle->prepareFrameVisibility(context, framebufferWidth_, framebufferHeight_,
-                                                    MAIN_VIEW_MIN_OBJECT_VIEWPORT_FRACTION);
+                                                    mainViewMinimumObjectViewportFraction_);
                 } else {
                     applyVehiclePlacement(
                         makeModelRootPlacement(vehicle->placement, vehicle->modelOffsetZ));
                     vehicle->prepareFrameVisibility(RenderViewContext::NonPlayer, framebufferWidth_,
                                                     framebufferHeight_,
-                                                    MAIN_VIEW_MIN_OBJECT_VIEWPORT_FRACTION);
+                                                    mainViewMinimumObjectViewportFraction_);
                 }
                 popMatrix();
             }
@@ -1333,9 +1333,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             glDisable(GL_BLEND);
             glDisable(GL_CULL_FACE);
             glDisable(GL_POLYGON_OFFSET_FILL);
-            mapRenderer_->draw(
-                false, renderingReflection_ ? REFLECTION_VIEW_MIN_OBJECT_VIEWPORT_FRACTION
-                                            : MAIN_VIEW_MIN_OBJECT_VIEWPORT_FRACTION);
+            mapRenderer_->draw(false, renderingReflection_
+                                          ? reflectionMinimumObjectViewportFraction_
+                                          : mainViewMinimumObjectViewportFraction_);
             for (const HumanTrafficState& human : humanTrafficActors_) {
                 if (!human.populationEnabled) {
                     continue;
@@ -1452,6 +1452,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                           : RenderViewContext::PlayerInterior;
     {
         TraceScope phase("render", "RenderLoop::draw.model");
+        openbus::rendering::IndirectCullingScope indirectScope;
         bool playerDrawn = false;
         const auto modelLoadDeadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(4);
@@ -1537,10 +1538,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                                   shadowGroundHeight + GROUND_SHADOW_OFFSET_Z);
                     shadowTransform = &aiGroundShadowTransform;
                 }
-                vehicle->draw(
-                    vehicleContext, renderPass, shadowTransform,
-                    renderingReflection_ ? REFLECTION_VIEW_MIN_OBJECT_VIEWPORT_FRACTION
-                                         : MAIN_VIEW_MIN_OBJECT_VIEWPORT_FRACTION);
+                vehicle->draw(vehicleContext, renderPass, shadowTransform,
+                              renderingReflection_ ? reflectionMinimumObjectViewportFraction_
+                                                   : mainViewMinimumObjectViewportFraction_);
                 popMatrix();
             }
         };
@@ -1701,7 +1701,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             glDepthFunc(GL_LESS);
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
-            mapRenderer_->draw(true, MAIN_VIEW_MIN_OBJECT_VIEWPORT_FRACTION);
+            mapRenderer_->draw(true, mainViewMinimumObjectViewportFraction_);
         };
         drawVehicles(VehicleRenderPass::Opaque, false);
         for (TrafficVehicleState& trafficVehicle : trafficVehicles_) {

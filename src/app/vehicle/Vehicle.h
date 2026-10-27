@@ -292,6 +292,7 @@ struct Vehicle {
         bool visibilitySwitched = false;
         std::uint64_t materialSelectionGeneration = 0;
         std::size_t vertexCount = 0;
+        std::size_t indirectSlot = std::numeric_limits<std::size_t>::max();
         // Lazily built local bounds of consecutive triangle groups; lets mouse picking
         // skip most triangles. Keyed by the vertex storage and its size.
         struct PickChunkBounds {
@@ -340,6 +341,7 @@ struct Vehicle {
         mutable Matrix4 cachedAnimationTransform = {};
         mutable std::uint64_t viewDepthCacheGeneration = 0;
         mutable double cachedViewDepth = 0.0;
+        bool indirectEligible = false;
     };
 
     struct TransparentBatch {
@@ -353,6 +355,7 @@ struct Vehicle {
     std::vector<DisplayPart*> opaquePartsScratch;
     std::vector<TransparentBatch> noDepthOpaqueBatchesScratch;
     std::vector<TransparentBatch> transparentBatchesScratch;
+    openbus::rendering::IndirectCullingBatch preparedIndirectBatch;
     std::vector<bool> variableVisibleParts;
     std::vector<std::size_t> visibleClickablePartIndices;
     std::vector<std::size_t> visibleOpaquePickPartIndices;
@@ -415,6 +418,9 @@ struct Vehicle {
     RenderViewContext preparedDrawContext = RenderViewContext::PlayerExterior;
     bool preparedDrawReflection = false;
     bool preparedDrawTransparent = false;
+    bool preparedDrawIndirect = false;
+    bool preparedDrawFrustumCulling = true;
+    double preparedDrawMinimumObjectViewportFraction = 0.0;
     std::uint64_t preparedDrawAnimationGeneration = 0;
     std::uint64_t preparedDrawMaterialGeneration = 0;
     Matrix4 preparedDrawModelView = {};
@@ -466,9 +472,6 @@ struct Vehicle {
     const std::vector<int>& reflectionTextureIndicesForPart(const DisplayPart& part) const;
 
     void cacheReflectionTextureIndices(DisplayPart& part) const;
-
-    std::vector<std::uint32_t> computePartVisibility(bool selectLod,
-                                                     double minimumObjectViewportFraction) const;
 
     void prepareFrameVisibility(RenderViewContext context, int viewportWidth, int viewportHeight,
                                 double minimumObjectViewportFraction);

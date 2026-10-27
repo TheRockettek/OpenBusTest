@@ -7,6 +7,7 @@
 #include "core/Environment.h"
 #include "core/Logger.h"
 #include "core/Utf8Path.h"
+#include "render/CoreRenderer.h"
 #include "render/OpenGLFunctions.h"
 
 #include <algorithm>
@@ -98,9 +99,10 @@ AssetRequestManager::~AssetRequestManager() {
     }
     if (!textures_.empty()) {
         glDeleteTextures(static_cast<GLsizei>(textures_.size()), textures_.data());
+        invalidateTextureBindings();
     }
     if (!buffers_.empty()) {
-        pglDeleteBuffers(static_cast<GLsizei>(buffers_.size()), buffers_.data());
+        deleteRendererBuffers(static_cast<GLsizei>(buffers_.size()), buffers_.data());
     }
 }
 

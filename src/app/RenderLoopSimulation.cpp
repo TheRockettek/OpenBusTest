@@ -1022,8 +1022,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             TrafficVehicleState& state = trafficVehicles_[stateIndex];
             if (!state.isBus) {
                 loadedRoadVehicles += state.vehicle != nullptr;
-                pendingRoadVehicleLoads += state.pendingVehicle.valid() ||
-                                           state.pendingInitializationVehicle != nullptr;
+                pendingRoadVehicleLoads +=
+                    state.pendingVehicle.valid() || state.pendingInitializationVehicle != nullptr;
                 failedRoadVehicleLoads += state.vehicleLoadFailed;
                 activeRoadVehicles += state.populationEnabled;
             }
@@ -1053,9 +1053,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     }
                 } else {
                     canSpawn =
-                        findRoadSpawn(state, trafficSpawnDiagnosticsEnabled_
-                                                 ? &roadSpawnDiagnostics
-                                                 : nullptr)
+                        findRoadSpawn(state, trafficSpawnDiagnosticsEnabled_ ? &roadSpawnDiagnostics
+                                                                             : nullptr)
                             .has_value();
                 }
             }
@@ -1088,8 +1087,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     ", posesOutsideActiveTiles=" +
                     std::to_string(roadSpawnDiagnostics.posesOutsideActiveTiles) +
                     ", visible=" + std::to_string(roadSpawnDiagnostics.visibleCandidates) +
-                    ", obstructed=" +
-                    std::to_string(roadSpawnDiagnostics.obstructedCandidates) +
+                    ", obstructed=" + std::to_string(roadSpawnDiagnostics.obstructedCandidates) +
                     ", clear=" + std::to_string(roadSpawnDiagnostics.clearCandidates));
                 trafficSpawnDiagnosticElapsedSeconds_ = 0.0;
             }

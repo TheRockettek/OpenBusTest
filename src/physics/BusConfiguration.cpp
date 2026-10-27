@@ -257,8 +257,8 @@ BusConfiguration configurationFromVehicleConfig(const VehicleConfig& source,
 
 std::filesystem::path resolveModelConfigPath(const std::filesystem::path& busConfigPath,
                                              const std::filesystem::path& modelPath) {
-    return openbus::assets::resolveCaseInsensitivePath(
-        busConfigPath.parent_path() / normalizedPath(modelPath));
+    return openbus::assets::resolveCaseInsensitivePath(busConfigPath.parent_path() /
+                                                       normalizedPath(modelPath));
 }
 
 std::filesystem::path modelRootForConfig(const std::filesystem::path& modelConfigPath) {

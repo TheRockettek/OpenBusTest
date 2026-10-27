@@ -102,7 +102,7 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                     preparedTree.vertices.data(), GL_STATIC_DRAW);
                 if (batch.buffer == 0 || glGetError() != GL_NO_ERROR) {
                     if (batch.buffer != 0) {
-                        pglDeleteBuffers(1, &batch.buffer);
+                        deleteRendererBuffers(1, &batch.buffer);
                     }
                     recordSkipped(skipped, "tree scenery batches rejected by OpenGL upload",
                                   openbus::pathToUtf8(configPath.filename()));
@@ -281,7 +281,7 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                           vertices.data(), GL_STATIC_DRAW);
             if (batch.buffer == 0 || glGetError() != GL_NO_ERROR) {
                 if (batch.buffer != 0) {
-                    pglDeleteBuffers(1, &batch.buffer);
+                    deleteRendererBuffers(1, &batch.buffer);
                 }
                 recordSkipped(
                     skipped, "scenery model batches rejected by OpenGL upload",

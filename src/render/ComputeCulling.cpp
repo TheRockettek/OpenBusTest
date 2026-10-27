@@ -21,11 +21,31 @@ std::array<GLuint, 3> buffers = {};
 GLint planesLocation = -1;
 GLint countLocation = -1;
 GLint indirectLocation = -1;
+GLint proxyCommandsLocation = -1;
+GLint projectionScaleLocation = -1;
+GLint minimumFractionLocation = -1;
 std::size_t maxItems = 0;
 bool indirectMode = false;
+std::vector<float> uploadedLodBoundaries;
+bool lodBufferInitialized = false;
 GLuint selectedBuffer = 0;
 std::size_t selectedSlot = 0;
+bool selectedOcclusionProxies = false;
 constexpr GLenum drawIndirectBuffer = 0x8F3F;
+GLuint trackedIndirectBinding = 0;
+bool indirectBindingTracked = false;
+bool storageBindingTracked = false;
+bool storageBindingsCaptured = false;
+GLint savedStorageBinding = 0;
+std::array<GLint, 3> savedIndexedStorageBindings = {};
+
+void bindIndirectBuffer(GLuint buffer) {
+    if (!indirectBindingTracked || trackedIndirectBinding != buffer) {
+        pglBindBuffer(drawIndirectBuffer, buffer);
+        if (indirectBindingTracked)
+            trackedIndirectBinding = buffer;
+    }
+}
 
 const char* source = R"GLSL(
 #version 430 core
@@ -37,22 +57,28 @@ layout(std430, binding = 2) readonly buffer LodData { float boundaries[]; };
 uniform vec4 uPlanes[6];
 uniform int uCount;
 uniform int uIndirect;
+uniform int uProxyCommands;
+uniform float uProjectionScale;
+uniform float uMinimumFraction;
 void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= uint(uCount)) return;
     Item item = items[index];
     bool keep = (item.metadata.x & 8u) == 0u;
-    if ((item.metadata.x & 1u) != 0u) {
+    if (keep && (item.metadata.x & 1u) != 0u) {
         for (int p = 0; p < 6; ++p) {
             if (dot(uPlanes[p].xyz, item.eyeSphere.xyz) + uPlanes[p].w <
-                -item.eyeSphere.w - 0.001) keep = false;
+                -item.eyeSphere.w - 0.001) {
+                keep = false;
+                break;
+            }
         }
     }
-    if ((item.metadata.x & 2u) != 0u) {
+    if (keep && (item.metadata.x & 2u) != 0u) {
         vec2 delta = max(max(item.distanceBounds.xy, -item.distanceBounds.zw), vec2(0));
         if (dot(delta, delta) > 100000000.0) keep = false;
     }
-    if ((item.metadata.x & 4u) != 0u && item.metadata.w != 0u) {
+    if (keep && (item.metadata.x & 4u) != 0u && item.metadata.w != 0u) {
         float distanceToEye = length(item.eyeSphere.xyz);
         uint selected = item.metadata.w - 1u;
         for (uint level = 0u; level < item.metadata.w; ++level) {
@@ -63,21 +89,51 @@ void main() {
         }
         if (selected != item.metadata.y) keep = false;
     }
+    if (keep && (item.metadata.x & 16u) != 0u) {
+        float depth = -item.eyeSphere.z;
+        float radius = item.eyeSphere.w;
+        if (!isnan(depth) && !isinf(depth) && !isnan(radius) && !isinf(radius) &&
+            radius > 0.0 && depth > radius && !isnan(uProjectionScale) &&
+            !isinf(uProjectionScale) && uProjectionScale > 0.0 &&
+            !isnan(uMinimumFraction) && !isinf(uMinimumFraction) && uMinimumFraction > 0.0) {
+            float fraction = uProjectionScale * radius / (depth - radius);
+            if (!isnan(fraction) && !isinf(fraction) &&
+                fraction < uMinimumFraction * (1.0 - 0.00001)) keep = false;
+        }
+    }
     if (uIndirect == 0) {
         visible[index] = keep ? 1u : 0u;
     } else {
         // Five scalar words: indexed command layout, also valid as the first
         // four words of an arrays command (all offsets/base instances are zero).
-        uint offset = index * 5u;
+        uint offset = index * (uProxyCommands != 0 ? 10u : 5u);
         visible[offset] = item.draw.x;
         visible[offset + 1u] = keep ? 1u : 0u;
         visible[offset + 2u] = 0u;
         visible[offset + 3u] = 0u;
         visible[offset + 4u] = 0u;
+        if (uProxyCommands != 0) {
+            visible[offset + 5u] = 36u;
+            visible[offset + 6u] = keep ? 1u : 0u;
+            visible[offset + 7u] = 0u;
+            visible[offset + 8u] = 0u;
+            visible[offset + 9u] = 0u;
+        }
     }
 }
 )GLSL";
 } // namespace
+
+CullingProjectedSize makeCullingProjectedSize(const std::array<double, 16>& projection,
+                                              double minimumFraction) {
+    const double scale = std::abs(projection[5]);
+    if (!std::isfinite(scale) || scale <= 0.0 || !std::isfinite(minimumFraction) ||
+        minimumFraction <= 0.0 || scale > std::numeric_limits<float>::max() ||
+        minimumFraction > std::numeric_limits<float>::max()) {
+        return {};
+    }
+    return {static_cast<float>(scale), static_cast<float>(minimumFraction)};
+}
 
 CullingPlanes makeCullingPlanes(const std::array<double, 16>& projection) {
     CullingPlanes result = {};
@@ -113,8 +169,8 @@ bool sphereBelowMinimumViewportFraction(const std::array<double, 16>& modelView,
                                         const std::array<double, 16>& projection,
                                         const std::array<double, 3>& center, double radius,
                                         double minimumFraction) {
-    if (!std::isfinite(minimumFraction) || minimumFraction <= 0.0 ||
-        !std::isfinite(radius) || radius <= 0.0) {
+    if (!std::isfinite(minimumFraction) || minimumFraction <= 0.0 || !std::isfinite(radius) ||
+        radius <= 0.0) {
         return false;
     }
 
@@ -126,8 +182,7 @@ bool sphereBelowMinimumViewportFraction(const std::array<double, 16>& modelView,
         return false;
     }
 
-    const double projectedFraction =
-        verticalProjectionScale * radius / (eyeDepth - radius);
+    const double projectedFraction = verticalProjectionScale * radius / (eyeDepth - radius);
     return std::isfinite(projectedFraction) && projectedFraction < minimumFraction;
 }
 
@@ -140,8 +195,68 @@ std::uint32_t appendCullingLodBoundaries(std::vector<float>& boundaries,
     return offset;
 }
 
+bool cullingLodMayMatch(const CullingItem& item, std::span<const float> boundaries) {
+    const std::size_t offset = item.metadata[2];
+    const std::size_t count = item.metadata[3];
+    if ((item.metadata[0] & CullLod) == 0 || count == 0 || offset > boundaries.size() ||
+        count > boundaries.size() - offset)
+        return true;
+    const std::size_t desired = item.metadata[1];
+    if (desired >= count)
+        return false;
+    const double distance =
+        std::hypot(static_cast<double>(item.eyeSphere[0]), static_cast<double>(item.eyeSphere[1]),
+                   static_cast<double>(item.eyeSphere[2]));
+    // Float length evaluation can overflow on the GPU even when double hypot
+    // remains finite. Uncertain values must be left to the compute shader.
+    if (!std::isfinite(distance) || distance > 1.0e18)
+        return true;
+    const double margin = 0.001 + distance * 0.00001;
+    const double minimumDistance = std::max(0.0, distance - margin);
+    const double maximumDistance = distance + margin;
+    for (std::size_t level = 0; level < desired; ++level) {
+        const float boundary = boundaries[offset + level];
+        if (!std::isfinite(boundary))
+            return true;
+        if (maximumDistance <= boundary)
+            return false;
+    }
+    if (desired + 1 < count) {
+        const float boundary = boundaries[offset + desired];
+        if (!std::isfinite(boundary))
+            return true;
+        if (minimumDistance > boundary)
+            return false;
+    }
+    return true;
+}
+
+bool cullingFrustumMayIntersect(const CullingItem& item, const CullingPlanes& planes) {
+    if ((item.metadata[0] & CullFrustum) == 0)
+        return true;
+    const auto& sphere = item.eyeSphere;
+    if (!std::isfinite(sphere[0]) || !std::isfinite(sphere[1]) || !std::isfinite(sphere[2]) ||
+        !std::isfinite(sphere[3]) || sphere[3] < 0.0F)
+        return true;
+    for (const auto& plane : planes) {
+        double distance = plane[3];
+        double magnitude = std::abs(static_cast<double>(plane[3])) + sphere[3];
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            const double term = static_cast<double>(plane[axis]) * sphere[axis];
+            distance += term;
+            magnitude += std::abs(term);
+        }
+        if (!std::isfinite(distance) || !std::isfinite(magnitude) || magnitude > 1.0e30)
+            continue;
+        const double margin = 0.002 + magnitude * 0.00001;
+        if (distance < -static_cast<double>(sphere[3]) - margin)
+            return false;
+    }
+    return true;
+}
+
 bool cullingItemVisible(const CullingItem& item, const CullingPlanes& planes,
-                        std::span<const float> lodBoundaries) {
+                        std::span<const float> lodBoundaries, CullingProjectedSize projectedSize) {
     if ((item.metadata[0] & CullLod) != 0 &&
         (item.metadata[2] > lodBoundaries.size() ||
          item.metadata[3] > lodBoundaries.size() - item.metadata[2]))
@@ -149,6 +264,18 @@ bool cullingItemVisible(const CullingItem& item, const CullingPlanes& planes,
     if ((item.metadata[0] & CullReject) != 0)
         return false;
     const auto& sphere = item.eyeSphere;
+    if ((item.metadata[0] & CullProjectedSize) != 0) {
+        const float depth = -sphere[2];
+        const float radius = sphere[3];
+        if (std::isfinite(depth) && std::isfinite(radius) && radius > 0.0F && depth > radius &&
+            std::isfinite(projectedSize.projectionScale) && projectedSize.projectionScale > 0.0F &&
+            std::isfinite(projectedSize.minimumFraction) && projectedSize.minimumFraction > 0.0F) {
+            const float fraction = projectedSize.projectionScale * radius / (depth - radius);
+            if (std::isfinite(fraction) &&
+                fraction < projectedSize.minimumFraction * (1.0F - 0.00001F))
+                return false;
+        }
+    }
     if ((item.metadata[0] & CullFrustum) != 0) {
         for (const auto& plane : planes) {
             const float distance =
@@ -184,12 +311,16 @@ void shutdownComputeCulling() {
     if (program != 0)
         pglDeleteProgram(program);
     if (buffers[0] != 0 || buffers[1] != 0 || buffers[2] != 0) {
+        for (GLuint buffer : buffers)
+            invalidateCullingStorageBinding(buffer);
         pglDeleteBuffers(static_cast<GLsizei>(buffers.size()), buffers.data());
     }
     program = 0;
     buffers = {};
     maxItems = 0;
     indirectMode = false;
+    uploadedLodBoundaries.clear();
+    lodBufferInitialized = false;
     selectedBuffer = 0;
 }
 
@@ -211,8 +342,10 @@ void initializeComputeCulling(bool enableReadback, bool enableIndirect) {
         return;
     }
     const GLuint shader = pglCreateShader(0x91B9 /* GL_COMPUTE_SHADER */);
-    if (shader == 0)
+    if (shader == 0) {
+        gameLog.Log("Could not create compute culling shader; using CPU visibility tests");
         return;
+    }
     pglShaderSource(shader, 1, &source, nullptr);
     pglCompileShader(shader);
     GLint success = GL_FALSE;
@@ -240,6 +373,7 @@ void initializeComputeCulling(bool enableReadback, bool enableIndirect) {
     }
     pglGenBuffers(static_cast<GLsizei>(buffers.size()), buffers.data());
     if (std::any_of(buffers.begin(), buffers.end(), [](GLuint buffer) { return buffer == 0; })) {
+        gameLog.Log("Could not allocate compute culling buffers; using CPU visibility tests");
         shutdownComputeCulling();
         return;
     }
@@ -249,7 +383,11 @@ void initializeComputeCulling(bool enableReadback, bool enableIndirect) {
     planesLocation = pglGetUniformLocation(program, "uPlanes");
     countLocation = pglGetUniformLocation(program, "uCount");
     indirectLocation = pglGetUniformLocation(program, "uIndirect");
-    if (planesLocation < 0 || countLocation < 0 || indirectLocation < 0) {
+    proxyCommandsLocation = pglGetUniformLocation(program, "uProxyCommands");
+    projectionScaleLocation = pglGetUniformLocation(program, "uProjectionScale");
+    minimumFractionLocation = pglGetUniformLocation(program, "uMinimumFraction");
+    if (planesLocation < 0 || countLocation < 0 || indirectLocation < 0 ||
+        proxyCommandsLocation < 0 || projectionScaleLocation < 0 || minimumFractionLocation < 0) {
         gameLog.Log("Compute culling uniforms unavailable; using CPU visibility tests");
         shutdownComputeCulling();
         return;
@@ -270,10 +408,18 @@ bool indirectCullingAvailable() {
 
 static bool dispatchCulling(std::span<const CullingItem> items, const CullingPlanes& planes,
                             std::span<const float> lodBoundaries, GLuint output,
-                            std::vector<std::uint32_t>* visibility) {
-    if (program == 0 || items.size() > maxItems ||
-        lodBoundaries.size() > (128U * 1024U * 1024U) / sizeof(float))
+                            std::vector<std::uint32_t>* visibility,
+                            CullingProjectedSize projectedSize, bool occlusionProxies) {
+    if (program == 0)
         return false;
+    if (items.size() > maxItems || lodBoundaries.size() > (128U * 1024U * 1024U) / sizeof(float)) {
+        static bool loggedLimit = false;
+        if (!loggedLimit) {
+            gameLog.Log("Compute culling input exceeds supported limits; using CPU for this view");
+            loggedLimit = true;
+        }
+        return false;
+    }
     if (items.empty())
         return true;
     TraceScope trace("render", visibility ? "ComputeCulling::dispatchAndReadback"
@@ -281,11 +427,23 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
     for (const auto& item : items) {
         if ((item.metadata[0] & CullLod) != 0 &&
             (item.metadata[2] > lodBoundaries.size() ||
-             item.metadata[3] > lodBoundaries.size() - item.metadata[2]))
+             item.metadata[3] > lodBoundaries.size() - item.metadata[2])) {
+            static bool loggedInvalidLod = false;
+            if (!loggedInvalidLod) {
+                gameLog.Log("Invalid compute culling LOD range; using CPU for this view");
+                loggedInvalidLod = true;
+            }
             return false;
+        }
         if (!visibility &&
-            item.draw[0] > static_cast<std::uint32_t>(std::numeric_limits<GLsizei>::max()))
+            item.draw[0] > static_cast<std::uint32_t>(std::numeric_limits<GLsizei>::max())) {
+            static bool loggedInvalidCount = false;
+            if (!loggedInvalidCount) {
+                gameLog.Log("Indirect draw count exceeds GLsizei; using CPU for this view");
+                loggedInvalidCount = true;
+            }
             return false;
+        }
     }
     // Errors from earlier texture uploads/draws must not be attributed to this
     // dispatch and permanently disable an otherwise functioning compute path.
@@ -300,22 +458,40 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
     GLint previousProgram = 0, previousBuffer = 0;
     std::array<GLint, 3> previousBindings = {};
     glGetIntegerv(0x8B8D /* GL_CURRENT_PROGRAM */, &previousProgram);
-    glGetIntegerv(storageBinding, &previousBuffer);
-    for (GLuint i = 0; i < 3; ++i)
-        pglGetIntegeri(storageBinding, i, &previousBindings[i]);
+    if (storageBindingTracked && storageBindingsCaptured) {
+        previousBuffer = savedStorageBinding;
+        previousBindings = savedIndexedStorageBindings;
+    } else {
+        glGetIntegerv(storageBinding, &previousBuffer);
+        for (GLuint i = 0; i < 3; ++i)
+            pglGetIntegeri(storageBinding, i, &previousBindings[i]);
+        if (storageBindingTracked) {
+            savedStorageBinding = previousBuffer;
+            savedIndexedStorageBindings = previousBindings;
+            storageBindingsCaptured = true;
+        }
+    }
     pglBindBuffer(storageBuffer, buffers[0]);
     pglBufferData(storageBuffer, static_cast<std::ptrdiff_t>(items.size_bytes()), items.data(),
                   streamDraw);
     pglBindBuffer(storageBuffer, output);
-    pglBufferData(
-        storageBuffer,
-        static_cast<std::ptrdiff_t>(items.size() * sizeof(std::uint32_t) * (visibility ? 1 : 5)),
-        nullptr, streamDraw);
-    pglBindBuffer(storageBuffer, buffers[2]);
-    const float dummy = 0.0F;
     pglBufferData(storageBuffer,
-                  static_cast<std::ptrdiff_t>(std::max(lodBoundaries.size_bytes(), sizeof(float))),
-                  lodBoundaries.empty() ? &dummy : lodBoundaries.data(), streamDraw);
+                  static_cast<std::ptrdiff_t>(items.size() * sizeof(std::uint32_t) *
+                                              (visibility         ? 1
+                                               : occlusionProxies ? 10
+                                                                  : 5)),
+                  nullptr, streamDraw);
+    const bool uploadLod = !lodBufferInitialized ||
+                           !std::equal(lodBoundaries.begin(), lodBoundaries.end(),
+                                       uploadedLodBoundaries.begin(), uploadedLodBoundaries.end());
+    if (uploadLod) {
+        pglBindBuffer(storageBuffer, buffers[2]);
+        const float dummy = 0.0F;
+        pglBufferData(
+            storageBuffer,
+            static_cast<std::ptrdiff_t>(std::max(lodBoundaries.size_bytes(), sizeof(float))),
+            lodBoundaries.empty() ? &dummy : lodBoundaries.data(), streamDraw);
+    }
     pglBindBufferBase(storageBuffer, 0, buffers[0]);
     pglBindBufferBase(storageBuffer, 1, output);
     pglBindBufferBase(storageBuffer, 2, buffers[2]);
@@ -323,6 +499,9 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
     pglUniform4fv(planesLocation, 6, planes[0].data());
     pglUniform1i(countLocation, static_cast<GLint>(items.size()));
     pglUniform1i(indirectLocation, visibility ? 0 : 1);
+    pglUniform1i(proxyCommandsLocation, occlusionProxies ? 1 : 0);
+    pglUniform1f(projectionScaleLocation, projectedSize.projectionScale);
+    pglUniform1f(minimumFractionLocation, projectedSize.minimumFraction);
     pglDispatchCompute(static_cast<GLuint>((items.size() + 63) / 64), 1, 1);
     pglMemoryBarrier(visibility ? 0x0200 /* BUFFER_UPDATE */ : 0x0040 /* COMMAND */);
     // CPU submission needs this view's result for sorting/material resolution.
@@ -336,6 +515,10 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
                             visibility->data());
     }
     const bool success = glGetError() == GL_NO_ERROR;
+    if (success && uploadLod) {
+        uploadedLodBoundaries.assign(lodBoundaries.begin(), lodBoundaries.end());
+        lodBufferInitialized = true;
+    }
     pglUseProgram(static_cast<GLuint>(previousProgram));
     for (GLuint i = 0; i < 3; ++i)
         pglBindBufferBase(storageBuffer, i, static_cast<GLuint>(previousBindings[i]));
@@ -350,21 +533,27 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
 }
 
 bool computeCull(std::span<const CullingItem> items, const CullingPlanes& planes,
-                 std::span<const float> boundaries, std::vector<std::uint32_t>& visibility) {
+                 std::span<const float> boundaries, std::vector<std::uint32_t>& visibility,
+                 CullingProjectedSize projectedSize) {
     visibility.clear();
-    return computeCullingAvailable() &&
-           dispatchCulling(items, planes, boundaries, buffers[1], &visibility);
+    return computeCullingAvailable() && dispatchCulling(items, planes, boundaries, buffers[1],
+                                                        &visibility, projectedSize, false);
 }
 
 IndirectCullingBatch::~IndirectCullingBatch() {
     if (selectedBuffer == buffer_)
         selectedBuffer = 0;
-    if (buffer_)
+    if (buffer_) {
+        invalidateCullingStorageBinding(buffer_);
         pglDeleteBuffers(1, &buffer_);
+        if (indirectBindingTracked && trackedIndirectBinding == buffer_)
+            trackedIndirectBinding = 0;
+    }
 }
 
 bool IndirectCullingBatch::dispatch(std::span<const CullingItem> items, const CullingPlanes& planes,
-                                    std::span<const float> boundaries) {
+                                    std::span<const float> boundaries,
+                                    CullingProjectedSize projectedSize, bool occlusionProxies) {
     if (selectedBuffer == buffer_)
         selectedBuffer = 0;
     count_ = 0;
@@ -372,39 +561,89 @@ bool IndirectCullingBatch::dispatch(std::span<const CullingItem> items, const Cu
         return false;
     if (!buffer_)
         pglGenBuffers(1, &buffer_);
-    if (!buffer_ || !dispatchCulling(items, planes, boundaries, buffer_, nullptr))
+    if (!buffer_) {
+        static bool loggedAllocationFailure = false;
+        if (!loggedAllocationFailure) {
+            gameLog.Log("Could not allocate indirect command buffer; using CPU for this view");
+            loggedAllocationFailure = true;
+        }
+        return false;
+    }
+    if (!dispatchCulling(items, planes, boundaries, buffer_, nullptr, projectedSize,
+                         occlusionProxies))
         return false;
     count_ = items.size();
+    occlusionProxies_ = occlusionProxies;
     return true;
 }
 
 void IndirectCullingBatch::select(std::size_t slot) const {
     selectedBuffer = slot < count_ ? buffer_ : 0;
     selectedSlot = slot;
+    selectedOcclusionProxies = occlusionProxies_;
 }
 
 IndirectCullingScope::IndirectCullingScope()
-    : buffer_(selectedBuffer), slot_(selectedSlot), active_(indirectCullingAvailable()) {
-    if (active_)
-        glGetIntegerv(0x8F43 /* DRAW_INDIRECT_BUFFER_BINDING */, &binding_);
+    : buffer_(selectedBuffer), slot_(selectedSlot), occlusionProxies_(selectedOcclusionProxies),
+      previousBindingTracked_(indirectBindingTracked),
+      previousStorageTracked_(storageBindingTracked), active_(indirectCullingAvailable()) {
+    if (active_) {
+        if (previousBindingTracked_)
+            binding_ = static_cast<GLint>(trackedIndirectBinding);
+        else
+            glGetIntegerv(0x8F43 /* DRAW_INDIRECT_BUFFER_BINDING */, &binding_);
+        trackedIndirectBinding = static_cast<GLuint>(binding_);
+        indirectBindingTracked = true;
+        if (!previousStorageTracked_) {
+            storageBindingTracked = true;
+            storageBindingsCaptured = false;
+        }
+    }
     selectedBuffer = 0;
 }
 IndirectCullingScope::~IndirectCullingScope() {
     selectedBuffer = buffer_;
     selectedSlot = slot_;
-    if (active_)
-        pglBindBuffer(drawIndirectBuffer, static_cast<GLuint>(binding_));
+    selectedOcclusionProxies = occlusionProxies_;
+    if (active_) {
+        bindIndirectBuffer(static_cast<GLuint>(binding_));
+        indirectBindingTracked = previousBindingTracked_;
+        if (!previousStorageTracked_) {
+            storageBindingTracked = false;
+            storageBindingsCaptured = false;
+        }
+    }
+}
+
+void invalidateCullingStorageBinding(std::uint32_t buffer) {
+    if (buffer == 0 || !storageBindingsCaptured)
+        return;
+    if (savedStorageBinding == static_cast<GLint>(buffer) ||
+        std::find(savedIndexedStorageBindings.begin(), savedIndexedStorageBindings.end(),
+                  static_cast<GLint>(buffer)) != savedIndexedStorageBindings.end())
+        storageBindingsCaptured = false;
 }
 
 bool drawSelectedIndirect(bool indexed) {
     if (!selectedBuffer || !indirectCullingAvailable())
         return false;
-    pglBindBuffer(drawIndirectBuffer, selectedBuffer);
-    const auto offset = reinterpret_cast<const void*>(selectedSlot * 5 * sizeof(std::uint32_t));
+    bindIndirectBuffer(selectedBuffer);
+    const auto offset = reinterpret_cast<const void*>(
+        selectedSlot * (selectedOcclusionProxies ? 10 : 5) * sizeof(std::uint32_t));
     if (indexed)
         pglDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, offset);
     else
         pglDrawArraysIndirect(GL_TRIANGLES, offset);
+    return true;
+}
+
+bool drawSelectedIndirectProxy() {
+    if (!selectedBuffer || !selectedOcclusionProxies || !indirectCullingAvailable())
+        return false;
+    bindIndirectBuffer(selectedBuffer);
+    const auto offset =
+        reinterpret_cast<const void*>((selectedSlot * 10 + 5) * sizeof(std::uint32_t));
+    pglDrawArraysIndirect(GL_TRIANGLES, offset);
     return true;
 }
 } // namespace openbus::rendering

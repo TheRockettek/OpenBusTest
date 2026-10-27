@@ -29,6 +29,9 @@ struct ViewFrustum {
 [[nodiscard]] bool sphereOutsideFrustum(const ViewFrustum& frustum,
                                         const std::array<double, 4>& eye, double radius);
 
+[[nodiscard]] bool boxFullyBeyondNearPlane(const ViewFrustum& frustum, const Matrix4& modelView,
+                                           const std::array<double, 3>& center, double halfExtent);
+
 [[nodiscard]] Matrix4 translationMatrix(const std::array<double, 3>& value);
 
 [[nodiscard]] Matrix4 poseMatrix(const BodyPose& pose);

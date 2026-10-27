@@ -4,7 +4,59 @@
 
 #include "core/Utf8Path.h"
 
+#include <string_view>
+
 namespace openbus::rendering {
+namespace {
+
+constexpr GLenum anySamplesPassed = 0x8C2F;
+constexpr GLenum queryWait = 0x8E13;
+
+const std::vector<PrimitiveVertex>& occlusionProxyCube() {
+    static const std::vector<PrimitiveVertex> vertices = [] {
+        constexpr std::array<std::array<float, 3>, 8> corners = {{
+            {-0.5F, -0.5F, -0.5F},
+            {0.5F, -0.5F, -0.5F},
+            {0.5F, 0.5F, -0.5F},
+            {-0.5F, 0.5F, -0.5F},
+            {-0.5F, -0.5F, 0.5F},
+            {0.5F, -0.5F, 0.5F},
+            {0.5F, 0.5F, 0.5F},
+            {-0.5F, 0.5F, 0.5F},
+        }};
+        constexpr std::array<std::array<int, 4>, 6> faces = {{
+            {0, 1, 2, 3},
+            {4, 7, 6, 5},
+            {0, 4, 5, 1},
+            {1, 5, 6, 2},
+            {2, 6, 7, 3},
+            {4, 0, 3, 7},
+        }};
+        std::vector<PrimitiveVertex> result;
+        result.reserve(36);
+        for (const auto& face : faces) {
+            for (const int index : {face[0], face[1], face[2], face[0], face[2], face[3]}) {
+                const auto& point = corners[static_cast<std::size_t>(index)];
+                result.push_back({point[0], point[1], point[2], 1.0F, 1.0F, 1.0F});
+            }
+        }
+        return result;
+    }();
+    return vertices;
+}
+
+bool depthOcclusionQueriesRequested() {
+    const char* setting = openbus::getEnvironment("OPENBUS_OCCLUSION_CULLING");
+    return setting != nullptr && std::string_view(setting) == "queries";
+}
+
+bool depthOcclusionQueriesAvailable() {
+    return pglGenQueries != nullptr && pglDeleteQueries != nullptr && pglBeginQuery != nullptr &&
+           pglEndQuery != nullptr && pglBeginConditionalRender != nullptr &&
+           pglEndConditionalRender != nullptr;
+}
+
+} // namespace
 
 void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfigPath,
                                         const openbus::map::MapTrafficPose& pose,
@@ -142,7 +194,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
 
 void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFraction) const {
     TraceScope trace("map", "MapRenderer::draw");
-    IndirectCullingBatch indirectBatch;
+    IndirectCullingBatch& indirectBatch = impl_->indirectCullingBatch;
     IndirectCullingScope indirectScope;
     bool indirect = false;
     // Map and vehicle passes share the clockwise convention; querying the
@@ -153,24 +205,71 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
     const double cameraX = -(view[0] * view[12] + view[1] * view[13] + view[2] * view[14]);
     const double cameraY = -(view[4] * view[12] + view[5] * view[13] + view[6] * view[14]);
     const double cameraZ = -(view[8] * view[12] + view[9] * view[13] + view[10] * view[14]);
+    const bool depthOcclusionQueries =
+        depthOcclusionQueriesRequested() && depthOcclusionQueriesAvailable();
+    const bool transparentOcclusionQueries =
+        depthOcclusionQueries &&
+        parseEnabledFlag(openbus::getEnvironment("OPENBUS_OCCLUSION_TRANSPARENT"));
+    const bool geometryOcclusionQueries =
+        depthOcclusionQueries &&
+        parseEnabledFlag(openbus::getEnvironment("OPENBUS_OCCLUSION_MAP_GEOMETRY"));
+    const bool waterOcclusionQueries =
+        depthOcclusionQueries &&
+        parseEnabledFlag(openbus::getEnvironment("OPENBUS_OCCLUSION_WATER"));
+    impl_->nextOcclusionQuery = 0;
+    if (depthOcclusionQueriesRequested() && !depthOcclusionQueriesAvailable() &&
+        !impl_->occlusionQueryUnavailableLogged) {
+        gameLog.Log("Depth occlusion queries unavailable; continuing without query culling");
+        impl_->occlusionQueryUnavailableLogged = true;
+    }
+    if (depthOcclusionQueries && !impl_->occlusionQueryEnabledLogged) {
+        gameLog.Log("Depth occlusion queries enabled for opaque map scenery");
+        impl_->occlusionQueryEnabledLogged = true;
+    }
+    if (transparentOcclusionQueries && !impl_->transparentOcclusionQueryEnabledLogged) {
+        gameLog.Log("Depth occlusion queries enabled for ordinary transparent map scenery");
+        impl_->transparentOcclusionQueryEnabledLogged = true;
+    }
+    if (geometryOcclusionQueries && !impl_->geometryOcclusionQueryEnabledLogged) {
+        gameLog.Log("Depth occlusion queries enabled for bounded terrain and opaque roads");
+        impl_->geometryOcclusionQueryEnabledLogged = true;
+    }
+    if (waterOcclusionQueries && !impl_->waterOcclusionQueryEnabledLogged) {
+        gameLog.Log("Depth occlusion queries enabled for bounded water");
+        impl_->waterOcclusionQueryEnabledLogged = true;
+    }
     const std::vector<Impl::ActiveSceneryChunk>& activeSceneryChunks =
         impl_->activeSceneryChunks[renderTypeFourOnly ? 1 : 0];
-    std::vector<CullingItem> cullingItems;
-    std::vector<float> lodBoundaries;
-    std::vector<std::uint32_t> visibility;
-    std::unordered_map<const void*, std::size_t> cullingIndices;
     bool gpuCulling = false;
-    if (computeCullingAvailable() || indirectCullingAvailable()) {
+    if (indirectCullingAvailable()) {
         TraceScope phase("map", "MapRenderer::draw.computeCulling");
-        std::vector<std::uint32_t> lodOffsets;
+        auto& cullingItems = impl_->cullingItemsScratch;
+        auto& lodBoundaries = impl_->cullingLodBoundariesScratch;
+        auto& lodOffsets = impl_->cullingLodOffsetsScratch;
+        const auto cullingPlanes = makeCullingPlanes(projectionMatrix());
+        cullingItems.clear();
+        lodBoundaries.clear();
+        lodOffsets.clear();
+        if (++impl_->cullingGeneration == 0) {
+            for (auto& tile : impl_->terrainBuffers)
+                tile.cullingSlot = {};
+            for (auto& water : impl_->waterBatches)
+                water.cullingSlot = {};
+            for (auto& road : impl_->roadBatches)
+                road.cullingSlot = {};
+            for (auto& [key, chunk] : impl_->sceneryChunks) {
+                static_cast<void>(key);
+                for (auto& instance : chunk.instances)
+                    instance.cullingSlot = {};
+            }
+            impl_->cullingGeneration = 1;
+        }
         for (const auto& thresholds : impl_->sceneryLodThresholdSets) {
             lodOffsets.push_back(appendCullingLodBoundaries(lodBoundaries, thresholds));
         }
-        const auto addSphere = [&](const void* key, const std::array<double, 3>& center,
-                                   double radius, double minX, double minY, double maxX,
-                                   double maxY, std::size_t count) -> CullingItem& {
-            cullingIndices.emplace(key, cullingItems.size());
-            CullingItem item = makeCullingItem(view, center, radius);
+        const auto addSphere = [&](const auto* key, CullingItem item, double minX, double minY,
+                                   double maxX, double maxY, std::size_t count) {
+            key->cullingSlot = {cullingItems.size(), impl_->cullingGeneration};
             item.draw[0] = count <= static_cast<std::size_t>(std::numeric_limits<GLsizei>::max())
                                ? static_cast<std::uint32_t>(count)
                                : std::numeric_limits<std::uint32_t>::max();
@@ -179,13 +278,15 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 static_cast<float>(minX - cameraX), static_cast<float>(minY - cameraY),
                 static_cast<float>(maxX - cameraX), static_cast<float>(maxY - cameraY)};
             cullingItems.push_back(item);
-            return cullingItems.back();
         };
-        const auto addBounds = [&](const void* key, double minX, double minY, double minZ,
+        const auto addBounds = [&](const auto* key, double minX, double minY, double minZ,
                                    double maxX, double maxY, double maxZ, std::size_t count) {
-            addSphere(key, {(minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5},
-                      std::hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5, minX, minY, maxX,
-                      maxY, count);
+            const auto item = makeCullingItem(
+                view, {(minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5},
+                std::hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5);
+            if (!cullingFrustumMayIntersect(item, cullingPlanes))
+                return;
+            addSphere(key, item, minX, minY, maxX, maxY, count);
         };
         const auto addTile = [&](const auto& tile) {
             if (!impl_->activeTileKeys.contains(tileKey(tile.tileX, tile.tileY)))
@@ -212,31 +313,23 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             const Impl::SceneryChunk& chunk = *active.chunk;
             // Broad-phase chunk rejection avoids CPU material/resource work for
             // entire distant groups; individual sphere/LOD tests remain on GPU.
-            if (indirectCullingAvailable() &&
-                (squaredDistanceToBounds(cameraX, cameraY, chunk.minX, chunk.minY, chunk.maxX,
-                                         chunk.maxY) > MAP_VISIBILITY_RADIUS_SQUARED ||
-                 outsideMapFrustum(frustum, view,
-                                   {(chunk.minX + chunk.maxX) * 0.5,
-                                    (chunk.minY + chunk.maxY) * 0.5,
-                                    (chunk.minZ + chunk.maxZ) * 0.5},
-                                   std::hypot(chunk.maxX - chunk.minX, chunk.maxY - chunk.minY,
-                                              chunk.maxZ - chunk.minZ) *
-                                       0.5)))
+            if (squaredDistanceToBounds(cameraX, cameraY, chunk.minX, chunk.minY, chunk.maxX,
+                                        chunk.maxY) > MAP_VISIBILITY_RADIUS_SQUARED ||
+                outsideMapFrustum(frustum, view,
+                                  {(chunk.minX + chunk.maxX) * 0.5, (chunk.minY + chunk.maxY) * 0.5,
+                                   (chunk.minZ + chunk.maxZ) * 0.5},
+                                  std::hypot(chunk.maxX - chunk.minX, chunk.maxY - chunk.minY,
+                                             chunk.maxZ - chunk.minZ) *
+                                      0.5))
                 continue;
             for (const std::size_t instanceIndex : active.instanceIndexes) {
                 const Impl::SceneryInstance& instance = active.chunk->instances[instanceIndex];
                 const auto& batch = impl_->sceneryBatches[instance.batchIndex];
-                auto& item = addSphere(
-                    &instance, {instance.x, instance.y, instance.z}, instance.boundingRadius,
-                    instance.x - instance.boundingRadius, instance.y - instance.boundingRadius,
-                    instance.x + instance.boundingRadius, instance.y + instance.boundingRadius,
-                    batch.vertexCount);
-                if (sphereBelowMinimumViewportFraction(
-                        view, projectionMatrix(), {instance.x, instance.y, instance.z},
-                        instance.boundingRadius, minimumObjectViewportFraction)) {
-                    item.metadata[0] |= CullReject;
-                }
-                item.metadata[0] |= CullLod;
+                auto item = makeCullingItem(view, {instance.x, instance.y, instance.z},
+                                            instance.boundingRadius);
+                if (!cullingFrustumMayIntersect(item, cullingPlanes))
+                    continue;
+                item.metadata[0] |= CullLod | CullProjectedSize;
                 item.metadata[1] = static_cast<std::uint32_t>(batch.sceneryLodIndex);
                 if (instance.lodThresholdSetIndex < lodOffsets.size()) {
                     item.metadata[2] = lodOffsets[instance.lodThresholdSetIndex];
@@ -245,30 +338,30 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 }
                 // Map assets without thresholds still select LOD zero.
                 if (item.metadata[3] == 0 && batch.sceneryLodIndex != 0) {
-                    item.metadata[0] |= CullReject;
+                    continue;
                 }
+                if (!cullingLodMayMatch(item, lodBoundaries))
+                    continue;
+                addSphere(&instance, item, instance.x - instance.boundingRadius,
+                          instance.y - instance.boundingRadius,
+                          instance.x + instance.boundingRadius,
+                          instance.y + instance.boundingRadius, batch.vertexCount);
             }
         }
-        if (indirectCullingAvailable()) {
-            indirect = indirectBatch.dispatch(cullingItems, makeCullingPlanes(projectionMatrix()),
-                                              lodBoundaries);
-            gpuCulling = indirect;
-        } else {
-            gpuCulling = computeCull(cullingItems, makeCullingPlanes(projectionMatrix()),
-                                     lodBoundaries, visibility);
-        }
+        const auto projectedSize =
+            makeCullingProjectedSize(projectionMatrix(), minimumObjectViewportFraction);
+        indirect = indirectBatch.dispatch(cullingItems, cullingPlanes, lodBoundaries, projectedSize,
+                                          depthOcclusionQueries);
+        gpuCulling = indirect;
     }
-    const auto gpuVisible = [&](const void* key) {
-        const auto found = cullingIndices.find(key);
-        return found != cullingIndices.end() && (indirect || visibility[found->second] != 0);
+    const auto gpuVisible = [&](const auto* key) {
+        return key->cullingSlot.generation == impl_->cullingGeneration;
     };
-    const auto selectIndirect = [&](const void* key) {
+    const auto selectIndirect = [&](const auto* key) {
         if (!indirect)
             return;
-        const auto found = cullingIndices.find(key);
-        indirectBatch.select(found != cullingIndices.end()
-                                 ? found->second
-                                 : std::numeric_limits<std::size_t>::max());
+        indirectBatch.select(gpuVisible(key) ? key->cullingSlot.index
+                                             : std::numeric_limits<std::size_t>::max());
     };
     const auto outsideVisibilityBounds = [&](double minX, double minY, double maxX, double maxY) {
         return squaredDistanceToBounds(cameraX, cameraY, minX, minY, maxX, maxY) >
@@ -365,8 +458,90 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         return texture.texture;
     };
 
+    struct OcclusionPassState {
+        std::array<GLboolean, 4> colorMask = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+        GLenum depthFunc = GL_LESS;
+        GLboolean depthMask = GL_TRUE;
+        bool cullFace = false;
+        bool captured = false;
+    };
+    const auto beginOcclusionProxy = [&](const std::array<double, 3>& center, double radius,
+                                         OcclusionPassState* state) {
+        if (state == nullptr || !std::isfinite(radius) || radius <= 0.0)
+            return false;
+        const double proxyRadius = radius * 1.001 + 0.001;
+        if (!boxFullyBeyondNearPlane(frustum, view, center, proxyRadius))
+            return false;
+        if (impl_->nextOcclusionQuery == impl_->occlusionQueries.size()) {
+            GLuint newQuery = 0;
+            pglGenQueries(1, &newQuery);
+            if (newQuery != 0) {
+                impl_->occlusionQueries.push_back(newQuery);
+            } else if (!impl_->occlusionQueryAllocationLogged) {
+                gameLog.Log("Could not allocate a depth occlusion query; "
+                            "rendering candidates conservatively");
+                impl_->occlusionQueryAllocationLogged = true;
+            }
+        }
+        if (impl_->nextOcclusionQuery >= impl_->occlusionQueries.size())
+            return false;
+        const GLuint query = impl_->occlusionQueries[impl_->nextOcclusionQuery++];
+        if (!state->captured) {
+            glGetBooleanv(GL_COLOR_WRITEMASK, state->colorMask.data());
+            state->cullFace = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
+            state->captured = true;
+        }
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE);
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        if (state->cullFace)
+            glDisable(GL_CULL_FACE);
+        pglBeginQuery(anySamplesPassed, query);
+        pushMatrix();
+        translate(center[0], center[1], center[2]);
+        scale(proxyRadius * 2.0, proxyRadius * 2.0, proxyRadius * 2.0);
+        const bool proxySubmitted = drawStaticPrimitives(
+            impl_->occlusionProxyBuffer, occlusionProxyCube(), GL_TRIANGLES, 1.0F, 0, indirect);
+        popMatrix();
+        pglEndQuery(anySamplesPassed);
+        if (proxySubmitted) {
+            pglBeginConditionalRender(query, queryWait);
+        } else if (!impl_->occlusionProxyFailureLogged) {
+            gameLog.Log("Could not submit an occlusion proxy; rendering candidate conservatively");
+            impl_->occlusionProxyFailureLogged = true;
+        }
+        glColorMask(state->colorMask[0], state->colorMask[1], state->colorMask[2],
+                    state->colorMask[3]);
+        glDepthMask(state->depthMask);
+        glDepthFunc(state->depthFunc);
+        if (state->cullFace)
+            glEnable(GL_CULL_FACE);
+        return proxySubmitted;
+    };
+    const auto beginBoundsOcclusion = [&](double minX, double minY, double minZ, double maxX,
+                                          double maxY, double maxZ, OcclusionPassState* state) {
+        if (state == nullptr)
+            return false;
+        const std::array<double, 3> minimum = {minX, minY, minZ};
+        const std::array<double, 3> maximum = {maxX, maxY, maxZ};
+        std::array<double, 3> center = {};
+        double radius = 0.0;
+        double magnitude = 1.0;
+        for (std::size_t axis = 0; axis < center.size(); ++axis) {
+            if (!std::isfinite(minimum[axis]) || !std::isfinite(maximum[axis]) ||
+                minimum[axis] > maximum[axis])
+                return false;
+            center[axis] = minimum[axis] + (maximum[axis] - minimum[axis]) * 0.5;
+            radius = std::max(radius, (maximum[axis] - minimum[axis]) * 0.5);
+            magnitude = std::max({magnitude, std::abs(minimum[axis]), std::abs(maximum[axis])});
+        }
+        radius += magnitude * std::numeric_limits<float>::epsilon() * 4.0;
+        return beginOcclusionProxy(center, radius, state);
+    };
+
     const auto drawTerrain = [&]() {
         TraceScope phase("map", "MapRenderer::draw.terrain");
+        OcclusionPassState occlusionState;
         ModelMaterial material;
         material.texture = impl_->texture;
         material.textured = true;
@@ -393,6 +568,10 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             material.textureScale = tile.baseTextureScale;
             material.detailTextureScale = tile.baseDetailTextureScale;
             selectIndirect(&tile);
+            const bool conditionalRender =
+                beginBoundsOcclusion(minX, minY, tile.minZ, minX + impl_->coordinates.tileSize,
+                                     minY + impl_->coordinates.tileSize, tile.maxZ,
+                                     geometryOcclusionQueries ? &occlusionState : nullptr);
             pushMatrix();
             multiplyMatrix(translationMatrix({minX, minY, 0.0}));
             drawIndexedModelBatch(tile.buffer, tile.indexBuffer, tile.indexCount, material,
@@ -411,6 +590,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 glDisable(GL_BLEND);
             }
             popMatrix();
+            if (conditionalRender)
+                pglEndConditionalRender();
         }
     };
     const auto drawWater = [&]() {
@@ -449,16 +630,25 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         glDepthMask(GL_FALSE);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        OcclusionPassState occlusionState;
+        occlusionState.depthFunc = GL_LEQUAL;
+        occlusionState.depthMask = GL_FALSE;
         for (const auto& [water, depth] : visibleWater) {
             static_cast<void>(depth);
             selectIndirect(water);
+            const double minX = static_cast<double>(water->tileX) * impl_->coordinates.tileSize;
+            const double minY = static_cast<double>(water->tileY) * impl_->coordinates.tileSize;
+            const bool conditionalRender =
+                beginBoundsOcclusion(minX, minY, water->minZ, minX + impl_->coordinates.tileSize,
+                                     minY + impl_->coordinates.tileSize, water->maxZ,
+                                     waterOcclusionQueries ? &occlusionState : nullptr);
             pushMatrix();
-            multiplyMatrix(translationMatrix(
-                {static_cast<double>(water->tileX) * impl_->coordinates.tileSize,
-                 static_cast<double>(water->tileY) * impl_->coordinates.tileSize, 0.0}));
+            multiplyMatrix(translationMatrix({minX, minY, 0.0}));
             drawIndexedModelBatch(water->buffer, water->indexBuffer, water->indexCount, material,
                                   waterColor, 0.62, 0);
             popMatrix();
+            if (conditionalRender)
+                pglEndConditionalRender();
         }
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);
@@ -466,6 +656,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
     };
     const auto drawSplines = [&]() {
         TraceScope phase("map", "MapRenderer::draw.splines");
+        OcclusionPassState occlusionState;
         for (const Impl::ModelBatch& road : impl_->roadBatches) {
             if (!impl_->activeTileKeys.contains(tileKey(road.tileX, road.tileY))) {
                 continue;
@@ -482,6 +673,12 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 continue;
             }
             selectIndirect(&road);
+            const bool conditionalRender =
+                road.hasVisibilityBounds && road.alphaMode == 0 && !road.noZcheck &&
+                !road.noZwrite &&
+                beginBoundsOcclusion(road.minX, road.minY, road.minZ, road.maxX, road.maxY,
+                                     road.maxZ,
+                                     geometryOcclusionQueries ? &occlusionState : nullptr);
             pushMatrix();
             multiplyMatrix(translationMatrix(
                 {static_cast<double>(road.tileX) * impl_->coordinates.tileSize,
@@ -489,6 +686,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             drawIndexedModelBatch(road.buffer, road.indexBuffer, road.indexCount, road.material,
                                   road.color, 1.0, road.alphaMode, road.cullBackFaces);
             popMatrix();
+            if (conditionalRender)
+                pglEndConditionalRender();
         }
     };
     std::vector<Impl::SceneryDraw>& sceneryDraws = impl_->sceneryDrawScratch;
@@ -498,13 +697,20 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
     }
     const auto drawSceneryInstance = [&](const Impl::SceneryInstance& instance,
                                          const Impl::ModelBatch& batch,
-                                         const ModelMaterial& sceneryMaterial, int alphaMode) {
+                                         const ModelMaterial& sceneryMaterial, int alphaMode,
+                                         OcclusionPassState* occlusionState = nullptr) {
         selectIndirect(&instance);
+        const bool conditionalRender =
+            !instance.poleCrash && beginOcclusionProxy({instance.x, instance.y, instance.z},
+                                                       instance.boundingRadius, occlusionState);
         pushMatrix();
         multiplyMatrix(instance.transform);
         drawModelBatch(batch.buffer, batch.vertexCount, sceneryMaterial, batch.color, batch.alpha,
                        alphaMode, batch.cullBackFaces);
         popMatrix();
+        if (conditionalRender) {
+            pglEndConditionalRender();
+        }
     };
     // Returns the texture to apply, or nullopt when the batch material is left unchanged.
     const auto resolveFreeTexture =
@@ -671,25 +877,48 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
     using SceneryDraw = Impl::SceneryDraw;
     const auto drawSceneryTypes = [&](std::size_t group) {
         TraceScope phase("map", "MapRenderer::draw.submitScenery");
-        const std::vector<const SceneryDraw*>& opaqueScenery = impl_->opaqueSceneryScratch[group];
+        std::vector<const SceneryDraw*>& opaqueScenery = impl_->opaqueSceneryScratch[group];
         std::vector<const SceneryDraw*>& transparentScenery =
             impl_->transparentSceneryScratch[group];
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
         glDepthMask(GL_TRUE);
         glDisable(GL_BLEND);
+        OcclusionPassState occlusionState;
+        if (depthOcclusionQueries) {
+            const auto reorderable = [](const SceneryDraw* scenery) {
+                return scenery->alphaMode == 0 && !scenery->batch->noZwrite &&
+                       !scenery->batch->noZcheck;
+            };
+            for (auto begin = opaqueScenery.begin(); begin != opaqueScenery.end();) {
+                if (!reorderable(*begin)) {
+                    ++begin;
+                    continue;
+                }
+                const auto end = std::find_if_not(begin, opaqueScenery.end(), reorderable);
+                std::stable_sort(begin, end,
+                                 [](const SceneryDraw* first, const SceneryDraw* second) {
+                                     return first->viewDepth < second->viewDepth;
+                                 });
+                begin = end;
+            }
+        }
         for (const SceneryDraw* scenery : opaqueScenery) {
             glDepthMask(scenery->batch->noZwrite ? GL_FALSE : GL_TRUE);
             // OMSI shadow overlays commonly request both flags: they must not
             // write depth, but still need depth testing so they cannot bleed
             // through foreground scenery or vehicles.
-            const bool skipDepthCheck = scenery->batch->noZcheck &&
-                                        !scenery->batch->noZwrite && scenery->alphaMode == 0;
+            const bool skipDepthCheck =
+                scenery->batch->noZcheck && !scenery->batch->noZwrite && scenery->alphaMode == 0;
             if (skipDepthCheck) {
                 glDisable(GL_DEPTH_TEST);
             }
             drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material,
-                                scenery->alphaMode);
+                                scenery->alphaMode,
+                                depthOcclusionQueries && scenery->alphaMode == 0 &&
+                                        !scenery->batch->noZwrite && !scenery->batch->noZcheck
+                                    ? &occlusionState
+                                    : nullptr);
             if (skipDepthCheck) {
                 glEnable(GL_DEPTH_TEST);
             }
@@ -708,7 +937,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         const bool hasTransmapDepthPrepass = std::any_of(
             transparentScenery.begin(), transparentScenery.end(), [](const SceneryDraw* scenery) {
                 return scenery->alphaMode == 2 && scenery->material.useTransmap &&
-                           !scenery->material.useTextTexture && !scenery->batch->noZwrite;
+                       !scenery->material.useTextTexture && !scenery->batch->noZwrite;
             });
         if (hasTransmapDepthPrepass) {
             GLboolean previousColorMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
@@ -743,13 +972,19 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             const bool hasOpaqueTransmapDepth =
                 scenery->alphaMode == 2 && scenery->material.useTransmap &&
                 !scenery->material.useTextTexture && !scenery->batch->noZwrite;
-            glDepthFunc(hasOpaqueTransmapDepth ? GL_LEQUAL : GL_LESS);
-            glDepthMask(scenery->material.useTextTexture && !scenery->batch->noZwrite ? GL_TRUE
-                                                                                      : GL_FALSE);
+            occlusionState.depthFunc = hasOpaqueTransmapDepth ? GL_LEQUAL : GL_LESS;
+            occlusionState.depthMask =
+                scenery->material.useTextTexture && !scenery->batch->noZwrite ? GL_TRUE : GL_FALSE;
+            glDepthFunc(occlusionState.depthFunc);
+            glDepthMask(occlusionState.depthMask);
             // Transparent scenery such as windows must remain occluded by solid geometry,
             // even when an asset requests noZcheck. Keep noZwrite semantics for blending.
             drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material,
-                                scenery->alphaMode);
+                                scenery->alphaMode,
+                                transparentOcclusionQueries && !scenery->batch->noZwrite &&
+                                        !scenery->batch->noZcheck
+                                    ? &occlusionState
+                                    : nullptr);
         }
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);

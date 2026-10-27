@@ -55,6 +55,26 @@ double positiveEnvironmentRate(const char* name, double defaultValue) {
     }
 }
 
+double minimumObjectViewportFraction(const char* name) {
+    const char* value = openbus::getEnvironment(name);
+    if (value == nullptr || *value == '\0') {
+        return 0.0;
+    }
+    try {
+        std::size_t parsed = 0;
+        const double percentage = std::stod(value, &parsed);
+        if (value[parsed] != '\0' || !std::isfinite(percentage) || percentage < 0.0 ||
+            percentage > 100.0) {
+            throw std::invalid_argument("Expected a percentage from 0 to 100");
+        }
+        return percentage / 100.0;
+    } catch (const std::exception&) {
+        gameLog.Log(std::string("Invalid ") + name +
+                    "; minimum object size culling is disabled for this view");
+        return 0.0;
+    }
+}
+
 } // namespace
 
 RenderLoop::RenderLoop(int width, int height, const char* title)
@@ -77,6 +97,18 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     aiMaximumRateHz_ = positiveEnvironmentRate("OPENBUS_MAX_FPS", 0.0);
     aiRateDivisor_ = positiveEnvironmentRate("OPENBUS_AI_HZ_DIVISOR", 1.0);
     renderFpsCapHz_ = positiveEnvironmentRate("OPENBUS_FPS_CAP", 0.0);
+    mainViewMinimumObjectViewportFraction_ =
+        minimumObjectViewportFraction("OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT");
+    reflectionMinimumObjectViewportFraction_ =
+        minimumObjectViewportFraction("OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT");
+    if (mainViewMinimumObjectViewportFraction_ > 0.0) {
+        gameLog.Log("Main-view minimum object size culling set to " +
+                    std::to_string(mainViewMinimumObjectViewportFraction_ * 100.0) + "%");
+    }
+    if (reflectionMinimumObjectViewportFraction_ > 0.0) {
+        gameLog.Log("Mirror/camera minimum object size culling set to " +
+                    std::to_string(reflectionMinimumObjectViewportFraction_ * 100.0) + "%");
+    }
     gameLog.Log(
         aiSimulationRateHz_ > 0.0
             ? "AI traffic simulation rate set to " + std::to_string(aiSimulationRateHz_) + " Hz"

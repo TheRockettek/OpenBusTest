@@ -1205,10 +1205,12 @@ bool initializeCoreRenderer() {
             ++rendererGeneration;
         }
         const char* cullingBackend = openbus::getEnvironment("OPENBUS_CULLING_BACKEND");
-        initializeComputeCulling(
-            computeCullingRequested(cullingBackend != nullptr ? std::string_view(cullingBackend)
-                                                              : std::string_view{}),
-            cullingBackend != nullptr && std::string_view(cullingBackend) == "compute-indirect");
+        const std::string_view backend = cullingBackend != nullptr ? cullingBackend : "";
+        if (backend == "compute-readback") {
+            gameLog.Log("compute-readback culling is retired; using CPU visibility tests. "
+                        "Set OPENBUS_CULLING_BACKEND=compute-indirect for GPU culling");
+        }
+        initializeComputeCulling(false, indirectCullingRequested(backend));
         return true;
     }
     shutdownCoreRenderer();
@@ -1279,6 +1281,15 @@ void invalidateTextureBindings() {
     wrapParametersValid = false;
     pglActiveTexture(GL_TEXTURE0);
     currentTextureUnit = GL_TEXTURE0;
+}
+
+void deleteRendererBuffers(GLsizei count, const GLuint* buffers) {
+    for (GLsizei index = 0; index < count; ++index) {
+        if (buffers[index] == currentArrayBuffer)
+            currentArrayBuffer = 0;
+        invalidateCullingStorageBinding(buffers[index]);
+    }
+    pglDeleteBuffers(count, buffers);
 }
 
 void setLightingViewMatrix(const Matrix4& view) {
@@ -1539,12 +1550,13 @@ void drawPrimitives(const std::vector<PrimitiveVertex>& vertices, GLenum primiti
     }
 }
 
-void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
+bool drawStaticPrimitives(StaticPrimitiveBuffer& cache,
                           const std::vector<PrimitiveVertex>& vertices, GLenum primitive,
-                          float lineWidth, std::uint64_t contentRevision) {
+                          float lineWidth, std::uint64_t contentRevision,
+                          bool useIndirectOcclusionProxy) {
     TraceScope trace("render", "CoreRenderer::drawStaticPrimitives");
     if (primitiveProgram == 0 || vertices.empty()) {
-        return;
+        return false;
     }
     if (cache.rendererGeneration != rendererGeneration) {
         cache = {};
@@ -1556,7 +1568,7 @@ void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
     if (cache.buffer == 0) {
         pglGenBuffers(1, &cache.buffer);
         if (cache.buffer == 0) {
-            return;
+            return false;
         }
         staticPrimitiveBuffers.push_back(cache.buffer);
     }
@@ -1567,14 +1579,19 @@ void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
     pglBindBuffer(GL_ARRAY_BUFFER, cache.buffer);
     currentArrayBuffer = cache.buffer;
     if (needsUpload) {
-        cache.vertexCount = vertices.size();
-        cache.contentRevision = contentRevision;
         {
             TraceScope phase("render", "CoreRenderer::drawStaticPrimitives.upload");
             pglBufferData(GL_ARRAY_BUFFER,
                           static_cast<std::ptrdiff_t>(vertices.size() * sizeof(PrimitiveVertex)),
                           vertices.data(), GL_STATIC_DRAW);
         }
+        if (glGetError() != GL_NO_ERROR) {
+            gameLog.Log("OpenGL error during or before static primitive upload; "
+                        "skipping this primitive and retrying the upload later");
+            return false;
+        }
+        cache.vertexCount = vertices.size();
+        cache.contentRevision = contentRevision;
     }
     pglVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), nullptr);
     pglVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex),
@@ -1583,8 +1600,23 @@ void drawStaticPrimitives(StaticPrimitiveBuffer& cache,
     {
         TraceScope phase("render", "CoreRenderer::drawStaticPrimitives.submit");
         recordTriangleSubmission(trianglesForPrimitive(primitive, cache.vertexCount));
-        glDrawArrays(primitive, 0, static_cast<GLsizei>(cache.vertexCount));
+        if (!useIndirectOcclusionProxy || !drawSelectedIndirectProxy()) {
+            glDrawArrays(primitive, 0, static_cast<GLsizei>(cache.vertexCount));
+        }
     }
+    return true;
+}
+
+void releaseStaticPrimitiveBuffer(StaticPrimitiveBuffer& cache) {
+    if (cache.buffer != 0 && cache.rendererGeneration == rendererGeneration) {
+        const auto found =
+            std::find(staticPrimitiveBuffers.begin(), staticPrimitiveBuffers.end(), cache.buffer);
+        if (found != staticPrimitiveBuffers.end()) {
+            deleteRendererBuffers(1, &cache.buffer);
+            staticPrimitiveBuffers.erase(found);
+        }
+    }
+    cache = {};
 }
 
 void drawTextureQuad(GLuint texture, float x, float y, float width, float height,

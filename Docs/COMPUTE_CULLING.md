@@ -12,12 +12,13 @@ CPU spatial tests and chunk rejection. No compute input lists, dispatches, or
 visibility readbacks are performed. Frustum/distance/LOD culling remains enabled;
 this does not disable culling or reduce reflection quality/update frequency.
 
-`OPENBUS_CULLING_BACKEND=compute-readback` explicitly selects the experimental
-synchronous compute implementation for comparisons.
 `OPENBUS_CULLING_BACKEND=compute-indirect` selects the implemented **no-readback
 GPU command backend** described below. Other values select CPU.
 Backend selection occurs at renderer initialization. The log identifies the
-selected backend. No environment variable is required for normal operation.
+selected backend. The old `compute-readback` setting is retired and logs a
+warning before selecting CPU; diagnostic probes still exercise readback to
+compare GPU visibility with the CPU reference. No environment variable is
+required for normal operation.
 
 The renderer requests an OpenGL 4.3 core context, retrying OpenGL 3.3 if
 unavailable. Compute culling initializes only when the actual context version
@@ -29,45 +30,150 @@ allocation, or dispatch failures retain the CPU visibility implementation.
 
 - Map terrain, water, road bounds, and scenery bounding spheres use batched
   compute frustum and 10 km XY-bounds distance tests.
+- A conservative CPU frustum broad phase removes clearly off-screen map
+  bounds and scenery before preparing indirect draws; retained candidates
+  still receive the GPU's final test.
 - Scenery and vehicle mesh LOD selection runs in compute.
+- Optional projected-size tests for scenery and vehicle parts run in compute,
+  using the current view's projection scale and configured threshold; terrain,
+  roads, and water are not affected by that cutoff.
 - Animated vehicle rendering bounds use compute tests. Reflection-surface
   scheduling uses a small current-view CPU test in all backends.
 - Active tile membership, script variables, viewpoints, reflection target sizing,
   material resolution, transparent sorting, and draw submission remain on CPU.
 - This replaces spatial visibility tests, not rasterizer back-face selection or
-  depth testing. It does not add occlusion/Hi-Z culling.
+  depth testing. Hi-Z is not implemented; the optional depth-query prototype is
+  described below.
 
-Map scenery instances and vehicle parts also use a projected-size cutoff:
-objects smaller than 2% of the main viewport height are skipped, and objects
-smaller than 10% are skipped in mirror/camera reflection views. The cutoff is
-applied consistently before CPU submission and as an explicit rejection in the
-optional GPU visibility path. Spheres reaching the camera plane and degenerate
-bounds are retained conservatively. This is not occlusion culling; fully covered
-objects can still be submitted when they exceed the size threshold.
+Map scenery instances and vehicle parts can use a projected-size cutoff,
+configured independently for the main view and mirror/camera views:
+
+- `OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT` sets the main-view threshold.
+- `OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT` sets the mirror/camera threshold.
+
+Values are percentages of viewport height, from `0` through `100`. Unset,
+empty, or `0` values disable the cutoff for that view. Invalid values are logged
+and ignored. The CPU backend applies the cutoff before submission; the optional
+GPU backend calculates it in compute and gates indirect commands.
+The traffic-light raster probe exercises red, green, and yellow phases with both
+cutoffs disabled, including CPU and indirect rendering with queries enabled.
+The GPU test uses float inputs and a small conservative boundary margin, so
+objects near the cutoff may be retained when the double-precision CPU test
+would reject them. Spheres reaching the camera plane and degenerate bounds are
+retained conservatively. Size culling is not occlusion
+culling; fully covered objects can still be submitted when they exceed the
+configured threshold.
+
+## Experimental depth-query occlusion
+
+Set `OPENBUS_OCCLUSION_CULLING=queries` to enable an opt-in opaque-map-scenery
+prototype. It front-to-back sorts contiguous runs of ordinary opaque scenery
+within each render-type group, leaving cutouts and special depth modes in place,
+draws a conservative bounding cube against the current view's depth buffer
+without changing color or depth, and uses `GL_ANY_SAMPLES_PASSED` plus
+conditional rendering to skip the object's draw when the proxy is fully hidden.
+The query is performed in the same view and frame, including reflection targets;
+no previous-frame visibility is reused and no query result is read back by the
+CPU. Unsupported query entry points fall back to ordinary rendering.
+
+Set `OPENBUS_OCCLUSION_TRANSPARENT=1` in addition to enable queries for ordinary
+transparent scenery after the opaque and transmap depth passes of its current
+render-type group. This is off by default: transparent candidates add more
+proxy draws and queries, which can reduce performance. They are tested against
+the depth already present in the same view, without changing their back-to-front
+order or depth-write behavior.
+
+Set `OPENBUS_OCCLUSION_MAP_GEOMETRY=1` alongside the query setting to also test
+bounded terrain tiles and ordinary opaque road batches against the depth already
+written at their original positions in the render order. Terrain base and ground
+layers share one query. Unbounded, transparent, or special-depth roads and
+near-plane-crossing or invalid bounds render normally. This is off by default
+because large tile bounds often remain visible and the additional query overhead
+can cost more than it saves.
+
+Set `OPENBUS_OCCLUSION_WATER=1` alongside the query setting to test each water
+tile's conservative bounds against depth already present at the water pass.
+The existing back-to-front order, blending, depth test and disabled depth writes
+are preserved. Invalid or near-plane-crossing bounds, query allocation failure,
+and proxy submission failure fall back to ordinary rendering. This option is
+off by default: large tile bounds and query overhead may make it slower. The
+water raster probe covers visible, hidden, partially covered and layered water
+in CPU and indirect modes, including a texture-backed framebuffer; full mirror
+and in-game behavior still need validation.
+
+One short Mesa software-rendered `DBC_Map` comparison with indirect culling and
+scenery queries enabled averaged 204.7 ms per `frame/main` CPU trace scope with
+geometry queries off and 201.8 ms with them on (15 measured frames per run).
+The requested window was 640×360 but the framebuffer was 1280×720. Both runs
+reported missing or unsupported map assets. This small, noisy difference is not
+evidence of a hardware performance improvement; no GPU timing was collected.
+
+A separate short software comparison of the indirect broad phase and dispatch
+reuse, with scenery and map-geometry queries enabled, recorded 2,660 indexed
+model-batch submissions before and 1,098 after over 15 measured frames. Mean
+`frame/main` CPU scope duration was 206.7 ms before and 208.4 ms after. The
+640×360 window again had a 1280×720 framebuffer; the map had missing or
+unsupported assets. The submission reduction is measurable in this run, but
+the timing difference does not establish a performance improvement.
+
+Scenery query eligibility respects the existing depth-test and depth-write
+behavior; objects with `noZcheck` or `noZwrite` are not query culled. Vehicles
+are not query culled.
+Because conditional rendering may serialize GPU work and each candidate
+adds a proxy draw/query, this is a correctness/performance prototype, not an
+assumed optimization. Compare frame time and triangle/shader workload with the
+setting off and on before using it broadly. The existing CPU triangle counter
+still reports candidate geometry submitted by the renderer, not geometry
+suppressed by conditional rendering; use GPU timing/profiling to measure the
+actual workload. The normal renderer remains unchanged unless explicitly enabled.
+Proxies that intersect the near plane and animated crashable poles are rendered
+without query culling. When combined with compute-indirect, the GPU-generated
+visibility also gates the query proxy, although CPU query setup is still required.
+Depth and color state used for queries is shared within each opaque render-type
+pass rather than queried from the driver for every candidate.
+If proxy-buffer upload fails, the candidate is rendered normally and the upload
+is retried later; the map releases its proxy buffer when it is destroyed.
 
 Centers are transformed into eye space in double precision before packing the
 SSBO, preventing large map origins from erasing local detail. Normalized frustum
 planes use a conservative 1 mm margin. LOD decisions use float precision on GPU,
 so transitions can differ from double-precision CPU fallback at exact thresholds.
 
-Readback mode reads its **current view's** mask after a buffer-update memory
-barrier; indirect mode consumes GPU commands after a command barrier, without
+Indirect mode consumes GPU commands after a command barrier, without
 downloading a mask. Main views, captures, and reflections never consume previous-frame
 visibility. The prior GL program and buffer bindings are restored after compute
 to preserve the renderer's cached state. Resources are released before context
 destruction.
 
+The shared LOD-boundary buffer is uploaded again only when its contents change;
+unchanged successive views reuse the GPU storage. Changed contents replace the
+storage so earlier queued dispatches retain their own boundaries.
+Nested indirect scopes also reuse a snapshot of shader-storage bindings across
+dispatches, while restoring the caller's bindings after each dispatch. Direct
+shader-storage or indirect-target binding changes inside such a scope are not
+supported; renderer-owned buffer deletion invalidates the snapshot.
+
 ## Performance limitation
 
-The legacy readback backend requires synchronous GPU-to-CPU visibility readback.
+The retired readback backend required synchronous GPU-to-CPU visibility readback.
 The indirect backend removes that dependency, but still prepares materials and
 submits individual indirect draws for all candidates, including GPU-rejected
-candidates. Neither compute backend currently beats CPU culling in the measured
+candidates. Indirect did not beat CPU culling in the previously measured
 scene; CPU remains the default. Capability alone is not a performance criterion.
-`ComputeCulling::dispatchAndReadback` and `ComputeCulling::readback.wait` trace
-scopes identify this cost when running an explicit comparison.
+Diagnostic probe readback is not used by application rendering.
 
-## What exactly is the CPU waiting for?
+### Short software-rendering check
+
+On `DBC_Map` at 640×360 with queries enabled, 3 warmup frames and 15 measured
+frames, a single Mesa software-rendered run before the scenery broad phases
+averaged 357.6 ms per `frame/main` CPU trace scope and submitted 116,472 model
+batch scopes. A subsequent run with the frustum and LOD broad phases averaged
+171.5 ms and submitted 46,588 model batch scopes. Both runs completed; the map
+reported missing/unsupported assets in both. These short, workload-sensitive
+CPU trace measurements are not GPU timings or a representative London/Radeon
+comparison. They do not establish a hardware performance improvement.
+
+## Historical: what was the CPU waiting for?
 
 **Culling does not inherently require a CPU wait. The legacy readback implementation
 requires one because the CPU is the consumer of the GPU's answer.** It moves the
@@ -123,9 +229,9 @@ Neither is a GPU timestamp measurement of the compute shader. The earlier
 `MapRenderer::draw.computeCulling` scope also includes CPU input construction and
 pointer-to-index hash-table work. Do not label those totals "GPU culling time".
 
-### Where the returned mask is consumed
+### Where the returned mask was consumed
 
-| Path | What the CPU currently does after receiving the result | Is that CPU dependency fundamental? |
+| Path | What the former readback implementation did after receiving the result | Is that CPU dependency fundamental? |
 | --- | --- | --- |
 | `MapRenderer::draw()` | `gpuVisible()` indexes the mask for terrain, water, roads, and scenery; rejected objects are skipped before per-object submission. GPU LOD rejection replaces CPU LOD selection. | No. GPU-produced draw commands can encode these decisions. |
 | `Vehicle::computePartVisibility(true)` → `Vehicle::draw()` | The `visible` lambda filters spatial/LOD visibility; CPU builds opaque and transparent lists and submits batches. Prepared lists may be reused for the transparent pass. | No. CPU can prepare candidates and material state without reading spatial visibility; GPU can suppress rejected commands. |
@@ -135,9 +241,8 @@ pointer-to-index hash-table work. Do not label those totals "GPU culling time".
 Script-variable/viewpoint eligibility, active tiles, and resource residency are
 CPU-known inputs, not values the culling shader discovers. Likewise, sorting
 keys and material selections can be calculated for a conservative candidate set
-before knowing its final spatial mask. The current code filters first to avoid
-doing that work for invisible objects; this is an optimization choice, not a
-requirement of OpenGL or of material rendering.
+before knowing its final spatial mask. The indirect path does that work before
+the GPU rejects candidates, which is an important remaining performance cost.
 
 ## Moving more work to GPU without waiting
 
@@ -148,13 +253,17 @@ render thread wait for the answer.
 
 ### Implemented first stage: fixed-slot GPU commands
 
-`IndirectCullingBatch` owns an output buffer for one draw invocation. Each input
+`IndirectCullingBatch` owns a reusable output buffer. Each input
 `CullingItem` is 64 bytes (eye sphere, XY bounds, flags/LOD, geometry count).
-Compute writes five tightly packed 32-bit words per command: count,
+Compute writes five words per candidate, plus a second five-word command when
+query occlusion is enabled for that map view. The model command contains count,
 instanceCount, firstIndex, baseVertex, baseInstance. The last three are zero;
 the first four words also form a valid arrays-indirect command with zero first
 and baseInstance. Rejected candidates have instanceCount zero. Counts/ranges are
-CPU-known geometry metadata, not downloaded GPU results.
+CPU-known geometry metadata, not downloaded GPU results. The second command
+draws the 36-vertex query proxy with the same instance count, so spatially
+rejected indirect candidates do not rasterize that proxy. Compute stops further
+visibility checks for a candidate once an earlier check rejects it.
 
 `GL_COMMAND_BARRIER_BIT` makes these writes visible to indirect command fetch.
 `CoreRenderer` model, indexed-model, material, and environment passes use
@@ -164,20 +273,41 @@ still submits a fixed candidate list; this is not command compaction or MDI.
 
 `IndirectCullingScope` restores selected-command state and the prior GL indirect
 buffer binding. Batch destructors run with the rendering context current;
-OpenGL defers storage release until queued commands finish. Each invocation has
-its own output storage, so reflection/main views cannot overwrite each other's
-commands. Re-dispatching a batch reallocates its output store. Input/LOD uploads
-still use `glBufferData`; allocation/driver costs are not eliminated.
+OpenGL defers storage release until queued commands finish. Each nonempty
+dispatch replaces the buffer's output storage, so reflection/main views cannot
+overwrite previously queued commands. Map draws reuse the buffer object, while
+vehicles retain one for their matching opaque/transparent passes. The binding
+is cached within each scope, avoiding repeated binds for
+successive commands in the same batch; direct changes to the indirect-buffer
+target are not permitted while a scope is active. The vehicle model phase shares
+an outer scope, so nested vehicle draws reuse the tracked binding without
+querying the driver for every pass. Re-dispatching a batch
+reallocates its output store. Input/LOD uploads still use `glBufferData`;
+allocation/driver costs are not eliminated.
 
 Map terrain layers, sorted water, bounded roads, and scenery select their own
-command slots. Map chunk broad-phase rejection remains CPU-side to avoid
-preparing materials for entire off-screen groups; per-candidate tests/LOD run
-on GPU. Roads without bounds use ordinary draws. Vehicles emit one command per
+command slots through view-stamped records, avoiding a per-view pointer hash
+table and preventing omitted candidates from reusing a previous view's slot.
+Map culling inputs and LOD scratch vectors also retain capacity between views.
+Map chunk broad-phase rejection remains CPU-side to avoid preparing materials
+for entire off-screen groups. Conservative CPU frustum and LOD broad phases
+also omit scenery candidates that cannot pass the GPU tests, retaining uncertain
+and boundary candidates for the GPU's final decision. This avoids preparing
+and submitting every candidate when the current individual-draw path cannot
+compact them. Roads without bounds use ordinary draws. Vehicles emit one command per
 eligible batch (parts can contain batches with different geometry counts).
-Script/viewpoint eligibility stays CPU-side. Transparent candidates are sorted
+Eligible batches carry their command slots directly rather than using a
+per-view pointer hash table; ineligible slots are cleared on redispatch. Vehicle
+input scratch capacity is reused on the render thread instead of being retained
+separately by every vehicle. The same conservative frustum and LOD broad phases
+omit clearly rejected vehicle parts before batch/material preparation; compute
+still makes the final decision for the retained parts.
+Script/viewpoint eligibility stays CPU-side. Vehicle opaque and transparent
+passes reuse the same prepared commands and sorted candidate lists when view,
+animation, material, frustum, and size settings match. Changed settings or
+newly loaded geometry force a fresh dispatch. Transparent candidates are sorted
 on CPU and submitted in that order; GPU rejection does not reorder them. The
-same slot gates transmap depth and environment passes. Indirect vehicle lists
-are rebuilt per invocation rather than reused across opaque/transparent calls.
+same slot gates transmap depth and environment passes.
 
 Initialization checks compute and both indirect draw entry points. Readback
 entry points are **not required** for indirect mode. Allocation/validation or

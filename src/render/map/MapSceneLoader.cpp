@@ -1704,10 +1704,10 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                 prepared.indices.data(), GL_STATIC_DRAW);
             if (buffer.buffer == 0 || buffer.indexBuffer == 0 || glGetError() != GL_NO_ERROR) {
                 if (buffer.buffer != 0) {
-                    pglDeleteBuffers(1, &buffer.buffer);
+                    deleteRendererBuffers(1, &buffer.buffer);
                 }
                 if (buffer.indexBuffer != 0) {
-                    pglDeleteBuffers(1, &buffer.indexBuffer);
+                    deleteRendererBuffers(1, &buffer.indexBuffer);
                 }
                 throw std::runtime_error("Could not upload terrain mesh for " +
                                          openbus::pathToUtf8(tile.textPath.filename()));
@@ -1984,10 +1984,10 @@ bool MapSceneLoader::uploadRoadBatches(bool waitForCompletion) {
                       geometry.indices.data(), GL_STATIC_DRAW);
         if (batch.buffer == 0 || batch.indexBuffer == 0 || glGetError() != GL_NO_ERROR) {
             if (batch.buffer != 0) {
-                pglDeleteBuffers(1, &batch.buffer);
+                deleteRendererBuffers(1, &batch.buffer);
             }
             if (batch.indexBuffer != 0) {
-                pglDeleteBuffers(1, &batch.indexBuffer);
+                deleteRendererBuffers(1, &batch.indexBuffer);
             }
             recordSkipped(skipped, "road batches rejected by OpenGL upload", batchKey);
             geometryIt = roadVertices.erase(geometryIt);

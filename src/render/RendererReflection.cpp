@@ -178,6 +178,8 @@ void ReflectionRenderer::destroy() {
             pglDeleteFramebuffers(1, &target.framebuffer);
         }
     }
+    if (!impl_->targets.empty())
+        invalidateTextureBindings();
     impl_->targets.clear();
 }
 

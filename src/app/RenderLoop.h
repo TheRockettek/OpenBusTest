@@ -363,6 +363,8 @@ class RenderLoop {
     double droppedScriptTimeSinceDiagnostic_ = 0.0;
     int framebufferWidth_ = 1;
     int framebufferHeight_ = 1;
+    double mainViewMinimumObjectViewportFraction_ = 0.0;
+    double reflectionMinimumObjectViewportFraction_ = 0.0;
     openbus::rendering::StaticPrimitiveBuffer collisionWireframeBuffer_;
     std::vector<openbus::rendering::PrimitiveVertex> collisionWireframeVertices_;
     openbus::rendering::StaticPrimitiveBuffer collisionSurfaceWireframeBuffer_;

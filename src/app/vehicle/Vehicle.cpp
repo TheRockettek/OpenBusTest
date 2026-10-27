@@ -178,7 +178,7 @@ Vehicle::~Vehicle() {
         for (const DisplayPart& part : parts) {
             for (const Batch& batch : part.batches) {
                 if (batch.buffer && !batch.bufferTracked) {
-                    pglDeleteBuffers(1, &batch.buffer);
+                    openbus::rendering::deleteRendererBuffers(1, &batch.buffer);
                 }
             }
         }

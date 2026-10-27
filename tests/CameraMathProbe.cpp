@@ -38,6 +38,19 @@ int main() {
         std::cerr << "Camera projection far clip is not configured for long map visibility\n";
         return 1;
     }
+    const auto frustum = openbus::rendering::buildViewFrustum(projection);
+    const auto rotatedView = openbus::rendering::rotationMatrix(45.0, 0.0, 1.0, 0.0);
+    const auto inverseView = openbus::rendering::rotationMatrix(-45.0, 0.0, 1.0, 0.0);
+    const auto rotatedCenter = [&](double depth) {
+        const auto point = openbus::rendering::transformPoint(inverseView, {0.0, 0.0, -depth, 1.0});
+        return std::array<double, 3>{point[0], point[1], point[2]};
+    };
+    if (openbus::rendering::boxFullyBeyondNearPlane(frustum, rotatedView, rotatedCenter(1.3), 1.0) ||
+        !openbus::rendering::boxFullyBeyondNearPlane(frustum, rotatedView, rotatedCenter(2.0), 1.0) ||
+        openbus::rendering::boxFullyBeyondNearPlane(frustum, rotatedView, rotatedCenter(2.0), 0.0)) {
+        std::cerr << "Occlusion proxy near-plane test is not conservative for rotated views\n";
+        return 1;
+    }
     const VehiclePlacement groundPlacement{{4.0, -7.0, 0.0}, 37.0};
     constexpr double modelOffsetZ = -0.4;
     constexpr double groundPlaneZ = 0.015;

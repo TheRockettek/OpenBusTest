@@ -47,6 +47,12 @@ BindFramebufferProc pglBindFramebuffer = nullptr;
 DeleteFramebuffersProc pglDeleteFramebuffers = nullptr;
 FramebufferTexture2DProc pglFramebufferTexture2D = nullptr;
 CheckFramebufferStatusProc pglCheckFramebufferStatus = nullptr;
+GenQueriesProc pglGenQueries = nullptr;
+DeleteQueriesProc pglDeleteQueries = nullptr;
+BeginQueryProc pglBeginQuery = nullptr;
+EndQueryProc pglEndQuery = nullptr;
+BeginConditionalRenderProc pglBeginConditionalRender = nullptr;
+EndConditionalRenderProc pglEndConditionalRender = nullptr;
 DispatchComputeProc pglDispatchCompute = nullptr;
 MemoryBarrierProc pglMemoryBarrier = nullptr;
 BindBufferBaseProc pglBindBufferBase = nullptr;
@@ -126,6 +132,14 @@ bool loadOpenGLFunctions() {
         reinterpret_cast<FramebufferTexture2DProc>(glfwGetProcAddress("glFramebufferTexture2D"));
     pglCheckFramebufferStatus = reinterpret_cast<CheckFramebufferStatusProc>(
         glfwGetProcAddress("glCheckFramebufferStatus"));
+    pglGenQueries = reinterpret_cast<GenQueriesProc>(glfwGetProcAddress("glGenQueries"));
+    pglDeleteQueries = reinterpret_cast<DeleteQueriesProc>(glfwGetProcAddress("glDeleteQueries"));
+    pglBeginQuery = reinterpret_cast<BeginQueryProc>(glfwGetProcAddress("glBeginQuery"));
+    pglEndQuery = reinterpret_cast<EndQueryProc>(glfwGetProcAddress("glEndQuery"));
+    pglBeginConditionalRender = reinterpret_cast<BeginConditionalRenderProc>(
+        glfwGetProcAddress("glBeginConditionalRender"));
+    pglEndConditionalRender =
+        reinterpret_cast<EndConditionalRenderProc>(glfwGetProcAddress("glEndConditionalRender"));
     const bool available =
         pglGenBuffers && pglBindBuffer && pglBufferData && pglDeleteBuffers &&
         pglCompressedTexImage2D && pglGetStringi && pglActiveTexture && pglGenVertexArrays &&

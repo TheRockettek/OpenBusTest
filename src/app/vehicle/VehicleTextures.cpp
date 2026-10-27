@@ -236,6 +236,7 @@ GLuint Vehicle::uploadCompressedDds(const std::filesystem::path& path, const Com
                                 static_cast<GLsizei>(data.size()), data.data());
         if (glGetError() != GL_NO_ERROR) {
             glDeleteTextures(1, &texture);
+            openbus::rendering::invalidateTextureBindings();
             return 0;
         }
         levelWidth = std::max(1, levelWidth / 2);

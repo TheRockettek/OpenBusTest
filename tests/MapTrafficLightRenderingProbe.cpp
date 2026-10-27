@@ -3,6 +3,7 @@
 #include "core/Variables.h"
 #include "map/MapTileWindow.h"
 #include "render/AssetRequestManager.h"
+#include "render/ComputeCulling.h"
 #include "render/CoreRenderer.h"
 #include "render/MatrixMath.h"
 #include "render/OpenGLFunctions.h"
@@ -21,12 +22,21 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
 using namespace openbus::rendering;
 
 namespace {
+
+BeginQueryProc beginQuery = nullptr;
+std::size_t occlusionQueryCount = 0;
+
+void APIENTRY recordOcclusionQuery(GLenum target, GLuint query) {
+    ++occlusionQueryCount;
+    beginQuery(target, query);
+}
 
 void writeText(const std::filesystem::path& path, const std::string& text) {
     std::ofstream output(path, std::ios::binary);
@@ -257,7 +267,7 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     check(renderer.renderStats().activeSceneryObjects == 2,
           "Cross-tile spline parents must resolve for active attached scenery");
     setPerspective(32, 32, 90);
-    setModelViewMatrix(translationMatrix({0, 0, -2}));
+    setModelViewMatrix(translationMatrix({0, 0, -12}));
     glViewport(0, 0, 32, 32);
     glDisable(GL_DITHER);
     double previousClock = 0.0;
@@ -265,8 +275,10 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
         const double elapsed = clock + 0.1 - previousClock;
         simulation.sharedVariables().updateFrame(static_cast<float>(elapsed),
                                                  static_cast<float>(clock), 0, 0);
-        renderer.updateTrafficSignalControllers({}, elapsed, previousClock);
+        openbus::map::advanceMapTrafficSignalControllers(renderer.trafficSignalControllers(), {},
+                                                          elapsed, previousClock);
         previousClock = clock + 0.1;
+        renderer.updateTrafficSignalScripts(clock);
         renderer.updateScripts();
         const auto stats = renderer.trafficSignalDebugStats();
         check(stats.activeSignalModels == 2 && stats.modelsWithoutPhase == 0 &&
@@ -275,7 +287,10 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
         glDepthMask(GL_TRUE);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        const std::size_t queriesBefore = occlusionQueryCount;
         renderer.draw();
+        check(beginQuery == nullptr || occlusionQueryCount > queriesBefore,
+              "Traffic-light phase did not exercise an occlusion query");
         std::array<std::uint8_t, 4> pixel = {};
         glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
         for (std::size_t channel = 0; channel < 3; ++channel) {
@@ -300,7 +315,10 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     const std::array<double, 2> playerBusPosition = {
         signalPath[0][0] - directionX / directionLength * 5.0,
         signalPath[0][1] - directionY / directionLength * 5.0};
-    renderer.updateTrafficSignalControllers({}, 0.1, 6.1, playerBusPosition);
+    openbus::map::advanceMapTrafficSignalControllers(
+        renderer.trafficSignalControllers(), {}, 0.1, 6.1,
+        renderer.trafficSignalBusPriorityRequests(playerBusPosition));
+    renderer.updateTrafficSignalScripts(6.2);
     renderer.updateScripts();
     const auto priorityStats = renderer.trafficSignalDebugStats();
     check(priorityStats.modelsByPhase[6] >= 1 && priorityStats.controllerDrivenModels == 2,
@@ -410,7 +428,7 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
                   "Spawn selection must defer while startup lane data is unavailable");
             startupLaneLookupChecked = true;
         }
-        if (logContains(probeLog, "scenery/model asset preparation failed for", "attempt 1 of 3")) {
+        if (logContains(probeLog, "startup_batch_", "attempt 1 of 3")) {
             startupAssetRetryObserved = true;
             break;
         }
@@ -446,7 +464,13 @@ int main(int argc, char** argv) {
         return 77;
     }
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    const char* backendSetting = std::getenv("OPENBUS_CULLING_BACKEND");
+    const bool indirect = backendSetting != nullptr &&
+                          std::string_view(backendSetting) == "compute-indirect";
+    const char* querySetting = std::getenv("OPENBUS_OCCLUSION_CULLING");
+    const bool queriesRequested =
+        querySetting != nullptr && std::string_view(querySetting) == "queries";
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, indirect ? 4 : 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     GLFWwindow* window = glfwCreateWindow(32, 32, "Traffic-light probe", nullptr, nullptr);
@@ -458,17 +482,32 @@ int main(int argc, char** argv) {
     const auto root = openbus::probe::makeProbeDirectory("openbus-traffic-light-rendering");
     configureProbeLog(root / "probe.log");
     bool passed = loadOpenGLFunctions() && initializeCoreRenderer();
-    if (passed) {
+    bool unavailable = false;
+    if (passed && indirect && !indirectCullingAvailable())
+        unavailable = true;
+    if (passed && queriesRequested) {
+        unavailable |= pglGenQueries == nullptr || pglDeleteQueries == nullptr ||
+                       pglBeginQuery == nullptr || pglEndQuery == nullptr ||
+                       pglBeginConditionalRender == nullptr || pglEndConditionalRender == nullptr;
+        if (!unavailable) {
+            beginQuery = pglBeginQuery;
+            pglBeginQuery = recordOcclusionQuery;
+        }
+    }
+    if (passed && !unavailable) {
         try {
             runProbe(root, argc == 2);
+            check(!queriesRequested || occlusionQueryCount > 0,
+                  "Traffic-light fixture did not exercise occlusion queries");
         } catch (const std::exception& error) {
             std::cerr << error.what() << '\n';
             passed = false;
         }
+        if (beginQuery != nullptr) pglBeginQuery = beginQuery;
     }
     shutdownCoreRenderer();
     glfwDestroyWindow(window);
     glfwTerminate();
     openbus::probe::removeProbeDirectory(root);
-    return passed ? 0 : 1;
+    return unavailable ? 77 : passed ? 0 : 1;
 }

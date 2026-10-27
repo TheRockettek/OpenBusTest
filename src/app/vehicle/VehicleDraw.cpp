@@ -167,9 +167,7 @@ void Vehicle::sortTransparentBatch(Batch& batch) {
 void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                    const Matrix4* groundShadowTransform, double minimumObjectViewportFraction) {
     TraceScope trace("render", "Vehicle::draw");
-    openbus::rendering::IndirectCullingBatch indirectBatch;
     openbus::rendering::IndirectCullingScope indirectScope;
-    std::unordered_map<const Batch*, std::size_t> indirectSlots;
     bool indirect = false;
     if (!loaded) {
         return;
@@ -189,10 +187,12 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
     const auto& modelView = openbus::rendering::modelViewMatrix();
     const auto& projection = openbus::rendering::projectionMatrix();
     const bool reusePreparedDraw =
-        !openbus::rendering::indirectCullingAvailable() &&
         renderPass == VehicleRenderPass::Transparent && preparedDrawListsValid &&
         preparedDrawContext == context && preparedDrawReflection == reflectionPass &&
         preparedDrawTransparent == classifyTransparent &&
+        preparedDrawIndirect == openbus::rendering::indirectCullingAvailable() &&
+        preparedDrawFrustumCulling == frustumCulling &&
+        preparedDrawMinimumObjectViewportFraction == minimumObjectViewportFraction &&
         preparedDrawAnimationGeneration == animationGeneration &&
         preparedDrawMaterialGeneration == materialSelectionGeneration &&
         preparedDrawModelView == modelView && preparedDrawProjection == projection;
@@ -216,57 +216,69 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
         }
     }
 
-    if (openbus::rendering::indirectCullingAvailable()) {
+    if (reusePreparedDraw) {
+        indirect = preparedDrawIndirect;
+    } else if (openbus::rendering::indirectCullingAvailable()) {
+        TraceScope phase("render", "Vehicle::draw.prepareIndirect");
         using namespace openbus::rendering;
-        std::vector<CullingItem> items;
-        std::vector<float> boundaries;
+        static thread_local std::vector<CullingItem> items;
+        static thread_local std::vector<float> boundaries;
+        items.clear();
+        boundaries.clear();
         appendCullingLodBoundaries(boundaries, lodThresholds);
-        for (const DisplayPart& part : displayLists) {
+        const auto cullingPlanes = makeCullingPlanes(projection);
+        for (DisplayPart& part : displayLists) {
+            part.indirectEligible = false;
+            for (Batch& batch : part.batches)
+                batch.indirectSlot = std::numeric_limits<std::size_t>::max();
             const std::size_t partIndex = static_cast<std::size_t>(&part - displayLists.data());
             if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex] ||
                 !openbus::rendering::viewpointMatches(part.viewpoint, context))
                 continue;
             auto item = makeCullingItem(modelView, animatedPartCenter(part), part.radius);
             item.metadata[0] = frustumCulling ? CullFrustum : 0U;
-            if (openbus::rendering::sphereBelowMinimumViewportFraction(
-                    modelView, projection, animatedPartCenter(part), part.radius,
-                    minimumObjectViewportFraction)) {
-                item.metadata[0] |= CullReject;
-            }
+            item.metadata[0] |= CullProjectedSize;
             if (part.lodIndex >= 0 && !boundaries.empty()) {
                 item.metadata[0] |= CullLod;
                 item.metadata[1] = static_cast<std::uint32_t>(part.lodIndex);
                 item.metadata[3] = static_cast<std::uint32_t>(boundaries.size());
             }
-            for (const Batch& batch : part.batches) {
+            if (!cullingFrustumMayIntersect(item, cullingPlanes) ||
+                !cullingLodMayMatch(item, boundaries))
+                continue;
+            part.indirectEligible = true;
+            for (Batch& batch : part.batches) {
                 item.draw[0] = batch.vertexCount <=
                                        static_cast<std::size_t>(std::numeric_limits<GLsizei>::max())
                                    ? static_cast<std::uint32_t>(batch.vertexCount)
                                    : std::numeric_limits<std::uint32_t>::max();
-                indirectSlots.emplace(&batch, items.size());
+                batch.indirectSlot = items.size();
                 items.push_back(item);
             }
         }
-        indirect = indirectBatch.dispatch(items, makeCullingPlanes(projection), boundaries);
+        indirect = preparedIndirectBatch.dispatch(
+            items, cullingPlanes, boundaries,
+            makeCullingProjectedSize(projection, minimumObjectViewportFraction));
     }
     const auto selectIndirect = [&](const Batch& batch) {
-        if (indirect)
-            indirectBatch.select(indirectSlots.at(&batch));
+        if (indirect) {
+            if (batch.indirectSlot == std::numeric_limits<std::size_t>::max()) {
+                static bool loggedMissingSlot = false;
+                if (!loggedMissingSlot) {
+                    gameLog.Log("Vehicle indirect command slot missing; drawing conservatively");
+                    loggedMissingSlot = true;
+                }
+            }
+            preparedIndirectBatch.select(batch.indirectSlot);
+        }
     };
-    const auto computeVisibility =
-        reusePreparedDraw
-            ? std::vector<std::uint32_t>{}
-            : computePartVisibility(true, minimumObjectViewportFraction);
     const auto visible = [&](const DisplayPart& part, std::size_t partIndex) {
         // TraceScope phase("render", "Vehicle::draw.visible");
         if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex]) {
             return false;
         }
         if (indirect)
-            return true;
-        if (!computeVisibility.empty()) {
-            return computeVisibility[partIndex] != 0;
-        }
+            return part.indirectEligible;
         const std::array<double, 3> center = animatedPartCenter(part);
         const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
         const std::array<double, 4> eye = transformPoint(modelView, local);
@@ -364,11 +376,14 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                                  return first.depth > second.depth;
                              });
         }
-        preparedDrawListsValid = renderPass == VehicleRenderPass::Opaque && !indirect;
+        preparedDrawListsValid = renderPass == VehicleRenderPass::Opaque;
         if (preparedDrawListsValid) {
             preparedDrawContext = context;
             preparedDrawReflection = reflectionPass;
             preparedDrawTransparent = classifyTransparent;
+            preparedDrawIndirect = indirect;
+            preparedDrawFrustumCulling = frustumCulling;
+            preparedDrawMinimumObjectViewportFraction = minimumObjectViewportFraction;
             preparedDrawAnimationGeneration = animationGeneration;
             preparedDrawMaterialGeneration = materialSelectionGeneration;
             preparedDrawModelView = modelView;

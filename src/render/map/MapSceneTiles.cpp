@@ -228,10 +228,10 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                           preparedRoads.waterIndices.data(), GL_STATIC_DRAW);
             if (batch.buffer == 0 || batch.indexBuffer == 0 || glGetError() != GL_NO_ERROR) {
                 if (batch.buffer != 0) {
-                    pglDeleteBuffers(1, &batch.buffer);
+                    deleteRendererBuffers(1, &batch.buffer);
                 }
                 if (batch.indexBuffer != 0) {
-                    pglDeleteBuffers(1, &batch.indexBuffer);
+                    deleteRendererBuffers(1, &batch.indexBuffer);
                 }
                 recordSkipped(skipped, "water surfaces rejected by OpenGL upload", tileName);
             } else {

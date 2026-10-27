@@ -180,8 +180,8 @@ struct MapCollisionStreamer::WorkerState {
 
     const MapRoadConnectionIndex& roadConnections() {
         if (!connections) {
-            openbus::rendering::TraceScope trace(
-                "map_collision", "MapCollisionStreamer.loadRoadConnections");
+            openbus::rendering::TraceScope trace("map_collision",
+                                                 "MapCollisionStreamer.loadRoadConnections");
             connections = loadMapRoadConnections(map, omsiRoot);
         }
         return *connections;
@@ -189,8 +189,8 @@ struct MapCollisionStreamer::WorkerState {
 
     const MapSceneryCollisionIndex& sceneryCollisions() {
         if (!scenery) {
-            openbus::rendering::TraceScope trace(
-                "map_collision", "MapCollisionStreamer.buildSceneryCollisionIndex");
+            openbus::rendering::TraceScope trace("map_collision",
+                                                 "MapCollisionStreamer.buildSceneryCollisionIndex");
             scenery = buildMapSceneryCollisionIndex(map, omsiRoot);
         }
         return *scenery;
@@ -416,8 +416,8 @@ void MapCollisionStreamer::waitForPendingBuilds() {
 
 void MapCollisionStreamer::waitForTileCollision(
     double worldX, double worldY, const std::vector<MapTileCoordinate>& loadedGeometryTiles) {
-    openbus::rendering::TraceScope waitTrace(
-        "map_collision", "MapCollisionStreamer.waitForTileCollision");
+    openbus::rendering::TraceScope waitTrace("map_collision",
+                                             "MapCollisionStreamer.waitForTileCollision");
     const int centerX = mapWorldTile(worldX, map_.coordinates.tileSize);
     const int centerY = mapWorldTile(worldY, map_.coordinates.tileSize);
     const std::uint64_t key = tileKey(centerX, centerY);
@@ -452,8 +452,8 @@ void MapCollisionStreamer::waitForTileCollision(
 
         {
             std::unique_lock<std::mutex> lock(worker_->mutex);
-            openbus::rendering::TraceScope blockedTrace(
-                "map_collision", "MapCollisionStreamer.waitForWorkerResult");
+            openbus::rendering::TraceScope blockedTrace("map_collision",
+                                                        "MapCollisionStreamer.waitForWorkerResult");
             worker_->condition.wait(lock, [this, key] {
                 return worker_->stopping ||
                        std::any_of(

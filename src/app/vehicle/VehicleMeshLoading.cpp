@@ -409,7 +409,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
                                               static_cast<float>(source.color[2]), 1.0f});
             target->materialTextures.push_back(makeMaterialTexture(source));
             if (source.buffer != 0) {
-                pglDeleteBuffers(1, &source.buffer);
+                openbus::rendering::deleteRendererBuffers(1, &source.buffer);
                 source.buffer = 0;
             }
             pglBindBuffer(GL_ARRAY_BUFFER, target->buffer);

@@ -58,9 +58,13 @@ Matrix4 bentPoleTransform(const Matrix4& baseTransform, const std::array<double,
 } // namespace
 
 MapRenderer::Impl::~Impl() {
+    releaseStaticPrimitiveBuffer(occlusionProxyBuffer);
+    if (!occlusionQueries.empty() && pglDeleteQueries != nullptr) {
+        pglDeleteQueries(static_cast<GLsizei>(occlusionQueries.size()), occlusionQueries.data());
+    }
     const auto deleteBuffer = [](GLuint buffer) {
         if (buffer != 0 && pglDeleteBuffers != nullptr) {
-            pglDeleteBuffers(1, &buffer);
+            deleteRendererBuffers(1, &buffer);
         }
     };
     const auto deleteBatchBuffers = [&](const auto& batches) {
@@ -81,6 +85,8 @@ MapRenderer::Impl::~Impl() {
     if (texture != 0) {
         glDeleteTextures(1, &texture);
     }
+    if (!ownedTextures.empty() || texture != 0)
+        invalidateTextureBindings();
 }
 
 MapRenderer::MapRenderer(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
@@ -875,7 +881,7 @@ void MapRenderer::loadHumanTrafficModelNow(
             const GLenum uploadError = drainGlErrors();
             if (batch.buffer == 0 || uploadError != GL_NO_ERROR) {
                 if (batch.buffer != 0) {
-                    pglDeleteBuffers(1, &batch.buffer);
+                    deleteRendererBuffers(1, &batch.buffer);
                 }
                 gameLog.Log("Could not upload human model mesh '" +
                             openbus::pathToUtf8(part.objPath) +

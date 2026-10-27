@@ -939,6 +939,55 @@ the outstanding implementation and validation tasks:
   semantics remain unverified. The inspected Grande Porto signal-route file is
   only a header/template.
 
+### GPU visibility and draw submission
+
+The current indirect path generates fixed-slot commands on the GPU but still
+submits individual draws. Same-frame query occlusion covers ordinary opaque
+scenery, with optional transparent scenery, bounded terrain/opaque-road and
+water queries; vehicles are not query culled. CPU culling remains the default
+and fallback, and both projected-size thresholds default to disabled.
+See [COMPUTE_CULLING.md](Docs/COMPUTE_CULLING.md) for settings, tests, and
+limitations.
+
+- [ ] Reduce indirect submission overhead with compatible geometry/material
+  batching, instancing or multi-draw and GPU-readable per-instance transforms.
+  Preserve scripts, material changes, winding, authored render groups and
+  ordering, with CPU/individual-draw fallback where batching is unsafe or
+  unsupported. Verify actual draw-call reduction and pixel parity across
+  main, mirror and capture views, both with and without query occlusion.
+- [ ] Evaluate GPU command/instance compaction only after batching exists and
+  profiling shows it is worthwhile. Preserve draw order where required and
+  avoid synchronous visibility or draw-count readback; use GPU indirect-count
+  functionality only when supported.
+- [ ] Implement and validate conservative current-view depth-pyramid/Hi-Z
+  occlusion without adding another application-selectable culling backend.
+  Provide a sampleable depth source, correct maximum-depth reduction for
+  standard depth testing, conservative projected coverage, per-view isolation,
+  appropriate barriers, and visible fallback for near-plane or uncertain
+  bounds and failures. Compare actual raster output against unculled views.
+- [~] Opt-in bounded water queries have raster coverage; validate them in
+  representative in-game and mirror views and measure their cost. Extend
+  occlusion to vehicle parts where beneficial, accounting for animated and
+  crashable bounds, transparency, depth-write/check exceptions, reflections
+  and near-plane intersections; render normally when bounds are uncertain.
+- [ ] Improve opaque render order only within compatible authored render
+  groups, without moving cutouts, decals, transmap, special depth modes or
+  transparent draws across ordering barriers. Add real-raster regressions for
+  partially visible geometry and overlapping materials.
+- [ ] Obtain repeatable London-map CPU+queries versus compute-indirect+queries
+  measurements on representative Radeon hardware, including the main view and
+  mirrors. Record frame-time distributions, CPU submission and GPU/presentation
+  timings, configuration, resolution and asset warnings. The current short
+  Mesa software runs show fewer submitted batches but do not establish a
+  hardware performance improvement; submitted triangle counts do not measure
+  geometry suppressed by GPU commands or conditional rendering.
+- [ ] Re-run the focused CPU/GPU, query, traffic-light, vehicle and material
+  probes after these changes, and validate representative in-game scenes and
+  mirror views. Keep minimum-size cutoffs disabled unless explicitly set, and
+  retain conservative fallback and resource/view isolation on errors.
+
+### Broader performance and platform validation
+
 - [~] Reflection, async loading, texture scaling, and material batching are
   opt-in/performance-sensitive paths and need repeatable comparison runs.
 - [ ] Compare the vehicle draw-list/material-selection reuse and static

@@ -65,6 +65,12 @@ using BindFramebufferProc = void (*)(GLenum, GLuint);
 using DeleteFramebuffersProc = void (*)(GLsizei, const GLuint*);
 using FramebufferTexture2DProc = void (*)(GLenum, GLenum, GLenum, GLuint, GLint);
 using CheckFramebufferStatusProc = GLenum (*)(GLenum);
+using GenQueriesProc = void(APIENTRY*)(GLsizei, GLuint*);
+using DeleteQueriesProc = void(APIENTRY*)(GLsizei, const GLuint*);
+using BeginQueryProc = void(APIENTRY*)(GLenum, GLuint);
+using EndQueryProc = void(APIENTRY*)(GLenum);
+using BeginConditionalRenderProc = void(APIENTRY*)(GLuint, GLenum);
+using EndConditionalRenderProc = void(APIENTRY*)();
 
 extern GenBuffersProc pglGenBuffers;
 extern BindBufferProc pglBindBuffer;
@@ -106,6 +112,12 @@ extern BindFramebufferProc pglBindFramebuffer;
 extern DeleteFramebuffersProc pglDeleteFramebuffers;
 extern FramebufferTexture2DProc pglFramebufferTexture2D;
 extern CheckFramebufferStatusProc pglCheckFramebufferStatus;
+extern GenQueriesProc pglGenQueries;
+extern DeleteQueriesProc pglDeleteQueries;
+extern BeginQueryProc pglBeginQuery;
+extern EndQueryProc pglEndQuery;
+extern BeginConditionalRenderProc pglBeginConditionalRender;
+extern EndConditionalRenderProc pglEndConditionalRender;
 
 bool loadOpenGLFunctions();
 [[nodiscard]] bool hasOpenGLExtension(std::string_view extension);

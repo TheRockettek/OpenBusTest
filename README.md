@@ -547,10 +547,15 @@ This uses the separate `build-lint` directory and enables the project’s
 Additional CMake arguments are passed through and can override the helper's
 defaults.
 
-To format the project’s C++ files with `clang-format`, install LLVM and run:
+To format the project’s C++ files with `clang-format`, install LLVM and run the
+script for your platform:
 
 ```powershell
 .\format.bat
+```
+
+```bash
+./format.sh
 ```
 
 Run the prototype:

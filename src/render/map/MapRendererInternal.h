@@ -187,6 +187,10 @@ using namespace map_detail;
 struct MapRenderer::Impl {
     openbus::map::MapCoordinates coordinates;
     double sceneryProjectionRadiusScale = 1.0;
+    struct CullingSlot {
+        std::size_t index = 0;
+        std::uint64_t generation = 0;
+    };
     struct DynamicSceneryTexture {
         GLuint texture = 0;
         int width = 0;
@@ -208,6 +212,7 @@ struct MapRenderer::Impl {
         std::array<float, 2> baseTextureScale = {1.0F, 1.0F};
         std::array<float, 2> baseDetailTextureScale = {1.0F, 1.0F};
         std::vector<ModelMaterial> groundTextureLayers;
+        mutable CullingSlot cullingSlot;
     };
 
     struct WaterBatch {
@@ -219,6 +224,7 @@ struct MapRenderer::Impl {
         double minZ = 0.0;
         double maxZ = 0.0;
         double meanZ = 0.0;
+        mutable CullingSlot cullingSlot;
     };
 
     struct ModelBatch {
@@ -253,6 +259,7 @@ struct MapRenderer::Impl {
         int tileX = 0;
         int tileY = 0;
         std::size_t sceneryLodIndex = 0;
+        mutable CullingSlot cullingSlot;
     };
 
     struct HumanModelAsset {
@@ -331,6 +338,7 @@ struct MapRenderer::Impl {
         std::size_t lodThresholdSetIndex = 0;
         int sourceTileX = 0;
         int sourceTileY = 0;
+        mutable CullingSlot cullingSlot;
     };
 
     struct SceneryInstanceReference {
@@ -441,6 +449,21 @@ struct MapRenderer::Impl {
     std::vector<SceneryDraw> sceneryDrawScratch;
     std::array<std::vector<const SceneryDraw*>, SCENERY_DRAW_GROUP_COUNT> opaqueSceneryScratch;
     std::array<std::vector<const SceneryDraw*>, SCENERY_DRAW_GROUP_COUNT> transparentSceneryScratch;
+    std::vector<CullingItem> cullingItemsScratch;
+    std::vector<float> cullingLodBoundariesScratch;
+    std::vector<std::uint32_t> cullingLodOffsetsScratch;
+    IndirectCullingBatch indirectCullingBatch;
+    std::uint64_t cullingGeneration = 0;
+    std::vector<GLuint> occlusionQueries;
+    std::size_t nextOcclusionQuery = 0;
+    StaticPrimitiveBuffer occlusionProxyBuffer;
+    bool occlusionQueryEnabledLogged = false;
+    bool transparentOcclusionQueryEnabledLogged = false;
+    bool geometryOcclusionQueryEnabledLogged = false;
+    bool waterOcclusionQueryEnabledLogged = false;
+    bool occlusionQueryUnavailableLogged = false;
+    bool occlusionQueryAllocationLogged = false;
+    bool occlusionProxyFailureLogged = false;
     std::vector<openbus::map::MapTileCoordinate> mapTileCoordinates;
     std::vector<openbus::map::MapTileCoordinate> activeTileCoordinates;
     std::vector<openbus::map::MapTileCoordinate> requestedTileCoordinates;

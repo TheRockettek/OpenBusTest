@@ -85,6 +85,25 @@ bool sphereOutsideFrustum(const ViewFrustum& frustum, const std::array<double, 4
     return false;
 }
 
+bool boxFullyBeyondNearPlane(const ViewFrustum& frustum, const Matrix4& modelView,
+                             const std::array<double, 3>& center, double halfExtent) {
+    if (!std::isfinite(halfExtent) || halfExtent <= 0.0) {
+        return false;
+    }
+    const auto eye = transformPoint(modelView, {center[0], center[1], center[2], 1.0});
+    const auto& plane = frustum.planes[4];
+    const double distance = plane[0] * eye[0] + plane[1] * eye[1] + plane[2] * eye[2] + plane[3];
+    double support = 0.0;
+    for (std::size_t column = 0; column < 3; ++column) {
+        support +=
+            std::abs(plane[0] * modelView[column * 4] + plane[1] * modelView[column * 4 + 1] +
+                     plane[2] * modelView[column * 4 + 2]);
+    }
+    support *= halfExtent;
+    return std::isfinite(distance) && std::isfinite(support) && frustum.planeLengths[4] > 0.0 &&
+           distance > support;
+}
+
 Matrix4 translationMatrix(const std::array<double, 3>& value) {
     Matrix4 result = identityMatrix();
     result[12] = value[0];
