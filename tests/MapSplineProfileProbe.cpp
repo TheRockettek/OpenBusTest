@@ -99,10 +99,13 @@ void runProbe(const std::filesystem::path& fixture) {
     pairedPathProfile.paths = {
         {{"0", "-1.9", "0.1", "3.5", "0"}, {0.0, -1.9, 0.1, 3.5, 0.0}, true, 0},
         {{"0", "1.9", "0.1", "3.5", "1"}, {0.0, 1.9, 0.1, 3.5, 1.0}, true, 0},
+        {{"0", "0", "0.1", "3.5", "2"}, {0.0, 0.0, 0.1, 3.5, 2.0}, true, 0},
+        {{"0", "2.5", "0.1"}, {0.0, 2.5, 0.1}, true, 0},
+        {{"1", "3", "0.2", "1", "1"}, {1.0, 3.0, 0.2, 1.0, 1.0}, true, 1},
     };
     const std::vector<openbus::map::MapSplinePathOffset> roadPathOffsets =
         mapSplineProfilePathOffsets(pairedPathProfile, 0);
-    require(roadPathOffsets.size() == 2,
+    require(roadPathOffsets.size() == 4,
             "both authored lane paths are retained for a shared road spline");
     require(roadPathOffsets[0].pathIndex == 0 && roadPathOffsets[1].pathIndex == 1,
             "filtered road paths retain their original indices among all path types");
@@ -116,8 +119,38 @@ void runProbe(const std::filesystem::path& fixture) {
                 "mirrored spline moves the first traffic lane across the centerline");
     requireNear(mirroredRoadPathOffsets[1].lateralMeters, -1.9,
                 "mirrored spline moves the second traffic lane across the centerline");
-    require(!mirroredRoadPathOffsets[0].reversed && mirroredRoadPathOffsets[1].reversed,
-            "mirroring changes traffic lane sides without changing authored travel directions");
+    require(mirroredRoadPathOffsets[0].reversed && !mirroredRoadPathOffsets[1].reversed,
+            "mirroring reverses both directional road lanes");
+    require(mirroredRoadPathOffsets[2].bidirectional && !mirroredRoadPathOffsets[2].reversed &&
+                !mirroredRoadPathOffsets[3].reversed,
+            "bidirectional and unspecified directions remain unchanged");
+    const auto mirroredHumanPaths = mapSplineProfilePathOffsets(pairedPathProfile, 1, true);
+    require(mirroredHumanPaths.size() == 1 && mirroredHumanPaths[0].reversed &&
+                mirroredHumanPaths[0].lateralMeters == -3.0,
+            "mirrored pedestrian path retains its authored direction");
+    const auto authoredPaths = mapSplineProfilePathOffsets(
+        pairedPathProfile, 0, true, openbus::map::MirroredRoadDirectionPolicy::Authored);
+    require(!authoredPaths[0].reversed && authoredPaths[1].reversed &&
+                authoredPaths[0].lateralMeters == 1.9,
+            "authored mode retains prior mirrored road directions");
+    openbus::map::MapSplineProfile oneWayProfile;
+    oneWayProfile.paths = {pairedPathProfile.paths[0], pairedPathProfile.paths[2]};
+    const auto oneWay = mapSplineProfilePathOffsets(oneWayProfile, 0, true);
+    require(oneWay.size() == 2 && oneWay[0].reversed && oneWay[1].bidirectional,
+            "mirrored one-way roads reverse while bidirectional paths remain unchanged");
+    const auto oneWayAuthored = mapSplineProfilePathOffsets(
+        oneWayProfile, 0, true, openbus::map::MirroredRoadDirectionPolicy::Authored);
+    require(!oneWayAuthored[0].reversed && oneWayAuthored[1].bidirectional,
+            "authored mode preserves mirrored one-way road directions");
+    using openbus::map::MirroredRoadDirectionPolicy;
+    using openbus::map::parseMirroredRoadDirectionPolicy;
+    require(parseMirroredRoadDirectionPolicy("") == MirroredRoadDirectionPolicy::Correct &&
+                parseMirroredRoadDirectionPolicy("correct") ==
+                    MirroredRoadDirectionPolicy::Correct &&
+                parseMirroredRoadDirectionPolicy("authored") ==
+                    MirroredRoadDirectionPolicy::Authored &&
+                !parseMirroredRoadDirectionPolicy("invalid"),
+            "mirrored road policy accepts documented values and rejects invalid ones");
 }
 
 void runExplicitCantWidthProbe(const std::filesystem::path& fixture) {

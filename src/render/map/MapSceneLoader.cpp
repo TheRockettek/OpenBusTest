@@ -1732,6 +1732,18 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
 void MapSceneLoader::indexMapContent() {
     TraceScope trace("map", "MapSceneLoader::indexMapContent.work");
     const auto indexStart = std::chrono::steady_clock::now();
+    const char* configuredDirectionPolicy =
+        openbus::getEnvironment("OPENBUS_MIRRORED_ROAD_DIRECTIONS");
+    const auto mirroredRoadPolicy = openbus::map::parseMirroredRoadDirectionPolicy(
+        configuredDirectionPolicy == nullptr ? "" : configuredDirectionPolicy);
+    if (!mirroredRoadPolicy) {
+        throw std::runtime_error(
+            "OPENBUS_MIRRORED_ROAD_DIRECTIONS must be 'correct' or 'authored'");
+    }
+    if (*mirroredRoadPolicy == openbus::map::MirroredRoadDirectionPolicy::Authored) {
+        gameLog.Log("Mirrored road directions use authored values "
+                    "(OPENBUS_MIRRORED_ROAD_DIRECTIONS=authored).");
+    }
     std::unordered_set<int> referencedSplineAttachmentIds;
     const auto registerObjectId = [&](int objectId, MapObjectRecordKind kind,
                                       const std::string& tileName, int tileX, int tileY) {
@@ -1777,7 +1789,8 @@ void MapSceneLoader::indexMapContent() {
                     roadTrafficSplines.push_back(spline);
                     impl_->roadTrafficSplinePathOffsets[spline.splineId] =
                         openbus::map::mapSplineProfilePathOffsets(
-                            *profile, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, spline.mirrored);
+                            *profile, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, spline.mirrored,
+                            *mirroredRoadPolicy);
                     if (spline.geometryValid && std::isfinite(spline.length) &&
                         spline.length > 0.0) {
                         for (const auto& lane :

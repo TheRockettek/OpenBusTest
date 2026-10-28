@@ -620,12 +620,17 @@ bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
     }
     if (extension == ".dds") {
         std::ifstream signature(path, std::ios::binary);
-        std::array<char, 2> magic = {};
-        signature.read(magic.data(), static_cast<std::streamsize>(magic.size()));
-        // Some OMSI add-ons ship palettized BMP data with a .dds extension.
-        // Detect the file contents before choosing a decoder based on its name.
+        std::array<std::uint8_t, 8> magic = {};
+        signature.read(reinterpret_cast<char*>(magic.data()),
+                       static_cast<std::streamsize>(magic.size()));
+        // Some OMSI add-ons ship BMP or PNG data with a .dds extension.
         if (signature && magic[0] == 'B' && magic[1] == 'M') {
             return readBmpImage(path, image);
+        }
+        constexpr std::array<std::uint8_t, 8> pngMagic = {
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+        if (signature && magic == pngMagic) {
+            return readStbImage(path, image);
         }
     }
     if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".bmp") {

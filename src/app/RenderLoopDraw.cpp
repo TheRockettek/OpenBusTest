@@ -2,6 +2,7 @@
 
 #include "app/RenderLoopInternal.h"
 #include "app/ImGuiLayer.h"
+#include "app/TrafficDebugDirection.h"
 
 #include <imgui.h>
 #include "app/vehicle/VehiclePartLoading.h"
@@ -178,26 +179,21 @@ class SceneryTrafficEndpointIndex {
             if (!std::isfinite(splineLength) || splineLength <= 0.0) {
                 continue;
             }
-            openbus::map::MapTrafficRoute singleSplineRoute;
-            singleSplineRoute.segments.push_back(activeRoute.firstSegment);
-            singleSplineRoute.cumulativeEndDistances.push_back(splineLength);
-            singleSplineRoute.totalLength = splineLength;
             std::vector<openbus::map::MapSplinePathOffset> pathOffsets =
                 mapRenderer.trafficSplinePathOffsets(splineId, pathTypeCode);
             if (pathOffsets.empty()) {
                 pathOffsets.push_back({});
             }
             for (const openbus::map::MapSplinePathOffset& pathOffset : pathOffsets) {
+                const auto singleSplineRoute =
+                    openbus::app::trafficDebugSplineRoute(activeRoute.firstSegment, pathOffset);
                 for (const double distance : {0.0, splineLength}) {
                     const std::optional<openbus::map::MapTrafficPose> pose =
-                        openbus::map::sampleMapTrafficRoute(singleSplineRoute, distance,
-                                                            pathOffset.lateralMeters);
+                        openbus::map::sampleMapTrafficRoute(singleSplineRoute, distance, 0.0);
                     if (!pose.has_value()) {
                         continue;
                     }
-                    std::array<double, 3> position = pose->position;
-                    position[2] += pathOffset.heightMeters;
-                    addEndpoint(position, static_cast<double>(pathTypeCode), splineId);
+                    addEndpoint(pose->position, static_cast<double>(pathTypeCode), splineId);
                 }
             }
         }
@@ -381,6 +377,20 @@ void appendTrafficBehaviorLine(std::vector<openbus::rendering::PrimitiveVertex>&
     }
 }
 
+void appendTrafficDirectionArrow(std::vector<openbus::rendering::PrimitiveVertex>& vertices,
+                                 const std::array<double, 3>& center, double headingRadians,
+                                 double length, const std::array<float, 3>& color,
+                                 const std::array<double, 2>& origin) {
+    const auto points = openbus::app::trafficDirectionArrow(center, headingRadians, length);
+    if (points) {
+        for (const auto& point : *points) {
+            vertices.push_back(trafficDebugVertex(point, color, origin));
+        }
+    } else {
+        gameLog.Warning("Cannot draw traffic direction arrow with invalid geometry");
+    }
+}
+
 std::vector<std::string>
 trafficSignalDebugLabel(const openbus::rendering::TrafficPathDebugSegment& segment,
                         std::size_t fallbackId, double signalClockSeconds) {
@@ -511,19 +521,10 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
         }
         const std::optional<openbus::map::MapTrafficSplineEndpointStatus> endpointStatus =
             mapRenderer.trafficSplineEndpointStatus(splineId, pathTypeCode);
-        openbus::map::MapTrafficRoute singleSplineRoute;
-        singleSplineRoute.segments.push_back(firstSegment);
-        singleSplineRoute.cumulativeEndDistances.push_back(splineLength);
-        singleSplineRoute.totalLength = splineLength;
-
         std::vector<openbus::map::MapSplinePathOffset> pathOffsets =
             mapRenderer.trafficSplinePathOffsets(splineId, pathTypeCode);
         if (pathOffsets.empty()) {
             pathOffsets.push_back({});
-        }
-        std::optional<openbus::map::MapTrafficRoute> aiRouteSegments;
-        if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
-            aiRouteSegments = openbus::map::subdivideMapTrafficRoute(singleSplineRoute);
         }
         constexpr double sampleSpacingMeters = 2.0;
         constexpr std::size_t maximumSamplesPerSpline = 2048;
@@ -533,6 +534,12 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
                 ? maximumSamplesPerSpline
                 : std::max<std::size_t>(1, static_cast<std::size_t>(requestedSamples));
         for (const openbus::map::MapSplinePathOffset& pathOffset : pathOffsets) {
+            const auto singleSplineRoute =
+                openbus::app::trafficDebugSplineRoute(firstSegment, pathOffset);
+            std::optional<openbus::map::MapTrafficRoute> aiRouteSegments;
+            if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
+                aiRouteSegments = openbus::map::subdivideMapTrafficRoute(singleSplineRoute);
+            }
             const std::array<float, 3> pathColor =
                 pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD
                     ? trafficPriorityDebugColor(
@@ -540,24 +547,42 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
                               splineReference.placement.rules, pathOffset.pathIndex)))
                     : color;
             std::optional<openbus::map::MapTrafficPose> previousPose =
-                openbus::map::sampleMapTrafficRoute(singleSplineRoute, 0.0,
-                                                    pathOffset.lateralMeters);
+                openbus::map::sampleMapTrafficRoute(singleSplineRoute, 0.0, 0.0);
             const std::optional<openbus::map::MapTrafficPose> startPose = previousPose;
             for (std::size_t sampleIndex = 1; sampleIndex <= sampleCount; ++sampleIndex) {
                 const double distance = splineLength * static_cast<double>(sampleIndex) /
                                         static_cast<double>(sampleCount);
                 const std::optional<openbus::map::MapTrafficPose> pose =
-                    openbus::map::sampleMapTrafficRoute(singleSplineRoute, distance,
-                                                        pathOffset.lateralMeters);
+                    openbus::map::sampleMapTrafficRoute(singleSplineRoute, distance, 0.0);
                 if (previousPose.has_value() && pose.has_value()) {
                     std::array<double, 3> from = previousPose->position;
                     std::array<double, 3> to = pose->position;
-                    from[2] += pathOffset.heightMeters + 0.08;
-                    to[2] += pathOffset.heightMeters + 0.08;
+                    from[2] += 0.08;
+                    to[2] += 0.08;
                     vertices.push_back(trafficDebugVertex(from, pathColor, origin));
                     vertices.push_back(trafficDebugVertex(to, pathColor, origin));
                 }
                 previousPose = pose;
+            }
+            const std::size_t arrowCount = std::max<std::size_t>(
+                1, static_cast<std::size_t>(std::min(std::ceil(splineLength / 15.0), 256.0)));
+            for (std::size_t index = 0; index < arrowCount; ++index) {
+                const double distance =
+                    splineLength * (static_cast<double>(index) + 0.5) / arrowCount;
+                const auto pose =
+                    openbus::map::sampleMapTrafficRoute(singleSplineRoute, distance, 0.0);
+                if (!pose) {
+                    continue;
+                }
+                auto center = pose->position;
+                center[2] += 0.2;
+                const double heading = openbus::map::mapTrafficRouteTravelHeadingRadians(
+                    singleSplineRoute, distance, 0.0);
+                appendTrafficDirectionArrow(vertices, center, heading, 2.0, pathColor, origin);
+                if (pathOffset.bidirectional) {
+                    appendTrafficDirectionArrow(vertices, center, heading + std::numbers::pi, 2.0,
+                                                pathColor, origin);
+                }
             }
             constexpr float endpointMarkerHalfSize = 0.45F;
             constexpr float endpointMarkerZOffset = 0.16F;
@@ -625,13 +650,13 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
                     }
                 };
             const bool startConnected = endpointStatus.has_value() &&
-                                        (firstSegment.reversed ? endpointStatus->endConnected
+                                        (pathOffset.reversed ? endpointStatus->endConnected
                                                                : endpointStatus->startConnected);
             const bool endConnected = endpointStatus.has_value() &&
-                                      (firstSegment.reversed ? endpointStatus->startConnected
+                                      (pathOffset.reversed ? endpointStatus->startConnected
                                                              : endpointStatus->endConnected);
-            appendEndpointMarker(startPose, pathOffset.heightMeters, true, startConnected);
-            appendEndpointMarker(previousPose, pathOffset.heightMeters, false, endConnected);
+            appendEndpointMarker(startPose, 0.0, true, startConnected);
+            appendEndpointMarker(previousPose, 0.0, false, endConnected);
 
             if (aiRouteSegments.has_value()) {
                 constexpr float splitMarkerHalfWidth = 0.35F;
@@ -642,7 +667,7 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
                      ++pieceIndex) {
                     const auto splitPose = openbus::map::sampleMapTrafficRoute(
                         singleSplineRoute, aiRouteSegments->cumulativeEndDistances[pieceIndex],
-                        pathOffset.lateralMeters);
+                        0.0);
                     if (!splitPose.has_value()) {
                         continue;
                     }
@@ -650,8 +675,7 @@ void appendTrafficSplineDebugVertices(const openbus::rendering::MapRenderer& map
                     const double rightY = -std::sin(splitPose->headingRadians);
                     const double x = splitPose->position[0];
                     const double y = splitPose->position[1];
-                    const double z =
-                        splitPose->position[2] + pathOffset.heightMeters + splitMarkerZOffset;
+                    const double z = splitPose->position[2] + splitMarkerZOffset;
                     vertices.push_back(trafficDebugVertex(
                         {x - rightX * splitMarkerHalfWidth, y - rightY * splitMarkerHalfWidth, z},
                         splitMarkerColor, origin));
@@ -676,12 +700,27 @@ void appendSceneryTrafficPathDebugVertices(
             : segment.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN
                 ? std::array<float, 3>{1.0F, 0.25F, 0.9F}
                 : std::array<float, 3>{0.15F, 0.9F, 1.0F};
+        double sinceArrow = 0.0;
         for (std::size_t index = 1; index < segment.points.size(); ++index) {
+            const auto& from = segment.points[index - 1];
+            const auto& to = segment.points[index];
             for (const std::array<double, 3>& point :
-                 {segment.points[index - 1], segment.points[index]}) {
+                 {from, to}) {
                 std::array<double, 3> elevatedPoint = point;
                 elevatedPoint[2] += 0.08;
                 vertices.push_back(trafficDebugVertex(elevatedPoint, color, origin));
+            }
+            const double dx = to[0] - from[0];
+            const double dy = to[1] - from[1];
+            sinceArrow += std::hypot(dx, dy);
+            if ((sinceArrow >= 15.0 || index == segment.points.size() / 2) &&
+                std::hypot(dx, dy) > 1.0e-6) {
+                const std::array<double, 3> center = {
+                    (from[0] + to[0]) * 0.5, (from[1] + to[1]) * 0.5,
+                    (from[2] + to[2]) * 0.5 + 0.2};
+                appendTrafficDirectionArrow(vertices, center, std::atan2(dx, dy), 2.0, color,
+                                            origin);
+                sinceArrow = 0.0;
             }
         }
     }
@@ -1932,8 +1971,11 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 if (pose.has_value()) {
                     std::array<double, 3> labelPosition = pose->position;
                     labelPosition[2] += 2.2;
+                    const auto pathOffsets = mapRenderer_->trafficSplinePathOffsets(
+                        activeRoute.splineId, activeRoute.pathTypeCode);
                     trafficSplineDebugLabels_.push_back(
-                        {activeRoute.splineId, activeRoute.pathTypeCode, labelPosition});
+                        {activeRoute.splineId, activeRoute.pathTypeCode, labelPosition,
+                         openbus::app::trafficDebugHasBidirectionalPath(pathOffsets)});
                 }
             }
             const SceneryTrafficEndpointIndex sceneryEndpoints(
@@ -2180,6 +2222,13 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             }
             appendTrafficBehaviorBox(behaviorVertices, *pose, state.actor.lengthMeters,
                                      state.actor.widthMeters, 0.1, color, trafficDebugOrigin);
+            auto arrowCenter = state.vehicle->placement.position;
+            arrowCenter[2] += std::max(state.vehicle->trafficHeightMeters, 1.0) + 0.3;
+            const double vehicleHeading =
+                (90.0 - state.vehicle->placement.yawDegrees) * std::numbers::pi / 180.0;
+            appendTrafficDirectionArrow(behaviorVertices, arrowCenter, vehicleHeading,
+                                        std::clamp(state.actor.lengthMeters * 0.6, 2.0, 6.0),
+                                        {1.0F, 1.0F, 1.0F}, trafficDebugOrigin);
             appendSignalStopBox(state.actor);
 
             const double reservationHorizon = state.actor.speedMetersPerSecond * 3.0;
@@ -2614,6 +2663,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     ImGui::SameLine();
                 }
                 ImGui::NewLine();
+                ImGui::TextUnformatted("Path arrows = travel direction; white arrows = AI facing");
             }
             ImGui::End();
         }
@@ -2706,7 +2756,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 const char prefix =
                     label.pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN ? 'H' : 'S';
                 drawWorldLabel(label.position,
-                               std::string(1, prefix) + std::to_string(label.splineId),
+                               std::string(1, prefix) + std::to_string(label.splineId) +
+                                   (label.hasBidirectionalPath ? " [BIDIR]" : ""),
                                IM_COL32(255, 255, 255, 255), IM_COL32(15, 30, 38, 210));
             }
             for (const TrafficVehicleState& state : trafficVehicles_) {

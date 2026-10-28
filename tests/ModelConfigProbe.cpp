@@ -12,7 +12,7 @@
 #include <iostream>
 #include <sstream>
 
-int main() {
+int main(int argc, char** argv) {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_model_config_probe");
     std::filesystem::create_directories(root);
@@ -57,6 +57,86 @@ int main() {
     config.close();
 
     Variables variables(ScriptObjectKind::Vehicle);
+    const std::filesystem::path objectScopePath = root / "object_scope.sco";
+    std::ofstream objectScope(objectScopePath);
+    objectScope << "[fixed]\n[nocollision]\n[absheight]\n"
+                   "[mesh]\ndisplay.obj\n[fixed]\n[nocollision]\n";
+    objectScope.close();
+    const ModelConfig objectScopeResult = loadModelConfig(
+        objectScopePath, root, ModelConfigKind::SceneryObject, variables);
+    const SceneryObjectConfig objectScopeScenery = loadSceneryObjectFile(objectScopePath);
+    if (objectScopeResult.diagnostics.hasErrors() || objectScopeResult.parts.size() != 1 ||
+        !objectScopeResult.absoluteHeight || !objectScopeResult.parts[0].fixed ||
+        !objectScopeResult.parts[0].noCollision || !objectScopeScenery.noCollision) {
+        std::cerr << "SCO object- and mesh-scope markers were not handled correctly\n";
+        return 1;
+    }
+    const std::filesystem::path trafficObjectPath = root / "traffic_object.sco";
+    std::ofstream trafficObject(trafficObjectPath);
+    trafficObject << "[surface]\n[trafficlight]\n[traffic_lights_group]\n10\n"
+                     "[traffic_light]\nRoad\n[phase]\n0\n3\n[phase]\n6\n7\n"
+                     "[approachdist]\n5\n[path]\n"
+                     "1\n2\n3\n4\n5\n6\n7\n8\n0\n2.5\n0\n0\n"
+                     "[use_traffic_light]\n0\n[traffic_light_stop]\n0\n1\n2\n"
+                     "[traffic_light_stop]\n0\n2\n2\n"
+                     "[traffic_light_jump]\n0\n25\n6\n3\n"
+                     "[mesh]\ndisplay.obj\n";
+    trafficObject.close();
+    const ModelConfig trafficModel =
+        loadModelConfig(trafficObjectPath, root, ModelConfigKind::SceneryObject, variables);
+    const SceneryObjectConfig trafficScenery = loadSceneryObjectFile(trafficObjectPath);
+    if (!trafficModel.diagnostics.entries.empty() || trafficModel.parts.size() != 1 ||
+        !trafficScenery.diagnostics.entries.empty() || !trafficScenery.surface ||
+        !trafficScenery.trafficLight || trafficScenery.trafficPaths.size() != 1 ||
+        trafficScenery.trafficLights.size() != 1 ||
+        trafficScenery.trafficLights[0].phases.size() != 2 ||
+        trafficScenery.trafficLights[0].approachDistanceMeters != 5.0 ||
+        trafficScenery.trafficPaths[0].trafficLightIndex != 0 ||
+        !trafficScenery.trafficPaths[0].trafficSignal ||
+        !trafficScenery.trafficPaths[0].trafficSignal->hasBusPriority ||
+        !trafficScenery.trafficPaths[0].trafficSignal->program ||
+        trafficScenery.trafficPaths[0].trafficSignal->program->controlPoints.size() != 2 ||
+        trafficScenery.trafficLightBusPriorityRules.size() != 1) {
+        std::cerr << "SCO traffic directives were not handled by the scenery parser\n";
+        return 1;
+    }
+    const std::filesystem::path invalidTrafficModelPath = root / "traffic_model.cfg";
+    std::ofstream invalidTrafficModel(invalidTrafficModelPath);
+    invalidTrafficModel << "[path]\n0\n";
+    invalidTrafficModel.close();
+    const ModelConfig invalidTrafficModelResult = loadModelConfig(
+        invalidTrafficModelPath, root, ModelConfigKind::SceneryObject, variables);
+    if (invalidTrafficModelResult.diagnostics.entries.empty() ||
+        invalidTrafficModelResult.diagnostics.entries[0].keyword != "path") {
+        std::cerr << "SCO-only traffic directive was accepted in a model CFG\n";
+        return 1;
+    }
+    const std::filesystem::path invalidTrafficObjectPath = root / "invalid_traffic.sco";
+    std::ofstream invalidTrafficObject(invalidTrafficObjectPath);
+    invalidTrafficObject << "[path]\n1\n[mesh]\ndisplay.obj\n";
+    invalidTrafficObject.close();
+    const SceneryObjectConfig invalidTrafficObjectResult =
+        loadSceneryObjectFile(invalidTrafficObjectPath);
+    if (!invalidTrafficObjectResult.diagnostics.hasErrors()) {
+        std::cerr << "malformed SCO traffic directive was not diagnosed\n";
+        return 1;
+    }
+    const std::filesystem::path vehicleRenderPath = root / "vehicle_render.cfg";
+    std::ofstream vehicleRender(vehicleRenderPath);
+    vehicleRender << "[mesh]\ndisplay.obj\n[rendertype]\n4\n";
+    vehicleRender.close();
+    const ModelConfig vehicleRenderResult =
+        loadModelConfig(vehicleRenderPath, root, ModelConfigKind::Vehicle, variables);
+    if (vehicleRenderResult.diagnostics.hasErrors() || vehicleRenderResult.parts.size() != 1 ||
+        !vehicleRenderResult.parts[0].hasRenderType ||
+        vehicleRenderResult.parts[0].renderType != 4) {
+        std::cerr << "vehicle render type was not accepted\n";
+        return 1;
+    }
+    if (argc == 2 && std::string(argv[1]) == "--log-regression") {
+        openbus::probe::removeProbeDirectory(root);
+        return 0;
+    }
     using openbus::rendering::ObjMaterial;
     using openbus::rendering::ParsedObj;
     ParsedObj undergroundMesh;
@@ -500,6 +580,24 @@ int main() {
     if (resolveSceneryObjectModelConfigPath(externalModelSCOConfig) !=
         root / "model" / "model_parked.cfg") {
         std::cerr << "relative SCO [model] reference was not resolved from its config directory\n";
+        return 1;
+    }
+    const std::filesystem::path caseModelDirectory = root / "Model";
+    std::filesystem::create_directories(caseModelDirectory);
+    const std::filesystem::path caseModelPath = caseModelDirectory / "Model_Parked.cfg";
+    std::ofstream(caseModelPath) << "[mesh]\ndisplay.obj\n";
+    const auto resolvedExternalModel = resolveSceneryObjectModelConfigPath(externalModelSCOConfig);
+    std::error_code caseModelError;
+    if (!std::filesystem::equivalent(resolvedExternalModel, caseModelPath, caseModelError) ||
+        caseModelError) {
+        std::cerr << "SCO model path did not resolve backslashes and case-mismatched components\n";
+        return 1;
+    }
+    SceneryObjectConfig absoluteModelSCOConfig = externalModelSCOConfig;
+    absoluteModelSCOConfig.modelPath = std::filesystem::absolute(caseModelPath);
+    if (resolveSceneryObjectModelConfigPath(absoluteModelSCOConfig) !=
+        absoluteModelSCOConfig.modelPath) {
+        std::cerr << "absolute SCO model path was not preserved\n";
         return 1;
     }
     const std::filesystem::path xModelRoot = root / "scenery_model";

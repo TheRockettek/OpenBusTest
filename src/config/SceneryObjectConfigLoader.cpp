@@ -578,7 +578,9 @@ resolveSceneryObjectModelConfigPath(const SceneryObjectConfig& configuration) {
         return configuration.sourcePath.lexically_normal();
     }
 
-    const std::filesystem::path modelPath = configuration.modelPath.lexically_normal();
+    std::string modelPathText = openbus::pathToUtf8(configuration.modelPath);
+    std::replace(modelPathText.begin(), modelPathText.end(), '\\', '/');
+    const std::filesystem::path modelPath = openbus::pathFromUtf8(modelPathText).lexically_normal();
     if (modelPath.is_absolute()) {
         return openbus::assets::resolveCaseInsensitivePath(modelPath);
     }

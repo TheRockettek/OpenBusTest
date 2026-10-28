@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace openbus::map {
@@ -48,6 +49,11 @@ struct MapSplinePathOffset {
     bool bidirectional = false;
 };
 
+enum class MirroredRoadDirectionPolicy {
+    Correct,
+    Authored,
+};
+
 struct MapSplineProfile {
     std::vector<std::string> textures;
     std::vector<int> textureAlphaModes;
@@ -70,8 +76,15 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path);
 std::optional<double> mapSplineProfileCantHalfWidth(const MapSplineProfile& profile) noexcept;
 
 bool mapSplineProfileHasPathType(const MapSplineProfile& profile, int pathTypeCode) noexcept;
+std::optional<MirroredRoadDirectionPolicy>
+parseMirroredRoadDirectionPolicy(std::string_view value) noexcept;
+
+// Correct mirrored unidirectional road paths by default; bidirectional and
+// human paths retain their authored directions. Authored mode restores legacy behavior.
 std::vector<MapSplinePathOffset> mapSplineProfilePathOffsets(const MapSplineProfile& profile,
                                                              int pathTypeCode,
-                                                             bool mirrored = false);
+                                                             bool mirrored = false,
+                                                             MirroredRoadDirectionPolicy policy =
+                                                                 MirroredRoadDirectionPolicy::Correct);
 
 } // namespace openbus::map

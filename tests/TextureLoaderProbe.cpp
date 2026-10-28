@@ -1,4 +1,5 @@
 #include "assets/TextureLoader.h"
+#include "assets/TextureAssetLoader.h"
 
 #include "core/AssetPath.h"
 #include "core/Logger.h"
@@ -39,7 +40,7 @@ bool writeBytes(const std::filesystem::path& path, const std::vector<std::uint8_
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     bool valid = true;
     const std::filesystem::path texturePathDirectory =
         openbus::probe::makeProbeDirectory("openbus_texture_path");
@@ -329,6 +330,33 @@ int main() {
                          image.rgba[3] == 78,
                      "PNG RGBA channels decode unchanged");
     openbus::probe::removeProbeFile(pngPath);
+
+    const std::filesystem::path mislabeledPngPath =
+        std::filesystem::temp_directory_path() / "openbus_png_payload.dds";
+    valid &= require(writeBytes(mislabeledPngPath, pngBytes), "write PNG payload with DDS filename");
+    openbus::rendering::TextureAsset pngAsset;
+    valid &= require(openbus::rendering::loadTextureAsset(mislabeledPngPath, pngAsset),
+                     "texture asset loader accepts PNG payload with DDS filename");
+    valid &= require(pngAsset.image.width == 1 && pngAsset.image.height == 1 &&
+                         pngAsset.image.rgba == std::vector<std::uint8_t>({12, 34, 56, 78}) &&
+                         !pngAsset.compressedTexture && !pngAsset.compressedDds,
+                     "mislabeled PNG preserves RGBA and is not treated as compressed DDS");
+    valid &= require(writeBytes(mislabeledPngPath,
+                                std::vector<std::uint8_t>(pngBytes.begin(), pngBytes.begin() + 8)),
+                     "write truncated PNG payload");
+    openbus::rendering::TextureAsset truncatedPngAsset;
+    valid &= require(!openbus::rendering::loadTextureAsset(mislabeledPngPath, truncatedPngAsset),
+                     "truncated PNG with DDS filename fails to decode");
+    openbus::probe::removeProbeFile(mislabeledPngPath);
+
+    if (argc > 1) {
+        openbus::rendering::TextureAsset installedAsset;
+        valid &= require(openbus::rendering::loadTextureAsset(argv[1], installedAsset),
+                         "specified installed texture loads");
+        valid &= require(installedAsset.image.width > 0 && installedAsset.image.height > 0 &&
+                             !installedAsset.image.rgba.empty(),
+                         "specified installed texture decodes to RGBA");
+    }
 
     const std::filesystem::path jpegPath =
         std::filesystem::temp_directory_path() / "openbus_grayscale.jpg";

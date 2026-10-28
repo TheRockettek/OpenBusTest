@@ -45,6 +45,7 @@ openbus_add_probe(OpenBusConfigurationParserProbe ConfigurationParserProbe.cpp
 openbus_add_probe(OpenBusSceneryObjectConfigProbe SceneryObjectConfigProbe.cpp
     LIBS openbus_config openbus_map)
 openbus_add_probe(OpenBusModelConfigProbe ModelConfigProbe.cpp LIBS openbus_config openbus_osc)
+add_test(NAME OpenBusModelLogRegressionProbe COMMAND OpenBusModelConfigProbe --log-regression)
 openbus_add_probe(OpenBusVehicleConfigProbe VehicleConfigProbe.cpp
     LIBS openbus_config openbus_osc openbus_physics)
 openbus_add_probe(OpenBusVehicleCatalogProbe VehicleCatalogProbe.cpp LIBS openbus_config)
@@ -98,6 +99,7 @@ openbus_add_probe(OpenBusMapSplineProfileProbe MapSplineProfileProbe.cpp LIBS op
         "${OPENBUS_FIXTURES}/map_spline_profile_explicit_cant_width.sli"
         "${OPENBUS_FIXTURES}/map_spline_profile_no_collision.sli")
 openbus_add_probe(OpenBusMapTrafficRuntimeProbe MapTrafficRuntimeProbe.cpp LIBS openbus_map)
+openbus_add_probe(OpenBusTrafficDebugDirectionProbe TrafficDebugDirectionProbe.cpp LIBS openbus_map)
 add_executable(OpenBusMapTrafficWorkerProbe MapTrafficWorkerProbe.cpp
     "${OPENBUS_SOURCE_ROOT}/app/MapTrafficWorker.cpp")
 target_include_directories(OpenBusMapTrafficWorkerProbe PRIVATE "${OPENBUS_SOURCE_ROOT}")
@@ -185,6 +187,8 @@ target_sources(OpenBusVehicleIndirectReuseProbe PRIVATE
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleVisibility.cpp")
 openbus_copy_lua_runtime(OpenBusVehicleIndirectReuseProbe)
 set_tests_properties(OpenBusVehicleIndirectReuseProbe PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME OpenBusVehicleTextureLookupProbe
+    COMMAND OpenBusVehicleIndirectReuseProbe --texture-lookup)
 openbus_add_probe(OpenBusVehiclePartLoadingProbe VehiclePartLoadingProbe.cpp
     LIBS openbus_render)
 openbus_add_probe(OpenBusVehicleMaterialSelectionProbe VehicleMaterialSelectionProbe.cpp

@@ -1,6 +1,29 @@
 #include "app/vehicle/Vehicle.h"
+#include "ProbeTempDirectory.h"
 
+#include <fstream>
 #include <iostream>
+
+struct VehicleTextureLookupProbe {
+    static bool run() {
+        const auto root = openbus::probe::makeProbeDirectory("openbus_vehicle_texture_lookup");
+        const auto model = root / "vehicle" / "model";
+        const auto texture = root / "vehicle" / "texture";
+        std::filesystem::create_directories(model);
+        std::filesystem::create_directories(texture / "nested");
+        std::ofstream(texture / "Sprinter.png") << "fixture";
+        std::ofstream(texture / "nested" / "Plate.png") << "fixture";
+        const bool passed =
+            Vehicle::findTexture(model, "Sprinter.png") == texture / "Sprinter.png" &&
+            Vehicle::findTexture(model, "plate.PNG") == texture / "nested" / "Plate.png" &&
+            Vehicle::findTexture(model, "missing.png").empty();
+        openbus::probe::removeProbeDirectory(root);
+        if (!passed) {
+            std::cerr << "vehicle texture lookup failed for a lowercase texture directory\n";
+        }
+        return passed;
+    }
+};
 
 namespace {
 
@@ -14,7 +37,10 @@ void APIENTRY recordDispatch(GLuint x, GLuint y, GLuint z) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--texture-lookup") {
+        return VehicleTextureLookupProbe::run() ? 0 : 1;
+    }
     using namespace openbus::rendering;
     if (!glfwInit()) return 77;
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);

@@ -287,17 +287,34 @@ bool mapSplineProfileHasPathType(const MapSplineProfile& profile, int pathTypeCo
                        });
 }
 
+std::optional<MirroredRoadDirectionPolicy>
+parseMirroredRoadDirectionPolicy(std::string_view value) noexcept {
+    if (value.empty() || value == "correct") {
+        return MirroredRoadDirectionPolicy::Correct;
+    }
+    if (value == "authored") {
+        return MirroredRoadDirectionPolicy::Authored;
+    }
+    return std::nullopt;
+}
+
 std::vector<MapSplinePathOffset> mapSplineProfilePathOffsets(const MapSplineProfile& profile,
-                                                             int pathTypeCode, bool mirrored) {
+                                                             int pathTypeCode, bool mirrored,
+                                                             MirroredRoadDirectionPolicy policy) {
     std::vector<MapSplinePathOffset> offsets;
+    const bool correctDirections = mirrored && pathTypeCode == MAP_SPLINE_PATH_TYPE_ROAD &&
+                                   policy == MirroredRoadDirectionPolicy::Correct;
     for (std::size_t pathIndex = 0; pathIndex < profile.paths.size(); ++pathIndex) {
         const MapSplinePathDefinition& path = profile.paths[pathIndex];
         if (path.pathTypeCode == pathTypeCode && path.numericFieldsValid &&
             path.numericFields.size() >= 3) {
             const double lateral = mirrored ? -path.numericFields[1] : path.numericFields[1];
+            const bool hasDirection = path.numericFields.size() >= 5;
+            const bool forward = hasDirection && path.numericFields[4] == 0.0;
+            const bool reverse = hasDirection && path.numericFields[4] == 1.0;
             offsets.push_back({pathIndex, lateral, path.numericFields[2],
-                               path.numericFields.size() >= 5 && path.numericFields[4] == 1.0,
-                               path.numericFields.size() >= 5 && path.numericFields[4] == 2.0});
+                               correctDirections && (forward || reverse) ? !reverse : reverse,
+                               hasDirection && path.numericFields[4] == 2.0});
         }
     }
     return offsets;

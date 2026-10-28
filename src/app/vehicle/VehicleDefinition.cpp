@@ -81,7 +81,8 @@ sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
         gameLog.Log(
             diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? LogLevel::Error
                                                                               : LogLevel::Warning,
-            "CFG " + severity + " line " + std::to_string(diagnostic.line) + " [" +
+            "CFG " + severity + " file=" + modelConfigPath.generic_string() +
+                " line " + std::to_string(diagnostic.line) + " [" +
                 diagnostic.keyword + "]: " + diagnostic.message);
     }
 

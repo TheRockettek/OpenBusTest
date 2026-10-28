@@ -775,6 +775,8 @@ struct Vehicle {
                       std::chrono::steady_clock::time_point frameDeadline);
 
   private:
+    friend struct VehicleTextureLookupProbe;
+
     static std::string trim(const std::string& value);
 
     static std::string lower(std::string value);

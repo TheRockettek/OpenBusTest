@@ -2,6 +2,7 @@
 
 #include "app/vehicle/Vehicle.h"
 #include "config/ScriptTextureLimits.h"
+#include "core/AssetPath.h"
 
 bool Vehicle::areTexturesLoaded() const {
     if (!areObjectsLoaded()) {
@@ -426,7 +427,8 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
     std::vector<std::filesystem::path> textureRoots;
     for (std::filesystem::path ancestor = root; !ancestor.empty();
          ancestor = ancestor.parent_path()) {
-        const std::filesystem::path textureRoot = ancestor / "Texture";
+        const std::filesystem::path textureRoot =
+            openbus::assets::resolveCaseInsensitivePath(ancestor / "Texture");
         if (std::filesystem::exists(textureRoot)) {
             textureRoots.push_back(textureRoot);
             direct = textureRoot / cleaned;
@@ -677,7 +679,8 @@ void Vehicle::ensureTexture(Batch& batch, bool visible) {
     if ((batch.texturePath.empty() || batch.texture == 0) &&
         !batch.textureCacheEntry->decodeFailureLogged) {
         batch.textureCacheEntry->decodeFailureLogged = true;
-        textureLog.Error("decode-failed: " + batch.textureName +
+        textureLog.Error(std::string(batch.texturePath.empty() ? "not-found: " : "decode-failed: ") +
+                       batch.textureName +
                        " resolved=" + batch.texturePath.generic_string() +
                        " source=" + batch.sourceMeshPath.generic_string());
     }

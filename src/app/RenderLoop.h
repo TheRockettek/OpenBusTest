@@ -99,6 +99,7 @@ struct TrafficSplineDebugLabel {
     int splineId = 0;
     int pathTypeCode = 0;
     std::array<double, 3> position = {};
+    bool hasBidirectionalPath = false;
 };
 
 class RenderLoop {

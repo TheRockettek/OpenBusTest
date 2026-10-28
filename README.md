@@ -119,6 +119,13 @@ entries continue to provide scheduled AI buses on timetable routes.
 (default `200`, maximum `200`).
 Trucks are permitted on road paths by default unless the map's path rules
 explicitly prohibit them; configured group and path density rules still apply.
+For mirrored road splines, OpenBus flips unidirectional lane directions along
+with their lateral positions, including one-way carriageways. Bidirectional and
+pedestrian paths keep their authored directions. This correction is an OpenBus
+compatibility policy, not verified
+native OMSI behavior. Set `OPENBUS_MIRRORED_ROAD_DIRECTIONS=authored` to
+restore the previous behavior for maps that intentionally use mirrored
+directions; `correct` is the default.
 The selected start date/time drives the in-game traffic clock's `Time` system
 variable, which advances using elapsed simulation time. The selected date sets
 the system variables `Day`, `Month`, and `Year`;
@@ -204,8 +211,8 @@ footprints, so road AI stops/yields rather than sweeping through them.
 Pedestrians likewise pause
 before occupied vehicle footprints and resume when clear; this is kinematic
 avoidance, not physical collision response.
-Vehicles follow the authored lane offsets, heights, and travel directions shown
-by the cyan F2 overlay, including scenery junction paths. Matching lane endpoints
+Vehicles follow the lane offsets, heights, and effective travel directions shown
+by the F2 overlay, including scenery junction paths. Matching lane endpoints
 join within 0.5 m horizontally and vertically; opposite-direction lanes are not
 used as a forced return route. Road vehicles make reproducible seeded choices
 among compatible straight, left, and right movements. Turns tighter than the
@@ -780,7 +787,12 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   tessellated as local spline segments from their position, heading, radius,
   and length fields. Road paths are colored by priority (0 purple, 64 blue,
   128 green, 192 yellow, and 255 red), with a matching F2 legend; human paths
-  are magenta. Orange squares mark unconnected directed starts; red Xs mark unconnected
+  are magenta. Arrows on paths show their travel direction; bidirectional
+  paths have arrows in both directions, and their spline labels show `[BIDIR]`.
+  `H` labels identify pedestrian splines; `S` labels identify road splines.
+  White arrows above active AI vehicles
+  show the vehicle's actual facing direction for comparison. Orange squares
+  mark unconnected directed starts; red Xs mark unconnected
   directed ends. Connected endpoints have no marker: they have reciprocal links
   or a matching map or scenery path endpoint within 0.5 m horizontally and
   vertically. Matching endpoints are joined in the overlay with a short colored
@@ -912,8 +924,8 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   plus the final OpenGL image-origin correction;
 - MAN DL05 OBJ lateral coordinates are mirrored into the simulator convention
   so the modeled right-side exit remains on the vehicle's right
-  TGA, BMP, PNG/JPEG, and DXT1/DXT5 DDS texture data are decoded for model
-  materials
+- TGA, BMP, PNG/JPEG, and DXT1/DXT5 DDS texture data are decoded for model
+  materials, including BMP and PNG payloads with a `.dds` filename
 - OBJ `mtllib`/`usemtl` groups are rendered with their material textures;
   converter-generated texture extensions are resolved by filename stem
 - Window meshes use a depth-write-disabled, controlled translucent glass pass

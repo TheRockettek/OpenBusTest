@@ -110,9 +110,6 @@ bool validForKind(const std::string& keyword, ModelConfigKind kind) {
         kind != ModelConfigKind::Bus) {
         return false;
     }
-    if (keyword == "rendertype" && kind != ModelConfigKind::SceneryObject) {
-        return false;
-    }
     if (keyword == "new_attachment" && kind != ModelConfigKind::SceneryObject) {
         return false;
     }
@@ -438,8 +435,15 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         const std::string keyword = lower(line.keyword());
         if (kind == ModelConfigKind::SceneryObject &&
-            lower(configPath.extension().string()) == ".sco" && keyword == "surface") {
-            continue;
+            lower(configPath.extension().string()) == ".sco") {
+            // SCO object directives are parsed and diagnosed by loadSceneryObjectFile.
+            static const std::unordered_set<std::string> sceneryObjectDirectives = {
+                "surface", "trafficlight", "traffic_lights_group", "traffic_light", "phase",
+                "approachdist", "path", "use_traffic_light", "traffic_light_stop",
+                "traffic_light_jump"};
+            if (sceneryObjectDirectives.contains(keyword)) {
+                continue;
+            }
         }
         if (!isKnownKeyword(keyword)) {
             openbus::config::logUnhandledConfigurationTag("model.cfg", configPath, line.number,
@@ -1211,6 +1215,13 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         // [fixed]/[absheight]: marker records with no payload consumed here.
         if (keyword == "fixed" || keyword == "absheight") {
+            if (kind == ModelConfigKind::SceneryObject &&
+                lower(configPath.extension().string()) == ".sco" && part() == nullptr) {
+                if (keyword == "absheight") {
+                    result.absoluteHeight = true;
+                }
+                continue;
+            }
             ModelPart* current = requirePart();
             if (keyword == "fixed" && current != nullptr) {
                 current->fixed = true;
@@ -1274,6 +1285,11 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         // [nocollision]: marker disables collision contribution from the current mesh.
         if (keyword == "nocollision") {
+            if (kind == ModelConfigKind::SceneryObject &&
+                lower(configPath.extension().string()) == ".sco" && part() == nullptr) {
+                // The SCO loader handles object-level collision markers.
+                continue;
+            }
             if (ModelPart* current = requirePart(); current != nullptr) {
                 current->noCollision = true;
             }
