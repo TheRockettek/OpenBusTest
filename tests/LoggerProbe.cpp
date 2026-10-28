@@ -11,9 +11,19 @@
 #include <thread>
 #include <vector>
 
-int main() {
-    const auto directory = openbus::probe::makeProbeDirectory("openbus_logger_probe");
-    const auto path = directory / "test.log";
+int main(int argc, char** argv) {
+    const bool invalidPath = argc > 1 && std::string(argv[1]) == "invalid-path";
+    const bool writeFailure = argc > 1 && std::string(argv[1]) == "write-failure";
+    if (writeFailure && !std::filesystem::exists("/dev/full")) {
+        return 77;
+    }
+    const auto directory = openbus::probe::makeProbeDirectory(
+        invalidPath ? "openbus_logger_invalid_path_probe"
+        : writeFailure ? "openbus_logger_write_failure_probe"
+                       : "openbus_logger_probe");
+    const std::filesystem::path path =
+        invalidPath ? directory : writeFailure ? std::filesystem::path("/dev/full")
+                                              : directory / "test.log";
 #ifdef _WIN32
     const int environmentResult = _putenv_s("OPENBUS_LOG_FILE", path.string().c_str());
 #else
@@ -27,7 +37,26 @@ int main() {
 
     std::ostringstream console;
     std::streambuf* previous = std::cout.rdbuf(console.rdbuf());
+    std::ostringstream errors;
+    std::streambuf* previousErrors = std::cerr.rdbuf(errors.rdbuf());
     Logger logger("Probe");
+    if (invalidPath || writeFailure) {
+        logger.Error("still available on console");
+        Logger::Flush();
+        std::cout.rdbuf(previous);
+        std::cerr.rdbuf(previousErrors);
+        const std::string expectedError = invalidPath ? "could not open" : "could not write";
+        const bool passed =
+            errors.str().find("[ERROR] Logger " + expectedError + " log file: " + path.string()) !=
+                std::string::npos &&
+            console.str().find("[ERROR] Probe still available on console") != std::string::npos;
+        openbus::probe::removeProbeDirectory(directory);
+        if (!passed) {
+            std::cerr << "Log file failure was not reported\n";
+            return 1;
+        }
+        return 0;
+    }
     logger.Debug("debug message");
     logger.Info("info message");
     logger.Warning("warning message");
@@ -48,10 +77,11 @@ int main() {
     }
     Logger::Flush();
     std::cout.rdbuf(previous);
+    std::cerr.rdbuf(previousErrors);
 
     std::ifstream file(path);
     const std::string contents{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
-    bool passed = file.is_open() && contents == console.str();
+    bool passed = file.is_open() && errors.str().empty() && contents == console.str();
     const std::regex prefix(R"(^\[[0-9]+\] \[(DEBUG|INFO|WARNING|ERROR)\] Probe .+$)");
     std::istringstream lines(contents);
     std::string line;

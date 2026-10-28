@@ -31,7 +31,11 @@ std::string logFilePath() {
 class LoggerState {
   public:
     LoggerState()
-        : logFile(logFilePath(), std::ios::out | std::ios::trunc), worker(&LoggerState::run, this) {
+        : logPath(logFilePath()), logFile(logPath, std::ios::out | std::ios::trunc),
+          worker(&LoggerState::run, this) {
+        if (!logFile.is_open()) {
+            std::cerr << "[ERROR] Logger could not open log file: " << logPath << '\n';
+        }
     }
 
     ~LoggerState() {
@@ -73,15 +77,21 @@ class LoggerState {
                 if (logFile.is_open()) {
                     logFile << entry.message << '\n';
                     logFile.flush();
+                    if (!logFile) {
+                        std::cerr << "[ERROR] Logger could not write log file: " << logPath << '\n';
+                        logFile.close();
+                    }
                 }
                 lock.lock();
             }
         }
         if (logFile.is_open()) {
             logFile.flush();
+            logFile.close();
         }
     }
 
+    std::string logPath;
     std::ofstream logFile;
     std::mutex mutex;
     std::condition_variable condition;

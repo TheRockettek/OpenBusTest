@@ -36,6 +36,9 @@ add_test(NAME OpenBusPerfTraceDisabledProbe COMMAND OpenBusPerfTraceDisabledProb
 
 # Core / configuration
 openbus_add_probe(OpenBusLoggerProbe LoggerProbe.cpp LIBS openbus_core)
+add_test(NAME OpenBusLoggerProbe.invalid-path COMMAND OpenBusLoggerProbe invalid-path)
+add_test(NAME OpenBusLoggerProbe.write-failure COMMAND OpenBusLoggerProbe write-failure)
+set_tests_properties(OpenBusLoggerProbe.write-failure PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusVariablesProbe VariablesProbe.cpp LIBS openbus_core)
 openbus_add_probe(OpenBusConfigurationParserProbe ConfigurationParserProbe.cpp
     LIBS openbus_config)

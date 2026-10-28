@@ -43,7 +43,7 @@ void writeCrashReport(const char* reason, DWORD exceptionCode = 0, void* excepti
     }
 
     try {
-        crashLog.Log("Crash detected: " + std::string(reason));
+        crashLog.Error("Crash detected: " + std::string(reason));
 
         std::ofstream report("game.crash", std::ios::out | std::ios::trunc);
         if (!report.is_open()) {
