@@ -24,12 +24,17 @@ std::string tileLabel(int x, int y) {
 }
 
 void recordSkipped(SkipSummaries& summaries, const std::string& reason, const std::string& example,
-                   std::size_t count) {
+                   std::size_t count, LogLevel level) {
     SkipSummary& summary = summaries[reason];
     summary.count += count;
+    if (level == LogLevel::Error) {
+        summary.level = LogLevel::Error;
+    } else if (level == LogLevel::Warning && summary.level != LogLevel::Error) {
+        summary.level = LogLevel::Warning;
+    }
     if (!example.empty() && summary.examples.size() < MAX_SKIP_EXAMPLES) {
         summary.examples.push_back(example);
-        gameLog.Log("Map skip encountered: " + reason + "; example: " + example);
+        gameLog.Log(level, "Map skip encountered: " + reason + "; example: " + example);
     }
 }
 
@@ -40,7 +45,7 @@ void logSkipped(const SkipSummaries& summaries) {
         if (!summary.examples.empty()) {
             message += " (context logged when encountered)";
         }
-        gameLog.Log(message);
+        gameLog.Log(summary.level, message);
     }
 }
 

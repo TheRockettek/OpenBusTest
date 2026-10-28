@@ -81,7 +81,10 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             recordSkipped(skipped, "scenery config diagnostics",
                           openbus::pathToUtf8(configPath.filename()) +
                               " line=" + std::to_string(diagnostic.line) + " [" +
-                              diagnostic.keyword + "] " + severity + ": " + diagnostic.message);
+                              diagnostic.keyword + "] " + severity + ": " + diagnostic.message,
+                          1, diagnostic.severity == ConfigurationDiagnostic::Severity::Error
+                                 ? LogLevel::Error
+                                 : LogLevel::Warning);
         }
         if (!objectConfiguration.trees.empty()) {
             for (const PreparedSceneryTreeBatch& preparedTree : prepared.treeBatches) {
@@ -144,7 +147,10 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             recordSkipped(skipped, "scenery model config diagnostics",
                           openbus::pathToUtf8(modelConfigPath.filename()) +
                               " line=" + std::to_string(diagnostic.line) + " [" +
-                              diagnostic.keyword + "] " + severity + ": " + diagnostic.message);
+                              diagnostic.keyword + "] " + severity + ": " + diagnostic.message,
+                          1, diagnostic.severity == ConfigurationDiagnostic::Severity::Error
+                                 ? LogLevel::Error
+                                 : LogLevel::Warning);
         }
         for (const ModelPart& part : configuration.parts) {
             if (!part.visibleVariable.empty()) {
@@ -262,7 +268,7 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             }
             if (verboseAlphaMaterials &&
                 (batch.alphaMode != 0 || batch.noZcheck || batch.noZwrite)) {
-                gameLog.Log(
+                gameLog.Debug(
                     "Map scenery alpha material: asset=" +
                     openbus::pathToUtf8(modelConfigPath.filename()) + " mesh=" +
                     openbus::pathToUtf8(openbus::pathFromUtf8(preparedBatch.meshKey).filename()) +

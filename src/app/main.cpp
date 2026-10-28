@@ -841,8 +841,11 @@ int main() {
             ", entrypoints=" + std::to_string(mapDefinition.entryPoints.size()) + mapNameSummary +
             ".");
         for (const ConfigurationDiagnostic& diagnostic : mapDefinition.diagnostics.entries) {
-            applicationLog.Log("Map global.cfg line " + std::to_string(diagnostic.line) + " [" +
-                               diagnostic.keyword + "]: " + diagnostic.message);
+            applicationLog.Log(
+                diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? LogLevel::Error
+                                                                                  : LogLevel::Warning,
+                "Map global.cfg line " + std::to_string(diagnostic.line) + " [" +
+                    diagnostic.keyword + "]: " + diagnostic.message);
         }
         const std::size_t spawnEntryPoint = startupSelection.spawnEntryPoint;
         const std::size_t groundTextureIndex = openbus::map::selectMapGroundTextureIndex(
@@ -889,7 +892,7 @@ int main() {
                     break;
                 } catch (const std::exception& error) {
                     lastLoadError = error.what();
-                    applicationLog.Log("Initial simulation bus unavailable '" + candidate.string() +
+                    applicationLog.Warning("Initial simulation bus unavailable '" + candidate.string() +
                                        "': " + error.what());
                 }
             }
@@ -906,7 +909,7 @@ int main() {
             openbus::rendering::TraceScope trace("config", "main.writeConfigurationSnapshots");
             std::ofstream configurationOutput("OpenBus_configuration.json", std::ios::trunc);
             if (!configurationOutput) {
-                applicationLog.Log("Failed to open OpenBus_configuration.json");
+                applicationLog.Error("Failed to open OpenBus_configuration.json");
                 throw std::runtime_error("Failed to open OpenBus_configuration.json");
             }
             writeBusConfigurationJson(configurationOutput, configuration);
@@ -914,7 +917,7 @@ int main() {
             std::ofstream modelConfigurationOutput("OpenBus_model_configuration.json",
                                                    std::ios::trunc);
             if (!modelConfigurationOutput) {
-                applicationLog.Log("Failed to open OpenBus_model_configuration.json");
+                applicationLog.Error("Failed to open OpenBus_model_configuration.json");
                 throw std::runtime_error("Failed to open OpenBus_model_configuration.json");
             }
             writeModelConfigurationJson(modelConfigurationOutput, modelConfigPath,
@@ -942,7 +945,7 @@ int main() {
                                             grid.intervals, grid.heights});
                     loaded.second.emplace_back(tile.x, tile.y);
                 } catch (const std::exception& error) {
-                    applicationLog.Log("Spawn terrain collision unavailable for tile (" +
+                    applicationLog.Warning("Spawn terrain collision unavailable for tile (" +
                                        std::to_string(tile.x) + "," + std::to_string(tile.y) +
                                        "): " + error.what());
                 }
@@ -1116,11 +1119,11 @@ int main() {
                 }
             }
             if (!configuredDensity.has_value()) {
-                applicationLog.Log("Map road traffic density is unavailable at " +
+                applicationLog.Warning("Map road traffic density is unavailable at " +
                                    std::to_string(mapAiStartHour) + "h; using density factor 1.0.");
             }
             if (aiRoadVehicles.empty()) {
-                applicationLog.Log(
+                applicationLog.Warning(
                     "Map road traffic not spawned: supported NormalCar(s), Trucks, Commercial(s), "
                     "and Ambulance groups have no loadable .ovh/.bus entries.");
             } else if (!hasGroupDensitySchedule &&
@@ -1241,7 +1244,7 @@ int main() {
                                 }
                             } catch (const std::exception& error) {
                                 unavailableAiVehicles.insert(vehiclePath);
-                                applicationLog.Log("Skipping map road vehicle '" + vehiclePath +
+                                applicationLog.Warning("Skipping map road vehicle '" + vehiclePath +
                                                    "': " + error.what());
                             }
                         }
@@ -1279,7 +1282,7 @@ int main() {
             const std::vector<std::string> aiBusConfigurations =
                 openbus::map::mapAiBusAssetPaths(mapDefinition.aiTraffic);
             if (aiBusConfigurations.empty()) {
-                applicationLog.Log(
+                applicationLog.Warning(
                     "Map AI buses not spawned: ailists.cfg has no loadable depot bus "
                     "configurations.");
             } else {
@@ -1325,7 +1328,7 @@ int main() {
                             for (const std::string& diagnostic :
                                  search.timetableOriginDiagnostics) {
                                 if (loggedTimetableOriginDiagnostics.insert(diagnostic).second) {
-                                    applicationLog.Log(diagnostic);
+                                    applicationLog.Warning(diagnostic);
                                 }
                             }
                             feasibleRoutesExamined += search.feasibleRoutesExamined;
@@ -1347,7 +1350,7 @@ int main() {
                             entries = busEntryLanes.emplace(busPath, std::move(search)).first;
                         } catch (const std::exception& error) {
                             unavailableAiBuses.insert(busPath);
-                            applicationLog.Log("Skipping map AI bus '" + busPath +
+                            applicationLog.Warning("Skipping map AI bus '" + busPath +
                                                "': " + error.what());
                             continue;
                         }
@@ -1402,7 +1405,7 @@ int main() {
                         const auto stationPosition =
                             openbus::map::mapAiTimetableStationPosition(timetable, station);
                         if (!stationPosition) {
-                            applicationLog.Log("Skipping passenger stop with an invalid timetable "
+                            applicationLog.Warning("Skipping passenger stop with an invalid timetable "
                                                "track position: " +
                                                station.name + " in " + timetable.timetableKey);
                             continue;
@@ -1438,7 +1441,7 @@ int main() {
                                 matchedRoute.routeStart.allowReverseTraversalForRequired,
                                 passengerStops, timetable.lineName, timetable.destinationName,
                                 std::nullopt, true, std::nullopt, &passengerRouteIndex)) {
-                            applicationLog.Log(
+                            applicationLog.Warning(
                                 "Player passenger stops are unavailable for timetable route " +
                                 timetable.lineName +
                                 " because its mapped road route could not "
@@ -1446,7 +1449,7 @@ int main() {
                             continue;
                         }
                     } catch (const std::exception& error) {
-                        applicationLog.Log(
+                        applicationLog.Warning(
                             "Player passenger stops are unavailable for timetable route " +
                             timetable.lineName + ": " + error.what());
                         continue;
@@ -1486,12 +1489,12 @@ int main() {
                                     std::nullopt, false, passengerRouteIndex)) {
                                 ++addedBuses;
                             } else {
-                                applicationLog.Log(
+                                applicationLog.Warning(
                                     "Skipping scheduled map AI bus: matched timetable route could "
                                     "not be rebuilt from its endpoint entry.");
                             }
                         } catch (const std::exception& error) {
-                            applicationLog.Log("Skipping map AI bus '" + matchedRoute.busPath +
+                            applicationLog.Warning("Skipping map AI bus '" + matchedRoute.busPath +
                                                "': " + error.what());
                             break;
                         }
@@ -1534,7 +1537,7 @@ int main() {
                                 ".";
                         }
                     }
-                    applicationLog.Log(routeSearchSummary);
+                    applicationLog.Warning(routeSearchSummary);
                 } else {
                     applicationLog.Log(
                         "Map AI buses queued at endpoint entries: " + std::to_string(addedBuses) +
@@ -1559,7 +1562,7 @@ int main() {
             if (std::filesystem::is_regular_file(humanConfigPath)) {
                 scheduledPassengerHumanModels.push_back(humanConfigPath);
             } else {
-                applicationLog.Log("Skipping missing scheduled passenger human model "
+                applicationLog.Warning("Skipping missing scheduled passenger human model "
                                    "configuration '" +
                                    humanConfigPath.generic_string() + "'.");
             }
@@ -1568,7 +1571,7 @@ int main() {
         if (mapHumanBaseCount == 0) {
             applicationLog.Log("Map human traffic is disabled by OPENBUS_MAP_HUMAN_COUNT=0.");
         } else if (configuredHumanModelPaths.empty()) {
-            applicationLog.Log(
+            applicationLog.Warning(
                 "Map human traffic not spawned: humans.txt contains no .hum model paths.");
         } else {
             const std::optional<double> configuredDensity = openbus::map::mapTrafficDensityAtHour(
@@ -1596,7 +1599,7 @@ int main() {
                 const std::filesystem::path humanConfigPath =
                     openbus::assets::resolveCaseInsensitivePath(omsiRootPath() / normalizedPath);
                 if (!std::filesystem::is_regular_file(humanConfigPath)) {
-                    applicationLog.Log("Skipping missing human model configuration '" +
+                    applicationLog.Warning("Skipping missing human model configuration '" +
                                        configuredPath + "'.");
                     continue;
                 }
@@ -1604,7 +1607,7 @@ int main() {
                     const openbus::config::HumanConfig humanConfig =
                         openbus::config::loadHumanConfig(humanConfigPath);
                     if (humanConfig.diagnostics.hasErrors()) {
-                        applicationLog.Log("Skipping invalid human configuration '" +
+                        applicationLog.Warning("Skipping invalid human configuration '" +
                                            humanConfigPath.generic_string() + "'.");
                         continue;
                     }
@@ -1617,7 +1620,7 @@ int main() {
                     if (geometry == humanConfig.numericRecords.end() ||
                         !std::isfinite(geometry->values[0]) || geometry->values[0] <= 0.0 ||
                         !std::isfinite(geometry->values[1]) || geometry->values[1] <= 0.0) {
-                        applicationLog.Log("Skipping human configuration without valid "
+                        applicationLog.Warning("Skipping human configuration without valid "
                                            "[humangeom] dimensions: " +
                                            humanConfigPath.generic_string() + ".");
                         continue;
@@ -1626,20 +1629,20 @@ int main() {
                                            geometry->values[1],
                                            humanConfig.walkStrideLengthMeters});
                 } catch (const std::exception& error) {
-                    applicationLog.Log("Skipping human configuration '" +
+                    applicationLog.Warning("Skipping human configuration '" +
                                        humanConfigPath.generic_string() + "': " + error.what());
                 }
             }
             humanConfigTrace.finish();
             if (!configuredDensity.has_value()) {
-                applicationLog.Log("Map passenger traffic density is unavailable at " +
+                applicationLog.Warning("Map passenger traffic density is unavailable at " +
                                    std::to_string(mapAiStartHour) + "h; using density factor 1.0.");
             }
             if (humanSplineIds.empty()) {
-                applicationLog.Log("Map human traffic not spawned: no usable human-path splines "
+                applicationLog.Warning("Map human traffic not spawned: no usable human-path splines "
                                    "([path] type 1) were found.");
             } else if (humanModels.empty()) {
-                applicationLog.Log("Map human traffic not spawned: no valid .hum configurations "
+                applicationLog.Warning("Map human traffic not spawned: no valid .hum configurations "
                                    "were available.");
             } else if (humanPoolCount == 0) {
                 applicationLog.Log("Map passenger traffic schedule has no positive population.");
@@ -1665,7 +1668,7 @@ int main() {
                             ++addedHumans;
                         }
                     } catch (const std::exception& error) {
-                        applicationLog.Log("Skipping human traffic actor '" +
+                        applicationLog.Warning("Skipping human traffic actor '" +
                                            humanModel.configPath.generic_string() +
                                            "': " + error.what());
                     }
@@ -1810,7 +1813,7 @@ int main() {
                                            framebufferDimensions[1] != windowHeight)) {
                 std::cout << "BENCHMARK_SKIPPED=resolution_mismatch\n";
                 std::cout << "BENCHMARK_COMPLETE=1\n";
-                applicationLog.Log("Benchmark skipped because the requested framebuffer size "
+                applicationLog.Warning("Benchmark skipped because the requested framebuffer size "
                                    "is unavailable");
                 Logger::Flush();
                 openbus::rendering::Flush();
@@ -1928,7 +1931,7 @@ int main() {
                         applicationLog.Log("Selected bus physics initialized; simulation resumed.");
                     } catch (const std::exception& error) {
                         const std::string message = error.what();
-                        applicationLog.Log("Unable to spawn selected bus: " + message);
+                        applicationLog.Error("Unable to spawn selected bus: " + message);
                         renderer.SetSpawnBusError(message);
                     }
                 }
@@ -1980,7 +1983,7 @@ int main() {
         }
         applicationLog.Log("OpenBus shut down cleanly");
     } catch (const std::exception& error) {
-        applicationLog.Log(std::string("OpenBus failed: ") + error.what());
+        applicationLog.Error(std::string("OpenBus failed: ") + error.what());
         std::cerr << "OpenBus failed: " << error.what() << '\n';
         Logger::Flush();
         openbus::rendering::Flush();

@@ -953,7 +953,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                                                                          image)) {
                             surface = surfaceMaps.emplace(surfaceKey, std::move(image)).first;
                         } else {
-                            gameLog.Log("Map road surface height map could not be decoded: " +
+                            gameLog.Warning("Map road surface height map could not be decoded: " +
                                         surfacePath->second->string());
                             surface = surfaceMaps.emplace(surfaceKey, std::nullopt).first;
                         }
@@ -963,7 +963,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                             sectionGeometry, centerline.size(), section.points.size(),
                             spline.mirrored, *surface->second);
                         if (!surfaceHeightMapApplied) {
-                            gameLog.Log(
+                            gameLog.Warning(
                                 "Map road surface height map has invalid image dimensions: " +
                                 surfacePath->second->string());
                         }

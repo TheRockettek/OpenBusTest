@@ -128,7 +128,7 @@ void logUnhandledConfigurationTag(const std::string& format,
             return;
         }
     }
-    configurationLog.Log("Unhandled configuration tag [" + tag + "]: " + disposition + " in " +
+    configurationLog.Warning("Unhandled configuration tag [" + tag + "]: " + disposition + " in " +
                          format + " file=" + location + " line=" + std::to_string(line));
 }
 

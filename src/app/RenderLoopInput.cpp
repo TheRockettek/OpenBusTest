@@ -169,7 +169,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                     logDiagnosticVariables();
                 }
                 if (!mouseControlToggle) {
-                    gameLog.Log(std::string("Key binding ") + binding.action +
+                    gameLog.Debug(std::string("Key binding ") + binding.action +
                                 (pressed ? " pressed" : " released"));
                 }
             }
@@ -192,12 +192,13 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
 #if OPENBUS_ENABLE_PERF_TRACE
             const bool wasRecording = openbus::rendering::IsRecording();
             const bool recording = openbus::rendering::SetRecording(!wasRecording);
-            gameLog.Log(recording ? "Performance recording started (F10 to pause)"
+            gameLog.Log(recording || wasRecording ? LogLevel::Info : LogLevel::Warning,
+                        recording ? "Performance recording started (F10 to pause)"
                         : wasRecording
                             ? "Performance recording paused and saved (F10 to resume)"
                             : "Performance recording could not start; check trace output errors");
 #else
-            gameLog.Log(
+            gameLog.Warning(
                 "Performance recording is unavailable; launch with profile.bat or profile.sh");
 #endif
         }

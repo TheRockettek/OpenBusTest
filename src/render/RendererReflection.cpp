@@ -152,7 +152,7 @@ void ReflectionRenderer::initialize(const std::vector<VehicleCamera>& cameras) {
         pglFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
                                 target.depthTexture, 0);
         if (pglCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-            gameLog.Log("Reflection framebuffer is incomplete at index " + std::to_string(index));
+            gameLog.Warning("Reflection framebuffer is incomplete at index " + std::to_string(index));
         }
         activeReflectionTextures[static_cast<int>(index)] = target.texture;
     }

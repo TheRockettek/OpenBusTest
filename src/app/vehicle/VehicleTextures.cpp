@@ -113,7 +113,7 @@ GLuint Vehicle::uploadTexture(const std::filesystem::path& path, const Image& im
     static const bool verboseTextureUploadLogs =
         parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
     if (verboseTextureUploadLogs) {
-        gameLog.Log("Uploading texture from path: " + path.generic_string());
+        gameLog.Debug("Uploading texture from path: " + path.generic_string());
     }
     Image scaledImage;
     const Image* uploadImage = &image;
@@ -126,7 +126,7 @@ GLuint Vehicle::uploadTexture(const std::filesystem::path& path, const Image& im
         if (!openbus::rendering::checkedTextureBufferSize(static_cast<std::size_t>(scaledWidth),
                                                           static_cast<std::size_t>(scaledHeight), 4,
                                                           scaledSize)) {
-            gameLog.Log("Texture scaling exceeds the decoded image size limit: " +
+            gameLog.Error("Texture scaling exceeds the decoded image size limit: " +
                         path.generic_string());
             return 0;
         }
@@ -204,7 +204,7 @@ GLuint Vehicle::uploadCompressedTexture(const std::filesystem::path& path,
     static const bool verboseTextureUploadLogs =
         parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
     if (verboseTextureUploadLogs) {
-        gameLog.Log("Uploaded compressed texture from path: " + path.generic_string());
+        gameLog.Debug("Uploaded compressed texture from path: " + path.generic_string());
     }
     return texture;
 }
@@ -247,7 +247,7 @@ GLuint Vehicle::uploadCompressedDds(const std::filesystem::path& path, const Com
     static const bool verboseTextureUploadLogs =
         parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_UPLOAD"));
     if (verboseTextureUploadLogs) {
-        gameLog.Log("Uploaded DXT5 texture from path: " + path.generic_string());
+        gameLog.Debug("Uploaded DXT5 texture from path: " + path.generic_string());
     }
     return texture;
 }
@@ -316,7 +316,7 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
     }
 
     if (verboseTextureLookupLogs) {
-        gameLog.Log("Resolving texture with name: " + name + " in root: " + root.generic_string());
+        gameLog.Debug("Resolving texture with name: " + name + " in root: " + root.generic_string());
     }
 
     const auto cacheResult = [&](const std::filesystem::path& path) {
@@ -448,7 +448,7 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
         const auto preferredDirect = index->byStem.find(requestedStem);
         if (preferredDirect != index->byStem.end()) {
             if (verboseTextureLookupLogs) {
-                gameLog.Log("Found texture directly at path: " +
+                gameLog.Debug("Found texture directly at path: " +
                             preferredDirect->second.generic_string());
             }
             return cacheResult(preferredDirect->second);
@@ -461,7 +461,7 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
         const auto byFileName = index->byFileName.find(basename);
         if (byFileName != index->byFileName.end()) {
             if (verboseTextureLookupLogs) {
-                gameLog.Log("Found texture at indexed filename path: " +
+                gameLog.Debug("Found texture at indexed filename path: " +
                             byFileName->second.generic_string());
             }
             return cacheResult(byFileName->second);
@@ -469,14 +469,14 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
         const auto byStem = index->byStem.find(requestedStem);
         if (byStem != index->byStem.end()) {
             if (verboseTextureLookupLogs) {
-                gameLog.Log("Found texture at indexed stem path: " +
+                gameLog.Debug("Found texture at indexed stem path: " +
                             byStem->second.generic_string());
             }
             return cacheResult(byStem->second);
         }
     }
 
-    textureLog.Log("missing: " + cleaned);
+    textureLog.Warning("missing: " + cleaned);
     return cacheResult({});
 }
 
@@ -677,7 +677,7 @@ void Vehicle::ensureTexture(Batch& batch, bool visible) {
     if ((batch.texturePath.empty() || batch.texture == 0) &&
         !batch.textureCacheEntry->decodeFailureLogged) {
         batch.textureCacheEntry->decodeFailureLogged = true;
-        textureLog.Log("decode-failed: " + batch.textureName +
+        textureLog.Error("decode-failed: " + batch.textureName +
                        " resolved=" + batch.texturePath.generic_string() +
                        " source=" + batch.sourceMeshPath.generic_string());
     }

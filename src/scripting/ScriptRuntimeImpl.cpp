@@ -45,7 +45,11 @@ std::shared_ptr<const OscProgram> cachedNativeProgram(const std::filesystem::pat
 } // namespace script_detail
 
 void ScriptRuntime::Impl::log(const std::string& message) const {
-    scriptRuntimeLogger.Log("[" + scriptIdentity + "] " + message);
+    log(LogLevel::Info, message);
+}
+
+void ScriptRuntime::Impl::log(LogLevel level, const std::string& message) const {
+    scriptRuntimeLogger.Log(level, "[" + scriptIdentity + "] " + message);
 }
 
 ScriptRuntime::Impl::~Impl() {

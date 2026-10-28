@@ -1013,7 +1013,7 @@ int ScriptRuntime::Impl::scriptFontIndex(const std::string& name) {
     const auto font = loadFont(name);
     if (!font) {
         if (!attempted) {
-            log("Script font not found: " + name);
+            log(LogLevel::Warning, "Script font not found: " + name);
         }
         return -1;
     }
@@ -1029,7 +1029,7 @@ void ScriptRuntime::Impl::drawScriptText(int index, int x, int y, int fontIndex,
                                          int letterSpacing, const std::string& value) {
     openbus::rendering::TraceScope trace("script", "ScriptRuntime.drawScriptText");
     if (fontIndex < 0 || static_cast<std::size_t>(fontIndex) >= scriptFonts.size()) {
-        log("Invalid script font index: " + std::to_string(fontIndex));
+        log(LogLevel::Warning, "Invalid script font index: " + std::to_string(fontIndex));
         return;
     }
     ScriptTexture& texture = scriptTextures[index];
@@ -1043,7 +1043,8 @@ void ScriptRuntime::Impl::drawScriptText(int index, int x, int y, int fontIndex,
 
 float ScriptRuntime::Impl::scriptTextLength(int fontIndex, const std::string& value) const {
     if (fontIndex < 0 || static_cast<std::size_t>(fontIndex) >= scriptFonts.size()) {
-        log("Invalid script font index for TextLength: " + std::to_string(fontIndex));
+        log(LogLevel::Warning,
+            "Invalid script font index for TextLength: " + std::to_string(fontIndex));
         return 0.0F;
     }
     const FontAsset& font = *scriptFonts[fontIndex];

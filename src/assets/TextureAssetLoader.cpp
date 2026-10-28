@@ -51,7 +51,7 @@ bool loadTextureAsset(const std::filesystem::path& path, TextureAsset& asset) {
                     return true;
                 }
             } catch (const std::exception& error) {
-                gameLog.Log("GLI failed to load compressed texture " + openbus::pathToUtf8(path) +
+                gameLog.Warning("GLI failed to load compressed texture " + openbus::pathToUtf8(path) +
                             ": " + error.what());
             }
         }

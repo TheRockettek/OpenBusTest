@@ -149,7 +149,7 @@ void MapRenderer::updateScripts() {
         scriptState.runtime->update(false);
         const std::vector<std::string>& errors = scriptState.runtime->errors();
         for (std::size_t index = previousErrorCount; index < errors.size(); ++index) {
-            gameLog.Log("Scenery script frame error: " + errors[index]);
+            gameLog.Error("Scenery script frame error: " + errors[index]);
         }
     }
 }
@@ -181,7 +181,7 @@ void MapRenderer::initializeActiveScripts() {
         scriptState.runtime->update(false);
         const std::vector<std::string>& errors = scriptState.runtime->errors();
         for (std::size_t index = previousErrorCount; index < errors.size(); ++index) {
-            gameLog.Log("Scenery script initialization error: " + errors[index]);
+            gameLog.Error("Scenery script initialization error: " + errors[index]);
         }
     }
 }
@@ -637,7 +637,7 @@ void MapRenderer::loadHumanTrafficModelNow(
     const std::filesystem::path modelRoot = modelConfigPath.parent_path();
     for (const ConfigurationDiagnostic& diagnostic : configuration.diagnostics.entries) {
         if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error) {
-            gameLog.Log("Human model configuration error: " + openbus::pathToUtf8(modelConfigPath) +
+            gameLog.Error("Human model configuration error: " + openbus::pathToUtf8(modelConfigPath) +
                         " line=" + std::to_string(diagnostic.line) + " [" + diagnostic.keyword +
                         "] " + diagnostic.message);
         }
@@ -676,7 +676,7 @@ void MapRenderer::loadHumanTrafficModelNow(
                 mesh = assetRequests_->requestObj(part.objPath, part.bundleEntry).get();
             }
             if (!mesh) {
-                gameLog.Log("Skipping unsupported or empty human model mesh: " +
+                gameLog.Warning("Skipping unsupported or empty human model mesh: " +
                             openbus::pathToUtf8(part.objPath));
                 continue;
             }
@@ -689,7 +689,7 @@ void MapRenderer::loadHumanTrafficModelNow(
             }
             parsedParts.push_back({&part, std::move(mesh)});
         } catch (const std::exception& error) {
-            gameLog.Log("Could not load human model mesh " + openbus::pathToUtf8(part.objPath) +
+            gameLog.Warning("Could not load human model mesh " + openbus::pathToUtf8(part.objPath) +
                         ": " + error.what());
         }
     }
@@ -865,11 +865,11 @@ void MapRenderer::loadHumanTrafficModelNow(
                     textureImage = request->second;
                 }
             } else if (!textureName.empty()) {
-                gameLog.Log("Human model texture was not found: " + textureName);
+                gameLog.Warning("Human model texture was not found: " + textureName);
             }
             const GLenum priorGlError = drainGlErrors();
             if (priorGlError != GL_NO_ERROR && !loggedPriorUploadError) {
-                gameLog.Log("OpenGL error predates human mesh upload; error=" +
+                gameLog.Warning("OpenGL error predates human mesh upload; error=" +
                             std::to_string(priorGlError));
                 loggedPriorUploadError = true;
             }
@@ -883,7 +883,7 @@ void MapRenderer::loadHumanTrafficModelNow(
                 if (batch.buffer != 0) {
                     deleteRendererBuffers(1, &batch.buffer);
                 }
-                gameLog.Log("Could not upload human model mesh '" +
+                gameLog.Warning("Could not upload human model mesh '" +
                             openbus::pathToUtf8(part.objPath) +
                             "', material=" + std::to_string(materialIndex) +
                             ", OpenGL error=" + std::to_string(uploadError));

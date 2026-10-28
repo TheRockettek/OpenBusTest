@@ -378,7 +378,7 @@ void MapSceneLoader::recordTilePreparationFailure(std::uint64_t tileKeyValue,
     }
 
     if (waitForCompletion) {
-        gameLog.Log("Map " + stage + " failed for " + openbus::pathToUtf8(path) + ": " + detail);
+        gameLog.Error("Map " + stage + " failed for " + openbus::pathToUtf8(path) + ": " + detail);
         std::rethrow_exception(error);
     }
 
@@ -393,7 +393,8 @@ void MapSceneLoader::recordTilePreparationFailure(std::uint64_t tileKeyValue,
         const auto retryDelay = std::chrono::milliseconds(250 * (1U << (failure.attempts - 1U)));
         failure.retryAfter = std::chrono::steady_clock::now() + retryDelay;
     }
-    gameLog.Log("Map " + stage + " failed for " + openbus::pathToUtf8(path) + ": " + detail +
+    gameLog.Log(failure.exhausted ? LogLevel::Error : LogLevel::Warning,
+                "Map " + stage + " failed for " + openbus::pathToUtf8(path) + ": " + detail +
                 (failure.exhausted
                      ? "; automatic retries exhausted, retry after the tile leaves the active "
                        "window."
@@ -1071,7 +1072,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
         for (const std::uint64_t key : terrainTileKeys) {
             terrainReadyCount += loadedTerrainTileKeys.contains(key) ? 1U : 0U;
         }
-        gameLog.Log("Map active tile progress: phase=" + std::string(phase) +
+        gameLog.Debug("Map active tile progress: phase=" + std::string(phase) +
                     ", terrain=" + std::to_string(terrainReadyCount) + "/" +
                     std::to_string(terrainTileKeys.size()) + ", content=" +
                     std::to_string(contentReady) + "/" + std::to_string(tileCoordinates.size()) +
@@ -1209,7 +1210,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
             pendingTileRoadRequests.erase(roadRequest);
         }
         tilePreparationFailures.erase(key);
-        gameLog.Log("Map phase: loading active tile " +
+        gameLog.Debug("Map phase: loading active tile " +
                     tileLabel(tileReference->x, tileReference->y) + ".");
         const auto roadData = preparedTileRoads.find(key);
         if (roadData == preparedTileRoads.end()) {
@@ -1596,7 +1597,7 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                     preparedTextureErrors.try_emplace(imageKey, std::move(error));
                 }
             }
-            gameLog.Log("Map terrain tile " + std::to_string(terrainTilesVisited) + ": " +
+            gameLog.Debug("Map terrain tile " + std::to_string(terrainTilesVisited) + ": " +
                         openbus::pathToUtf8(tile.terrainPath) +
                         "; meshes uploaded=" + std::to_string(impl_->terrainBuffers.size()) +
                         ", elapsed=" + std::to_string(elapsedMilliseconds(terrainLoadStart)) +
@@ -1720,7 +1721,7 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
         }
     }
     if (terrainTilesVisited > 0 || terrainUploads > 0) {
-        gameLog.Log("Map active terrain load progress: " + std::to_string(terrainTilesVisited) +
+        gameLog.Debug("Map active terrain load progress: " + std::to_string(terrainTilesVisited) +
                     " tiles visited, " + std::to_string(terrainUploads) + " uploaded, " +
                     std::to_string(impl_->terrainBuffers.size()) + " total meshes in " +
                     std::to_string(elapsedMilliseconds(terrainLoadStart)) + " ms.");
@@ -1748,7 +1749,7 @@ void MapSceneLoader::indexMapContent() {
     for (std::size_t tileReferenceIndex = 0; tileReferenceIndex < map.tiles.size();
          ++tileReferenceIndex) {
         const openbus::map::MapTileReference& tileReference = map.tiles[tileReferenceIndex];
-        gameLog.Log("Map index tile " + std::to_string(tileReferenceIndex + 1) + "/" +
+        gameLog.Debug("Map index tile " + std::to_string(tileReferenceIndex + 1) + "/" +
                     std::to_string(map.tiles.size()) + ": " +
                     openbus::pathToUtf8(tileReference.textPath) +
                     "; elapsed=" + std::to_string(elapsedMilliseconds(indexStart)) + " ms.");

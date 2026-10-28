@@ -67,6 +67,7 @@ double squaredDistanceToBounds(double x, double y, double minX, double minY, dou
 struct SkipSummary {
     std::size_t count = 0;
     std::vector<std::string> examples;
+    LogLevel level = LogLevel::Info;
 };
 
 using SkipSummaries = std::map<std::string, SkipSummary>;
@@ -76,7 +77,7 @@ long long elapsedMilliseconds(std::chrono::steady_clock::time_point start);
 std::string tileLabel(int x, int y);
 
 void recordSkipped(SkipSummaries& summaries, const std::string& reason, const std::string& example,
-                   std::size_t count = 1);
+                   std::size_t count = 1, LogLevel level = LogLevel::Warning);
 
 void logSkipped(const SkipSummaries& summaries);
 

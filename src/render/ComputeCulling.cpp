@@ -337,13 +337,13 @@ void initializeComputeCulling(bool enableReadback, bool enableIndirect) {
     if ((major < 4 || (major == 4 && minor < 3)) || !pglDispatchCompute || !pglMemoryBarrier ||
         !pglBindBufferBase || !pglGetIntegeri || (enableReadback && !pglGetBufferSubData) ||
         (enableIndirect && (!pglDrawArraysIndirect || !pglDrawElementsIndirect))) {
-        gameLog.Log(
+        gameLog.Warning(
             "Compute culling unavailable; using CPU visibility tests (OpenGL 4.3 required)");
         return;
     }
     const GLuint shader = pglCreateShader(0x91B9 /* GL_COMPUTE_SHADER */);
     if (shader == 0) {
-        gameLog.Log("Could not create compute culling shader; using CPU visibility tests");
+        gameLog.Warning("Could not create compute culling shader; using CPU visibility tests");
         return;
     }
     pglShaderSource(shader, 1, &source, nullptr);
@@ -353,7 +353,7 @@ void initializeComputeCulling(bool enableReadback, bool enableIndirect) {
     if (success == GL_FALSE) {
         std::array<char, 4096> log = {};
         pglGetShaderInfoLog(shader, static_cast<GLsizei>(log.size()), nullptr, log.data());
-        gameLog.Log(std::string("Compute culling compilation failed; CPU fallback: ") + log.data());
+        gameLog.Warning(std::string("Compute culling compilation failed; CPU fallback: ") + log.data());
         pglDeleteShader(shader);
         return;
     }
@@ -367,13 +367,13 @@ void initializeComputeCulling(bool enableReadback, bool enableIndirect) {
     }
     pglDeleteShader(shader);
     if (success == GL_FALSE) {
-        gameLog.Log("Compute culling link failed; using CPU visibility tests");
+        gameLog.Warning("Compute culling link failed; using CPU visibility tests");
         shutdownComputeCulling();
         return;
     }
     pglGenBuffers(static_cast<GLsizei>(buffers.size()), buffers.data());
     if (std::any_of(buffers.begin(), buffers.end(), [](GLuint buffer) { return buffer == 0; })) {
-        gameLog.Log("Could not allocate compute culling buffers; using CPU visibility tests");
+        gameLog.Warning("Could not allocate compute culling buffers; using CPU visibility tests");
         shutdownComputeCulling();
         return;
     }
@@ -388,7 +388,7 @@ void initializeComputeCulling(bool enableReadback, bool enableIndirect) {
     minimumFractionLocation = pglGetUniformLocation(program, "uMinimumFraction");
     if (planesLocation < 0 || countLocation < 0 || indirectLocation < 0 ||
         proxyCommandsLocation < 0 || projectionScaleLocation < 0 || minimumFractionLocation < 0) {
-        gameLog.Log("Compute culling uniforms unavailable; using CPU visibility tests");
+        gameLog.Warning("Compute culling uniforms unavailable; using CPU visibility tests");
         shutdownComputeCulling();
         return;
     }
@@ -415,7 +415,7 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
     if (items.size() > maxItems || lodBoundaries.size() > (128U * 1024U * 1024U) / sizeof(float)) {
         static bool loggedLimit = false;
         if (!loggedLimit) {
-            gameLog.Log("Compute culling input exceeds supported limits; using CPU for this view");
+            gameLog.Warning("Compute culling input exceeds supported limits; using CPU for this view");
             loggedLimit = true;
         }
         return false;
@@ -430,7 +430,7 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
              item.metadata[3] > lodBoundaries.size() - item.metadata[2])) {
             static bool loggedInvalidLod = false;
             if (!loggedInvalidLod) {
-                gameLog.Log("Invalid compute culling LOD range; using CPU for this view");
+                gameLog.Warning("Invalid compute culling LOD range; using CPU for this view");
                 loggedInvalidLod = true;
             }
             return false;
@@ -439,7 +439,7 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
             item.draw[0] > static_cast<std::uint32_t>(std::numeric_limits<GLsizei>::max())) {
             static bool loggedInvalidCount = false;
             if (!loggedInvalidCount) {
-                gameLog.Log("Indirect draw count exceeds GLsizei; using CPU for this view");
+                gameLog.Warning("Indirect draw count exceeds GLsizei; using CPU for this view");
                 loggedInvalidCount = true;
             }
             return false;
@@ -452,7 +452,7 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
         earlierError = true;
     static bool loggedEarlierError = false;
     if (earlierError && !loggedEarlierError) {
-        gameLog.Log("OpenGL error predates compute culling; cleared before dispatch validation");
+        gameLog.Warning("OpenGL error predates compute culling; cleared before dispatch validation");
         loggedEarlierError = true;
     }
     GLint previousProgram = 0, previousBuffer = 0;
@@ -526,7 +526,7 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
     if (!success) {
         if (visibility)
             visibility->clear();
-        gameLog.Log("Compute culling dispatch/readback failed; disabling compute culling");
+        gameLog.Warning("Compute culling dispatch/readback failed; disabling compute culling");
         shutdownComputeCulling();
     }
     return success;
@@ -564,7 +564,7 @@ bool IndirectCullingBatch::dispatch(std::span<const CullingItem> items, const Cu
     if (!buffer_) {
         static bool loggedAllocationFailure = false;
         if (!loggedAllocationFailure) {
-            gameLog.Log("Could not allocate indirect command buffer; using CPU for this view");
+            gameLog.Warning("Could not allocate indirect command buffer; using CPU for this view");
             loggedAllocationFailure = true;
         }
         return false;

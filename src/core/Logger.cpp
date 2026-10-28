@@ -95,6 +95,20 @@ LoggerState& loggerState() {
     return state;
 }
 
+const char* levelName(LogLevel level) {
+    switch (level) {
+    case LogLevel::Debug:
+        return "DEBUG";
+    case LogLevel::Info:
+        return "INFO";
+    case LogLevel::Warning:
+        return "WARNING";
+    case LogLevel::Error:
+        return "ERROR";
+    }
+    return "UNKNOWN";
+}
+
 } // namespace
 
 Logger gameLog("Game");
@@ -107,6 +121,27 @@ void Logger::Flush() {
 }
 
 void Logger::Log(const std::string& message) {
+    Log(LogLevel::Info, message);
+}
+
+void Logger::Log(LogLevel level, const std::string& message) {
     const auto elapsed = duration_cast<milliseconds>(system_clock::now() - startTime).count();
-    loggerState().enqueue("[" + std::to_string(elapsed) + "] " + moduleName_ + " " + message);
+    loggerState().enqueue("[" + std::to_string(elapsed) + "] [" + levelName(level) + "] " +
+                          moduleName_ + " " + message);
+}
+
+void Logger::Debug(const std::string& message) {
+    Log(LogLevel::Debug, message);
+}
+
+void Logger::Info(const std::string& message) {
+    Log(LogLevel::Info, message);
+}
+
+void Logger::Warning(const std::string& message) {
+    Log(LogLevel::Warning, message);
+}
+
+void Logger::Error(const std::string& message) {
+    Log(LogLevel::Error, message);
 }

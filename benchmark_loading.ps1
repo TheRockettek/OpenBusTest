@@ -118,7 +118,7 @@ try {
         }
 
         $objects = Select-String -Path $logPath `
-            -Pattern '^\[(\d+)\] Game All objects loaded\.'
+            -Pattern '^\[(\d+)\] (?:\[INFO\] )?Game All objects loaded\.'
         if (-not $objects) {
             throw "The object-load completion marker was not written for run $run. See $logPath."
         }

@@ -96,7 +96,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     static const bool materialBatchingEnabled =
         parseEnabledFlag(openbus::getEnvironment("OPENBUS_MATERIAL_BATCHING"));
     if (verboseObjLoadLogs) {
-        gameLog.Log("Loading OBJ model from path: " + part.objPath.generic_string());
+        gameLog.Debug("Loading OBJ model from path: " + part.objPath.generic_string());
     }
     if (!parsed) {
         return;
@@ -141,7 +141,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     }
     if (verboseObjLoadLogs && !animations.empty()) {
         for (const ModelAnimation& animation : animations) {
-            gameLog.Log(
+            gameLog.Debug(
                 "Model animation: " + part.objPath.filename().string() + " type=" + animation.type +
                 " variable=" + animation.variable + " scale=" + std::to_string(animation.scale) +
                 " origin=(" + std::to_string(animation.origin[0]) + ',' +
@@ -467,7 +467,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
         std::vector<const MaterialState*>& states =
             materialStatesByStemOccurrence[lower(statePath.stem().string())];
         if (state.materialIndex > 10000) {
-            gameLog.Log("Ignoring out-of-range material index " +
+            gameLog.Warning("Ignoring out-of-range material index " +
                         std::to_string(state.materialIndex));
             continue;
         }
@@ -652,7 +652,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     cacheReflectionTextureIndices(destination->back());
     if (verboseObjLoadLogs) {
         for (const Batch& batch : destination->back().batches) {
-            gameLog.Log("OBJ batch: " + part.objPath.filename().string() +
+            gameLog.Debug("OBJ batch: " + part.objPath.filename().string() +
                         " vertices=" + std::to_string(batch.vertexCount) +
                         " alpha=" + std::to_string(batch.alphaMode) +
                         " noZwrite=" + (batch.noZwrite ? "true" : "false") +

@@ -218,13 +218,13 @@ struct BusSimulation::Impl {
           maxCatchUpSteps(catchUpSteps) {
         openbus::rendering::TraceScope initializeTrace("physics", "BusSimulation::Impl.initialize");
         if (!std::isfinite(physicsHz) || physicsHz <= 0.0 || catchUpSteps <= 0) {
-            simulationLog.Log("Invalid physics timing configuration");
+            simulationLog.Error("Invalid physics timing configuration");
             throw std::invalid_argument(
                 "Physics rate must be finite and positive, and catch-up steps must be positive");
         }
         const double candidateFixedStep = 1.0 / physicsHz;
         if (!std::isfinite(candidateFixedStep) || candidateFixedStep <= 0.0) {
-            simulationLog.Log("Physics rate produced an invalid fixed step");
+            simulationLog.Error("Physics rate produced an invalid fixed step");
             throw std::invalid_argument(
                 "Physics rate is outside the representable fixed-step range");
         }
@@ -235,13 +235,13 @@ struct BusSimulation::Impl {
             throw std::invalid_argument("Wheel-to-static contact settings are invalid");
         }
         if (configuration.axles.empty()) {
-            simulationLog.Log("Bus configuration has no axles");
+            simulationLog.Error("Bus configuration has no axles");
             throw std::invalid_argument("A bus must define at least one axle");
         }
         if (configuration.rollingResistanceForceNewtons.has_value() &&
             (!std::isfinite(*configuration.rollingResistanceForceNewtons) ||
              *configuration.rollingResistanceForceNewtons < 0.0)) {
-            simulationLog.Log("Invalid rolling-resistance force");
+            simulationLog.Error("Invalid rolling-resistance force");
             throw std::invalid_argument("Rolling-resistance force must be finite and non-negative");
         }
         if (configuration.inverseMinimumTurnRadius > 0.0) {
@@ -263,12 +263,12 @@ struct BusSimulation::Impl {
         }
         for (const BusAxle& axle : configuration.axles) {
             if (axle.trackWidth <= 0.0 || std::abs(axle.position) > configuration.bodyHalfLength) {
-                simulationLog.Log("Bus axle geometry is outside the chassis");
+                simulationLog.Error("Bus axle geometry is outside the chassis");
                 throw std::invalid_argument("Bus axle geometry is outside the chassis");
             }
             const dReal wheelCenterOffset = axle.trackWidth * 0.5 - configuration.wheelHalfWidth;
             if (wheelCenterOffset <= 0.0) {
-                simulationLog.Log("Bus axle width is too small for configured wheel width");
+                simulationLog.Error("Bus axle width is too small for configured wheel width");
                 throw std::invalid_argument("Bus axle width must exceed wheel width");
             }
             corners.push_back({axle.position, wheelCenterOffset, axle.wheelDiameter * 0.5});
@@ -277,7 +277,7 @@ struct BusSimulation::Impl {
         const dReal componentMass = corners.size() * (WHEEL_MASS + 2.0 * KNUCKLE_MASS);
         const dReal minimumMass = componentMass + MINIMUM_CHASSIS_MASS;
         if (configuration.mass < minimumMass) {
-            simulationLog.Log("Configured bus mass is below the physics minimum; using " +
+            simulationLog.Warning("Configured bus mass is below the physics minimum; using " +
                               std::to_string(minimumMass) + " kg");
             configuration.mass = minimumMass;
         }
@@ -288,7 +288,7 @@ struct BusSimulation::Impl {
         const dReal chassisMass =
             configuration.mass - corners.size() * (WHEEL_MASS + 2.0 * KNUCKLE_MASS);
         if (chassisMass <= 0.0) {
-            simulationLog.Log("Bus mass is too low for configured wheel and suspension masses");
+            simulationLog.Error("Bus mass is too low for configured wheel and suspension masses");
             throw std::invalid_argument("Bus mass must exceed wheel and suspension masses");
         }
         dMassSetBoxTotal(&mass, chassisMass, configuration.collisionLength,
@@ -535,11 +535,11 @@ struct BusSimulation::Impl {
             if (shiftTimer <= 0.0 && engineRpm > UPSHIFT_RPM && currentGear + 1 < NUM_GEARS) {
                 ++currentGear;
                 shiftTimer = SHIFT_LOCKOUT;
-                simulationLog.Log("Upshifted to gear " + std::to_string(currentGear + 1));
+                simulationLog.Debug("Upshifted to gear " + std::to_string(currentGear + 1));
             } else if (shiftTimer <= 0.0 && engineRpm < DOWNSHIFT_RPM && currentGear > 0) {
                 --currentGear;
                 shiftTimer = SHIFT_LOCKOUT;
-                simulationLog.Log("Downshifted to gear " + std::to_string(currentGear + 1));
+                simulationLog.Debug("Downshifted to gear " + std::to_string(currentGear + 1));
             }
             shiftTimer = std::max(0.0, shiftTimer - fixedStep);
 
@@ -704,7 +704,7 @@ struct BusSimulation::Impl {
         if (accumulator >= fixedStep) {
             dropped = true;
             if (!dropReported) {
-                simulationLog.Log("Dropped accumulated simulation time after exceeding catch-up "
+                simulationLog.Warning("Dropped accumulated simulation time after exceeding catch-up "
                                   "limit. Dropped seconds: " +
                                   std::to_string(elapsedSeconds));
                 dropReported = true;

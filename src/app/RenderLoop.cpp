@@ -50,7 +50,7 @@ double positiveEnvironmentRate(const char* name, double defaultValue) {
         }
         return std::clamp(rate, 0.01, 1000.0);
     } catch (const std::exception&) {
-        gameLog.Log(std::string("Invalid ") + name + "; ignoring the setting");
+        gameLog.Warning(std::string("Invalid ") + name + "; ignoring the setting");
         return defaultValue;
     }
 }
@@ -69,7 +69,7 @@ double minimumObjectViewportFraction(const char* name) {
         }
         return percentage / 100.0;
     } catch (const std::exception&) {
-        gameLog.Log(std::string("Invalid ") + name +
+        gameLog.Warning(std::string("Invalid ") + name +
                     "; minimum object size culling is disabled for this view");
         return 0.0;
     }
@@ -140,7 +140,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
             scriptRateHz_ = rate;
         } catch (const std::exception&) {
             scriptRateHz_ = 0.0;
-            gameLog.Log("Invalid OPENBUS_SCRIPT_HZ; scripts will follow the render rate");
+            gameLog.Warning("Invalid OPENBUS_SCRIPT_HZ; scripts will follow the render rate");
         }
     }
     if (const char* hoverRate = openbus::getEnvironment("OPENBUS_HOVER_HZ")) {
@@ -153,9 +153,9 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
             const double rateHz = std::clamp(rate, 0.0, 1000.0);
             clickableHoverRefreshInterval_ = rateHz > 0.0 ? 1.0 / rateHz : 0.0;
         } catch (const std::invalid_argument&) {
-            gameLog.Log("Invalid OPENBUS_HOVER_HZ; using the default 75 ms hover interval");
+            gameLog.Warning("Invalid OPENBUS_HOVER_HZ; using the default 75 ms hover interval");
         } catch (const std::out_of_range&) {
-            gameLog.Log("OPENBUS_HOVER_HZ out of range; using the default 75 ms hover interval");
+            gameLog.Warning("OPENBUS_HOVER_HZ out of range; using the default 75 ms hover interval");
         }
     }
     if (clickableHoverRefreshInterval_ > 0.0) {
@@ -180,7 +180,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         gameLog.Log("Scripts follow the render rate");
     }
     if (!glfwInit()) {
-        gameLog.Log("Failed to initialize GLFW");
+        gameLog.Error("Failed to initialize GLFW");
         throw std::runtime_error("Failed to initialize GLFW");
     }
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -193,13 +193,13 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
 #endif
     window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
     if (!window_) {
-        gameLog.Log("OpenGL 4.3 context unavailable; retrying 3.3 with CPU culling");
+        gameLog.Warning("OpenGL 4.3 context unavailable; retrying 3.3 with CPU culling");
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
     }
     if (!window_) {
-        gameLog.Log("Failed to create OpenGL window");
+        gameLog.Error("Failed to create OpenGL window");
         glfwTerminate();
         throw std::runtime_error("Failed to create OpenGL window");
     }
@@ -253,10 +253,10 @@ RenderLoop::~RenderLoop() {
         try {
             std::unique_ptr<Vehicle> pendingVehicle = state.pendingVehicle.get();
         } catch (const std::exception& error) {
-            gameLog.Log("Map traffic vehicle loader failed during shutdown: " +
+            gameLog.Warning("Map traffic vehicle loader failed during shutdown: " +
                         std::string(error.what()));
         } catch (...) {
-            gameLog.Log("Map traffic vehicle loader failed during shutdown with an unknown error");
+            gameLog.Warning("Map traffic vehicle loader failed during shutdown with an unknown error");
         }
     }
     if (window_ != nullptr && mouseLookEnabled_) {
@@ -505,7 +505,7 @@ bool RenderLoop::AddTrafficVehicle(
             throw std::invalid_argument("Scheduled map bus passenger stop is invalid");
         }
         const auto logUnmatchedStop = [&] {
-            gameLog.Log("Scheduled passenger stop could not be matched to the bus route; "
+            gameLog.Warning("Scheduled passenger stop could not be matched to the bus route; "
                         "stopId=" +
                         std::to_string(stop.stopId) + " spline=" + std::to_string(stop.splineId) +
                         " path=" + std::to_string(stop.pathIndex) +
@@ -863,7 +863,7 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
         const std::filesystem::path resolvedPath =
             openbus::assets::resolveCaseInsensitivePath(omsiRoot / normalizedPath);
         if (!std::filesystem::is_regular_file(resolvedPath)) {
-            gameLog.Log("Map " + std::string(assetName) +
+            gameLog.Warning("Map " + std::string(assetName) +
                         " configuration is missing: " + resolvedPath.generic_string());
             return std::nullopt;
         }
@@ -880,8 +880,11 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
                                 static_cast<float>(ticket.value));
         }
         for (const ConfigurationDiagnostic& diagnostic : ticketPack.diagnostics.entries) {
-            gameLog.Log("Map ticket-pack warning line=" + std::to_string(diagnostic.line) + " [" +
-                        diagnostic.keyword + "] " + diagnostic.message);
+            gameLog.Log(
+                diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? LogLevel::Error
+                                                                                  : LogLevel::Warning,
+                "Map ticket-pack diagnostic line=" + std::to_string(diagnostic.line) + " [" +
+                    diagnostic.keyword + "] " + diagnostic.message);
         }
     }
     if (const auto currencyPath = resolveMapAsset(map.metadata.moneySystem, "currency")) {
@@ -894,8 +897,11 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
                                       currency.coins[index].modelPath);
         }
         for (const ConfigurationDiagnostic& diagnostic : currency.diagnostics.entries) {
-            gameLog.Log("Map currency warning line=" + std::to_string(diagnostic.line) + " [" +
-                        diagnostic.keyword + "] " + diagnostic.message);
+            gameLog.Log(
+                diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? LogLevel::Error
+                                                                                  : LogLevel::Warning,
+                "Map currency diagnostic line=" + std::to_string(diagnostic.line) + " [" +
+                    diagnostic.keyword + "] " + diagnostic.message);
         }
     }
     trafficSplineDebugBuilt_ = false;

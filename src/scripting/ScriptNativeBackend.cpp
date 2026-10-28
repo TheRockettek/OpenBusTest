@@ -600,7 +600,7 @@ bool ScriptRuntime::Impl::executeNativeFunction(const std::string& functionName,
             case OscOpcode::StringNoOp:
                 break;
             case OscOpcode::DebugString:
-                log("omsi_debug(" + nativePeekString() + ")");
+                log(LogLevel::Debug, "omsi_debug(" + nativePeekString() + ")");
                 break;
             case OscOpcode::StackDump:
                 break;
@@ -654,7 +654,7 @@ bool ScriptRuntime::Impl::tryInitializeNativeBackend() {
         std::shared_ptr<const OscProgram> program =
             cachedNativeProgram(sourcePath, error, compiledAnyScript);
         if (!program) {
-            scriptRuntimeLogger.Log("Native OSC backend falling back to Lua for " +
+            scriptRuntimeLogger.Warning("Native OSC backend falling back to Lua for " +
                                     sourcePath.string() + ": " + error);
             nativePrograms.clear();
             return false;

@@ -154,7 +154,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
     const auto tileStart = std::chrono::steady_clock::now();
     const int tileX = tileReference.x;
     const int tileY = tileReference.y;
-    gameLog.Log("Map content tile " + tileLabel(tileX, tileY) + ": " +
+    gameLog.Debug("Map content tile " + tileLabel(tileX, tileY) + ": " +
                 openbus::pathToUtf8(tileReference.textPath));
     TraceScope tileTrace("map", "MapRenderer.processTile");
     ++tilesProcessed;
@@ -164,7 +164,10 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
     const std::string tileName = tileLabel(tileX, tileY);
     for (const ConfigurationDiagnostic& diagnostic : tile.diagnostics.entries) {
         recordSkipped(skipped, "unimplemented map tile sections [" + diagnostic.keyword + "]",
-                      tileName + " line=" + std::to_string(diagnostic.line));
+                      tileName + " line=" + std::to_string(diagnostic.line), 1,
+                      diagnostic.severity == ConfigurationDiagnostic::Severity::Error
+                          ? LogLevel::Error
+                          : LogLevel::Warning);
     }
     const auto reportVariableParent = [&](int objectId, const std::optional<int>& parentId) {
         if (parentId.has_value()) {
@@ -450,7 +453,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
         // Editor-only junctions still own the schedules referenced by visible heads.
         if (editorOnlySceneryAssets.contains(assetKey)) {
             recordSkipped(skipped, "map scenery placements marked [onlyeditor]",
-                          description + " config=" + openbus::pathToUtf8(configPath.filename()));
+                          description + " config=" + openbus::pathToUtf8(configPath.filename()), 1,
+                          LogLevel::Info);
             return;
         }
         if (batchIndexes.empty()) {
@@ -584,7 +588,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
     for (const std::string& profileKey : preparedRoads.editorOnlyProfileKeys) {
         if (editorOnlySplineProfiles.insert(profileKey).second) {
             recordSkipped(skipped, "editor-only spline profiles",
-                          openbus::pathToUtf8(openbus::pathFromUtf8(profileKey).filename()));
+                          openbus::pathToUtf8(openbus::pathFromUtf8(profileKey).filename()), 1,
+                          LogLevel::Info);
         }
     }
     for (const auto& [path, image] : preparedRoads.decodedTextures) {
@@ -596,7 +601,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
     for (auto& [batchKey, geometry] : preparedRoads.geometryByBatch) {
         roadVertices.emplace(batchKey, std::move(geometry));
     }
-    gameLog.Log("Map content tile loaded: " + tileName +
+    gameLog.Debug("Map content tile loaded: " + tileName +
                 "; loaded tiles=" + std::to_string(tilesProcessed) +
                 ", scenery=" + std::to_string(sceneryPlacementsParsed) +
                 ", splines=" + std::to_string(splinePlacementsParsed) +

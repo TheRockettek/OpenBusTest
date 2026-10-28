@@ -153,7 +153,7 @@ bool loadOpenGLFunctions() {
         pglBindFramebuffer && pglDeleteFramebuffers && pglFramebufferTexture2D &&
         pglCheckFramebufferStatus;
     if (!available) {
-        gameLog.Log("Failed to load required OpenGL VBO functions");
+        gameLog.Error("Failed to load required OpenGL VBO functions");
     }
     return available;
 }

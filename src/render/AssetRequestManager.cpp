@@ -239,9 +239,9 @@ void AssetRequestManager::startTextureRequest(const std::shared_ptr<TextureCache
             try {
                 loadTextureRequest(request);
             } catch (const std::exception& error) {
-                gameLog.Log("Texture worker failed: " + std::string(error.what()));
+                gameLog.Error("Texture worker failed: " + std::string(error.what()));
             } catch (...) {
-                gameLog.Log("Texture worker failed with an unknown error");
+                gameLog.Error("Texture worker failed with an unknown error");
             }
             std::lock_guard<std::mutex> lock(request->mutex);
             request->complete = true;
@@ -253,7 +253,7 @@ void AssetRequestManager::startTextureRequest(const std::shared_ptr<TextureCache
         }
         enqueue([task] { (*task)(); });
     } catch (const std::exception& error) {
-        gameLog.Log("Failed to start texture worker: " + std::string(error.what()));
+        gameLog.Error("Failed to start texture worker: " + std::string(error.what()));
         std::lock_guard<std::mutex> lock(entry->request->mutex);
         entry->request->task = {};
         entry->request->complete = true;
@@ -338,13 +338,13 @@ void AssetRequestManager::requestDxt5Fallback(const std::shared_ptr<TextureReque
                     std::lock_guard<std::mutex> lock(request->mutex);
                     request->image = std::make_shared<Image>(std::move(image));
                 } else {
-                    gameLog.Log("DXT5 fallback decode failed: " + openbus::pathToUtf8(path));
+                    gameLog.Warning("DXT5 fallback decode failed: " + openbus::pathToUtf8(path));
                 }
             } catch (const std::exception& error) {
-                gameLog.Log("DXT5 fallback decode failed for " + openbus::pathToUtf8(path) + ": " +
+                gameLog.Warning("DXT5 fallback decode failed for " + openbus::pathToUtf8(path) + ": " +
                             error.what());
             } catch (...) {
-                gameLog.Log("DXT5 fallback decode failed for " + openbus::pathToUtf8(path) +
+                gameLog.Warning("DXT5 fallback decode failed for " + openbus::pathToUtf8(path) +
                             " with an unknown error");
             }
             std::lock_guard<std::mutex> lock(request->mutex);
@@ -357,7 +357,7 @@ void AssetRequestManager::requestDxt5Fallback(const std::shared_ptr<TextureReque
         }
         enqueue([task] { (*task)(); });
     } catch (const std::exception& error) {
-        gameLog.Log("Failed to start DXT5 fallback decoder: " + std::string(error.what()));
+        gameLog.Warning("Failed to start DXT5 fallback decoder: " + std::string(error.what()));
         std::lock_guard<std::mutex> lock(request->mutex);
         request->fallbackTask = {};
         request->fallbackDecodeComplete = true;

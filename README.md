@@ -30,6 +30,11 @@ including bus model CFG keywords selected by `OPENBUS_MODEL_CONFIG`, see the
 
 Startup progress is written to the console and `game.log`, including configuration
 loading, renderer initialization, map phases, and each terrain/index/content tile.
+Each log entry includes elapsed milliseconds, a severity (`DEBUG`, `INFO`,
+`WARNING`, or `ERROR`), and its module, for example
+`[123] [WARNING] Game Texture missing`. All levels are written to both outputs;
+severity labels do not filter messages. Set `OPENBUS_LOG_FILE` to change the log
+file path (the file is replaced at startup).
 Tile messages include the current file and counts; phase summaries and content
 tile completions include elapsed milliseconds. If loading appears stuck after an
 unhandled-configuration-tag warning, check the subsequent progress messages for

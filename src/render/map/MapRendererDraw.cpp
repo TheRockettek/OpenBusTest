@@ -77,7 +77,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
         } catch (const std::exception& error) {
             impl_->pendingHumanTrafficModels.erase(cacheKey);
             impl_->failedHumanTrafficModels.insert(cacheKey);
-            gameLog.Log("Could not asynchronously load human traffic model '" +
+            gameLog.Warning("Could not asynchronously load human traffic model '" +
                         openbus::pathToUtf8(humanConfigPath) + "': " + error.what());
             return;
         }
@@ -122,7 +122,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             }
             batch.material.textured = batch.material.texture != 0;
         } catch (const std::exception& error) {
-            gameLog.Log("Could not asynchronously load human model texture " +
+            gameLog.Warning("Could not asynchronously load human model texture " +
                         openbus::pathToUtf8(texturePath) + ": " + error.what());
         }
         imageRequest = {};
@@ -219,7 +219,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
     impl_->nextOcclusionQuery = 0;
     if (depthOcclusionQueriesRequested() && !depthOcclusionQueriesAvailable() &&
         !impl_->occlusionQueryUnavailableLogged) {
-        gameLog.Log("Depth occlusion queries unavailable; continuing without query culling");
+        gameLog.Warning("Depth occlusion queries unavailable; continuing without query culling");
         impl_->occlusionQueryUnavailableLogged = true;
     }
     if (depthOcclusionQueries && !impl_->occlusionQueryEnabledLogged) {
@@ -478,7 +478,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             if (newQuery != 0) {
                 impl_->occlusionQueries.push_back(newQuery);
             } else if (!impl_->occlusionQueryAllocationLogged) {
-                gameLog.Log("Could not allocate a depth occlusion query; "
+                gameLog.Warning("Could not allocate a depth occlusion query; "
                             "rendering candidates conservatively");
                 impl_->occlusionQueryAllocationLogged = true;
             }
@@ -507,7 +507,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         if (proxySubmitted) {
             pglBeginConditionalRender(query, queryWait);
         } else if (!impl_->occlusionProxyFailureLogged) {
-            gameLog.Log("Could not submit an occlusion proxy; rendering candidate conservatively");
+            gameLog.Warning("Could not submit an occlusion proxy; rendering candidate conservatively");
             impl_->occlusionProxyFailureLogged = true;
         }
         glColorMask(state->colorMask[0], state->colorMask[1], state->colorMask[2],
@@ -727,7 +727,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         }
         if (texturePath.empty()) {
             impl_->unavailableSceneryTextures.insert(textureKey);
-            gameLog.Log("Map scenery free texture not found: " + selectedTexture);
+            gameLog.Warning("Map scenery free texture not found: " + selectedTexture);
             return std::nullopt;
         }
         auto texture = impl_->dynamicSceneryTextures.find(textureKey);
@@ -738,7 +738,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 texture = impl_->dynamicSceneryTextures.emplace(textureKey, loadedTexture).first;
             } catch (const std::exception& error) {
                 impl_->unavailableSceneryTextures.insert(textureKey);
-                gameLog.Log("Could not load map scenery free texture " +
+                gameLog.Warning("Could not load map scenery free texture " +
                             openbus::pathToUtf8(texturePath) + ": " + error.what());
                 return std::nullopt;
             }

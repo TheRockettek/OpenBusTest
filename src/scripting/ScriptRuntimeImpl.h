@@ -213,6 +213,7 @@ struct ScriptRuntime::Impl {
     }
 
     void log(const std::string& message) const;
+    void log(LogLevel level, const std::string& message) const;
 
     static int panicHandler(lua_State* lua);
 

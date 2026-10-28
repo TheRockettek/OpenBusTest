@@ -35,6 +35,7 @@ endforeach()
 add_test(NAME OpenBusPerfTraceDisabledProbe COMMAND OpenBusPerfTraceDisabledProbe)
 
 # Core / configuration
+openbus_add_probe(OpenBusLoggerProbe LoggerProbe.cpp LIBS openbus_core)
 openbus_add_probe(OpenBusVariablesProbe VariablesProbe.cpp LIBS openbus_core)
 openbus_add_probe(OpenBusConfigurationParserProbe ConfigurationParserProbe.cpp
     LIBS openbus_config)

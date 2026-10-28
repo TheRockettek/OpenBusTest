@@ -723,7 +723,7 @@ GLuint compileShader(GLenum type, const char* source) {
     std::string log(static_cast<std::size_t>(std::max(logLength, 1)), '\0');
     GLsizei written = 0;
     pglGetShaderInfoLog(shader, static_cast<GLsizei>(log.size()), &written, log.data());
-    gameLog.Log("OpenGL shader compilation failed: " + log);
+    gameLog.Error("OpenGL shader compilation failed: " + log);
     pglDeleteShader(shader);
     return 0;
 }
@@ -756,7 +756,7 @@ GLuint createProgram(const char* vertexSource, const char* fragmentSource) {
     std::string log(static_cast<std::size_t>(std::max(logLength, 1)), '\0');
     GLsizei written = 0;
     pglGetProgramInfoLog(program, static_cast<GLsizei>(log.size()), &written, log.data());
-    gameLog.Log("OpenGL shader link failed: " + log);
+    gameLog.Error("OpenGL shader link failed: " + log);
     pglDeleteProgram(program);
     return 0;
 }
@@ -1207,7 +1207,7 @@ bool initializeCoreRenderer() {
         const char* cullingBackend = openbus::getEnvironment("OPENBUS_CULLING_BACKEND");
         const std::string_view backend = cullingBackend != nullptr ? cullingBackend : "";
         if (backend == "compute-readback") {
-            gameLog.Log("compute-readback culling is retired; using CPU visibility tests. "
+            gameLog.Warning("compute-readback culling is retired; using CPU visibility tests. "
                         "Set OPENBUS_CULLING_BACKEND=compute-indirect for GPU culling");
         }
         initializeComputeCulling(false, indirectCullingRequested(backend));
@@ -1586,7 +1586,7 @@ bool drawStaticPrimitives(StaticPrimitiveBuffer& cache,
                           vertices.data(), GL_STATIC_DRAW);
         }
         if (glGetError() != GL_NO_ERROR) {
-            gameLog.Log("OpenGL error during or before static primitive upload; "
+            gameLog.Warning("OpenGL error during or before static primitive upload; "
                         "skipping this primitive and retrying the upload later");
             return false;
         }

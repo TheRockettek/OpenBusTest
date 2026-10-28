@@ -86,13 +86,14 @@ void inheritVehicleKeyBindingsFromOmsi(std::vector<VehicleKeyBinding>& bindings)
     const std::filesystem::path configPath = omsiRootPath() / "Inputs" / "keyboard.cfg";
     std::ifstream input(configPath);
     if (!input) {
-        gameLog.Log("OMSI keybindings not found, using OpenBus defaults: " +
+        gameLog.Warning("OMSI keybindings not found, using OpenBus defaults: " +
                     configPath.generic_string());
         return;
     }
 
     const bool inherited = openbus::input::inheritVehicleKeyBindings(input, bindings);
-    gameLog.Log(std::string(inherited ? "Inherited OMSI vehicle keybindings from "
+    gameLog.Log(inherited ? LogLevel::Info : LogLevel::Warning,
+                std::string(inherited ? "Inherited OMSI vehicle keybindings from "
                                       : "No supported OMSI vehicle keybindings in ") +
                 configPath.generic_string());
 }

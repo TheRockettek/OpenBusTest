@@ -612,7 +612,7 @@ bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
     static const bool verboseTextureReadLogs =
         parseEnabledFlag(openbus::getEnvironment("OPENBUS_VERBOSE_TEXTURE_READ"));
     if (verboseTextureReadLogs) {
-        gameLog.Log("Reading image from path: " + openbus::pathToUtf8(path));
+        gameLog.Debug("Reading image from path: " + openbus::pathToUtf8(path));
     }
     const std::string extension = lower(path.extension().string());
     if (extension == ".surf") {

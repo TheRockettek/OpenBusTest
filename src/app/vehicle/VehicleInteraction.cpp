@@ -503,7 +503,7 @@ void Vehicle::logClickableDebugInfo(RenderViewContext context) const {
     for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
         const DisplayPart& part = displayLists[partIndex];
         if (!part.mouseEvent.empty()) {
-            gameLog.Log(clickableDebugDescription(part, partIndex, context));
+            gameLog.Debug(clickableDebugDescription(part, partIndex, context));
         }
     }
 }

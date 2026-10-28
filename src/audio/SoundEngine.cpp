@@ -242,12 +242,12 @@ struct SoundEngine::Backend {
         dopplerEnabled = dopplerEnabledFromEnvironment();
         device = alcOpenDevice(nullptr);
         if (device == nullptr) {
-            soundLog.Log("Unable to open an OpenAL audio device");
+            soundLog.Error("Unable to open an OpenAL audio device");
             return;
         }
         context = alcCreateContext(device, nullptr);
         if (context == nullptr || alcMakeContextCurrent(context) == ALC_FALSE) {
-            soundLog.Log("Unable to create an OpenAL audio context");
+            soundLog.Error("Unable to create an OpenAL audio context");
             if (context != nullptr) {
                 alcDestroyContext(context);
                 context = nullptr;
@@ -316,13 +316,13 @@ struct SoundEngine::Backend {
                                            const SoundPlaybackParameters& parameters) {
         const std::shared_ptr<Clip> clip = loadClipLocked(path);
         if (!clip) {
-            soundLog.Log("Unable to decode sound: " + path.string());
+            soundLog.Warning("Unable to decode sound: " + path.string());
             return 0;
         }
         ALuint source = 0;
         alGenSources(1, &source);
         if (source == 0) {
-            soundLog.Log("Unable to create OpenAL sound source");
+            soundLog.Warning("Unable to create OpenAL sound source");
             return 0;
         }
         alSourcei(source, AL_BUFFER, static_cast<ALint>(clip->buffer));
@@ -341,7 +341,7 @@ struct SoundEngine::Backend {
         alSourcePlay(source);
         if (alGetError() != AL_NO_ERROR) {
             alDeleteSources(1, &source);
-            soundLog.Log("Unable to start OpenAL sound source: " + path.string());
+            soundLog.Warning("Unable to start OpenAL sound source: " + path.string());
             return 0;
         }
         SoundPlaybackHandle handle = nextHandle++;

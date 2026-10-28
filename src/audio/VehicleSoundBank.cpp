@@ -121,7 +121,7 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
 
     openbus::config::Reader reader(configPath);
     if (!reader.isOpen()) {
-        soundLog.Log("Unable to open sound configuration: " + configPath.string());
+        soundLog.Warning("Unable to open sound configuration: " + configPath.string());
         return;
     }
 
@@ -322,7 +322,7 @@ void VehicleSoundBank::load(const std::filesystem::path& configPath) {
                 }
             }
             current.conditions.push_back({{}, 0.0F, -1});
-            soundLog.Log("Invalid [conditionSingle] in " + configPath.string());
+            soundLog.Warning("Invalid [conditionSingle] in " + configPath.string());
             updateCurrentTriggers();
             continue;
         }
@@ -418,7 +418,7 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
     const auto found = triggers_.find(triggerName);
     if (found == triggers_.end()) {
         if (warnedUnknownTriggers_.insert(triggerName).second) {
-            soundLog.Log("Skipping unknown sound trigger: " + name);
+            soundLog.Warning("Skipping unknown sound trigger: " + name);
         }
         return;
     }
@@ -493,7 +493,7 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
         // Keep the existing silent-loop behavior. A live KeepPlaying one-shot must
         // still receive parameter changes, including a gain that has reached zero.
         if (gain <= 0.0 && definition.loop) {
-            soundLog.Log("Skipping silent sound: trigger=" + name +
+            soundLog.Debug("Skipping silent sound: trigger=" + name +
                          " gain=" + std::to_string(gain));
             continue;
         }
@@ -524,11 +524,11 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
             }
         }
         if (gain <= 0.0) {
-            soundLog.Log("Skipping silent sound: trigger=" + name +
+            soundLog.Debug("Skipping silent sound: trigger=" + name +
                          " gain=" + std::to_string(gain));
             continue;
         }
-        soundLog.Log("Sound playback requested: trigger=" + name + " file=" + file.string() +
+        soundLog.Debug("Sound playback requested: trigger=" + name + " file=" + file.string() +
                      " gain=" + std::to_string(gain) +
                      " loop=" + (definition.loop ? "true" : "false"));
         const SoundPlaybackHandle handle = playback.play(file, definition.loop, parameters);

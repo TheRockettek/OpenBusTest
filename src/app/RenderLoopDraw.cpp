@@ -1265,7 +1265,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 pendingMouseClickX_ * framebufferScaleX, pendingMouseClickY_ * framebufferScaleY,
                 framebufferWidth_, framebufferHeight_, interactionContext);
             if (clickableDebugOverlay_) {
-                gameLog.Log("Mouse press picked event=" +
+                gameLog.Debug("Mouse press picked event=" +
                             (event.empty() ? std::string("none") : event));
             }
             mouseDragDiagnosticLogged_ = false;
@@ -1308,7 +1308,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                 description << " cp_rollof_pos="
                                             << playerVehicle_->variables.get("cp_rollof_pos");
                             }
-                            gameLog.Log(description.str());
+                            gameLog.Debug(description.str());
                             return;
                         }
                         playerVehicle_->scripts->invokeMouseDrag(event, deltaX, deltaY, x, y);
@@ -2884,7 +2884,7 @@ void RenderLoop::captureViews(const BusSimulation& simulation, const World& worl
         {
             TraceScope phase("capture", "RenderLoop::captureViews.save");
             if (!openbus::rendering::saveFramebufferPng(path, width, height)) {
-                gameLog.Log("Failed to save screenshot: " + path.string());
+                gameLog.Error("Failed to save screenshot: " + path.string());
             } else {
                 gameLog.Log("Saved screenshot: " + path.string());
             }

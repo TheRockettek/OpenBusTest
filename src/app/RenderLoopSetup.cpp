@@ -124,7 +124,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
             selectedDefinition = openbus::map::loadMapDefinition(maps[selectedMapIndex]);
         } catch (const std::exception& error) {
             mapLoadError = error.what();
-            gameLog.Log("Unable to load map '" + pathToUtf8(maps[selectedMapIndex]) +
+            gameLog.Error("Unable to load map '" + pathToUtf8(maps[selectedMapIndex]) +
                         "': " + error.what());
         }
     };
@@ -172,7 +172,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                 restoreSetupDialogSize = true;
                 mapLoadError = error.what();
                 selectedDefinition = selection.mapDefinition;
-                gameLog.Log("Initial map tile loading failed: " + mapLoadError);
+                gameLog.Error("Initial map tile loading failed: " + mapLoadError);
             }
             if (waitingForInitialMapWindow) {
                 ImGui::SetNextWindowSize(ImVec2(480.0F, 120.0F), ImGuiCond_Always);
@@ -305,7 +305,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
             } catch (const std::exception& error) {
                 mapLoadError = error.what();
                 selectedDefinition = selection.mapDefinition;
-                gameLog.Log("Unable to start map loading: " + mapLoadError);
+                gameLog.Error("Unable to start map loading: " + mapLoadError);
             }
         }
         ImGui::EndDisabled();
@@ -445,7 +445,7 @@ void RenderLoop::loadMapVehicleOptions() {
     } catch (const std::exception& error) {
         mapVehicleConfig_.reset();
         mapVehicleLoadError_ = error.what();
-        gameLog.Log("Unable to load bus '" +
+        gameLog.Error("Unable to load bus '" +
                     pathToUtf8(vehicleCatalog_[selectedMapVehicleIndex_].configurationPath) +
                     "': " + error.what());
     }

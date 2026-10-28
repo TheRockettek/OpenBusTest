@@ -7,7 +7,7 @@ int ScriptRuntime::Impl::panicHandler(lua_State* lua) {
     const std::string detail = message ? message : "non-string Lua error object";
     const std::string output =
         "Lua panic: " + detail + " (stack=" + std::to_string(lua_gettop(lua)) + ")";
-    scriptRuntimeLogger.Log(output);
+    scriptRuntimeLogger.Error(output);
     std::cerr << output << '\n';
     return 0;
 }
@@ -192,7 +192,7 @@ int ScriptRuntime::Impl::soundTriggerFile(lua_State* lua) {
 
 int ScriptRuntime::Impl::debug(lua_State* lua) {
     Impl* runtime = runtimeFor(lua);
-    runtime->log("omsi_debug(" + std::string(luaL_checkstring(lua, 1)) + ")");
+    runtime->log(LogLevel::Debug, "omsi_debug(" + std::string(luaL_checkstring(lua, 1)) + ")");
     return 0;
 }
 

@@ -45,12 +45,12 @@ void logVariableSet(const std::string& scope, const Variables& variables) {
         numericNames.push_back(name);
     }
     std::sort(numericNames.begin(), numericNames.end());
-    gameLog.Log(scope + " numeric variables: " + std::to_string(numericNames.size()));
+    gameLog.Debug(scope + " numeric variables: " + std::to_string(numericNames.size()));
     for (const std::string& name : numericNames) {
         std::ostringstream line;
         line << scope << '.' << name << " = " << std::setprecision(12)
              << variables.numericValues().at(name);
-        gameLog.Log(line.str());
+        gameLog.Debug(line.str());
     }
 
     std::vector<std::string> stringNames;
@@ -60,9 +60,9 @@ void logVariableSet(const std::string& scope, const Variables& variables) {
         stringNames.push_back(name);
     }
     std::sort(stringNames.begin(), stringNames.end());
-    gameLog.Log(scope + " string variables: " + std::to_string(stringNames.size()));
+    gameLog.Debug(scope + " string variables: " + std::to_string(stringNames.size()));
     for (const std::string& name : stringNames) {
-        gameLog.Log(scope + "." + name + " = " + variables.stringValues().at(name));
+        gameLog.Debug(scope + "." + name + " = " + variables.stringValues().at(name));
     }
 }
 
@@ -126,7 +126,7 @@ void RenderLoop::logDrivetrainDiagnosticVariables() const {
     for (const char* name : variableNames) {
         line << ' ' << name << '=' << playerVehicle_->variables.get(name);
     }
-    gameLog.Log(line.str());
+    gameLog.Debug(line.str());
 }
 
 void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double throttle,
@@ -273,7 +273,7 @@ void RenderLoop::finishPendingTrafficVehicleLoads() {
         } catch (const std::exception& error) {
             state.pendingInitializationVehicle.reset();
             state.vehicleLoadFailed = true;
-            gameLog.Log("Could not asynchronously load map traffic vehicle '" +
+            gameLog.Warning("Could not asynchronously load map traffic vehicle '" +
                         state.actor.modelPath + "': " + error.what());
         }
     }
@@ -642,7 +642,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     const auto spawnPose =
                         sampleMapTrafficRoute(state.actor.route, state.spawnedAtDistanceMeters,
                                               state.actor.lateralOffsetMeters);
-                    gameLog.Log("Map road AI vehicle made no route progress from spawn spline=" +
+                    gameLog.Warning("Map road AI vehicle made no route progress from spawn spline=" +
                                 std::to_string(spawnPose ? spawnPose->splineId : 0) +
                                 "; rejecting that spawn candidate and retrying elsewhere: " +
                                 state.actor.modelPath);
@@ -853,7 +853,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 !lastMainCameraPoseValid_ ||
                 std::abs(cameraDistanceMeters -
                          state.lastScheduledAdmissionDiagnosticCameraDistanceMeters) >= 50.0) {
-                gameLog.Log("Scheduled map AI bus departure waiting: spline=" +
+                gameLog.Debug("Scheduled map AI bus departure waiting: spline=" +
                             std::to_string(entryPose.splineId) + ", hidden=" +
                             std::to_string(entryHidden) + ", clear=" + std::to_string(entryClear) +
                             ", activeTile=" + std::to_string(entryOnActiveTile) +
@@ -1070,7 +1070,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         if (trafficSpawnDiagnosticsEnabled_) {
             trafficSpawnDiagnosticElapsedSeconds_ += trafficInputElapsedSeconds;
             if (trafficSpawnDiagnosticElapsedSeconds_ >= 1.0) {
-                gameLog.Log(
+                gameLog.Debug(
                     "Map road AI spawn admission: target=" +
                     std::to_string(targetRoadTrafficCount_) +
                     ", queued=" + std::to_string(trafficVehicles_.size()) +
@@ -1377,7 +1377,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 trafficVehicle.actor.distanceMeters -
                         trafficVehicle.lastScheduledProgressDiagnosticDistanceMeters >=
                     100.0) {
-                gameLog.Log("Scheduled map AI bus route progress: timetable minute=" +
+                gameLog.Debug("Scheduled map AI bus route progress: timetable minute=" +
                             std::to_string(trafficVehicle.lastScheduledDepartureMinutes) +
                             ", route distance=" +
                             std::to_string(trafficVehicle.actor.distanceMeters -
@@ -1427,7 +1427,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                         ", speed=" + std::to_string(other.speedMetersPerSecond) +
                         " m/s, its block reason=" + mapTrafficBlockReasonName(other.blockReason);
                 }
-                gameLog.Log(
+                gameLog.Warning(
                     std::string("Map ") + (trafficVehicle.isBus ? "AI bus" : "road AI vehicle") +
                     " appears stuck after " +
                     std::to_string(trafficVehicle.stoppedSecondsSinceProgress) +
@@ -1601,7 +1601,7 @@ void RenderLoop::updateScripts() {
             lastScriptDiagnosticTime_ = diagnosticTime;
         } else if (diagnosticTime - lastScriptDiagnosticTime_ >= 1.0) {
             if (droppedScriptTicksSinceDiagnostic_ > 0) {
-                gameLog.Log("Script scheduler executed " +
+                gameLog.Debug("Script scheduler executed " +
                             std::to_string(scriptTicksSinceDiagnostic_) + " ticks and dropped " +
                             std::to_string(droppedScriptTicksSinceDiagnostic_) + " ticks (" +
                             std::to_string(droppedScriptTimeSinceDiagnostic_) +

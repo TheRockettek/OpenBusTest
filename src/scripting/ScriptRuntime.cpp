@@ -188,7 +188,7 @@ void ScriptRuntime::invokeEntryPoint(const std::string& functionName) {
         const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                                   : impl_->invoke(functionName.c_str());
         if (!invoked) {
-            impl_->log("warning: entry point " + functionName + " not found");
+            impl_->log(LogLevel::Warning, "warning: entry point " + functionName + " not found");
         }
     }
 }
@@ -202,8 +202,8 @@ void ScriptRuntime::invokeSystemTrigger(const std::string& triggerName) {
         const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                                   : impl_->invoke(functionName.c_str());
         if (!invoked) {
-            impl_->log("warning: system trigger " + triggerName + " -> " + functionName +
-                       " not found");
+            impl_->log(LogLevel::Warning, "warning: system trigger " + triggerName + " -> " +
+                                              functionName + " not found");
         }
     }
 }
@@ -223,8 +223,9 @@ void ScriptRuntime::invokeInputEvent(const std::string& keyName, bool pressed) {
         const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                                   : impl_->invoke(functionName.c_str());
         if (!invoked) {
-            impl_->log("warning: key event " + normalized + (pressed ? " pressed" : " released") +
-                       " -> " + functionName + " not found");
+            impl_->log(LogLevel::Warning, "warning: key event " + normalized +
+                                              (pressed ? " pressed" : " released") + " -> " +
+                                              functionName + " not found");
         }
     }
 }
@@ -245,7 +246,7 @@ void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool presse
                                        : impl_->invoke(functionName.c_str());
         if (!invoked) {
             if (logEvent && hasScriptEntryPoint(functionName)) {
-                impl_->log("warning: key binding " + normalized +
+                impl_->log(LogLevel::Warning, "warning: key binding " + normalized +
                            (pressed ? " pressed" : " released") + " -> " + functionName +
                            " not found");
             }
@@ -269,7 +270,8 @@ void ScriptRuntime::invokeMouseEvent(const std::string& eventName) {
         const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                                   : impl_->invoke(functionName.c_str());
         if (!invoked) {
-            impl_->log("warning: mouse event " + normalized + " -> " + functionName + " not found");
+            impl_->log(LogLevel::Warning, "warning: mouse event " + normalized + " -> " +
+                                              functionName + " not found");
         } else {
             // impl_->log("trigger ran: " + functionName + " (mouse event " + normalized + ")");
         }
@@ -316,8 +318,8 @@ void ScriptRuntime::invokeMouseRelease(const std::string& eventName) {
         const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                                   : impl_->invoke(functionName.c_str());
         if (!invoked) {
-            impl_->log("warning: mouse release " + normalized + " -> " + functionName +
-                       " not found");
+            impl_->log(LogLevel::Warning, "warning: mouse release " + normalized + " -> " +
+                                              functionName + " not found");
         } else {
             // impl_->log("trigger ran: " + functionName + " (mouse release " + normalized + ")");
         }
@@ -361,7 +363,8 @@ void ScriptRuntime::invokeMouseDrag(const std::string& eventName, float deltaX, 
         const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                                   : impl_->invoke(functionName.c_str());
         if (!invoked) {
-            impl_->log("warning: mouse drag " + normalized + " -> " + functionName + " not found");
+            impl_->log(LogLevel::Warning, "warning: mouse drag " + normalized + " -> " +
+                                              functionName + " not found");
         }
     }
 }

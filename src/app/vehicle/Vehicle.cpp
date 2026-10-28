@@ -26,7 +26,7 @@ void Vehicle::updateScripts(bool isAiVehicle) {
         const std::size_t scriptErrorCount = scripts->errors().size();
         scripts->update(isAiVehicle);
         for (std::size_t index = scriptErrorCount; index < scripts->errors().size(); ++index) {
-            gameLog.Log("Lua frame error: " + scripts->errors()[index]);
+            gameLog.Error("Lua frame error: " + scripts->errors()[index]);
         }
     }
 }
@@ -41,7 +41,7 @@ Vehicle::DeferredTrafficInitializationStep Vehicle::finishDeferredTrafficInitial
         {
             TraceScope definitionTrace("traffic", "deferredTraffic.loadDefinition");
             for (const std::string& error : scripts->errors()) {
-                gameLog.Log("Lua script error: " + error);
+                gameLog.Error("Lua script error: " + error);
             }
             load(*definition);
         }
@@ -49,7 +49,7 @@ Vehicle::DeferredTrafficInitializationStep Vehicle::finishDeferredTrafficInitial
             TraceScope scriptsTrace("traffic", "deferredTraffic.initializeScripts");
             scripts->initialize();
             for (const std::string& error : scripts->errors()) {
-                gameLog.Log("Lua initialization error: " + error);
+                gameLog.Error("Lua initialization error: " + error);
             }
             scripts->update(false);
         }
