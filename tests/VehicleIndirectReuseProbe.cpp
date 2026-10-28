@@ -51,6 +51,7 @@ int main() {
         Vehicle::Batch transparent;
         transparent.vertexCount = 3;
         transparent.alphaMode = 2;
+        transparent.baseMaterial.alphaMode = 2;
         transparent.color = {0, 1, 0};
         const std::array<Vehicle::Vertex, 3> vertices = {{
             {-1, -1, -10, 0, 0, 0, 0, 0, 1},
@@ -202,6 +203,76 @@ int main() {
         }
         vehicle.lodThresholds.clear();
         vehicle.displayLists[0].lodIndex = -1;
+        Vehicle::DisplayPart farPart{};
+        farPart.viewpoint = 0;
+        farPart.lodIndex = -1;
+        farPart.center = {0, 0, -18};
+        farPart.size = {2, 2, 2};
+        farPart.radius = 1;
+        farPart.batches.push_back(vehicle.displayLists[0].batches[1]);
+        farPart.batches[0].bufferTracked = true;
+        vehicle.displayLists.push_back(std::move(farPart));
+        auto& changingBatch = vehicle.displayLists[0].batches[0];
+        auto transparentItem = std::make_shared<ModelMaterialState>();
+        transparentItem->alphaMode = 2;
+        ModelMaterialState::TextureChange change;
+        change.activationVariable = "probe_material";
+        change.items.push_back(transparentItem);
+        changingBatch.baseMaterial.textureChanges = {change};
+        changingBatch.textureChanges = {change};
+
+        for (bool gpu : {false, true}) {
+            initializeComputeCulling(false, gpu);
+            setModelViewMatrix(identityMatrix());
+            vehicle.variables.set("probe_material", 0.0);
+            vehicle.prepareFrameVisibility(ViewpointContext::PlayerExterior, 64, 64, 0.0);
+            draw(VehicleRenderPass::Opaque);
+            const auto preparedGeneration = vehicle.viewDepthGeneration;
+            if (vehicle.opaquePartsScratch.size() != 1 ||
+                vehicle.transparentBatchesScratch.size() != 2 ||
+                vehicle.transparentBatchesScratch[0].part != &vehicle.displayLists[1] ||
+                vehicle.transparentBatchesScratch[1].part != &vehicle.displayLists[0]) {
+                std::cerr << "Initial opaque/transparent classification or sorting failed\n";
+                passed = false;
+            }
+            draw(VehicleRenderPass::Transparent);
+            if (vehicle.viewDepthGeneration != preparedGeneration) {
+                std::cerr << "Same-view transparent pass did not reuse prepared lists\n";
+                passed = false;
+            }
+
+            vehicle.variables.set("probe_material", 1.0);
+            vehicle.prepareFrameVisibility(ViewpointContext::PlayerExterior, 64, 64, 0.0);
+            draw(VehicleRenderPass::Transparent);
+            if (vehicle.viewDepthGeneration == preparedGeneration || changingBatch.alphaMode != 2 ||
+                !changingBatch.selectedMaterialItem ||
+                vehicle.transparentBatchesScratch.size() != 3) {
+                std::cerr << "Material change did not invalidate and reclassify the draw lists\n";
+                passed = false;
+            }
+
+            vehicle.variables.set("probe_material", 0.0);
+            vehicle.prepareFrameVisibility(ViewpointContext::PlayerExterior, 64, 64, 0.0);
+            draw(VehicleRenderPass::Opaque);
+            if (changingBatch.alphaMode != 0 || changingBatch.selectedMaterialItem ||
+                vehicle.opaquePartsScratch.size() != 1 ||
+                vehicle.transparentBatchesScratch.size() != 2) {
+                std::cerr << "Restored material did not return to the opaque draw list\n";
+                passed = false;
+            }
+            const auto forwardGeneration = vehicle.viewDepthGeneration;
+            setModelViewMatrix(multiplyMatrix4(translationMatrix({0, 0, -30}),
+                                               rotationMatrix(180, 0, 1, 0)));
+            draw(VehicleRenderPass::Transparent);
+            if (vehicle.viewDepthGeneration == forwardGeneration ||
+                vehicle.transparentBatchesScratch.size() != 2 ||
+                vehicle.transparentBatchesScratch[0].part != &vehicle.displayLists[0] ||
+                vehicle.transparentBatchesScratch[1].part != &vehicle.displayLists[1]) {
+                std::cerr << "Changed view did not rebuild transparent sorting\n";
+                passed = false;
+            }
+        }
+        setModelViewMatrix(identityMatrix());
         {
             IndirectCullingScope modelPhase;
             draw(VehicleRenderPass::Opaque);

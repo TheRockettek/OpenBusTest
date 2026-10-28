@@ -1002,9 +1002,11 @@ limitations.
   tile coordinates only on the built route; avoiding those out-of-window builds
   needs a pre-build spline-to-tile lookup. Sampled AI actor poses are also still
   recomputed.
-- [ ] Add renderer regression coverage for opaque/transparent list reuse,
-  script-driven material changes, and view-specific reflection culling and
-  transparent sorting before broadening those caches.
+- [~] `OpenBusVehicleIndirectReuseProbe` checks opaque/transparent list reuse,
+  script-variable-driven material reclassification, and view-dependent
+  transparent sorting on CPU and compute-indirect paths. Reflection-pass
+  culling and sorting still need equivalent vehicle-level regression coverage
+  before broadening those caches.
 - [ ] Attribute `Vehicle::drawBatch.prepareAndSubmit` with finer-grained CPU
   profiling; test same-view transmap depth-prepass reuse only if material
   assembly is still material after the existing submission-state caches.

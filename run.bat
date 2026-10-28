@@ -26,7 +26,7 @@ set "OPENBUS_SCRIPT_HZ=60"
 set "OPENBUS_ASSET_WORKERS=4"
 set "OPENBUS_DOPPLER=1"
 set "OPENBUS_CAPTURE_VIEWS="
-set "OPENBUS_CULLING_BACKEND=cpu"
+set "OPENBUS_CULLING_BACKEND=compute-indirect"
 set "OPENBUS_STEERING_SMOOTHING=1"
 
 cmake --preset windows-clang-ninja
