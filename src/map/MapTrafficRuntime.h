@@ -142,6 +142,8 @@ struct MapTrafficActor {
     std::optional<double> junctionClaimEndMeters;
     // Keep a too-late-to-brake signal decision until this signal entry is passed.
     std::optional<std::size_t> committedSignalSegmentIndex;
+    // Distant actors retain full interaction checks but use sparser curve-speed sampling.
+    bool reducedSpeedLookahead = false;
 };
 
 double mapTrafficSpawnSpeedMetersPerSecond(const MapTrafficActor& actor, double distanceMeters);

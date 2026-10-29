@@ -1086,9 +1086,33 @@ limitations.
   uninstrumented Linux release runs showed overlapping timing ranges, so the
   performance impact on representative maps remains unconfirmed. Profiling
   now separates following candidate collection from evaluation, and initial
-  footprint construction from active junction claims. Investigate whether the
-  adaptive worker rate creates excessive substeps at high traffic load before
-  changing timestep or backlog behavior.
+  footprint construction from active junction claims. Worker-rate adaptation
+  now smooths requested-rate changes and only updates the worker when the
+  configured rate has changed materially, avoiding per-render-frame lock and
+  wakeup churn. Validate rate stability under real backlog and high-load captures;
+  do not change timestep or backlog behavior without those measurements.
+- [~] Traffic actors more than 500 m from the main camera use 2 m curve-speed
+  sampling, promoted back to full sampling inside 400 m. Following, collision,
+  signal, junction, obstacle-clearance, and authored speed-limit checks remain
+  full detail; coarse curve samples use an extra braking margin. The 333-actor
+  synthetic lookahead benchmark had matching distance/speed sums and median
+  update time of 19.30 ms reduced-detail versus 21.35 ms full-detail across
+  three paired runs. These are preliminary straight-route Linux measurements;
+  validate curved routes and representative in-game traffic before claiming a
+  general speedup.
+- [~] Large groups sharing an open directed route now build a per-substep
+  route-distance index and inspect only plausible leaders in the braking and
+  response horizon, while retaining the spatial candidates and full checks.
+  Small groups and closed/loop routes retain the previous exhaustive route scan
+  to preserve seam behavior. The 1,000-actor shared-route benchmark completed
+  at 24.75 ms/update in one Linux release run; compare repeated baseline and
+  optimized captures before claiming a speedup, and profile loop-heavy traffic.
+- [~] Transmap-transparent batches cache their sorted vertex order while the
+  view-depth axis and source geometry are unchanged, avoiding repeat triangle
+  sorting in stable views. Triangle-order scratch storage is reused, and profiler
+  scopes now split cache hits, CPU sorting/reordering, and GPU buffer uploads.
+  The vehicle sorting, material rendering, and indirect-reuse probes pass;
+  measure the new scopes in a crowded scene to quantify frame-time improvement.
 - [~] Within each traffic substep, junction ranges and unchanged actor footprints
   are reused, and claim-section overlap checks are shared across samples.
   The traffic probe checks stationary leaders resuming across an occupancy-cell

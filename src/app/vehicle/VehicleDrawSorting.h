@@ -9,6 +9,49 @@
 
 namespace openbus::app::vehicle {
 
+struct TransparentTriangleDepth {
+    std::size_t index = 0;
+    double depth = 0.0;
+};
+
+inline std::array<double, 3>
+transparentTriangleDepthAxis(const openbus::rendering::Matrix4& modelView) {
+    return {modelView[2], modelView[6], modelView[10]};
+}
+
+template <typename VertexContainer>
+void transparentTriangleOrder(const VertexContainer& vertices,
+                              const openbus::rendering::Matrix4& modelView,
+                              std::vector<TransparentTriangleDepth>& triangles,
+                              std::vector<std::size_t>& order) {
+    order.clear();
+    if (vertices.size() < 6 || vertices.size() % 3 != 0) {
+        return;
+    }
+    triangles.clear();
+    triangles.reserve(vertices.size() / 3);
+    for (std::size_t index = 0; index < vertices.size(); index += 3) {
+        const auto& first = vertices[index];
+        const auto& second = vertices[index + 1];
+        const auto& third = vertices[index + 2];
+        const std::array<double, 4> center = {
+            (static_cast<double>(first.x) + second.x + third.x) / 3.0,
+            (static_cast<double>(first.y) + second.y + third.y) / 3.0,
+            (static_cast<double>(first.z) + second.z + third.z) / 3.0, 1.0};
+        const auto viewCenter = openbus::rendering::transformPoint(modelView, center);
+        triangles.push_back({index, -viewCenter[2]});
+    }
+    std::stable_sort(
+        triangles.begin(), triangles.end(),
+        [](const TransparentTriangleDepth& first, const TransparentTriangleDepth& second) {
+            return first.depth > second.depth;
+        });
+    order.reserve(triangles.size());
+    for (const TransparentTriangleDepth& triangle : triangles) {
+        order.push_back(triangle.index);
+    }
+}
+
 template <typename TransparentBatch>
 void sortTransparentBatches(std::vector<TransparentBatch>& batches) {
     std::stable_sort(batches.begin(), batches.end(),
@@ -26,36 +69,9 @@ void sortTransparentBatches(std::vector<TransparentBatch>& batches) {
 template <typename VertexContainer>
 std::vector<std::size_t> transparentTriangleOrder(const VertexContainer& vertices,
                                                   const openbus::rendering::Matrix4& modelView) {
-    if (vertices.size() < 6 || vertices.size() % 3 != 0) {
-        return {};
-    }
-    struct TriangleDepth {
-        std::size_t index;
-        double depth;
-    };
-    std::vector<TriangleDepth> triangles;
-    triangles.reserve(vertices.size() / 3);
-    for (std::size_t index = 0; index < vertices.size(); index += 3) {
-        const auto& first = vertices[index];
-        const auto& second = vertices[index + 1];
-        const auto& third = vertices[index + 2];
-        const std::array<double, 4> center = {
-            (static_cast<double>(first.x) + second.x + third.x) / 3.0,
-            (static_cast<double>(first.y) + second.y + third.y) / 3.0,
-            (static_cast<double>(first.z) + second.z + third.z) / 3.0, 1.0};
-        const std::array<double, 4> viewCenter =
-            openbus::rendering::transformPoint(modelView, center);
-        triangles.push_back({index, -viewCenter[2]});
-    }
-    std::stable_sort(triangles.begin(), triangles.end(),
-                     [](const TriangleDepth& first, const TriangleDepth& second) {
-                         return first.depth > second.depth;
-                     });
+    std::vector<TransparentTriangleDepth> triangles;
     std::vector<std::size_t> order;
-    order.reserve(triangles.size());
-    for (const TriangleDepth& triangle : triangles) {
-        order.push_back(triangle.index);
-    }
+    transparentTriangleOrder(vertices, modelView, triangles, order);
     return order;
 }
 

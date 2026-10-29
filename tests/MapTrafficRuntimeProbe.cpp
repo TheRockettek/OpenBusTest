@@ -1479,6 +1479,58 @@ void verifyDrivingBehavior() {
     const double distantFollowingSpeed = followingSpeedAfterLeaderSlows(36.0);
     require(closeFollowingSpeed + 1.0 < distantFollowingSpeed && closeFollowingSpeed > 0.0,
             "following speed adapts smoothly to a slowing leader according to the available gap");
+    auto reducedDetailLeader =
+        makeMapTrafficActor(road, "reduced-detail-leader.ovh", 5.0, 0.0, false);
+    auto reducedDetailFollower =
+        makeMapTrafficActor(road, "reduced-detail-follower.ovh", 12.0, 0.0, false);
+    reducedDetailLeader.distanceMeters = 30.0;
+    reducedDetailFollower.reducedSpeedLookahead = true;
+    for (int frame = 0; frame < 20; ++frame) {
+        advanceMapTrafficDriving({&reducedDetailFollower, &reducedDetailLeader}, {}, 0.1);
+        require(mapTrafficHasClearance(footprint(reducedDetailFollower),
+                                       {footprint(reducedDetailLeader)}, 0.49),
+                "reduced curve-speed sampling retains full-rate leader clearance checks");
+    }
+    require(reducedDetailFollower.blockReason == MapTrafficBlockReason::Leader,
+            "reduced-detail vehicles still adapt speed to a slower leader");
+    std::vector<MapTrafficActor> indexedFollowingActors;
+    std::vector<MapTrafficActor*> indexedFollowingPointers;
+    indexedFollowingActors.reserve(8);
+    indexedFollowingPointers.reserve(8);
+    for (std::size_t index = 0; index < 8; ++index) {
+        auto indexedActor =
+            makeMapTrafficActor(road, "indexed-following-" + std::to_string(index) + ".ovh",
+                                12.0, 0.0, false);
+        indexedActor.distanceMeters =
+            index == 0 ? 100.0 : index == 1 ? 130.0 : 250.0 + (index - 2) * 45.0;
+        indexedActor.speedMetersPerSecond = index == 1 ? 0.0 : 10.0;
+        indexedFollowingActors.push_back(std::move(indexedActor));
+    }
+    for (auto& indexedActor : indexedFollowingActors) {
+        indexedFollowingPointers.push_back(&indexedActor);
+    }
+    std::vector<MapTrafficActor> exhaustiveFollowingActors(indexedFollowingActors.begin(),
+                                                           indexedFollowingActors.end() - 1);
+    std::vector<MapTrafficActor*> exhaustiveFollowingPointers;
+    exhaustiveFollowingPointers.reserve(exhaustiveFollowingActors.size());
+    for (auto& exhaustiveActor : exhaustiveFollowingActors) {
+        exhaustiveFollowingPointers.push_back(&exhaustiveActor);
+    }
+    for (int frame = 0; frame < 20; ++frame) {
+        advanceMapTrafficDriving(indexedFollowingPointers, {}, 0.1);
+        advanceMapTrafficDriving(exhaustiveFollowingPointers, {}, 0.1);
+        require(indexedFollowingActors[0].blockReason == MapTrafficBlockReason::Leader,
+                "large shared routes retain the nearest same-route leader for speed control");
+        require(mapTrafficHasClearance(footprint(indexedFollowingActors[0]),
+                                      {footprint(indexedFollowingActors[1])}, 0.49),
+                "large shared routes retain full collision clearance");
+        requireNear(indexedFollowingActors[0].distanceMeters,
+                    exhaustiveFollowingActors[0].distanceMeters,
+                    "the route-distance index matches exhaustive same-route following");
+        requireNear(indexedFollowingActors[0].targetSpeedMetersPerSecond,
+                    exhaustiveFollowingActors[0].targetSpeedMetersPerSecond,
+                    "the route-distance index preserves the exhaustive speed target");
+    }
     auto stoppedFollowingLeader =
         makeMapTrafficActor(road, "stopped-following-leader.ovh", 0.0, 0.0, false);
     auto approachingFollower =
@@ -4037,9 +4089,15 @@ void verifyTrafficRules() {
     speedCapped.speedMetersPerSecond = 0.0;
     speedCapped.unscheduledGroupIndex = 0;
     speedCapped.trafficRuleGroupIndex = 0;
+    MapTrafficActor reducedSpeedCapped = speedCapped;
+    reducedSpeedCapped.reducedSpeedLookahead = true;
     advanceMapTrafficDriving({&speedCapped}, {}, 4.0);
+    advanceMapTrafficDriving({&reducedSpeedCapped}, {}, 4.0);
     require(speedCapped.speedMetersPerSecond <= 5.0 + 1.0e-8,
             "authored speed limits cap vehicle speed in km/h converted to m/s");
+    requireNear(reducedSpeedCapped.targetSpeedMetersPerSecond,
+                speedCapped.targetSpeedMetersPerSecond,
+                "reduced curve sampling retains exact authored speed-limit decisions");
 
     MapTrafficRouteSegment firstSpeedSegment;
     firstSpeedSegment.spline = {makeSpline(1302, 0, 0, 0.0), 0, 0};
@@ -4074,7 +4132,9 @@ void verifyTrafficRules() {
                 "lookahead applies a group speed limit across a closed route seam");
 }
 
-void benchmarkDrivingLookahead(std::size_t actorCount = 69, double spacingMeters = 100.0) {
+void benchmarkDrivingLookahead(std::size_t actorCount = 69, double spacingMeters = 100.0,
+                               bool reducedSpeedLookahead = false,
+                               bool sharedDirectedRoute = false) {
     using namespace openbus::map;
     std::vector<MapTrafficActor> actors(actorCount);
     std::vector<MapTrafficActor*> pointers;
@@ -4083,15 +4143,20 @@ void benchmarkDrivingLookahead(std::size_t actorCount = 69, double spacingMeters
         for (int segmentIndex = 0; segmentIndex < 20; ++segmentIndex) {
             MapTrafficRouteSegment segment;
             segment.spline.placement = makeSpline(
-                10000 + static_cast<int>(index) * 20 + segmentIndex, 0, 0, segmentIndex * 10.0);
-            segment.spline.placement.localX = static_cast<double>(index) * spacingMeters;
+                10000 + static_cast<int>(sharedDirectedRoute ? 0 : index) * 20 + segmentIndex, 0,
+                0, segmentIndex * (sharedDirectedRoute ? 5000.0 : 10.0));
+            segment.spline.placement.length = sharedDirectedRoute ? 5000.0 : 10.0;
+            segment.spline.placement.localX =
+                sharedDirectedRoute ? 0.0 : static_cast<double>(index) * spacingMeters;
             actor.route.segments.push_back(segment);
-            actor.route.cumulativeEndDistances.push_back((segmentIndex + 1) * 10.0);
+            actor.route.cumulativeEndDistances.push_back(
+                (segmentIndex + 1) * (sharedDirectedRoute ? 5000.0 : 10.0));
         }
-        actor.route.totalLength = 200.0;
-        actor.distanceMeters = 20.0;
+        actor.route.totalLength = sharedDirectedRoute ? 100000.0 : 200.0;
+        actor.distanceMeters = 20.0 + (sharedDirectedRoute ? index * spacingMeters : 0.0);
         actor.speedMetersPerSecond = 10.0;
         actor.cruiseSpeedMetersPerSecond = 12.0;
+        actor.reducedSpeedLookahead = reducedSpeedLookahead;
         pointers.push_back(&actor);
     }
     // Warm up outside the timed region; actors have distinct, non-conflicting routes.
@@ -4114,7 +4179,9 @@ void benchmarkDrivingLookahead(std::size_t actorCount = 69, double spacingMeters
         speedSum += actor.speedMetersPerSecond;
     }
     std::cout << std::setprecision(17) << "TRAFFIC_LOOKAHEAD_BENCHMARK actors=" << actors.size()
-              << " updates=" << updates << " ms_per_update=" << milliseconds / updates
+              << " updates=" << updates << " reduced_speed_lookahead="
+              << reducedSpeedLookahead << " shared_route=" << sharedDirectedRoute
+              << " ms_per_update=" << milliseconds / updates
               << " distance_sum=" << distanceSum << " speed_sum=" << speedSum << '\n';
 }
 
@@ -5071,6 +5138,14 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-traffic-scale") {
             benchmarkDrivingLookahead(333);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-traffic-scale-reduced") {
+            benchmarkDrivingLookahead(333, 100.0, true);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-same-route") {
+            benchmarkDrivingLookahead(1000, 100.0, false, true);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-traffic-dense") {

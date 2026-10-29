@@ -136,32 +136,90 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
 }
 
 void Vehicle::sortTransparentBatch(Batch& batch) {
-    const std::vector<std::size_t> triangleOrder = openbus::app::vehicle::transparentTriangleOrder(
-        batch.vertices, openbus::rendering::modelViewMatrix());
+    const auto& modelView = openbus::rendering::modelViewMatrix();
+    const std::array<double, 3> depthAxis =
+        openbus::app::vehicle::transparentTriangleDepthAxis(modelView);
+    const std::vector<Vertex>* const source = batch.vertices.values.get();
+    for (const Batch::TransparentSortCacheEntry& entry : batch.transparentSortCache) {
+        if (entry.valid && entry.source == source && entry.vertexCount == batch.vertices.size() &&
+            entry.depthAxis == depthAxis) {
+            batch.buffer = entry.buffer;
+            batch.sharedGeometryBuffer = false;
+            TraceScope cacheHit("render", "Vehicle::draw.transparentSortCacheHit");
+            return;
+        }
+    }
+    TraceScope sortTrace("render", "Vehicle::draw.transparentTriangleSort");
+    static thread_local std::vector<openbus::app::vehicle::TransparentTriangleDepth>
+        triangleDepthScratch;
+    static thread_local std::vector<std::size_t> triangleOrderScratch;
+    static thread_local std::vector<Vertex> sortedVertices;
+    openbus::app::vehicle::transparentTriangleOrder(batch.vertices, modelView, triangleDepthScratch,
+                                                    triangleOrderScratch);
+    const std::vector<std::size_t>& triangleOrder = triangleOrderScratch;
     if (triangleOrder.empty()) {
         return;
     }
-    std::vector<Vertex> sortedVertices;
-    sortedVertices.reserve(batch.vertices.size());
+    sortedVertices.resize(batch.vertices.size());
+    std::size_t sortedVertexIndex = 0;
     for (const std::size_t index : triangleOrder) {
-        sortedVertices.insert(sortedVertices.end(), batch.vertices.begin() + index,
-                              batch.vertices.begin() + index + 3);
+        std::copy_n(batch.vertices.begin() + index, 3,
+                    sortedVertices.begin() + static_cast<std::ptrdiff_t>(sortedVertexIndex));
+        sortedVertexIndex += 3;
     }
-    if (batch.sharedGeometryBuffer) {
+    sortTrace.finish();
+    std::size_t cacheSlot = batch.transparentSortCache.size();
+    for (std::size_t index = 0; index < batch.transparentSortCache.size(); ++index) {
+        if (!batch.transparentSortCache[index].valid) {
+            cacheSlot = index;
+            break;
+        }
+    }
+    if (cacheSlot == batch.transparentSortCache.size()) {
+        cacheSlot = batch.transparentSortCacheReplacementIndex;
+        batch.transparentSortCacheReplacementIndex =
+            (batch.transparentSortCacheReplacementIndex + 1) % batch.transparentSortCache.size();
+    }
+    Batch::TransparentSortCacheEntry& entry = batch.transparentSortCache[cacheSlot];
+    GLuint sortedBuffer = entry.buffer;
+    const bool batchBufferAlreadyCached =
+        std::any_of(batch.transparentSortCache.begin(), batch.transparentSortCache.end(),
+                    [&](const Batch::TransparentSortCacheEntry& cached) {
+                        return cached.buffer != 0 && cached.buffer == batch.buffer;
+                    });
+    if (sortedBuffer == 0 && batch.sharedGeometryBuffer) {
         GLuint privateBuffer = 0;
         pglGenBuffers(1, &privateBuffer);
         if (privateBuffer == 0) {
             return;
         }
-        batch.buffer = privateBuffer;
-        batch.sharedGeometryBuffer = false;
+        sortedBuffer = privateBuffer;
         batch.bufferTracked = true;
-        assets->trackBuffer(batch.buffer);
+        assets->trackBuffer(sortedBuffer);
+    } else if (sortedBuffer == 0 && batchBufferAlreadyCached) {
+        GLuint privateBuffer = 0;
+        pglGenBuffers(1, &privateBuffer);
+        if (privateBuffer == 0) {
+            return;
+        }
+        sortedBuffer = privateBuffer;
+        batch.bufferTracked = true;
+        assets->trackBuffer(sortedBuffer);
+    } else if (sortedBuffer == 0) {
+        sortedBuffer = batch.buffer;
     }
-    pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+    TraceScope uploadTrace("render", "Vehicle::draw.transparentVertexUpload");
+    pglBindBuffer(GL_ARRAY_BUFFER, sortedBuffer);
     pglBufferData(GL_ARRAY_BUFFER,
                   static_cast<std::ptrdiff_t>(sortedVertices.size() * sizeof(Vertex)),
                   sortedVertices.data(), GL_STATIC_DRAW);
+    batch.buffer = sortedBuffer;
+    batch.sharedGeometryBuffer = false;
+    entry.depthAxis = depthAxis;
+    entry.source = source;
+    entry.vertexCount = batch.vertices.size();
+    entry.buffer = sortedBuffer;
+    entry.valid = true;
 }
 
 void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,

@@ -33,6 +33,8 @@ bool Vehicle::loadSharedDisplayLists() {
         part.cachedViewDepth = 0.0;
         for (Batch& batch : part.batches) {
             batch.sharedGeometryBuffer = true;
+            batch.transparentSortCache = {};
+            batch.transparentSortCacheReplacementIndex = 0;
             batch.dynamicTexture = 0;
             batch.freeTexture = 0;
             batch.freeTextureIndex = -1;

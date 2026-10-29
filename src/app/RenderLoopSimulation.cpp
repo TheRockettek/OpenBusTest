@@ -295,8 +295,20 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
     if (averageWorkerTickSeconds > 0.0) {
         aiRateHz = std::min(aiRateHz, aiWorkerBudgetFraction / averageWorkerTickSeconds);
     }
-    currentAiSimulationRateHz_ = std::clamp(aiRateHz, 0.01, 1000.0);
-    trafficWorker_->setSimulationRateHz(currentAiSimulationRateHz_);
+    const double requestedAiRateHz = std::clamp(aiRateHz, 0.01, 1000.0);
+    if (currentAiSimulationRateHz_ <= 0.0) {
+        currentAiSimulationRateHz_ = requestedAiRateHz;
+    } else {
+        constexpr double rateSmoothing = 0.2;
+        currentAiSimulationRateHz_ +=
+            (requestedAiRateHz - currentAiSimulationRateHz_) * rateSmoothing;
+    }
+    if (configuredAiSimulationRateHz_ <= 0.0 ||
+        std::abs(currentAiSimulationRateHz_ - configuredAiSimulationRateHz_) >=
+            std::max(0.01, configuredAiSimulationRateHz_ * 0.01)) {
+        trafficWorker_->setSimulationRateHz(currentAiSimulationRateHz_);
+        configuredAiSimulationRateHz_ = currentAiSimulationRateHz_;
+    }
     trafficWorkerInputAccumulatorSeconds_ += elapsedSeconds;
     const double trafficInputIntervalSeconds = 1.0 / currentAiSimulationRateHz_;
     const bool trafficInputDue =
@@ -1162,13 +1174,35 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                                     *state.blockingActorStateIndex < trafficVehicles_.size() &&
                                     trafficVehicles_[*state.blockingActorStateIndex]
                                             .workerGeneration == *state.blockingActorGeneration;
+                                constexpr double reducedDetailEnterDistanceMeters = 500.0;
+                                constexpr double reducedDetailExitDistanceMeters = 400.0;
+                                if (lastMainCameraPoseValid_ && state.cachedPose.has_value()) {
+                                    const double cameraDistanceMeters =
+                                        std::hypot(std::hypot(state.cachedPose->position[0] -
+                                                                  lastMainCameraPose_.position[0],
+                                                              state.cachedPose->position[1] -
+                                                                  lastMainCameraPose_.position[1]),
+                                                   state.cachedPose->position[2] -
+                                                       lastMainCameraPose_.position[2]);
+                                    if (state.reducedTrafficDetail) {
+                                        state.reducedTrafficDetail =
+                                            cameraDistanceMeters >= reducedDetailExitDistanceMeters;
+                                    } else {
+                                        state.reducedTrafficDetail =
+                                            cameraDistanceMeters >=
+                                            reducedDetailEnterDistanceMeters;
+                                    }
+                                } else {
+                                    state.reducedTrafficDetail = false;
+                                }
                                 actors.push_back(
                                     {index, state.workerGeneration, state.workerActorTemplate,
                                      motion,
                                      !blockerGenerationMatches ? std::nullopt
                                                                : state.blockingActorStateIndex,
                                      !blockerGenerationMatches ? std::nullopt
-                                                               : state.blockingActorGeneration});
+                                                               : state.blockingActorGeneration,
+                                     state.reducedTrafficDetail});
                             }
                         }
                     }

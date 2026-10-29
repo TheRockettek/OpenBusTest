@@ -425,6 +425,7 @@ class RenderLoop {
         bool isBus = false;
         bool populationEnabled = false;
         bool vehicleLoadFailed = false;
+        bool reducedTrafficDetail = false;
         bool scheduledTripActive = false;
         unsigned lastScheduledAdmissionDiagnosticBlockerMask = 8;
         double lastScheduledAdmissionDiagnosticCameraDistanceMeters = -1.0;
@@ -475,6 +476,7 @@ class RenderLoop {
     double aiRateDivisor_ = 1.0;
     double trafficWorkerInputAccumulatorSeconds_ = 0.0;
     double currentAiSimulationRateHz_ = 0.0;
+    double configuredAiSimulationRateHz_ = 0.0;
     double currentAiWorkerTickMilliseconds_ = 0.0;
     std::unique_ptr<openbus::app::MapTrafficWorker> trafficWorker_;
     void finishPendingTrafficVehicleLoads();

@@ -5083,6 +5083,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         }
     };
     constexpr double occupancyCellSizeMeters = 12.0;
+    constexpr std::size_t routeDistanceIndexThreshold = 8;
+    std::vector<std::vector<std::size_t>> routeActorsByDistance(actors.size());
     const auto cellForPosition = [](double x, double y,
                                     double cellSizeMeters) -> std::optional<OccupancyCell> {
         const double cellX = std::floor(x / cellSizeMeters);
@@ -5115,6 +5117,32 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             occupied.push_back(actorFootprint(*actor, actor->distanceMeters));
         }
         footprintTrace.finish();
+        double maximumActorTravelMeters = 0.0;
+        for (const MapTrafficActor* actor : actors) {
+            maximumActorTravelMeters =
+                std::max(maximumActorTravelMeters,
+                         (actor->speedMetersPerSecond + acceleration * step) * step);
+        }
+        for (std::size_t routeClass = 0; routeClass < actorsByRouteClass.size(); ++routeClass) {
+            auto& sortedActors = routeActorsByDistance[routeClass];
+            sortedActors.clear();
+            const auto& routeClassActors = actorsByRouteClass[routeClass];
+            if (routeClassActors.size() < routeDistanceIndexThreshold) {
+                continue;
+            }
+            const MapTrafficRoute& route = actors[routeClassActors.front()]->route;
+            if (route.closed || route.loopStartDistance.has_value()) {
+                continue;
+            }
+            sortedActors = routeClassActors;
+            std::sort(sortedActors.begin(), sortedActors.end(),
+                      [&](std::size_t first, std::size_t second) {
+                          const double firstDistance = actors[first]->distanceMeters;
+                          const double secondDistance = actors[second]->distanceMeters;
+                          return firstDistance == secondDistance ? first < second
+                                                                 : firstDistance < secondDistance;
+                      });
+        }
         openbus::rendering::TraceScope activeClaimsTrace(
             "traffic", "MapTrafficRuntime::advanceMapTrafficDriving.substepActiveClaims");
         for (std::size_t candidateIndex = 0; candidateIndex < actors.size(); ++candidateIndex) {
@@ -5938,6 +5966,12 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     targetBlockingObstacle = blockingObstacle;
                 }
             };
+            const auto limitTargetFromSquaredSpeed = [&](double limitSquared) {
+                if (limitSquared < target * target) {
+                    limitTarget(std::sqrt(std::max(0.0, limitSquared)),
+                                MapTrafficBlockReason::None);
+                }
+            };
             double nearestFollowingGapMeters = std::numeric_limits<double>::infinity();
             double nearestFollowingSpeedMetersPerSecond = 0.0;
             const MapTrafficActor* nearestFollowingActor = nullptr;
@@ -5963,8 +5997,35 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             // across loop seams and on routes that double back.
             const auto& routeActors = actorsByRouteClass[routeClassByActor[index]];
             if (routeActors.size() > 1) {
-                for (const std::size_t routeActor : routeActors) {
-                    nearbyOccupied.push_back(obstacles.size() + routeActor);
+                const auto& sortedRouteActors = routeActorsByDistance[routeClassByActor[index]];
+                if (sortedRouteActors.empty()) {
+                    for (const std::size_t routeActor : routeActors) {
+                        nearbyOccupied.push_back(obstacles.size() + routeActor);
+                    }
+                } else {
+                    const double maximumFollowingGapMeters =
+                        standstillFollowingGapMeters + actor.speedMetersPerSecond * headwaySeconds +
+                        actor.speedMetersPerSecond * actor.speedMetersPerSecond / (2.0 * braking) +
+                        actor.cruiseSpeedMetersPerSecond * (followingResponseSeconds + 1.0) + 1.0;
+                    const double substepMovementMarginMeters = 2.0 * maximumActorTravelMeters;
+                    const double minimumDistance =
+                        actor.distanceMeters - substepMovementMarginMeters;
+                    const double maximumDistance = actor.distanceMeters +
+                                                   maximumFollowingGapMeters +
+                                                   substepMovementMarginMeters;
+                    const auto first = std::lower_bound(
+                        sortedRouteActors.begin(), sortedRouteActors.end(), minimumDistance,
+                        [&](std::size_t routeActor, double distance) {
+                            return actors[routeActor]->distanceMeters < distance;
+                        });
+                    const auto last =
+                        std::upper_bound(first, sortedRouteActors.end(), maximumDistance,
+                                         [&](double distance, std::size_t routeActor) {
+                                             return distance < actors[routeActor]->distanceMeters;
+                                         });
+                    for (auto routeActor = first; routeActor != last; ++routeActor) {
+                        nearbyOccupied.push_back(obstacles.size() + *routeActor);
+                    }
                 }
                 std::sort(nearbyOccupied.begin(), nearbyOccupied.end());
                 nearbyOccupied.erase(std::unique(nearbyOccupied.begin(), nearbyOccupied.end()),
@@ -6268,7 +6329,9 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 const MapTrafficVehicleFilter vehicle{actor.vehicleType,
                                                       actor.unscheduledGroupIndex, actor.scheduled,
                                                       actor.trafficRuleGroupIndex};
-                for (double ahead = 0.0; ahead <= movementLookahead; ahead += 1.0) {
+                std::size_t lookaheadSampleIndex = 0;
+                for (double ahead = 0.0; ahead <= movementLookahead;
+                     ahead += 1.0, ++lookaheadSampleIndex) {
                     if (ahead > signalStopDistance) {
                         break;
                     }
@@ -6282,13 +6345,18 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     // Curve limits never fall below this floor; skip route sampling when even
                     // the floor cannot lower the current target.
                     const double curveLimitFloor = std::min(actor.cruiseSpeedMetersPerSecond, 2.0);
-                    if (!deferrableSamplingQueries ||
-                        std::sqrt(curveLimitFloor * curveLimitFloor +
-                                  2.0 * braking * std::max(0.0, ahead - 2.0)) < target) {
+                    const bool sampleCurveSpeed = !actor.reducedSpeedLookahead ||
+                                                  !deferrableSamplingQueries ||
+                                                  lookaheadSampleIndex % 2 == 0;
+                    const double curveBrakingDistance =
+                        std::max(0.0, ahead - 2.0 - (actor.reducedSpeedLookahead ? 1.0 : 0.0));
+                    const double curveFloorSquared =
+                        curveLimitFloor * curveLimitFloor + 2.0 * braking * curveBrakingDistance;
+                    if (sampleCurveSpeed &&
+                        (!deferrableSamplingQueries || curveFloorSquared < target * target)) {
                         const double curveLimit = curveSpeedLimitAt(distance);
-                        limitTarget(std::sqrt(curveLimit * curveLimit +
-                                              2.0 * braking * std::max(0.0, ahead - 2.0)),
-                                    MapTrafficBlockReason::None);
+                        limitTargetFromSquaredSpeed(curveLimit * curveLimit +
+                                                    2.0 * braking * curveBrakingDistance);
                     }
                     const auto& segment = routeSegmentAtDistance(actor.route, distance);
                     if (&segment != speedLimitSegment) {
@@ -6298,9 +6366,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     }
                     if (segmentSpeedLimit.has_value()) {
                         const double limitMetersPerSecond = *segmentSpeedLimit / 3.6;
-                        limitTarget(std::sqrt(limitMetersPerSecond * limitMetersPerSecond +
-                                              2.0 * braking * std::max(0.0, ahead - 2.0)),
-                                    MapTrafficBlockReason::None);
+                        limitTargetFromSquaredSpeed(limitMetersPerSecond * limitMetersPerSecond +
+                                                    2.0 * braking * std::max(0.0, ahead - 2.0));
                     }
                     constexpr double clearance = 2.0;
                     if (!clearAt(distance, clearance, true)) {

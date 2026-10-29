@@ -32,6 +32,7 @@ class MapTrafficWorker {
         ActorMotion motion;
         std::optional<std::size_t> blockingActorStateIndex;
         std::optional<std::uint64_t> blockingActorGeneration;
+        bool reducedSpeedLookahead = false;
     };
 
     struct ActorResult {

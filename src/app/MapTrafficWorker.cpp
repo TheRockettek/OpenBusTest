@@ -232,6 +232,7 @@ struct MapTrafficWorker::Impl {
                     runtimeActors.push_back(*actor.actorTemplate);
                     openbus::map::MapTrafficActor& runtimeActor = runtimeActors.back();
                     applyMotion(runtimeActor, actor.motion);
+                    runtimeActor.reducedSpeedLookahead = actor.reducedSpeedLookahead;
                     if (hasPrevious) {
                         const WorkingActor& previousActor = workingActors[previous->second];
                         preserveMovementState(runtimeActor, previousActor.actor);

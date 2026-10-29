@@ -178,6 +178,14 @@ struct Vehicle {
     };
 
     struct Batch {
+        struct TransparentSortCacheEntry {
+            std::array<double, 3> depthAxis = {};
+            const std::vector<Vertex>* source = nullptr;
+            std::size_t vertexCount = 0;
+            GLuint buffer = 0;
+            bool valid = false;
+        };
+
         struct SharedVertices {
             std::shared_ptr<std::vector<Vertex>> values = std::make_shared<std::vector<Vertex>>();
 
@@ -293,6 +301,8 @@ struct Vehicle {
         std::uint64_t materialSelectionGeneration = 0;
         std::size_t vertexCount = 0;
         std::size_t indirectSlot = std::numeric_limits<std::size_t>::max();
+        std::array<TransparentSortCacheEntry, 3> transparentSortCache = {};
+        std::size_t transparentSortCacheReplacementIndex = 0;
         // Lazily built local bounds of consecutive triangle groups; lets mouse picking
         // skip most triangles. Keyed by the vertex storage and its size.
         struct PickChunkBounds {

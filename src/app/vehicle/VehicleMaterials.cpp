@@ -85,6 +85,9 @@ void Vehicle::updateMaterialChange(Batch& batch) {
     batch.textureLoadStarted = false;
     if (layer != batch.textureLayer) {
         batch.textureLayer = layer;
+        for (auto& cachedSort : batch.transparentSortCache) {
+            cachedSort.valid = false;
+        }
         for (Vertex& vertex : batch.vertices) {
             vertex.layer = static_cast<float>(layer);
         }

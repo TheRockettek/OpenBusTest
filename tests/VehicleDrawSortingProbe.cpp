@@ -46,5 +46,17 @@ int main() {
         std::cerr << "transparent triangles were not sorted far-to-near with stable ties\n";
         return 1;
     }
+    auto translatedModelView = openbus::rendering::identityMatrix();
+    translatedModelView[12] = 15.0;
+    translatedModelView[13] = -8.0;
+    translatedModelView[14] = 42.0;
+    if (openbus::app::vehicle::transparentTriangleDepthAxis(translatedModelView) !=
+            openbus::app::vehicle::transparentTriangleDepthAxis(
+                openbus::rendering::identityMatrix()) ||
+        openbus::app::vehicle::transparentTriangleOrder(triangles, translatedModelView) !=
+            triangleOrder) {
+        std::cerr << "transparent triangle order changed under camera translation\n";
+        return 1;
+    }
     return 0;
 }
