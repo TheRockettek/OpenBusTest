@@ -341,11 +341,11 @@ void AssetRequestManager::requestDxt5Fallback(const std::shared_ptr<TextureReque
                     gameLog.Warning("DXT5 fallback decode failed: " + openbus::pathToUtf8(path));
                 }
             } catch (const std::exception& error) {
-                gameLog.Warning("DXT5 fallback decode failed for " + openbus::pathToUtf8(path) + ": " +
-                            error.what());
+                gameLog.Warning("DXT5 fallback decode failed for " + openbus::pathToUtf8(path) +
+                                ": " + error.what());
             } catch (...) {
                 gameLog.Warning("DXT5 fallback decode failed for " + openbus::pathToUtf8(path) +
-                            " with an unknown error");
+                                " with an unknown error");
             }
             std::lock_guard<std::mutex> lock(request->mutex);
             request->fallbackDecodeComplete = true;

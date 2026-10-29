@@ -468,7 +468,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
             materialStatesByStemOccurrence[lower(statePath.stem().string())];
         if (state.materialIndex > 10000) {
             gameLog.Warning("Ignoring out-of-range material index " +
-                        std::to_string(state.materialIndex));
+                            std::to_string(state.materialIndex));
             continue;
         }
         if (state.materialIndex >= 0) {
@@ -653,10 +653,10 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     if (verboseObjLoadLogs) {
         for (const Batch& batch : destination->back().batches) {
             gameLog.Debug("OBJ batch: " + part.objPath.filename().string() +
-                        " vertices=" + std::to_string(batch.vertexCount) +
-                        " alpha=" + std::to_string(batch.alphaMode) +
-                        " noZwrite=" + (batch.noZwrite ? "true" : "false") +
-                        " texture=" + batch.textureName + " transmap=" + batch.transmap.name);
+                          " vertices=" + std::to_string(batch.vertexCount) +
+                          " alpha=" + std::to_string(batch.alphaMode) +
+                          " noZwrite=" + (batch.noZwrite ? "true" : "false") +
+                          " texture=" + batch.textureName + " transmap=" + batch.transmap.name);
         }
     }
 }

@@ -70,7 +70,7 @@ double minimumObjectViewportFraction(const char* name) {
         return percentage / 100.0;
     } catch (const std::exception&) {
         gameLog.Warning(std::string("Invalid ") + name +
-                    "; minimum object size culling is disabled for this view");
+                        "; minimum object size culling is disabled for this view");
         return 0.0;
     }
 }
@@ -156,7 +156,8 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         } catch (const std::invalid_argument&) {
             gameLog.Warning("Invalid OPENBUS_HOVER_HZ; using the default 75 ms hover interval");
         } catch (const std::out_of_range&) {
-            gameLog.Warning("OPENBUS_HOVER_HZ out of range; using the default 75 ms hover interval");
+            gameLog.Warning(
+                "OPENBUS_HOVER_HZ out of range; using the default 75 ms hover interval");
         }
     }
     if (clickableHoverRefreshInterval_ > 0.0) {
@@ -255,9 +256,10 @@ RenderLoop::~RenderLoop() {
             std::unique_ptr<Vehicle> pendingVehicle = state.pendingVehicle.get();
         } catch (const std::exception& error) {
             gameLog.Warning("Map traffic vehicle loader failed during shutdown: " +
-                        std::string(error.what()));
+                            std::string(error.what()));
         } catch (...) {
-            gameLog.Warning("Map traffic vehicle loader failed during shutdown with an unknown error");
+            gameLog.Warning(
+                "Map traffic vehicle loader failed during shutdown with an unknown error");
         }
     }
     if (window_ != nullptr && mouseLookEnabled_) {
@@ -470,7 +472,8 @@ bool RenderLoop::AddTrafficVehicle(
             : std::min_element(configuration.axles.begin(), configuration.axles.end(),
                                [](const BusAxle& left, const BusAxle& right) {
                                    return left.position < right.position;
-                               })->position;
+                               })
+                  ->position;
     std::vector<openbus::map::MapTrafficSpawnCandidate> spawnCandidates;
     if (!isBus) {
         spawnCandidates =
@@ -493,8 +496,7 @@ bool RenderLoop::AddTrafficVehicle(
     }
     VehiclePlacement placement;
     placement.position = pose->position;
-    placement.yawDegrees = openbus::map::mapTrafficHeadingToVehicleYawDegrees(
-        pose->headingRadians);
+    placement.yawDegrees = openbus::map::mapTrafficHeadingToVehicleYawDegrees(pose->headingRadians);
     placement.pitchDegrees = pose->pitchRadians * 180.0 / std::numbers::pi;
     placement.rollDegrees = pose->rollRadians * 180.0 / std::numbers::pi;
     const VehiclePlacement configuredPlacement =
@@ -519,11 +521,11 @@ bool RenderLoop::AddTrafficVehicle(
             throw std::invalid_argument("Scheduled map bus passenger stop is invalid");
         }
         const auto logUnmatchedStop = [&] {
-            gameLog.Warning("Scheduled passenger stop could not be matched to the bus route; "
-                        "stopId=" +
-                        std::to_string(stop.stopId) + " spline=" + std::to_string(stop.splineId) +
-                        " path=" + std::to_string(stop.pathIndex) +
-                        " bus=" + busConfigPath.string());
+            gameLog.Warning(
+                "Scheduled passenger stop could not be matched to the bus route; "
+                "stopId=" +
+                std::to_string(stop.stopId) + " spline=" + std::to_string(stop.splineId) +
+                " path=" + std::to_string(stop.pathIndex) + " bus=" + busConfigPath.string());
         };
         if (stop.splinePositionMeters) {
             const auto routePosition = openbus::map::mapTrafficRoutePositionOnSpline(
@@ -877,7 +879,7 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
             openbus::assets::resolveCaseInsensitivePath(omsiRoot / normalizedPath);
         if (!std::filesystem::is_regular_file(resolvedPath)) {
             gameLog.Warning("Map " + std::string(assetName) +
-                        " configuration is missing: " + resolvedPath.generic_string());
+                            " configuration is missing: " + resolvedPath.generic_string());
             return std::nullopt;
         }
         return resolvedPath;
@@ -893,11 +895,11 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
                                 static_cast<float>(ticket.value));
         }
         for (const ConfigurationDiagnostic& diagnostic : ticketPack.diagnostics.entries) {
-            gameLog.Log(
-                diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? LogLevel::Error
-                                                                                  : LogLevel::Warning,
-                "Map ticket-pack diagnostic line=" + std::to_string(diagnostic.line) + " [" +
-                    diagnostic.keyword + "] " + diagnostic.message);
+            gameLog.Log(diagnostic.severity == ConfigurationDiagnostic::Severity::Error
+                            ? LogLevel::Error
+                            : LogLevel::Warning,
+                        "Map ticket-pack diagnostic line=" + std::to_string(diagnostic.line) +
+                            " [" + diagnostic.keyword + "] " + diagnostic.message);
         }
     }
     if (const auto currencyPath = resolveMapAsset(map.metadata.moneySystem, "currency")) {
@@ -910,11 +912,11 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
                                       currency.coins[index].modelPath);
         }
         for (const ConfigurationDiagnostic& diagnostic : currency.diagnostics.entries) {
-            gameLog.Log(
-                diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? LogLevel::Error
-                                                                                  : LogLevel::Warning,
-                "Map currency diagnostic line=" + std::to_string(diagnostic.line) + " [" +
-                    diagnostic.keyword + "] " + diagnostic.message);
+            gameLog.Log(diagnostic.severity == ConfigurationDiagnostic::Severity::Error
+                            ? LogLevel::Error
+                            : LogLevel::Warning,
+                        "Map currency diagnostic line=" + std::to_string(diagnostic.line) + " [" +
+                            diagnostic.keyword + "] " + diagnostic.message);
         }
     }
     trafficSplineDebugBuilt_ = false;

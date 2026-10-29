@@ -67,12 +67,12 @@ sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
         }
         const std::string severity =
             diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error" : "warning";
-        gameLog.Log(
-            diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? LogLevel::Error
-                                                                              : LogLevel::Warning,
-            "CFG " + severity + " file=" + busConfigPath.generic_string() +
-                " line " + std::to_string(diagnostic.line) + " [" +
-                diagnostic.keyword + "]: " + diagnostic.message);
+        gameLog.Log(diagnostic.severity == ConfigurationDiagnostic::Severity::Error
+                        ? LogLevel::Error
+                        : LogLevel::Warning,
+                    "CFG " + severity + " file=" + busConfigPath.generic_string() + " line " +
+                        std::to_string(diagnostic.line) + " [" + diagnostic.keyword +
+                        "]: " + diagnostic.message);
     }
 
     openbus::scripting::Vehicle modelVariables;
@@ -94,12 +94,12 @@ sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
          definition->modelConfiguration.diagnostics.entries) {
         const std::string severity =
             diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error" : "warning";
-        gameLog.Log(
-            diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? LogLevel::Error
-                                                                              : LogLevel::Warning,
-            "CFG " + severity + " file=" + modelConfigPath.generic_string() +
-                " line " + std::to_string(diagnostic.line) + " [" +
-                diagnostic.keyword + "]: " + diagnostic.message);
+        gameLog.Log(diagnostic.severity == ConfigurationDiagnostic::Severity::Error
+                        ? LogLevel::Error
+                        : LogLevel::Warning,
+                    "CFG " + severity + " file=" + modelConfigPath.generic_string() + " line " +
+                        std::to_string(diagnostic.line) + " [" + diagnostic.keyword +
+                        "]: " + diagnostic.message);
     }
 
     std::shared_ptr<const SharedVehicleDefinition> shared = std::move(definition);

@@ -78,7 +78,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             impl_->pendingHumanTrafficModels.erase(cacheKey);
             impl_->failedHumanTrafficModels.insert(cacheKey);
             gameLog.Warning("Could not asynchronously load human traffic model '" +
-                        openbus::pathToUtf8(humanConfigPath) + "': " + error.what());
+                            openbus::pathToUtf8(humanConfigPath) + "': " + error.what());
             return;
         }
         model = impl_->humanTrafficModels.find(cacheKey);
@@ -123,7 +123,7 @@ void MapRenderer::drawHumanTrafficActor(const std::filesystem::path& humanConfig
             batch.material.textured = batch.material.texture != 0;
         } catch (const std::exception& error) {
             gameLog.Warning("Could not asynchronously load human model texture " +
-                        openbus::pathToUtf8(texturePath) + ": " + error.what());
+                            openbus::pathToUtf8(texturePath) + ": " + error.what());
         }
         imageRequest = {};
         impl_->humanTextureRequests.erase(textureKey);
@@ -479,7 +479,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 impl_->occlusionQueries.push_back(newQuery);
             } else if (!impl_->occlusionQueryAllocationLogged) {
                 gameLog.Warning("Could not allocate a depth occlusion query; "
-                            "rendering candidates conservatively");
+                                "rendering candidates conservatively");
                 impl_->occlusionQueryAllocationLogged = true;
             }
         }
@@ -507,7 +507,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         if (proxySubmitted) {
             pglBeginConditionalRender(query, queryWait);
         } else if (!impl_->occlusionProxyFailureLogged) {
-            gameLog.Warning("Could not submit an occlusion proxy; rendering candidate conservatively");
+            gameLog.Warning(
+                "Could not submit an occlusion proxy; rendering candidate conservatively");
             impl_->occlusionProxyFailureLogged = true;
         }
         glColorMask(state->colorMask[0], state->colorMask[1], state->colorMask[2],
@@ -739,7 +740,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
             } catch (const std::exception& error) {
                 impl_->unavailableSceneryTextures.insert(textureKey);
                 gameLog.Warning("Could not load map scenery free texture " +
-                            openbus::pathToUtf8(texturePath) + ": " + error.what());
+                                openbus::pathToUtf8(texturePath) + ": " + error.what());
                 return std::nullopt;
             }
         }

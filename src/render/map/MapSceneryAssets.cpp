@@ -58,11 +58,10 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
         if (objectConfiguration.onlyEditor &&
             (objectConfiguration.busStop || objectConfiguration.hasPassengerCabin)) {
             editorPassengerAssets.emplace(
-                cacheKey,
-                EditorPassengerAsset{objectConfiguration.busStop, objectConfiguration.hasPassengerCabin,
-                                     objectConfiguration.hasBoundingBox,
-                                     objectConfiguration.boundingBox,
-                                     objectConfiguration.passengerPositions});
+                cacheKey, EditorPassengerAsset{
+                              objectConfiguration.busStop, objectConfiguration.hasPassengerCabin,
+                              objectConfiguration.hasBoundingBox, objectConfiguration.boundingBox,
+                              objectConfiguration.passengerPositions});
         }
         // Editor-only assets can still contribute path debug geometry.
         if (objectConfiguration.absoluteHeight) {
@@ -85,9 +84,10 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                           openbus::pathToUtf8(configPath.filename()) +
                               " line=" + std::to_string(diagnostic.line) + " [" +
                               diagnostic.keyword + "] " + severity + ": " + diagnostic.message,
-                          1, diagnostic.severity == ConfigurationDiagnostic::Severity::Error
-                                 ? LogLevel::Error
-                                 : LogLevel::Warning);
+                          1,
+                          diagnostic.severity == ConfigurationDiagnostic::Severity::Error
+                              ? LogLevel::Error
+                              : LogLevel::Warning);
         }
         // Tree SCOs may mark their helper mesh [onlyeditor] while their [tree]
         // definition is runtime scenery. The tree preview below replaces that mesh.
@@ -157,9 +157,10 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                           openbus::pathToUtf8(modelConfigPath.filename()) +
                               " line=" + std::to_string(diagnostic.line) + " [" +
                               diagnostic.keyword + "] " + severity + ": " + diagnostic.message,
-                          1, diagnostic.severity == ConfigurationDiagnostic::Severity::Error
-                                 ? LogLevel::Error
-                                 : LogLevel::Warning);
+                          1,
+                          diagnostic.severity == ConfigurationDiagnostic::Severity::Error
+                              ? LogLevel::Error
+                              : LogLevel::Warning);
         }
         for (const ModelPart& part : configuration.parts) {
             if (!part.visibleVariable.empty()) {

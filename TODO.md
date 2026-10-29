@@ -1069,6 +1069,32 @@ limitations.
 - [ ] Compare the vehicle draw-list/material-selection reuse and static
   ground/grid VBO changes using repeated, uninstrumented runs; report frame
   p50/p95 and keep traced scope totals separate from frame time.
+- [~] Traffic driving reuses overlapping curvature samples and filters following
+  and priority candidates with spatial indexes, retaining same-route leaders and
+  conservative fallbacks. `OpenBusMapTrafficRuntimeProbe --benchmark-traffic-scale`
+  covers 333 separated actors, while `--benchmark-junctions` hashes junction
+  state on every update. Uninstrumented Linux release runs measured
+  approximately 22.3-23.6 ms/update before and 20.0-20.8 ms/update after for
+  the synthetic 333-actor case; junction results were approximately 4.1-4.6
+  ms/update with matching state hashes. Re-profile representative in-game
+  traffic and validate dense junctions and variable simulation timesteps.
+- [~] Following searches use a tighter conservative radial candidate range and
+  reuse heading calculations; arbitration reuses per-actor hold state and
+  lookahead reuses each segment's vehicle speed limit. The runtime probe checks
+  speed-limit changes at segment and loop boundaries and offers
+  `--benchmark-traffic-dense` for 333 nearby parallel actors. Paired,
+  uninstrumented Linux release runs showed overlapping timing ranges, so the
+  performance impact on representative maps remains unconfirmed. Profiling
+  now separates following candidate collection from evaluation, and initial
+  footprint construction from active junction claims. Investigate whether the
+  adaptive worker rate creates excessive substeps at high traffic load before
+  changing timestep or backlog behavior.
+- [~] Within each traffic substep, junction ranges and unchanged actor footprints
+  are reused, and claim-section overlap checks are shared across samples.
+  The traffic probe checks stationary leaders resuming across an occupancy-cell
+  boundary. In three uninstrumented Linux release comparisons, the junction
+  benchmark kept the same state hash and took 4.39-4.61 ms/update versus
+  4.51-4.77 ms/update before; timings still need representative map validation.
 - [~] `RenderLoopDraw.cpp` now filters scenery traffic segments to the active
   tile window once per debug draw and reuses that ordered view for endpoint
   lookup, path geometry, signal stop lines, and signal details. Traffic routes

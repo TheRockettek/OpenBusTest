@@ -269,7 +269,7 @@ void RenderLoop::finishPendingTrafficVehicleLoads() {
             state.pendingInitializationVehicle.reset();
             state.vehicleLoadFailed = true;
             gameLog.Warning("Could not asynchronously load map traffic vehicle '" +
-                        state.actor.modelPath + "': " + error.what());
+                            state.actor.modelPath + "': " + error.what());
         }
     }
 }
@@ -635,10 +635,11 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     const auto spawnPose =
                         sampleMapTrafficRoute(state.actor.route, state.spawnedAtDistanceMeters,
                                               state.actor.lateralOffsetMeters);
-                    gameLog.Warning("Map road AI vehicle made no route progress from spawn spline=" +
-                                std::to_string(spawnPose ? spawnPose->splineId : 0) +
-                                "; rejecting that spawn candidate and retrying elsewhere: " +
-                                state.actor.modelPath);
+                    gameLog.Warning(
+                        "Map road AI vehicle made no route progress from spawn spline=" +
+                        std::to_string(spawnPose ? spawnPose->splineId : 0) +
+                        "; rejecting that spawn candidate and retrying elsewhere: " +
+                        state.actor.modelPath);
                     state.activeSpawnCandidateIndex.reset();
                     continue;
                 } else {
@@ -849,15 +850,16 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 std::abs(cameraDistanceMeters -
                          state.lastScheduledAdmissionDiagnosticCameraDistanceMeters) >= 50.0) {
                 gameLog.Debug("Scheduled map AI bus departure waiting: spline=" +
-                            std::to_string(entryPose.splineId) + ", hidden=" +
-                            std::to_string(entryHidden) + ", clear=" + std::to_string(entryClear) +
-                            ", activeTile=" + std::to_string(entryOnActiveTile) +
-                            ", cameraValid=" + std::to_string(lastMainCameraPoseValid_) +
-                            ", cameraDistance=" + std::to_string(cameraDistanceMeters) +
-                            "m, simulationSeconds=" + std::to_string(currentSimulationTime) +
-                            ", departureSeconds=" +
-                            std::to_string(state.nextScheduledDepartureElapsedSeconds) + ": " +
-                            state.actor.modelPath);
+                              std::to_string(entryPose.splineId) +
+                              ", hidden=" + std::to_string(entryHidden) +
+                              ", clear=" + std::to_string(entryClear) +
+                              ", activeTile=" + std::to_string(entryOnActiveTile) +
+                              ", cameraValid=" + std::to_string(lastMainCameraPoseValid_) +
+                              ", cameraDistance=" + std::to_string(cameraDistanceMeters) +
+                              "m, simulationSeconds=" + std::to_string(currentSimulationTime) +
+                              ", departureSeconds=" +
+                              std::to_string(state.nextScheduledDepartureElapsedSeconds) + ": " +
+                              state.actor.modelPath);
                 state.lastScheduledAdmissionDiagnosticBlockerMask = blockerMask;
                 state.lastScheduledAdmissionDiagnosticCameraDistanceMeters = cameraDistanceMeters;
             }
@@ -914,7 +916,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 }
                 resetMapTrafficActorForEntry(state.actor);
                 state.actor.distanceMeters = spawn->distanceMeters;
-                // Start from rest so the first traffic tick can react to nearby leaders and red lights.
+                // Start from rest so the first traffic tick can react to nearby leaders and red
+                // lights.
                 state.actor.speedMetersPerSecond = 0.0;
                 state.wheelTravelDistanceMeters = 0.0;
                 state.previousWheelRouteDistanceMeters = state.actor.distanceMeters;
@@ -1070,14 +1073,14 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     if (!activeTileCoordinates.empty()) {
                         activeTileCoordinates += ';';
                     }
-                    activeTileCoordinates += std::to_string(tileX) + ',' +
-                                             std::to_string(tileY);
+                    activeTileCoordinates += std::to_string(tileX) + ',' + std::to_string(tileY);
                 }
                 const std::string firstInactiveCandidateTile =
                     roadSpawnDiagnostics.firstInactiveCandidateTile
                         ? std::to_string(roadSpawnDiagnostics.firstInactiveCandidateTile->first) +
                               ',' +
-                              std::to_string(roadSpawnDiagnostics.firstInactiveCandidateTile->second)
+                              std::to_string(
+                                  roadSpawnDiagnostics.firstInactiveCandidateTile->second)
                         : std::string("none");
                 gameLog.Debug(
                     "Map road AI spawn admission: target=" +
@@ -1389,12 +1392,12 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                         trafficVehicle.lastScheduledProgressDiagnosticDistanceMeters >=
                     100.0) {
                 gameLog.Debug("Scheduled map AI bus route progress: timetable minute=" +
-                            std::to_string(trafficVehicle.lastScheduledDepartureMinutes) +
-                            ", route distance=" +
-                            std::to_string(trafficVehicle.actor.distanceMeters -
-                                           trafficVehicle.spawnedAtDistanceMeters) +
-                            "m, spline=" + std::to_string(pose->splineId) + ": " +
-                            trafficVehicle.actor.modelPath);
+                              std::to_string(trafficVehicle.lastScheduledDepartureMinutes) +
+                              ", route distance=" +
+                              std::to_string(trafficVehicle.actor.distanceMeters -
+                                             trafficVehicle.spawnedAtDistanceMeters) +
+                              "m, spline=" + std::to_string(pose->splineId) + ": " +
+                              trafficVehicle.actor.modelPath);
                 trafficVehicle.lastScheduledProgressDiagnosticDistanceMeters =
                     trafficVehicle.actor.distanceMeters;
             }
@@ -1612,10 +1615,10 @@ void RenderLoop::updateScripts() {
         } else if (diagnosticTime - lastScriptDiagnosticTime_ >= 1.0) {
             if (droppedScriptTicksSinceDiagnostic_ > 0) {
                 gameLog.Debug("Script scheduler executed " +
-                            std::to_string(scriptTicksSinceDiagnostic_) + " ticks and dropped " +
-                            std::to_string(droppedScriptTicksSinceDiagnostic_) + " ticks (" +
-                            std::to_string(droppedScriptTimeSinceDiagnostic_) +
-                            " s) during the last second");
+                              std::to_string(scriptTicksSinceDiagnostic_) + " ticks and dropped " +
+                              std::to_string(droppedScriptTicksSinceDiagnostic_) + " ticks (" +
+                              std::to_string(droppedScriptTimeSinceDiagnostic_) +
+                              " s) during the last second");
             }
             lastScriptDiagnosticTime_ = diagnosticTime;
             scriptTicksSinceDiagnostic_ = 0;

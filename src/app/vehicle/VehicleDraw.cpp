@@ -265,7 +265,8 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
             if (batch.indirectSlot == std::numeric_limits<std::size_t>::max()) {
                 static bool loggedMissingSlot = false;
                 if (!loggedMissingSlot) {
-                    gameLog.Warning("Vehicle indirect command slot missing; drawing conservatively");
+                    gameLog.Warning(
+                        "Vehicle indirect command slot missing; drawing conservatively");
                     loggedMissingSlot = true;
                 }
             }

@@ -279,8 +279,7 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
         } else if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
             openbus::config::logUnhandledConfigurationTag(
                 "spline profile (.sli)", path, sectionLine,
-                sourceLine.substr(1, sourceLine.size() - 2),
-                "directive is not implemented");
+                sourceLine.substr(1, sourceLine.size() - 2), "directive is not implemented");
         }
     }
 

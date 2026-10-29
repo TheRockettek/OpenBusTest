@@ -494,7 +494,7 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
         // still receive parameter changes, including a gain that has reached zero.
         if (gain <= 0.0 && definition.loop) {
             soundLog.Debug("Skipping silent sound: trigger=" + name +
-                         " gain=" + std::to_string(gain));
+                           " gain=" + std::to_string(gain));
             continue;
         }
         const SoundPlaybackParameters parameters{static_cast<float>(gain), 1.0F,
@@ -525,12 +525,12 @@ void VehicleSoundBank::trigger(SoundPlayback& playback, const std::string& name,
         }
         if (gain <= 0.0) {
             soundLog.Debug("Skipping silent sound: trigger=" + name +
-                         " gain=" + std::to_string(gain));
+                           " gain=" + std::to_string(gain));
             continue;
         }
         soundLog.Debug("Sound playback requested: trigger=" + name + " file=" + file.string() +
-                     " gain=" + std::to_string(gain) +
-                     " loop=" + (definition.loop ? "true" : "false"));
+                       " gain=" + std::to_string(gain) +
+                       " loop=" + (definition.loop ? "true" : "false"));
         const SoundPlaybackHandle handle = playback.play(file, definition.loop, parameters);
         if (handle != 0) {
             ownedSources.emplace(definition.id, ActiveSound{file, handle});

@@ -1489,6 +1489,45 @@ void verifyDrivingBehavior() {
                 approachingFollower.blockReason == MapTrafficBlockReason::Leader,
             "a fast follower reduces its target speed early when approaching a stopped leader");
     {
+        auto waitingLeader = makeMapTrafficActor(road, "waiting-leader.ovh", 0.0, 0.0, false);
+        auto waitingFollower = makeMapTrafficActor(road, "waiting-follower.ovh", 6.0, 0.0, false);
+        waitingLeader.distanceMeters = 24.0;
+        for (int frame = 0; frame < 20; ++frame) {
+            advanceMapTrafficDriving({&waitingFollower, &waitingLeader}, {}, 0.1);
+        }
+        requireNear(waitingLeader.distanceMeters, 24.0,
+                    "a stationary leader retains its occupied position across substeps");
+        waitingLeader.cruiseSpeedMetersPerSecond = 6.0;
+        for (int frame = 0; frame < 60; ++frame) {
+            advanceMapTrafficDriving({&waitingFollower, &waitingLeader}, {}, 0.1);
+            require(mapTrafficHasClearance(footprint(waitingFollower), {footprint(waitingLeader)},
+                                           0.49),
+                    "a follower keeps clearance when a stationary leader starts moving");
+        }
+        require(waitingLeader.distanceMeters > 36.0 && waitingFollower.distanceMeters > 5.0,
+                "vehicles resume safely when the leader crosses an occupancy cell boundary");
+    }
+    for (const double startDistance : {11.9, 12.1}) {
+        for (const bool reverseOrder : {false, true}) {
+            auto followerOnRoute =
+                makeMapTrafficActor(road, "projected-follower.ovh", 12.0, 0.0, false);
+            auto otherRoute = road;
+            otherRoute.segments.front().spline.placement.splineId += 1;
+            auto leaderOnOtherRoute =
+                makeMapTrafficActor(otherRoute, "projected-leader.ovh", 0.0, 0.0, false);
+            followerOnRoute.distanceMeters = startDistance;
+            followerOnRoute.speedMetersPerSecond = 8.0;
+            leaderOnOtherRoute.distanceMeters = startDistance + 20.0;
+            const std::vector<MapTrafficActor*> ordered =
+                reverseOrder ? std::vector<MapTrafficActor*>{&leaderOnOtherRoute, &followerOnRoute}
+                             : std::vector<MapTrafficActor*>{&followerOnRoute, &leaderOnOtherRoute};
+            advanceMapTrafficDriving(ordered, {}, 0.05);
+            require(followerOnRoute.blockReason == MapTrafficBlockReason::Leader &&
+                        followerOnRoute.blockingActor == &leaderOnOtherRoute,
+                    "following finds leaders on different routes across occupancy cell boundaries");
+        }
+    }
+    {
         const auto adjacentLane = oneSegment(straight(1104, 2.4, 0.0, 0.0, 500.0));
         auto adjacentStoppedCar =
             makeMapTrafficActor(adjacentLane, "adjacent-stopped.ovh", 0.0, 0.0, false);
@@ -4001,11 +4040,43 @@ void verifyTrafficRules() {
     advanceMapTrafficDriving({&speedCapped}, {}, 4.0);
     require(speedCapped.speedMetersPerSecond <= 5.0 + 1.0e-8,
             "authored speed limits cap vehicle speed in km/h converted to m/s");
+
+    MapTrafficRouteSegment firstSpeedSegment;
+    firstSpeedSegment.spline = {makeSpline(1302, 0, 0, 0.0), 0, 0};
+    firstSpeedSegment.spline.placement.length = 20.0;
+    MapTrafficRouteSegment nextSpeedSegment;
+    nextSpeedSegment.spline = {makeSpline(1303, 0, 0, 20.0), 0, 0};
+    nextSpeedSegment.spline.placement.length = 100.0;
+    nextSpeedSegment.pathRules.groups.push_back(speedRules);
+    MapTrafficRoute changingSpeedRoute;
+    changingSpeedRoute.segments = {firstSpeedSegment, nextSpeedSegment};
+    changingSpeedRoute.cumulativeEndDistances = {20.0, 120.0};
+    changingSpeedRoute.totalLength = 120.0;
+    auto approachingSpeedLimit =
+        makeMapTrafficActor(changingSpeedRoute, "changing-speed.ovh", 12.0, 0.0, false);
+    approachingSpeedLimit.distanceMeters = 12.0;
+    approachingSpeedLimit.speedMetersPerSecond = 8.0;
+    approachingSpeedLimit.trafficRuleGroupIndex = 0;
+    advanceMapTrafficDriving({&approachingSpeedLimit}, {}, 0.05);
+    requireNear(approachingSpeedLimit.targetSpeedMetersPerSecond, std::sqrt(67.0),
+                "lookahead applies a new group speed limit at the route segment boundary");
+
+    changingSpeedRoute.closed = true;
+    changingSpeedRoute.segments.front().pathRules.groups.push_back(speedRules);
+    changingSpeedRoute.segments.back().pathRules.groups.clear();
+    auto approachingLoopSpeedLimit =
+        makeMapTrafficActor(changingSpeedRoute, "loop-speed.ovh", 12.0, 0.0, false);
+    approachingLoopSpeedLimit.distanceMeters = 112.0;
+    approachingLoopSpeedLimit.speedMetersPerSecond = 8.0;
+    approachingLoopSpeedLimit.trafficRuleGroupIndex = 0;
+    advanceMapTrafficDriving({&approachingLoopSpeedLimit}, {}, 0.05);
+    requireNear(approachingLoopSpeedLimit.targetSpeedMetersPerSecond, std::sqrt(61.0),
+                "lookahead applies a group speed limit across a closed route seam");
 }
 
-void benchmarkDrivingLookahead() {
+void benchmarkDrivingLookahead(std::size_t actorCount = 69, double spacingMeters = 100.0) {
     using namespace openbus::map;
-    std::vector<MapTrafficActor> actors(69);
+    std::vector<MapTrafficActor> actors(actorCount);
     std::vector<MapTrafficActor*> pointers;
     for (std::size_t index = 0; index < actors.size(); ++index) {
         auto& actor = actors[index];
@@ -4013,7 +4084,7 @@ void benchmarkDrivingLookahead() {
             MapTrafficRouteSegment segment;
             segment.spline.placement = makeSpline(
                 10000 + static_cast<int>(index) * 20 + segmentIndex, 0, 0, segmentIndex * 10.0);
-            segment.spline.placement.localX = static_cast<double>(index) * 100.0;
+            segment.spline.placement.localX = static_cast<double>(index) * spacingMeters;
             actor.route.segments.push_back(segment);
             actor.route.cumulativeEndDistances.push_back((segmentIndex + 1) * 10.0);
         }
@@ -4996,6 +5067,14 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-lookahead") {
             benchmarkDrivingLookahead();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-traffic-scale") {
+            benchmarkDrivingLookahead(333);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-traffic-dense") {
+            benchmarkDrivingLookahead(333, 6.0);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-junctions") {

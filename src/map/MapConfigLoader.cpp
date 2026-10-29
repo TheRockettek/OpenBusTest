@@ -2120,9 +2120,10 @@ mapAiRoadTrafficPopulationByGroup(const MapAiTrafficData& traffic, std::size_t p
     return populations;
 }
 
-std::vector<MapAiRoadTrafficGroupPopulation> mapAiMaximumRoadTrafficPoolByGroup(
-    const MapAiTrafficData& traffic, const std::vector<MapAiRoadVehicle>& vehicles,
-    std::size_t basePopulation, double densityMultiplier) {
+std::vector<MapAiRoadTrafficGroupPopulation>
+mapAiMaximumRoadTrafficPoolByGroup(const MapAiTrafficData& traffic,
+                                   const std::vector<MapAiRoadVehicle>& vehicles,
+                                   std::size_t basePopulation, double densityMultiplier) {
     if (!std::isfinite(densityMultiplier) || densityMultiplier < 0.0) {
         throw std::invalid_argument("AI road traffic pool density multiplier is invalid");
     }
@@ -2166,8 +2167,8 @@ std::vector<MapAiRoadTrafficGroupPopulation> mapAiMaximumRoadTrafficPoolByGroup(
         for (const double hour : candidateHours) {
             const double density =
                 mapAiRoadTrafficDensityAtHour(traffic, vehicles, hour, dayOfWeekMask).value_or(0.0);
-            const std::size_t targetPopulation = mapTrafficPopulationForDensity(
-                basePopulation, density * densityMultiplier);
+            const std::size_t targetPopulation =
+                mapTrafficPopulationForDensity(basePopulation, density * densityMultiplier);
             for (const MapAiRoadTrafficGroupPopulation& population :
                  mapAiRoadTrafficPopulationByGroup(traffic, targetPopulation, hour,
                                                    dayOfWeekMask)) {

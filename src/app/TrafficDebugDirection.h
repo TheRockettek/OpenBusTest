@@ -45,11 +45,9 @@ trafficDirectionArrow(const std::array<double, 3>& center, double headingRadians
     const std::array<double, 3> tail = {center[0] - forwardX * length * 0.5,
                                         center[1] - forwardY * length * 0.5, center[2]};
     const auto wing = [&](double side) {
-        return std::array<double, 3>{tip[0] - forwardX * length * 0.35 +
-                                         rightX * length * 0.22 * side,
-                                     tip[1] - forwardY * length * 0.35 +
-                                         rightY * length * 0.22 * side,
-                                     center[2]};
+        return std::array<double, 3>{
+            tip[0] - forwardX * length * 0.35 + rightX * length * 0.22 * side,
+            tip[1] - forwardY * length * 0.35 + rightY * length * 0.22 * side, center[2]};
     };
     return std::array<std::array<double, 3>, 6>{tail, tip, wing(-1.0), tip, wing(1.0), tip};
 }

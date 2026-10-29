@@ -129,7 +129,7 @@ void logUnhandledConfigurationTag(const std::string& format,
         }
     }
     configurationLog.Warning("Unhandled configuration tag [" + tag + "]: " + disposition + " in " +
-                         format + " file=" + location + " line=" + std::to_string(line));
+                             format + " file=" + location + " line=" + std::to_string(line));
 }
 
 bool Line::isKeyword() const {

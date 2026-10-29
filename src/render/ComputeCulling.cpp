@@ -353,7 +353,8 @@ void initializeComputeCulling(bool enableReadback, bool enableIndirect) {
     if (success == GL_FALSE) {
         std::array<char, 4096> log = {};
         pglGetShaderInfoLog(shader, static_cast<GLsizei>(log.size()), nullptr, log.data());
-        gameLog.Warning(std::string("Compute culling compilation failed; CPU fallback: ") + log.data());
+        gameLog.Warning(std::string("Compute culling compilation failed; CPU fallback: ") +
+                        log.data());
         pglDeleteShader(shader);
         return;
     }
@@ -415,7 +416,8 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
     if (items.size() > maxItems || lodBoundaries.size() > (128U * 1024U * 1024U) / sizeof(float)) {
         static bool loggedLimit = false;
         if (!loggedLimit) {
-            gameLog.Warning("Compute culling input exceeds supported limits; using CPU for this view");
+            gameLog.Warning(
+                "Compute culling input exceeds supported limits; using CPU for this view");
             loggedLimit = true;
         }
         return false;
@@ -452,7 +454,8 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
         earlierError = true;
     static bool loggedEarlierError = false;
     if (earlierError && !loggedEarlierError) {
-        gameLog.Warning("OpenGL error predates compute culling; cleared before dispatch validation");
+        gameLog.Warning(
+            "OpenGL error predates compute culling; cleared before dispatch validation");
         loggedEarlierError = true;
     }
     GLint previousProgram = 0, previousBuffer = 0;

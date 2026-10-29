@@ -278,7 +278,7 @@ struct BusSimulation::Impl {
         const dReal minimumMass = componentMass + MINIMUM_CHASSIS_MASS;
         if (configuration.mass < minimumMass) {
             simulationLog.Warning("Configured bus mass is below the physics minimum; using " +
-                              std::to_string(minimumMass) + " kg");
+                                  std::to_string(minimumMass) + " kg");
             configuration.mass = minimumMass;
         }
         openbus::rendering::TraceScope vehiclePhysicsTrace(
@@ -704,9 +704,10 @@ struct BusSimulation::Impl {
         if (accumulator >= fixedStep) {
             dropped = true;
             if (!dropReported) {
-                simulationLog.Warning("Dropped accumulated simulation time after exceeding catch-up "
-                                  "limit. Dropped seconds: " +
-                                  std::to_string(elapsedSeconds));
+                simulationLog.Warning(
+                    "Dropped accumulated simulation time after exceeding catch-up "
+                    "limit. Dropped seconds: " +
+                    std::to_string(elapsedSeconds));
                 dropReported = true;
             }
             accumulator = std::fmod(accumulator, fixedStep);

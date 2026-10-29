@@ -627,8 +627,8 @@ bool TextureLoader::readImage(const std::filesystem::path& path, Image& image) {
         if (signature && magic[0] == 'B' && magic[1] == 'M') {
             return readBmpImage(path, image);
         }
-        constexpr std::array<std::uint8_t, 8> pngMagic = {
-            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
+        constexpr std::array<std::uint8_t, 8> pngMagic = {0x89, 0x50, 0x4e, 0x47,
+                                                          0x0d, 0x0a, 0x1a, 0x0a};
         if (signature && magic == pngMagic) {
             return readStbImage(path, image);
         }

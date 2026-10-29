@@ -100,8 +100,7 @@ fontDirectoryIndex(const std::filesystem::path& directory) {
             if (statusError) {
                 complete = false;
                 scriptRuntimeLogger.Warning("Could not inspect font file '" +
-                                            entry->path().string() + "': " +
-                                            statusError.message());
+                                            entry->path().string() + "': " + statusError.message());
             }
             continue;
         }
@@ -110,10 +109,9 @@ fontDirectoryIndex(const std::filesystem::path& directory) {
         complete = complete && readSucceeded;
         for (std::size_t lineIndex = 0; lineIndex + 5 < lines.size(); ++lineIndex) {
             std::string section = lines[lineIndex];
-            std::transform(section.begin(), section.end(), section.begin(),
-                           [](unsigned char character) {
-                               return static_cast<char>(std::tolower(character));
-                           });
+            std::transform(
+                section.begin(), section.end(), section.begin(),
+                [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
             if (section != "[newfont]") {
                 continue;
             }

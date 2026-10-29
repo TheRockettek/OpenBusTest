@@ -135,8 +135,8 @@ maximumMapTrafficPopulation(std::size_t basePopulation,
                             const std::vector<openbus::map::MapTrafficDensityPoint>& schedule,
                             double densityMultiplier) {
     const auto populationForDensity = [&](std::optional<double> density) {
-        return openbus::map::mapTrafficPopulationForDensity(
-            basePopulation, density.value_or(1.0) * densityMultiplier);
+        return openbus::map::mapTrafficPopulationForDensity(basePopulation, density.value_or(1.0) *
+                                                                                densityMultiplier);
     };
     const std::size_t fallback = populationForDensity(std::nullopt);
     if (schedule.empty() || !std::isfinite(schedule.front().hour) || schedule.front().hour < 0.0 ||
@@ -163,8 +163,8 @@ maximumMapTrafficPopulation(std::size_t basePopulation,
 std::size_t mapTrafficPopulationForTestDensity(std::size_t basePopulation,
                                                std::optional<double> density,
                                                double densityMultiplier) {
-    return openbus::map::mapTrafficPopulationForDensity(
-        basePopulation, density.value_or(1.0) * densityMultiplier);
+    return openbus::map::mapTrafficPopulationForDensity(basePopulation,
+                                                        density.value_or(1.0) * densityMultiplier);
 }
 
 struct MapBusLineRouteStart {
@@ -403,9 +403,10 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
         const auto requirements = timetableRouteRequirements(line.trackEntries);
         std::size_t availablePrefixLength = 0;
         while (availablePrefixLength < requirements.size() &&
-               !renderer.trafficLanesForTimetableEntry(
-                           requirements[availablePrefixLength].splineId,
-                           requirements[availablePrefixLength].sceneryPathIndex)
+               !renderer
+                    .trafficLanesForTimetableEntry(
+                        requirements[availablePrefixLength].splineId,
+                        requirements[availablePrefixLength].sceneryPathIndex)
                     .empty()) {
             ++availablePrefixLength;
         }
@@ -427,9 +428,9 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
                     requiredSceneryPathSequence.push_back(requirements[index].sceneryPathIndex);
                 }
                 const auto routeSegments = renderer.trafficRouteSegments(
-                    origin.splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD,
-                    origin.laneSelector, 0.0, 0, requiredSplineSequence,
-                    {2, std::nullopt, true, std::nullopt}, requiredSceneryPathSequence, true);
+                    origin.splineId, openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, origin.laneSelector,
+                    0.0, 0, requiredSplineSequence, {2, std::nullopt, true, std::nullopt},
+                    requiredSceneryPathSequence, true);
                 const std::vector<openbus::map::MapTrafficRouteRequirement> requiredPrefix(
                     requirements.begin(),
                     requirements.begin() + static_cast<std::ptrdiff_t>(prefixLength));
@@ -442,13 +443,11 @@ MapBusLineRouteSearch mapBusLineRouteStarts(const RenderLoop& renderer,
                 routeStart.timetableRouteIndex = lineIndex;
                 routeStart.matchedTimetableEntryCount = prefixLength;
                 routeStart.requiredSplineSequence = std::move(requiredSplineSequence);
-                routeStart.requiredSceneryPathSequence =
-                    std::move(requiredSceneryPathSequence);
+                routeStart.requiredSceneryPathSequence = std::move(requiredSceneryPathSequence);
                 routeStart.stopAtRequiredSequenceEnd = true;
                 routeStart.itineraryInaccurateFallback = true;
-                if (!bestFallback ||
-                    routeStart.matchedTimetableEntryCount >
-                        bestFallback->matchedTimetableEntryCount) {
+                if (!bestFallback || routeStart.matchedTimetableEntryCount >
+                                         bestFallback->matchedTimetableEntryCount) {
                     bestFallback = std::move(routeStart);
                 }
                 break;
@@ -906,11 +905,11 @@ int main() {
             ", entrypoints=" + std::to_string(mapDefinition.entryPoints.size()) + mapNameSummary +
             ".");
         for (const ConfigurationDiagnostic& diagnostic : mapDefinition.diagnostics.entries) {
-            applicationLog.Log(
-                diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? LogLevel::Error
-                                                                                  : LogLevel::Warning,
-                "Map global.cfg line " + std::to_string(diagnostic.line) + " [" +
-                    diagnostic.keyword + "]: " + diagnostic.message);
+            applicationLog.Log(diagnostic.severity == ConfigurationDiagnostic::Severity::Error
+                                   ? LogLevel::Error
+                                   : LogLevel::Warning,
+                               "Map global.cfg line " + std::to_string(diagnostic.line) + " [" +
+                                   diagnostic.keyword + "]: " + diagnostic.message);
         }
         const std::size_t spawnEntryPoint = startupSelection.spawnEntryPoint;
         const std::size_t groundTextureIndex = openbus::map::selectMapGroundTextureIndex(
@@ -957,8 +956,8 @@ int main() {
                     break;
                 } catch (const std::exception& error) {
                     lastLoadError = error.what();
-                    applicationLog.Warning("Initial simulation bus unavailable '" + candidate.string() +
-                                       "': " + error.what());
+                    applicationLog.Warning("Initial simulation bus unavailable '" +
+                                           candidate.string() + "': " + error.what());
                 }
             }
             if (!loaded) {
@@ -1011,8 +1010,8 @@ int main() {
                     loaded.second.emplace_back(tile.x, tile.y);
                 } catch (const std::exception& error) {
                     applicationLog.Warning("Spawn terrain collision unavailable for tile (" +
-                                       std::to_string(tile.x) + "," + std::to_string(tile.y) +
-                                       "): " + error.what());
+                                           std::to_string(tile.x) + "," + std::to_string(tile.y) +
+                                           "): " + error.what());
                 }
             }
             if (loaded.first.empty()) {
@@ -1140,9 +1139,8 @@ int main() {
         if (mapAiBaseCount == 0) {
             applicationLog.Log("Map-driven AI traffic is disabled by OPENBUS_MAP_AI_COUNT=0.");
         } else {
-            const int startWeekdayMask =
-                openbus::map::mapTrafficWeekdayMaskAtElapsedSeconds(mapAiStartWeekdayIndex,
-                                                                    mapAiStartHour, 0.0);
+            const int startWeekdayMask = openbus::map::mapTrafficWeekdayMaskAtElapsedSeconds(
+                mapAiStartWeekdayIndex, mapAiStartHour, 0.0);
             const std::optional<double> groupDensity = openbus::map::mapAiRoadTrafficDensityAtHour(
                 mapDefinition.aiTraffic, availableAiRoadVehicles, mapAiStartHour, startWeekdayMask);
             const std::optional<double> configuredDensity =
@@ -1184,7 +1182,8 @@ int main() {
             }
             if (!configuredDensity.has_value()) {
                 applicationLog.Warning("Map road traffic density is unavailable at " +
-                                   std::to_string(mapAiStartHour) + "h; using density factor 1.0.");
+                                       std::to_string(mapAiStartHour) +
+                                       "h; using density factor 1.0.");
             }
             if (aiRoadVehicles.empty()) {
                 applicationLog.Warning(
@@ -1297,8 +1296,8 @@ int main() {
                                 const auto vehicleFilter = openbus::map::MapTrafficVehicleFilter{
                                     vehicleType, roadVehicle.groupIndex, false,
                                     roadVehicle.trafficRuleGroupIndex};
-                                const auto lane = renderer.selectTrafficSpawnLane(
-                                    vehicleFilter, candidateSeed);
+                                const auto lane =
+                                    renderer.selectTrafficSpawnLane(vehicleFilter, candidateSeed);
                                 if (!lane.has_value()) {
                                     ++noCompatibleSpawnLaneCount;
                                     continue;
@@ -1323,7 +1322,7 @@ int main() {
                             } catch (const std::exception& error) {
                                 unavailableAiVehicles.insert(vehiclePath);
                                 applicationLog.Warning("Skipping map road vehicle '" + vehiclePath +
-                                                   "': " + error.what());
+                                                       "': " + error.what());
                             }
                         }
                         if (previouslyAdded == addedTrafficVehicles && hasLoggedPoolState) {
@@ -1431,7 +1430,7 @@ int main() {
                         } catch (const std::exception& error) {
                             unavailableAiBuses.insert(busPath);
                             applicationLog.Warning("Skipping map AI bus '" + busPath +
-                                               "': " + error.what());
+                                                   "': " + error.what());
                             continue;
                         }
                     }
@@ -1446,16 +1445,16 @@ int main() {
                 }
                 routeSearchTrace.finish();
                 if (!matchedBusRoutes.empty()) {
-                    const std::size_t fallbackCount = static_cast<std::size_t>(std::count_if(
-                        matchedBusRoutes.begin(), matchedBusRoutes.end(),
-                        [](const MatchedBusRoute& route) {
-                            return route.routeStart.itineraryInaccurateFallback;
-                        }));
-                    applicationLog.Log(
-                        "Scheduled bus route search found " +
-                        std::to_string(matchedBusRoutes.size() - fallbackCount) +
-                        " complete timetable route(s) and " + std::to_string(fallbackCount) +
-                        " partial prefix fallback(s).");
+                    const std::size_t fallbackCount = static_cast<std::size_t>(
+                        std::count_if(matchedBusRoutes.begin(), matchedBusRoutes.end(),
+                                      [](const MatchedBusRoute& route) {
+                                          return route.routeStart.itineraryInaccurateFallback;
+                                      }));
+                    applicationLog.Log("Scheduled bus route search found " +
+                                       std::to_string(matchedBusRoutes.size() - fallbackCount) +
+                                       " complete timetable route(s) and " +
+                                       std::to_string(fallbackCount) +
+                                       " partial prefix fallback(s).");
                 }
                 for (const MatchedBusRoute& matchedRoute : matchedBusRoutes) {
                     const auto& timetable =
@@ -1506,9 +1505,10 @@ int main() {
                         const auto stationPosition =
                             openbus::map::mapAiTimetableStationPosition(timetable, station);
                         if (!stationPosition) {
-                            applicationLog.Warning("Skipping passenger stop with an invalid timetable "
-                                               "track position: " +
-                                               station.name + " in " + timetable.timetableKey);
+                            applicationLog.Warning(
+                                "Skipping passenger stop with an invalid timetable "
+                                "track position: " +
+                                station.name + " in " + timetable.timetableKey);
                             continue;
                         }
                         const auto& trackEntry =
@@ -1602,8 +1602,8 @@ int main() {
                                         .allowIntermediarySegmentsBetweenRequired,
                                     matchedRoute.routeStart.allowReverseTraversalForRequired,
                                     busPassengerStops, timetable.lineName,
-                                    timetable.destinationName,
-                                    std::nullopt, false, passengerRouteIndex)) {
+                                    timetable.destinationName, std::nullopt, false,
+                                    passengerRouteIndex)) {
                                 ++addedBuses;
                             } else {
                                 applicationLog.Warning(
@@ -1612,7 +1612,7 @@ int main() {
                             }
                         } catch (const std::exception& error) {
                             applicationLog.Warning("Skipping map AI bus '" + matchedRoute.busPath +
-                                               "': " + error.what());
+                                                   "': " + error.what());
                             break;
                         }
                     }
@@ -1680,8 +1680,8 @@ int main() {
                 scheduledPassengerHumanModels.push_back(humanConfigPath);
             } else {
                 applicationLog.Warning("Skipping missing scheduled passenger human model "
-                                   "configuration '" +
-                                   humanConfigPath.generic_string() + "'.");
+                                       "configuration '" +
+                                       humanConfigPath.generic_string() + "'.");
             }
         }
         renderer.SetScheduledPassengerHumanModels(std::move(scheduledPassengerHumanModels));
@@ -1717,7 +1717,7 @@ int main() {
                     openbus::assets::resolveCaseInsensitivePath(omsiRootPath() / normalizedPath);
                 if (!std::filesystem::is_regular_file(humanConfigPath)) {
                     applicationLog.Warning("Skipping missing human model configuration '" +
-                                       configuredPath + "'.");
+                                           configuredPath + "'.");
                     continue;
                 }
                 try {
@@ -1725,7 +1725,7 @@ int main() {
                         openbus::config::loadHumanConfig(humanConfigPath);
                     if (humanConfig.diagnostics.hasErrors()) {
                         applicationLog.Warning("Skipping invalid human configuration '" +
-                                           humanConfigPath.generic_string() + "'.");
+                                               humanConfigPath.generic_string() + "'.");
                         continue;
                     }
                     const auto geometry = std::find_if(
@@ -1738,8 +1738,8 @@ int main() {
                         !std::isfinite(geometry->values[0]) || geometry->values[0] <= 0.0 ||
                         !std::isfinite(geometry->values[1]) || geometry->values[1] <= 0.0) {
                         applicationLog.Warning("Skipping human configuration without valid "
-                                           "[humangeom] dimensions: " +
-                                           humanConfigPath.generic_string() + ".");
+                                               "[humangeom] dimensions: " +
+                                               humanConfigPath.generic_string() + ".");
                         continue;
                     }
                     humanModels.push_back({humanConfigPath, geometry->values[0],
@@ -1747,20 +1747,23 @@ int main() {
                                            humanConfig.walkStrideLengthMeters});
                 } catch (const std::exception& error) {
                     applicationLog.Warning("Skipping human configuration '" +
-                                       humanConfigPath.generic_string() + "': " + error.what());
+                                           humanConfigPath.generic_string() + "': " + error.what());
                 }
             }
             humanConfigTrace.finish();
             if (!configuredDensity.has_value()) {
                 applicationLog.Warning("Map passenger traffic density is unavailable at " +
-                                   std::to_string(mapAiStartHour) + "h; using density factor 1.0.");
+                                       std::to_string(mapAiStartHour) +
+                                       "h; using density factor 1.0.");
             }
             if (humanSplineIds.empty()) {
-                applicationLog.Warning("Map human traffic not spawned: no usable human-path splines "
-                                   "([path] type 1) were found.");
+                applicationLog.Warning(
+                    "Map human traffic not spawned: no usable human-path splines "
+                    "([path] type 1) were found.");
             } else if (humanModels.empty()) {
-                applicationLog.Warning("Map human traffic not spawned: no valid .hum configurations "
-                                   "were available.");
+                applicationLog.Warning(
+                    "Map human traffic not spawned: no valid .hum configurations "
+                    "were available.");
             } else if (humanPoolCount == 0) {
                 applicationLog.Log("Map passenger traffic schedule has no positive population.");
             } else {
@@ -1786,8 +1789,8 @@ int main() {
                         }
                     } catch (const std::exception& error) {
                         applicationLog.Warning("Skipping human traffic actor '" +
-                                           humanModel.configPath.generic_string() +
-                                           "': " + error.what());
+                                               humanModel.configPath.generic_string() +
+                                               "': " + error.what());
                     }
                 }
                 applicationLog.Log(
@@ -1931,7 +1934,7 @@ int main() {
                 std::cout << "BENCHMARK_SKIPPED=resolution_mismatch\n";
                 std::cout << "BENCHMARK_COMPLETE=1\n";
                 applicationLog.Warning("Benchmark skipped because the requested framebuffer size "
-                                   "is unavailable");
+                                       "is unavailable");
                 Logger::Flush();
                 openbus::rendering::Flush();
                 return 0;

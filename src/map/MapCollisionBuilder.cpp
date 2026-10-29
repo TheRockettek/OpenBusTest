@@ -954,7 +954,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                             surface = surfaceMaps.emplace(surfaceKey, std::move(image)).first;
                         } else {
                             gameLog.Warning("Map road surface height map could not be decoded: " +
-                                        surfacePath->second->string());
+                                            surfacePath->second->string());
                             surface = surfaceMaps.emplace(surfaceKey, std::nullopt).first;
                         }
                     }

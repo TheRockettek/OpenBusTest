@@ -257,9 +257,10 @@ std::optional<std::size_t> selectMapAiRoadVehicle(const std::vector<MapAiRoadVeh
 std::vector<MapAiRoadTrafficGroupPopulation>
 mapAiRoadTrafficPopulationByGroup(const MapAiTrafficData& traffic, std::size_t populationCount,
                                   double hour, int dayOfWeekMask);
-std::vector<MapAiRoadTrafficGroupPopulation> mapAiMaximumRoadTrafficPoolByGroup(
-    const MapAiTrafficData& traffic, const std::vector<MapAiRoadVehicle>& vehicles,
-    std::size_t basePopulation, double densityMultiplier);
+std::vector<MapAiRoadTrafficGroupPopulation>
+mapAiMaximumRoadTrafficPoolByGroup(const MapAiTrafficData& traffic,
+                                   const std::vector<MapAiRoadVehicle>& vehicles,
+                                   std::size_t basePopulation, double densityMultiplier);
 std::optional<double> mapAiRoadTrafficDensityAtHour(const MapAiTrafficData& traffic,
                                                     const std::vector<MapAiRoadVehicle>& vehicles,
                                                     double hour, int dayOfWeekMask);

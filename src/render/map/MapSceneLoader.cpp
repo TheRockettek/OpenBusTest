@@ -393,16 +393,17 @@ void MapSceneLoader::recordTilePreparationFailure(std::uint64_t tileKeyValue,
         const auto retryDelay = std::chrono::milliseconds(250 * (1U << (failure.attempts - 1U)));
         failure.retryAfter = std::chrono::steady_clock::now() + retryDelay;
     }
-    gameLog.Log(failure.exhausted ? LogLevel::Error : LogLevel::Warning,
-                "Map " + stage + " failed for " + openbus::pathToUtf8(path) + ": " + detail +
-                (failure.exhausted
-                     ? "; automatic retries exhausted, retry after the tile leaves the active "
-                       "window."
-                     : "; retrying in " +
-                           std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                              failure.retryAfter - std::chrono::steady_clock::now())
-                                              .count()) +
-                           " ms (attempt " + std::to_string(failure.attempts) + " of 3)."));
+    gameLog.Log(
+        failure.exhausted ? LogLevel::Error : LogLevel::Warning,
+        "Map " + stage + " failed for " + openbus::pathToUtf8(path) + ": " + detail +
+            (failure.exhausted
+                 ? "; automatic retries exhausted, retry after the tile leaves the active "
+                   "window."
+                 : "; retrying in " +
+                       std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          failure.retryAfter - std::chrono::steady_clock::now())
+                                          .count()) +
+                       " ms (attempt " + std::to_string(failure.attempts) + " of 3)."));
 }
 
 MapSceneLoader::PreparedSceneryAsset
@@ -1072,21 +1073,22 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
         for (const std::uint64_t key : terrainTileKeys) {
             terrainReadyCount += loadedTerrainTileKeys.contains(key) ? 1U : 0U;
         }
-        gameLog.Debug("Map active tile progress: phase=" + std::string(phase) +
-                    ", terrain=" + std::to_string(terrainReadyCount) + "/" +
-                    std::to_string(terrainTileKeys.size()) + ", content=" +
-                    std::to_string(contentReady) + "/" + std::to_string(tileCoordinates.size()) +
-                    ", parse futures=" + std::to_string(countActive(pendingTileDataRequests)) +
-                    " (" + std::to_string(parseReady) + " ready), parsed waiting for assets=" +
-                    std::to_string(countActive(pendingTileContentData)) +
-                    ", scenery batches=" + std::to_string(countActive(pendingTileSceneryRequests)) +
-                    ", road preparations=" + std::to_string(countActive(pendingTileRoadRequests)) +
-                    ", prepared roads=" + std::to_string(countActive(preparedTileRoads)) +
-                    ", asset workers active/total=" + std::to_string(workerStats.activeWorkers) +
-                    "/" + std::to_string(workerStats.workerCount) +
-                    ", queued=" + std::to_string(workerStats.queuedTasks) +
-                    ", peak active/queued=" + std::to_string(workerStats.peakActiveWorkers) + "/" +
-                    std::to_string(workerStats.peakQueuedTasks) + ".");
+        gameLog.Debug(
+            "Map active tile progress: phase=" + std::string(phase) +
+            ", terrain=" + std::to_string(terrainReadyCount) + "/" +
+            std::to_string(terrainTileKeys.size()) + ", content=" + std::to_string(contentReady) +
+            "/" + std::to_string(tileCoordinates.size()) +
+            ", parse futures=" + std::to_string(countActive(pendingTileDataRequests)) + " (" +
+            std::to_string(parseReady) + " ready), parsed waiting for assets=" +
+            std::to_string(countActive(pendingTileContentData)) +
+            ", scenery batches=" + std::to_string(countActive(pendingTileSceneryRequests)) +
+            ", road preparations=" + std::to_string(countActive(pendingTileRoadRequests)) +
+            ", prepared roads=" + std::to_string(countActive(preparedTileRoads)) +
+            ", asset workers active/total=" + std::to_string(workerStats.activeWorkers) + "/" +
+            std::to_string(workerStats.workerCount) +
+            ", queued=" + std::to_string(workerStats.queuedTasks) +
+            ", peak active/queued=" + std::to_string(workerStats.peakActiveWorkers) + "/" +
+            std::to_string(workerStats.peakQueuedTasks) + ".");
     };
     bool laneNetworksReady = false;
     if (initialLoad) {
@@ -1211,7 +1213,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
         }
         tilePreparationFailures.erase(key);
         gameLog.Debug("Map phase: loading active tile " +
-                    tileLabel(tileReference->x, tileReference->y) + ".");
+                      tileLabel(tileReference->x, tileReference->y) + ".");
         const auto roadData = preparedTileRoads.find(key);
         if (roadData == preparedTileRoads.end()) {
             throw std::logic_error("Active map tile road data was not prepared");
@@ -1598,10 +1600,10 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                 }
             }
             gameLog.Debug("Map terrain tile " + std::to_string(terrainTilesVisited) + ": " +
-                        openbus::pathToUtf8(tile.terrainPath) +
-                        "; meshes uploaded=" + std::to_string(impl_->terrainBuffers.size()) +
-                        ", elapsed=" + std::to_string(elapsedMilliseconds(terrainLoadStart)) +
-                        " ms.");
+                          openbus::pathToUtf8(tile.terrainPath) +
+                          "; meshes uploaded=" + std::to_string(impl_->terrainBuffers.size()) +
+                          ", elapsed=" + std::to_string(elapsedMilliseconds(terrainLoadStart)) +
+                          " ms.");
             const auto [terrain, inserted] =
                 terrainByCoordinate.emplace(key, std::move(prepared.grid));
             static_cast<void>(inserted);
@@ -1722,9 +1724,9 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
     }
     if (terrainTilesVisited > 0 || terrainUploads > 0) {
         gameLog.Debug("Map active terrain load progress: " + std::to_string(terrainTilesVisited) +
-                    " tiles visited, " + std::to_string(terrainUploads) + " uploaded, " +
-                    std::to_string(impl_->terrainBuffers.size()) + " total meshes in " +
-                    std::to_string(elapsedMilliseconds(terrainLoadStart)) + " ms.");
+                      " tiles visited, " + std::to_string(terrainUploads) + " uploaded, " +
+                      std::to_string(impl_->terrainBuffers.size()) + " total meshes in " +
+                      std::to_string(elapsedMilliseconds(terrainLoadStart)) + " ms.");
     }
     return terrainChanged;
 }
@@ -1762,9 +1764,9 @@ void MapSceneLoader::indexMapContent() {
          ++tileReferenceIndex) {
         const openbus::map::MapTileReference& tileReference = map.tiles[tileReferenceIndex];
         gameLog.Debug("Map index tile " + std::to_string(tileReferenceIndex + 1) + "/" +
-                    std::to_string(map.tiles.size()) + ": " +
-                    openbus::pathToUtf8(tileReference.textPath) +
-                    "; elapsed=" + std::to_string(elapsedMilliseconds(indexStart)) + " ms.");
+                      std::to_string(map.tiles.size()) + ": " +
+                      openbus::pathToUtf8(tileReference.textPath) +
+                      "; elapsed=" + std::to_string(elapsedMilliseconds(indexStart)) + " ms.");
         const openbus::map::MapTileData tile = openbus::map::loadMapTile(tileReference);
         const std::string tileName = tileLabel(tileReference.x, tileReference.y);
         std::optional<openbus::map::WaterData> trafficWater;

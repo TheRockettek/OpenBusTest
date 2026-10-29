@@ -247,8 +247,8 @@ void ScriptRuntime::invokeKeyBinding(const std::string& bindingName, bool presse
         if (!invoked) {
             if (logEvent && hasScriptEntryPoint(functionName)) {
                 impl_->log(LogLevel::Warning, "warning: key binding " + normalized +
-                           (pressed ? " pressed" : " released") + " -> " + functionName +
-                           " not found");
+                                                  (pressed ? " pressed" : " released") + " -> " +
+                                                  functionName + " not found");
             }
         } else if (logEvent) {
             // impl_->log("trigger ran: " + functionName + " (key binding " + normalized +
@@ -270,8 +270,8 @@ void ScriptRuntime::invokeMouseEvent(const std::string& eventName) {
         const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                                   : impl_->invoke(functionName.c_str());
         if (!invoked) {
-            impl_->log(LogLevel::Warning, "warning: mouse event " + normalized + " -> " +
-                                              functionName + " not found");
+            impl_->log(LogLevel::Warning,
+                       "warning: mouse event " + normalized + " -> " + functionName + " not found");
         } else {
             // impl_->log("trigger ran: " + functionName + " (mouse event " + normalized + ")");
         }
@@ -363,8 +363,8 @@ void ScriptRuntime::invokeMouseDrag(const std::string& eventName, float deltaX, 
         const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                                   : impl_->invoke(functionName.c_str());
         if (!invoked) {
-            impl_->log(LogLevel::Warning, "warning: mouse drag " + normalized + " -> " +
-                                              functionName + " not found");
+            impl_->log(LogLevel::Warning,
+                       "warning: mouse drag " + normalized + " -> " + functionName + " not found");
         }
     }
 }

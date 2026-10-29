@@ -402,8 +402,9 @@ std::vector<int> MapRenderer::trafficSplineIds(int pathTypeCode) const {
     return {};
 }
 
-std::vector<int> MapRenderer::trafficSplineIdsInTiles(
-    int pathTypeCode, const std::vector<std::pair<int, int>>& tiles) const {
+std::vector<int>
+MapRenderer::trafficSplineIdsInTiles(int pathTypeCode,
+                                     const std::vector<std::pair<int, int>>& tiles) const {
     if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
         return impl_->roadTrafficRouteNetwork.splineIdsInTiles(tiles);
     }
@@ -660,9 +661,10 @@ void MapRenderer::loadHumanTrafficModelNow(
     const std::filesystem::path modelRoot = modelConfigPath.parent_path();
     for (const ConfigurationDiagnostic& diagnostic : configuration.diagnostics.entries) {
         if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error) {
-            gameLog.Error("Human model configuration error: " + openbus::pathToUtf8(modelConfigPath) +
-                        " line=" + std::to_string(diagnostic.line) + " [" + diagnostic.keyword +
-                        "] " + diagnostic.message);
+            gameLog.Error(
+                "Human model configuration error: " + openbus::pathToUtf8(modelConfigPath) +
+                " line=" + std::to_string(diagnostic.line) + " [" + diagnostic.keyword + "] " +
+                diagnostic.message);
         }
     }
     if (configuration.diagnostics.hasErrors()) {
@@ -700,7 +702,7 @@ void MapRenderer::loadHumanTrafficModelNow(
             }
             if (!mesh) {
                 gameLog.Warning("Skipping unsupported or empty human model mesh: " +
-                            openbus::pathToUtf8(part.objPath));
+                                openbus::pathToUtf8(part.objPath));
                 continue;
             }
             for (const ObjPosition& position : mesh->positions) {
@@ -713,7 +715,7 @@ void MapRenderer::loadHumanTrafficModelNow(
             parsedParts.push_back({&part, std::move(mesh)});
         } catch (const std::exception& error) {
             gameLog.Warning("Could not load human model mesh " + openbus::pathToUtf8(part.objPath) +
-                        ": " + error.what());
+                            ": " + error.what());
         }
     }
     if (parsedParts.empty() || !std::isfinite(minimum[0]) || !std::isfinite(minimum[1]) ||
@@ -893,7 +895,7 @@ void MapRenderer::loadHumanTrafficModelNow(
             const GLenum priorGlError = drainGlErrors();
             if (priorGlError != GL_NO_ERROR && !loggedPriorUploadError) {
                 gameLog.Warning("OpenGL error predates human mesh upload; error=" +
-                            std::to_string(priorGlError));
+                                std::to_string(priorGlError));
                 loggedPriorUploadError = true;
             }
             pglGenBuffers(1, &batch.buffer);
@@ -907,9 +909,9 @@ void MapRenderer::loadHumanTrafficModelNow(
                     deleteRendererBuffers(1, &batch.buffer);
                 }
                 gameLog.Warning("Could not upload human model mesh '" +
-                            openbus::pathToUtf8(part.objPath) +
-                            "', material=" + std::to_string(materialIndex) +
-                            ", OpenGL error=" + std::to_string(uploadError));
+                                openbus::pathToUtf8(part.objPath) +
+                                "', material=" + std::to_string(materialIndex) +
+                                ", OpenGL error=" + std::to_string(uploadError));
                 continue;
             }
             texturePaths.push_back(texturePath);

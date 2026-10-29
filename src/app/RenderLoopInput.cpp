@@ -172,7 +172,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                 }
                 if (!mouseControlToggle) {
                     gameLog.Debug(std::string("Key binding ") + binding.action +
-                                (pressed ? " pressed" : " released"));
+                                  (pressed ? " pressed" : " released"));
                 }
             }
             if (!mouseControlToggle && !dumpVariables && !freeCameraToggle &&

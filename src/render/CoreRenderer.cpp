@@ -1208,7 +1208,7 @@ bool initializeCoreRenderer() {
         const std::string_view backend = cullingBackend != nullptr ? cullingBackend : "";
         if (backend == "compute-readback") {
             gameLog.Warning("compute-readback culling is retired; using CPU visibility tests. "
-                        "Set OPENBUS_CULLING_BACKEND=compute-indirect for GPU culling");
+                            "Set OPENBUS_CULLING_BACKEND=compute-indirect for GPU culling");
         }
         initializeComputeCulling(false, indirectCullingRequested(backend));
         return true;
@@ -1587,7 +1587,7 @@ bool drawStaticPrimitives(StaticPrimitiveBuffer& cache,
         }
         if (glGetError() != GL_NO_ERROR) {
             gameLog.Warning("OpenGL error during or before static primitive upload; "
-                        "skipping this primitive and retrying the upload later");
+                            "skipping this primitive and retrying the upload later");
             return false;
         }
         cache.vertexCount = vertices.size();

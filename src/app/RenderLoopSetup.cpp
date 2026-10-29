@@ -125,7 +125,7 @@ bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
         } catch (const std::exception& error) {
             mapLoadError = error.what();
             gameLog.Error("Unable to load map '" + pathToUtf8(maps[selectedMapIndex]) +
-                        "': " + error.what());
+                          "': " + error.what());
         }
     };
     loadSelectedMap();
@@ -446,8 +446,8 @@ void RenderLoop::loadMapVehicleOptions() {
         mapVehicleConfig_.reset();
         mapVehicleLoadError_ = error.what();
         gameLog.Error("Unable to load bus '" +
-                    pathToUtf8(vehicleCatalog_[selectedMapVehicleIndex_].configurationPath) +
-                    "': " + error.what());
+                      pathToUtf8(vehicleCatalog_[selectedMapVehicleIndex_].configurationPath) +
+                      "': " + error.what());
     }
 }
 

@@ -215,7 +215,7 @@ double mapTrafficRouteTravelHeadingRadians(const MapTrafficRoute& route, double 
 double mapTrafficHeadingToVehicleYawDegrees(double headingRadians);
 double mapTrafficHourAtElapsedSeconds(double startHour, double elapsedSeconds);
 int mapTrafficWeekdayMaskAtElapsedSeconds(int startWeekday, double startHour,
-                                         double elapsedSeconds);
+                                          double elapsedSeconds);
 double mapTrafficNextDepartureElapsedSeconds(double startHour, double elapsedSeconds,
                                              double departureMinutes);
 std::size_t mapTrafficNextDepartureIndex(double startHour, double elapsedSeconds,
@@ -247,8 +247,7 @@ std::size_t mapScheduledPassengerQueueSize(std::size_t nominalCount, double huma
 std::size_t mapScheduledPassengerQueueAfterDeparture(std::size_t waitingPassengers,
                                                      std::size_t initialPassengers) noexcept;
 std::size_t mapScheduledPassengerModelIdentity(int stopId, std::size_t queuePosition);
-std::size_t mapScheduledPassengerQueueSlot(std::size_t initialCount,
-                                           std::size_t passengerIndex);
+std::size_t mapScheduledPassengerQueueSlot(std::size_t initialCount, std::size_t passengerIndex);
 std::array<double, 2> mapTrafficPassengerWorldOffset(bool leftHandTraffic, double headingRadians,
                                                      double lateralOffsetMeters,
                                                      double longitudinalOffsetMeters);
@@ -375,7 +374,7 @@ std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route
                                                     double lateralOffsetMeters);
 // The rear axle follows the route; the returned pose is the vehicle model origin.
 std::optional<MapTrafficPose> sampleMapTrafficActorPose(const MapTrafficActor& actor,
-                                                       double distanceMeters);
+                                                        double distanceMeters);
 std::optional<MapTrafficRoutePosition>
 mapTrafficRoutePositionOnSpline(const MapTrafficRoute& route, int splineId,
                                 std::size_t sceneryPathIndex, double splinePositionMeters,

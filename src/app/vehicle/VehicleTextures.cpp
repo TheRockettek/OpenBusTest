@@ -128,7 +128,7 @@ GLuint Vehicle::uploadTexture(const std::filesystem::path& path, const Image& im
                                                           static_cast<std::size_t>(scaledHeight), 4,
                                                           scaledSize)) {
             gameLog.Error("Texture scaling exceeds the decoded image size limit: " +
-                        path.generic_string());
+                          path.generic_string());
             return 0;
         }
         std::vector<std::uint8_t> scaled(scaledSize);
@@ -317,7 +317,8 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
     }
 
     if (verboseTextureLookupLogs) {
-        gameLog.Debug("Resolving texture with name: " + name + " in root: " + root.generic_string());
+        gameLog.Debug("Resolving texture with name: " + name +
+                      " in root: " + root.generic_string());
     }
 
     const auto cacheResult = [&](const std::filesystem::path& path) {
@@ -451,7 +452,7 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
         if (preferredDirect != index->byStem.end()) {
             if (verboseTextureLookupLogs) {
                 gameLog.Debug("Found texture directly at path: " +
-                            preferredDirect->second.generic_string());
+                              preferredDirect->second.generic_string());
             }
             return cacheResult(preferredDirect->second);
         }
@@ -464,7 +465,7 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
         if (byFileName != index->byFileName.end()) {
             if (verboseTextureLookupLogs) {
                 gameLog.Debug("Found texture at indexed filename path: " +
-                            byFileName->second.generic_string());
+                              byFileName->second.generic_string());
             }
             return cacheResult(byFileName->second);
         }
@@ -472,7 +473,7 @@ std::filesystem::path Vehicle::findTexture(const std::filesystem::path& root,
         if (byStem != index->byStem.end()) {
             if (verboseTextureLookupLogs) {
                 gameLog.Debug("Found texture at indexed stem path: " +
-                            byStem->second.generic_string());
+                              byStem->second.generic_string());
             }
             return cacheResult(byStem->second);
         }
@@ -679,10 +680,10 @@ void Vehicle::ensureTexture(Batch& batch, bool visible) {
     if ((batch.texturePath.empty() || batch.texture == 0) &&
         !batch.textureCacheEntry->decodeFailureLogged) {
         batch.textureCacheEntry->decodeFailureLogged = true;
-        textureLog.Error(std::string(batch.texturePath.empty() ? "not-found: " : "decode-failed: ") +
-                       batch.textureName +
-                       " resolved=" + batch.texturePath.generic_string() +
-                       " source=" + batch.sourceMeshPath.generic_string());
+        textureLog.Error(
+            std::string(batch.texturePath.empty() ? "not-found: " : "decode-failed: ") +
+            batch.textureName + " resolved=" + batch.texturePath.generic_string() +
+            " source=" + batch.sourceMeshPath.generic_string());
     }
     // if (!batch.environmentLoadAttempted && !batch.environmentTextureName.empty() &&
     //     batch.environmentStrength > 0.0) {

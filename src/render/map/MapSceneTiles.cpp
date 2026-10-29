@@ -155,7 +155,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
     const int tileX = tileReference.x;
     const int tileY = tileReference.y;
     gameLog.Debug("Map content tile " + tileLabel(tileX, tileY) + ": " +
-                openbus::pathToUtf8(tileReference.textPath));
+                  openbus::pathToUtf8(tileReference.textPath));
     TraceScope tileTrace("map", "MapRenderer.processTile");
     ++tilesProcessed;
     sceneryPlacementsParsed +=
@@ -301,8 +301,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             debug.position = {worldX, worldY, worldZ};
             std::array<double, 3> minimum = {-0.5, -0.5, 0.0};
             std::array<double, 3> maximum = {0.5, 0.5, 1.0};
-            if (asset.hasBoundingBox && asset.boundingBox[0] > 0.0 &&
-                asset.boundingBox[1] > 0.0 && asset.boundingBox[2] > 0.0) {
+            if (asset.hasBoundingBox && asset.boundingBox[0] > 0.0 && asset.boundingBox[1] > 0.0 &&
+                asset.boundingBox[2] > 0.0) {
                 for (std::size_t axis = 0; axis < 3; ++axis) {
                     minimum[axis] = asset.boundingBox[axis + 3] - asset.boundingBox[axis] * 0.5;
                     maximum[axis] = asset.boundingBox[axis + 3] + asset.boundingBox[axis] * 0.5;
@@ -662,11 +662,11 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
         roadVertices.emplace(batchKey, std::move(geometry));
     }
     gameLog.Debug("Map content tile loaded: " + tileName +
-                "; loaded tiles=" + std::to_string(tilesProcessed) +
-                ", scenery=" + std::to_string(sceneryPlacementsParsed) +
-                ", splines=" + std::to_string(splinePlacementsParsed) +
-                ", cached spline profiles=" + std::to_string(splineProfiles.size()) + "; took " +
-                std::to_string(elapsedMilliseconds(tileStart)) + " ms.");
+                  "; loaded tiles=" + std::to_string(tilesProcessed) +
+                  ", scenery=" + std::to_string(sceneryPlacementsParsed) +
+                  ", splines=" + std::to_string(splinePlacementsParsed) +
+                  ", cached spline profiles=" + std::to_string(splineProfiles.size()) + "; took " +
+                  std::to_string(elapsedMilliseconds(tileStart)) + " ms.");
 }
 
 } // namespace openbus::rendering

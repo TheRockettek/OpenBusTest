@@ -46,8 +46,8 @@ const std::string& ScriptRuntime::Impl::nativePeekString() const {
 
 void ScriptRuntime::Impl::warnPlaceholderMacro(const std::string& name) {
     if (warnedPlaceholderMacros.insert(name).second) {
-        log(LogLevel::Warning, "system macro " + name +
-                                   " is not implemented; returning a placeholder");
+        log(LogLevel::Warning,
+            "system macro " + name + " is not implemented; returning a placeholder");
     }
 }
 
@@ -690,7 +690,7 @@ bool ScriptRuntime::Impl::tryInitializeNativeBackend() {
             cachedNativeProgram(sourcePath, error, compiledAnyScript);
         if (!program) {
             scriptRuntimeLogger.Warning("Native OSC backend falling back to Lua for " +
-                                    sourcePath.string() + ": " + error);
+                                        sourcePath.string() + ": " + error);
             nativePrograms.clear();
             return false;
         }

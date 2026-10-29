@@ -81,10 +81,8 @@ parseMirroredRoadDirectionPolicy(std::string_view value) noexcept;
 
 // Correct mirrored unidirectional road paths by default; bidirectional and
 // human paths retain their authored directions. Authored mode restores legacy behavior.
-std::vector<MapSplinePathOffset> mapSplineProfilePathOffsets(const MapSplineProfile& profile,
-                                                             int pathTypeCode,
-                                                             bool mirrored = false,
-                                                             MirroredRoadDirectionPolicy policy =
-                                                                 MirroredRoadDirectionPolicy::Correct);
+std::vector<MapSplinePathOffset> mapSplineProfilePathOffsets(
+    const MapSplineProfile& profile, int pathTypeCode, bool mirrored = false,
+    MirroredRoadDirectionPolicy policy = MirroredRoadDirectionPolicy::Correct);
 
 } // namespace openbus::map
