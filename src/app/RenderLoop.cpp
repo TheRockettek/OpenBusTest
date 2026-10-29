@@ -369,7 +369,8 @@ bool RenderLoop::AddTrafficVehicle(
     std::vector<openbus::map::MapTrafficPassengerStop> passengerStops,
     std::string timetableLineName, std::string timetableDestinationName,
     std::optional<std::size_t> trafficRuleGroupIndex, bool registerPassengerRouteOnly,
-    std::optional<std::size_t> passengerRouteIndex, std::size_t* registeredPassengerRouteIndex) {
+    std::optional<std::size_t> passengerRouteIndex, std::size_t* registeredPassengerRouteIndex,
+    bool requireActiveTileSpawnCandidate) {
     TraceScope trace("startup", "RenderLoop::AddTrafficVehicle");
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
@@ -462,6 +463,13 @@ bool RenderLoop::AddTrafficVehicle(
     actor.lengthMeters =
         configuration.boundingBox[1] + 2.0 * std::abs(configuration.boundingBox[4]);
     actor.widthMeters = configuration.boundingBox[0] + 2.0 * std::abs(configuration.boundingBox[3]);
+    actor.rearAxleOffsetMeters =
+        configuration.axles.empty()
+            ? -configuration.boundingBox[1] * 0.3
+            : std::min_element(configuration.axles.begin(), configuration.axles.end(),
+                               [](const BusAxle& left, const BusAxle& right) {
+                                   return left.position < right.position;
+                               })->position;
     std::vector<openbus::map::MapTrafficSpawnCandidate> spawnCandidates;
     if (!isBus) {
         spawnCandidates =
@@ -469,18 +477,23 @@ bool RenderLoop::AddTrafficVehicle(
         if (spawnCandidates.empty()) {
             return false;
         }
+        if (requireActiveTileSpawnCandidate) {
+            if (!openbus::map::mapTrafficSpawnCandidatesOverlapActiveTiles(
+                    spawnCandidates, mapRenderer_->activeTileCoordinates())) {
+                return false;
+            }
+        }
     }
 
     const std::optional<openbus::map::MapTrafficPose> pose =
-        openbus::map::sampleMapTrafficRoute(actor.route, 0.0, actor.lateralOffsetMeters);
+        openbus::map::sampleMapTrafficActorPose(actor, 0.0);
     if (!pose.has_value()) {
         throw std::runtime_error("Could not sample the initial map traffic route pose");
     }
     VehiclePlacement placement;
     placement.position = pose->position;
     placement.yawDegrees = openbus::map::mapTrafficHeadingToVehicleYawDegrees(
-        openbus::map::mapTrafficRouteTravelHeadingRadians(actor.route, 0.0,
-                                                          actor.lateralOffsetMeters));
+        pose->headingRadians);
     placement.pitchDegrees = pose->pitchRadians * 180.0 / std::numbers::pi;
     placement.rollDegrees = pose->rollRadians * 180.0 / std::numbers::pi;
     const VehiclePlacement configuredPlacement =
@@ -844,6 +857,10 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     }
     if (!mapRenderer_) {
         TraceScope rendererTrace("map", "RenderLoop::SetMap.createMapRenderer");
+        authoredPassengerPositions_.clear();
+        authoredPassengerQueueCounts_.clear();
+        authoredPassengerObjectCount_ = 0;
+        reportedPassengerFallbackStops_.clear();
         mapRenderer_ = std::make_unique<openbus::rendering::MapRenderer>(
             map, static_cast<std::size_t>(map.entryPoints[spawnEntryPointIndex].tileIndex),
             map.entryPoints[spawnEntryPointIndex].placement.position[0],
@@ -905,6 +922,7 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
         }
     }
     trafficSplineDebugBuilt_ = false;
+    trafficSplineDebugMapRevision_ = 0;
     trafficSplineDebugTiles_.clear();
     ++trafficSplineDebugRevision_;
 }

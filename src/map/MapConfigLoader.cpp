@@ -2168,7 +2168,7 @@ std::vector<MapAiRoadTrafficGroupPopulation> mapAiMaximumRoadTrafficPoolByGroup(
             const double density =
                 mapAiRoadTrafficDensityAtHour(traffic, vehicles, hour, dayOfWeekMask).value_or(0.0);
             const std::size_t targetPopulation = mapTrafficPopulationForDensity(
-                basePopulation, density * densityMultiplier, activePopulationCap);
+                basePopulation, density * densityMultiplier);
             for (const MapAiRoadTrafficGroupPopulation& population :
                  mapAiRoadTrafficPopulationByGroup(traffic, targetPopulation, hour,
                                                    dayOfWeekMask)) {
@@ -2438,22 +2438,18 @@ std::optional<double> mapTrafficDensityAtHour(const std::vector<MapTrafficDensit
 }
 
 std::size_t mapTrafficPopulationForDensity(std::size_t basePopulation,
-                                           std::optional<double> density,
-                                           std::size_t populationCap) {
-    if (populationCap == 0 || basePopulation == 0) {
+                                           std::optional<double> density) {
+    if (basePopulation == 0) {
         return 0;
     }
     if (!density.has_value()) {
-        return std::min(basePopulation, populationCap);
+        return basePopulation;
     }
     if (!std::isfinite(*density) || *density < 0.0) {
         throw std::invalid_argument("Map traffic density must be finite and non-negative");
     }
     const long double scaled =
         static_cast<long double>(basePopulation) * static_cast<long double>(*density);
-    if (scaled >= static_cast<long double>(populationCap)) {
-        return populationCap;
-    }
     return static_cast<std::size_t>(std::floor(scaled + 0.5L));
 }
 

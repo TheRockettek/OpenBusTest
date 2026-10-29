@@ -273,6 +273,66 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
         const bool absoluteHeight = absoluteHeightSceneryAssets.contains(assetKey);
         const double worldZ =
             openbus::map::mapSceneryWorldHeight(localZ, terrainHeightOffset, absoluteHeight);
+        const auto editorPassenger = editorPassengerAssets.find(assetKey);
+        if (editorPassenger != editorPassengerAssets.end()) {
+            const EditorPassengerAsset& asset = editorPassenger->second;
+            openbus::map::MapSceneryPose pose;
+            pose.x = worldX;
+            pose.y = worldY;
+            pose.z = worldZ;
+            pose.rotationDegrees = rotationDegrees;
+            pose.rotationCount = rotationCount;
+            if (orientationMatrix != nullptr) {
+                pose.orientationMatrix = *orientationMatrix;
+                pose.hasOrientationMatrix = true;
+            }
+            const auto worldPoint = [&](const std::array<double, 3>& local) {
+                const auto offset = openbus::map::transformMapSceneryVector(pose, local);
+                return std::array<double, 3>{worldX + offset[0], worldY + offset[1],
+                                             worldZ + offset[2]};
+            };
+            EditorPassengerDebugObject debug;
+            debug.tileX = tileX;
+            debug.tileY = tileY;
+            debug.objectId = mapObjectId;
+            debug.name = placementLabels.empty() ? std::string() : placementLabels.front();
+            debug.busStop = asset.busStop;
+            debug.passengerCabin = asset.passengerCabin;
+            debug.position = {worldX, worldY, worldZ};
+            std::array<double, 3> minimum = {-0.5, -0.5, 0.0};
+            std::array<double, 3> maximum = {0.5, 0.5, 1.0};
+            if (asset.hasBoundingBox && asset.boundingBox[0] > 0.0 &&
+                asset.boundingBox[1] > 0.0 && asset.boundingBox[2] > 0.0) {
+                for (std::size_t axis = 0; axis < 3; ++axis) {
+                    minimum[axis] = asset.boundingBox[axis + 3] - asset.boundingBox[axis] * 0.5;
+                    maximum[axis] = asset.boundingBox[axis + 3] + asset.boundingBox[axis] * 0.5;
+                }
+            } else if (!asset.positions.empty()) {
+                minimum = asset.positions.front().position;
+                maximum = minimum;
+                for (const PassengerCabinPosition& passenger : asset.positions) {
+                    for (std::size_t axis = 0; axis < 3; ++axis) {
+                        minimum[axis] = std::min(minimum[axis], passenger.position[axis]);
+                        maximum[axis] = std::max(maximum[axis], passenger.position[axis]);
+                    }
+                }
+                minimum[0] -= 0.3;
+                minimum[1] -= 0.3;
+                maximum[0] += 0.3;
+                maximum[1] += 0.3;
+                maximum[2] += 1.8;
+            }
+            for (std::size_t corner = 0; corner < 8; ++corner) {
+                debug.bounds[corner] = worldPoint({(corner & 1) ? maximum[0] : minimum[0],
+                                                   (corner & 2) ? maximum[1] : minimum[1],
+                                                   (corner & 4) ? maximum[2] : minimum[2]});
+            }
+            for (const PassengerCabinPosition& passenger : asset.positions) {
+                debug.passengerPositions.push_back(openbus::map::mapTrafficSceneryPassengerPose(
+                    pose, passenger.position, passenger.seatHeight, passenger.rotationDegrees));
+            }
+            impl_->editorPassengerDebugObjects.push_back(std::move(debug));
+        }
         const auto trafficPaths = sceneryTrafficPaths.find(assetKey);
         const bool trafficLightModel = sceneryTrafficLightAssets.contains(assetKey);
         std::optional<openbus::map::MapTrafficSignalSchedule> sceneryTrafficSignal;

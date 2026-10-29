@@ -92,6 +92,25 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             result.trafficLight = true;
             continue;
         }
+        if (keyword == "busstop") {
+            result.busStop = true;
+            continue;
+        }
+        if (keyword == "passengercabin") {
+            result.hasPassengerCabin = true;
+            Line value;
+            if (reader.readPayload(value, result.diagnostics, keyword)) {
+                VehicleConfig cabin;
+                cabin.passengerCabinConfigPath =
+                    openbus::assets::resolveReferencedPath(configPath, value.text);
+                loadPassengerCabinConfiguration(cabin);
+                result.passengerPositions = std::move(cabin.passengerPositions);
+                for (const ConfigurationDiagnostic& diagnostic : cabin.diagnostics.entries) {
+                    result.diagnostics.entries.push_back(diagnostic);
+                }
+            }
+            continue;
+        }
         if (keyword == "groups" || keyword == "friendlyname") {
             // These SCO metadata/editor fields do not affect static model rendering. Their
             // payload lines are intentionally left for the line-oriented parser to ignore.

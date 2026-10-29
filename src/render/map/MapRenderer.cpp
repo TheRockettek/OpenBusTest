@@ -230,6 +230,7 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
     if (!centerChanged && loadStatus != MapSceneLoader::TileLoadStatus::Updated) {
         return;
     }
+    ++impl_->trafficDebugGeometryRevision;
     if (centerChanged) {
         impl_->activeTileCoordinates = impl_->requestedTileCoordinates;
         impl_->activeTileKeys.clear();
@@ -302,6 +303,9 @@ void MapRenderer::updateStreaming(double worldX, double worldY) {
                 states->second.end());
         }
     }
+    if (asyncInitialLoad_ && !scriptsEnabled_ && impl_->activeCenterTile.has_value()) {
+        scriptsEnabled_ = true;
+    }
     if (scriptsEnabled_) {
         initializeActiveScripts();
     }
@@ -343,6 +347,10 @@ const std::vector<std::pair<int, int>>& MapRenderer::activeTileCoordinates() con
 
 MapRenderStats MapRenderer::renderStats() const {
     return impl_->renderStats;
+}
+
+std::uint64_t MapRenderer::trafficDebugGeometryRevision() const noexcept {
+    return impl_->trafficDebugGeometryRevision;
 }
 
 TrafficSignalDebugStats MapRenderer::trafficSignalDebugStats() const {
@@ -438,6 +446,10 @@ MapRenderer::trafficSplinePathOffsets(int splineId, int pathTypeCode) const {
 
 const std::vector<TrafficPathDebugSegment>& MapRenderer::sceneryTrafficPathSegments() const {
     return impl_->sceneryTrafficPathSegments;
+}
+
+const std::vector<EditorPassengerDebugObject>& MapRenderer::editorPassengerDebugObjects() const {
+    return impl_->editorPassengerDebugObjects;
 }
 
 std::optional<openbus::map::MapTrafficActor>

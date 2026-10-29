@@ -55,18 +55,21 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
         if (objectConfiguration.poleCrash.has_value()) {
             poleCrashSceneryAssets.insert(cacheKey);
         }
+        if (objectConfiguration.onlyEditor &&
+            (objectConfiguration.busStop || objectConfiguration.hasPassengerCabin)) {
+            editorPassengerAssets.emplace(
+                cacheKey,
+                EditorPassengerAsset{objectConfiguration.busStop, objectConfiguration.hasPassengerCabin,
+                                     objectConfiguration.hasBoundingBox,
+                                     objectConfiguration.boundingBox,
+                                     objectConfiguration.passengerPositions});
+        }
         // Editor-only assets can still contribute path debug geometry.
         if (objectConfiguration.absoluteHeight) {
             absoluteHeightSceneryAssets.insert(cacheKey);
         }
         if (!objectConfiguration.scriptConfiguration.scripts.empty()) {
             sceneryAssetsNeedingVariables.insert(cacheKey);
-        }
-        // Tree SCOs may mark their helper mesh [onlyeditor] while their [tree]
-        // definition is runtime scenery. The tree preview below replaces that mesh.
-        if (objectConfiguration.onlyEditor && objectConfiguration.trees.empty()) {
-            editorOnlySceneryAssets.insert(cacheKey);
-            return sceneryAssetBatches.emplace(cacheKey, std::move(batchIndexes)).first->second;
         }
         const std::filesystem::path& modelConfigPath = prepared.modelConfigPath;
         if (prepared.externalModelConfigMissing) {
@@ -85,6 +88,12 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
                           1, diagnostic.severity == ConfigurationDiagnostic::Severity::Error
                                  ? LogLevel::Error
                                  : LogLevel::Warning);
+        }
+        // Tree SCOs may mark their helper mesh [onlyeditor] while their [tree]
+        // definition is runtime scenery. The tree preview below replaces that mesh.
+        if (objectConfiguration.onlyEditor && objectConfiguration.trees.empty()) {
+            editorOnlySceneryAssets.insert(cacheKey);
+            return sceneryAssetBatches.emplace(cacheKey, std::move(batchIndexes)).first->second;
         }
         if (!objectConfiguration.trees.empty()) {
             for (const PreparedSceneryTreeBatch& preparedTree : prepared.treeBatches) {

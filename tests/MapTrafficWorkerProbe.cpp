@@ -75,6 +75,9 @@ int main() {
     try {
         openbus::app::MapTrafficWorker worker;
         openbus::map::MapTrafficActor vehicle = makeActor();
+        vehicle.route.segments[0].spline.placement.radius = 25.0;
+        vehicle.rearAxleOffsetMeters = -3.0;
+        const auto expectedActor = vehicle;
         openbus::map::MapTrafficActor pedestrian = makeActor();
         pedestrian.distanceMeters = 30.0;
         openbus::map::MapTrafficActor inactivePedestrian = makeActor();
@@ -110,17 +113,16 @@ int main() {
                     results->humans[0].distanceMeters > 30.0 &&
                     results->humans[1].distanceMeters > 50.0,
                 "the dedicated loop advances vehicle, active pedestrian, and off-screen pedestrian AI");
-        const auto expectedActor = makeActor();
-        const auto expectedVehiclePose = openbus::map::sampleMapTrafficRoute(
-            expectedActor.route, results->actors[0].motion.distanceMeters,
-            results->actors[0].motion.lateralOffsetMeters);
+        const auto expectedVehiclePose = openbus::map::sampleMapTrafficActorPose(
+            expectedActor, results->actors[0].motion.distanceMeters);
         require(expectedVehiclePose.has_value() &&
                     std::abs(results->actors[0].pose.position[0] -
                              expectedVehiclePose->position[0]) < 1.0e-6 &&
                     std::abs(results->actors[0].pose.position[1] -
                              expectedVehiclePose->position[1]) < 1.0e-6 &&
-                    std::isfinite(results->actors[0].travelHeadingRadians),
-                "the AI worker publishes a pose and travel heading for its advanced vehicle");
+                    std::abs(results->actors[0].travelHeadingRadians -
+                             expectedVehiclePose->headingRadians) < 1.0e-6,
+                "the AI worker publishes the rear-axle body pose and heading");
         require(signalController->clockSeconds() > 0.0,
                 "the dedicated loop advances traffic signals on the AI worker");
         require(std::isfinite(worker.averageTickProcessingSeconds()) &&

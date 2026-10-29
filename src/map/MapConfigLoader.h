@@ -105,8 +105,7 @@ struct MapAiTrafficDensityGroup {
 std::optional<double> mapTrafficDensityAtHour(const std::vector<MapTrafficDensityPoint>& schedule,
                                               double hour);
 std::size_t mapTrafficPopulationForDensity(std::size_t basePopulation,
-                                           std::optional<double> density,
-                                           std::size_t populationCap);
+                                           std::optional<double> density);
 
 struct MapAiVehicleEntry {
     std::string assetPath;

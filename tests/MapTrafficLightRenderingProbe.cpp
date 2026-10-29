@@ -1,6 +1,7 @@
 #include "ProbeTempDirectory.h"
 #include "core/Logger.h"
 #include "core/Variables.h"
+#include "map/MapTrafficRuntime.h"
 #include "map/MapTileWindow.h"
 #include "render/AssetRequestManager.h"
 #include "render/ComputeCulling.h"
@@ -145,10 +146,12 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     std::filesystem::create_directories(root / "model");
     std::filesystem::create_directories(root / "Splines");
     std::filesystem::create_directories(root / "Texture");
+    std::filesystem::create_directories(root / "Script");
     writeText(root / "Splines" / "Test.sli",
               "[texture]\nroad.tga\n[profile]\n0\n[profilepnt]\n-2\n0.25\n0\n0.2\n"
               "[profilepnt]\n2\n0.25\n1\n0.2\n");
     writeTinyTexture(root / "Texture" / "road.tga");
+    writeTinyTexture(root / "traf_LED.tga");
     writeLamp(root / "model" / "red.x", "1;0;0");
     writeLamp(root / "model" / "yellow.x", "1;1;0");
     writeLamp(root / "model" / "green.x", "0;1;0");
@@ -162,15 +165,26 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
         check(static_cast<bool>(output), "Could not write broken probe scenery texture");
     }
     writeText(root / "head.sco",
-              "[trafficlight]\n[script]\n1\nlamp.osc\n[varnamelist]\n1\nlamp_vars.txt\n"
-              "[mesh]\nred.x\n[visible]\nlamp_red\n1\n"
-              "[mesh]\nyellow.x\n[visible]\nlamp_yellow\n1\n"
-              "[mesh]\ngreen.x\n[visible]\nlamp_green\n1\n");
-    writeText(root / "lamp_vars.txt", "lamp_red\nlamp_yellow\nlamp_green\n");
-    writeText(root / "lamp.osc", "{frame}\n"
-                                 "(L.L.TrafficLightPhase) 0 = (S.L.lamp_red)\n"
-                                 "(L.L.TrafficLightPhase) 9 = (S.L.lamp_yellow)\n"
-                                 "(L.L.TrafficLightPhase) 6 = (S.L.lamp_green)\n{end}\n");
+              "[trafficlight]\n[script]\n1\nscript\\traf_car.osc\n"
+              "[varnamelist]\n1\nscript\\traf_car_varlist.txt\n"
+              "[mesh]\nred.x\n[matl]\ntraf_LED.tga\n0\n[matl_alpha]\n2\n"
+              "[visible]\nmain_red\n1\n"
+              "[mesh]\nyellow.x\n[matl]\ntraf_LED.tga\n0\n[matl_alpha]\n2\n"
+              "[visible]\nmain_yellow\n1\n"
+              "[mesh]\ngreen.x\n[matl]\ntraf_LED.tga\n0\n[matl_alpha]\n2\n"
+              "[visible]\nmain_green\n1\n");
+    writeText(root / "Script" / "traf_car_varlist.txt",
+              "main_Red\nmain_Yellow\nmain_Green\nsupp_Green\nTime_last\n");
+    writeText(root / "Script" / "traf_car.osc",
+              "{init}\n0 (S.L.Time_last)\n{end}\n"
+              "{frame}\n"
+              "(L.L.TrafficLightPhase) s0\n"
+              "l0 0 >= l0 5 <= && (S.L.main_Red)\n"
+              "l0 6 = l0 7 = || (S.L.main_Green)\n"
+              "l0 1 = l0 4 = || l0 7 = || (S.L.supp_Green)\n"
+              "l0 3 >= l0 5 <= && l0 9 >= l0 11 <= && || "
+              "(S.L.main_Yellow)\n"
+              "{end}\n");
     writeText(root / "controller.sco",
               "[onlyeditor]\n[traffic_lights_group]\n6\n"
               "[traffic_light]\nOther approach\n[phase]\n0\n6\n"
@@ -185,7 +199,8 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
                                           : ""));
     writeText(root / "tile.map",
               splineTileText(1) +
-                  "[object]\n0\ncontroller.sco\n100\n0\n0\n0\n0\n0\n0\n0\n"
+                  "[object]\n0\ncontroller.sco\n100\n0\n0\n5\n0\n0\n0\n0\n"
+                  "[rule]\n0\npriority\n192\n0\n"
                   "[object]\n0\nhead.sco\n101\n0\n0\n1\n0\n0\n0\n1\n1\n[varparent]\n100\n"
                   "[attachObj]\n0\nshared.sco\n301\n204\n0\n0\n0\n0\n0\n0\n");
     {
@@ -255,15 +270,27 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     check(
         renderer.renderStats().totalRoadBatches == 1 &&
             renderer.renderStats().totalWaterBatches == 1 &&
-            renderer.renderStats().totalTextures == 3,
+            renderer.renderStats().totalTextures == 4,
         "Initial road, water, and asynchronously decoded ground-layer textures must be published");
     const auto& paths = renderer.sceneryTrafficPathSegments();
     check(paths.size() == 1 && paths.front().trafficSignal.has_value() &&
               paths.front().pathIndex == 0 && paths.front().widthMeters == 3.0 &&
               paths.front().trafficSignal->lightIndex == 0 &&
               paths.front().trafficSignal->program != nullptr &&
-              paths.front().trafficSignal->program->controlPoints.size() == (conditional ? 2U : 0U),
-          "F2 signal debug path must retain controller phase and stopline data");
+              paths.front().trafficSignal->program->controlPoints.size() == (conditional ? 2U : 0U) &&
+              paths.front().pathRules.groups.size() == 1 &&
+              paths.front().pathRules.groups.front().priority == 192.0,
+          "SCO F2 path must retain its map traffic rule and controller/stopline data");
+    const auto aiRoute = renderer.buildDrivingRoute(100);
+    check(aiRoute.has_value() && !aiRoute->segments.empty() &&
+              aiRoute->segments.front().trafficSignal.has_value() &&
+              aiRoute->segments.front().pathRules.groups.size() == 1 &&
+              aiRoute->segments.front().pathRules.groups.front().priority == 192.0,
+          "AI route from an SCO path must retain the same map rule and signal schedule");
+    openbus::map::MapTrafficActor signalApproach;
+    signalApproach.route = *aiRoute;
+    check(openbus::map::mapTrafficActorWaitingAtSignal(signalApproach, 0.0),
+          "AI actor on an SCO route must stop at its red signal");
     check(renderer.renderStats().activeSceneryObjects == 2,
           "Cross-tile spline parents must resolve for active attached scenery");
     setPerspective(32, 32, 90);
@@ -325,6 +352,24 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
           "player bus approaching the stopline activates its configured green priority phase");
     check(glGetError() == GL_NO_ERROR, "Traffic-light rendering produced an OpenGL error");
 
+    SimulationState asyncSimulation;
+    AssetRequestManager asyncAssets;
+    MapRenderer asyncRenderer(map, 0, 0, 0, 0, root, asyncSimulation, asyncAssets, true);
+    for (int attempt = 0; attempt < 1000 && !asyncRenderer.initialWindowReady(); ++attempt) {
+        asyncRenderer.updateStreaming(0.0, 0.0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    check(asyncRenderer.initialWindowReady(),
+          "Asynchronously prepared map must eventually activate its initial tile window");
+    asyncRenderer.updateTrafficSignalScripts(0.0);
+    asyncRenderer.updateScripts();
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    asyncRenderer.draw();
+    std::array<std::uint8_t, 4> asyncPixel = {};
+    glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, asyncPixel.data());
+    check(asyncPixel[0] > 250 && asyncPixel[1] < 5 && asyncPixel[2] < 5,
+          "Traffic-light lamp scripts must run after asynchronous initial-window loading");
+
     const std::vector<openbus::map::MapTileCoordinate> originalWindow = {{0, 0}};
     const std::vector<openbus::map::MapTileCoordinate> nextWindow = {{4, 0}, {5, 0}};
     check(renderer.activeTileCoordinates() == originalWindow,
@@ -372,7 +417,7 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
           "Background water sidecar preparation must publish both streamed tiles");
     check(streamedStats.activeSceneryObjects == 3,
           "Tiles sharing a scenery asset must both publish their placements");
-    check(streamedStats.totalTextures == 6,
+    check(streamedStats.totalTextures == 7,
           "Streamed road and terrain tiles must reuse shared textures and publish tile masks");
 
     openbus::map::MapDefinition startupMap;

@@ -354,17 +354,13 @@ struct MapTrafficWorker::Impl {
                 advancedPoses.reserve(advancedActors.size());
                 advancedTravelHeadings.reserve(advancedActors.size());
                 for (const WorkingActor& actor : advancedActors) {
-                    const auto pose = openbus::map::sampleMapTrafficRoute(
-                        actor.actor.route, actor.actor.distanceMeters,
-                        actor.actor.lateralOffsetMeters);
+                    const auto pose = openbus::map::sampleMapTrafficActorPose(
+                        actor.actor, actor.actor.distanceMeters);
                     if (!pose) {
                         throw std::runtime_error("Could not sample an advanced map traffic actor");
                     }
                     advancedPoses.push_back(*pose);
-                    advancedTravelHeadings.push_back(
-                        openbus::map::mapTrafficRouteTravelHeadingRadians(
-                            actor.actor.route, actor.actor.distanceMeters,
-                            actor.actor.lateralOffsetMeters));
+                    advancedTravelHeadings.push_back(pose->headingRadians);
                 }
 
                 std::unordered_map<std::size_t, std::uint64_t> activeStates;

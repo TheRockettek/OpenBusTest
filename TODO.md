@@ -519,7 +519,8 @@ for the explicit boundary.
 #### AI vehicle and human traffic
 
 - [~] Spawn random road traffic from configured `.ovh` entries in modern
-  `ailists.cfg` road groups on `[path]` type-0 road splines; `.bus` vehicles
+  `ailists.cfg` road groups on connected `[path]` type-0 road splines and
+  point-backed scenery-object road paths; `.bus` vehicles
   are reserved for the separate timetable-route AI bus pool. `.ttl` departure
   times are attached to their `.ttp` trip metadata and matched buses now wait
   for their next scheduled departure before endpoint admission. Midnight
@@ -531,16 +532,25 @@ for the explicit boundary.
   connected road lanes with a forward continuation; isolated splines and
   terminal dead ends are excluded. Road vehicles can enter on connected
   internal lanes at clear, off-screen interior positions in the current active
-  tile window, including tiles activated later during streaming. Candidate
-  positions keep a vehicle-sized margin from spline endpoints, remain over
-  50 m plus vehicle radius from the camera, and preserve collision clearance.
-  Scheduled buses remain restricted to incoming endpoint lanes and their
-  timetable. Population changes unload vehicles off-screen; route-complete
+  tile window, including tiles activated later during streaming. Spawn
+  candidate tiles are derived from sampled world positions rather than the
+  owning spline tile, so splines and point-backed scenery paths crossing tile
+  boundaries can use the active tile containing the candidate. Initial pool construction prioritizes
+  routes with candidates in the current active tiles, verifies candidate
+  positions against the active window before local-priority admission, then
+  fills remaining capacity with map-wide routes. Candidate positions keep a vehicle-sized
+  margin from spline endpoints, remain over 50 m plus vehicle radius from the
+  camera, and preserve collision clearance. Scheduled buses remain restricted
+  to connected endpoints or their authored timetable origins. Population
+  changes unload vehicles off-screen; route-complete
   actors are recycled from the bounded pool, resetting route progress, speed,
   and junction-wait state. The startup pool remains the hard capacity.
-  When no complete timetable match exists, a route sharing at least two
-  consecutive timetable splines may use an explicitly logged partial endpoint
-  fallback; buses never spawn partway along a route.
+  When no complete timetable match exists, a route following at least two
+  consecutive entries from the timetable's first checkpoint may use an
+  explicitly logged, itinerary-inaccurate prefix fallback. It stops at the
+  matched prefix end and does not register player passenger stops for the
+  incomplete itinerary; missing checkpoints and disconnected transitions are
+  never skipped or synthesized.
 - [~] AI vehicles advance with lookahead speed control along directed authored
   lane paths, including scenery junction paths, matching the cyan F2 geometry.
   Matching endpoints connect within 0.5 m horizontally and vertically; road
@@ -596,21 +606,22 @@ for the explicit boundary.
   complete trip.
   A bus now selects the earliest departure at or after the configured starting
   hour rather than waiting for the first time in the timetable on the next day.
-  When no full route match exists, the best connected endpoint route sharing
-  at least two consecutive timetable splines can be dispatched using that
-  timetable's departures; startup logs identify this as an itinerary-inaccurate
-  fallback. Complete timetable matches are now preferred over partial endpoint
-  matches across all candidate endpoints, so an early partial match cannot hide
-  a later complete route. Road traffic paths authored inside placed scenery
+  When no full route match exists, a connected route following at least two
+  consecutive entries from the timetable's first checkpoint can be dispatched
+  using that timetable's departures; startup logs identify this as an
+  itinerary-inaccurate prefix fallback. It stops at the matched prefix end and
+  does not register player passenger stops for the incomplete itinerary.
+  Complete timetable matches are preferred over these fallbacks, so a partial
+  match cannot hide a later complete route. Road traffic paths authored inside placed scenery
   objects retain the parent object's map ID and path index, allowing repeated
   timetable `.ttr` entries for junction paths to match the directed lane graph.
   Repeated checkpoints on ordinary map splines are collapsed to one route
   segment; distinct placed-scenery paths retain their individual selectors.
   A live Cotterell run still reports three complete routes and seven partial
-  endpoint fallbacks, so unrepresented or disconnected map paths remain.
+  itinerary fallbacks, so unrepresented or disconnected map paths remain.
   A live Cotterell startup recognized complete routes for line 12, U28, and one
-  U18 trip; other candidate trips remain explicitly logged as partial endpoint
-  fallbacks rather than timetable-faithful. A one-bus live run departed line 12
+  U18 trip; other candidate trips remain explicitly logged as partial
+  timetable-origin prefix fallbacks rather than timetable-faithful. A one-bus live run departed line 12
   from endpoint spline 14089 at minute 483, emitted progress at 100 m intervals
   through 700 m, and reached its open route end after 785.68 m. Full OMSI
   schedule parity and the remaining partial map routes still need validation.
@@ -701,7 +712,7 @@ The entries above describe current behavior and its test coverage. These are
 the outstanding implementation and validation tasks:
 
 - [~] **Complete scheduled bus routes:** complete timetable matches are now
-  preferred over endpoint-only partial matches. Cotterell startup has queued
+  preferred over partial itinerary matches. Cotterell startup has queued
   endpoint buses for line 12, U28, and one complete U18 route; other trips
   remain partial fallbacks. Departure selection, midnight rollover, and the
   exact decimal-start-hour boundary are regression-tested; the boundary bug
@@ -723,8 +734,9 @@ the outstanding implementation and validation tasks:
   unconstrained routes connect that pair. The nearest directed lane endpoints
   are 23.99 m apart horizontally and 0.92 m vertically, with heading alignment
   -1.0, so this is not a join-tolerance defect. Startup still finds 3 exact
-  routes and 7 endpoint-only partial fallbacks. Do not classify those fallbacks
-  as timetable-faithful or synthesize the disconnected transition; resolve it
+  routes and 7 partial itinerary fallbacks. These matches start at the
+  timetable origin and stop at their connected prefix; do not classify them as
+  timetable-faithful or synthesize a disconnected transition. Resolve it
   against valid map lane data before claiming full timetable coverage. When the
   configured bus-pool limit is smaller than the number of matched timetable
   routes, current initialization assigns one bus to routes in parser order

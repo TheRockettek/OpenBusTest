@@ -141,7 +141,8 @@ class RenderLoop {
                            std::optional<std::size_t> trafficRuleGroupIndex = std::nullopt,
                            bool registerPassengerRouteOnly = false,
                            std::optional<std::size_t> passengerRouteIndex = std::nullopt,
-                           std::size_t* registeredPassengerRouteIndex = nullptr);
+                           std::size_t* registeredPassengerRouteIndex = nullptr,
+                           bool requireActiveTileSpawnCandidate = false);
     int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -317,6 +318,7 @@ class RenderLoop {
     Vehicle* trafficDebugHotVehicle_ = nullptr;
     double trafficDebugHotHoldSeconds_ = 0.0;
     bool trafficSplineDebugBuilt_ = false;
+    std::uint64_t trafficSplineDebugMapRevision_ = 0;
     double trafficSplineDebugOriginX_ = 0.0;
     double trafficSplineDebugOriginY_ = 0.0;
     std::vector<std::pair<int, int>> trafficSplineDebugTiles_;
@@ -449,6 +451,10 @@ class RenderLoop {
     std::vector<PassengerStopRouteState> passengerStopRoutes_;
     std::unordered_map<int, std::size_t> scheduledPassengerQueues_;
     std::unordered_map<int, std::size_t> scheduledPassengerInitialQueues_;
+    std::map<int, std::vector<openbus::map::MapTrafficPose>> authoredPassengerPositions_;
+    std::map<int, std::size_t> authoredPassengerQueueCounts_;
+    std::size_t authoredPassengerObjectCount_ = 0;
+    std::unordered_set<int> reportedPassengerFallbackStops_;
     std::size_t passengerServiceUpdateOffset_ = 0;
     std::optional<int> playerPassengerStopLatch_;
     std::optional<std::size_t> playerPassengerStopLatchRouteIndex_;

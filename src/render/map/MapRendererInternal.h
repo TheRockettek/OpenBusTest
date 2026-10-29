@@ -421,6 +421,7 @@ struct MapRenderer::Impl {
         sceneryInstancesBySourceTile;
     std::size_t sceneryInstanceCount = 0;
     std::size_t sceneryObjectCount = 0;
+    std::uint64_t trafficDebugGeometryRevision = 0;
     std::vector<ModelBatch> roadBatches;
     openbus::map::MapTrafficRouteNetwork trafficRouteNetwork;
     openbus::map::MapTrafficRouteNetwork roadTrafficRouteNetwork;
@@ -428,6 +429,7 @@ struct MapRenderer::Impl {
     openbus::map::MapTrafficRouteNetwork humanTrafficRouteNetwork;
     openbus::map::MapTrafficLaneNetwork humanTrafficLaneNetwork;
     std::vector<TrafficPathDebugSegment> sceneryTrafficPathSegments;
+    std::vector<EditorPassengerDebugObject> editorPassengerDebugObjects;
     std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>> trafficSignalControllers;
     std::unordered_map<int, std::vector<openbus::map::MapSplinePathOffset>>
         roadTrafficSplinePathOffsets;

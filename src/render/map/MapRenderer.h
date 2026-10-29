@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -52,6 +53,18 @@ struct TrafficPathDebugSegment {
     int tileY = 0;
 };
 
+struct EditorPassengerDebugObject {
+    int tileX = 0;
+    int tileY = 0;
+    std::optional<int> objectId;
+    std::string name;
+    bool busStop = false;
+    bool passengerCabin = false;
+    std::array<double, 3> position = {};
+    std::array<std::array<double, 3>, 8> bounds = {};
+    std::vector<openbus::map::MapTrafficPose> passengerPositions;
+};
+
 class MapRenderer {
   public:
     MapRenderer(const openbus::map::MapDefinition& map, std::size_t centerTileIndex,
@@ -72,6 +85,7 @@ class MapRenderer {
     double tileSize() const noexcept;
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;
     MapRenderStats renderStats() const;
+    std::uint64_t trafficDebugGeometryRevision() const noexcept;
     TrafficSignalDebugStats trafficSignalDebugStats() const;
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId) const;
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId,
@@ -104,6 +118,7 @@ class MapRenderer {
     std::vector<openbus::map::MapSplinePathOffset> trafficSplinePathOffsets(int splineId,
                                                                             int pathTypeCode) const;
     const std::vector<TrafficPathDebugSegment>& sceneryTrafficPathSegments() const;
+    const std::vector<EditorPassengerDebugObject>& editorPassengerDebugObjects() const;
     std::optional<openbus::map::MapTrafficActor> createTrafficActor(
         int splineId, std::string modelPath, double speedMetersPerSecond,
         double laneOffsetMagnitudeMeters, std::optional<std::string> driverModelPath = std::nullopt,

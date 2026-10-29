@@ -245,6 +245,14 @@ class MapSceneLoader {
     std::unordered_map<std::string, std::size_t> sceneryLodThresholdSetByAsset;
     std::unordered_map<std::string, std::vector<ModelAttachmentPoint>> sceneryAttachmentPoints;
     std::unordered_map<std::string, std::vector<SceneryObjectTrafficPath>> sceneryTrafficPaths;
+    struct EditorPassengerAsset {
+        bool busStop = false;
+        bool passengerCabin = false;
+        bool hasBoundingBox = false;
+        std::array<double, 6> boundingBox = {};
+        std::vector<PassengerCabinPosition> positions;
+    };
+    std::unordered_map<std::string, EditorPassengerAsset> editorPassengerAssets;
     std::unordered_map<std::string,
                        std::vector<std::optional<openbus::map::MapTrafficSignalSchedule>>>
         sceneryTrafficLightSchedules;

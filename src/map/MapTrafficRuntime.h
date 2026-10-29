@@ -121,6 +121,9 @@ struct MapTrafficActor {
     double cruiseSpeedMetersPerSecond = 0.0;
     double lengthMeters = 4.5;
     double widthMeters = 1.8;
+    // Signed longitudinal offset from the model origin to the rear axle.
+    // Zero retains the route-centered pose for actors without vehicle axle data.
+    double rearAxleOffsetMeters = 0.0;
     double minimumTurnRadiusMeters = 4.5;
     double junctionWaitSeconds = 0.0;
     std::optional<double> scheduledStopDistanceMeters;
@@ -150,6 +153,28 @@ struct MapTrafficPose {
     double pitchRadians = 0.0;
     double rollRadians = 0.0;
 };
+
+struct MapPassengerStopAnchor {
+    int stopId = 0;
+    std::array<double, 3> position = {};
+};
+
+struct MapPassengerWaitingArea {
+    int objectId = 0;
+    std::array<double, 3> position = {};
+    std::vector<MapTrafficPose> positions;
+    std::array<std::array<double, 3>, 8> bounds = {};
+};
+
+MapTrafficPose mapTrafficSceneryPassengerPose(const MapSceneryPose& sceneryPose,
+                                              const std::array<double, 3>& localPosition,
+                                              double seatHeight, double rotationDegrees);
+
+// Assign each waiting area to its nearest stop, with a bounded distance and height difference.
+std::map<int, std::vector<MapTrafficPose>>
+mapTrafficAssignPassengerPositions(const std::vector<MapPassengerStopAnchor>& stops,
+                                   const std::vector<MapPassengerWaitingArea>& areas,
+                                   const std::map<int, std::size_t>& requestedCounts = {});
 
 enum class MapTrafficTurnSignal {
     None,
@@ -221,9 +246,13 @@ std::size_t mapScheduledPassengerQueueSize(std::size_t nominalCount, double huma
 std::size_t mapScheduledPassengerQueueAfterDeparture(std::size_t waitingPassengers,
                                                      std::size_t initialPassengers) noexcept;
 std::size_t mapScheduledPassengerModelIdentity(int stopId, std::size_t queuePosition);
+std::size_t mapScheduledPassengerQueueSlot(std::size_t initialCount,
+                                           std::size_t passengerIndex);
 std::array<double, 2> mapTrafficPassengerWorldOffset(bool leftHandTraffic, double headingRadians,
                                                      double lateralOffsetMeters,
                                                      double longitudinalOffsetMeters);
+MapTrafficPose mapTrafficPassengerQueuePose(const MapTrafficPose& stopPose, bool leftHandTraffic,
+                                            std::size_t queueSlot);
 std::vector<std::size_t> mapPassengerServiceUpdateOrder(const std::vector<int>& serviceStopIds,
                                                         std::size_t rotation);
 
@@ -245,6 +274,7 @@ struct MapTrafficPassengerStop {
     double dwellSeconds = 0.0;
     double routeDistanceMeters = 0.0;
     std::optional<double> splinePositionMeters;
+    std::string name;
 };
 
 class MapPassengerServiceRuntime {
@@ -342,6 +372,9 @@ MapTrafficRoute subdivideMapTrafficRoute(const MapTrafficRoute& route);
 std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route,
                                                     double distanceMeters,
                                                     double lateralOffsetMeters);
+// The rear axle follows the route; the returned pose is the vehicle model origin.
+std::optional<MapTrafficPose> sampleMapTrafficActorPose(const MapTrafficActor& actor,
+                                                       double distanceMeters);
 std::optional<MapTrafficRoutePosition>
 mapTrafficRoutePositionOnSpline(const MapTrafficRoute& route, int splineId,
                                 std::size_t sceneryPathIndex, double splinePositionMeters,
@@ -350,6 +383,9 @@ MapTrafficTurnSignal mapTrafficActorTurnSignal(const MapTrafficActor& actor,
                                                double activationDistanceMeters = 35.0);
 std::vector<MapTrafficSpawnCandidate> mapTrafficRouteSpawnCandidates(const MapTrafficRoute& route,
                                                                      double vehicleLengthMeters);
+bool mapTrafficSpawnCandidatesOverlapActiveTiles(
+    const std::vector<MapTrafficSpawnCandidate>& candidates,
+    const std::vector<std::pair<int, int>>& activeTiles);
 bool mapTrafficRouteSegmentClearsWater(const MapTrafficRouteSegment& segment,
                                        const WaterData& water, double tileSize,
                                        double clearanceMeters = 0.25);

@@ -126,6 +126,9 @@ compatibility policy, not verified
 native OMSI behavior. Set `OPENBUS_MIRRORED_ROAD_DIRECTIONS=authored` to
 restore the previous behavior for maps that intentionally use mirrored
 directions; `correct` is the default.
+Connected type-0 road paths authored by scenery objects also contribute
+traffic lanes and spawn positions. These point-backed paths appear as unlabeled
+lines in the F2 path overlay, unlike spline routes labeled `S<ID>` or `H<ID>`.
 The selected start date/time drives the in-game traffic clock's `Time` system
 variable, which advances using elapsed simulation time. The selected date sets
 the system variables `Day`, `Month`, and `Year`;
@@ -160,8 +163,15 @@ also use workers. OpenGL uploads and script initialization remain on the
 main/render thread. Road vehicles and buses wait in an inactive queue until
 their model and scripts are ready. Road traffic may be admitted at clear,
 off-screen interior positions on connected lanes; scheduled buses remain
-restricted to incoming timetable endpoints. Isolated splines and terminal dead
-ends are excluded from road-traffic spawn candidates. Admission requires a
+restricted to connected endpoints or their authored timetable origins.
+Candidate tile ownership is derived from each sampled world position, so
+interior positions on splines crossing tile boundaries can be admitted when
+their actual tile is active. Isolated splines and terminal dead ends are
+excluded from road-traffic spawn candidates. Pool construction first
+prioritizes routes with spawn candidates in the current active tile window for
+the initial target population, then fills remaining capacity with map-wide
+routes; every route is checked for an active-tile candidate before local
+priority admission. The runtime active-tile guard remains in force. Admission requires a
 clear vehicle footprint, an entry outside the main camera frustum, and at least
 50 m clearance from the camera (plus the vehicle radius). Density reductions
 remove surplus vehicles only off-screen. Vehicles are retired when they reach
@@ -189,7 +199,8 @@ paths can bridge small authored vertical offsets (up to 2.5 m) when their
 horizontal endpoints and headings align; ordinary road-traffic connectivity
 keeps its stricter limits. Cotterell
 startup validation has recognized complete routes for line 12, U28, and one
-U18 trip; other trips remain explicitly logged as partial endpoint fallbacks
+U18 trip; other trips may be explicitly logged as partial timetable-origin
+prefix fallbacks
 when the map graph cannot reproduce their full authored sequence. A departure
 that exactly matches the configured start hour is eligible immediately,
 including when the hour is represented as a decimal value. A live Cotterell
@@ -221,10 +232,14 @@ when present, otherwise a conservative class/wheelbase estimate is used.
 Genuine loops continue forward without reversing. Conflicting junction paths
 use swept-footprint reservations; authored path/group priority takes precedence.
 AI vehicle bodies follow the sampled road surface in all three rotations: yaw
-tracks travel direction, pitch follows the authored grade, and roll follows
+tracks the route at the rear axle, pitch follows the authored grade, and roll follows
 road cant. Pitch and roll use the vehicle's heading-relative axes so uphill
 travel raises the nose regardless of compass direction. Lane positions include
-the authored road skew and height offsets.
+the authored road skew and height offsets. The configured rearmost axle follows
+the route and the vehicle body pivots around it; when axle data is unavailable,
+the rear axle is estimated at 30% of the configured bounding-box length behind
+the model origin.
+AI collision footprints and their F2 visualizations use the same body pose.
 Among equal priorities, movements under 45° are treated as straight-like,
 45–100° bends go next, and sharper turns go last. Faster approaches (under
 3 m/s, under 8 m/s, or more, based on cruise speed so braking does not reverse
@@ -235,7 +250,10 @@ entry when needed, keeping the waiting vehicle clear of the crossing path so
 through traffic can pass instead of deadlocking against it. Synthetic
 regressions verify that a waiting lower-priority movement yields to an
 approaching higher-priority vehicle, crossing movements remain clear, and both
-make progress. Complete
+make progress. When a long turning vehicle's front extends into the junction
+while its center is still alongside a straight-going vehicle, it can yield to
+that vehicle if priority and the sampled stopping distance permit; physical
+collision checks still apply. Complete
 native OMSI right-of-way behavior remains unverified.
 
 Traffic accelerates at up to 1.6 m/s^2 and normally brakes at up to 3 m/s^2.
@@ -285,16 +303,16 @@ Route planning tries an alternative branch if a later turn is impossible,
 rejecting the entry route if no drivable exit or loop is reachable. Vehicles
 exit only at unconnected lane ends; missing or misaligned authored connections
 can still terminate a route.
-AI buses are
-selected separately from depot bus definitions. When an endpoint route matches
-a timetable's `.ttr` spline chain, buses follow that route and use its parsed
-departures. Complete matches are searched across candidate endpoints before
-considering fallbacks. For an individual timetable without a complete endpoint
-match, if a generated endpoint route shares at least two consecutive splines,
-OpenBus can queue it as an explicitly logged fallback using that timetable's
-departures; this route is not guaranteed to serve the authored itinerary.
-Either way, buses require connected endpoint entries and never spawn partway
-along a route. Set
+AI buses are selected separately from depot bus definitions. When a connected
+route matches a timetable's complete `.ttr` spline chain, buses follow that
+route and use its parsed departures; complete matches take priority over
+fallbacks. If no complete match exists, OpenBus can use an explicitly logged,
+itinerary-inaccurate fallback only when it can follow at least two consecutive
+timetable entries from the trip's first checkpoint. Such a bus follows only
+the matched prefix, stops at that prefix's end, and does not register player
+passenger stops as if the full itinerary were available. Fallbacks do not skip
+missing checkpoints or invent connections. They start at the timetable origin
+and still wait for a clear, off-screen admission position. Set
 `OPENBUS_MAP_BUS_COUNT` to control their population (default `20`, maximum
 `200`; `0` disables map AI buses). The bounded bus pool is created at startup
 and buses are admitted at scheduled times. Traffic remains lane-constrained and
@@ -790,6 +808,19 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   are magenta. Arrows on paths show their travel direction; bidirectional
   paths have arrows in both directions, and their spline labels show `[BIDIR]`.
   `H` labels identify pedestrian splines; `S` labels identify road splines.
+  Green wireframe boxes mark the waiting-passenger slots at
+  registered timetable stops within 75 m. Their labels show the stop name, ID,
+  and waiting count; an empty queue shows its first potential slot. Positions
+  use nearby authored passenger areas when available; `[fallback]` identifies
+  generated roadside positions when no area is matched.
+  Amber wireframes show editor-only `[busstop]` objects, and cyan wireframes
+  show editor-only passenger areas and their authored cabin positions. Labels
+  show the map object ID and any stop name. Each passenger area is associated
+  with the nearest editor bus stop within 30 m and 2 m vertically; this
+  proximity rule is an approximation, not verified native OMSI linking.
+  Waiting passengers use its authored positions first; excess passengers are
+  distributed inside the authored passenger-area bounds. When no area is
+  matched, the generated roadside queue is used.
   White arrows above active AI vehicles
   show the vehicle's actual facing direction for comparison. Orange squares
   mark unconnected directed starts; red Xs mark unconnected
@@ -799,8 +830,8 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   connector when a visible gap remains; this does not change AI route connectivity.
   Traffic-light phase, cycle, control-point, and bus priority diagnostics appear
   in an ImGui panel while F2 is active. The top-left ImGui status panel shows the
-  simulation date and time to the second, along with player coordinates and
-  map/traffic statistics.
+  simulation date and time to the second, player coordinates, the current map
+  tile and whether it is active, along with map/traffic statistics.
   Signalized road paths show a stopline across the authored path width, placed
   0.75 m before the controlled path entry (the AI stopping boundary). The ImGui
   traffic-light panel lists junction/object ID (`J`), path (`P`), light (`L`),

@@ -519,6 +519,10 @@ bool parseAxle(Reader& reader, VehicleConfig& result, const Line& keywordLine) {
 
 } // namespace
 
+void loadPassengerCabinConfiguration(VehicleConfig& configuration) {
+    loadPassengerCabin(configuration, configuration);
+}
+
 void prepareScriptConfiguration(VehicleConfig& configuration, bool convertScripts) {
     loadReferencedDefinitions(configuration.sourcePath, configuration);
     if (convertScripts) {

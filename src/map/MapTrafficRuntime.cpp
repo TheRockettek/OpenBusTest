@@ -11,7 +11,6 @@
 #include <cstdint>
 #include <functional>
 #include <iomanip>
-#include <map>
 #include <numbers>
 #include <map>
 #include <limits>
@@ -20,6 +19,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -27,12 +27,136 @@
 
 namespace openbus::map {
 
+MapTrafficPose mapTrafficSceneryPassengerPose(const MapSceneryPose& sceneryPose,
+                                              const std::array<double, 3>& localPosition,
+                                              double seatHeight, double rotationDegrees) {
+    const auto offset = transformMapSceneryVector(
+        sceneryPose, {localPosition[0], localPosition[1], localPosition[2] + seatHeight});
+    const double angle = rotationDegrees * std::numbers::pi / 180.0;
+    const auto direction =
+        transformMapSceneryVector(sceneryPose, {std::cos(angle), -std::sin(angle), 0.0});
+    MapTrafficPose result;
+    result.position = {sceneryPose.x + offset[0], sceneryPose.y + offset[1],
+                       sceneryPose.z + offset[2]};
+    result.headingRadians = -std::atan2(direction[1], direction[0]);
+    return result;
+}
+
 bool mapTrafficPoseOnActiveTile(const MapTrafficPose& pose,
                                 const std::vector<std::pair<int, int>>& activeTiles,
                                 double tileSize) {
     const MapTileCoordinate tile{mapWorldTile(pose.position[0], tileSize),
                                  mapWorldTile(pose.position[1], tileSize)};
     return std::find(activeTiles.begin(), activeTiles.end(), tile) != activeTiles.end();
+}
+
+std::map<int, std::vector<MapTrafficPose>>
+mapTrafficAssignPassengerPositions(const std::vector<MapPassengerStopAnchor>& stops,
+                                   const std::vector<MapPassengerWaitingArea>& areas,
+                                   const std::map<int, std::size_t>& requestedCounts) {
+    constexpr double maximumDistanceMeters = 30.0;
+    constexpr double maximumHeightDifferenceMeters = 2.0;
+    std::vector<const MapPassengerWaitingArea*> orderedAreas;
+    orderedAreas.reserve(areas.size());
+    for (const auto& area : areas) {
+        orderedAreas.push_back(&area);
+    }
+    std::sort(orderedAreas.begin(), orderedAreas.end(), [](const auto* first, const auto* second) {
+        return std::tie(first->objectId, first->position) <
+               std::tie(second->objectId, second->position);
+    });
+    std::map<int, std::vector<MapTrafficPose>> result;
+    std::map<int, std::vector<const MapPassengerWaitingArea*>> assignedAreas;
+    for (const auto* area : orderedAreas) {
+        const MapPassengerStopAnchor* nearest = nullptr;
+        double nearestDistance = maximumDistanceMeters;
+        for (const auto& stop : stops) {
+            if (stop.stopId == 0 ||
+                std::abs(stop.position[2] - area->position[2]) > maximumHeightDifferenceMeters) {
+                continue;
+            }
+            const double distance = std::hypot(stop.position[0] - area->position[0],
+                                               stop.position[1] - area->position[1]);
+            if (distance <= maximumDistanceMeters &&
+                (nearest == nullptr || distance < nearestDistance ||
+                 (distance == nearestDistance && stop.stopId < nearest->stopId))) {
+                nearest = &stop;
+                nearestDistance = distance;
+            }
+        }
+        if (nearest != nullptr && !area->positions.empty()) {
+            auto& positions = result[nearest->stopId];
+            positions.insert(positions.end(), area->positions.begin(), area->positions.end());
+            assignedAreas[nearest->stopId].push_back(area);
+        }
+    }
+
+    for (const auto& [stopId, requestedCount] : requestedCounts) {
+        auto positions = result.find(stopId);
+        const auto areasForStop = assignedAreas.find(stopId);
+        if (positions == result.end() || areasForStop == assignedAreas.end() ||
+            positions->second.size() >= requestedCount) {
+            continue;
+        }
+        std::size_t extraCount = requestedCount - positions->second.size();
+        std::vector<std::vector<MapTrafficPose>> extrasByArea(areasForStop->second.size());
+        for (std::size_t areaIndex = 0;
+             areaIndex < areasForStop->second.size() && extraCount > 0; ++areaIndex) {
+            const auto* area = areasForStop->second[areaIndex];
+            const std::size_t share =
+                (extraCount + areasForStop->second.size() - areaIndex - 1) /
+                (areasForStop->second.size() - areaIndex);
+            const auto& bounds = area->bounds;
+            const std::array<double, 3> axisX = {
+                bounds[1][0] - bounds[0][0], bounds[1][1] - bounds[0][1],
+                bounds[1][2] - bounds[0][2]};
+            const std::array<double, 3> axisY = {
+                bounds[2][0] - bounds[0][0], bounds[2][1] - bounds[0][1],
+                bounds[2][2] - bounds[0][2]};
+            const double width = std::hypot(axisX[0], axisX[1], axisX[2]);
+            const double depth = std::hypot(axisY[0], axisY[1], axisY[2]);
+            if (width <= 1.0e-6 || depth <= 1.0e-6) {
+                continue;
+            }
+            const double aspectRatio = width / depth;
+            const std::size_t columns = std::max<std::size_t>(
+                1, static_cast<std::size_t>(std::ceil(std::sqrt(share * aspectRatio))));
+            const std::size_t rows = (share + columns - 1) / columns;
+            auto& generated = extrasByArea[areaIndex];
+            for (std::size_t passenger = 0; passenger < share; ++passenger) {
+                const std::size_t row = passenger / columns;
+                const std::size_t column = passenger % columns;
+                const double u = (static_cast<double>(column) + 0.5) /
+                                 static_cast<double>(columns);
+                const double v = (static_cast<double>(row) + 0.5) /
+                                 static_cast<double>(rows);
+                const std::array<double, 3> selected = {
+                    bounds[0][0] + u * axisX[0] + v * axisY[0],
+                    bounds[0][1] + u * axisX[1] + v * axisY[1],
+                    bounds[0][2] + u * axisX[2] + v * axisY[2]};
+                const auto nearestPosition = std::min_element(
+                    area->positions.begin(), area->positions.end(),
+                    [&](const MapTrafficPose& left, const MapTrafficPose& right) {
+                        const auto distanceSquared = [&](const MapTrafficPose& pose) {
+                            const double dx = pose.position[0] - selected[0];
+                            const double dy = pose.position[1] - selected[1];
+                            const double dz = pose.position[2] - selected[2];
+                            return dx * dx + dy * dy + dz * dz;
+                        };
+                        return distanceSquared(left) < distanceSquared(right);
+                    });
+                MapTrafficPose generatedPose = *nearestPosition;
+                generatedPose.position = selected;
+                generated.push_back(generatedPose);
+            }
+            extraCount -= generated.size();
+        }
+        for (const auto& areaExtras : extrasByArea) {
+            positions->second.insert(positions->second.end(), areaExtras.begin(),
+                                     areaExtras.end());
+        }
+    }
+    return result;
 }
 
 namespace {
@@ -246,6 +370,16 @@ std::size_t mapScheduledPassengerModelIdentity(int stopId, std::size_t queuePosi
     return stopIdentity + queuePosition;
 }
 
+std::size_t mapScheduledPassengerQueueSlot(std::size_t initialCount,
+                                           std::size_t passengerIndex) {
+    if (passengerIndex >= initialCount) {
+        throw std::invalid_argument(trafficInputError(
+            "Passenger queue index exceeds its initial count", "initialCount=", initialCount,
+            "passengerIndex=", passengerIndex));
+    }
+    return initialCount - passengerIndex - 1;
+}
+
 std::array<double, 2> mapTrafficPassengerWorldOffset(bool leftHandTraffic, double headingRadians,
                                                      double lateralOffsetMeters,
                                                      double longitudinalOffsetMeters) {
@@ -261,6 +395,18 @@ std::array<double, 2> mapTrafficPassengerWorldOffset(bool leftHandTraffic, doubl
                 longitudinalOffsetMeters * std::sin(headingRadians),
             -sideOffset * std::sin(headingRadians) +
                 longitudinalOffsetMeters * std::cos(headingRadians)};
+}
+
+MapTrafficPose mapTrafficPassengerQueuePose(const MapTrafficPose& stopPose, bool leftHandTraffic,
+                                            std::size_t queueSlot) {
+    const double row = static_cast<double>(queueSlot / 3);
+    const double column = static_cast<double>(queueSlot % 3) - 1.0;
+    const auto offset = mapTrafficPassengerWorldOffset(leftHandTraffic, stopPose.headingRadians,
+                                                       2.0 + 0.65 * column, -0.8 * row);
+    MapTrafficPose pose = stopPose;
+    pose.position[0] += offset[0];
+    pose.position[1] += offset[1];
+    return pose;
 }
 
 std::vector<std::size_t> mapPassengerServiceUpdateOrder(const std::vector<int>& serviceStopIds,
@@ -1948,6 +2094,41 @@ double mapTrafficRouteTravelHeadingRadians(const MapTrafficRoute& route, double 
     return std::atan2(dx, dy);
 }
 
+std::optional<MapTrafficPose> sampleMapTrafficActorPose(const MapTrafficActor& actor,
+                                                       double distanceMeters) {
+    if (!std::isfinite(distanceMeters) || !std::isfinite(actor.rearAxleOffsetMeters)) {
+        throw std::invalid_argument(trafficInputError(
+            "Traffic actor pose inputs are invalid", "distanceMeters=", distanceMeters,
+            "rearAxleOffsetMeters=", actor.rearAxleOffsetMeters));
+    }
+    const double axleDistance = distanceMeters + actor.rearAxleOffsetMeters;
+    if (!std::isfinite(axleDistance)) {
+        throw std::invalid_argument("Traffic rear axle route distance is not finite");
+    }
+    auto pose = sampleMapTrafficRoute(actor.route, axleDistance, actor.lateralOffsetMeters);
+    if (!pose) {
+        return std::nullopt;
+    }
+    if (actor.rearAxleOffsetMeters == 0.0) {
+        return pose;
+    }
+    const double sampledDistance =
+        !actor.route.closed && axleDistance < 0.0 ? 0.0
+        : !actor.route.closed && !actor.route.loopStartDistance &&
+                  axleDistance > actor.route.totalLength
+            ? actor.route.totalLength
+            : axleDistance;
+    pose->headingRadians = mapTrafficRouteTravelHeadingRadians(
+        actor.route, sampledDistance, actor.lateralOffsetMeters);
+    const double extrapolation = axleDistance - sampledDistance;
+    const double forwardOffset = extrapolation - actor.rearAxleOffsetMeters;
+    const double horizontalOffset = forwardOffset * std::cos(pose->pitchRadians);
+    pose->position[0] += horizontalOffset * std::sin(pose->headingRadians);
+    pose->position[1] += horizontalOffset * std::cos(pose->headingRadians);
+    pose->position[2] += forwardOffset * std::sin(pose->pitchRadians);
+    return pose;
+}
+
 MapTrafficTurnSignal mapTrafficActorTurnSignal(const MapTrafficActor& actor,
                                                double activationDistanceMeters) {
     if (!std::isfinite(activationDistanceMeters) || activationDistanceMeters < 0.0) {
@@ -2104,9 +2285,39 @@ std::vector<MapTrafficSpawnCandidate> mapTrafficRouteSpawnCandidates(const MapTr
     const double endpointMargin = std::max(8.0, vehicleLengthMeters * 0.5 + 4.0);
     const double spacing = std::max(12.0, vehicleLengthMeters + 6.0);
     std::vector<MapTrafficSpawnCandidate> candidates;
+    const auto appendSpanCandidates = [&](std::size_t segmentIndex, double spanStart,
+                                          double spanEnd) {
+        if (!std::isfinite(spanStart) || !std::isfinite(spanEnd) || spanEnd <= spanStart) {
+            throw std::invalid_argument(trafficInputError(
+                "Traffic spawn route has invalid segment distances", "segmentIndex=", segmentIndex,
+                "spanStart=", spanStart, "spanEnd=", spanEnd));
+        }
+        for (double distance = spanStart + endpointMargin; distance <= spanEnd - endpointMargin;
+             distance += spacing) {
+            const auto pose = sampleMapTrafficRoute(route, distance, 0.0);
+            if (!pose) {
+                throw std::runtime_error("Could not sample a map traffic spawn candidate position");
+            }
+            const double tileSize = route.segments[segmentIndex].spline.coordinates.tileSize;
+            candidates.push_back({distance, mapWorldTile(pose->position[0], tileSize),
+                                  mapWorldTile(pose->position[1], tileSize)});
+        }
+    };
     for (std::size_t index = 0; index < route.segments.size();) {
         const MapTrafficRouteSegment& segment = route.segments[index];
-        if (!segment.points.empty() || segment.spline.placement.splineId == 0) {
+        if (segment.spline.placement.splineId == 0) {
+            ++index;
+            continue;
+        }
+
+        const double segmentStart = index == 0 ? 0.0 : route.cumulativeEndDistances[index - 1];
+        const double segmentEnd = route.cumulativeEndDistances[index];
+        if (!segment.points.empty()) {
+            const bool isOpenRouteEnd =
+                index + 1 == route.segments.size() && !route.closed && !route.loopStartDistance;
+            if (!isOpenRouteEnd && !segment.trafficSignal.has_value()) {
+                appendSpanCandidates(index, segmentStart, segmentEnd);
+            }
             ++index;
             continue;
         }
@@ -2125,22 +2336,31 @@ std::vector<MapTrafficSpawnCandidate> mapTrafficRouteSpawnCandidates(const MapTr
 
         const bool isOpenRouteEnd =
             spanEndIndex + 1 == route.segments.size() && !route.closed && !route.loopStartDistance;
-        if (!isOpenRouteEnd) {
+        const bool signalizedSpan = std::any_of(
+            route.segments.begin() + static_cast<std::ptrdiff_t>(index),
+            route.segments.begin() + static_cast<std::ptrdiff_t>(spanEndIndex + 1),
+            [](const MapTrafficRouteSegment& spanSegment) {
+                return spanSegment.trafficSignal.has_value();
+            });
+        if (!isOpenRouteEnd && !signalizedSpan) {
             const double spanStart = index == 0 ? 0.0 : route.cumulativeEndDistances[index - 1];
             const double spanEnd = route.cumulativeEndDistances[spanEndIndex];
-            if (!std::isfinite(spanStart) || !std::isfinite(spanEnd) || spanEnd <= spanStart) {
-                throw std::invalid_argument(trafficInputError(
-                    "Traffic spawn route has invalid segment distances", "segmentIndex=", index,
-                    "spanEndIndex=", spanEndIndex, "spanStart=", spanStart, "spanEnd=", spanEnd));
-            }
-            for (double distance = spanStart + endpointMargin; distance <= spanEnd - endpointMargin;
-                 distance += spacing) {
-                candidates.push_back({distance, segment.spline.tileX, segment.spline.tileY});
-            }
+            appendSpanCandidates(index, spanStart, spanEnd);
         }
         index = spanEndIndex + 1;
     }
     return candidates;
+}
+
+bool mapTrafficSpawnCandidatesOverlapActiveTiles(
+    const std::vector<MapTrafficSpawnCandidate>& candidates,
+    const std::vector<std::pair<int, int>>& activeTiles) {
+    return std::any_of(candidates.begin(), candidates.end(),
+                       [&](const MapTrafficSpawnCandidate& candidate) {
+                           return std::find(activeTiles.begin(), activeTiles.end(),
+                                            std::pair{candidate.tileX, candidate.tileY}) !=
+                                  activeTiles.end();
+                       });
 }
 
 bool advanceMapTrafficActor(MapTrafficActor& actor, double elapsedSeconds) {
@@ -2580,7 +2800,7 @@ void MapTrafficLaneNetwork::finalize() {
     for (const auto& [splineId, indexes] : lanesBySpline_) {
         for (std::size_t laneSelector = 0; laneSelector < indexes.size(); ++laneSelector) {
             const std::size_t index = indexes[laneSelector];
-            if (segments_[index].points.empty() && !next_[index].empty()) {
+            if (!next_[index].empty()) {
                 spawnLanes_.push_back({splineId, laneSelector});
             }
         }
@@ -2827,7 +3047,7 @@ void MapTrafficLaneNetwork::finalizeAppendedSegments() {
     for (const auto& [splineId, indexes] : lanesBySpline_) {
         for (std::size_t laneSelector = 0; laneSelector < indexes.size(); ++laneSelector) {
             const std::size_t index = indexes[laneSelector];
-            if (segments_[index].points.empty() && !next_[index].empty()) {
+            if (!next_[index].empty()) {
                 spawnLanes_.push_back({splineId, laneSelector});
             }
         }
@@ -3619,7 +3839,7 @@ double footprintSeparation(const MapTrafficObstacle& a, const MapTrafficObstacle
 }
 
 MapTrafficObstacle actorFootprint(const MapTrafficActor& actor, double distance) {
-    const auto pose = sampleMapTrafficRoute(actor.route, distance, actor.lateralOffsetMeters);
+    const auto pose = sampleMapTrafficActorPose(actor, distance);
     if (!pose) {
         throw std::invalid_argument(trafficInputError(
             "Cannot sample traffic driving route", "distanceMeters=", distance,
@@ -4022,8 +4242,7 @@ bool advanceMapTrafficActorLoopingAvoidingObstacles(
             } else {
                 advanceMapTrafficActorLooping(actor, step);
             }
-            const auto pose =
-                sampleMapTrafficRoute(actor.route, actor.distanceMeters, actor.lateralOffsetMeters);
+            const auto pose = sampleMapTrafficActorPose(actor, actor.distanceMeters);
             if (!pose) {
                 throw std::runtime_error(
                     trafficInputError("Cannot sample an obstacle-aware traffic actor",
@@ -4340,8 +4559,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                      projectedDistance > pathActor.route.totalLength)) {
                     return false;
                 }
-                projected = sampleMapTrafficRoute(pathActor.route, projectedDistance,
-                                                  pathActor.lateralOffsetMeters);
+                projected = sampleMapTrafficActorPose(pathActor, projectedDistance);
                 if (!projected.has_value()) {
                     return false;
                 }
@@ -4356,8 +4574,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                  finalDistance > pathActor.route.totalLength)) {
                 return false;
             }
-            projected = sampleMapTrafficRoute(pathActor.route, finalDistance,
-                                              pathActor.lateralOffsetMeters);
+            projected = sampleMapTrafficActorPose(pathActor, finalDistance);
             if (!projected.has_value() ||
                 std::cos(projected->headingRadians - targetPose.headingRadians) < 0.7) {
                 return false;
@@ -5212,12 +5429,18 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             const MapTrafficActor& low = *actors[lowIndex];
             for (std::size_t highIndex = 0; highIndex < actors.size(); ++highIndex) {
                 const MapTrafficActor& high = *actors[highIndex];
+                const bool stationaryJunctionYielder =
+                    high.speedMetersPerSecond < 0.3 &&
+                    !actorCommittedInJunction[highIndex] &&
+                    (high.blockReason == MapTrafficBlockReason::CrossingReservation ||
+                     high.blockReason == MapTrafficBlockReason::JunctionTraffic);
                 const bool highHeld = high.blockReason == MapTrafficBlockReason::Signal ||
                                       (high.speedMetersPerSecond < 0.3 &&
                                        (high.blockReason == MapTrafficBlockReason::Leader ||
                                         high.blockReason == MapTrafficBlockReason::Vehicle ||
                                         high.blockReason == MapTrafficBlockReason::Obstacle ||
-                                        high.blockReason == MapTrafficBlockReason::Collision));
+                                        high.blockReason == MapTrafficBlockReason::Collision)) ||
+                                      stationaryJunctionYielder;
                 const bool tieBreaksInFavorOfHigh =
                     priorities[highIndex] == priorities[lowIndex] &&
                     (movementTurnClass[highIndex] < movementTurnClass[lowIndex] ||
@@ -5229,6 +5452,42 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                           highIndex < lowIndex))))));
                 const bool highHasAuthoredPriority =
                     priorities[highIndex] > priorities[lowIndex] || tieBreaksInFavorOfHigh;
+                // A long vehicle's nose can enter the junction while it is still alongside
+                // through traffic on the approach. Treat that as a yieldable turn only if
+                // its sampled footprint can stop before the conflict.
+                const auto adjacentFrontOnlyTurn = [&](std::size_t turnIndex,
+                                                       std::size_t throughIndex) {
+                    if (!committedTurningInJunction[turnIndex] ||
+                        actorCenterInJunction[turnIndex] ||
+                        movementTurnClass[throughIndex] != 0) {
+                        return false;
+                    }
+                    const auto& turn = occupied[obstacles.size() + turnIndex];
+                    const auto& through = occupied[obstacles.size() + throughIndex];
+                    const double heading = through.pose.headingRadians;
+                    if (std::cos(turn.pose.headingRadians - heading) < 0.95) {
+                        return false;
+                    }
+                    const double dx = turn.pose.position[0] - through.pose.position[0];
+                    const double dy = turn.pose.position[1] - through.pose.position[1];
+                    const double along = std::abs(dx * std::sin(heading) + dy * std::cos(heading));
+                    const double across = std::abs(dx * std::cos(heading) - dy * std::sin(heading));
+                    if (along > (turn.lengthMeters + through.lengthMeters) * 0.5 ||
+                        across > (turn.widthMeters + through.widthMeters) * 0.5 + 4.0) {
+                        return false;
+                    }
+                    const MapTrafficActor& turningActor = *actors[turnIndex];
+                    const auto conflict = firstConflictOnArrival(
+                        previewClaim(turnIndex), turningActor, previewClaim(throughIndex),
+                        *actors[throughIndex]);
+                    return conflict.has_value() &&
+                           *conflict - turningActor.distanceMeters >=
+                               turningActor.speedMetersPerSecond * turningActor.speedMetersPerSecond /
+                                       (2.0 * braking) +
+                                   priorityYieldClearanceMeters;
+                };
+                const bool lowIsAdjacentFrontOnlyTurn = adjacentFrontOnlyTurn(lowIndex, highIndex);
+                const bool highIsAdjacentFrontOnlyTurn = adjacentFrontOnlyTurn(highIndex, lowIndex);
                 const bool committedTurnPrecedenceDiffers =
                     committedTurningInJunction[highIndex] != committedTurningInJunction[lowIndex];
                 const bool lowYieldingOnJunction =
@@ -5241,7 +5500,9 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     actorCenterInJunction[highIndex] && !actorCenterInJunction[lowIndex] &&
                     movementTurnClass[lowIndex] > 0 && highHasAuthoredPriority;
                 const bool highHasPriority =
-                    highPrecedesJunctionYielder
+                    lowIsAdjacentFrontOnlyTurn || highIsAdjacentFrontOnlyTurn
+                        ? highHasAuthoredPriority
+                    : highPrecedesJunctionYielder
                         ? highHasAuthoredPriority
                         : highIsEstablishedInJunction ||
                               (committedTurnPrecedenceDiffers
@@ -5307,15 +5568,19 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         }
                     }
                 }
+                const double conflictStopBuffer = lowIsAdjacentFrontOnlyTurn
+                                                      ? priorityYieldClearanceMeters
+                                                      : low.lengthMeters * 0.5 +
+                                                            priorityYieldClearanceMeters;
                 if (conflict.has_value() &&
-                    (!committedTurningInJunction[lowIndex] || highPrecedesJunctionYielder) &&
+                    (!committedTurningInJunction[lowIndex] || highPrecedesJunctionYielder ||
+                     lowIsAdjacentFrontOnlyTurn) &&
                     *conflict - low.distanceMeters >=
                         low.speedMetersPerSecond * low.speedMetersPerSecond / (2.0 * braking) +
-                            low.lengthMeters * 0.5 + priorityYieldClearanceMeters) {
+                            conflictStopBuffer) {
                     canStillYield[lowIndex] = 1;
                     priorityStopDistances[lowIndex] =
-                        std::min(priorityStopDistances[lowIndex],
-                                 *conflict - low.lengthMeters * 0.5 - priorityYieldClearanceMeters);
+                        std::min(priorityStopDistances[lowIndex], *conflict - conflictStopBuffer);
                     yieldsTo[lowIndex].push_back(highIndex);
                 }
             }
@@ -5629,8 +5894,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                             pathPose.reset();
                             break;
                         }
-                        pathPose = sampleMapTrafficRoute(actor.route, pathDistance,
-                                                         actor.lateralOffsetMeters);
+                        pathPose = sampleMapTrafficActorPose(actor, pathDistance);
                         if (!pathPose) {
                             break;
                         }
@@ -5694,8 +5958,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                         pathPose.reset();
                         break;
                     }
-                    pathPose =
-                        sampleMapTrafficRoute(actor.route, pathDistance, actor.lateralOffsetMeters);
+                    pathPose = sampleMapTrafficActorPose(actor, pathDistance);
                     if (!pathPose) {
                         break;
                     }

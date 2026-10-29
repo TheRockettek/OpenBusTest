@@ -44,6 +44,136 @@ void requireNear(double actual, double expected, const char* message) {
     }
 }
 
+void verifyRearAxleTrafficPose() {
+    using namespace openbus::map;
+    for (const double direction : {-1.0, 1.0}) {
+        MapTrafficRouteSegment approach{{makeSpline(3200, 0, 0, -40.0), 0, 0}};
+        approach.spline.placement.localX = 0.0;
+        approach.spline.placement.elevation = 0.0;
+        approach.spline.placement.length = 40.0;
+        MapTrafficRouteSegment turn;
+        constexpr double radius = 8.0;
+        for (int step = 0; step <= 64; ++step) {
+            const double angle = std::numbers::pi * 0.5 * step / 64.0;
+            turn.points.push_back({direction * radius * (1.0 - std::cos(angle)),
+                                   radius * std::sin(angle), 0.0});
+        }
+        double turnLength = 0.0;
+        for (std::size_t index = 1; index < turn.points.size(); ++index) {
+            turnLength += std::hypot(turn.points[index][0] - turn.points[index - 1][0],
+                                     turn.points[index][1] - turn.points[index - 1][1]);
+        }
+        MapTrafficRouteSegment exit{{makeSpline(3201, 0, 0, radius), 0, 0}};
+        exit.spline.placement.localX = direction * radius;
+        exit.spline.placement.elevation = 0.0;
+        exit.spline.placement.rotationDegrees = direction * 90.0;
+        exit.spline.placement.length = 40.0;
+        MapTrafficRoute route;
+        route.segments = {approach, turn, exit};
+        route.cumulativeEndDistances = {40.0, 40.0 + turnLength, 80.0 + turnLength};
+        route.totalLength = route.cumulativeEndDistances.back();
+        auto actor = makeMapTrafficActor(route, "rear-axle.ovh", 4.0, 0.0, false);
+        actor.lengthMeters = 12.0;
+        actor.widthMeters = 2.4;
+        actor.rearAxleOffsetMeters = -3.0;
+        for (double distance : {0.0, 20.0, 40.0, 44.0, 48.0, 53.0, 60.0}) {
+            const auto body = sampleMapTrafficActorPose(actor, distance);
+            require(body.has_value(), "rear-axle vehicle pose can be sampled");
+            if (distance >= 3.0) {
+                const auto axle = sampleMapTrafficRoute(route, distance - 3.0, 0.0);
+                require(axle.has_value(), "rear axle route pose can be sampled");
+                requireNear(body->position[0] - 3.0 * std::sin(body->headingRadians),
+                            axle->position[0], "rear axle follows the route horizontally");
+                requireNear(body->position[1] - 3.0 * std::cos(body->headingRadians),
+                            axle->position[1], "rear axle follows the route longitudinally");
+                requireNear(body->headingRadians,
+                            mapTrafficRouteTravelHeadingRadians(route, distance - 3.0, 0.0),
+                            "body heading follows the rear axle tangent");
+            } else {
+                const auto origin = sampleMapTrafficRoute(route, distance, 0.0);
+                require(origin.has_value(), "route origin can be sampled");
+                requireNear(body->position[0], origin->position[0],
+                            "rear axle extrapolates before an open route");
+                requireNear(body->position[1], origin->position[1],
+                            "open-route entry retains the vehicle origin");
+            }
+        }
+        const auto body = sampleMapTrafficActorPose(actor, 48.0);
+        const auto centerline = sampleMapTrafficRoute(route, 48.0, 0.0);
+        require(body && centerline &&
+                    std::abs(std::remainder(body->headingRadians - centerline->headingRadians,
+                                            2.0 * std::numbers::pi)) > 0.25,
+                "a long vehicle pivots around its rear axle rather than its route center");
+
+        actor.distanceMeters = 44.0;
+        actor.speedMetersPerSecond = 4.0;
+        const auto start = sampleMapTrafficActorPose(actor, actor.distanceMeters);
+        const auto future = sampleMapTrafficActorPose(actor, actor.distanceMeters + 2.0);
+        const auto oldFuture = sampleMapTrafficRoute(route, actor.distanceMeters + 2.0, 0.0);
+        require(start && future && oldFuture, "turning collision test samples body poses");
+        const MapTrafficObstacle startBody{*start, actor.lengthMeters, actor.widthMeters};
+        const MapTrafficObstacle futureBody{*future, actor.lengthMeters, actor.widthMeters};
+        const MapTrafficObstacle oldFutureBody{*oldFuture, actor.lengthMeters, actor.widthMeters};
+        std::optional<MapTrafficObstacle> obstacle;
+        for (double x = -12.0; x <= 12.0 && !obstacle; x += 0.25) {
+            for (double y = -8.0; y <= 16.0; y += 0.25) {
+                MapTrafficPose obstaclePose;
+                obstaclePose.position = {x, y, 0.0};
+                const MapTrafficObstacle candidate{obstaclePose, 0.25, 0.25};
+                if (mapTrafficHasClearance(startBody, {candidate}, 0.1) &&
+                    !mapTrafficHasClearance(futureBody, {candidate}, 0.0) &&
+                    mapTrafficHasClearance(oldFutureBody, {candidate}, 0.0)) {
+                    obstacle = candidate;
+                    break;
+                }
+            }
+        }
+        require(obstacle.has_value(), "turning vehicle has a swept-body obstacle");
+        for (int frame = 0; frame < 60; ++frame) {
+            advanceMapTrafficDriving({&actor}, {*obstacle}, 0.05);
+            const auto pose = sampleMapTrafficActorPose(actor, actor.distanceMeters);
+            require(pose && mapTrafficHasClearance({*pose, actor.lengthMeters, actor.widthMeters},
+                                                   {*obstacle}, 0.0),
+                    "rear-axle turn preserves physical body clearance");
+        }
+        require(actor.distanceMeters < 46.0,
+                "swept collision stops the rear-axle vehicle before its body reaches an obstacle");
+    }
+    MapTrafficRouteSegment loop;
+    constexpr double radius = 20.0;
+    for (int step = 0; step <= 128; ++step) {
+        const double angle = 2.0 * std::numbers::pi * step / 128.0;
+        loop.points.push_back({radius * (1.0 - std::cos(angle)), radius * std::sin(angle), 0.0});
+    }
+    double length = 0.0;
+    for (std::size_t index = 1; index < loop.points.size(); ++index) {
+        length += std::hypot(loop.points[index][0] - loop.points[index - 1][0],
+                             loop.points[index][1] - loop.points[index - 1][1]);
+    }
+    MapTrafficRoute loopRoute;
+    loopRoute.segments = {loop};
+    loopRoute.cumulativeEndDistances = {length};
+    loopRoute.totalLength = length;
+    loopRoute.closed = true;
+    auto loopActor = makeMapTrafficActor(loopRoute, "loop-rear-axle.ovh", 4.0, 0.0, false);
+    loopActor.rearAxleOffsetMeters = -3.0;
+    const auto body = sampleMapTrafficActorPose(loopActor, 1.0);
+    const auto axle = sampleMapTrafficRoute(loopRoute, length - 2.0, 0.0);
+    require(body && axle, "rear axle samples across a closed route seam");
+    requireNear(body->position[0] - 3.0 * std::sin(body->headingRadians), axle->position[0],
+                "rear axle wraps across the loop horizontally");
+    requireNear(body->position[1] - 3.0 * std::cos(body->headingRadians), axle->position[1],
+                "rear axle wraps across the loop longitudinally");
+    loopActor.rearAxleOffsetMeters = std::numeric_limits<double>::quiet_NaN();
+    bool rejectedInvalidOffset = false;
+    try {
+        (void)sampleMapTrafficActorPose(loopActor, 1.0);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidOffset = true;
+    }
+    require(rejectedInvalidOffset, "non-finite rear axle offsets are rejected");
+}
+
 void verifyPassengerSideOffsets() {
     using namespace openbus::map;
     requireNear(mapTrafficPassengerSideSign(false), 1.0,
@@ -73,10 +203,142 @@ void verifyPassengerSideOffsets() {
                 "left-hand eastbound queue extends back toward the west");
     requireNear(leftHandEastboundQueue[1], 2.0,
                 "left-hand eastbound queue is placed north of the road");
+    MapTrafficPose stopPose;
+    stopPose.position = {10.0, 20.0, 3.0};
+    for (const bool leftHandTraffic : {false, true}) {
+        for (const double heading : {0.0, std::numbers::pi / 2.0}) {
+            stopPose.headingRadians = heading;
+            for (std::size_t slot = 0; slot < 7; ++slot) {
+                const auto pose = mapTrafficPassengerQueuePose(stopPose, leftHandTraffic, slot);
+                const auto expected = mapTrafficPassengerWorldOffset(
+                    leftHandTraffic, heading, 2.0 + 0.65 * (static_cast<double>(slot % 3) - 1.0),
+                    -0.8 * static_cast<double>(slot / 3));
+                requireNear(pose.position[0], stopPose.position[0] + expected[0],
+                            "queue marker and passenger share the lateral position");
+                requireNear(pose.position[1], stopPose.position[1] + expected[1],
+                            "queue marker and passenger share the longitudinal position");
+                requireNear(pose.position[2], stopPose.position[2],
+                            "queue markers retain stop elevation");
+                requireNear(pose.headingRadians, heading, "queue markers retain stop heading");
+            }
+        }
+    }
+    {
+        MapSceneryPose scenery;
+        scenery.x = 100.0;
+        scenery.y = 200.0;
+        scenery.z = 3.0;
+        scenery.rotationDegrees[0] = 90.0;
+        scenery.rotationCount = 3;
+        const auto pose = mapTrafficSceneryPassengerPose(scenery, {1.0, 2.0, 0.5}, 0.25, 30.0);
+        requireNear(pose.position[0], 102.0, "passenger position follows editor object rotation");
+        requireNear(pose.position[1], 199.0, "passenger position follows editor object origin");
+        requireNear(pose.position[2], 3.75, "passenger position includes authored seat height");
+        requireNear(pose.headingRadians, 2.0 * std::numbers::pi / 3.0,
+                    "passenger heading combines editor and authored rotations");
+        scenery.rotationDegrees[1] = 90.0;
+        const auto pitched = mapTrafficSceneryPassengerPose(scenery, {0.0, 0.0, 0.0}, 1.0, 0.0);
+        const auto transformedUp = transformMapSceneryVector(scenery, {0.0, 0.0, 1.0});
+        requireNear(pitched.position[0], scenery.x + transformedUp[0],
+                    "seat height follows tilted editor object x axis");
+        requireNear(pitched.position[1], scenery.y + transformedUp[1],
+                    "seat height follows tilted editor object y axis");
+        requireNear(pitched.position[2], scenery.z + transformedUp[2],
+                    "seat height follows tilted editor object z axis");
+    }
+    {
+        MapTrafficPose firstPosition;
+        firstPosition.position = {36.9, 191.8, 0.25};
+        MapTrafficPose secondPosition;
+        secondPosition.position = {15.1, 195.8, 0.25};
+        MapTrafficPose thirdPosition;
+        thirdPosition.position = {24.9, 170.0, 0.25};
+        const std::vector<MapPassengerStopAnchor> stops = {
+            {8318690, {33.79, 192.28, 0.1}}, {8318798, {16.41, 197.22, 0.1}},
+            {8318801, {26.43, 175.47, 0.1}}, {100, {100.0, 100.0, 20.0}}};
+        const std::vector<MapPassengerWaitingArea> areas = {
+            {8318803, {24.86, 170.03, 0.25}, {thirdPosition}},
+            {8318692, {36.98, 191.76, 0.25}, {firstPosition}},
+            {8318802, {15.07, 195.78, 0.25}, {secondPosition}},
+            {999, {100.0, 100.0, 0.0}, {firstPosition}},
+            {1000, {200.0, 200.0, 0.0}, {firstPosition}}};
+        const auto assigned = mapTrafficAssignPassengerPositions(stops, areas);
+        require(assigned.size() == 3 && assigned.at(8318690)[0].position == firstPosition.position &&
+                    assigned.at(8318798)[0].position == secondPosition.position &&
+                    assigned.at(8318801)[0].position == thirdPosition.position,
+                "BRT waiting areas belong to the nearest nearby stop on the same level");
+        const auto ordered = mapTrafficAssignPassengerPositions(
+            {{20, {0.0, 0.0, 0.0}}, {10, {2.0, 0.0, 0.0}}},
+            {{4, {1.0, 0.0, 0.0}, {secondPosition}},
+             {3, {1.0, 0.0, 0.0}, {firstPosition}}});
+        require(ordered.size() == 1 && ordered.at(10).size() == 2 &&
+                    ordered.at(10)[0].position == firstPosition.position &&
+                    ordered.at(10)[1].position == secondPosition.position,
+                "equidistant stops and multiple waiting areas are assigned deterministically");
+        const std::array<std::array<double, 3>, 8> areaBounds = {{
+            {0.0, 0.0, 0.0}, {2.0, 0.0, 0.0}, {0.0, 4.0, 0.0}, {2.0, 4.0, 0.0},
+            {0.0, 0.0, 2.0}, {2.0, 0.0, 2.0}, {0.0, 4.0, 2.0}, {2.0, 4.0, 2.0}}};
+        const std::vector<MapTrafficPose> authored = {
+            {.position = {0.5, 0.5, 0.0}, .headingRadians = 0.2},
+            {.position = {1.5, 3.5, 0.0}, .headingRadians = 0.4}};
+        const auto expanded = mapTrafficAssignPassengerPositions(
+            {{55, {10.0, 10.0, 0.0}}},
+            {{8, {10.1, 10.0, 0.0}, authored, areaBounds}}, {{55, 12}});
+        require(expanded.size() == 1 && expanded.at(55).size() == 12 &&
+                    expanded.at(55)[0].position == authored[0].position &&
+                    expanded.at(55)[1].position == authored[1].position,
+                "waiting areas provide authored and excess passenger positions");
+        for (std::size_t index = authored.size(); index < expanded.at(55).size(); ++index) {
+            const auto& position = expanded.at(55)[index].position;
+            require(position[0] >= 0.0 && position[0] <= 2.0 && position[1] >= 0.0 &&
+                        position[1] <= 4.0 && position[2] == 0.0,
+                    "excess waiting passengers stay within the authored area bounds");
+            require(std::none_of(expanded.at(55).begin(),
+                                 expanded.at(55).begin() + static_cast<std::ptrdiff_t>(index),
+                                 [&](const MapTrafficPose& existing) {
+                                     return existing.position == position;
+                                 }),
+                    "generated passenger positions do not duplicate occupied slots");
+        }
+    }
 }
 
 void verifyPassengerServiceBehavior() {
     using namespace openbus::map;
+    for (const std::size_t waiting : {1U, 3U, 7U, 10U}) {
+        constexpr std::size_t initial = 10;
+        constexpr std::size_t capacity = 3;
+        const std::size_t visible = std::min(waiting, capacity);
+        std::unordered_set<std::size_t> occupied;
+        for (std::size_t passenger = waiting - visible; passenger < waiting; ++passenger) {
+            occupied.insert(mapScheduledPassengerQueueSlot(initial, passenger) % capacity);
+        }
+        require(occupied.size() == visible,
+                "visible waiting passengers occupy distinct authored slots");
+        const auto nextBoardingSlot = mapScheduledPassengerQueueSlot(initial, waiting - 1);
+        require(occupied.contains(nextBoardingSlot % capacity),
+                "next boarding passenger starts in a visible waiting slot");
+    }
+    bool rejectedInvalidQueueIndex = false;
+    try {
+        (void)mapScheduledPassengerQueueSlot(3, 3);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidQueueIndex = true;
+    }
+    require(rejectedInvalidQueueIndex, "queue slots reject out-of-range passenger indices");
+    MapPassengerServiceRuntime boardingQueue(1);
+    boardingQueue.setWaitingPassengers(42, 4);
+    require(boardingQueue.arrive({.stopId = 42, .dwellSeconds = 2.0, .nextStopId = 43}),
+            "boarding continuity test arrives at its stop");
+    const std::size_t beforeBoarding = boardingQueue.waitingPassengers(42);
+    const auto visibleSlot = mapScheduledPassengerQueueSlot(4, beforeBoarding - 1);
+    boardingQueue.advance(0.01);
+    const std::size_t afterBoarding = boardingQueue.waitingPassengers(42);
+    require(boardingQueue.boardingPassenger() && afterBoarding + 1 == beforeBoarding &&
+                mapScheduledPassengerQueueSlot(4, afterBoarding) == visibleSlot &&
+                boardingQueue.boardingPassengerModelIndex() ==
+                    mapScheduledPassengerModelIdentity(42, beforeBoarding - 1),
+            "boarding retains the visible passenger's slot and model after queue decrement");
     require(mapScheduledPassengerModelIdentity(400, 0) == 400 &&
                 mapScheduledPassengerModelIdentity(400, 1) == 401,
             "visible passenger model identities follow deterministic queue positions");
@@ -396,6 +658,10 @@ void verifyDrivingBehavior() {
                 !splitStraightRoute.segments[1].trafficSignal.has_value() &&
                 !splitStraightRoute.segments[2].trafficSignal.has_value(),
             "long straight splines split at 10 m intervals with signals kept at the route start");
+    MapTrafficRoute closedSignalRoute = splitStraightRoute;
+    closedSignalRoute.closed = true;
+    require(mapTrafficRouteSpawnCandidates(closedSignalRoute, 4.5).empty(),
+            "road traffic does not spawn inside a subdivided signalized spline");
     const auto splitStopPosition =
         mapTrafficRoutePositionOnSpline(splitStraightRoute, 1899, 0, 15.0);
     require(splitStopPosition && splitStopPosition->segmentIndex == 1,
@@ -431,8 +697,10 @@ void verifyDrivingBehavior() {
     MapTrafficRouteSegment junctionPath;
     junctionPath.points = {{0.0, 0.0, 0.0}, {0.0, 4.0, 0.0}};
     MapTrafficRouteSegment divergingStraight = straight(1897, 0.0, 0.0, 90.0, 30.0);
+    MapTrafficRouteSegment unsignalizedLongStraight = longStraight;
+    unsignalizedLongStraight.trafficSignal.reset();
     MapTrafficRoute mergeRoute;
-    mergeRoute.segments = {longStraight, junctionPath, divergingStraight};
+    mergeRoute.segments = {unsignalizedLongStraight, junctionPath, divergingStraight};
     mergeRoute.cumulativeEndDistances = {35.0, 39.0, 69.0};
     mergeRoute.totalLength = 69.0;
     const MapTrafficRoute safeMergeRoute = subdivideMapTrafficRoute(mergeRoute);
@@ -837,7 +1105,83 @@ void verifyDrivingBehavior() {
                 "road spawn candidates include interior positions beyond the first lane");
     require(spawnCandidates[0].tileX == 0 && spawnCandidates[0].tileY == 0 &&
                 spawnCandidates[1].tileX == 0 && spawnCandidates[1].tileY == 0,
-            "road spawn candidates retain their owning tile for streaming admission");
+            "road spawn candidates report their sampled world tile");
+    MapTrafficLaneNetwork sceneryRoadLanes;
+    MapTrafficRouteSegment sceneryRoadStart;
+    sceneryRoadStart.spline.placement.splineId = 1020;
+    sceneryRoadStart.spline.coordinates.tileSize = OMSI_TILE_SIZE_METERS;
+    sceneryRoadStart.points = {{0.0, 0.0, 0.0}, {0.0, 30.0, 0.0}};
+    MapTrafficRouteSegment sceneryRoadEnd;
+    sceneryRoadEnd.spline.placement.splineId = 1021;
+    sceneryRoadEnd.spline.coordinates.tileSize = OMSI_TILE_SIZE_METERS;
+    sceneryRoadEnd.points = {{0.0, 30.0, 0.0}, {0.0, 60.0, 0.0}};
+    sceneryRoadLanes.addSegment(std::move(sceneryRoadStart));
+    sceneryRoadLanes.addSegment(std::move(sceneryRoadEnd));
+    sceneryRoadLanes.finalize();
+    require(sceneryRoadLanes.spawnLanes() == std::vector<MapTrafficLaneStart>{{1020, 0}},
+            "connected point-backed scenery roads are eligible traffic spawn lanes");
+    const auto sceneryRoadRoute = sceneryRoadLanes.buildRoute(1020);
+    require(sceneryRoadRoute.has_value(),
+            "point-backed scenery road lanes build routes for spawn candidates");
+    const auto scenerySpawnCandidates =
+        mapTrafficRouteSpawnCandidates(*sceneryRoadRoute, 4.5);
+    require(scenerySpawnCandidates.size() == 2 &&
+                scenerySpawnCandidates[0].tileX == 0 && scenerySpawnCandidates[0].tileY == 0 &&
+                scenerySpawnCandidates[1].tileX == 0 && scenerySpawnCandidates[1].tileY == 0,
+            "point-backed scenery road interiors produce world-tile spawn candidates");
+    openbus::map::MapTrafficRoute signalizedSpawnRoute;
+    openbus::map::MapTrafficRouteSegment signalizedSpawnPath;
+    signalizedSpawnPath.spline.placement.splineId = 1022;
+    signalizedSpawnPath.spline.coordinates.tileSize = OMSI_TILE_SIZE_METERS;
+    signalizedSpawnPath.sceneryPathIndex = 0;
+    signalizedSpawnPath.points = {{0.0, 0.0, 0.0}, {0.0, 60.0, 0.0}};
+    signalizedSpawnPath.trafficSignal = openbus::map::MapTrafficSignalSchedule{};
+    openbus::map::MapTrafficRouteSegment postSignalSpawnPath;
+    postSignalSpawnPath.spline.placement.splineId = 1022;
+    postSignalSpawnPath.spline.coordinates.tileSize = OMSI_TILE_SIZE_METERS;
+    postSignalSpawnPath.sceneryPathIndex = 1;
+    postSignalSpawnPath.points = {{0.0, 60.0, 0.0}, {0.0, 120.0, 0.0}};
+    signalizedSpawnRoute.segments = {signalizedSpawnPath, postSignalSpawnPath};
+    signalizedSpawnRoute.cumulativeEndDistances = {60.0, 120.0};
+    signalizedSpawnRoute.totalLength = 120.0;
+    signalizedSpawnRoute.closed = true;
+    const auto signalSafeSpawnCandidates =
+        mapTrafficRouteSpawnCandidates(signalizedSpawnRoute, 4.5);
+    require(!signalSafeSpawnCandidates.empty() &&
+                std::all_of(signalSafeSpawnCandidates.begin(), signalSafeSpawnCandidates.end(),
+                            [](const openbus::map::MapTrafficSpawnCandidate& candidate) {
+                                return candidate.distanceMeters >= 60.0;
+                            }),
+            "road traffic never spawns inside a signalized SCO path beyond its stopline");
+    MapTrafficLaneNetwork crossTileSpawnLanes;
+    crossTileSpawnLanes.addSegment(
+        straight(1013, 0.0, OMSI_TILE_SIZE_METERS - 60.0, 0.0, 120.0));
+    crossTileSpawnLanes.addSegment(
+        straight(1014, 0.0, OMSI_TILE_SIZE_METERS + 60.0, 0.0, 30.0));
+    crossTileSpawnLanes.finalize();
+    const auto crossTileSpawnRoute = crossTileSpawnLanes.buildRoute(1013);
+    require(crossTileSpawnRoute.has_value(),
+            "a connected route can cross an active-tile boundary");
+    const auto crossTileSpawnCandidates =
+        mapTrafficRouteSpawnCandidates(*crossTileSpawnRoute, 4.5);
+    require(std::all_of(crossTileSpawnCandidates.begin(), crossTileSpawnCandidates.end(),
+                         [&](const auto& candidate) {
+                             const auto pose = sampleMapTrafficRoute(
+                                 *crossTileSpawnRoute, candidate.distanceMeters, 0.0);
+                             return pose && mapTrafficPoseOnActiveTile(
+                                                *pose, {{candidate.tileX, candidate.tileY}},
+                                                OMSI_TILE_SIZE_METERS);
+                         }),
+            "spawn candidate tiles match their sampled world positions");
+    require(std::any_of(crossTileSpawnCandidates.begin(), crossTileSpawnCandidates.end(),
+                         [](const auto& candidate) {
+                             return candidate.tileY == 1;
+                         }),
+            "spawn candidates crossing a tile boundary use the tile containing their pose");
+    require(mapTrafficSpawnCandidatesOverlapActiveTiles(crossTileSpawnCandidates,
+                                                        {{0, 0}, {0, 1}}) &&
+                !mapTrafficSpawnCandidatesOverlapActiveTiles(crossTileSpawnCandidates, {{2, 2}}),
+            "active route admission follows candidate positions rather than source spline tiles");
     MapTrafficLaneNetwork sidewalkLane;
     auto sidewalk = straight(1006, 0.0, 0.0, 0.0, 20.0);
     sidewalk.pathLateralMeters = 2.5;
@@ -2397,6 +2741,49 @@ void verifyDrivingBehavior() {
     require(lowPriorityYielded && highPriorityWasServedFirst && lowPriority.distanceMeters > 60.0 &&
                 highPriority.distanceMeters > 60.0,
             "priority 256 wins over priority 64 before wait aging closes the priority gap");
+    auto blockedPriorityRoute = oneSegment(straight(1260, -40.0, 0.0, 90.0, 100.0));
+    auto blockingSegment = straight(1261, -10.0, -10.0, 0.0, 20.0);
+    blockingSegment.points = {{-10.0, -10.0, 0.0}, {-10.0, 10.0, 0.0}};
+    auto blockingRoute = oneSegment(blockingSegment);
+    auto laterCrossingRoute = oneSegment(straight(1262, -4.0, -60.0, 0.0, 100.0));
+    blockedPriorityRoute.segments.front().pathRules.priority = 128.0;
+    blockingRoute.segments.front().pathRules.priority = 256.0;
+    laterCrossingRoute.segments.front().pathRules.priority = 64.0;
+    auto blockedPriority =
+        makeMapTrafficActor(blockedPriorityRoute, "blocked-priority.ovh", 8.0, 0.0, false);
+    auto intersectionBlocker =
+        makeMapTrafficActor(blockingRoute, "intersection-blocker.ovh", 0.0, 0.0, false);
+    auto laterCrossing =
+        makeMapTrafficActor(laterCrossingRoute, "later-crossing.ovh", 8.0, 0.0, false);
+    blockedPriority.distanceMeters = 20.0;
+    blockedPriority.speedMetersPerSecond = 8.0;
+    intersectionBlocker.distanceMeters = 10.0;
+    laterCrossing.distanceMeters = 46.0;
+    laterCrossing.speedMetersPerSecond = 8.0;
+    bool blockedPriorityYielded = false;
+    bool laterCrossingPassedBlockedVehicle = false;
+    bool downstreamYieldedWhileFrontWasStopped = false;
+    for (int frame = 0; frame < 160; ++frame) {
+        advanceMapTrafficDriving({&blockedPriority, &intersectionBlocker, &laterCrossing}, {}, 0.1);
+        blockedPriorityYielded =
+            blockedPriorityYielded ||
+            (blockedPriority.blockReason == MapTrafficBlockReason::JunctionTraffic &&
+             blockedPriority.speedMetersPerSecond < 0.3);
+        laterCrossingPassedBlockedVehicle =
+            laterCrossingPassedBlockedVehicle ||
+            (laterCrossing.distanceMeters > 60.0 && blockedPriority.distanceMeters < 50.0);
+        downstreamYieldedWhileFrontWasStopped =
+            downstreamYieldedWhileFrontWasStopped ||
+            (blockedPriority.speedMetersPerSecond < 0.3 &&
+             blockedPriority.blockReason == MapTrafficBlockReason::JunctionTraffic &&
+             laterCrossing.blockingActor == &blockedPriority &&
+             laterCrossing.blockReason == MapTrafficBlockReason::JunctionTraffic);
+    }
+    require(blockedPriorityYielded, "the middle-priority vehicle stops for an occupied junction");
+    require(!downstreamYieldedWhileFrontWasStopped,
+            "a stopped, uncommitted junction yielder does not block a downstream crossing");
+    require(laterCrossingPassedBlockedVehicle,
+            "a vehicle waiting to yield does not make other traffic yield to it downstream");
     MapTrafficRoute lowPriorityTurningRoute;
     auto lowPriorityApproach = straight(1208, 0.0, -40.0, 0.0, 40.0);
     lowPriorityApproach.pathRules.groups.push_back(committedPathRules);
@@ -4122,6 +4509,171 @@ void verifyRealisticTrafficBehavior() {
             "a right-turning vehicle accelerates back to cruise speed after the junction clears");
 }
 
+void verifyAdjacentStraightAndRightTurn() {
+    using namespace openbus::map;
+    const auto spline = [](int id, double x, double y, double heading, double length) {
+        MapTrafficRouteSegment segment{{makeSpline(id, 0, 0, y), 0, 0}};
+        segment.spline.placement.localX = x;
+        segment.spline.placement.elevation = 0.0;
+        segment.spline.placement.rotationDegrees = heading;
+        segment.spline.placement.length = length;
+        return segment;
+    };
+    const auto route = [](std::vector<MapTrafficRouteSegment> segments,
+                          const std::vector<double>& lengths) {
+        MapTrafficRoute result;
+        result.segments = std::move(segments);
+        for (const double length : lengths) {
+            result.totalLength += length;
+            result.cumulativeEndDistances.push_back(result.totalLength);
+        }
+        return result;
+    };
+    MapTrafficRouteSegment throughJunction;
+    throughJunction.points = {{3.4, 0.0, 0.0}, {3.4, 20.0, 0.0}};
+    throughJunction.trafficSignal = MapTrafficSignalSchedule{120.0, {{6, 120.0}}};
+    const auto throughRoute =
+        route({spline(3100, 3.4, -40.0, 0.0, 40.0), throughJunction,
+               spline(3101, 3.4, 20.0, 0.0, 60.0)},
+              {40.0, 20.0, 60.0});
+    MapTrafficRouteSegment turningJunction;
+    constexpr double radius = 8.0;
+    constexpr int steps = 32;
+    for (int step = 0; step <= steps; ++step) {
+        const double angle = std::numbers::pi -
+                             std::numbers::pi * 0.5 * static_cast<double>(step) / steps;
+        turningJunction.points.push_back(
+            {radius + radius * std::cos(angle), radius * std::sin(angle), 0.0});
+    }
+    turningJunction.trafficSignal = MapTrafficSignalSchedule{120.0, {{6, 120.0}}};
+    double turnLength = 0.0;
+    for (std::size_t index = 1; index < turningJunction.points.size(); ++index) {
+        const auto& first = turningJunction.points[index - 1];
+        const auto& second = turningJunction.points[index];
+        turnLength += std::hypot(second[0] - first[0], second[1] - first[1]);
+    }
+    const auto turnRoute =
+        route({spline(3102, 0.0, -40.0, 0.0, 40.0), turningJunction,
+               spline(3103, radius, radius, 90.0, 60.0)},
+              {40.0, turnLength, 60.0});
+    for (const auto& [startDistance, reverseOrder, redFirst, turnLengthMeters] :
+         {std::tuple{35.0, false, false, 4.5}, std::tuple{35.0, true, false, 4.5},
+          std::tuple{38.0, false, false, 4.5}, std::tuple{38.0, true, false, 4.5},
+          std::tuple{39.0, false, false, 4.5}, std::tuple{39.0, true, false, 4.5},
+          std::tuple{35.0, false, true, 4.5}, std::tuple{35.0, true, true, 4.5},
+          std::tuple{38.0, false, true, 4.5}, std::tuple{38.0, true, true, 4.5},
+          std::tuple{35.0, false, false, 12.0}, std::tuple{35.0, true, false, 12.0},
+          std::tuple{35.0, false, true, 12.0}, std::tuple{35.0, true, true, 12.0},
+          std::tuple{35.0, false, false, 18.0}, std::tuple{35.0, true, false, 18.0},
+          std::tuple{35.0, false, true, 18.0}, std::tuple{35.0, true, true, 18.0}}) {
+        auto through = makeMapTrafficActor(throughRoute, "adjacent-through.ovh", 8.0, 0.0, false);
+        auto turn = makeMapTrafficActor(turnRoute, "adjacent-turn.ovh", 8.0, 0.0, false);
+        turn.lengthMeters = turnLengthMeters;
+        if (turnLengthMeters > 4.5) {
+            turn.rearAxleOffsetMeters = -3.0;
+        }
+        if (redFirst) {
+            const MapTrafficSignalSchedule redThenGreen{120.0, {{0, 5.0}, {6, 115.0}}};
+            through.route.segments[1].trafficSignal = redThenGreen;
+            turn.route.segments[1].trafficSignal = redThenGreen;
+        }
+        through.distanceMeters = startDistance;
+        turn.distanceMeters = startDistance;
+        through.speedMetersPerSecond = 0.0;
+        turn.speedMetersPerSecond = 0.0;
+        bool turnYielded = false;
+        int throughYieldFrames = 0;
+        double minimumThroughYieldSpeed = std::numeric_limits<double>::infinity();
+        std::string throughYieldDetails;
+        int throughClearedFrame = -1;
+        int turnEnteredFrame = -1;
+        for (int frame = 0; frame < 300; ++frame) {
+            const std::vector<MapTrafficActor*> actors =
+                reverseOrder ? std::vector<MapTrafficActor*>{&turn, &through}
+                             : std::vector<MapTrafficActor*>{&through, &turn};
+            advanceMapTrafficDriving(actors, {}, 0.1, frame * 0.1);
+            const auto throughPose = sampleMapTrafficActorPose(through, through.distanceMeters);
+            const auto turnPose = sampleMapTrafficActorPose(turn, turn.distanceMeters);
+            require(throughPose && turnPose, "adjacent vehicles retain valid route poses");
+            require(mapTrafficHasClearance({*throughPose, through.lengthMeters, through.widthMeters},
+                                          {{*turnPose, turn.lengthMeters, turn.widthMeters}}, 0.0),
+                    "adjacent through and turning vehicles do not collide");
+            turnYielded |= (!redFirst || frame >= 50) && turn.blockingActor == &through &&
+                           (turn.blockReason == MapTrafficBlockReason::JunctionTraffic ||
+                            turn.blockReason == MapTrafficBlockReason::CrossingReservation);
+            if ((!redFirst || frame >= 50) && through.blockingActor == &turn &&
+                (through.blockReason == MapTrafficBlockReason::JunctionTraffic ||
+                 through.blockReason == MapTrafficBlockReason::CrossingReservation)) {
+                ++throughYieldFrames;
+                minimumThroughYieldSpeed =
+                    std::min(minimumThroughYieldSpeed, through.speedMetersPerSecond);
+                throughYieldDetails += " frame=" + std::to_string(frame) +
+                                       " through=" + std::to_string(through.distanceMeters) +
+                                       " turn=" + std::to_string(turn.distanceMeters) +
+                                       " reason=" + mapTrafficBlockReasonName(through.blockReason);
+            }
+            if ((!redFirst || frame >= 50) && throughClearedFrame < 0 &&
+                through.distanceMeters > 50.0) {
+                throughClearedFrame = frame;
+            }
+            if ((!redFirst || frame >= 50) && turnEnteredFrame < 0 && turn.distanceMeters > 40.0) {
+                turnEnteredFrame = frame;
+            }
+        }
+        if (!(throughClearedFrame >= 0 && throughClearedFrame < (redFirst ? 150 : 100) &&
+              turnYielded &&
+              (throughYieldFrames == 0 ||
+               (turnLengthMeters > 4.5 && minimumThroughYieldSpeed > 1.0)) &&
+              turnEnteredFrame > throughClearedFrame && turn.distanceMeters > 60.0)) {
+            throw std::runtime_error(
+                "adjacent straight/right-turn priority failed: start=" +
+                std::to_string(startDistance) + ", reverseOrder=" + std::to_string(reverseOrder) +
+                ", redFirst=" + std::to_string(redFirst) +
+                ", turnLength=" + std::to_string(turnLengthMeters) +
+                ", throughClearedFrame=" + std::to_string(throughClearedFrame) +
+                ", turnEnteredFrame=" + std::to_string(turnEnteredFrame) +
+                ", turnYielded=" + std::to_string(turnYielded) +
+                ", throughYieldFrames=" + std::to_string(throughYieldFrames) +
+                ", minimumThroughYieldSpeed=" + std::to_string(minimumThroughYieldSpeed) +
+                ", throughYieldDetails=" + throughYieldDetails +
+                ", throughDistance=" + std::to_string(through.distanceMeters) +
+                ", turnDistance=" + std::to_string(turn.distanceMeters));
+        }
+    }
+    for (const bool reverseOrder : {false, true}) {
+        auto through = makeMapTrafficActor(throughRoute, "lower-priority-through.ovh", 8.0, 0.0,
+                                           false);
+        auto turn = makeMapTrafficActor(turnRoute, "higher-priority-turn.ovh", 8.0, 0.0, false);
+        for (auto& segment : through.route.segments) {
+            segment.pathRules.priority = 64.0;
+        }
+        for (auto& segment : turn.route.segments) {
+            segment.pathRules.priority = 192.0;
+        }
+        turn.lengthMeters = 12.0;
+        turn.rearAxleOffsetMeters = -3.0;
+        through.distanceMeters = turn.distanceMeters = 35.0;
+        bool throughYielded = false;
+        for (int frame = 0; frame < 300; ++frame) {
+            const std::vector<MapTrafficActor*> actors =
+                reverseOrder ? std::vector<MapTrafficActor*>{&turn, &through}
+                             : std::vector<MapTrafficActor*>{&through, &turn};
+            advanceMapTrafficDriving(actors, {}, 0.1, frame * 0.1);
+            const auto throughPose = sampleMapTrafficActorPose(through, through.distanceMeters);
+            const auto turnPose = sampleMapTrafficActorPose(turn, turn.distanceMeters);
+            require(throughPose && turnPose, "priority vehicles retain valid route poses");
+            require(mapTrafficHasClearance({*throughPose, through.lengthMeters, through.widthMeters},
+                                          {{*turnPose, turn.lengthMeters, turn.widthMeters}}, 0.0),
+                    "authored-priority vehicles do not collide");
+            throughYielded |= through.blockingActor == &turn &&
+                              (through.blockReason == MapTrafficBlockReason::JunctionTraffic ||
+                               through.blockReason == MapTrafficBlockReason::CrossingReservation);
+        }
+        require(throughYielded && through.distanceMeters > 60.0 && turn.distanceMeters > 60.0,
+                "an adjacent long turn with higher authored priority goes before through traffic");
+    }
+}
+
 void verifyCommittedLeftTurnPriority() {
     using namespace openbus::map;
     const auto straight = [](int id, double x, double y, double heading, double length) {
@@ -4471,7 +5023,16 @@ int main(int argc, char** argv) {
             verifyCommittedLeftTurnPriority();
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--adjacent-straight-right-turn") {
+            verifyAdjacentStraightAndRightTurn();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--rear-axle") {
+            verifyRearAxleTrafficPose();
+            return 0;
+        }
         using namespace openbus::map;
+        verifyRearAxleTrafficPose();
         verifyPassengerSideOffsets();
         verifyPassengerServiceBehavior();
         verifyTrafficWaterClearance();
@@ -4480,6 +5041,7 @@ int main(int argc, char** argv) {
         verifyAutomaticRoundaboutPriority();
         verifyMalformedRouteErrors();
         verifyRealisticTrafficBehavior();
+        verifyAdjacentStraightAndRightTurn();
         const auto spawnPopulation = [](const MapTrafficRouteNetwork& routeNetwork,
                                         const std::vector<int>& splineIds,
                                         const std::string& modelPath, double speedMetersPerSecond,

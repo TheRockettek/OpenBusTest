@@ -191,18 +191,11 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
         if (!trafficVehicle.populationEnabled || trafficVehicle.vehicle == nullptr) {
             continue;
         }
-        const auto rearAxle = std::min_element(trafficVehicle.vehicle->trafficAxles.begin(),
-                                               trafficVehicle.vehicle->trafficAxles.end(),
-                                               [](const BusAxle& left, const BusAxle& right) {
-                                                   return left.position < right.position;
-                                               });
-        const double rearAxleOffsetMeters =
-            rearAxle == trafficVehicle.vehicle->trafficAxles.end() ? 0.0 : rearAxle->position;
         trafficVehicle.vehicle->updateTrafficWheelAnimations(
             trafficVehicle.wheelTravelDistanceMeters,
             mapTrafficRouteCurvatureAtRearAxle(trafficVehicle.actor,
                                                trafficVehicle.vehicle->trafficWheelbaseMeters,
-                                               rearAxleOffsetMeters),
+                                               trafficVehicle.actor.rearAxleOffsetMeters),
             trafficVehicle.actor.speedMetersPerSecond);
     }
     if (drivetrainDiagnosticsEnabled_) {
@@ -408,14 +401,12 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             state.cachedPoseLateralOffsetMeters == state.actor.lateralOffsetMeters) {
             return state.cachedPose;
         }
-        const auto pose = sampleMapTrafficRoute(state.actor.route, state.actor.distanceMeters,
-                                                state.actor.lateralOffsetMeters);
+        const auto pose = sampleMapTrafficActorPose(state.actor, state.actor.distanceMeters);
         if (pose) {
             state.cachedPose = pose;
             state.cachedPoseDistanceMeters = state.actor.distanceMeters;
             state.cachedPoseLateralOffsetMeters = state.actor.lateralOffsetMeters;
-            state.cachedTravelHeadingRadians = mapTrafficRouteTravelHeadingRadians(
-                state.actor.route, state.actor.distanceMeters, state.actor.lateralOffsetMeters);
+            state.cachedTravelHeadingRadians = pose->headingRadians;
             state.cachedPoseGeneration = state.workerGeneration;
         }
         return pose;
@@ -595,7 +586,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                                                 trafficReflectionCameraViews_, 50.0);
     };
     const auto hidden = [&](const MapTrafficActor& actor, double distance) {
-        const auto pose = sampleMapTrafficRoute(actor.route, distance, 0.0);
+        const auto pose = sampleMapTrafficActorPose(actor, distance);
         if (!pose) {
             throw std::runtime_error("Cannot sample a queued traffic entry");
         }
@@ -671,8 +662,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             if (!state.vehicle->mapTrafficTileActive) {
                 continue;
             }
-            const auto pose =
-                sampleMapTrafficRoute(state.actor.route, state.actor.distanceMeters, 0.0);
+            const auto pose = sampleMapTrafficActorPose(state.actor, state.actor.distanceMeters);
             if (!pose) {
                 throw std::runtime_error("Cannot sample active traffic for entry admission");
             }
@@ -779,6 +769,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             std::size_t visibleCandidates = 0;
             std::size_t obstructedCandidates = 0;
             std::size_t clearCandidates = 0;
+            std::optional<std::pair<int, int>> firstInactiveCandidateTile;
         };
         const auto findRoadSpawn =
             [&](const TrafficVehicleState& state,
@@ -786,7 +777,6 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             if (diagnostics != nullptr) {
                 ++diagnostics->vehiclesChecked;
             }
-            const MapTrafficRoute& route = state.actor.route;
             for (std::size_t candidateIndex = 0; candidateIndex < state.spawnCandidates.size();
                  ++candidateIndex) {
                 if (std::ranges::find(state.rejectedSpawnCandidateIndices, candidateIndex) !=
@@ -803,11 +793,14 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 if (!activeTiles.contains({spawn.tileX, spawn.tileY})) {
                     if (diagnostics != nullptr) {
                         ++diagnostics->inactiveCandidateTiles;
+                        if (!diagnostics->firstInactiveCandidateTile) {
+                            diagnostics->firstInactiveCandidateTile =
+                                std::pair{spawn.tileX, spawn.tileY};
+                        }
                     }
                     continue;
                 }
-                const auto pose = sampleMapTrafficRoute(route, spawn.distanceMeters,
-                                                        state.actor.lateralOffsetMeters);
+                const auto pose = sampleMapTrafficActorPose(state.actor, spawn.distanceMeters);
                 if (!pose) {
                     throw std::runtime_error("Could not sample a road traffic spawn position");
                 }
@@ -893,7 +886,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 }
                 std::optional<RoadSpawnLocation> spawn;
                 if (state.isBus) {
-                    const auto entryPose = sampleMapTrafficRoute(state.actor.route, 0.0, 0.0);
+                    const auto entryPose = sampleMapTrafficActorPose(state.actor, 0.0);
                     if (!entryPose) {
                         throw std::runtime_error("Could not sample a map traffic entry pose");
                     }
@@ -919,8 +912,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 }
                 resetMapTrafficActorForEntry(state.actor);
                 state.actor.distanceMeters = spawn->distanceMeters;
-                state.actor.speedMetersPerSecond =
-                    mapTrafficSpawnSpeedMetersPerSecond(state.actor, state.actor.distanceMeters);
+                // Start from rest so the first traffic tick can react to nearby leaders and red lights.
+                state.actor.speedMetersPerSecond = 0.0;
                 state.wheelTravelDistanceMeters = 0.0;
                 state.previousWheelRouteDistanceMeters = state.actor.distanceMeters;
                 state.wheelRouteDistanceInitialized = true;
@@ -1034,7 +1027,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             bool canSpawn = false;
             if (!state.populationEnabled) {
                 if (state.isBus) {
-                    const auto entryPose = sampleMapTrafficRoute(state.actor.route, 0.0, 0.0);
+                    const auto entryPose = sampleMapTrafficActorPose(state.actor, 0.0);
                     if (!entryPose) {
                         throw std::runtime_error("Could not sample a map traffic entry pose");
                     }
@@ -1070,6 +1063,20 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         if (trafficSpawnDiagnosticsEnabled_) {
             trafficSpawnDiagnosticElapsedSeconds_ += trafficInputElapsedSeconds;
             if (trafficSpawnDiagnosticElapsedSeconds_ >= 1.0) {
+                std::string activeTileCoordinates;
+                for (const auto& [tileX, tileY] : activeTiles) {
+                    if (!activeTileCoordinates.empty()) {
+                        activeTileCoordinates += ';';
+                    }
+                    activeTileCoordinates += std::to_string(tileX) + ',' +
+                                             std::to_string(tileY);
+                }
+                const std::string firstInactiveCandidateTile =
+                    roadSpawnDiagnostics.firstInactiveCandidateTile
+                        ? std::to_string(roadSpawnDiagnostics.firstInactiveCandidateTile->first) +
+                              ',' +
+                              std::to_string(roadSpawnDiagnostics.firstInactiveCandidateTile->second)
+                        : std::string("none");
                 gameLog.Debug(
                     "Map road AI spawn admission: target=" +
                     std::to_string(targetRoadTrafficCount_) +
@@ -1086,6 +1093,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     std::to_string(roadSpawnDiagnostics.inactiveCandidateTiles) +
                     ", posesOutsideActiveTiles=" +
                     std::to_string(roadSpawnDiagnostics.posesOutsideActiveTiles) +
+                    ", firstInactiveCandidateTile=" + firstInactiveCandidateTile +
+                    ", activeTileCoordinates=" + activeTileCoordinates +
                     ", visible=" + std::to_string(roadSpawnDiagnostics.visibleCandidates) +
                     ", obstructed=" + std::to_string(roadSpawnDiagnostics.obstructedCandidates) +
                     ", clear=" + std::to_string(roadSpawnDiagnostics.clearCandidates));
@@ -1417,8 +1426,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                            trafficVehicle.actor.blockingActor != nullptr &&
                            found != trafficStateByActor.end()) {
                     const MapTrafficActor& other = found->second->actor;
-                    const auto otherPose = sampleMapTrafficRoute(other.route, other.distanceMeters,
-                                                                 other.lateralOffsetMeters);
+                    const auto otherPose = sampleMapTrafficActorPose(other, other.distanceMeters);
                     blocker =
                         other.modelPath +
                         (otherPose ? " at (" + std::to_string(otherPose->position[0]) + ", " +

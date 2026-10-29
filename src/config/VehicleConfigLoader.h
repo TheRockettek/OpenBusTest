@@ -130,6 +130,8 @@ struct VehicleConfig {
 
 VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, VehicleFileKind kind,
                                 bool convertScripts = true);
+// Loads passenger positions from a cabin file into the supplied configuration.
+void loadPassengerCabinConfiguration(VehicleConfig& configuration);
 // Loads a configuration's referenced variable/constant files and prepares its OSC script paths.
 void prepareScriptConfiguration(VehicleConfig& configuration, bool convertScripts = true);
 std::vector<int> passengerPathRoute(const std::vector<PassengerPathPoint>& points,

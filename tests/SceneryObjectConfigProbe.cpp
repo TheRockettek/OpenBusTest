@@ -21,6 +21,18 @@ bool require(bool condition, const char* description) {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 4 && std::string(argv[1]) == "--editor-passenger-assets") {
+        const SceneryObjectConfig stop = loadSceneryObjectFile(argv[2]);
+        const SceneryObjectConfig passengers = loadSceneryObjectFile(argv[3]);
+        bool valid = require(stop.onlyEditor && stop.busStop && stop.hasBoundingBox &&
+                                 !stop.diagnostics.hasErrors(),
+                             "installed editor bus stop is parsed");
+        valid &= require(passengers.onlyEditor && passengers.hasPassengerCabin &&
+                             passengers.passengerPositions.size() == 7 &&
+                             !passengers.diagnostics.hasErrors(),
+                         "installed editor passenger area has seven positions");
+        return valid ? 0 : 1;
+    }
     if (argc == 2) {
         const SceneryObjectConfig configuration = loadSceneryObjectFile(argv[1]);
         bool valid = require(configuration.trafficPaths.size() == 40,
@@ -56,6 +68,9 @@ int main(int argc, char** argv) {
     const std::filesystem::path polePath = directory / "pole.sco";
     const std::filesystem::path invalidPolePath = directory / "invalid-pole.sco";
     const std::filesystem::path nonFinitePolePath = directory / "non-finite-pole.sco";
+    const std::filesystem::path editorStopPath = directory / "editor-stop.sco";
+    const std::filesystem::path editorPassengersPath = directory / "editor-passengers.sco";
+    const std::filesystem::path missingPassengersPath = directory / "missing-passengers.sco";
     {
         std::ofstream output(path);
         if (!output) {
@@ -153,6 +168,22 @@ int main(int argc, char** argv) {
         std::ofstream output(nonFinitePolePath);
         output << "[crashmode_pole]\nnan\n1.2\n";
     }
+    {
+        std::ofstream output(editorStopPath);
+        output << "[onlyeditor]\n[mesh]\nstop.x\n[busstop]\n"
+                  "[boundingbox]\n1\n2\n3\n0\n0\n1.5\n";
+    }
+    {
+        std::ofstream output(editorPassengersPath);
+        output << "[onlyeditor]\n[mesh]\npeople.x\n[passengercabin]\nwaiting.cfg\n";
+        std::ofstream cabin(directory / "waiting.cfg");
+        cabin << "[passpos]\n-0.2\n-1.5\n0\n0\n185\n"
+                 "[passpos]\n0.5\n-1.4\n0.25\n0\n181\n";
+    }
+    {
+        std::ofstream output(missingPassengersPath);
+        output << "[onlyeditor]\n[mesh]\npeople.x\n[passengercabin]\nmissing.cfg\n";
+    }
     const SceneryObjectConfig configuration = loadSceneryObjectFile(path);
     const SceneryObjectConfig singleStopConfiguration = loadSceneryObjectFile(singleStopPath);
     const SceneryObjectConfig remappedConfiguration = loadSceneryObjectFile(remappedPath);
@@ -162,9 +193,24 @@ int main(int argc, char** argv) {
     const SceneryObjectConfig invalidPoleConfiguration = loadSceneryObjectFile(invalidPolePath);
     const SceneryObjectConfig nonFinitePoleConfiguration =
         loadSceneryObjectFile(nonFinitePolePath);
+    const SceneryObjectConfig editorStop = loadSceneryObjectFile(editorStopPath);
+    const SceneryObjectConfig editorPassengers = loadSceneryObjectFile(editorPassengersPath);
+    const SceneryObjectConfig missingPassengers = loadSceneryObjectFile(missingPassengersPath);
     openbus::probe::removeProbeDirectory(directory);
 
     bool valid = require(configuration.trafficPaths.size() == 2, "path sections parsed");
+    valid &= require(editorStop.onlyEditor && editorStop.busStop && editorStop.hasBoundingBox &&
+                         !editorStop.diagnostics.hasErrors(),
+                     "editor bus stop and its bounding box are parsed");
+    valid &= require(editorPassengers.onlyEditor && editorPassengers.hasPassengerCabin &&
+                         editorPassengers.passengerPositions.size() == 2 &&
+                         editorPassengers.passengerPositions[0].position[0] == -0.2 &&
+                         editorPassengers.passengerPositions[1].position[2] == 0.25 &&
+                         !editorPassengers.diagnostics.hasErrors(),
+                     "editor passenger cabin positions are parsed");
+    valid &= require(missingPassengers.hasPassengerCabin &&
+                         missingPassengers.diagnostics.hasErrors(),
+                     "missing editor passenger cabin is reported");
     valid &= require(singleStopConfiguration.trafficLightSchedules.size() == 1 &&
                          singleStopConfiguration.trafficLights.size() == 1 &&
                          singleStopConfiguration.trafficLightSchedules.front().has_value() &&
