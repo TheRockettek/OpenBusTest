@@ -407,9 +407,8 @@ partial:
   curves to the capped road-traffic population target, startup pool composition,
   and per-group active targets. The maximum reserved pool is fixed at startup,
   but unfilled reservations are retried as connected road lanes stream in.
-  Weekday schedules use the map
-  system calendar, initialized to the host local date and advanced by
-  simulation time.
+  Weekday schedules use the selected map calendar and change day at its
+  midnight, rather than 24 hours after startup.
 - Scheduled OMSI AI buses use matched timetable routes and departures; fixed
   SCO traffic-light schedules stop road traffic and pedestrians on linked
   paths. Signalized scenery instances expose the active phase through

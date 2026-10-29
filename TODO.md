@@ -427,8 +427,12 @@ arrival-board data:
   `GetArrBusLine`, `GetArrBusTerminus`, and `GetArrBusTimeDiff`.
 - [~] Verify OMSI parity for `NrSpecRandom`; OpenBus now provides deterministic
   seeded output, but its algorithm and range still need compatibility evidence.
-- [ ] Add host-owned updates for default-only documented system variables:
-  `Time`, `Day`, `Month`, `Year`, `DayOfYear`, `Pause`, `NoSound`,
+- [~] The selected simulation calendar updates `Time`, `Day`, `Month`, `Year`,
+  and zero-based `DayOfYear` across midnight. Traffic density weekday classes
+  now change at the selected calendar's midnight, including weekend and week
+  boundaries; focused clock and density probes cover a Friday-night start.
+  Add host-owned updates for the remaining default-only system variables:
+  `Pause`, `NoSound`,
   `PrecipType`, `PrecipRate`, `coll_pos_*`, `coll_energy`,
   `Weather_Temperature`, `Weather_AbsHum`, `AutoClutch`, `SunAlt`, and
   `wearlifespan`.

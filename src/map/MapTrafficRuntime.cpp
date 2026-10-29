@@ -653,14 +653,22 @@ double mapTrafficHourAtElapsedSeconds(double startHour, double elapsedSeconds) {
     return hour < 0.0 ? hour + hoursPerDay : hour;
 }
 
-int mapTrafficWeekdayMaskAtElapsedSeconds(int startWeekday, double elapsedSeconds) {
-    if (startWeekday < 0 || startWeekday > 6 || !std::isfinite(elapsedSeconds) ||
+int mapTrafficWeekdayMaskAtElapsedSeconds(int startWeekday, double startHour,
+                                         double elapsedSeconds) {
+    if (startWeekday < 0 || startWeekday > 6 || !std::isfinite(startHour) ||
+        startHour < 0.0 || startHour >= 24.0 || !std::isfinite(elapsedSeconds) ||
         elapsedSeconds < 0.0) {
         throw std::invalid_argument(trafficInputError("Map AI weekday clock is invalid",
                                                       "startWeekday=", startWeekday,
+                                                      "startHour=", startHour,
                                                       "elapsedSeconds=", elapsedSeconds));
     }
-    const int elapsedDays = static_cast<int>(std::fmod(std::floor(elapsedSeconds / 86400.0), 7.0));
+    constexpr double secondsPerDay = 86400.0;
+    int elapsedDays =
+        static_cast<int>(std::fmod(std::floor(elapsedSeconds / secondsPerDay), 7.0));
+    if (std::fmod(elapsedSeconds, secondsPerDay) >= secondsPerDay - startHour * 3600.0) {
+        ++elapsedDays;
+    }
     const int weekday = (startWeekday + elapsedDays) % 7;
     if (weekday == 0) {
         return 4;

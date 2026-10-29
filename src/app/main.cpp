@@ -1148,7 +1148,8 @@ int main() {
             applicationLog.Log("Map-driven AI traffic is disabled by OPENBUS_MAP_AI_COUNT=0.");
         } else {
             const int startWeekdayMask =
-                openbus::map::mapTrafficWeekdayMaskAtElapsedSeconds(mapAiStartWeekdayIndex, 0.0);
+                openbus::map::mapTrafficWeekdayMaskAtElapsedSeconds(mapAiStartWeekdayIndex,
+                                                                    mapAiStartHour, 0.0);
             const std::optional<double> groupDensity = openbus::map::mapAiRoadTrafficDensityAtHour(
                 mapDefinition.aiTraffic, availableAiRoadVehicles, mapAiStartHour, startWeekdayMask);
             const std::optional<double> configuredDensity =
@@ -1814,7 +1815,7 @@ int main() {
             const double trafficHour = openbus::map::mapTrafficHourAtElapsedSeconds(
                 mapAiStartHour, simulation->simulationTime());
             const int trafficWeekdayMask = openbus::map::mapTrafficWeekdayMaskAtElapsedSeconds(
-                mapAiStartWeekdayIndex, simulation->simulationTime());
+                mapAiStartWeekdayIndex, mapAiStartHour, simulation->simulationTime());
             const std::optional<double> groupDensity = openbus::map::mapAiRoadTrafficDensityAtHour(
                 mapDefinition.aiTraffic, availableAiRoadVehicles, trafficHour, trafficWeekdayMask);
             const std::optional<double> roadDensity =

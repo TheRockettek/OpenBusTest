@@ -214,7 +214,8 @@ double mapTrafficRouteTravelHeadingRadians(const MapTrafficRoute& route, double 
                                            double lateralOffsetMeters);
 double mapTrafficHeadingToVehicleYawDegrees(double headingRadians);
 double mapTrafficHourAtElapsedSeconds(double startHour, double elapsedSeconds);
-int mapTrafficWeekdayMaskAtElapsedSeconds(int startWeekday, double elapsedSeconds);
+int mapTrafficWeekdayMaskAtElapsedSeconds(int startWeekday, double startHour,
+                                         double elapsedSeconds);
 double mapTrafficNextDepartureElapsedSeconds(double startHour, double elapsedSeconds,
                                              double departureMinutes);
 std::size_t mapTrafficNextDepartureIndex(double startHour, double elapsedSeconds,

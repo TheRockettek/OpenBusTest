@@ -5423,11 +5423,39 @@ int main(int argc, char** argv) {
                     "map traffic clock wraps across midnight");
         requireNear(mapTrafficHourAtElapsedSeconds(12.0, 86400.0), 12.0,
                     "map traffic clock wraps after a full day");
-        require(mapTrafficWeekdayMaskAtElapsedSeconds(1, 0.0) == 1 &&
-                    mapTrafficWeekdayMaskAtElapsedSeconds(5, 86400.0) == 2 &&
-                    mapTrafficWeekdayMaskAtElapsedSeconds(6, 86400.0) == 4 &&
-                    mapTrafficWeekdayMaskAtElapsedSeconds(1, 7.0 * 86400.0) == 1,
-                "unscheduled density weekday class advances and wraps with simulation time");
+        require(mapTrafficWeekdayMaskAtElapsedSeconds(5, 23.5, 0.0) == 1 &&
+                    mapTrafficWeekdayMaskAtElapsedSeconds(5, 23.5, 1799.999) == 1 &&
+                    mapTrafficWeekdayMaskAtElapsedSeconds(5, 23.5, 1800.0) == 2 &&
+                    mapTrafficWeekdayMaskAtElapsedSeconds(5, 23.5, 1800.0 + 86400.0) == 4 &&
+                    mapTrafficWeekdayMaskAtElapsedSeconds(5, 23.5, 1800.0 + 2.0 * 86400.0) == 1 &&
+                    mapTrafficWeekdayMaskAtElapsedSeconds(5, 23.5, 7.0 * 86400.0) == 1 &&
+                    mapTrafficWeekdayMaskAtElapsedSeconds(6, 0.0, 0.0) == 2 &&
+                    mapTrafficWeekdayMaskAtElapsedSeconds(6, 0.0, 86400.0) == 4,
+                "unscheduled density weekday class changes at calendar midnight and wraps weekly");
+        bool rejectedInvalidWeekdayClock = false;
+        try {
+            static_cast<void>(mapTrafficWeekdayMaskAtElapsedSeconds(5, 24.0, 0.0));
+        } catch (const std::invalid_argument&) {
+            rejectedInvalidWeekdayClock = true;
+        }
+        require(rejectedInvalidWeekdayClock, "weekday clock rejects invalid start hours");
+        MapAiTrafficData dayTraffic;
+        dayTraffic.hasUnscheduledTrafficDensityFile = true;
+        dayTraffic.unscheduledTrafficDensityGroups = {
+            {"Cars", 1.0, {{1, {{0.0, 0.9}}}, {2, {{0.0, 0.5}}}, {4, {{0.0, 0.2}}}}}};
+        MapAiRoadVehicle dayVehicle;
+        dayVehicle.groupName = "Cars";
+        const auto densityAt = [&](double elapsed) {
+            return mapAiRoadTrafficDensityAtHour(
+                dayTraffic, {dayVehicle}, mapTrafficHourAtElapsedSeconds(23.5, elapsed),
+                mapTrafficWeekdayMaskAtElapsedSeconds(5, 23.5, elapsed));
+        };
+        require(densityAt(1799.0).has_value() && densityAt(1800.0).has_value() &&
+                    densityAt(88200.0).has_value(),
+                "Friday, Saturday, and Sunday density schedules resolve");
+        requireNear(*densityAt(1799.0), 0.9, "Friday density remains active before midnight");
+        requireNear(*densityAt(1800.0), 0.5, "Saturday density activates at midnight");
+        requireNear(*densityAt(88200.0), 0.2, "Sunday density activates at the next midnight");
         requireNear(mapTrafficNextDepartureElapsedSeconds(6.0, 0.0, 405.0), 2700.0,
                     "scheduled departure is measured from the configured start hour");
         requireNear(mapTrafficNextDepartureElapsedSeconds(23.5, 0.0, 30.0), 3600.0,
