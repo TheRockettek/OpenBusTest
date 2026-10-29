@@ -194,8 +194,8 @@ void runLinkedProbe() {
         const auto mapRoot = root / "map";
         const auto omsiRoot = root / "omsi";
         const std::string crossSection =
-          "[texture]\nroad.bmp\n[profile]\n0\n"
-          "[profilepnt]\n-2\n0.25\n0\n0.2\n[profilepnt]\n2\n0.25\n1\n0.2\n";
+          "[TEXTURE]\nroad.bmp\n-<DISABLED>-\n[nocollision]\n-<ENABLED>-\n[PROFILE]\n0\n"
+          "[PROFILEPNT]\n-2\n0.25\n0\n0.2\n[PROFILEPNT]\n2\n0.25\n1\n0.2\n";
                 writeText(omsiRoot / "Splines" / "Test.sli",
               "[halfcantwidth]\n0.06\n[heightprofile]\n-0.2\n0.2\n0\n0\n" +
                                     crossSection);

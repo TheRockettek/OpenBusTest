@@ -1118,9 +1118,8 @@ int main() {
         if (mapTrafficDensityMultiplier != 1.0) {
             applicationLog.Log("Map traffic density multiplier is " +
                                std::to_string(mapTrafficDensityMultiplier) +
-                               "x "
-                               "(OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER; active population cap "
-                               "200).");
+                               "x (OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER; no fixed active "
+                               "population cap).");
         }
         const bool mapTrafficSpawnInView =
             booleanEnvironmentValue("OPENBUS_MAP_AI_SPAWN_VISIBLE", false);
@@ -1162,8 +1161,7 @@ int main() {
                     hasGroupDensitySchedule
                         ? openbus::map::mapAiMaximumRoadTrafficPoolByGroup(
                               mapDefinition.aiTraffic, availableAiRoadVehicles,
-                              static_cast<std::size_t>(mapAiBaseCount), mapTrafficDensityMultiplier,
-                              200)
+                              static_cast<std::size_t>(mapAiBaseCount), mapTrafficDensityMultiplier)
                         : std::vector<openbus::map::MapAiRoadTrafficGroupPopulation>{};
             std::size_t roadVehiclePoolCount = 0;
             if (hasGroupDensitySchedule) {

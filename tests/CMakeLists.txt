@@ -98,6 +98,26 @@ openbus_add_probe(OpenBusMapSplineProfileProbe MapSplineProfileProbe.cpp LIBS op
         "${OPENBUS_FIXTURES}/map_spline_profile.sli"
         "${OPENBUS_FIXTURES}/map_spline_profile_explicit_cant_width.sli"
         "${OPENBUS_FIXTURES}/map_spline_profile_no_collision.sli")
+add_test(NAME OpenBusMapSplineMalformedPointProbe COMMAND OpenBusMapSplineProfileProbe
+    --malformed "${OPENBUS_FIXTURES}/map_spline_profile_malformed.sli")
+set_tests_properties(OpenBusMapSplineMalformedPointProbe PROPERTIES
+    PASS_REGULAR_EXPRESSION "expected four finite numeric fields.*map_spline_profile_malformed.sli line=10")
+add_test(NAME OpenBusMapSplineTruncatedPointProbe COMMAND OpenBusMapSplineProfileProbe
+    --malformed "${OPENBUS_FIXTURES}/map_spline_profile_malformed.sli")
+set_tests_properties(OpenBusMapSplineTruncatedPointProbe PROPERTIES
+    PASS_REGULAR_EXPRESSION "expected four finite numeric fields.*map_spline_profile_malformed.sli line=15")
+add_test(NAME OpenBusMapSplineMalformedStripProbe COMMAND OpenBusMapSplineProfileProbe
+    --malformed "${OPENBUS_FIXTURES}/map_spline_profile_malformed.sli")
+set_tests_properties(OpenBusMapSplineMalformedStripProbe PROPERTIES
+    PASS_REGULAR_EXPRESSION "invalid texture index.*map_spline_profile_malformed.sli line=24")
+add_test(NAME OpenBusMapSplineMissingStripIndexProbe COMMAND OpenBusMapSplineProfileProbe
+    --malformed "${OPENBUS_FIXTURES}/map_spline_profile_malformed.sli")
+set_tests_properties(OpenBusMapSplineMissingStripIndexProbe PROPERTIES
+    PASS_REGULAR_EXPRESSION "missing texture index.*map_spline_profile_malformed.sli line=23")
+add_test(NAME OpenBusMapSplineInspectionProbe COMMAND OpenBusMapSplineProfileProbe
+    --inspect "${OPENBUS_FIXTURES}/map_spline_profile_mixed_case.sli")
+set_tests_properties(OpenBusMapSplineInspectionProbe PROPERTIES
+    PASS_REGULAR_EXPRESSION "profile strips: 1, renderable: 1, fewer than two points: 0, invalid texture index: 0")
 openbus_add_probe(OpenBusMapTrafficRuntimeProbe MapTrafficRuntimeProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusTrafficDebugDirectionProbe TrafficDebugDirectionProbe.cpp LIBS openbus_map)
 add_executable(OpenBusMapTrafficWorkerProbe MapTrafficWorkerProbe.cpp

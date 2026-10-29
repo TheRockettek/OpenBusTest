@@ -11,7 +11,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
+#include <random>
 #include <string>
 #include <tuple>
 
@@ -101,6 +103,76 @@ bool check(const VehicleConfig& configuration, const char* backend) {
                   << " coin0=" << local.get("cash_coin_dispensed_count_0")
                   << " coin1=" << local.get("cash_coin_dispensed_count_1") << '\n';
         return false;
+    }
+    local.setString("lookup_ident", "fixture-stop");
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        runtime.invokeEntryPoint("trigger_placeholder_stack");
+        for (const char* name : {"tt_terminus", "tt_count", "tt_index", "tt_delay",
+                                 "tt_arrival", "tt_departure"}) {
+            if (local.get(std::string(name) + "_result") != 0.0F ||
+                local.get(std::string(name) + "_sentinel") != 123.0F) {
+                std::cerr << backend << ": timetable placeholder corrupted stack: " << name
+                          << '\n';
+                return false;
+            }
+        }
+        for (const char* name : {"terminus_code", "route_terminus", "route_count", "height"}) {
+            if (local.get(std::string(name) + "_result") != 0.0F ||
+                local.get(std::string(name) + "_sentinel") != 123.0F) {
+                std::cerr << backend << ": numeric placeholder corrupted stack: " << name << '\n';
+                return false;
+            }
+        }
+        for (const char* name : {"terminus_index", "route_index"}) {
+            if (local.get(std::string(name) + "_result") != -1.0F ||
+                local.get(std::string(name) + "_sentinel") != 122.0F) {
+                std::cerr << backend << ": index placeholder corrupted stack: " << name << '\n';
+                return false;
+            }
+        }
+        for (const char* name : {"terminus_string", "busstop_string", "route_stop",
+                                 "depot_string"}) {
+            if (local.get(std::string(name) + "_length") != 0.0F ||
+                local.get(std::string(name) + "_sentinel") != 123.0F ||
+                local.getString(std::string(name) + "_combined") != "fixture-stop") {
+                std::cerr << backend << ": string placeholder corrupted stack: " << name
+                          << " length=" << local.get(std::string(name) + "_length")
+                          << " combined='" << local.getString(std::string(name) + "_combined")
+                          << "' numeric-sentinel=" << local.get(std::string(name) + "_sentinel")
+                          << '\n';
+                return false;
+            }
+        }
+        const float seedLimit =
+            std::ldexp(1.0F, std::numeric_limits<unsigned int>::digits);
+        for (const float seed : {0.0F, 42.0F, 42.75F, -0.5F,
+                                 std::nextafter(seedLimit, 0.0F)}) {
+            local.set("random_seed", seed);
+            runtime.invokeEntryPoint("trigger_random_seed");
+            std::minstd_rand expected(static_cast<unsigned int>(std::trunc(seed)));
+            const float expectedValue =
+                static_cast<float>(expected()) / static_cast<float>(std::minstd_rand::max());
+            if (local.get("random_result") != expectedValue ||
+                local.get("random_sentinel") != 123.0F + expectedValue) {
+                std::cerr << backend << ": deterministic random seed or stack mismatch\n";
+                return false;
+            }
+        }
+        for (const float seed : {-1.0F, seedLimit, std::numeric_limits<float>::infinity(),
+                                 std::numeric_limits<float>::quiet_NaN()}) {
+            local.set("random_seed", seed);
+            runtime.invokeEntryPoint("trigger_random_seed");
+            if (local.get("random_result") != 0.0F || local.get("random_sentinel") != 123.0F) {
+                std::cerr << backend << ": invalid random seed was not rejected\n";
+                return false;
+            }
+        }
+        if (local.get("busstop_result") != -1.0F ||
+            local.get("busstop_sentinel") != 122.0F ||
+            !local.getString("busstop_remaining").empty()) {
+            std::cerr << backend << ": bus-stop lookup consumed the wrong stack\n";
+            return false;
+        }
     }
     bool previous = false;
     constexpr std::array<bool, 5> states = {false, true, true, false, false};
@@ -239,11 +311,52 @@ bool check(const VehicleConfig& configuration, const char* backend) {
     return true;
 }
 
+bool checkSceneryPlaceholders(const VehicleConfig& configuration, const char* backend) {
+    if (!selectBackend(backend)) {
+        return false;
+    }
+    openbus::scripting::SceneryObject local;
+    SimulationState simulation;
+    local.setString("lookup_ident", "fixture-stop");
+    ScriptRuntime runtime(configuration, local, simulation);
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        runtime.invokeEntryPoint("trigger_arrival_placeholders");
+        if (!runtime.errors().empty() || local.get("arrival_time_result") != 0.0F ||
+            local.get("arrival_time_sentinel") != 123.0F) {
+            std::cerr << backend << ": arrival time placeholder corrupted stack\n";
+            return false;
+        }
+        for (const char* name : {"arrival_line", "arrival_terminus"}) {
+            if (local.get(std::string(name) + "_length") != 0.0F ||
+                local.get(std::string(name) + "_sentinel") != 123.0F ||
+                local.getString(std::string(name) + "_combined") != "fixture-stop") {
+                std::cerr << backend << ": arrival string placeholder corrupted stack: " << name
+                          << " length=" << local.get(std::string(name) + "_length")
+                          << " combined='" << local.getString(std::string(name) + "_combined")
+                          << "' numeric-sentinel=" << local.get(std::string(name) + "_sentinel")
+                          << '\n';
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
     const auto root = openbus::probe::makeProbeDirectory("openbus_script_input_probe");
     std::filesystem::create_directories(root);
+    const std::string logPath = (root / "script.log").string();
+#ifdef _WIN32
+    if (_putenv_s("OPENBUS_LOG_FILE", logPath.c_str()) != 0) {
+#else
+    if (setenv("OPENBUS_LOG_FILE", logPath.c_str(), 1) != 0) {
+#endif
+        std::cerr << "Could not configure script probe log path\n";
+        openbus::probe::removeProbeDirectory(root);
+        return 1;
+    }
     const auto script = root / "input.osc";
     {
         std::ofstream source(script);
@@ -273,6 +386,38 @@ int main() {
                   "2 (M.V.givechangecoin)\n"
                   "1.5 (M.V.givechangecoin)\n"
                   "-1 (M.V.givechangecoin)\n{end}\n"
+                  "{trigger:placeholder_stack}\n"
+                  "123 (M.V.getttterminusindex) (S.L.tt_terminus_result) + (S.L.tt_terminus_sentinel)\n"
+                  "123 (M.V.getttbusstopcount) (S.L.tt_count_result) + (S.L.tt_count_sentinel)\n"
+                  "123 (M.V.getttbusstopindex) (S.L.tt_index_result) + (S.L.tt_index_sentinel)\n"
+                  "123 (M.V.getttdelay) (S.L.tt_delay_result) + (S.L.tt_delay_sentinel)\n"
+                  "123 7 (M.V.getttbusstoparr) (S.L.tt_arrival_result) + (S.L.tt_arrival_sentinel)\n"
+                  "123 7 (M.V.getttbusstopdep) (S.L.tt_departure_result) + (S.L.tt_departure_sentinel)\n"
+                  "(L.$.lookup_ident) 123 (M.V.getbusstopindex) "
+                  "(S.L.busstop_result) + (S.L.busstop_sentinel) (S.$.busstop_remaining)\n"
+                  "123 7 (M.V.getterminusindex) (S.L.terminus_index_result) + (S.L.terminus_index_sentinel)\n"
+                  "123 7 (M.V.getrouteindex) (S.L.route_index_result) + (S.L.route_index_sentinel)\n"
+                  "123 7 (M.V.getterminuscode) (S.L.terminus_code_result) + (S.L.terminus_code_sentinel)\n"
+                  "123 7 (M.V.getrouteterminusindex) (S.L.route_terminus_result) + (S.L.route_terminus_sentinel)\n"
+                  "123 7 (M.V.getbusstopcount) (S.L.route_count_result) + (S.L.route_count_sentinel)\n"
+                  "123 1 2 3 (M.V.getheightabovepoint) (S.L.height_result) + (S.L.height_sentinel)\n"
+                  "(L.$.lookup_ident) 123 1 2 (M.V.getterminusstring) (S.L.terminus_string_sentinel) "
+                  "$length (S.L.terminus_string_length) $+ (S.$.terminus_string_combined)\n"
+                  "(L.$.lookup_ident) 123 1 2 (M.V.getbusstopstring) (S.L.busstop_string_sentinel) "
+                  "$length (S.L.busstop_string_length) $+ (S.$.busstop_string_combined)\n"
+                  "(L.$.lookup_ident) 123 1 2 (M.V.getroutebusstopident) (S.L.route_stop_sentinel) "
+                  "$length (S.L.route_stop_length) $+ (S.$.route_stop_combined)\n"
+                  "(L.$.lookup_ident) 123 1 (M.V.getdepotstringglobal) (S.L.depot_string_sentinel) "
+                  "$length (S.L.depot_string_length) $+ (S.$.depot_string_combined)\n{end}\n"
+                  "{trigger:arrival_placeholders}\n"
+                  "123 7 (M.V.getarrbustimediff) (S.L.arrival_time_result) + (S.L.arrival_time_sentinel)\n"
+                  "(L.$.lookup_ident) 123 1 (M.V.getarrbusline) (S.L.arrival_line_sentinel) "
+                  "$length (S.L.arrival_line_length) $+ (S.$.arrival_line_combined)\n"
+                  "(L.$.lookup_ident) 123 1 (M.V.getarrbusterminus) (S.L.arrival_terminus_sentinel) "
+                  "$length (S.L.arrival_terminus_length) $+ (S.$.arrival_terminus_combined)\n{end}\n"
+                  "{trigger:random_seed}\n"
+                  "123 (L.L.random_seed) (M.V.nrspecrandom) "
+                  "(S.L.random_result) + (S.L.random_sentinel)\n{end}\n"
                   "{trigger:held}\n(L.L.held_press) 1 + (S.L.held_press)\n"
                   "(L.S.Timegap) (S.L.key_time)\n(L.S.mouse_x) (S.L.key_mouse)\n{end}\n"
                   "{trigger:held_off}\n(L.L.held_release) 1 + (S.L.held_release)\n{end}\n"
@@ -315,6 +460,53 @@ int main() {
     configuration.scripts = {script.filename().string()};
     const bool nativePassed = check(configuration, "native");
     const bool luaPassed = check(configuration, "lua");
+    const bool nativeSceneryPassed = checkSceneryPlaceholders(configuration, "native");
+    const bool luaSceneryPassed = checkSceneryPlaceholders(configuration, "lua");
+    Logger::Flush();
+    std::ifstream logInput(logPath);
+    const bool logOpened = logInput.is_open();
+    const std::string log((std::istreambuf_iterator<char>(logInput)),
+                          std::istreambuf_iterator<char>());
+    bool warningCountsValid = logOpened;
+    for (const std::string& message : {
+             std::string("system macro getttterminusindex is not implemented"),
+             std::string("system macro getttbusstopcount is not implemented"),
+             std::string("system macro getttbusstopindex is not implemented"),
+             std::string("system macro getttdelay is not implemented"),
+             std::string("system macro getttbusstoparr is not implemented"),
+             std::string("system macro getttbusstopdep is not implemented"),
+             std::string("system macro getbusstopindex is not implemented"),
+             std::string("system macro getterminusindex is not implemented"),
+             std::string("system macro getterminuscode is not implemented"),
+             std::string("system macro getterminusstring is not implemented"),
+             std::string("system macro getbusstopstring is not implemented"),
+             std::string("system macro getrouteindex is not implemented"),
+             std::string("system macro getrouteterminusindex is not implemented"),
+             std::string("system macro getbusstopcount is not implemented"),
+             std::string("system macro getroutebusstopident is not implemented"),
+             std::string("system macro getdepotstringglobal is not implemented"),
+             std::string("system macro getarrbusline is not implemented"),
+             std::string("system macro getarrbusterminus is not implemented"),
+             std::string("system macro getarrbustimediff is not implemented"),
+             std::string("system macro getheightabovepoint is not implemented"),
+             std::string("NrSpecRandom seed is outside the supported range"),
+         }) {
+        std::size_t count = 0;
+        std::size_t offset = 0;
+        while ((offset = log.find(message, offset)) != std::string::npos) {
+            ++count;
+            offset += message.size();
+        }
+        if (count != 2) {
+            std::cerr << "Expected one warning per backend for " << message << ", got " << count
+                      << '\n';
+            warningCountsValid = false;
+        }
+    }
+    logInput.close();
     openbus::probe::removeProbeDirectory(root);
-    return nativePassed && luaPassed ? 0 : 1;
+    return nativePassed && luaPassed && nativeSceneryPassed && luaSceneryPassed &&
+                   warningCountsValid
+               ? 0
+               : 1;
 }

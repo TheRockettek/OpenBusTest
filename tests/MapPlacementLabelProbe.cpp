@@ -6,6 +6,7 @@
 #include "ProbeTempDirectory.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -43,6 +44,33 @@ void writeWhiteFontBitmap(const std::filesystem::path& path) {
                                                      255, 255, 255, 0,   0,   0};
     output.write(reinterpret_cast<const char*>(row.data()), row.size());
     output.write(reinterpret_cast<const char*>(row.data()), row.size());
+}
+
+bool checkFontPixels(const VehicleConfig& configuration, SimulationState& sharedState,
+                     const std::string& fontName, std::size_t expected) {
+    openbus::scripting::SceneryObject placement;
+    placement.declareString("sign_text");
+    placement.setString("sign_text", "50");
+    ScriptRuntime runtime(configuration, placement, sharedState);
+    runtime.configureTextTextures(
+        {ModelTextTexture{1, false,
+                          {"sign_text", fontName, "8", "4", "0", "255", "255", "255"}}});
+    runtime.initialize();
+    ScriptRuntime::ScriptTextureSnapshot texture;
+    if (!runtime.copyTextTexture(1, texture)) {
+        std::cerr << "could not retrieve text rendered with font " << fontName << "\n";
+        return false;
+    }
+    std::size_t opaquePixels = 0;
+    for (std::size_t alpha = 3; alpha < texture.pixels.size(); alpha += 4) {
+        opaquePixels += texture.pixels[alpha] != 0 ? 1U : 0U;
+    }
+    if (opaquePixels != expected) {
+        std::cerr << "font " << fontName << ": expected " << expected
+                  << " opaque pixels, got " << opaquePixels << "\n";
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -132,29 +160,46 @@ int main() {
             "[newfont]\nDelayedFont\nfixture.bmp\nfixture.bmp\n2\n0\n"
             "[char]\n5\n0\n1\n0\n[char]\n0\n1\n3\n0\n";
     font.close();
-    openbus::scripting::SceneryObject fontPlacement;
-    fontPlacement.declareString("sign_text");
-    fontPlacement.setString("sign_text", "50");
-    ScriptRuntime fontRuntime(configuration, fontPlacement, sharedState);
-    fontRuntime.configureTextTextures(
-        {ModelTextTexture{1, false,
-                          {"sign_text", "DelayedFont", "8", "4", "0", "255", "255", "255"}}});
-    fontRuntime.initialize();
-    ScriptRuntime::ScriptTextureSnapshot fontTexture;
-    if (!fontRuntime.copyTextTexture(1, fontTexture)) {
-        std::cerr << "could not retrieve text rendered with the fixture bitmap font\n";
+    if (!checkFontPixels(configuration, sharedState, "DelayedFont", 6)) {
         return 1;
     }
-    std::size_t opaquePixels = 0;
-    for (std::size_t alpha = 3; alpha < fontTexture.pixels.size(); alpha += 4) {
-        opaquePixels += fontTexture.pixels[alpha] != 0 ? 1U : 0U;
+    std::ofstream addedFont(fonts / "added.oft");
+    addedFont << "[newfont]\nAddedFont\nfixture.bmp\nfixture.bmp\n2\n0\n"
+                 "[char]\n5\n0\n1\n0\n[char]\n0\n1\n3\n0\n";
+    addedFont.close();
+    std::filesystem::last_write_time(fonts, std::filesystem::file_time_type::clock::now() +
+                                                std::chrono::seconds(10));
+    if (!checkFontPixels(configuration, sharedState, "AddedFont", 6)) {
+        return 1;
+    }
+    std::filesystem::remove(fonts / "added.oft");
+    std::filesystem::last_write_time(fonts, std::filesystem::file_time_type::clock::now() +
+                                                std::chrono::seconds(20));
+    if (!checkFontPixels(configuration, sharedState, "AddedFont", 15)) {
+        return 1;
+    }
+
+    const auto upperRoot = root / "CASE";
+    const auto lowerRoot = root / "case";
+    std::filesystem::create_directories(upperRoot / "Fonts");
+    std::filesystem::create_directories(lowerRoot / "Fonts");
+    if (!std::filesystem::equivalent(upperRoot, lowerRoot)) {
+        std::filesystem::copy_file(fonts / "fixture.bmp", lowerRoot / "Fonts" / "fixture.bmp");
+        std::filesystem::copy_file(fonts / "delayed.oft", lowerRoot / "Fonts" / "delayed.oft");
+        VehicleConfig upperConfiguration = configuration;
+        VehicleConfig lowerConfiguration = configuration;
+        upperConfiguration.sourcePath = upperRoot / "label.sco";
+        lowerConfiguration.sourcePath = lowerRoot / "label.sco";
+        if (!checkFontPixels(upperConfiguration, sharedState, "DelayedFont", 6)) {
+            return 1;
+        }
+        std::filesystem::remove(fonts / "delayed.oft");
+        std::filesystem::last_write_time(fonts, std::filesystem::file_time_type::clock::now() +
+                                                    std::chrono::seconds(30));
+        if (!checkFontPixels(lowerConfiguration, sharedState, "DelayedFont", 6)) {
+            return 1;
+        }
     }
     openbus::probe::removeProbeDirectory(root);
-    if (opaquePixels != 6) {
-        std::cerr << "font lookup stopped at the documentation [newfont] block; expected six "
-                     "pixels from the custom 1x2 and 2x2 digit glyphs, got "
-                  << opaquePixels << "\n";
-        return 1;
-    }
     return 0;
 }

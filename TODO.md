@@ -127,9 +127,9 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
 
 ## 5. Complete vehicle/model configuration coverage
 
-- [~] `[mouseevent]` identifiers are retained on model parts, and W/A/S/D
-  transitions are dispatched to the player script runtime as key state and
-  optional key-specific entry points. Exact transformed triangle picking is
+- [~] `[mouseevent]` identifiers are retained on model parts, and configured
+  vehicle key bindings are dispatched to the player script runtime as key
+  state and optional key-specific entry points. Exact transformed triangle picking is
   active, including hand-cursor hover feedback, captured `trigger_<event>` /
   `trigger_<event>_drag` callbacks, matching `trigger_<event>_off` release
   callbacks, and the `I`-key clickable wireframe overlay. Scenery-object
@@ -150,8 +150,9 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   are available; persistence and full OMSI selection UI remain incomplete.
 - [~] Bus-model `[collision_mesh]` records now build an ODE triangle collider;
   model `[boundingbox]` overrides the BUS box, `[nocollision]` filters a
-  mesh-scoped collider, and the BUS box remains the fallback. Scenery-object
-  collision records are still parse-only because scenery has no runtime.
+  mesh-scoped collider, and the BUS box remains the fallback. Scenery
+  collision also uses authored meshes, model geometry, or bounding-box
+  fallback; installed-asset contact parity remains unverified.
 - [~] Passenger-cabin CFG loading and a deterministic per-vehicle service
   runtime now cover waiting counts, timed boarding/alighting, dwell state, and
   seat occupancy. Legacy TTP calls and station-ID-only trips with complete
@@ -248,8 +249,9 @@ by parser alignment and should not be described as supported:
   text format semantics remain. `[texttexture_enh]` alignments 0–5 and grid
   spacing are handled by the text runtime. `[interiorlight]`, `[light_enh]`,
   `[light_enh_2]`, and `[spotlight]` light emission remain incomplete.
-- Configurable keyboard binding files and the complete OMSI input action map;
-  the current runtime dispatches physical W/A/S/D transitions to scripts.
+- Complete OMSI input configuration and action semantics. Vehicle bindings
+  can inherit `[vehicles]`/`[entry]` assignments from `Inputs/keyboard.cfg`,
+  with OpenBus defaults for unsupported or absent assignments.
 - Remaining script system data providers such as route, terminus, ticket,
   passenger-count, ground-height, and arrival-board lookups; safe fallbacks
   remain in `ScriptRuntime`.
@@ -267,7 +269,8 @@ for alignment is not mistaken for supporting it.
 
 #### BUS vehicle configuration
 
-- [ ] Implement BUS-level `[fixed]` and `[scriptshare]` semantics.
+- [~] BUS-level `[fixed]` and `[scriptshare]` are explicitly diagnosed as
+  unsupported; their runtime semantics are not implemented.
 - [ ] Retain the labels and implement the view selection behavior for
   `[view_schedule]` and `[view_ticketselling]`; current parsing only records
   that the keyword occurred and validates that a driver camera exists.
@@ -278,17 +281,19 @@ for alignment is not mistaken for supporting it.
   Native precedence and horizontal CG physics remain unverified/incomplete.
 - [~] `[rot_pnt_long]` is retained and diagnosed as not applied; implement
   its longitudinal rotation-point physics semantics.
-- [ ] Add the documented vehicle-family records `[rowdy_factor]`, `[boogies]`,
-  `[ai_brakeperformance]`, `[ai_veh_type]`, and `[sinus]`, or explicitly mark
-  them unsupported when their family-specific semantics cannot be preserved.
+- [~] Vehicle-family `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`,
+  `[ai_veh_type]`, and `[sinus]` are explicitly diagnosed as unsupported;
+  their family-specific behavior is not implemented.
 - [ ] Implement articulated/coupled records: `[coupling_front]`,
   `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, and
-  `[couple_front_open_for_sound]`.
+  `[couple_front_open_for_sound]`. These now produce explicit unsupported
+  diagnostics; articulated vehicles remain outside the supported scope.
 - [ ] Implement `[control_cable_front]` and `[control_cable_back]` for
-  electrical/control-variable transfer between coupled vehicles.
+  electrical/control-variable transfer between coupled vehicles. Both are
+  diagnosed as unsupported.
 - [ ] Implement `[new_attachment]` attachment transforms and the rail/trolley
   records `[contact_shoe]` and `[rail_body_osc]`, or explicitly scope them out
-  with diagnostics.
+  with diagnostics. Vehicle-level records now report unsupported behavior.
 - [ ] Complete `[registration_automatic]`, `[registration_free]`, and
   `[kmcounter_init]` runtime selection/persistence as tracked in the E400
   comparison section.
@@ -310,9 +315,9 @@ for alignment is not mistaken for supporting it.
   semantics remain unverified.
 - [~] `[isshadow]` meshes now render with their authored transparent material
   and a ground-plane projection; model collision meshes/bounds and
-  `[nocollision]` now affect the bus ODE collider. Scenery-object collision
-  construction and shadow grounding against elevated road surfaces remain
-  incomplete.
+  `[nocollision]` now affect the bus ODE collider. Scenery collision has a
+  separate supported mesh/box path; shadow grounding against elevated road
+  surfaces remains incomplete.
 - [~] Basic `[illumination_interior]`/`[interiorlight]` controller-driven
   point-light shading, mesh assignments, and distance attenuation are active;
   a GPU probe covers color, zero strength, and near/far attenuation. OMSI
@@ -339,23 +344,31 @@ for alignment is not mistaken for supporting it.
 - [ ] Finish OMSI-compatible `[texttexture]` and `[texttexture_enh]` font,
   vertical/layout, and alpha semantics; horizontal alignments 0–5 and authored
   grid spacing are supported, but the fallback font rasterizer and remaining
-  enhanced-format flags are still not fully compatible.
+  enhanced-format flags are still not fully compatible. Font-directory indexes
+  now refresh on directory timestamp changes and do not cache missing
+  directories; regression coverage includes added and removed definitions and
+  case-distinct paths. The index depends on filesystem timestamp resolution and
+  does not detect in-place changes to OFT font names; already-created script
+  runtimes also retain their font results.
 
 #### General CFG dialects
 
 - [ ] Add a surface/material CFG path for `[puddles]`, `[moisture]`,
   texture `[surface]`, and `[NightMapMode]`, including wetness and
-  surface-type data. Scenery `[surface]` and `[nocollision]` are currently
-  retained as flags without a runtime collision consumer; `[NightMapMode]` is
-  parsed but discarded. `[maplight]` is also consumed without generating
-  tile lightmaps.
+  surface-type data. Scenery `[surface]` and `[nocollision]` affect supported
+  collision geometry, but do not implement texture surface/material physics;
+  `[NightMapMode]` is parsed but discarded. `[maplight]` is also consumed
+  without generating tile lightmaps.
 - [ ] Implement passenger-cabin `[noticketsale]` eligibility and the observed
   `[ticket_sale]`, `[ticket_sale_money_point_2]`, and
   `[ticket_sale_change_point_2]` ticket-machine behavior/locations; these
   interactions are currently unhandled.
 - [~] Scenery SCO `[script]`, `[varnamelist]`, `[stringvarnamelist]`, and
   `[constfile]` resources now feed per-placement `init`/`frame` runtimes, and
-  scenery `[visible]` controllers are checked during map drawing. Script-driven
+  scenery `[visible]` controllers are checked during map drawing. The inline
+  SCO model parser leaves these resource records and `[model]` to the SCO
+  parser instead of reporting them as unknown model directives; external model
+  CFG diagnostics are unchanged. Script-driven
   animations, dynamic materials/textures, mouse-event dispatch, sound callbacks,
   and general `[varparent]` state inheritance remain incomplete. `[varparent]`
   is used to associate `[trafficlight]` signal heads with a parent controller's
@@ -381,13 +394,17 @@ for alignment is not mistaken for supporting it.
   `[aigroup_depot]`, `[busstop]`, `[signalroute]`, and `[StnLink]`.
 - [ ] Add environment configuration support for `[sky_textures]`,
   `[cloudtype]`, and `[startdate]`.
-- [ ] Add fare/currency support for `[currency]` and `[coin]`.
-- [ ] Add configurable input CFG support for `[game]`, `[ctrl]`, `[axis]`,
-  and keyboard-context `[entry]`; current controls are hardcoded to the
-  runtime key map.
+- [~] Map-referenced `[currency]` and `[coin]` records provide coin values to
+  change-coin script macros; coin rendering and passenger transactions remain
+  incomplete.
+- [~] Vehicle keyboard `[entry]` assignments are inherited from the
+  `[vehicles]` section of `Inputs/keyboard.cfg` and exercised by
+  `OpenBusVehicleInputBindingsProbe`; missing/unsupported bindings retain
+  defaults. `[game]`, `[ctrl]`, `[axis]`, other input contexts, and complete
+  native input behavior remain unsupported or unverified.
 - [ ] Implement observed configuration records that remain unhandled in their
-  current contexts: SCO `[approachdist]`, `[carpark_p]`, `[collision_mesh]`,
-  `[complexity]`, `[crossingproblem]`, `[entrypoint]`, `[joinable]`, `[mass]`,
+  current contexts: SCO `[carpark_p]`, `[complexity]`, `[crossingproblem]`,
+  `[entrypoint]`, `[joinable]`, `[mass]`,
   `[momentofintertia]`, `[newanim]`,
   `[nomaplighting]`, `[shadow]` per-mesh cast-shadow behavior,
   `[splinehelper]`, and `[terrainhole]`; model-config
@@ -396,7 +413,9 @@ for alignment is not mistaken for supporting it.
   `[length]`, `[matl]`, `[nightmapmode]`, and `[rail_enh]`. Some names have
   implementations in other contexts (for example, `[traffic_light]` data in
   SCO files and `[matl]` model materials); the missing scope is the context
-  shown by the runtime warning, not the keyword globally. `[newachse]`
+  shown by the runtime warning, not the keyword globally. SCO `[approachdist]`
+  is parsed for traffic signals, and SCO `[collision_mesh]` feeds supported
+  scenery collision; native parity remains unverified. `[newachse]`
   descriptive text lines are labels rather than configuration tags and are
   ignored; only identifier-like unknown axle fields are reported.
   Model-animation directives such as `anim_rot` and `anim_trans` are
@@ -422,23 +441,37 @@ The following documented system macros are partial or still dispatch to safe
 placeholder handlers rather than complete route, timetable, passenger-path,
 terrain, or arrival-board data:
 
-- [ ] HOF/route lookups: `GetTerminusIndex`, `GetTerminusCode`,
+- [~] HOF/route lookups: `GetTerminusIndex`, `GetTerminusCode`,
   `GetTerminusString`, `GetBusstopIndex`, `GetBusstopString`, `GetRouteIndex`,
-  `GetRouteTerminusIndex`, `GetBusstopCount`, and `GetRouteBusstopIdent`.
+  `GetRouteTerminusIndex`, `GetBusstopCount`, and `GetRouteBusstopIdent` remain
+  placeholders. They warn once per runtime and macro; native and Lua probes
+  exercise their numeric and string stack contracts. `GetBusstopIndex` consumes
+  its string argument without disturbing the numeric stack.
 - [~] Timetable lookups: scheduled AI buses publish line and destination
   strings before script initialization for `GetTTLineString` and
   `GetTTBusstopName`; both script backends have focused lookup tests.
   Complete native stop-name semantics and `GetTTTerminusIndex`,
   `GetTTBusstopCount`, `GetTTBusstopIndex`, `GetTTDelay`, `GetTTBusstopArr`,
-  and `GetTTBusstopDep` remain incomplete.
+  and `GetTTBusstopDep` remain incomplete. Their zero-valued placeholders now
+  preserve the documented input stack and log once per runtime when used;
+  native and Lua regressions cover all six.
 - [~] Ticket/passenger macros: `GiveChangeCoin`, `GetTicketName`, and
   `GetTicketValue` use map ticket/currency data and `GetHumanCountOnSeat` reads
   the current seat-occupancy variables. Ticket purchasing/payment and
   `GetHumanCountOnPathLink` producers remain unimplemented.
-- [ ] World and depot lookups: `GetHeightAbovePoint`, `GetDepotStringGlobal`,
-  `GetArrBusLine`, `GetArrBusTerminus`, and `GetArrBusTimeDiff`.
+- [~] World and depot lookups: `GetHeightAbovePoint`, `GetDepotStringGlobal`,
+  `GetArrBusLine`, `GetArrBusTerminus`, and `GetArrBusTimeDiff` remain
+  placeholders. Both backends now warn once per runtime and macro, with
+  vehicle and scenery probes checking their respective stack contracts.
+- [ ] Resolve OSC backend differences before claiming stack and object-kind
+  parity: native `(S.$...)` consumes a string while the Lua converter peeks it;
+  the documented native OMSI behavior needs verification. Native system-macro
+  dispatch also bypasses the vehicle/scenery availability check used when
+  registering Lua macros, so out-of-kind calls behave differently.
 - [~] Verify OMSI parity for `NrSpecRandom`; OpenBus now provides deterministic
-  seeded output, but its algorithm and range still need compatibility evidence.
+  seeded output, and both backends reject non-finite/out-of-range seeds with a
+  once-per-runtime warning instead of performing undefined conversions.
+  Its algorithm and range still need compatibility evidence.
 - [~] The selected simulation calendar updates `Time`, `Day`, `Month`, `Year`,
   and one-based `DayOfYear` across midnight. Traffic density weekday classes
   now change at the selected calendar's midnight, including weekend and week
@@ -530,8 +563,8 @@ for the explicit boundary.
   their raw payload lines with source line numbers; their runtime semantics
   remain unimplemented.
   `.map.water` presence and count-plus-four-float records are decoded and
-  validated; rendering remains deferred because the four heights' spatial
-  order is not verified. `.map.LM.bmp` and `.map.terrain_0.rdy` paths/presence
+  validated; provisional tile quads use an unverified corner ordering.
+  `.map.LM.bmp` and `.map.terrain_0.rdy` paths/presence
   are inventoried but their payloads are not decoded or rendered.
   Unimplemented bracketed sections in tile files and `global.cfg` now produce
   line-numbered warnings and preserve each section's opaque payload lines;
@@ -713,15 +746,14 @@ for the explicit boundary.
   those validations remain open.
 
 - [~] Apply road and passenger traffic-density schedules to their respective
-  capped populations using provisional linear interpolation and endpoint
+  population targets using provisional linear interpolation and endpoint
   clamping. Density changes now defer population transitions until off-screen
   positions are available and route footprints are clear. The startup road
   pool reserves each unscheduled group up to its maximum active target across
-  configured hours and weekday classes, rather than limiting the total queued
-  pool to the simultaneous active population cap. This lets the same fixed,
-  group-specific pool meet separate peaks at different times; the active
-  population remains capped. Sampled split-peak regressions cover this
-  invariant. Weekday schedules derive their starting weekday from the map
+  configured hours and weekday classes. There is no fixed active population
+  cap; separate group peaks can make the queued pool larger than any one
+  simultaneous target. Split-peak and uncapped interior-rounding regressions
+  cover the reservation logic. Weekday schedules derive their starting weekday from the map
   system calendar (`Day`, `Month`, `Year`, and `DayOfYear`); the date and time
   variables advance with elapsed simulation time. Verify native units,
   interpolation, and time-of-day policy before treating the behavior as
@@ -815,9 +847,11 @@ the outstanding implementation and validation tasks:
   `[halfcantwidth]` now overrides the fallback width derived from valid
   `[heightprofile]` lateral extents for cant clamping; native visual parity and
   full authored height-profile behavior remain unresolved. The Cotterell log
-  reports 951 profile strips with fewer than two points (including `pavement_a.sli`);
-  verify whether these are intentional degenerate/editor strips or a
-  profile-reader/geometry omission.
+  reports 951 profile strips with fewer than two points (including `pavement_a.sli`).
+  Two currently installed `pavement_a.sli` copies each parse as two renderable
+  strips with two points apiece and no invalid texture indices. This does not
+  reproduce the retained log or identify its exact source asset/version; rerun
+  a representative map and investigate any remaining short strips.
 - [~] Provisional `[water]` tile quads are decoded, validated, rendered, and
   covered by `OpenBusMapWaterGeometryProbe`; OMSI parity and water collision
   remain incomplete. `[variable_terrain]` and `[variable_terrainlightmap]`,
@@ -839,6 +873,8 @@ the outstanding implementation and validation tasks:
   whether they are unresolved repeater-master references, invalid local spline
   records, ambiguous IDs, or bad source placements. Unique reciprocal spline
   chains now resolve across tile boundaries for ordinary attachment rows.
+  Cotterell is not present in the current Linux installation's map directory,
+  so the retained report cannot be reproduced here.
 - [~] Nonzero-LOD scenery parts now render using the vehicle renderer's existing
   threshold-to-distance mapping. Validate distance transitions and visual
   parity with representative installed scenery; 9 parts were skipped in the
@@ -858,7 +894,13 @@ the outstanding implementation and validation tasks:
   mesh.
 - [~] Read road cross-sections from `.sli` files (`[texture]`, `[profile]`,
   `[profilepnt]`), retain the four raw/numeric fields of `[heightprofile]`, and
-  retain `[nocollision]` to exclude marked profiles from road collision while
+  match directives case-insensitively while preserving payload case and
+  skipping disabled blocks, as in the shared CFG reader. A profile probe
+  covers mixed-case tags, textures, road geometry, paths, and disabled records.
+  Malformed points and profile indices now produce line-numbered diagnostics
+  rather than being silently dropped; recovery and logging have focused probes.
+  The earlier aggregate skipped-strip count has not been rechecked on a live map.
+  Retain `[nocollision]` to exclude marked profiles from road collision while
   preserving their render geometry; native OMSI profile semantics are still
   unverified. Apply explicit `[halfcantwidth]` to cant clamping as well. Spline
   cant is provisionally interpolated as percentage crossfall in shared
@@ -893,14 +935,15 @@ the outstanding implementation and validation tasks:
   neighborhood. Builder and simulation probes cover selected-tile construction,
   O3D placement/winding, `[nocollision]`, and add/remove resource ownership;
   validate contact while crossing representative installed tile seams and tune
-  duplicate contacts where road strips overlap terrain. `[boundingbox]`-only
-  scenery and non-O3D collision formats remain unsupported.
+  duplicate contacts where road strips overlap terrain. Supported scenery
+  `[boundingbox]` fallback is probed; non-O3D collision formats remain
+  unsupported.
 - [~] Extend the per-placement scenery `init`/`frame` and `[visible]` path with
   script-driven animations, dynamic material changes, sound dispatch, and
   mouse events after those runtime semantics are verified. `[varparent]`
   script-variable inheritance remains distinct and unsupported.
 - [~] Decode `.map.water` sidecars into per-surface four-height records;
-  determine corner/quadrant ordering and implement water rendering. Per-tile/
+  determine corner/quadrant ordering and validate provisional water rendering. Per-tile/
   detail/seasonal ground textures, map lightmaps, and Chrono variant resolution
   remain. Chrono selector IDs and opaque override payload lines are parser-only.
 - [~] Map loading is being moved to background preparation with main-thread
@@ -1057,8 +1100,12 @@ limitations.
 - [ ] Validate Windows and Linux helper scripts from clean build directories.
 - [~] Focused clang-format checks pass for changed ranges, and clang-tidy runs
   using the exported Windows compile database. The repository-wide checks still
-  report existing formatting/lint warnings outside the touched ranges; Linux
-  validation was not available in this Windows environment.
+  report existing formatting/lint warnings outside the touched ranges. Linux
+  application builds and focused probes have since been run.
+- [x] Restore `OpenBusMapConfigProbe` compilation after removal of the density
+  population-cap argument, and update group-pool reservations to cover
+  uncapped interior rounding peaks. Unrepresentable population counts are
+  rejected rather than converted out of range.
 
 Done when performance options have documented tradeoffs and both primary build
 platforms have a reproducible build-and-smoke procedure.

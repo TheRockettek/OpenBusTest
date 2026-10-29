@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <limits>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -850,6 +851,34 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             continue;
         }
 
+        static const std::unordered_map<std::string, std::string> unsupportedKeywords = {
+            {"fixed", "vehicle-level fixed behavior is not implemented"},
+            {"scriptshare", "shared vehicle script state is not implemented"},
+            {"rowdy_factor", "family-specific ride behavior is not implemented"},
+            {"boogies", "bogie behavior is not implemented"},
+            {"ai_brakeperformance", "family-specific AI braking behavior is not implemented"},
+            {"ai_veh_type", "family-specific AI vehicle categories are not implemented"},
+            {"sinus", "family-specific body oscillation is not implemented"},
+            {"coupling_front", "vehicle coupling is not implemented"},
+            {"coupling_back", "vehicle coupling is not implemented"},
+            {"coupling_front_character", "vehicle coupling is not implemented"},
+            {"couple_back", "vehicle coupling is not implemented"},
+            {"couple_front_open_for_sound", "vehicle coupling sound is not implemented"},
+            {"control_cable_front", "coupled-vehicle control transfer is not implemented"},
+            {"control_cable_back", "coupled-vehicle control transfer is not implemented"},
+            {"new_attachment", "vehicle attachment behavior is not implemented"},
+            {"contact_shoe", "rail and trolley contact behavior is not implemented"},
+            {"rail_body_osc", "rail body oscillation is not implemented"},
+        };
+        const auto unsupported = unsupportedKeywords.find(keyword);
+        if (unsupported != unsupportedKeywords.end()) {
+            const std::string message = "recognized but unsupported: " + unsupported->second;
+            result.diagnostics.warning(line.number, line.keyword(), message);
+            openbus::config::logUnhandledConfigurationTag(
+                kind == VehicleFileKind::Bus ? "bus.cfg" : "vehicle.cfg", configPath, line.number,
+                line.keyword(), message);
+            continue;
+        }
         result.diagnostics.warning(line.number, line.keyword(), "unknown vehicle keyword");
         openbus::config::logUnhandledConfigurationTag(
             kind == VehicleFileKind::Bus ? "bus.cfg" : "vehicle.cfg", configPath, line.number,

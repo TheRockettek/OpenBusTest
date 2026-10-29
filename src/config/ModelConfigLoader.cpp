@@ -455,7 +455,8 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             static const std::unordered_set<std::string> sceneryObjectDirectives = {
                 "surface", "trafficlight", "traffic_lights_group", "traffic_light", "phase",
                 "approachdist", "path", "use_traffic_light", "traffic_light_stop",
-                "traffic_light_jump"};
+                "traffic_light_jump", "model", "script", "varnamelist", "stringvarnamelist",
+                "constfile"};
             if (sceneryObjectDirectives.contains(keyword)) {
                 continue;
             }

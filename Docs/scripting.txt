@@ -204,6 +204,9 @@ f0 String Index
 GetBusstopIndex
 $0 Busstop Ident
 
+OpenBus consumes the identifier and currently returns -1 as an unsupported
+lookup, with a warning once per runtime.
+
 GetBusstopString
 f2 Busstop Index
 f0 String Index
@@ -233,6 +236,11 @@ f0 Timetable Busstop Index
 
 GetTTBusstopDep
 f0 Timetable Busstop Index
+
+OpenBus currently returns zero for the timetable numeric lookups above. The
+four lookups without listed inputs preserve the numeric stack; arrival and
+departure consume their timetable stop index. A warning is logged once per
+runtime and macro when these placeholders are used.
 
 Scheduled map AI buses receive the matched timetable line and destination before
 their scripts initialize. GetTTLineString returns the timetable line name, and
@@ -376,7 +384,9 @@ Macros With Runtime Behavior
 The script-texture macros (STNewTex, STLock, STUnlock, STFilter, STSetColor,
 STDrawPixel, STDrawRect, STTextOut, STReadPixel, STCopyColor, STLoadTex,
 STGetR/G/B/A, GetFontIndex, and TextLength) have runtime implementations.
-NrSpecRandom is implemented as a seeded pseudo-random value.
+NrSpecRandom is implemented as a seeded pseudo-random value; OMSI algorithm
+parity is not verified. Finite seeds are truncated toward zero and must fit an
+unsigned integer. Invalid seeds return zero and log one warning per runtime.
 
 GetTicketName and GetTicketValue read indexed ticket data from local or shared
 script state. GiveChangeCoin reads the indexed coin value and updates OpenBus
@@ -410,4 +420,11 @@ GetArrBusLine, GetArrBusTerminus, and GetArrBusTimeDiff.
 The currently registered macros above are recognized by the script runtime,
 but their query results are placeholders: empty strings, zero, or -1. A
 complete implementation requires the corresponding route/timetable/depot,
-geometry, or arrival data to be made available to scripts.
+geometry, or arrival data to be made available to scripts. These placeholders
+log a warning once per runtime and macro when invoked.
+
+Backend compatibility limitation: native string stores currently consume the
+top string, while converted Lua string stores leave it on the stack. Native
+system-macro dispatch also does not enforce the object-kind availability
+checks used when registering Lua macros. Native OMSI behavior for string stores
+and out-of-kind macro calls has not been verified.

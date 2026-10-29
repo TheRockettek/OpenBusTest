@@ -44,10 +44,11 @@ and [scenery status](IMPLEMENTATION_STATUS_SCENERY.md) for full limitations.
 | `[cog]` | Partial | Its z coordinate supplies the CG height when `[schwerpunkt]` is absent. `[schwerpunkt]` takes precedence with a warning on disagreement; nonzero x/y offsets are retained and warned about but not applied. Native precedence remains unverified. |
 | `[rollwiderstand]`, `[ai_deltaheight]`, `[sound_ai]` | Partial | Working subsets exist; native physics, placement, and AI audio parity remain unverified. |
 | `[rot_pnt_long]` | Parsed only | The coordinate is retained and diagnosed, but does not affect vehicle physics. |
-| `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`, `[ai_veh_type]`, `[sinus]` | Not implemented | Family-specific AI/drivetrain behavior is absent. |
-| `[coupling_front]`, `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, `[couple_front_open_for_sound]` | Not implemented | Coupling and articulated multi-vehicle behavior are absent. |
-| `[control_cable_front]`, `[control_cable_back]` | Not implemented | Cross-vehicle control/electrical variable transfer is absent. |
-| `[contact_shoe]`, `[rail_body_osc]` | Not implemented | Rail/trolley-specific behavior is absent. |
+| `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`, `[ai_veh_type]`, `[sinus]` | Unsupported | Explicit diagnostics; family-specific behavior is absent. |
+| BUS/vehicle `[fixed]`, `[scriptshare]`, `[new_attachment]` | Unsupported | Explicit diagnostics; vehicle-level behavior is absent. |
+| `[coupling_front]`, `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, `[couple_front_open_for_sound]` | Unsupported | Explicit diagnostics; coupling and articulated multi-vehicle behavior are absent. |
+| `[control_cable_front]`, `[control_cable_back]` | Unsupported | Explicit diagnostics; cross-vehicle control/electrical variable transfer is absent. |
+| `[contact_shoe]`, `[rail_body_osc]` | Unsupported | Explicit diagnostics; rail/trolley-specific behavior is absent. |
 | `[registration_automatic]`, `[registration_free]`, `[kmcounter_init]` | Partial | Startup selection/number seeding and odometer initialization exist; persistence and the full selection UI do not. |
 
 The complete configurable input map and vehicle-family-specific view systems

@@ -55,10 +55,21 @@ std::vector<std::string> readLines(const std::filesystem::path& path) {
 
     std::vector<std::string> lines;
     std::size_t begin = 0;
+    bool disabled = false;
     while (begin < text.size()) {
         const std::size_t end = text.find('\n', begin);
         const std::size_t lineEnd = end == std::string::npos ? text.size() : end;
-        lines.push_back(trim(std::string_view(text).substr(begin, lineEnd - begin)));
+        std::string line = trim(std::string_view(text).substr(begin, lineEnd - begin));
+        if (line == "-<DISABLED>-") {
+            disabled = true;
+            line.clear();
+        } else if (line == "-<ENABLED>-") {
+            disabled = false;
+            line.clear();
+        } else if (disabled) {
+            line.clear();
+        }
+        lines.push_back(std::move(line));
         if (end == std::string::npos) {
             break;
         }
@@ -127,7 +138,11 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
 
     for (std::size_t cursor = 0; cursor < lines.size();) {
         const std::size_t sectionLine = cursor + 1;
-        const std::string& section = lines[cursor++];
+        const std::string& sourceLine = lines[cursor++];
+        const std::string section =
+            sourceLine.size() > 2 && sourceLine.front() == '[' && sourceLine.back() == ']'
+                ? openbus::config::lower(sourceLine)
+                : sourceLine;
         if (section == "[onlyeditor]") {
             profile.editorOnly = true;
         } else if (section == "[nocollision]") {
@@ -218,7 +233,7 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
                     profile.textureAlphaModes[currentTextureIndex] = alphaMode;
                 }
             }
-        } else if (section == "[scaleTexByLength]" && hasCurrentTexture) {
+        } else if (section == "[scaletexbylength]" && hasCurrentTexture) {
             scaleTextureByLength[currentTextureIndex] = true;
         } else if (section == "[profile]") {
             std::string textureIndexText;
@@ -236,23 +251,35 @@ MapSplineProfile loadMapSplineProfile(const std::filesystem::path& path) {
                     currentSection = &profile.sections.back();
                 } else {
                     currentSection = nullptr;
+                    openbus::config::logUnhandledConfigurationTag(
+                        "spline profile (.sli)", path, sectionLine, "profile",
+                        "invalid texture index; profile strip ignored");
                 }
             } else {
                 currentSection = nullptr;
+                openbus::config::logUnhandledConfigurationTag(
+                    "spline profile (.sli)", path, sectionLine, "profile",
+                    "missing texture index; profile strip ignored");
             }
         } else if (section == "[profilepnt]" && currentSection != nullptr) {
             std::array<double, 4> values = {};
             if (readRealPayloads(lines, cursor, values)) {
                 currentSection->points.push_back({values[0], values[1], values[2], values[3]});
+            } else {
+                openbus::config::logUnhandledConfigurationTag(
+                    "spline profile (.sli)", path, sectionLine, "profilepnt",
+                    "expected four finite numeric fields; profile point ignored");
             }
         } else if (section == "[matl_alpha]" || section == "[profilepnt]" ||
-                   section == "[scaleTexByLength]") {
+                   section == "[scaletexbylength]") {
             openbus::config::logUnhandledConfigurationTag(
-                "spline profile (.sli)", path, sectionLine, section.substr(1, section.size() - 2),
+                "spline profile (.sli)", path, sectionLine,
+                sourceLine.substr(1, sourceLine.size() - 2),
                 "directive has no applicable preceding texture mapping");
         } else if (section.size() > 2 && section.front() == '[' && section.back() == ']') {
             openbus::config::logUnhandledConfigurationTag(
-                "spline profile (.sli)", path, sectionLine, section.substr(1, section.size() - 2),
+                "spline profile (.sli)", path, sectionLine,
+                sourceLine.substr(1, sourceLine.size() - 2),
                 "directive is not implemented");
         }
     }

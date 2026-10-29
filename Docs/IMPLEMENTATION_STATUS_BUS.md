@@ -12,10 +12,11 @@ Scope: the vehicle `.bus` file, its model CFG, and the passenger-cabin/path file
 | `[rollwiderstand]` | Active subset | A non-negative authored force in newtons opposes longitudinal motion; negative values are rejected, and when absent the previous mass-scaled OpenBus fallback is retained. Native OMSI physics parity remains unverified. |
 | `[rot_pnt_long]` | Parsed only | The longitudinal rotation point is retained and diagnosed but does not affect vehicle physics. |
 | `[ai_deltaheight]` | Active subset | Applied as a vertical offset to AI vehicle placement, including map-route updates; player vehicles are unchanged. Native OMSI sign/unit parity still needs live validation. |
-| `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`, `[ai_veh_type]`, `[sinus]` | Not implemented | Family-specific AI/drivetrain behavior is absent. |
-| `[coupling_front]`, `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, `[couple_front_open_for_sound]` | Not implemented | Coupling and multi-vehicle behavior are absent; articulated multi-body physics is not implemented. |
-| `[control_cable_front]`, `[control_cable_back]` | Not implemented | No cross-vehicle control/electrical variable transfer. |
-| `[contact_shoe]`, `[rail_body_osc]` | Not implemented | Rail/trolley-specific behavior is absent. |
+| `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`, `[ai_veh_type]`, `[sinus]` | Unsupported | Recognized with explicit diagnostics; family-specific behavior is absent. |
+| BUS/vehicle `[fixed]`, `[scriptshare]`, `[new_attachment]` | Unsupported | Recognized with explicit diagnostics; their vehicle-level runtime behavior is absent. |
+| `[coupling_front]`, `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, `[couple_front_open_for_sound]` | Unsupported | Recognized with explicit diagnostics; coupling and multi-vehicle behavior are absent. |
+| `[control_cable_front]`, `[control_cable_back]` | Unsupported | Recognized with explicit diagnostics; no cross-vehicle control/electrical transfer. |
+| `[contact_shoe]`, `[rail_body_osc]` | Unsupported | Recognized with explicit diagnostics; rail/trolley-specific behavior is absent. |
 | `[sound_ai]` | Partial | AI vehicle initialization selects the authored AI sound bank and falls back to `[sound]` when absent. AI ambient/spatial playback parity remains unverified. See [audio status](IMPLEMENTATION_STATUS_AUDIO.md). |
 | `[registration_automatic]`, `[registration_free]`, `[kmcounter_init]` | Partial | Startup selection/number seeding and odometer initialization exist; persistence and the full OMSI selection UI do not. |
 
@@ -40,7 +41,10 @@ those references as disk filenames. Both script backends allow drawing between
 `GetFontIndex`, `TextLength`, and `STTextOut` using the installed OFT bitmap fonts.
 `STTextOut`'s Full Colour argument selects font colours; zero uses `STSetColor`,
 not a transparent packed colour. Font/layout parity beyond this subset remains
-unverified.
+unverified. Font-directory indexes refresh when directory timestamps change,
+including after definitions are added or removed. Timestamp resolution can
+limit detection, in-place changes to OFT font names do not refresh the index,
+and fonts already cached by a script runtime are not live-reloaded.
 
 Vehicle `[matl_nightmap]` layers normally fade in with darkness (`nightlighta` /
 `envir_brightness`). Nightmaps on script-selected material items, and on meshes gated

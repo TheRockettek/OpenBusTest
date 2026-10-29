@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -309,12 +310,21 @@ void runFixtureProbe() {
                          {{4.0, 0.5}, {4.0, 0.8}}, 4.0)
                          .has_value(),
                 "empty and ambiguous density schedules do not return a value");
-        require(openbus::map::mapTrafficPopulationForDensity(8, 0.25, 200) == 2 &&
-                    openbus::map::mapTrafficPopulationForDensity(8, 0.0, 200) == 0 &&
-                    openbus::map::mapTrafficPopulationForDensity(8, 2.0, 10) == 10 &&
-                    openbus::map::mapTrafficPopulationForDensity(8, std::nullopt, 200) == 8 &&
-                    openbus::map::mapTrafficPopulationForDensity(8, 1.0, 0) == 0,
-                "road density scales a base population, uses fallback density, and respects cap");
+        require(openbus::map::mapTrafficPopulationForDensity(8, 0.25) == 2 &&
+                    openbus::map::mapTrafficPopulationForDensity(8, 0.0) == 0 &&
+                    openbus::map::mapTrafficPopulationForDensity(8, 2.0) == 16 &&
+                    openbus::map::mapTrafficPopulationForDensity(8, std::nullopt) == 8 &&
+                    openbus::map::mapTrafficPopulationForDensity(0, 1.0) == 0 &&
+                    openbus::map::mapTrafficPopulationForDensity(200, 2.0) == 400,
+                "road density scales a base population without a fixed active cap");
+        bool populationOverflowRejected = false;
+        try {
+            static_cast<void>(openbus::map::mapTrafficPopulationForDensity(
+                (std::numeric_limits<std::size_t>::max)(), 2.0));
+        } catch (const std::overflow_error&) {
+            populationOverflowRejected = true;
+        }
+        require(populationOverflowRejected, "unrepresentable traffic population is rejected");
         bool invalidDensityHourRejected = false;
         try {
             static_cast<void>(openbus::map::mapTrafficDensityAtHour(densitySchedule, 24.1));
@@ -484,10 +494,7 @@ void runFixtureProbe() {
             }
         }
         const auto splitPeakPool = openbus::map::mapAiMaximumRoadTrafficPoolByGroup(
-            splitPeakTraffic, roadVehicles, 10, 1.0, 200);
-        const auto splitPeakPoolWithActiveCap =
-            openbus::map::mapAiMaximumRoadTrafficPoolByGroup(
-            splitPeakTraffic, roadVehicles, 10, 1.0, 6);
+            splitPeakTraffic, roadVehicles, 10, 1.0);
         openbus::map::MapAiTrafficData laterPeakTraffic = definition.aiTraffic;
         for (openbus::map::MapAiTrafficDensityGroup& group :
              laterPeakTraffic.unscheduledTrafficDensityGroups) {
@@ -497,20 +504,16 @@ void runFixtureProbe() {
         const auto noDensityAtStart =
             openbus::map::mapAiRoadVehicles(laterPeakTraffic, 0.0, 1);
         const auto laterPeakPool = openbus::map::mapAiMaximumRoadTrafficPoolByGroup(
-            laterPeakTraffic, roadVehicles, 10, 1.0, 200);
-        require(splitPeakPool.size() == 2 && splitPeakPool[0].groupIndex == 0 &&
-                    splitPeakPool[0].populationCount >= 5 &&
-                    splitPeakPool[1].groupIndex == 1 &&
-                    splitPeakPool[1].populationCount >= 5 &&
-                    splitPeakPoolWithActiveCap.size() == 2 &&
-                    splitPeakPoolWithActiveCap[0].groupIndex == 0 &&
-                    splitPeakPoolWithActiveCap[0].populationCount >= 5 &&
-                    splitPeakPoolWithActiveCap[1].groupIndex == 1 &&
-                    splitPeakPoolWithActiveCap[1].populationCount >= 5 &&
-                    !openbus::map::selectMapAiRoadVehicle(noDensityAtStart, 1).has_value() &&
-                    laterPeakPool.size() == 2 &&
+            laterPeakTraffic, roadVehicles, 10, 1.0);
+        require(splitPeakPool.size() == 2, "split peak pool contains both groups");
+        require(splitPeakPool[0].groupIndex == 0 && splitPeakPool[0].populationCount >= 5 &&
+                    splitPeakPool[1].groupIndex == 1 && splitPeakPool[1].populationCount >= 5,
+                "split peak pool reserves each group's maximum");
+        require(!openbus::map::selectMapAiRoadVehicle(noDensityAtStart, 1).has_value(),
+                "future-peak groups have no selectable vehicles at zero density");
+        require(laterPeakPool.size() == 2 &&
                     laterPeakPool[0].populationCount + laterPeakPool[1].populationCount >= 10,
-                "the unscheduled pool reserves split/future group peaks beyond the active cap");
+                "future group peaks are reserved at startup");
         for (const int dayMask : {1, 2, 4}) {
             for (int hourQuarter = 0; hourQuarter <= 96; ++hourQuarter) {
                 const double hour = static_cast<double>(hourQuarter) * 0.25;
@@ -519,18 +522,17 @@ void runFixtureProbe() {
                         splitPeakTraffic,
                         openbus::map::mapTrafficPopulationForDensity(
                             10, openbus::map::mapAiRoadTrafficDensityAtHour(
-                                    splitPeakTraffic, roadVehicles, hour, dayMask),
-                            6),
+                                    splitPeakTraffic, roadVehicles, hour, dayMask)),
                         hour, dayMask);
                 for (const auto& activeGroup : activeGroups) {
                     const auto reserved = std::find_if(
-                        splitPeakPoolWithActiveCap.begin(), splitPeakPoolWithActiveCap.end(),
+                        splitPeakPool.begin(), splitPeakPool.end(),
                         [&](const auto& poolGroup) {
                             return poolGroup.groupIndex == activeGroup.groupIndex;
                         });
-                    require(reserved != splitPeakPoolWithActiveCap.end() &&
+                    require(reserved != splitPeakPool.end() &&
                                 activeGroup.populationCount <= reserved->populationCount,
-                            "per-group reservations cover sampled active targets under the shared cap");
+                            "per-group reservations cover sampled active targets");
                 }
             }
         }
@@ -539,25 +541,24 @@ void runFixtureProbe() {
                 splitPeakTraffic,
                 openbus::map::mapTrafficPopulationForDensity(
                     10, openbus::map::mapAiRoadTrafficDensityAtHour(
-                            splitPeakTraffic, roadVehicles, 0.0, 1),
-                    200),
+                            splitPeakTraffic, roadVehicles, 0.0, 1)),
                 0.0, 1);
         const auto morningPeakReservation =
             uncappedMorningTargets.empty()
-                ? splitPeakPoolWithActiveCap.end()
-                : std::find_if(splitPeakPoolWithActiveCap.begin(),
-                               splitPeakPoolWithActiveCap.end(),
+                ? splitPeakPool.end()
+                : std::find_if(splitPeakPool.begin(),
+                               splitPeakPool.end(),
                                [&](const auto& group) {
                                    return group.groupIndex ==
                                           uncappedMorningTargets[0].groupIndex;
                                });
         require(uncappedMorningTargets.size() == 1 &&
                     uncappedMorningTargets[0].populationCount == 5 &&
-                    morningPeakReservation != splitPeakPoolWithActiveCap.end() &&
+                    morningPeakReservation != splitPeakPool.end() &&
                     morningPeakReservation->populationCount >= 5 &&
-                    splitPeakPoolWithActiveCap[0].populationCount +
-                            splitPeakPoolWithActiveCap[1].populationCount > 6,
-                "group reservations may exceed the shared active population cap");
+                    splitPeakPool[0].populationCount +
+                            splitPeakPool[1].populationCount > 6,
+                "group reservations can exceed any one simultaneous target");
         openbus::map::MapAiTrafficData roundingPeakTraffic = definition.aiTraffic;
         for (openbus::map::MapAiTrafficDensityGroup& group :
              roundingPeakTraffic.unscheduledTrafficDensityGroups) {
@@ -573,30 +574,27 @@ void runFixtureProbe() {
         }
         const auto roundingPeakPool =
             openbus::map::mapAiMaximumRoadTrafficPoolByGroup(
-                roundingPeakTraffic, roadVehicles, 10, 1.0, 5);
+                roundingPeakTraffic, roadVehicles, 10, 1.0);
         const auto roundingPeakTargets =
             openbus::map::mapAiRoadTrafficPopulationByGroup(
                 roundingPeakTraffic,
                 openbus::map::mapTrafficPopulationForDensity(
                     10, openbus::map::mapAiRoadTrafficDensityAtHour(
-                            roundingPeakTraffic, roadVehicles, 3.375, 1),
-                    5),
+                            roundingPeakTraffic, roadVehicles, 3.375, 1)),
                 3.375, 1);
         const auto roundingPeakTargetsAtStart =
             openbus::map::mapAiRoadTrafficPopulationByGroup(
                 roundingPeakTraffic,
                 openbus::map::mapTrafficPopulationForDensity(
                     10, openbus::map::mapAiRoadTrafficDensityAtHour(
-                            roundingPeakTraffic, roadVehicles, 0.0, 1),
-                    5),
+                            roundingPeakTraffic, roadVehicles, 0.0, 1)),
                 0.0, 1);
         const auto roundingPeakTargetsAtEnd =
             openbus::map::mapAiRoadTrafficPopulationByGroup(
                 roundingPeakTraffic,
                 openbus::map::mapTrafficPopulationForDensity(
                     10, openbus::map::mapAiRoadTrafficDensityAtHour(
-                            roundingPeakTraffic, roadVehicles, 12.0, 1),
-                    5),
+                            roundingPeakTraffic, roadVehicles, 12.0, 1)),
                 12.0, 1);
         const auto normalCarRoundingReservation =
             std::find_if(roundingPeakPool.begin(), roundingPeakPool.end(),
@@ -605,11 +603,51 @@ void runFixtureProbe() {
                     roundingPeakTargets[1].groupIndex == 1 &&
                     roundingPeakTargets[1].populationCount == 3 &&
                     roundingPeakTargetsAtStart[1].populationCount == 2 &&
-                    roundingPeakTargetsAtEnd[1].populationCount == 2 &&
+                    roundingPeakTargetsAtEnd[1].populationCount == 4 &&
                     normalCarRoundingReservation != roundingPeakPool.end() &&
                     normalCarRoundingReservation->populationCount >=
                         roundingPeakTargets[1].populationCount,
-                "group startup reservations cover an interior cap-rounding peak between curve knots");
+                "group startup reservations cover rounded targets between curve knots");
+        openbus::map::MapAiTrafficData uncappedRoundingTraffic = definition.aiTraffic;
+        for (auto& group : uncappedRoundingTraffic.unscheduledTrafficDensityGroups) {
+            group.factor = 1.0;
+            if (group.name == "NormalCars") {
+                group.schedules = {{0, {{0.0, 0.6005}, {12.0, 0.6005}}}};
+            } else if (group.name == "Trucks") {
+                group.schedules = {{0, {{0.0, 0.0002}, {12.0, 0.0038}}}};
+            }
+        }
+        const auto uncappedPool = openbus::map::mapAiMaximumRoadTrafficPoolByGroup(
+            uncappedRoundingTraffic, roadVehicles, 1000, 1.0);
+        const auto uncappedTargets = openbus::map::mapAiRoadTrafficPopulationByGroup(
+            uncappedRoundingTraffic,
+            openbus::map::mapTrafficPopulationForDensity(
+                1000, openbus::map::mapAiRoadTrafficDensityAtHour(
+                          uncappedRoundingTraffic, roadVehicles, 1.1, 1)),
+            1.1, 1);
+        const auto normalPool = std::find_if(
+            uncappedPool.begin(), uncappedPool.end(),
+            [](const auto& group) { return group.groupIndex == 1; });
+        const auto normalTarget = std::find_if(
+            uncappedTargets.begin(), uncappedTargets.end(),
+            [](const auto& group) { return group.groupIndex == 1; });
+        for (const double hour : {0.0, 12.0}) {
+            const auto knotTargets = openbus::map::mapAiRoadTrafficPopulationByGroup(
+                uncappedRoundingTraffic,
+                openbus::map::mapTrafficPopulationForDensity(
+                    1000, openbus::map::mapAiRoadTrafficDensityAtHour(
+                              uncappedRoundingTraffic, roadVehicles, hour, 1)),
+                hour, 1);
+            const auto normalKnot = std::find_if(
+                knotTargets.begin(), knotTargets.end(),
+                [](const auto& group) { return group.groupIndex == 1; });
+            require(normalKnot != knotTargets.end() && normalKnot->populationCount == 300,
+                    "uncapped rounding fixture has lower group counts at both knots");
+        }
+        require(normalTarget != uncappedTargets.end() && normalTarget->populationCount == 301 &&
+                    normalPool != uncappedPool.end() &&
+                    normalPool->populationCount >= normalTarget->populationCount,
+                "uncapped group pool covers an interior rounding peak above 200");
         double normalCarSelectionWeight = 0.0;
         double truckSelectionWeight = 0.0;
         for (const openbus::map::MapAiRoadVehicle& vehicle : weekdayRoadVehicles) {

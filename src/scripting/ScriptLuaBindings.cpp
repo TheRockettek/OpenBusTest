@@ -262,10 +262,8 @@ int ScriptRuntime::Impl::safeGetHeightAbovePoint(lua_State* lua) {
 }
 
 int ScriptRuntime::Impl::safeNrSpecRandom(lua_State* lua) {
-    const float seed = popSystemFloat(runtimeFor(lua));
-    std::minstd_rand rand(static_cast<unsigned int>(seed));
-    return returnSystemFloat(lua, static_cast<float>(rand()) /
-                                      static_cast<float>(std::minstd_rand::max()));
+    Impl* runtime = runtimeFor(lua);
+    return returnSystemFloat(lua, runtime->nrSpecRandom(popSystemFloat(runtime)));
 }
 
 int ScriptRuntime::Impl::safeGiveChangeCoin(lua_State* lua) {

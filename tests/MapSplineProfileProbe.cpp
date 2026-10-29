@@ -174,6 +174,36 @@ void runNoCollisionProbe(const std::filesystem::path& fixture) {
             "[nocollision] leaves the profile texture mapping intact");
 }
 
+void runMixedCaseAndDisabledProbe(const std::filesystem::path& fixture) {
+    const openbus::map::MapSplineProfile profile = openbus::map::loadMapSplineProfile(fixture);
+    require(!profile.noCollision, "disabled profile markers do not affect collision");
+    require(profile.textures.size() == 1 && profile.textures.front() == "RoadMixedCase.BMP",
+            "mixed-case directives retain the authored texture name");
+    require(profile.textureAlphaModes.size() == 1 && profile.textureAlphaModes.front() == 2,
+            "mixed-case alpha directive applies to the texture");
+    require(profile.explicitCantHalfWidth == 2.5, "mixed-case cant width is parsed");
+    require(profile.sections.size() == 1 && profile.sections.front().textureIndex == 0 &&
+                profile.sections.front().scaleTextureByLength &&
+                profile.sections.front().points.size() == 2,
+            "mixed-case profile records are parsed while disabled geometry is excluded");
+    requireNear(profile.sections.front().points.front().lateral, -2.0,
+                "enabled profile geometry remains intact");
+    require(profile.paths.size() == 1 && profile.paths.front().pathTypeCode == 0 &&
+                profile.paths.front().numericFieldsValid,
+            "mixed-case path directives retain their payload");
+}
+
+void runMalformedProfileProbe(const std::filesystem::path& fixture) {
+    const openbus::map::MapSplineProfile profile = openbus::map::loadMapSplineProfile(fixture);
+    require(profile.sections.size() == 2 && profile.sections[0].points.size() == 2 &&
+                profile.sections[1].points.size() == 1,
+            "malformed points and strips are ignored without losing following records");
+    requireNear(profile.sections[0].points[1].lateral, 2.0,
+                "parsing resumes at the next directive after a truncated point");
+    requireNear(profile.sections[1].points[0].lateral, 4.0,
+                "a valid strip following an invalid index is retained");
+}
+
 void runInstalledProfileSmoke(const std::filesystem::path& path) {
     const openbus::map::MapSplineProfile profile = openbus::map::loadMapSplineProfile(path);
     require(!profile.editorOnly, "selected installed road profile is runtime-visible");
@@ -183,15 +213,23 @@ void runInstalledProfileSmoke(const std::filesystem::path& path) {
     for (const openbus::map::MapSplineHeightProfile& heightProfile : profile.heightProfiles) {
         require(heightProfile.valid, "installed profile height records are numeric and complete");
     }
-    bool hasRenderableSection = false;
+    std::size_t renderableSections = 0;
+    std::size_t shortSections = 0;
+    std::size_t invalidTextureSections = 0;
     for (const openbus::map::MapSplineProfileSection& section : profile.sections) {
-        if (section.points.size() >= 2 && section.textureIndex >= 0 &&
-            static_cast<std::size_t>(section.textureIndex) < profile.textures.size()) {
-            hasRenderableSection = true;
-            break;
+        if (section.points.size() < 2) {
+            ++shortSections;
+        } else if (section.textureIndex < 0 ||
+                   static_cast<std::size_t>(section.textureIndex) >= profile.textures.size()) {
+            ++invalidTextureSections;
+        } else {
+            ++renderableSections;
         }
     }
-    require(hasRenderableSection, "installed profile has a textured cross-section strip");
+    std::cout << "profile strips: " << profile.sections.size()
+              << ", renderable: " << renderableSections << ", fewer than two points: "
+              << shortSections << ", invalid texture index: " << invalidTextureSections << '\n';
+    require(renderableSections != 0, "installed profile has a textured cross-section strip");
 }
 
 } // namespace
@@ -202,12 +240,18 @@ int main(int argc, char** argv) {
             runProbe(argv[1]);
             runExplicitCantWidthProbe(argv[2]);
             runNoCollisionProbe(argv[3]);
+            runMixedCaseAndDisabledProbe(
+                std::filesystem::path(argv[1]).parent_path() / "map_spline_profile_mixed_case.sli");
+            runMalformedProfileProbe(
+                std::filesystem::path(argv[1]).parent_path() / "map_spline_profile_malformed.sli");
         } else if (argc == 3 && std::string(argv[1]) == "--inspect") {
             runInstalledProfileSmoke(argv[2]);
+        } else if (argc == 3 && std::string(argv[1]) == "--malformed") {
+            runMalformedProfileProbe(argv[2]);
         } else {
             throw std::runtime_error(
                 "expected <fixture> <explicit-width-fixture> <no-collision-fixture> or "
-                "--inspect <installed-profile>");
+                "--inspect <installed-profile> or --malformed <fixture>");
         }
     } catch (const std::exception& error) {
         std::cerr << "map spline profile probe failed: " << error.what() << '\n';

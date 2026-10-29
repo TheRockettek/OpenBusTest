@@ -560,7 +560,8 @@ int main(int argc, char** argv) {
                        "[script]\n1\nsignal.osc\n"
                        "[varnamelist]\n1\nsignal_varlist.txt\n"
                        "[stringvarnamelist]\n1\nsignal_stringlist.txt\n"
-                       "[constfile]\n1\nsignal_const.cfg\n";
+                       "[constfile]\n1\nsignal_const.cfg\n"
+                       "[mesh]\ndisplay.obj\n";
     scriptedScenery.close();
     const SceneryObjectConfig scriptedSceneryConfiguration =
         loadSceneryObjectFile(scriptedSceneryPath);
@@ -576,6 +577,23 @@ int main(int argc, char** argv) {
         scriptedSceneryConfiguration.scriptConfiguration.curves.count("lampcurve") != 1 ||
         !std::filesystem::exists(generatedLuaPath(sceneryScriptPath))) {
         std::cerr << "SCO script, variable lists, constants, or OSC preparation were not loaded\n";
+        return 1;
+    }
+    Variables scriptedModelVariables(ScriptObjectKind::SceneryObject);
+    const ModelConfig scriptedModel = loadModelConfig(
+        scriptedSceneryPath, root, ModelConfigKind::SceneryObject, scriptedModelVariables);
+    if (!scriptedModel.diagnostics.entries.empty()) {
+        std::cerr << "inline SCO model parser incorrectly diagnosed SCO script resources\n";
+        return 1;
+    }
+    const std::filesystem::path nonSceneryScriptPath = root / "script_in_model.cfg";
+    std::ofstream(nonSceneryScriptPath) << "[script]\n1\nsignal.osc\n";
+    Variables nonSceneryScriptVariables(ScriptObjectKind::SceneryObject);
+    const ModelConfig nonSceneryScript = loadModelConfig(
+        nonSceneryScriptPath, root, ModelConfigKind::SceneryObject, nonSceneryScriptVariables);
+    if (nonSceneryScript.diagnostics.entries.empty() ||
+        nonSceneryScript.diagnostics.entries.front().keyword != "script") {
+        std::cerr << "external model CFG script directive was not diagnosed\n";
         return 1;
     }
     const std::filesystem::path treeWithHelperPath = root / "tree_with_editor_helper.sco";

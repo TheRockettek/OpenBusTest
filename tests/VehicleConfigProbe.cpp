@@ -84,6 +84,51 @@ int main() {
         std::ofstream output(path);
         output << "[model]\nmodel.cfg\n" << directive;
     };
+    const std::vector<std::string> unsupportedKeywords = {
+        "fixed",          "scriptshare",             "rowdy_factor",
+        "boogies",        "ai_brakeperformance",    "ai_veh_type",
+        "sinus",          "coupling_front",         "coupling_back",
+        "coupling_front_character",                  "couple_back",
+        "couple_front_open_for_sound",               "control_cable_front",
+        "control_cable_back",                        "new_attachment",
+        "contact_shoe",   "rail_body_osc",
+    };
+    const std::filesystem::path unsupportedPath = root / "unsupported.bus";
+    {
+        std::ofstream output(unsupportedPath);
+        output << "[model]\nmodel.cfg\n";
+        for (const std::string& keyword : unsupportedKeywords) {
+            output << '[' << keyword << "]\npayload\n";
+        }
+        output << "[unknown_probe_keyword]\npayload\n[rollwiderstand]\n1250\n";
+    }
+    for (VehicleFileKind kind : {VehicleFileKind::Bus, VehicleFileKind::Vehicle}) {
+        const VehicleConfig unsupported = loadVehicleConfig(unsupportedPath, kind, false);
+        for (const std::string& keyword : unsupportedKeywords) {
+            const auto diagnostic = std::find_if(
+                unsupported.diagnostics.entries.begin(), unsupported.diagnostics.entries.end(),
+                [&](const ConfigurationDiagnostic& entry) {
+                    return entry.keyword == keyword &&
+                           entry.severity == ConfigurationDiagnostic::Severity::Warning &&
+                           entry.message.find("recognized but unsupported:") == 0;
+                });
+            if (diagnostic == unsupported.diagnostics.entries.end() || diagnostic->line == 0) {
+                std::cerr << "Missing unsupported vehicle keyword diagnostic: " << keyword << '\n';
+                return 1;
+            }
+        }
+        const auto unknown = std::find_if(
+            unsupported.diagnostics.entries.begin(), unsupported.diagnostics.entries.end(),
+            [](const ConfigurationDiagnostic& entry) {
+                return entry.keyword == "unknown_probe_keyword" &&
+                       entry.message == "unknown vehicle keyword";
+            });
+        if (unsupported.diagnostics.hasErrors() || unknown == unsupported.diagnostics.entries.end() ||
+            unsupported.rollingResistanceForceNewtons != 1250.0) {
+            std::cerr << "Unsupported vehicle records disrupted later supported directives\n";
+            return 1;
+        }
+    }
     const std::filesystem::path zeroResistancePath = root / "zero_roll.bus";
     writeResistanceConfig(zeroResistancePath, "[rollwiderstand]\n0\n");
     const VehicleConfig zeroResistance =

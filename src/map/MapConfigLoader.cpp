@@ -2122,12 +2122,12 @@ mapAiRoadTrafficPopulationByGroup(const MapAiTrafficData& traffic, std::size_t p
 
 std::vector<MapAiRoadTrafficGroupPopulation> mapAiMaximumRoadTrafficPoolByGroup(
     const MapAiTrafficData& traffic, const std::vector<MapAiRoadVehicle>& vehicles,
-    std::size_t basePopulation, double densityMultiplier, std::size_t activePopulationCap) {
+    std::size_t basePopulation, double densityMultiplier) {
     if (!std::isfinite(densityMultiplier) || densityMultiplier < 0.0) {
         throw std::invalid_argument("AI road traffic pool density multiplier is invalid");
     }
     if (!traffic.hasUnscheduledTrafficDensityFile || basePopulation == 0 ||
-        densityMultiplier == 0.0 || activePopulationCap == 0) {
+        densityMultiplier == 0.0) {
         return {};
     }
 
@@ -2162,7 +2162,6 @@ std::vector<MapAiRoadTrafficGroupPopulation> mapAiMaximumRoadTrafficPoolByGroup(
     // Bound each group's maximum across curve knots, including rounding between knots.
     std::unordered_map<std::size_t, std::size_t> maximumByGroup;
     std::unordered_map<std::size_t, long double> maximumExpectedByGroup;
-    std::unordered_map<std::size_t, long double> maximumShareByGroup;
     for (const int dayOfWeekMask : {1, 2, 4}) {
         for (const double hour : candidateHours) {
             const double density =
@@ -2188,12 +2187,13 @@ std::vector<MapAiRoadTrafficGroupPopulation> mapAiMaximumRoadTrafficPoolByGroup(
                 continue;
             }
             for (const auto& [groupIndex, groupWeight] : groupWeightByIndex) {
+                if (groupWeight <= 0.0L) {
+                    continue;
+                }
                 maximumExpectedByGroup[groupIndex] =
                     std::max(maximumExpectedByGroup[groupIndex],
                              static_cast<long double>(basePopulation) * densityMultiplier *
                                  groupWeight / totalGroupFactors);
-                maximumShareByGroup[groupIndex] =
-                    std::max(maximumShareByGroup[groupIndex], groupWeight / totalWeight);
             }
         }
     }
@@ -2206,11 +2206,11 @@ std::vector<MapAiRoadTrafficGroupPopulation> mapAiMaximumRoadTrafficPoolByGroup(
     pool.reserve(maximumByGroup.size());
     for (const auto& [groupIndex, sampledMaximum] : maximumByGroup) {
         const long double densityBound = std::ceil(maximumExpectedByGroup[groupIndex] + 0.5L);
-        const long double capBound = std::ceil(static_cast<long double>(activePopulationCap) *
-                                               maximumShareByGroup[groupIndex]);
-        const std::size_t boundedMaximum = static_cast<std::size_t>(
-            std::min({densityBound, capBound,
-                      static_cast<long double>(std::numeric_limits<std::size_t>::max())}));
+        if (!std::isfinite(densityBound) ||
+            densityBound >= std::ldexp(1.0L, std::numeric_limits<std::size_t>::digits)) {
+            throw std::overflow_error("AI road traffic pool exceeds the supported integer range");
+        }
+        const std::size_t boundedMaximum = static_cast<std::size_t>(densityBound);
         const std::size_t populationCount = std::max(sampledMaximum, boundedMaximum);
         if (populationCount == 0) {
             continue;
@@ -2450,7 +2450,12 @@ std::size_t mapTrafficPopulationForDensity(std::size_t basePopulation,
     }
     const long double scaled =
         static_cast<long double>(basePopulation) * static_cast<long double>(*density);
-    return static_cast<std::size_t>(std::floor(scaled + 0.5L));
+    const long double rounded = std::round(scaled);
+    if (!std::isfinite(rounded) ||
+        rounded >= std::ldexp(1.0L, std::numeric_limits<std::size_t>::digits)) {
+        throw std::overflow_error("Map traffic population exceeds the supported integer range");
+    }
+    return static_cast<std::size_t>(rounded);
 }
 
 MapGroundTextureTiling

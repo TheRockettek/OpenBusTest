@@ -44,6 +44,28 @@ const std::string& ScriptRuntime::Impl::nativePeekString() const {
     return stringStack.empty() ? empty : stringStack.back();
 }
 
+void ScriptRuntime::Impl::warnPlaceholderMacro(const std::string& name) {
+    if (warnedPlaceholderMacros.insert(name).second) {
+        log(LogLevel::Warning, "system macro " + name +
+                                   " is not implemented; returning a placeholder");
+    }
+}
+
+float ScriptRuntime::Impl::nrSpecRandom(float seed) {
+    const double truncated = std::trunc(static_cast<double>(seed));
+    if (!std::isfinite(truncated) || truncated < 0.0 ||
+        truncated >= std::ldexp(1.0, std::numeric_limits<unsigned int>::digits)) {
+        if (!warnedInvalidRandomSeed) {
+            log(LogLevel::Warning, "NrSpecRandom seed is outside the supported range; "
+                                   "returning zero");
+            warnedInvalidRandomSeed = true;
+        }
+        return 0.0F;
+    }
+    std::minstd_rand random(static_cast<unsigned int>(truncated));
+    return static_cast<float>(random()) / static_cast<float>(std::minstd_rand::max());
+}
+
 void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
     const auto popFloats = [this](std::size_t count) {
         while (count-- > 0 && !floatStack.empty()) {
@@ -117,12 +139,18 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
         stringStack.push_back(localState.getString("tt_line_string"));
     } else if (name == "getttbusstopname") {
         stringStack.push_back(localState.getString("tt_busstop_name"));
-    } else if (name == "getterminusindex" || name == "getbusstopindex" || name == "getrouteindex") {
+    } else if (name == "getbusstopindex") {
+        nativePopString();
+        warnPlaceholderMacro(name);
+        pushNumber(-1.0F);
+    } else if (name == "getterminusindex" || name == "getrouteindex") {
         popFloats(1);
+        warnPlaceholderMacro(name);
         pushNumber(-1.0);
     } else if (name == "getterminusstring" || name == "getbusstopstring" ||
                name == "getroutebusstopident") {
         popFloats(2);
+        warnPlaceholderMacro(name);
         pushString();
     } else if (name == "gethumancountonpathlink" || name == "gethumancountonseat") {
         int index = -1;
@@ -134,19 +162,26 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
     } else if (name == "getdepotstringglobal" || name == "getarrbusline" ||
                name == "getarrbusterminus") {
         popFloats(1);
+        warnPlaceholderMacro(name);
         pushString();
     } else if (name == "getheightabovepoint") {
         popFloats(3);
+        warnPlaceholderMacro(name);
         pushNumber(0.0);
     } else if (name == "nrspecrandom") {
-        const unsigned int seed = static_cast<unsigned int>(nativePopFloat());
-        std::minstd_rand random(seed);
-        pushNumber(static_cast<float>(random()) / static_cast<float>(std::minstd_rand::max()));
+        pushNumber(nrSpecRandom(nativePopFloat()));
+    } else if (name == "getttterminusindex" || name == "getttbusstopcount" ||
+               name == "getttbusstopindex" || name == "getttdelay") {
+        warnPlaceholderMacro(name);
+        pushNumber(0.0F);
+    } else if (name == "getttbusstoparr" || name == "getttbusstopdep") {
+        nativePopFloat();
+        warnPlaceholderMacro(name);
+        pushNumber(0.0F);
     } else if (name == "getterminuscode" || name == "getrouteterminusindex" ||
-               name == "getbusstopcount" || name == "getttterminusindex" ||
-               name == "getttbusstopcount" || name == "getttbusstopindex" || name == "getttdelay" ||
-               name == "getarrbustimediff") {
+               name == "getbusstopcount" || name == "getarrbustimediff") {
         popFloats(1);
+        warnPlaceholderMacro(name);
         pushNumber(0.0);
     } else if (name == "stnewtex") {
         int index = -1;

@@ -76,7 +76,8 @@ int main() {
     vehicleConfig << "[friendlyname]\nTest\nAI car\nDefault\n"
                      "[model]\nmodel/model.cfg\n"
                      "[cog]\n0.1\n0\n1.2\n"
-                     "[rot_pnt_long]\n-2\n";
+                     "[rot_pnt_long]\n-2\n"
+                     "[rowdy_factor]\n0.5\n";
     vehicleConfig.close();
 
     std::ofstream modelConfig(root / "model/model.cfg");
@@ -104,7 +105,9 @@ int main() {
         log.find("[cog]: horizontal center-of-gravity offsets are retained but not applied") !=
             std::string::npos &&
         log.find("[rot_pnt_long]: recognized and retained but not applied to vehicle physics") !=
-            std::string::npos;
+            std::string::npos &&
+        log.find("[rowdy_factor]: recognized but unsupported: family-specific ride behavior is "
+                 "not implemented") != std::string::npos;
     logInput.close();
     openbus::probe::removeProbeDirectory(root);
 

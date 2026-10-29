@@ -298,6 +298,15 @@ agreement, **not visual parity with OMSI**.
 The `.sli` reader supports `[texture]`, `[profile]`, `[profilepnt]`, the
 per-texture `[scaleTexByLength]` marker for textured cross-section strips,
 `[halfcantwidth]` as the preferred cant-clamp half-width, and `[nocollision]`.
+Keyword matching is case-insensitive, while texture names and other payloads
+retain their authored case. `-<DISABLED>-` / `-<ENABLED>-` blocks are skipped
+using the same marker behavior as the shared configuration reader.
+Malformed or incomplete `[profilepnt]` records and invalid or missing `[profile]`
+texture indices are logged with their source line and ignored; subsequent
+bracketed records remain available to the parser.
+`OpenBusMapSplineProfileProbe --inspect <profile.sli>` reports section counts,
+including short strips and invalid texture indices; a renderable count does not
+verify that texture files exist or establish visual parity.
 The latter is treated as a profile-level marker: it retains rendered spline
 sections but omits their road collision geometry. Installed profiles use this
 marker, but its exact native OMSI spline semantics have not been independently

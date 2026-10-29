@@ -5,6 +5,7 @@
 namespace {
 
 struct FontDirectoryIndex {
+    std::filesystem::file_time_type modified;
     std::unordered_map<std::string, std::filesystem::path> pathsByName;
 };
 
@@ -26,15 +27,22 @@ std::string normalizedFontDirectoryKey(const std::filesystem::path& directory) {
     }
     normalized = normalized.lexically_normal();
     std::string key = normalized.generic_string();
+#ifdef _WIN32
     std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
         return static_cast<char>(std::tolower(character));
     });
+#endif
     return key;
 }
 
-std::vector<std::string> readFontLines(const std::filesystem::path& path) {
+std::vector<std::string> readFontLines(const std::filesystem::path& path, bool& succeeded) {
     std::vector<std::string> lines;
     std::ifstream input(path);
+    if (!input) {
+        scriptRuntimeLogger.Warning("Could not open font definition '" + path.string() + "'");
+        succeeded = false;
+        return lines;
+    }
     std::string line;
     while (std::getline(input, line)) {
         const std::size_t first = line.find_first_not_of(" \t\r\n");
@@ -45,6 +53,10 @@ std::vector<std::string> readFontLines(const std::filesystem::path& path) {
             lines.push_back(line.substr(first, last - first + 1));
         }
     }
+    succeeded = !input.bad();
+    if (!succeeded) {
+        scriptRuntimeLogger.Warning("Could not read font definition '" + path.string() + "'");
+    }
     return lines;
 }
 
@@ -53,42 +65,76 @@ fontDirectoryIndex(const std::filesystem::path& directory) {
     const std::string key = normalizedFontDirectoryKey(directory);
     std::lock_guard<std::mutex> lock(fontDirectoryIndexMutex());
     auto& indexes = fontDirectoryIndexes();
+    std::error_code error;
+    const auto status = std::filesystem::status(directory, error);
+    if (error || !std::filesystem::is_directory(status)) {
+        indexes.erase(key);
+        if (error && error != std::errc::no_such_file_or_directory &&
+            error != std::errc::not_a_directory) {
+            scriptRuntimeLogger.Warning("Could not inspect font directory '" + directory.string() +
+                                        "': " + error.message());
+        }
+        return std::make_shared<FontDirectoryIndex>();
+    }
+    const auto modified = std::filesystem::last_write_time(directory, error);
+    if (error) {
+        indexes.erase(key);
+        scriptRuntimeLogger.Warning("Could not read font directory timestamp '" +
+                                    directory.string() + "': " + error.message());
+        return std::make_shared<FontDirectoryIndex>();
+    }
     const auto cached = indexes.find(key);
-    if (cached != indexes.end()) {
+    if (cached != indexes.end() && cached->second->modified == modified) {
         return cached->second;
     }
 
     auto index = std::make_shared<FontDirectoryIndex>();
-    std::error_code error;
-    if (std::filesystem::is_directory(directory, error) && !error) {
-        std::filesystem::directory_iterator entry(
-            directory, std::filesystem::directory_options::skip_permission_denied, error);
-        const std::filesystem::directory_iterator end;
-        for (; !error && entry != end; entry.increment(error)) {
-            std::error_code statusError;
-            if (!entry->is_regular_file(statusError) || statusError ||
-                lower(entry->path().extension().string()) != ".oft") {
+    index->modified = modified;
+    bool complete = true;
+    std::filesystem::directory_iterator entry(directory, error);
+    const std::filesystem::directory_iterator end;
+    for (; !error && entry != end; entry.increment(error)) {
+        std::error_code statusError;
+        if (!entry->is_regular_file(statusError) || statusError ||
+            lower(entry->path().extension().string()) != ".oft") {
+            if (statusError) {
+                complete = false;
+                scriptRuntimeLogger.Warning("Could not inspect font file '" +
+                                            entry->path().string() + "': " +
+                                            statusError.message());
+            }
+            continue;
+        }
+        bool readSucceeded = false;
+        const std::vector<std::string> lines = readFontLines(entry->path(), readSucceeded);
+        complete = complete && readSucceeded;
+        for (std::size_t lineIndex = 0; lineIndex + 5 < lines.size(); ++lineIndex) {
+            std::string section = lines[lineIndex];
+            std::transform(section.begin(), section.end(), section.begin(),
+                           [](unsigned char character) {
+                               return static_cast<char>(std::tolower(character));
+                           });
+            if (section != "[newfont]") {
                 continue;
             }
-            const std::vector<std::string> lines = readFontLines(entry->path());
-            for (std::size_t lineIndex = 0; lineIndex + 5 < lines.size(); ++lineIndex) {
-                std::string section = lines[lineIndex];
-                std::transform(section.begin(), section.end(), section.begin(),
-                               [](unsigned char character) {
-                                   return static_cast<char>(std::tolower(character));
-                               });
-                if (section != "[newfont]") {
-                    continue;
-                }
-                std::string name = lines[lineIndex + 1];
-                std::transform(name.begin(), name.end(), name.begin(), [](unsigned char character) {
-                    return static_cast<char>(std::tolower(character));
-                });
-                index->pathsByName.try_emplace(std::move(name), entry->path());
-            }
+            std::string name = lines[lineIndex + 1];
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char character) {
+                return static_cast<char>(std::tolower(character));
+            });
+            index->pathsByName.try_emplace(std::move(name), entry->path());
         }
     }
-    indexes.emplace(key, index);
+    if (error) {
+        indexes.erase(key);
+        scriptRuntimeLogger.Warning("Could not list font directory '" + directory.string() +
+                                    "': " + error.message());
+        return index;
+    }
+    if (complete) {
+        indexes.insert_or_assign(key, index);
+    } else {
+        indexes.erase(key);
+    }
     return index;
 }
 
@@ -352,9 +398,13 @@ ScriptRuntime::Impl::loadFont(const std::string& requestedName) {
 
     auto font = std::make_shared<FontAsset>();
     std::vector<std::string> lines;
+    bool readSucceeded = false;
     {
         openbus::rendering::TraceScope readTrace("script", "ScriptRuntime.loadFont.readDefinition");
-        lines = ::readFontLines(fontPath);
+        lines = ::readFontLines(fontPath, readSucceeded);
+    }
+    if (!readSucceeded) {
+        return nullptr;
     }
     for (std::size_t lineIndex = 0; lineIndex < lines.size(); ++lineIndex) {
         if (lines[lineIndex] != "[newfont]" && lines[lineIndex] != "[char]") {

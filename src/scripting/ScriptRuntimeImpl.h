@@ -37,6 +37,7 @@ extern "C" {
 #include <sstream>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 extern Logger scriptRuntimeLogger;
 
@@ -89,6 +90,8 @@ struct ScriptRuntime::Impl {
     std::vector<std::string> errors;
     std::vector<float> floatStack;
     std::vector<std::string> stringStack;
+    std::unordered_set<std::string> warnedPlaceholderMacros;
+    bool warnedInvalidRandomSeed = false;
     std::unordered_map<int, ScriptTexture> scriptTextures;
     std::unordered_map<int, std::pair<int, int>> scriptTextureDimensions;
     enum class TextAlignment { Left, Center, Right };
@@ -163,6 +166,8 @@ struct ScriptRuntime::Impl {
     const std::string& nativePeekString() const;
 
     void executeSystemMacro(const std::string& name);
+    void warnPlaceholderMacro(const std::string& name);
+    float nrSpecRandom(float seed);
 
     bool executeNativeFunction(const std::string& functionName, int callDepth = 0);
 
@@ -286,7 +291,6 @@ struct ScriptRuntime::Impl {
     // TODO: Implement vehicle-relative ground ray casting.
     static int safeGetHeightAbovePoint(lua_State* lua);
 
-    // TODO: Implement deterministic fleet-number and seed-based randomization.
     static int safeNrSpecRandom(lua_State* lua);
 
     // TODO: Implement currency configuration and change-coin issuance.

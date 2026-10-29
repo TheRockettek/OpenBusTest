@@ -116,7 +116,7 @@ rules; `Emergency` and `Ambulance` use ambulance rules; `Trucks` and
 legacy vehicle-list formats are not supported by this runtime. Depot `.bus`
 entries continue to provide scheduled AI buses on timetable routes.
 `OPENBUS_MAP_AI_COUNT` sets the density-scaled road-vehicle base population
-(default `200`, maximum `200`).
+(default `200`, maximum `1000`).
 Trucks are permitted on road paths by default unless the map's path rules
 explicitly prohibit them; configured group and path density rules still apply.
 For mirrored road splines, OpenBus flips unidirectional lane directions along
@@ -132,7 +132,7 @@ lines in the F2 path overlay, unlike spline routes labeled `S<ID>` or `H<ID>`.
 The selected start date/time drives the in-game traffic clock's `Time` system
 variable, which advances using elapsed simulation time. The selected date sets
 the system variables `Day`, `Month`, and `Year`;
-`DayOfYear` is validated against that date. Traffic weekday schedules derive
+`DayOfYear` is computed from that date. Traffic weekday schedules derive
 their starting weekday from this same calendar (Sunday `0` through Saturday
 `6`), and the date advances with simulation time across midnight and year
 boundaries. Chrono tile overrides are currently disabled; the base map tile
@@ -146,15 +146,15 @@ clock advances. A pool sized for each schedule's maximum is queued at
 startup; vehicle instances are constructed and their scripts loaded on asset
 workers, while model mesh parsing is deferred to asynchronous requests.
 For unscheduled traffic, separate group peaks can require a queued pool larger
-than the active population cap; only the simultaneously active population is
-capped at `200`.
+than any simultaneous target. There is no fixed active population cap; available
+pool capacity and safe spawn positions can still limit the active population.
 Active vehicle meshes use the per-frame upload budget in order of distance to
 the player, so nearby traffic is prioritized over farther vehicles.
 `OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER` scales the map's scheduled density
 factor for road vehicles, buses, and pedestrians (default `1.0`, maximum
-`100.0`; each active population remains capped at `200`). Thus a multiplier of `10`
-does not mean 10 times the population cap: the target is the base population
-times the map's density factor times this multiplier. The `run.bat` testing
+`1000.0`). The target is the base population times the map's density factor
+times this multiplier; high values can request very large pools and consume
+substantial resources. The `run.bat` testing
 launcher defaults it to `10.0`, and `profile.bat` sets it to `100` for denser
 profiling traffic; `run.bat` respects a value already set in the
 environment; set it to `1.0` for normal scheduled density.
@@ -397,14 +397,14 @@ partial:
   Unimplemented bracketed sections in tile files and `global.cfg` are reported
   with line numbers during map loading. Global identity, description, seasons,
   and other documented metadata are retained; road/passenger density points
-  drive provisional, separately capped AI populations.
+  drive provisional, separate AI population targets.
   `[variable_terrain]` and `[variable_terrainlightmap]` markers are recognized
   and reported, but their dynamic terrain/lightmap behavior is not rendered.
   `[varparent]` and spline-terrain alignment data remain partial. `[rule]` and
   `[kill_rule]` apply supported group-specific speed, density, priority, and
   vehicle-access settings to road paths; see the [OMSI map format reference](Docs/OMSI2_MAP_FORMAT_REFERENCE.md).
   The separate `unsched_trafficdens.txt` group/day schedule applies its hourly
-  curves to the capped road-traffic population target, startup pool composition,
+  curves to the road-traffic population target, startup pool composition,
   and per-group active targets. The maximum reserved pool is fixed at startup,
   but unfilled reservations are retried as connected road lanes stream in.
   Weekday schedules use the selected map calendar and change day at its
