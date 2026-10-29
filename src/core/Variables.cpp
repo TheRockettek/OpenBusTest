@@ -145,7 +145,7 @@ SystemVariables::SystemVariables() : Variables(ScriptObjectKind::System) {
         {"day", static_cast<float>(localDate.tm_mday)},
         {"month", static_cast<float>(localDate.tm_mon + 1)},
         {"year", static_cast<float>(localDate.tm_year + 1900)},
-        {"dayofyear", static_cast<float>(localDate.tm_yday)},
+        {"dayofyear", static_cast<float>(localDate.tm_yday + 1)},
         // Drag motion is scoped to interaction callbacks, not absolute cursor position.
         {"mouse_x", 0.0},
         {"mouse_y", 0.0},
@@ -205,7 +205,7 @@ void SystemVariables::updateSimulationClock(double elapsedSeconds) {
         {"day", static_cast<float>(static_cast<unsigned>(calendarDate.day()))},
         {"month", static_cast<float>(static_cast<unsigned>(calendarDate.month()))},
         {"year", static_cast<float>(static_cast<int>(calendarDate.year()))},
-        {"dayofyear", static_cast<float>((currentDate - sys_days{firstDayOfYear}).count())},
+        {"dayofyear", static_cast<float>((currentDate - sys_days{firstDayOfYear}).count() + 1)},
     });
 }
 

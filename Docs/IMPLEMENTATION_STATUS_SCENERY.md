@@ -15,6 +15,9 @@ Scope: map scenery-object `.sco` files, inline/external scenery model CFGs, thei
 - `[collision_mesh]` O3D geometry from SCOs and external model CFGs is spatially indexed and clipped into each overlapped streamed tile, including long bridges and custom junction meshes. Without an authored collision mesh, `[boundingbox]` supplies a box collider; when neither is present, first-LOD O3D model geometry is used. `[nocollision]` suppresses collision unless the SCO also declares `[surface]`. Attached/scenery repeater collision and non-O3D formats remain unsupported.
 - `[crashmode_pole]` scenery is removed from static mesh collision and represented as a streamed capsule, sized from its collision-mesh bounds. Vehicle chassis impacts accumulate configured momentum-based rotation; poles bend visually around their placement base and disable collision at the break angle. The response is a kinematic approximation: bending is applied per contact episode, breakage does not produce a detached/falling body, and asset-axis/pivot parity and live-map behavior still need validation.
 - `[groups]`, `[friendlyname]`, and `[helparrow]` are accepted as SCO metadata/editor fields and ignored by static rendering.
+- `[description]` blocks are ignored by scenery rendering and by the inline-model
+  loader, even when their free-form text resembles model directives. An absent
+  `[end]` is reported as an error.
 - Text-texture glyphs (`[texttexture]`, `[texttexture_enh]`) are multiplied by the mesh's diffuse colour and receive the same ambient/sun, lightmap and interior lighting as ordinary textures; nightmap, transmap and bumpmap layers are not applied to them. `[matl_freetex]` surfaces are lit the same way.
 - Material emission blends the shaded surface toward its sampled, unlit colour. White emission in route-arrow, route-text and DL05 display O3D materials therefore preserves texture RGB and black pixels instead of adding white and saturating the surface.
 
@@ -50,6 +53,11 @@ no sign-specific colour correction is applied.
 | Dynamic sound and interaction fields | Not implemented | Scenery sound playback/callbacks and scenery-object mouse-event dispatch are not connected. |
 
 Scenery model CFGs share material and display limitations with bus model CFGs: incomplete CTC/texture replacement, lighting, alpha-depth parity, terrain mapping, and text-format details. See [BUS model CFG status](IMPLEMENTATION_STATUS_BUS.md#bus-model-cfg) for those shared model keywords; their presence in an SCO does not imply better scenery support.
+
+Inline SCO texture-address markers use the shared material parser and renderer,
+including border, clamp, mirror, and mirror-once modes. A GPU probe verifies
+border sampling and shared-texture wrap changes; representative scenery visual
+parity is not yet established.
 
 `[terrainmapping]` belongs to the model/scenery CFG dialect, not the vehicle `.bus` file. It is not dispatched by the shared model-config loader, so terrain/material mapping remains unimplemented for scenery (and is not a BUS-level feature either).
 

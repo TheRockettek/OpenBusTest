@@ -352,8 +352,8 @@ The simulation clock variables (Time, Day, Month, Year, DayOfYear), Timegap,
 GetTime, mouse_x, and mouse_y are updated by the runtime. mouse_x and mouse_y
 are handler-scoped drag deltas; mouse_cursor_x and mouse_cursor_y are OpenBus
 extensions containing cursor coordinates.
-OpenBus currently publishes DayOfYear as zero-based (0 on January 1), unlike
-the one-based OMSI convention described above.
+DayOfYear uses the one-based OMSI convention (1 on January 1). This replaces
+the previous OpenBus zero-based behavior.
 
 PrecipType and PrecipRate are initialized from the selected weather and share
 the values used by precipitation rendering. Their predefined vehicle-local

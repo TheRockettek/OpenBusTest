@@ -73,6 +73,9 @@ motion checks in both supported rendering modes.
   DXT1/DXT4/DXT5 DDS, transmap alpha, lightmap, and free-texture rendering.
   JPEG decoding is covered by a compact grayscale fixture, and all five
   texture address modes are checked from CFG parsing through GL enum mapping.
+  Inline SCO address directives are recognized by both scenery and model
+  loaders; GPU coverage verifies border sampling on both axes and wrap-state
+  changes on a shared texture. Representative scenery parity remains unverified.
   A GPU material probe verifies nightmap overlays, black-texel neutrality, and
   zero-strength behavior, plus directional environment-map sampling and blend
   opacity with a generated map.
@@ -385,7 +388,7 @@ for alignment is not mistaken for supporting it.
 - [ ] Implement observed configuration records that remain unhandled in their
   current contexts: SCO `[approachdist]`, `[carpark_p]`, `[collision_mesh]`,
   `[complexity]`, `[crossingproblem]`, `[entrypoint]`, `[joinable]`, `[mass]`,
-  `[momentofintertia]`, `[matl_texadress_border]`, `[newanim]`,
+  `[momentofintertia]`, `[newanim]`,
   `[nomaplighting]`, `[shadow]` per-mesh cast-shadow behavior,
   `[splinehelper]`, and `[terrainhole]`; model-config
   `[crashmode_pole]`, `[detail_factor]`, `[LightMapMapping]`,
@@ -407,9 +410,11 @@ for alignment is not mistaken for supporting it.
   supported operation names belong in this register. The prior live warning
   count is not retained as a keyword count because warning tokens can include
   non-keyword text; re-audit source records before publishing a count.
-- [ ] Define safe handling for general metadata `[friendlyname]`,
-  `[description]`, and `[usrinfo]`; never copy `[usrinfo]` values into logs,
-  diagnostics, or source control.
+- [~] BUS and map descriptions are retained; SCO descriptions are ignored by
+  rendering and skipped as free-form blocks by both SCO and inline-model
+  loaders, including keyword-shaped text. Define remaining metadata handling
+  for `[friendlyname]` and `[usrinfo]`; never copy `[usrinfo]` values into
+  logs, diagnostics, or source control.
 
 #### Documented script API gaps
 
@@ -435,7 +440,7 @@ terrain, or arrival-board data:
 - [~] Verify OMSI parity for `NrSpecRandom`; OpenBus now provides deterministic
   seeded output, but its algorithm and range still need compatibility evidence.
 - [~] The selected simulation calendar updates `Time`, `Day`, `Month`, `Year`,
-  and zero-based `DayOfYear` across midnight. Traffic density weekday classes
+  and one-based `DayOfYear` across midnight. Traffic density weekday classes
   now change at the selected calendar's midnight, including weekend and week
   boundaries; focused clock and density probes cover a Friday-night start and
   fractional start-time carry across midnight.
@@ -1027,8 +1032,10 @@ limitations.
   are filtered by their indexed owning tile before route construction; their
   active first segments are reused for endpoint lookup and debug geometry.
   A traffic-runtime probe compares the pre-filtered results with the previous
-  route-first selection, including ambiguous IDs and multiple tiles. Sampled
-  AI actor poses are still recomputed; measured overlay performance remains
+  route-first selection, including ambiguous IDs and multiple tiles. The
+  behavior overlay reuses its per-frame current actor poses and shares each
+  predicted pose between its trajectory and reservation boxes. Other diagnostic
+  pose samples remain; measured overlay performance and visual parity remain
   to be validated on representative maps.
 - [~] `OpenBusVehicleIndirectReuseProbe` checks opaque/transparent list reuse,
   script-variable-driven material reclassification, and view-dependent

@@ -46,6 +46,18 @@ bool check(const VehicleConfig& configuration, const char* backend) {
     local.setString("tt_line_string", "42");
     local.setString("tt_busstop_name", "Central Station");
     ScriptRuntime runtime(configuration, local, simulation);
+    system.configureSimulationClock(2024, 12, 31, 86399.0);
+    runtime.invokeEntryPoint("trigger_system_environment");
+    if (local.get("environment_dayofyear") != 366.0F) {
+        std::cerr << backend << ": leap-year day was not published to scripts\n";
+        return false;
+    }
+    system.updateSimulationClock(1.0);
+    runtime.invokeEntryPoint("trigger_system_environment");
+    if (local.get("environment_dayofyear") != 1.0F) {
+        std::cerr << backend << ": new-year day was not published to scripts\n";
+        return false;
+    }
     for (const auto& [type, rate, available] :
          {std::tuple{1, 0.75, true}, std::tuple{2, 0.25, false},
           std::tuple{0, 0.0, true}}) {
@@ -242,7 +254,8 @@ int main() {
                   "(L.S.PrecipRate) (S.L.environment_preciprate)\n"
                   "(L.L.PrecipType) (S.L.local_preciptype)\n"
                   "(L.L.PrecipRate) (S.L.local_preciprate)\n"
-                  "(L.S.NoSound) (S.L.environment_nosound)\n{end}\n"
+                  "(L.S.NoSound) (S.L.environment_nosound)\n"
+                  "(L.S.DayOfYear) (S.L.environment_dayofyear)\n{end}\n"
                   "{trigger:passenger_ticketing}\n"
                   "0 (M.V.getticketvalue) (S.L.ticket_value_result)\n"
                   "1 (M.V.getticketvalue) (S.L.nonfinite_ticket_value_result)\n"

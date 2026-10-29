@@ -57,6 +57,33 @@ int main(int argc, char** argv) {
     config.close();
 
     Variables variables(ScriptObjectKind::Vehicle);
+    const std::filesystem::path descriptionPath = root / "description.sco";
+    std::ofstream description(descriptionPath);
+    description << "[description]\nFree-form text\n[mesh]\nmissing.obj\n"
+                   "[matl]\nnot-a-material.bmp\n0\n\n[end]\n"
+                   "[mesh]\ndisplay.obj\n";
+    description.close();
+    const ModelConfig descriptionModel =
+        loadModelConfig(descriptionPath, root, ModelConfigKind::SceneryObject, variables);
+    const SceneryObjectConfig descriptionScenery = loadSceneryObjectFile(descriptionPath);
+    if (!descriptionModel.diagnostics.entries.empty() ||
+        !descriptionScenery.diagnostics.entries.empty() || descriptionModel.parts.size() != 1 ||
+        descriptionModel.parts[0].objPath.filename() != "display.obj" ||
+        !descriptionModel.parts[0].materialStates.empty()) {
+        std::cerr << "SCO description contents were interpreted as model directives\n";
+        return 1;
+    }
+    const std::filesystem::path unterminatedDescriptionPath = root / "unterminated_description.sco";
+    std::ofstream unterminatedDescription(unterminatedDescriptionPath);
+    unterminatedDescription << "[description]\n[mesh]\ndisplay.obj\n";
+    unterminatedDescription.close();
+    const ModelConfig unterminatedDescriptionModel = loadModelConfig(
+        unterminatedDescriptionPath, root, ModelConfigKind::SceneryObject, variables);
+    if (!unterminatedDescriptionModel.diagnostics.hasErrors() ||
+        !unterminatedDescriptionModel.parts.empty()) {
+        std::cerr << "unterminated SCO description was not diagnosed\n";
+        return 1;
+    }
     const std::filesystem::path objectScopePath = root / "object_scope.sco";
     std::ofstream objectScope(objectScopePath);
     objectScope << "[fixed]\n[nocollision]\n[absheight]\n"

@@ -362,6 +362,40 @@ int main() {
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
 
+    const auto sampleAddressMode = [&](float u, float v, GLenum wrapS, GLenum wrapT) {
+        auto addressVertices = vertices;
+        for (std::size_t index = 0; index < addressVertices.size(); index += 13) {
+            addressVertices[index + 3] = u;
+            addressVertices[index + 4] = v;
+        }
+        pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+        pglBufferData(GL_ARRAY_BUFFER, sizeof(addressVertices), addressVertices.data(),
+                      GL_STATIC_DRAW);
+        ModelMaterial addressMaterial;
+        addressMaterial.texture = white;
+        addressMaterial.textured = true;
+        addressMaterial.textureWrapS = wrapS;
+        addressMaterial.textureWrapT = wrapT;
+        addressMaterial.emissionColor = {1, 1, 1};
+        return draw(addressMaterial, {1, 1, 1}, 1.0);
+    };
+    const auto borderInside =
+        sampleAddressMode(0.5F, 0.5F, GL_CLAMP_TO_BORDER, GL_CLAMP_TO_BORDER);
+    const auto borderOutsideS =
+        sampleAddressMode(1.5F, 0.5F, GL_CLAMP_TO_BORDER, GL_CLAMP_TO_BORDER);
+    const auto borderOutsideT =
+        sampleAddressMode(0.5F, -0.5F, GL_CLAMP_TO_BORDER, GL_CLAMP_TO_BORDER);
+    const auto repeatAfterBorder = sampleAddressMode(1.5F, -0.5F, GL_REPEAT, GL_REPEAT);
+    const auto clampAfterRepeat =
+        sampleAddressMode(1.5F, -0.5F, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+    if (borderInside[0] < 250 || borderOutsideS[0] > 2 || borderOutsideT[0] > 2 ||
+        repeatAfterBorder[0] < 250 || clampAfterRepeat[0] < 250) {
+        std::cerr << "texture border addressing or shared-texture wrap transition failed\n";
+        passed = false;
+    }
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
+
     resetFrameTriangleCount();
     resetFrameReflectionTriangleCount();
     const ModelMaterial counterMaterial;

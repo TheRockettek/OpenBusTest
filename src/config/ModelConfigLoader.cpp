@@ -436,6 +436,21 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         const std::string keyword = lower(line.keyword());
         if (kind == ModelConfigKind::SceneryObject &&
             lower(configPath.extension().string()) == ".sco") {
+            if (keyword == "description") {
+                const std::size_t descriptionLine = line.number;
+                bool terminated = false;
+                while (reader.nextIncludingBlank(line)) {
+                    if (line.isKeyword() && lower(line.keyword()) == "end") {
+                        terminated = true;
+                        break;
+                    }
+                }
+                previousLine = line;
+                if (!terminated) {
+                    result.diagnostics.error(descriptionLine, keyword, "missing [end]");
+                }
+                continue;
+            }
             // SCO object directives are parsed and diagnosed by loadSceneryObjectFile.
             static const std::unordered_set<std::string> sceneryObjectDirectives = {
                 "surface", "trafficlight", "traffic_lights_group", "traffic_light", "phase",

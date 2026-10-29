@@ -2282,11 +2282,11 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 !state.vehicle->mapTrafficTileActive) {
                 continue;
             }
-            const auto pose = openbus::map::sampleMapTrafficActorPose(
-                state.actor, state.actor.distanceMeters);
-            if (!pose.has_value()) {
+            const auto foundPose = activeActorPoses.find(&state.actor);
+            if (foundPose == activeActorPoses.end()) {
                 continue;
             }
+            const auto* pose = &foundPose->second;
             const bool onJunction = openbus::map::mapTrafficRoutePositionOnJunctionPath(
                 state.actor.route, state.actor.distanceMeters);
             const std::array<float, 3> color =
@@ -2322,13 +2322,11 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                                                          reservationDistance)) {
                     continue;
                 }
-                const auto reservationPose = openbus::map::sampleMapTrafficActorPose(
-                    state.actor, reservationDistance);
-                if (!reservationPose.has_value() || !openbus::map::mapTrafficPoseOnActiveTile(
-                                                        *reservationPose, activeTiles, tileSize)) {
+                if (!predictedPose.has_value() || !openbus::map::mapTrafficPoseOnActiveTile(
+                                                      *predictedPose, activeTiles, tileSize)) {
                     continue;
                 }
-                appendTrafficBehaviorBox(behaviorVertices, *reservationPose,
+                appendTrafficBehaviorBox(behaviorVertices, *predictedPose,
                                          state.actor.lengthMeters, state.actor.widthMeters, 0.12,
                                          {1.0F, 0.5F, 0.05F}, trafficDebugOrigin);
             }

@@ -1,8 +1,10 @@
 #include "config/SceneryObjectConfigLoader.h"
+#include "core/Variables.h"
 #include "ProbeTempDirectory.h"
 
 #include "map/MapSplineGeometry.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -71,6 +73,7 @@ int main(int argc, char** argv) {
     const std::filesystem::path editorStopPath = directory / "editor-stop.sco";
     const std::filesystem::path editorPassengersPath = directory / "editor-passengers.sco";
     const std::filesystem::path missingPassengersPath = directory / "missing-passengers.sco";
+    const std::filesystem::path textureAddressPath = directory / "texture-address.sco";
     {
         std::ofstream output(path);
         if (!output) {
@@ -184,6 +187,14 @@ int main(int argc, char** argv) {
         std::ofstream output(missingPassengersPath);
         output << "[onlyeditor]\n[mesh]\npeople.x\n[passengercabin]\nmissing.cfg\n";
     }
+    {
+        std::ofstream output(textureAddressPath);
+        output << "[mesh]\nmesh.x\n"
+                  "[matl]\nborder.bmp\n0\n[matl_texadress_border]\n"
+                  "[matl]\nclamp.bmp\n1\n[matl_texadress_clamp]\n"
+                  "[matl]\nmirror.bmp\n2\n[matl_texadress_mirror]\n"
+                  "[matl]\nonce.bmp\n3\n[matl_texadress_mirroronce]\n";
+    }
     const SceneryObjectConfig configuration = loadSceneryObjectFile(path);
     const SceneryObjectConfig singleStopConfiguration = loadSceneryObjectFile(singleStopPath);
     const SceneryObjectConfig remappedConfiguration = loadSceneryObjectFile(remappedPath);
@@ -196,9 +207,29 @@ int main(int argc, char** argv) {
     const SceneryObjectConfig editorStop = loadSceneryObjectFile(editorStopPath);
     const SceneryObjectConfig editorPassengers = loadSceneryObjectFile(editorPassengersPath);
     const SceneryObjectConfig missingPassengers = loadSceneryObjectFile(missingPassengersPath);
+    const SceneryObjectConfig textureAddressObject = loadSceneryObjectFile(textureAddressPath);
+    openbus::scripting::SceneryObject textureAddressVariables;
+    const ModelConfig textureAddressModel =
+        loadSceneryObjectConfig(textureAddressPath, directory, textureAddressVariables);
     openbus::probe::removeProbeDirectory(directory);
 
     bool valid = require(configuration.trafficPaths.size() == 2, "path sections parsed");
+    const auto& addressParts = textureAddressModel.parts;
+    valid &= require(
+        !textureAddressObject.diagnostics.hasErrors() &&
+            std::none_of(textureAddressObject.diagnostics.entries.begin(),
+                         textureAddressObject.diagnostics.entries.end(),
+                         [](const ConfigurationDiagnostic& diagnostic) {
+                             return diagnostic.keyword.find("matl_texadress_") == 0;
+                         }) &&
+            !textureAddressModel.diagnostics.hasErrors() && addressParts.size() == 1 &&
+            addressParts[0].materialStatesInOrder.size() == 4 &&
+            addressParts[0].materialStatesInOrder[0].textureAddressS == TextureAddressMode::Border &&
+            addressParts[0].materialStatesInOrder[0].textureAddressT == TextureAddressMode::Border &&
+            addressParts[0].materialStatesInOrder[1].textureAddressS == TextureAddressMode::Clamp &&
+            addressParts[0].materialStatesInOrder[2].textureAddressS == TextureAddressMode::Mirror &&
+            addressParts[0].materialStatesInOrder[3].textureAddressS == TextureAddressMode::MirrorOnce,
+        "inline SCO material address directives are handled without unknown-keyword warnings");
     valid &= require(editorStop.onlyEditor && editorStop.busStop && editorStop.hasBoundingBox &&
                          !editorStop.diagnostics.hasErrors(),
                      "editor bus stop and its bounding box are parsed");

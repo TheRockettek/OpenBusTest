@@ -31,15 +31,17 @@ int main() {
     valid &= require(simulation.sharedVariables().get("year") == 2024.0F &&
                          simulation.sharedVariables().get("month") == 2.0F &&
                          simulation.sharedVariables().get("day") == 29.0F &&
-                         simulation.sharedVariables().get("dayofyear") == 59.0F &&
+                         simulation.sharedVariables().get("dayofyear") == 60.0F &&
                          simulation.sharedVariables().get("time") == 1.0F,
                      "simulation clock advances across leap-day midnight");
     simulation.sharedVariables().configureSimulationClock(2024, 12, 31, 86399.0);
+    valid &= require(simulation.sharedVariables().get("dayofyear") == 366.0F,
+                     "leap year ends on day 366");
     simulation.sharedVariables().updateSimulationClock(1.0);
     valid &= require(simulation.sharedVariables().get("year") == 2025.0F &&
                          simulation.sharedVariables().get("month") == 1.0F &&
                          simulation.sharedVariables().get("day") == 1.0F &&
-                         simulation.sharedVariables().get("dayofyear") == 0.0F &&
+                         simulation.sharedVariables().get("dayofyear") == 1.0F &&
                          simulation.sharedVariables().get("time") == 0.0F,
                      "simulation clock advances across year boundary");
     simulation.sharedVariables().configureSimulationClock(2024, 12, 31, 86399.75);
@@ -53,6 +55,15 @@ int main() {
                          simulation.sharedVariables().get("day") == 1.0F &&
                          simulation.sharedVariables().get("time") == 0.0F,
                      "fractional start and elapsed time carry across midnight");
+    simulation.sharedVariables().configureSimulationClock(2025, 12, 31, 0.0);
+    valid &= require(simulation.sharedVariables().get("dayofyear") == 365.0F,
+                     "common year ends on day 365");
+    simulation.sharedVariables().configureSimulationClock(2025, 2, 28, 86399.0);
+    simulation.sharedVariables().updateSimulationClock(1.0);
+    valid &= require(simulation.sharedVariables().get("month") == 3.0F &&
+                         simulation.sharedVariables().get("day") == 1.0F &&
+                         simulation.sharedVariables().get("dayofyear") == 60.0F,
+                     "common-year March follows day 59");
     bool rejectedInvalidCalendar = false;
     try {
         simulation.sharedVariables().configureSimulationClock(2025, 2, 29, 0.0);

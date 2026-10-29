@@ -876,21 +876,15 @@ int main() {
         const int mapCalendarYear = static_cast<int>(mapCalendar.get("year"));
         const int mapCalendarMonth = static_cast<int>(mapCalendar.get("month"));
         const int mapCalendarDay = static_cast<int>(mapCalendar.get("day"));
-        const int mapCalendarDayOfYear = static_cast<int>(mapCalendar.get("dayofyear"));
         const std::chrono::year_month_day mapCalendarDate{
             std::chrono::year{mapCalendarYear},
             std::chrono::month{static_cast<unsigned>(mapCalendarMonth)},
             std::chrono::day{static_cast<unsigned>(mapCalendarDay)}};
-        const std::chrono::sys_days firstDayOfYear{std::chrono::year_month_day{
-            mapCalendarDate.year(), std::chrono::January, std::chrono::day{1}}};
-        if (!mapCalendarDate.ok() ||
-            (std::chrono::sys_days{mapCalendarDate} - firstDayOfYear).count() !=
-                mapCalendarDayOfYear) {
+        if (!mapCalendarDate.ok()) {
             throw std::runtime_error("Map calendar system variables contain an invalid date");
         }
-        const int mapAiStartWeekdayIndex = static_cast<int>(std::chrono::weekday{
-            firstDayOfYear +
-            std::chrono::days{mapCalendarDayOfYear}}.c_encoding());
+        const int mapAiStartWeekdayIndex = static_cast<int>(
+            std::chrono::weekday{std::chrono::sys_days{mapCalendarDate}}.c_encoding());
         applicationLog.Log("Chrono map tile overrides are disabled; using base map tile files.");
         const std::size_t terrainSidecars = static_cast<std::size_t>(std::count_if(
             mapDefinition.tiles.begin(), mapDefinition.tiles.end(),
