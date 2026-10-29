@@ -273,7 +273,9 @@ small swept movement steps prevent AI from advancing through occupied space;
 an emergency stop can exceed comfortable braking when a blockage appears too
 close. A vehicle can continue when its next swept step increases separation
 from an external obstacle, so a pedestrian close behind does not hold it in
-place while it moves away. Once a vehicle is committed to a junction, the
+place while it moves away. Likewise, a close vehicle behind cannot hold a
+leader that is moving away; physical separation is still checked throughout
+the swept movement. Once a vehicle is committed to a junction, the
 swept collision margin is reduced while still preventing physical footprint
 overlap. All committed vehicle turns use a 0.15 m clearance from external
 vehicle footprints instead of the normal 0.5 m, allowing close, collision-free turns
@@ -283,7 +285,11 @@ gap model instead of being treated as parked obstacles, so a queue keeps flowing
 through a junction behind a moving leader and creeps up behind a stopped one. Before entering a junction, a vehicle claims it
 and waits at the entry line while any vehicle inside or already admitted would
 cross or merge into its path, so two approaches never lock each other inside
-the box. A vehicle approaching on a lower-priority spline gives way at its
+the box. Straight, separated opposing lanes can pass without treating the whole
+junction as a single shared corridor; uncertain geometry retains conservative
+checks. A vehicle approaching a junction constraint below 2 km/h settles to a
+stop within 0.25 m of its stopping point instead of creeping indefinitely.
+A vehicle approaching on a lower-priority spline gives way at its
 entry line to any higher-priority vehicle whose path crosses or merges into its
 junction movement and would arrive within the same conflict window (plus a
 0.75-second safety margin accounting for vehicle occupancy); traffic that has
@@ -912,6 +918,9 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Trace scopes shorter than `1` microsecond are omitted by default. Set
   `OPENBUS_TRACE_MIN_US=5` to omit scopes shorter than five microseconds;
   values below `1` are treated as `1`.
+- Set `OPENBUS_TRACE_TRAFFIC_DETAIL=1` while tracing to split individual traffic
+  lookahead samples into curve/speed-limit and clearance scopes. This can produce
+  many events and add profiling overhead; leave it unset for normal profiling.
 - Optional texture downscaling: set `OPENBUS_TEXTURE_SCALE=0.5` before
   launching to upload half-resolution textures; valid range is `0.25`-`1.0`.
   OpenBus does not include a texture-conversion helper; create BC3 DDS files

@@ -131,6 +131,16 @@ add_test(NAME OpenBusMapTrafficTJunctionProbe
     COMMAND OpenBusMapTrafficRuntimeProbe --t-junction)
 add_test(NAME OpenBusMapTrafficPriorityOrderProbe
     COMMAND OpenBusMapTrafficRuntimeProbe --authored-priority-order)
+add_test(NAME OpenBusMapTrafficDenseQueueProbe
+    COMMAND OpenBusMapTrafficRuntimeProbe --dense-queue)
+add_test(NAME OpenBusMapTrafficMixedQueueProbe
+    COMMAND OpenBusMapTrafficRuntimeProbe --mixed-queue)
+add_test(NAME OpenBusMapTrafficOppositeLaneProbe
+    COMMAND OpenBusMapTrafficRuntimeProbe --opposite-lanes)
+add_test(NAME OpenBusMapTrafficCloseFollowerProbe
+    COMMAND OpenBusMapTrafficRuntimeProbe --close-follower)
+add_test(NAME OpenBusMapTrafficLowSpeedStopProbe
+    COMMAND OpenBusMapTrafficRuntimeProbe --low-speed-stop)
 add_test(NAME OpenBusMapPassengerServiceProbe
     COMMAND OpenBusMapTrafficRuntimeProbe --passenger-service)
 

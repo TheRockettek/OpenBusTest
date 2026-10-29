@@ -2456,6 +2456,13 @@ std::size_t mapTrafficPopulationForDensity(std::size_t basePopulation,
         rounded >= std::ldexp(1.0L, std::numeric_limits<std::size_t>::digits)) {
         throw std::overflow_error("Map traffic population exceeds the supported integer range");
     }
+
+    Logger mapLog("Map");
+    mapLog.Log("Map traffic population for density: basePopulation = {}" + std::to_string(basePopulation));
+    mapLog.Log("Map traffic population for density: density = {}" + std::to_string(*density));
+    mapLog.Log("Map traffic population for density: scaled = {}" + std::to_string(scaled));
+    mapLog.Log("Map traffic population for density: rounded = {}" + std::to_string(rounded));
+
     return static_cast<std::size_t>(rounded);
 }
 

@@ -4221,6 +4221,315 @@ void benchmarkDrivingLookahead(std::size_t actorCount = 69, double spacingMeters
               << " distance_sum=" << distanceSum << " speed_sum=" << speedSum << '\n';
 }
 
+void benchmarkDrivingQueue(bool verify = false, bool mixedDimensions = false) {
+    using namespace openbus::map;
+    MapTrafficRouteSegment segment;
+    segment.spline.placement = makeSpline(99000, 0, 0, 0.0);
+    segment.spline.placement.localX = 0.0;
+    segment.spline.placement.elevation = 0.0;
+    segment.spline.placement.length = 1000.0;
+    MapTrafficRoute route;
+    route.segments = {segment};
+    route.cumulativeEndDistances = {1000.0};
+    route.totalLength = 1000.0;
+    std::vector<MapTrafficActor> actors(104);
+    std::vector<MapTrafficActor*> pointers;
+    for (std::size_t index = 0; index < actors.size(); ++index) {
+        auto& actor = actors[index];
+        actor.route = route;
+        actor.distanceMeters = 20.0 + index * 7.0;
+        actor.speedMetersPerSecond = 3.0;
+        actor.cruiseSpeedMetersPerSecond = 10.0;
+        if (mixedDimensions) {
+            actor.lengthMeters = index % 3 == 0 ? 6.0 : 4.0;
+            actor.widthMeters = index % 2 == 0 ? 2.4 : 1.8;
+            actor.rearAxleOffsetMeters = index % 4 == 0 ? -1.0 : 0.0;
+        }
+        pointers.push_back(&actor);
+    }
+    actors.back().speedMetersPerSecond = 0.0;
+    actors.back().cruiseSpeedMetersPerSecond = 0.0;
+    std::uint64_t stateHash = 1469598103934665603ULL;
+    const auto mix = [&](std::uint64_t value) {
+        stateHash ^= value;
+        stateHash *= 1099511628211ULL;
+    };
+    const auto mixDouble = [&](double value) {
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        mix(bits);
+    };
+    constexpr int updates = 120;
+    double milliseconds = 0.0;
+    for (int update = 0; update < updates; ++update) {
+        const auto start = std::chrono::steady_clock::now();
+        advanceMapTrafficDriving(pointers, {}, 0.05, update * 0.05);
+        milliseconds += std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - start)
+                            .count();
+        if (verify) {
+            for (std::size_t index = 1; index < actors.size(); ++index) {
+                const double gap = actors[index].distanceMeters - actors[index - 1].distanceMeters -
+                                   (actors[index].lengthMeters + actors[index - 1].lengthMeters) *
+                                       0.5;
+                require(gap >= -1.0e-8, "dense same-route queue preserves physical clearance");
+            }
+        }
+        for (const auto& actor : actors) {
+            mixDouble(actor.distanceMeters);
+            mixDouble(actor.speedMetersPerSecond);
+            mixDouble(actor.targetSpeedMetersPerSecond);
+            mixDouble(actor.junctionWaitSeconds);
+            mix(static_cast<std::uint64_t>(actor.blockReason));
+            mix(actor.blockingActor == nullptr
+                    ? actors.size()
+                    : static_cast<std::size_t>(actor.blockingActor - actors.data()));
+            mixDouble(actor.junctionClaimEndMeters.value_or(-1.0));
+        }
+    }
+    if (verify && (actors.back().speedMetersPerSecond != 0.0 ||
+                   actors[actors.size() - 2].speedMetersPerSecond > 1.0)) {
+        throw std::runtime_error(
+            "dense queue did not slow behind its leader: leader=" +
+            std::to_string(actors.back().speedMetersPerSecond) + " follower=" +
+            std::to_string(actors[actors.size() - 2].speedMetersPerSecond));
+    }
+    std::cout << std::setprecision(17) << "TRAFFIC_QUEUE_BENCHMARK actors=" << actors.size()
+              << " updates=" << updates << " mixed_dimensions=" << mixedDimensions
+              << " ms_per_update=" << milliseconds / updates
+              << " state_hash=" << std::hex << stateHash << std::dec << '\n';
+}
+
+openbus::map::MapTrafficRoute makeOppositeLaneRoute(bool reverse, double x) {
+    using namespace openbus::map;
+    const double startY = reverse ? 120.0 : -40.0;
+    const double direction = reverse ? -1.0 : 1.0;
+    const double heading = reverse ? 180.0 : 0.0;
+    const auto spline = [&](int id, double y) {
+        MapTrafficRouteSegment segment;
+        segment.spline.placement = makeSpline(id, 0, 0, y);
+        segment.spline.placement.localX = x;
+        segment.spline.placement.elevation = 0.0;
+        segment.spline.placement.rotationDegrees = heading;
+        segment.spline.placement.length = 40.0;
+        return segment;
+    };
+    auto junction = spline(reverse ? 99101 : 99100, startY + direction * 40.0);
+    junction.points = {{x, startY + direction * 40.0, 0.0},
+                       {x, startY + direction * 120.0, 0.0}};
+    MapTrafficRoute result;
+    result.segments = {spline(reverse ? 99103 : 99102, startY), junction,
+                       spline(reverse ? 99105 : 99104, startY + direction * 120.0)};
+    result.cumulativeEndDistances = {40.0, 120.0, 160.0};
+    result.totalLength = 160.0;
+    return result;
+}
+
+void verifyLeaderWithCloseFollower() {
+    using namespace openbus::map;
+    for (const bool differentRoutes : {false, true}) {
+        for (const bool reverseOrder : {false, true}) {
+            for (const double initialSpeed : {0.0, 4.0}) {
+                for (const double startDistance : {30.0, 60.0}) {
+                    auto route = makeOppositeLaneRoute(false, 0.0);
+                    auto followerRoute = route;
+                    if (differentRoutes) {
+                        followerRoute.segments.back().spline.placement.splineId += 100;
+                    }
+                    auto leader =
+                        makeMapTrafficActor(route, "close-leader.ovh", 4.0, 0.0, false);
+                    auto follower =
+                        makeMapTrafficActor(followerRoute, "close-follower.ovh", 4.0, 0.0, false);
+                    leader.rearAxleOffsetMeters = follower.rearAxleOffsetMeters = -1.35;
+                    follower.lengthMeters = 5.1;
+                    leader.distanceMeters = startDistance;
+                    follower.distanceMeters =
+                        startDistance - (leader.lengthMeters + follower.lengthMeters) * 0.5 - 0.05;
+                    leader.speedMetersPerSecond = follower.speedMetersPerSecond = initialSpeed;
+                    const std::vector<MapTrafficActor*> actors =
+                        reverseOrder ? std::vector<MapTrafficActor*>{&follower, &leader}
+                                     : std::vector<MapTrafficActor*>{&leader, &follower};
+                    for (int step = 0; step < 60; ++step) {
+                        advanceMapTrafficDriving(actors, {}, 0.05, step * 0.05);
+                        if (leader.blockingActor == &follower) {
+                            throw std::runtime_error(
+                                "a leader yields to the follower behind it: step=" +
+                                std::to_string(step) + " reason=" +
+                                std::string(mapTrafficBlockReasonName(leader.blockReason)) +
+                                " leader=" + std::to_string(leader.distanceMeters) +
+                                " follower=" + std::to_string(follower.distanceMeters));
+                        }
+                        const auto leaderPose =
+                            sampleMapTrafficActorPose(leader, leader.distanceMeters);
+                        const auto followerPose =
+                            sampleMapTrafficActorPose(follower, follower.distanceMeters);
+                        require(leaderPose && followerPose &&
+                                    mapTrafficHasClearance(
+                                        {*leaderPose, leader.lengthMeters, leader.widthMeters},
+                                        {{*followerPose, follower.lengthMeters, follower.widthMeters}},
+                                        0.0),
+                                "a leader moving away from a close follower maintains physical clearance");
+                    }
+                    require(leader.distanceMeters > startDistance + 5.0 &&
+                                leader.speedMetersPerSecond > 3.0,
+                            "a close follower cannot stop a clear leader");
+                }
+            }
+        }
+    }
+    const auto route = makeOppositeLaneRoute(false, 0.0);
+    auto front = makeMapTrafficActor(route, "stationary-front.ovh", 0.0, 0.0, false);
+    auto leader = makeMapTrafficActor(route, "constrained-leader.ovh", 4.0, 0.0, false);
+    auto follower = makeMapTrafficActor(route, "close-follower.ovh", 4.0, 0.0, false);
+    front.distanceMeters = 66.5;
+    leader.distanceMeters = 60.0;
+    follower.distanceMeters = 55.45;
+    leader.speedMetersPerSecond = follower.speedMetersPerSecond = 0.0;
+    for (int step = 0; step < 60; ++step) {
+        advanceMapTrafficDriving({&follower, &leader, &front}, {}, 0.05, step * 0.05);
+        const auto frontPose = sampleMapTrafficActorPose(front, front.distanceMeters);
+        const auto leaderPose = sampleMapTrafficActorPose(leader, leader.distanceMeters);
+        require(frontPose && leaderPose &&
+                    mapTrafficHasClearance({*leaderPose, leader.lengthMeters, leader.widthMeters},
+                                           {{*frontPose, front.lengthMeters, front.widthMeters}},
+                                           0.0),
+                "a close follower does not weaken clearance from the vehicle ahead");
+    }
+    require(leader.distanceMeters < 62.0 && leader.speedMetersPerSecond < 0.1 &&
+                leader.blockingActor == &front,
+            "a leader still stops for traffic ahead when it has a close follower");
+}
+
+void verifyOppositeLaneTraffic() {
+    using namespace openbus::map;
+    for (const bool offsetCenterline : {false, true}) {
+        for (const double rearAxle : {0.0, -1.35}) {
+            for (const bool reverseOrder : {false, true}) {
+                auto north = makeMapTrafficActor(
+                    makeOppositeLaneRoute(false, offsetCenterline ? 0.0 : 1.1),
+                    "opposite-north.ovh", 4.0, 0.0, false);
+                auto south = makeMapTrafficActor(
+                    makeOppositeLaneRoute(true, offsetCenterline ? 0.0 : -1.1),
+                    "opposite-south.ovh", 0.0, 0.0, false);
+                north.lateralOffsetMeters = south.lateralOffsetMeters =
+                    offsetCenterline ? 1.3 : 0.0;
+                north.rearAxleOffsetMeters = south.rearAxleOffsetMeters = rearAxle;
+                north.widthMeters = 1.6;
+                south.widthMeters = 2.0;
+                north.distanceMeters = 30.0;
+                north.speedMetersPerSecond = 4.0;
+                south.distanceMeters = 65.0;
+                const std::vector<MapTrafficActor*> actors =
+                    reverseOrder ? std::vector<MapTrafficActor*>{&south, &north}
+                                 : std::vector<MapTrafficActor*>{&north, &south};
+                double lowestSpeed = north.speedMetersPerSecond;
+                for (int step = 0; step < 80; ++step) {
+                    advanceMapTrafficDriving(actors, {}, 0.05, step * 0.05);
+                    lowestSpeed = std::min(lowestSpeed, north.speedMetersPerSecond);
+                    const auto northPose = sampleMapTrafficActorPose(north, north.distanceMeters);
+                    const auto southPose = sampleMapTrafficActorPose(south, south.distanceMeters);
+                    require(northPose && southPose &&
+                                mapTrafficHasClearance(
+                                    {*northPose, north.lengthMeters, north.widthMeters},
+                                    {{*southPose, south.lengthMeters, south.widthMeters}}, 0.0),
+                            "opposite-lane vehicles maintain physical clearance");
+                }
+                require(lowestSpeed > 3.9 && north.distanceMeters > 45.0,
+                        "straight traffic does not yield to a stationary vehicle in a clear opposite lane");
+            }
+        }
+        auto north = makeMapTrafficActor(makeOppositeLaneRoute(false, 0.0),
+                                         "narrow-north.ovh", 4.0, 0.0, false);
+        auto south = makeMapTrafficActor(makeOppositeLaneRoute(true, 0.0),
+                                         "narrow-south.ovh", 0.0, 0.0, false);
+        north.lateralOffsetMeters = south.lateralOffsetMeters = 0.8;
+        north.distanceMeters = 30.0;
+        north.speedMetersPerSecond = 4.0;
+        south.distanceMeters = 65.0;
+        for (int step = 0; step < 100; ++step) {
+            advanceMapTrafficDriving({&north, &south}, {}, 0.05, step * 0.05);
+            const auto northPose = sampleMapTrafficActorPose(north, north.distanceMeters);
+            const auto southPose = sampleMapTrafficActorPose(south, south.distanceMeters);
+            require(northPose && southPose &&
+                        mapTrafficHasClearance({*northPose, north.lengthMeters, north.widthMeters},
+                                               {{*southPose, south.lengthMeters, south.widthMeters}},
+                                               0.0),
+                    "overlapping opposing lanes retain physical clearance");
+        }
+        require(north.distanceMeters < 40.0 && north.speedMetersPerSecond < 0.05,
+                "overlapping opposing lanes remain exclusive");
+    }
+}
+
+void verifyLowSpeedFollowingStop() {
+    using namespace openbus::map;
+    MapTrafficRouteSegment segment;
+    segment.spline.placement = makeSpline(99200, 0, 0, 0.0);
+    segment.spline.placement.localX = 0.0;
+    segment.spline.placement.elevation = 0.0;
+    segment.spline.placement.length = 100.0;
+    MapTrafficRoute route;
+    route.segments = {segment};
+    route.cumulativeEndDistances = {100.0};
+    route.totalLength = 100.0;
+    auto leader = makeMapTrafficActor(route, "stopped-leader.ovh", 0.0, 0.0, false);
+    auto follower = makeMapTrafficActor(route, "slow-follower.ovh", 8.0, 0.0, false);
+    leader.distanceMeters = 50.0;
+    follower.distanceMeters = 50.0 - 4.5 - 2.7;
+    follower.speedMetersPerSecond = 0.5;
+    for (int step = 0; step < 60; ++step) {
+        const double previousSpeed = follower.speedMetersPerSecond;
+        advanceMapTrafficDriving({&follower, &leader}, {}, 0.05, step * 0.05);
+        const double gap = leader.distanceMeters - follower.distanceMeters -
+                           (leader.lengthMeters + follower.lengthMeters) * 0.5;
+        require(gap >= 2.0, "low-speed following maintains the standstill gap");
+        require(follower.speedMetersPerSecond + 0.15 + 1.0e-8 >= previousSpeed,
+                "low-speed settling respects maximum deceleration");
+    }
+    require(follower.speedMetersPerSecond < 0.05,
+            "a vehicle below 2 km/h settles promptly behind a stopped leader");
+    leader.cruiseSpeedMetersPerSecond = 0.5;
+    leader.speedMetersPerSecond = 0.5;
+    follower.distanceMeters = leader.distanceMeters - 4.5 - 2.7;
+    follower.speedMetersPerSecond = 0.5;
+    const double movingFollowerStart = follower.distanceMeters;
+    for (int step = 0; step < 60; ++step) {
+        advanceMapTrafficDriving({&follower, &leader}, {}, 0.05, 3.0 + step * 0.05);
+    }
+    require(follower.distanceMeters > movingFollowerStart + 0.9 &&
+                follower.speedMetersPerSecond > 0.3,
+            "a vehicle continues following a slowly moving leader");
+
+    auto approaching = makeMapTrafficActor(makeOppositeLaneRoute(false, 0.0),
+                                            "slow-junction.ovh", 0.5, 0.0, false);
+    auto opposing = makeMapTrafficActor(makeOppositeLaneRoute(true, 0.0),
+                                         "junction-blocker.ovh", 0.0, 0.0, false);
+    approaching.distanceMeters = 36.0;
+    approaching.speedMetersPerSecond = 0.5;
+    opposing.distanceMeters = 65.0;
+    for (int step = 0; step < 60; ++step) {
+        const double previousSpeed = approaching.speedMetersPerSecond;
+        advanceMapTrafficDriving({&approaching, &opposing}, {}, 0.05, step * 0.05);
+        require(approaching.distanceMeters <= 37.25 + 1.0e-8,
+                "low-speed junction traffic stops before the shared corridor");
+        require(approaching.speedMetersPerSecond + 0.15 + 1.0e-8 >= previousSpeed,
+                "low-speed junction settling respects maximum deceleration");
+    }
+    if (approaching.speedMetersPerSecond >= 0.05) {
+        throw std::runtime_error(
+            "a vehicle below 2 km/h takes too long to settle at a junction: speed=" +
+            std::to_string(approaching.speedMetersPerSecond) + " distance=" +
+            std::to_string(approaching.distanceMeters));
+    }
+    const double stoppedDistance = approaching.distanceMeters;
+    for (int step = 0; step < 60; ++step) {
+        advanceMapTrafficDriving({&approaching}, {}, 0.05, 3.0 + step * 0.05);
+    }
+    require(approaching.distanceMeters > stoppedDistance + 1.0 &&
+                approaching.speedMetersPerSecond > 0.4,
+            "a vehicle resumes after its junction blocker clears");
+}
+
 // Crossing traffic on a 3x3 junction grid, so arbitration, admission, and reservations run
 // together.
 std::vector<openbus::map::MapTrafficActor> makeJunctionGridActors() {
@@ -5190,6 +5499,30 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-junctions") {
             benchmarkDrivingJunctionGrid();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-queue") {
+            benchmarkDrivingQueue();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--dense-queue") {
+            benchmarkDrivingQueue(true);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--mixed-queue") {
+            benchmarkDrivingQueue(true, true);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--opposite-lanes") {
+            verifyOppositeLaneTraffic();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--close-follower") {
+            verifyLeaderWithCloseFollower();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--low-speed-stop") {
+            verifyLowSpeedFollowingStop();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--t-junction") {

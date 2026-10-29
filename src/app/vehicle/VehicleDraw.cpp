@@ -300,8 +300,7 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                 items.push_back(item);
             }
         }
-        indirect = preparedIndirectBatch.dispatch(
-            items, cullingPlanes, boundaries, projectedSize);
+        indirect = preparedIndirectBatch.dispatch(items, cullingPlanes, boundaries, projectedSize);
     }
     const auto selectIndirect = [&](const Batch& batch) {
         if (indirect) {

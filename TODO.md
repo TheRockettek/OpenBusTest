@@ -1111,6 +1111,23 @@ limitations.
   to preserve seam behavior. The 1,000-actor shared-route benchmark completed
   at 24.75 ms/update in one Linux release run; compare repeated baseline and
   optimized captures before claiming a speedup, and profile loop-heavy traffic.
+- [~] Same-route traffic skips redundant priority pairs and crossing reservation
+  candidates, and reuses exact junction-preview footprints where available.
+  `--benchmark-queue` exercises 104 queued vehicles and hashes their state;
+  `OpenBusMapTrafficDenseQueueProbe` verifies clearance and braking. Use
+  `OPENBUS_TRACE_TRAFFIC_DETAIL=1` for opt-in lookahead speed/clearance scopes.
+  An uninstrumented RelWithDebInfo run measured 1.05 ms/update before versus
+  0.81-0.83 ms/update in three later runs, with matching queue state hashes;
+  timings are preliminary and unpaired. Measure crowded in-game routes and
+  junctions; shared geometry and lane indexing across different routes remain
+  possible future work.
+- [~] Collision broad phases reuse per-substep vehicle/obstacle diagonals,
+  and junction occupancy is cached until the actor moves. The dense and mixed
+  dimension/rear-axle queue probes check braking and clearance. Uninstrumented
+  RelWithDebInfo samples measured 0.84 ms/update before versus 0.70-0.76 ms
+  afterward on the 104-vehicle queue, with matching state hashes; these runs
+  are unpaired. Compare representative in-game frame times before estimating
+  the benefit.
 - [~] Transmap-transparent batches keep their original vertex buffer and draw
   triangles through a cached, view-sorted index buffer, avoiding full vertex
   reordering and upload for each view. Index buffers are bounded to three view
