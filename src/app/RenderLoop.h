@@ -466,11 +466,17 @@ class RenderLoop {
     std::size_t targetRoadTrafficCount_ = 0;
     std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> targetRoadGroupPopulations_;
     bool useGroupRoadPopulation_ = false;
+    std::size_t roadRouteRefreshCursor_ = 0;
+    std::size_t roadRouteRefreshSeed_ = 0;
+    double roadRouteRefreshElapsedSeconds_ = 0.0;
     std::size_t targetBusTrafficCount_ = 0;
     double mapTrafficStartHour_ = 12.0;
     bool mapTrafficSpawnInView_ = false;
     bool trafficSpawnDiagnosticsEnabled_ = false;
     double trafficSpawnDiagnosticElapsedSeconds_ = 0.0;
+    std::size_t roadTrafficRecycledOutsideTiles_ = 0;
+    std::size_t roadRouteRefreshAttempts_ = 0;
+    std::size_t roadRouteRefreshSuccesses_ = 0;
     double aiSimulationRateHz_ = 0.0;
     double aiMaximumRateHz_ = 0.0;
     double aiRateDivisor_ = 1.0;

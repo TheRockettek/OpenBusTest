@@ -209,7 +209,8 @@ void runProbe(const std::filesystem::path& root) {
     glViewport(0, 0, 64, 64);
     glDisable(GL_DITHER);
     setPerspective(64, 64, 90);
-    const auto draw = [&](bool enabled, const Matrix4& view, bool cull, bool masked) {
+    const auto draw = [&](bool enabled, const Matrix4& view, bool cull, bool masked,
+                          double threshold = 0.0) {
         setQueries(enabled);
         queries.clear();
         indirectArraysDraws = 0;
@@ -222,7 +223,7 @@ void runProbe(const std::filesystem::path& root) {
         if (cull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
         {
             IndirectCullingScope modelPhase;
-            renderer.draw();
+            renderer.draw(false, threshold);
             require(!drawSelectedIndirect(false), "Map draw leaked its indirect selection");
         }
         std::array<GLboolean, 4> colorMask = {};
@@ -250,6 +251,17 @@ void runProbe(const std::filesystem::path& root) {
     initializeComputeCulling(false, false);
     const Matrix4 failureView = translationMatrix({0, 0, -30});
     const auto failureBaseline = draw(false, failureView, false, false);
+    const auto sizeCpu = draw(false, failureView, false, false, 0.5);
+    initializeComputeCulling(false, true);
+    resetFrameTriangleCount();
+    draw(false, failureView, false, false);
+    const auto allCandidates = frameTriangleCount();
+    resetFrameTriangleCount();
+    const auto sizeGpu = draw(false, failureView, false, false, 0.5);
+    require(sizeGpu == sizeCpu, "Map projected-size CPU/indirect pixels differ");
+    require(frameTriangleCount() < allCandidates,
+            "Map projected-size broad phase did not remove candidate triangles");
+    initializeComputeCulling(false, false);
     bufferData = pglBufferData;
     pglBufferData = recordBufferData;
     failNextProxyUpload = true;

@@ -182,7 +182,7 @@ struct Vehicle {
             std::array<double, 3> depthAxis = {};
             const std::vector<Vertex>* source = nullptr;
             std::size_t vertexCount = 0;
-            GLuint buffer = 0;
+            GLuint indexBuffer = 0;
             bool valid = false;
         };
 
@@ -756,9 +756,9 @@ struct Vehicle {
 
     void drawBatch(Batch& batch, double alpha, bool forceUntextured = false,
                    const std::array<double, 3>* overrideColor = nullptr, int alphaModeOverride = -1,
-                   bool forceDepthTest = false);
+                   bool forceDepthTest = false, GLuint transparentIndexBuffer = 0);
 
-    void sortTransparentBatch(Batch& batch);
+    GLuint sortTransparentBatch(Batch& batch);
 
     void draw(RenderViewContext context, VehicleRenderPass renderPass = VehicleRenderPass::All,
               const Matrix4* groundShadowTransform = nullptr,

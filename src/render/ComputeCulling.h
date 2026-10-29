@@ -53,6 +53,8 @@ bool cullingItemVisible(const CullingItem& item, const CullingPlanes& planes,
 bool cullingLodMayMatch(const CullingItem& item, std::span<const float> lodBoundaries);
 // Retain uncertain or boundary candidates for the GPU's final frustum test.
 bool cullingFrustumMayIntersect(const CullingItem& item, const CullingPlanes& planes);
+// False guarantees a projected-size rejection by the GPU; retain uncertain bounds.
+bool cullingProjectedSizeMayPass(const CullingItem& item, CullingProjectedSize projectedSize);
 
 constexpr bool indirectCullingRequested(std::string_view setting) {
     return setting == "compute-indirect";

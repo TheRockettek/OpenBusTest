@@ -12,7 +12,7 @@ void Vehicle::setOneSidedFrontFaceConvention() {
 
 void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
                         const std::array<double, 3>* overrideColor, int alphaModeOverride,
-                        bool forceDepthTest) {
+                        bool forceDepthTest, GLuint transparentIndexBuffer) {
     if (alpha <= 0.0) {
         return;
     }
@@ -125,7 +125,11 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
     }
     if (materialBatch) {
         drawMaterialBatch(batch.buffer, batch.vertexCount, batch.materialColors,
-                          *materialTextureIds, batch.materialTextureFlips);
+                          *materialTextureIds, batch.materialTextureFlips, transparentIndexBuffer);
+    } else if (transparentIndexBuffer != 0) {
+        openbus::rendering::drawIndexedModelBatch(batch.buffer, transparentIndexBuffer,
+                                                  batch.vertexCount, material, color, alpha,
+                                                  forceUntextured ? 0 : alphaMode, true);
     } else {
         drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
                        forceUntextured ? 0 : alphaMode, true);
@@ -135,7 +139,7 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
     }
 }
 
-void Vehicle::sortTransparentBatch(Batch& batch) {
+GLuint Vehicle::sortTransparentBatch(Batch& batch) {
     const auto& modelView = openbus::rendering::modelViewMatrix();
     const std::array<double, 3> depthAxis =
         openbus::app::vehicle::transparentTriangleDepthAxis(modelView);
@@ -143,29 +147,28 @@ void Vehicle::sortTransparentBatch(Batch& batch) {
     for (const Batch::TransparentSortCacheEntry& entry : batch.transparentSortCache) {
         if (entry.valid && entry.source == source && entry.vertexCount == batch.vertices.size() &&
             entry.depthAxis == depthAxis) {
-            batch.buffer = entry.buffer;
-            batch.sharedGeometryBuffer = false;
             TraceScope cacheHit("render", "Vehicle::draw.transparentSortCacheHit");
-            return;
+            return entry.indexBuffer;
         }
     }
     TraceScope sortTrace("render", "Vehicle::draw.transparentTriangleSort");
     static thread_local std::vector<openbus::app::vehicle::TransparentTriangleDepth>
         triangleDepthScratch;
     static thread_local std::vector<std::size_t> triangleOrderScratch;
-    static thread_local std::vector<Vertex> sortedVertices;
+    static thread_local std::vector<GLuint> sortedIndices;
     openbus::app::vehicle::transparentTriangleOrder(batch.vertices, modelView, triangleDepthScratch,
                                                     triangleOrderScratch);
     const std::vector<std::size_t>& triangleOrder = triangleOrderScratch;
-    if (triangleOrder.empty()) {
-        return;
+    if (triangleOrder.empty() ||
+        batch.vertices.size() > static_cast<std::size_t>(std::numeric_limits<GLuint>::max())) {
+        return 0;
     }
-    sortedVertices.resize(batch.vertices.size());
-    std::size_t sortedVertexIndex = 0;
+    sortedIndices.resize(batch.vertices.size());
+    std::size_t sortedIndex = 0;
     for (const std::size_t index : triangleOrder) {
-        std::copy_n(batch.vertices.begin() + index, 3,
-                    sortedVertices.begin() + static_cast<std::ptrdiff_t>(sortedVertexIndex));
-        sortedVertexIndex += 3;
+        sortedIndices[sortedIndex++] = static_cast<GLuint>(index);
+        sortedIndices[sortedIndex++] = static_cast<GLuint>(index + 1);
+        sortedIndices[sortedIndex++] = static_cast<GLuint>(index + 2);
     }
     sortTrace.finish();
     std::size_t cacheSlot = batch.transparentSortCache.size();
@@ -181,45 +184,25 @@ void Vehicle::sortTransparentBatch(Batch& batch) {
             (batch.transparentSortCacheReplacementIndex + 1) % batch.transparentSortCache.size();
     }
     Batch::TransparentSortCacheEntry& entry = batch.transparentSortCache[cacheSlot];
-    GLuint sortedBuffer = entry.buffer;
-    const bool batchBufferAlreadyCached =
-        std::any_of(batch.transparentSortCache.begin(), batch.transparentSortCache.end(),
-                    [&](const Batch::TransparentSortCacheEntry& cached) {
-                        return cached.buffer != 0 && cached.buffer == batch.buffer;
-                    });
-    if (sortedBuffer == 0 && batch.sharedGeometryBuffer) {
-        GLuint privateBuffer = 0;
-        pglGenBuffers(1, &privateBuffer);
-        if (privateBuffer == 0) {
-            return;
+    GLuint indexBuffer = entry.indexBuffer;
+    if (indexBuffer == 0) {
+        pglGenBuffers(1, &indexBuffer);
+        if (indexBuffer == 0) {
+            return 0;
         }
-        sortedBuffer = privateBuffer;
-        batch.bufferTracked = true;
-        assets->trackBuffer(sortedBuffer);
-    } else if (sortedBuffer == 0 && batchBufferAlreadyCached) {
-        GLuint privateBuffer = 0;
-        pglGenBuffers(1, &privateBuffer);
-        if (privateBuffer == 0) {
-            return;
-        }
-        sortedBuffer = privateBuffer;
-        batch.bufferTracked = true;
-        assets->trackBuffer(sortedBuffer);
-    } else if (sortedBuffer == 0) {
-        sortedBuffer = batch.buffer;
+        assets->trackBuffer(indexBuffer);
     }
-    TraceScope uploadTrace("render", "Vehicle::draw.transparentVertexUpload");
-    pglBindBuffer(GL_ARRAY_BUFFER, sortedBuffer);
+    TraceScope uploadTrace("render", "Vehicle::draw.transparentIndexUpload");
+    pglBindBuffer(GL_ARRAY_BUFFER, indexBuffer);
     pglBufferData(GL_ARRAY_BUFFER,
-                  static_cast<std::ptrdiff_t>(sortedVertices.size() * sizeof(Vertex)),
-                  sortedVertices.data(), GL_STATIC_DRAW);
-    batch.buffer = sortedBuffer;
-    batch.sharedGeometryBuffer = false;
+                  static_cast<std::ptrdiff_t>(sortedIndices.size() * sizeof(GLuint)),
+                  sortedIndices.data(), GL_STATIC_DRAW);
     entry.depthAxis = depthAxis;
     entry.source = source;
     entry.vertexCount = batch.vertices.size();
-    entry.buffer = sortedBuffer;
+    entry.indexBuffer = indexBuffer;
     entry.valid = true;
+    return indexBuffer;
 }
 
 void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
@@ -285,6 +268,8 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
         boundaries.clear();
         appendCullingLodBoundaries(boundaries, lodThresholds);
         const auto cullingPlanes = makeCullingPlanes(projection);
+        const auto projectedSize =
+            makeCullingProjectedSize(projection, minimumObjectViewportFraction);
         for (DisplayPart& part : displayLists) {
             part.indirectEligible = false;
             for (Batch& batch : part.batches)
@@ -302,7 +287,8 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                 item.metadata[3] = static_cast<std::uint32_t>(boundaries.size());
             }
             if (!cullingFrustumMayIntersect(item, cullingPlanes) ||
-                !cullingLodMayMatch(item, boundaries))
+                !cullingLodMayMatch(item, boundaries) ||
+                !cullingProjectedSizeMayPass(item, projectedSize))
                 continue;
             part.indirectEligible = true;
             for (Batch& batch : part.batches) {
@@ -315,8 +301,7 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
             }
         }
         indirect = preparedIndirectBatch.dispatch(
-            items, cullingPlanes, boundaries,
-            makeCullingProjectedSize(projection, minimumObjectViewportFraction));
+            items, cullingPlanes, boundaries, projectedSize);
     }
     const auto selectIndirect = [&](const Batch& batch) {
         if (indirect) {
@@ -552,12 +537,13 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                     glDisable(GL_BLEND);
                     glDisable(GL_POLYGON_OFFSET_FILL);
                 }
+                GLuint transparentIndexBuffer = 0;
                 if (alphaMode == 2 && batch.textTextureIndex < 0 && !batch.transmap.name.empty()) {
-                    sortTransparentBatch(batch);
+                    transparentIndexBuffer = sortTransparentBatch(batch);
                 }
                 selectIndirect(batch);
                 drawBatch(batch, alpha, false, nullptr, batch.textTextureIndex >= 0 ? 2 : -1,
-                          transparent.part->isShadow);
+                          transparent.part->isShadow, transparentIndexBuffer);
                 if (!reflectionPass) {
                     drawEnvironmentMap(batch, alpha);
                 }

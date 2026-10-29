@@ -681,7 +681,8 @@ int main() {
     pglBindBuffer(GL_ARRAY_BUFFER, indexBuffer);
     pglBufferData(GL_ARRAY_BUFFER, sizeof(indices), indices.data(), GL_STATIC_DRAW);
     pglBindBuffer(GL_ARRAY_BUFFER, buffer);
-    for (int source = 0; source < 4; ++source) {
+    std::array<std::uint8_t, 4> arrayMaterialBatchBaseline = {};
+    for (int source = 0; source < 5; ++source) {
         material = {};
         material.texture = white;
         material.textured = true;
@@ -695,8 +696,10 @@ int main() {
             glClear(GL_COLOR_BUFFER_BIT);
             if (source == 2) {
                 drawMaterialBatch(buffer, 3, batchColors, batchTextures, {});
-            } else {
+            } else if (source == 3) {
                 drawIndexedModelBatch(buffer, indexBuffer, 3, material, {1, 1, 1}, 1.0, 0);
+            } else {
+                drawMaterialBatch(buffer, 3, batchColors, batchTextures, {}, indexBuffer);
             }
             std::array<std::uint8_t, 4> result = {};
             glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
@@ -705,6 +708,12 @@ int main() {
         setModelViewMatrix(identityMatrix());
         setLightingViewMatrix(identityMatrix());
         const auto baseline = drawLighting();
+        if (source == 2) {
+            arrayMaterialBatchBaseline = baseline;
+        } else if (source == 4 && baseline != arrayMaterialBatchBaseline) {
+            std::cerr << "indexed material batch changed directional shading\n";
+            passed = false;
+        }
         if (baseline[0] <= 148) {
             std::cerr << "camera lighting probe did not exercise directional lighting\n";
             passed = false;

@@ -73,6 +73,10 @@ int main(int argc, char** argv) {
     const auto sizeSettings = makeCullingProjectedSize(screenProjection, 0.02);
     auto sizeItem = makeCullingItem(identity, {0, 0, -10}, 0.1);
     sizeItem.metadata[0] = CullProjectedSize;
+    if (!require(!cullingProjectedSizeMayPass(sizeItem, sizeSettings),
+                 "Projected-size broad phase retained clearly small object") ||
+        !require(cullingProjectedSizeMayPass(sizeItem, {}),
+                 "Projected-size broad phase rejected disabled cutoff")) return 1;
     if (!require(!cullingItemVisible(sizeItem, planes, {}, sizeSettings),
                  "Projected-size CPU reference retained small object") ||
         !require(cullingItemVisible(sizeItem, planes, {}, {}),
@@ -81,16 +85,47 @@ int main(int argc, char** argv) {
                                     makeCullingProjectedSize(screenProjection, 0.01)),
                  "Main-view projected-size threshold rejected large object")) return 1;
     sizeItem.eyeSphere[2] = -0.05F;
-    if (!require(cullingItemVisible(sizeItem, planes, {}, sizeSettings),
+    if (!require(cullingProjectedSizeMayPass(sizeItem, sizeSettings),
+                 "Projected-size broad phase rejected sphere across camera") ||
+        !require(cullingItemVisible(sizeItem, planes, {}, sizeSettings),
                  "Projected-size CPU reference rejected sphere across camera")) return 1;
     sizeItem.eyeSphere[2] = -10.0F;
     sizeItem.eyeSphere[3] = 0.0F;
-    if (!require(cullingItemVisible(sizeItem, planes, {}, sizeSettings),
+    if (!require(cullingProjectedSizeMayPass(sizeItem, sizeSettings),
+                 "Projected-size broad phase rejected degenerate sphere") ||
+        !require(cullingItemVisible(sizeItem, planes, {}, sizeSettings),
                  "Projected-size CPU reference rejected degenerate sphere")) return 1;
     sizeItem.eyeSphere[2] = -102.0F;
     sizeItem.eyeSphere[3] = 2.0F;
-    if (!require(cullingItemVisible(sizeItem, planes, {}, sizeSettings),
+    if (!require(cullingProjectedSizeMayPass(sizeItem, sizeSettings),
+                 "Projected-size broad phase rejected threshold boundary") ||
+        !require(cullingItemVisible(sizeItem, planes, {}, sizeSettings),
                  "Projected-size CPU reference rejected threshold boundary")) return 1;
+    sizeItem.eyeSphere[2] = -10.0F;
+    sizeItem.eyeSphere[3] = 0.1F;
+    sizeItem.metadata[0] = 0;
+    if (!require(cullingProjectedSizeMayPass(sizeItem, sizeSettings),
+                 "Projected-size broad phase ignored disabled item flag")) return 1;
+    sizeItem.metadata[0] = CullProjectedSize;
+    for (float invalid : {std::numeric_limits<float>::quiet_NaN(),
+                          std::numeric_limits<float>::infinity(),
+                          std::numeric_limits<float>::denorm_min()}) {
+        sizeItem.eyeSphere[3] = invalid;
+        if (!require(cullingProjectedSizeMayPass(sizeItem, sizeSettings),
+                     "Projected-size broad phase rejected uncertain radius")) return 1;
+    }
+    sizeItem.eyeSphere[3] = std::numeric_limits<float>::max();
+    sizeItem.eyeSphere[2] = -std::numeric_limits<float>::max();
+    if (!require(cullingProjectedSizeMayPass(sizeItem, sizeSettings),
+                 "Projected-size broad phase rejected extreme sphere")) return 1;
+    sizeItem.eyeSphere[2] = -1.0e20F;
+    sizeItem.eyeSphere[3] = 1.0e19F;
+    if (!require(cullingProjectedSizeMayPass(sizeItem, {1.0e20F, 0.5F}),
+                 "Projected-size broad phase rejected overflowing GPU arithmetic")) return 1;
+    sizeItem.eyeSphere[2] = -1.0e20F;
+    sizeItem.eyeSphere[3] = 1.0e-20F;
+    if (!require(cullingProjectedSizeMayPass(sizeItem, {1.0F, 0.5F}),
+                 "Projected-size broad phase rejected underflowing GPU arithmetic")) return 1;
     auto item = makeCullingItem(identity, {0, 0, 0}, 0.5);
     if (!require(cullingItemVisible(item, planes, {}), "Inside sphere rejected")) return 1;
     if (!require(cullingFrustumMayIntersect(item, planes), "Inside sphere rejected by broad phase"))
@@ -362,6 +397,36 @@ int main(int argc, char** argv) {
                              makeCullingProjectedSize(screenProjection, 0.10)) &&
                      result == std::vector<std::uint32_t>({1, 0, 0, 0, 1, 1}),
                  "Mirror-view GPU projected-size decisions incorrect")) exitCode = 1;
+    std::mt19937 sizeRandom(9721);
+    std::uniform_real_distribution<float> radiusDistribution(0.001F, 1000.0F);
+    std::uniform_real_distribution<float> offsetDistribution(-0.0002F, 0.0002F);
+    for (const float threshold : {0.0F, 0.02F, 0.5F, 1.0F}) {
+        std::vector<CullingItem> candidates;
+        for (int i = 0; i < 2048; ++i) {
+            const float radius = radiusDistribution(sizeRandom);
+            const float effectiveThreshold = threshold > 0.0F ? threshold : 0.5F;
+            const float depth = radius + radius / effectiveThreshold *
+                                             (1.0F + offsetDistribution(sizeRandom));
+            auto candidate = makeCullingItem(identity, {0, 0, -depth}, radius);
+            candidate.metadata[0] = CullProjectedSize;
+            candidate.draw[0] = 3;
+            candidates.push_back(candidate);
+        }
+        const auto settings = makeCullingProjectedSize(screenProjection, threshold);
+        if (!require(computeCull(candidates, planes, {}, result, settings),
+                     "Projected-size boundary GPU dispatch failed")) {
+            exitCode = 1;
+            break;
+        }
+        for (std::size_t i = 0; i < candidates.size(); ++i) {
+            if (!cullingProjectedSizeMayPass(candidates[i], settings) &&
+                !require(result[i] == 0,
+                         "Projected-size broad phase rejected a GPU-visible candidate")) {
+                exitCode = 1;
+                break;
+            }
+        }
+    }
     std::mt19937 random(813);
     std::uniform_real_distribution<float> position(-20000, 20000);
     std::vector<CullingItem> items;

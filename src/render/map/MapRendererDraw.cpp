@@ -247,6 +247,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         auto& lodBoundaries = impl_->cullingLodBoundariesScratch;
         auto& lodOffsets = impl_->cullingLodOffsetsScratch;
         const auto cullingPlanes = makeCullingPlanes(projectionMatrix());
+        const auto projectedSize =
+            makeCullingProjectedSize(projectionMatrix(), minimumObjectViewportFraction);
         cullingItems.clear();
         lodBoundaries.clear();
         lodOffsets.clear();
@@ -340,7 +342,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 if (item.metadata[3] == 0 && batch.sceneryLodIndex != 0) {
                     continue;
                 }
-                if (!cullingLodMayMatch(item, lodBoundaries))
+                if (!cullingLodMayMatch(item, lodBoundaries) ||
+                    !cullingProjectedSizeMayPass(item, projectedSize))
                     continue;
                 addSphere(&instance, item, instance.x - instance.boundingRadius,
                           instance.y - instance.boundingRadius,
@@ -348,8 +351,6 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                           instance.y + instance.boundingRadius, batch.vertexCount);
             }
         }
-        const auto projectedSize =
-            makeCullingProjectedSize(projectionMatrix(), minimumObjectViewportFraction);
         indirect = indirectBatch.dispatch(cullingItems, cullingPlanes, lodBoundaries, projectedSize,
                                           depthOcclusionQueries);
         gpuCulling = indirect;

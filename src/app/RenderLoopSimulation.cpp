@@ -455,6 +455,21 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             state.vehicle->mapTrafficTileActive = poseOnActiveTile(*pose);
             if (!state.vehicle->mapTrafficTileActive) {
                 state.actor.speedMetersPerSecond = 0.0;
+                if (!state.isBus) {
+                    state.populationEnabled = false;
+                    state.vehicle->mapTrafficRouteFinished = true;
+                    state.vehicle->variables.set("velocity", 0.0);
+                    state.vehicle->variables.set("velocity_ground", 0.0);
+                    state.vehicle->variables.set("ai_blinker_l", 0.0);
+                    state.vehicle->variables.set("ai_blinker_r", 0.0);
+                    state.vehicle->variables.set("ai_brakelight", 0.0);
+                    state.activeSpawnCandidateIndex.reset();
+                    state.deadlockRemovalCommitted = false;
+                    ++state.workerGeneration;
+                    if (trafficSpawnDiagnosticsEnabled_) {
+                        ++roadTrafficRecycledOutsideTiles_;
+                    }
+                }
                 state.lastProgressDistanceMeters = state.actor.distanceMeters;
                 state.stoppedSecondsSinceProgress = 0.0;
                 state.deadlocked = false;
@@ -614,6 +629,87 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         if (mapRenderer_ != nullptr) {
             const auto& coordinates = mapRenderer_->activeTileCoordinates();
             activeTiles.insert(coordinates.begin(), coordinates.end());
+        }
+        roadRouteRefreshElapsedSeconds_ += trafficInputElapsedSeconds;
+        const auto activeRoadCount = static_cast<std::size_t>(std::count_if(
+            trafficVehicles_.begin(), trafficVehicles_.end(), [](const TrafficVehicleState& state) {
+                return !state.isBus && state.populationEnabled;
+            }));
+        if (mapRenderer_ != nullptr && !activeTiles.empty() &&
+            activeRoadCount < targetRoadTrafficCount_ && roadRouteRefreshElapsedSeconds_ >= 0.05 &&
+            !trafficVehicles_.empty()) {
+            roadRouteRefreshElapsedSeconds_ = 0.0;
+            const auto& coordinates = mapRenderer_->activeTileCoordinates();
+            for (std::size_t checked = 0; checked < trafficVehicles_.size(); ++checked) {
+                const std::size_t index = roadRouteRefreshCursor_++ % trafficVehicles_.size();
+                TrafficVehicleState& state = trafficVehicles_[index];
+                if (state.isBus || state.populationEnabled || state.vehicle == nullptr ||
+                    state.vehicleLoadFailed || state.deadlockRemovalCommitted) {
+                    continue;
+                }
+                bool hasUsableActiveCandidate = false;
+                for (std::size_t candidateIndex = 0; candidateIndex < state.spawnCandidates.size();
+                     ++candidateIndex) {
+                    const auto& candidate = state.spawnCandidates[candidateIndex];
+                    if (activeTiles.contains({candidate.tileX, candidate.tileY}) &&
+                        std::ranges::find(state.rejectedSpawnCandidateIndices, candidateIndex) ==
+                            state.rejectedSpawnCandidateIndices.end()) {
+                        const auto pose =
+                            sampleMapTrafficActorPose(state.actor, candidate.distanceMeters);
+                        if (!pose) {
+                            throw std::runtime_error(
+                                "Could not sample a road traffic spawn position");
+                        }
+                        if (poseOnActiveTile(*pose)) {
+                            hasUsableActiveCandidate = true;
+                            break;
+                        }
+                    }
+                }
+                if (hasUsableActiveCandidate) {
+                    continue;
+                }
+                const MapTrafficVehicleFilter filter{state.actor.vehicleType,
+                                                     state.actor.unscheduledGroupIndex, false,
+                                                     state.actor.trafficRuleGroupIndex};
+                if (++roadRouteRefreshSeed_ == 0) {
+                    ++roadRouteRefreshSeed_;
+                }
+                if (trafficSpawnDiagnosticsEnabled_) {
+                    ++roadRouteRefreshAttempts_;
+                }
+                const auto lane = mapRenderer_->selectTrafficSpawnLaneInTiles(
+                    filter, roadRouteRefreshSeed_, coordinates);
+                if (!lane) {
+                    break;
+                }
+                auto route = mapRenderer_->buildDrivingRoute(
+                    lane->splineId, lane->laneSelector, roadRouteRefreshSeed_,
+                    state.actor.minimumTurnRadiusMeters, filter);
+                if (!route) {
+                    break;
+                }
+                auto subdividedRoute = subdivideMapTrafficRoute(*route);
+                auto candidates =
+                    mapTrafficRouteSpawnCandidates(subdividedRoute, state.actor.lengthMeters);
+                if (!mapTrafficSpawnCandidatesOverlapActiveTiles(candidates, coordinates)) {
+                    break;
+                }
+                state.actor.route = std::move(subdividedRoute);
+                resetMapTrafficActorForEntry(state.actor);
+                state.spawnCandidates = std::move(candidates);
+                state.rejectedSpawnCandidateIndices.clear();
+                state.activeSpawnCandidateIndex.reset();
+                state.cachedPose.reset();
+                state.blockingActorStateIndex.reset();
+                state.blockingActorGeneration.reset();
+                state.workerActorTemplate = std::make_shared<const MapTrafficActor>(state.actor);
+                ++state.workerGeneration;
+                if (trafficSpawnDiagnosticsEnabled_) {
+                    ++roadRouteRefreshSuccesses_;
+                }
+                break;
+            }
         }
         for (auto& state : trafficVehicles_) {
             if (state.deadlockRemovalCommitted) {
@@ -1102,6 +1198,9 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     ", pendingLoads=" + std::to_string(pendingRoadVehicleLoads) +
                     ", failedLoads=" + std::to_string(failedRoadVehicleLoads) +
                     ", active=" + std::to_string(activeRoadVehicles) +
+                    ", recycledOutsideTiles=" + std::to_string(roadTrafficRecycledOutsideTiles_) +
+                    ", localRouteAttempts=" + std::to_string(roadRouteRefreshAttempts_) +
+                    ", localRoutesBuilt=" + std::to_string(roadRouteRefreshSuccesses_) +
                     ", activeTiles=" + std::to_string(activeTiles.size()) +
                     ", checkedVehicles=" + std::to_string(roadSpawnDiagnostics.vehiclesChecked) +
                     ", candidates=" + std::to_string(roadSpawnDiagnostics.candidatesChecked) +
@@ -1116,6 +1215,9 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     ", obstructed=" + std::to_string(roadSpawnDiagnostics.obstructedCandidates) +
                     ", clear=" + std::to_string(roadSpawnDiagnostics.clearCandidates));
                 trafficSpawnDiagnosticElapsedSeconds_ = 0.0;
+                roadTrafficRecycledOutsideTiles_ = 0;
+                roadRouteRefreshAttempts_ = 0;
+                roadRouteRefreshSuccesses_ = 0;
             }
         }
     }

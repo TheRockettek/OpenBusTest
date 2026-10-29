@@ -3721,6 +3721,38 @@ MapTrafficLaneNetwork::selectSpawnLane(MapTrafficVehicleFilter vehicle,
     return selectLane(vehicle, selectionSeed, spawnLanes_);
 }
 
+std::optional<MapTrafficLaneStart> MapTrafficLaneNetwork::selectSpawnLaneInTiles(
+    MapTrafficVehicleFilter vehicle, std::size_t selectionSeed,
+    const std::vector<std::pair<int, int>>& activeTiles) const {
+    if (!finalized_) {
+        throw std::logic_error("Traffic lane network must be finalized before spawn lookup");
+    }
+    if (selectionSeed == 0) {
+        throw std::invalid_argument("Traffic spawn selection seed must be nonzero");
+    }
+    std::vector<MapTrafficLaneStart> candidates;
+    for (const MapTrafficLaneStart& entry : spawnLanes_) {
+        const auto& lanes = lanesBySpline_.at(entry.splineId);
+        const std::size_t laneIndex = lanes[entry.laneSelector];
+        const auto& segment = segments_[laneIndex];
+        const double tileSize = segment.spline.coordinates.tileSize;
+        const auto& start = laneStarts_[laneIndex].position;
+        if (std::any_of(activeTiles.begin(), activeTiles.end(), [&](const auto& tile) {
+                if (tile.first == segment.spline.tileX && tile.second == segment.spline.tileY) {
+                    return true;
+                }
+                const double minX = static_cast<double>(tile.first) * tileSize;
+                const double minY = static_cast<double>(tile.second) * tileSize;
+                const double dx = std::max({minX - start[0], 0.0, start[0] - minX - tileSize});
+                const double dy = std::max({minY - start[1], 0.0, start[1] - minY - tileSize});
+                return std::hypot(dx, dy) <= lengths_[laneIndex] + 0.01;
+            })) {
+            candidates.push_back(entry);
+        }
+    }
+    return selectLane(vehicle, selectionSeed, candidates);
+}
+
 std::optional<MapTrafficLaneStart>
 MapTrafficLaneNetwork::selectLane(MapTrafficVehicleFilter vehicle, std::size_t selectionSeed,
                                   const std::vector<MapTrafficLaneStart>& laneStarts) const {

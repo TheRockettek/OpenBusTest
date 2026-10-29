@@ -255,6 +255,32 @@ bool cullingFrustumMayIntersect(const CullingItem& item, const CullingPlanes& pl
     return true;
 }
 
+bool cullingProjectedSizeMayPass(const CullingItem& item, CullingProjectedSize projectedSize) {
+    if ((item.metadata[0] & CullProjectedSize) == 0) {
+        return true;
+    }
+    const float depth = -item.eyeSphere[2];
+    const float radius = item.eyeSphere[3];
+    const float scale = projectedSize.projectionScale;
+    const float threshold = projectedSize.minimumFraction;
+    if (!std::isnormal(depth) || !std::isnormal(radius) || !std::isnormal(scale) ||
+        !std::isnormal(threshold) || radius <= 0.0F || scale <= 0.0F || threshold <= 0.0F ||
+        depth <= radius) {
+        return true;
+    }
+    const float numerator = scale * radius;
+    const float denominator = depth - radius;
+    if (!std::isnormal(numerator) || !std::isnormal(denominator)) {
+        return true;
+    }
+    const double fraction = static_cast<double>(numerator) / denominator;
+    if (!std::isfinite(fraction) || fraction < std::numeric_limits<float>::min()) {
+        return true;
+    }
+    // Leave room for float arithmetic and the shader's own threshold margin.
+    return fraction >= static_cast<double>(threshold) * (1.0 - 0.0001);
+}
+
 bool cullingItemVisible(const CullingItem& item, const CullingPlanes& planes,
                         std::span<const float> lodBoundaries, CullingProjectedSize projectedSize) {
     if ((item.metadata[0] & CullLod) != 0 &&

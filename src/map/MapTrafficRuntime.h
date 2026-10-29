@@ -513,6 +513,9 @@ class MapTrafficLaneNetwork {
     std::vector<MapTrafficLaneStart> spawnLanes() const;
     std::optional<MapTrafficLaneStart> selectSpawnLane(MapTrafficVehicleFilter vehicle,
                                                        std::size_t selectionSeed) const;
+    std::optional<MapTrafficLaneStart>
+    selectSpawnLaneInTiles(MapTrafficVehicleFilter vehicle, std::size_t selectionSeed,
+                           const std::vector<std::pair<int, int>>& activeTiles) const;
 
   private:
     using Cell = std::pair<long long, long long>;

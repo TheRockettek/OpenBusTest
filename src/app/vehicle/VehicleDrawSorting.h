@@ -43,22 +43,21 @@ void transparentTriangleOrder(const VertexContainer& vertices,
             -(depthAxis[0] * centerX + depthAxis[1] * centerY + depthAxis[2] * centerZ);
         triangles.push_back({index, depth});
     }
-    std::sort(
-        triangles.begin(), triangles.end(),
-        [](const TransparentTriangleDepth& first, const TransparentTriangleDepth& second) {
-            const bool firstDepthIsNan = std::isnan(first.depth);
-            const bool secondDepthIsNan = std::isnan(second.depth);
-            if (firstDepthIsNan != secondDepthIsNan) {
-                return !firstDepthIsNan;
-            }
-            if (firstDepthIsNan) {
-                return first.index < second.index;
-            }
-            if (first.depth != second.depth) {
-                return first.depth > second.depth;
-            }
-            return first.index < second.index;
-        });
+    std::sort(triangles.begin(), triangles.end(),
+              [](const TransparentTriangleDepth& first, const TransparentTriangleDepth& second) {
+                  const bool firstDepthIsNan = std::isnan(first.depth);
+                  const bool secondDepthIsNan = std::isnan(second.depth);
+                  if (firstDepthIsNan != secondDepthIsNan) {
+                      return !firstDepthIsNan;
+                  }
+                  if (firstDepthIsNan) {
+                      return first.index < second.index;
+                  }
+                  if (first.depth != second.depth) {
+                      return first.depth > second.depth;
+                  }
+                  return first.index < second.index;
+              });
     order.reserve(triangles.size());
     for (const TransparentTriangleDepth& triangle : triangles) {
         order.push_back(triangle.index);

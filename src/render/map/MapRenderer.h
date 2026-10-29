@@ -111,6 +111,10 @@ class MapRenderer {
     std::optional<openbus::map::MapTrafficLaneStart>
     selectTrafficSpawnLane(openbus::map::MapTrafficVehicleFilter vehicle,
                            std::size_t selectionSeed) const;
+    std::optional<openbus::map::MapTrafficLaneStart>
+    selectTrafficSpawnLaneInTiles(openbus::map::MapTrafficVehicleFilter vehicle,
+                                  std::size_t selectionSeed,
+                                  const std::vector<std::pair<int, int>>& activeTiles) const;
     std::vector<int> trafficSplineIds(int pathTypeCode) const;
     std::vector<int> trafficSplineIdsInTiles(int pathTypeCode,
                                              const std::vector<std::pair<int, int>>& tiles) const;

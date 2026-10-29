@@ -1086,6 +1086,16 @@ MapRenderer::selectTrafficSpawnLane(openbus::map::MapTrafficVehicleFilter vehicl
     return impl_->roadTrafficLaneNetwork.selectSpawnLane(vehicle, selectionSeed);
 }
 
+std::optional<openbus::map::MapTrafficLaneStart> MapRenderer::selectTrafficSpawnLaneInTiles(
+    openbus::map::MapTrafficVehicleFilter vehicle, std::size_t selectionSeed,
+    const std::vector<std::pair<int, int>>& activeTiles) const {
+    if (!sceneLoader_->roadTrafficLaneNetworkReady()) {
+        return std::nullopt;
+    }
+    return impl_->roadTrafficLaneNetwork.selectSpawnLaneInTiles(vehicle, selectionSeed,
+                                                                activeTiles);
+}
+
 bool MapRenderer::addTrafficActor(openbus::map::MapTrafficActor actor) {
     if (!openbus::map::advanceMapTrafficActor(actor, 0.0)) {
         return false;

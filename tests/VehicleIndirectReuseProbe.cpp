@@ -1,5 +1,8 @@
 #include "app/vehicle/Vehicle.h"
 #include "ProbeTempDirectory.h"
+#include "physics/BusSimulation.h"
+#include "physics/World.h"
+#include "render/RendererReflection.h"
 
 #include <fstream>
 #include <iostream>
@@ -75,26 +78,79 @@ int main(int argc, char** argv) {
         opaque.vertexCount = 3;
         opaque.color = {1, 0, 0};
         Vehicle::Batch transparent;
-        transparent.vertexCount = 3;
+        transparent.vertexCount = 6;
         transparent.alphaMode = 2;
         transparent.baseMaterial.alphaMode = 2;
         transparent.color = {0, 1, 0};
+        transparent.transmap.name = "probe_transmap";
+        transparent.transmap.loadAttempted = true;
         const std::array<Vehicle::Vertex, 3> vertices = {{
             {-1, -1, -10, 0, 0, 0, 0, 0, 1},
             {0, 1, -10, 0, 0, 0, 0, 0, 1},
             {1, -1, -10, 0, 0, 0, 0, 0, 1},
         }};
+        const std::array<Vehicle::Vertex, 6> transparentVertices = {{
+            {-1, -1, -10, 0, 0, 0, 0, 0, 1},
+            {0, 1, -10, 0, 0, 0, 0, 0, 1},
+            {1, -1, -10, 0, 0, 0, 0, 0, 1},
+            {-1, -1, -12, 0, 0, 0, 0, 0, 1},
+            {0, 1, -12, 0, 0, 0, 0, 0, 1},
+            {1, -1, -12, 0, 0, 0, 0, 0, 1},
+        }};
+        transparent.vertices =
+            std::vector<Vehicle::Vertex>(transparentVertices.begin(), transparentVertices.end());
         for (auto* batch : {&opaque, &transparent}) {
             pglGenBuffers(1, &batch->buffer);
             pglBindBuffer(GL_ARRAY_BUFFER, batch->buffer);
-            pglBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
+            const auto* batchVertices =
+                batch == &transparent ? transparentVertices.data() : vertices.data();
+            const std::size_t batchVertexBytes =
+                batch == &transparent ? sizeof(transparentVertices) : sizeof(vertices);
+            pglBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(batchVertexBytes),
+                          batchVertices, GL_STATIC_DRAW);
             part.batches.push_back(std::move(*batch));
         }
         vehicle.displayLists.push_back(std::move(part));
         vehicle.variableVisibleParts = {true};
         vehicle.loaded = true;
-        setPerspective(64, 64, 90);
+        auto& sortingBatch = vehicle.displayLists[0].batches[1];
         setModelViewMatrix(identityMatrix());
+        const GLuint firstSortedIndexBuffer = vehicle.sortTransparentBatch(sortingBatch);
+        std::array<GLuint, 6> identitySortedIndices = {};
+        if (firstSortedIndexBuffer == 0 || pglGetBufferSubData == nullptr) {
+            std::cerr << "Transparent sorting did not create an inspectable index buffer\n";
+            passed = false;
+        } else {
+            pglBindBuffer(GL_ARRAY_BUFFER, firstSortedIndexBuffer);
+            pglGetBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(identitySortedIndices),
+                                identitySortedIndices.data());
+            if (identitySortedIndices != std::array<GLuint, 6>{3, 4, 5, 0, 1, 2}) {
+                std::cerr << "Transparent index buffer did not sort triangles far-to-near\n";
+                passed = false;
+            }
+            if (vehicle.sortTransparentBatch(sortingBatch) != firstSortedIndexBuffer) {
+                std::cerr << "Transparent sorting did not reuse the same-view index buffer\n";
+                passed = false;
+            }
+            setModelViewMatrix(rotationMatrix(180, 0, 1, 0));
+            const GLuint reversedSortedIndexBuffer = vehicle.sortTransparentBatch(sortingBatch);
+            std::array<GLuint, 6> reversedSortedIndices = {};
+            if (reversedSortedIndexBuffer == 0 ||
+                reversedSortedIndexBuffer == firstSortedIndexBuffer) {
+                std::cerr << "Transparent sorting did not cache a second view direction\n";
+                passed = false;
+            } else {
+                pglBindBuffer(GL_ARRAY_BUFFER, reversedSortedIndexBuffer);
+                pglGetBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(reversedSortedIndices),
+                                    reversedSortedIndices.data());
+                if (reversedSortedIndices != std::array<GLuint, 6>{0, 1, 2, 3, 4, 5}) {
+                    std::cerr << "Transparent index buffer did not reflect the changed view\n";
+                    passed = false;
+                }
+            }
+        }
+        setModelViewMatrix(identityMatrix());
+        setPerspective(64, 64, 90);
         glViewport(0, 0, 64, 64);
         dispatchCompute = pglDispatchCompute;
         pglDispatchCompute = recordDispatch;
@@ -187,6 +243,83 @@ int main(int argc, char** argv) {
         vehicle.lodThresholds.clear();
         vehicle.displayLists[0].lodIndex = -1;
         setModelViewMatrix(identityMatrix());
+        resetFrameTriangleCount();
+        draw(VehicleRenderPass::Opaque, 0.5);
+        draw(VehicleRenderPass::Transparent, 0.5);
+        if (vehicle.displayLists[0].indirectEligible ||
+            !vehicle.opaquePartsScratch.empty() || !vehicle.transparentBatchesScratch.empty() ||
+            frameTriangleCount() != 0) {
+            std::cerr << "Undersized vehicle part was classified or submitted\n";
+            passed = false;
+        }
+        for (const auto& batch : vehicle.displayLists[0].batches) {
+            if (batch.indirectSlot != std::numeric_limits<std::size_t>::max()) {
+                std::cerr << "Undersized vehicle part received an indirect slot\n";
+                passed = false;
+            }
+        }
+        expect(15, "Undersized vehicle dispatched compute");
+        draw(VehicleRenderPass::Opaque);
+        draw(VehicleRenderPass::Transparent);
+        if (!vehicle.displayLists[0].indirectEligible || frameTriangleCount() == 0) {
+            std::cerr << "Disabled cutoff did not restore vehicle submission\n";
+            passed = false;
+        }
+        expect(16, "Disabled cutoff did not restore GPU culling");
+        {
+            BusConfiguration configuration{};
+            configuration.mass = 12000;
+            configuration.length = configuration.collisionLength = 10;
+            configuration.width = configuration.collisionWidth = 2.5;
+            configuration.bodyHalfLength = 5;
+            configuration.bodyHalfWidth = 1.25;
+            configuration.bodyHalfHeight = 1.5;
+            configuration.collisionHeight = 3;
+            configuration.wheelRadius = 0.5;
+            configuration.wheelHalfWidth = 0.15;
+            configuration.centerOfGravityHeight = 1;
+            configuration.axles = {{3, 2, 2, 1.5, 1, 240000, 90000, 20000, true, false},
+                                   {-3, 2, 2, 1.5, 1, 240000, 90000, 20000, false, true}};
+            World world;
+            BusSimulation bus(world, configuration, VehiclePlacement{{0, 0, 0}, 0});
+            VehicleCamera camera;
+            camera.kind = VehicleCameraKind::Reflexion;
+            const std::vector<VehicleCamera> cameras = {camera};
+            ReflectionRenderer reflections;
+            reflections.initialize(cameras);
+            bool rendered = false;
+            reflections.render(
+                bus, cameras, {0, 0, 64, 64},
+                [](std::size_t) { return ReflectionRequirement{true, 64}; },
+                [&](const BusSimulation&, std::size_t, int width, int height) {
+                    rendered = true;
+                    setPerspective(width, height, 90);
+                    setModelViewMatrix(identityMatrix());
+                    setFrameTriangleCountReflectionPass(true);
+                    resetFrameReflectionTriangleCount();
+                    draw(VehicleRenderPass::Opaque, 0.5);
+                    draw(VehicleRenderPass::Transparent, 0.5);
+                    if (!reflectionPassActive() || frameReflectionTriangleCount() != 0 ||
+                        vehicle.displayLists[0].indirectEligible ||
+                        !vehicle.transparentBatchesScratch.empty()) {
+                        std::cerr << "Undersized part was submitted in a reflection pass\n";
+                        passed = false;
+                    }
+                    draw(VehicleRenderPass::Opaque);
+                    draw(VehicleRenderPass::Transparent);
+                    if (frameReflectionTriangleCount() == 0 ||
+                        vehicle.transparentBatchesScratch.empty()) {
+                        std::cerr << "Disabled reflection cutoff did not restore vehicle draws\n";
+                        passed = false;
+                    }
+                    setFrameTriangleCountReflectionPass(false);
+                },
+                [](int width, int height) { setPerspective(width, height, 90); });
+            if (!rendered) {
+                std::cerr << "Reflection fixture did not render\n";
+                passed = false;
+            }
+        }
         pglDispatchCompute = dispatchCompute;
         glDisable(GL_DITHER);
         const auto renderPair = [&](bool gpu, int scenario) {
@@ -197,18 +330,23 @@ int main(int argc, char** argv) {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             setModelViewMatrix(identityMatrix());
             if (scenario == 3) setModelViewMatrix(translationMatrix({100, 0, 0}));
-            if (scenario >= 4) setModelViewMatrix(translationMatrix({0, 0, -15}));
-            draw(VehicleRenderPass::Opaque);
+            if (scenario == 4 || scenario == 5)
+                setModelViewMatrix(translationMatrix({0, 0, -15}));
+            draw(VehicleRenderPass::Opaque, scenario == 6 ? 0.5 : 0.0);
             if (scenario == 1) setModelViewMatrix(translationMatrix({1, 0, 0}));
-            draw(VehicleRenderPass::Transparent, scenario == 2 ? 0.2 : 0.0);
+            draw(VehicleRenderPass::Transparent,
+                 scenario == 2 ? 0.2 : (scenario == 6 ? 0.5 : 0.0));
             std::vector<std::uint8_t> pixels(64 * 64 * 4);
             glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
             return pixels;
         };
-        for (int scenario : {0, 1, 2, 3, 4, 5}) {
-            if (scenario >= 4) {
+        for (int scenario : {0, 1, 2, 3, 4, 5, 6}) {
+            if (scenario == 4 || scenario == 5) {
                 vehicle.lodThresholds = {1.0, 0.5, 0.1};
                 vehicle.displayLists[0].lodIndex = scenario == 4 ? 0 : 1;
+            } else if (scenario == 6) {
+                vehicle.lodThresholds.clear();
+                vehicle.displayLists[0].lodIndex = -1;
             }
             const auto cpu = renderPair(false, scenario);
             const auto gpu = renderPair(true, scenario);
@@ -221,7 +359,7 @@ int main(int argc, char** argv) {
             for (std::size_t pixel = 0; pixel < cpu.size(); pixel += 4) {
                 nonBlack |= cpu[pixel] != 0 || cpu[pixel + 1] != 0 || cpu[pixel + 2] != 0;
             }
-            if (nonBlack != (scenario != 3 && scenario != 5)) {
+            if (nonBlack != (scenario != 3 && scenario != 5 && scenario != 6)) {
                 std::cerr << "Vehicle fixture produced unexpected visibility for scenario "
                           << scenario << '\n';
                 passed = false;

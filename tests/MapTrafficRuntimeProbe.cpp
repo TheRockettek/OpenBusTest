@@ -1093,6 +1093,40 @@ void verifyDrivingBehavior() {
     }
     require(selectedInternalSpawnLane,
             "seeded road spawn selection can choose a connected internal lane");
+    require(connectedSpawnLanes.selectSpawnLaneInTiles({0, std::nullopt, false}, 1, {{0, 0}})
+                .has_value() &&
+                !connectedSpawnLanes
+                     .selectSpawnLaneInTiles({0, std::nullopt, false}, 1, {{5, 5}})
+                     .has_value(),
+            "local spawn lane selection excludes roads outside the streamed tile window");
+    MapTrafficLaneNetwork streamedSpawnLanes;
+    const auto addStreamedLanes = [&](int tile) {
+        auto incoming = straight(1100 + tile * 2, 0.0, 0.0, 0.0, 20.0);
+        auto outgoing = straight(1101 + tile * 2, 0.0, 20.0, 0.0, 20.0);
+        incoming.spline.tileX = tile;
+        outgoing.spline.tileX = tile;
+        streamedSpawnLanes.addSegment(std::move(incoming));
+        streamedSpawnLanes.addSegment(std::move(outgoing));
+    };
+    addStreamedLanes(0);
+    streamedSpawnLanes.finalize();
+    const auto oldLocalLane =
+        streamedSpawnLanes.selectSpawnLaneInTiles({0, std::nullopt, false}, 1, {{0, 0}});
+    require(!streamedSpawnLanes.selectSpawnLaneInTiles({0, std::nullopt, false}, 1, {{3, 0}}),
+            "an unloaded tile has no local spawn lane");
+    addStreamedLanes(3);
+    streamedSpawnLanes.finalize();
+    const auto newLocalLane =
+        streamedSpawnLanes.selectSpawnLaneInTiles({0, std::nullopt, false}, 1, {{3, 0}});
+    require(oldLocalLane == std::optional<MapTrafficLaneStart>{{1100, 0}} &&
+                newLocalLane == std::optional<MapTrafficLaneStart>{{1106, 0}},
+            "streaming to a distant tile selects that tile's connected road lane");
+    const auto newLocalRoute =
+        streamedSpawnLanes.buildRoute(newLocalLane->splineId, newLocalLane->laneSelector);
+    require(newLocalRoute &&
+                mapTrafficSpawnCandidatesOverlapActiveTiles(
+                    mapTrafficRouteSpawnCandidates(*newLocalRoute, 4.5), {{3, 0}}),
+            "the replacement route provides a spawn candidate in the new active tile");
     const auto connectedSpawnRoute = connectedSpawnLanes.buildRoute(1010);
     require(connectedSpawnRoute.has_value(),
             "a connected road lane builds a route for interior spawn candidates");
@@ -4057,6 +4091,8 @@ void verifyTrafficRules() {
         const auto spawn = densityNetwork.selectSpawnLane({0, 7, false, 0}, seed);
         require(spawn.has_value() && spawn->splineId != 1314,
                 "zero-density paths are excluded from unscheduled spawn selection");
+        require(densityNetwork.selectSpawnLaneInTiles({0, 7, false, 0}, seed, {{0, 0}}) == spawn,
+                "local spawn lane selection retains weighted vehicle-specific path rules");
     }
 
     MapTrafficLaneNetwork zeroDensityContinuation;

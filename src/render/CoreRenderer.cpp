@@ -1469,7 +1469,8 @@ void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexC
 
 void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
                        const std::vector<std::array<float, 4>>& colors,
-                       const std::vector<GLuint>& textures, const std::vector<bool>& flipTextureY) {
+                       const std::vector<GLuint>& textures, const std::vector<bool>& flipTextureY,
+                       GLuint indexBuffer) {
     TraceScope trace("render", "CoreRenderer::drawMaterialBatch");
     if (materialProgram == 0 || buffer == 0 || vertexCount == 0 || colors.empty() ||
         textures.empty()) {
@@ -1497,9 +1498,18 @@ void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
     }
     selectTextureUnit(GL_TEXTURE0);
     bindModelVertexBuffer(buffer, modelVertexArray);
+    if (indexBuffer != 0) {
+        pglBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
+    }
     recordTriangleSubmission(vertexCount / 3);
-    if (!drawSelectedIndirect(false))
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
+    if (!drawSelectedIndirect(indexBuffer != 0)) {
+        if (indexBuffer != 0) {
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(vertexCount), GL_UNSIGNED_INT,
+                           nullptr);
+        } else {
+            glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
+        }
+    }
 }
 
 void drawEnvironmentBatch(GLuint buffer, std::size_t vertexCount, GLuint texture, double alpha) {

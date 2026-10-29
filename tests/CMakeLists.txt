@@ -218,7 +218,8 @@ target_sources(OpenBusVehicleIndirectReuseProbe PRIVATE
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleTextures.cpp"
     "${OPENBUS_SOURCE_ROOT}/app/vehicle/VehicleVisibility.cpp")
 openbus_copy_lua_runtime(OpenBusVehicleIndirectReuseProbe)
-set_tests_properties(OpenBusVehicleIndirectReuseProbe PROPERTIES SKIP_RETURN_CODE 77)
+set_tests_properties(OpenBusVehicleIndirectReuseProbe PROPERTIES SKIP_RETURN_CODE 77
+    ENVIRONMENT "OPENBUS_REFLECTION_SIZE=64;OPENBUS_REFLECTION_INTERVAL=1;OPENBUS_REFLECTION_MAX_FPS=0;OPENBUS_REFLECTION_TRANSPARENT=1")
 add_test(NAME OpenBusVehicleTextureLookupProbe
     COMMAND OpenBusVehicleIndirectReuseProbe --texture-lookup)
 openbus_add_probe(OpenBusVehiclePartLoadingProbe VehiclePartLoadingProbe.cpp

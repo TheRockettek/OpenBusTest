@@ -30,9 +30,9 @@ allocation, or dispatch failures retain the CPU visibility implementation.
 
 - Map terrain, water, road bounds, and scenery bounding spheres use batched
   compute frustum and 10 km XY-bounds distance tests.
-- A conservative CPU frustum broad phase removes clearly off-screen map
-  bounds and scenery before preparing indirect draws; retained candidates
-  still receive the GPU's final test.
+- Conservative CPU frustum, LOD, and projected-size broad phases remove clearly
+  rejected scenery and vehicle parts before preparing indirect draws; retained
+  candidates still receive the GPU's final test.
 - Scenery and vehicle mesh LOD selection runs in compute.
 - Optional projected-size tests for scenery and vehicle parts run in compute,
   using the current view's projection scale and configured threshold; terrain,
@@ -54,7 +54,9 @@ configured independently for the main view and mirror/camera views:
 Values are percentages of viewport height, from `0` through `100`. Unset,
 empty, or `0` values disable the cutoff for that view. Invalid values are logged
 and ignored. The CPU backend applies the cutoff before submission; the optional
-GPU backend calculates it in compute and gates indirect commands.
+GPU backend first excludes objects certainly below the cutoff on the CPU, then
+calculates the final decision in compute and gates indirect commands. Its
+conservative broad phase retains uncertain and near-threshold bounds.
 The traffic-light raster probe exercises red, green, and yellow phases with both
 cutoffs disabled, including CPU and indirect rendering with queries enabled.
 The GPU test uses float inputs and a small conservative boundary margin, so
@@ -62,7 +64,13 @@ objects near the cutoff may be retained when the double-precision CPU test
 would reject them. Spheres reaching the camera plane and degenerate bounds are
 retained conservatively. Size culling is not occlusion
 culling; fully covered objects can still be submitted when they exceed the
-configured threshold.
+configured threshold. The test uses conservative part or scenery bounding
+spheres, not the exact projected height of a complete vehicle or mesh.
+
+The window title reports submitted **candidate** triangles. For indirect draws,
+this includes candidates that compute later suppresses, not only triangles
+executed by the GPU. Reflection counts aggregate the targets drawn on the most
+recent reflection refresh and include repeated passes such as depth prepasses.
 
 ## Experimental depth-query occlusion
 

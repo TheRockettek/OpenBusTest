@@ -598,7 +598,11 @@ for the explicit boundary.
   to connected endpoints or their authored timetable origins. Population
   changes unload vehicles off-screen; route-complete
   actors are recycled from the bounded pool, resetting route progress, speed,
-  and junction-wait state. The startup pool remains the hard capacity.
+  and junction-wait state. Road actors outside active tiles release their
+  population slots, and inactive pool vehicles can rebuild routes from local
+  connected lanes as tiles stream in. Scheduled buses retain their timetable
+  routes and pause outside active tiles. The startup pool remains the hard
+  capacity; validate long-distance streaming and population refill in-game.
   When no complete timetable match exists, a route following at least two
   consecutive entries from the timetable's first checkpoint may use an
   explicitly logged, itinerary-inaccurate prefix fallback. It stops at the
@@ -1107,12 +1111,12 @@ limitations.
   to preserve seam behavior. The 1,000-actor shared-route benchmark completed
   at 24.75 ms/update in one Linux release run; compare repeated baseline and
   optimized captures before claiming a speedup, and profile loop-heavy traffic.
-- [~] Transmap-transparent batches cache their sorted vertex order while the
-  view-depth axis and source geometry are unchanged, avoiding repeat triangle
-  sorting in stable views. Triangle-order scratch storage is reused, and profiler
-  scopes now split cache hits, CPU sorting/reordering, and GPU buffer uploads.
-  The vehicle sorting, material rendering, and indirect-reuse probes pass;
-  measure the new scopes in a crowded scene to quantify frame-time improvement.
+- [~] Transmap-transparent batches keep their original vertex buffer and draw
+  triangles through a cached, view-sorted index buffer, avoiding full vertex
+  reordering and upload for each view. Index buffers are bounded to three view
+  directions per batch; profiler scopes separate cache hits, CPU sorting, and
+  index uploads. Measure the new scopes in a crowded scene to quantify frame-time
+  improvement.
 - [~] Within each traffic substep, junction ranges and unchanged actor footprints
   are reused, and claim-section overlap checks are shared across samples.
   The traffic probe checks stationary leaders resuming across an occupancy-cell

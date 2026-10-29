@@ -3059,7 +3059,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                   << throttlePercent << "% - Brake " << brakePercent << "% - "
                   << openbus::rendering::frameTriangleCount() << " main + "
                   << openbus::rendering::frameReflectionTriangleCount()
-                  << " reflection triangles/refresh - " << std::fixed << std::setprecision(1)
+                  << " reflection candidate triangles/refresh - " << std::fixed << std::setprecision(1)
                   << displayedFps_ << " FPS";
             {
                 TraceScope phase("render", "RenderLoop::draw.windowTitle.set");
