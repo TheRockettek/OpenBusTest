@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <vector>
 
@@ -28,23 +29,35 @@ void transparentTriangleOrder(const VertexContainer& vertices,
     if (vertices.size() < 6 || vertices.size() % 3 != 0) {
         return;
     }
+    const std::array<double, 3> depthAxis = transparentTriangleDepthAxis(modelView);
     triangles.clear();
     triangles.reserve(vertices.size() / 3);
     for (std::size_t index = 0; index < vertices.size(); index += 3) {
         const auto& first = vertices[index];
         const auto& second = vertices[index + 1];
         const auto& third = vertices[index + 2];
-        const std::array<double, 4> center = {
-            (static_cast<double>(first.x) + second.x + third.x) / 3.0,
-            (static_cast<double>(first.y) + second.y + third.y) / 3.0,
-            (static_cast<double>(first.z) + second.z + third.z) / 3.0, 1.0};
-        const auto viewCenter = openbus::rendering::transformPoint(modelView, center);
-        triangles.push_back({index, -viewCenter[2]});
+        const double centerX = (static_cast<double>(first.x) + second.x + third.x) / 3.0;
+        const double centerY = (static_cast<double>(first.y) + second.y + third.y) / 3.0;
+        const double centerZ = (static_cast<double>(first.z) + second.z + third.z) / 3.0;
+        const double depth =
+            -(depthAxis[0] * centerX + depthAxis[1] * centerY + depthAxis[2] * centerZ);
+        triangles.push_back({index, depth});
     }
-    std::stable_sort(
+    std::sort(
         triangles.begin(), triangles.end(),
         [](const TransparentTriangleDepth& first, const TransparentTriangleDepth& second) {
-            return first.depth > second.depth;
+            const bool firstDepthIsNan = std::isnan(first.depth);
+            const bool secondDepthIsNan = std::isnan(second.depth);
+            if (firstDepthIsNan != secondDepthIsNan) {
+                return !firstDepthIsNan;
+            }
+            if (firstDepthIsNan) {
+                return first.index < second.index;
+            }
+            if (first.depth != second.depth) {
+                return first.depth > second.depth;
+            }
+            return first.index < second.index;
         });
     order.reserve(triangles.size());
     for (const TransparentTriangleDepth& triangle : triangles) {
