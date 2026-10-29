@@ -2512,6 +2512,24 @@ std::vector<int> MapTrafficRouteNetwork::splineIds() const {
     return ids;
 }
 
+std::vector<int>
+MapTrafficRouteNetwork::splineIdsInTiles(const std::vector<std::pair<int, int>>& tiles) const {
+    if (!finalized_) {
+        throw std::logic_error(
+            trafficInputError("Traffic route network must be finalized before listing splines",
+                              "finalized=", finalized_));
+    }
+    std::vector<int> ids;
+    for (const auto& [splineId, spline] : splinesById_) {
+        if (std::find(tiles.begin(), tiles.end(), std::pair{spline.tileX, spline.tileY}) !=
+            tiles.end()) {
+            ids.push_back(splineId);
+        }
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
 std::vector<int> MapTrafficRouteNetwork::routeStartSplineIds() const {
     if (!finalized_) {
         throw std::logic_error(

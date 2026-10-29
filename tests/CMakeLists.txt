@@ -116,6 +116,18 @@ add_test(NAME OpenBusMapPassengerServiceProbe
 
 # Audio
 openbus_add_probe(OpenBusSoundEngineProbe SoundEngineProbe.cpp LIBS openbus_audio)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    openbus_add_probe(OpenBusAudioAvailabilityProbe AudioAvailabilityProbe.cpp
+        LIBS openbus_audio NO_TEST)
+    add_test(NAME OpenBusAudioAvailabilityProbe.available
+        COMMAND OpenBusAudioAvailabilityProbe available)
+    set_tests_properties(OpenBusAudioAvailabilityProbe.available
+        PROPERTIES ENVIRONMENT "ALSOFT_DRIVERS=null")
+    add_test(NAME OpenBusAudioAvailabilityProbe.unavailable
+        COMMAND OpenBusAudioAvailabilityProbe unavailable)
+    set_tests_properties(OpenBusAudioAvailabilityProbe.unavailable
+        PROPERTIES ENVIRONMENT "ALSOFT_DRIVERS=openbus-invalid-driver")
+endif()
 
 # Scripting
 openbus_add_probe(OpenBusScriptSchedulerProbe ScriptSchedulerProbe.cpp LIBS openbus_core)

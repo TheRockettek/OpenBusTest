@@ -1,12 +1,15 @@
 #include "app/vehicle/VehicleDefinition.h"
+#include "core/Logger.h"
 #include "map/MapTrafficRuntime.h"
 #include "render/MatrixMath.h"
 #include "ProbeTempDirectory.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <numbers>
 
 int main() {
@@ -58,11 +61,22 @@ int main() {
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_vehicle_definition_probe");
     std::filesystem::create_directories(root / "model");
+    const std::string logPath = (root / "diagnostics.log").string();
+#ifdef _WIN32
+    if (_putenv_s("OPENBUS_LOG_FILE", logPath.c_str()) != 0) {
+#else
+    if (setenv("OPENBUS_LOG_FILE", logPath.c_str(), 1) != 0) {
+#endif
+        std::cerr << "Could not configure diagnostic log path\n";
+        return 1;
+    }
 
     const std::filesystem::path vehicleConfigPath = root / "ai_car.ovh";
     std::ofstream vehicleConfig(vehicleConfigPath);
     vehicleConfig << "[friendlyname]\nTest\nAI car\nDefault\n"
-                     "[model]\nmodel/model.cfg\n";
+                     "[model]\nmodel/model.cfg\n"
+                     "[cog]\n0.1\n0\n1.2\n"
+                     "[rot_pnt_long]\n-2\n";
     vehicleConfig.close();
 
     std::ofstream modelConfig(root / "model/model.cfg");
@@ -82,9 +96,19 @@ int main() {
                         definition->modelConfiguration.parts[0].objPath == root / "model/car.o3d" &&
                         definition->modelConfiguration.parts[0].color ==
                             std::array<double, 3>{1.0, 1.0, 1.0};
+    Logger::Flush();
+    std::ifstream logInput(logPath);
+    const std::string log((std::istreambuf_iterator<char>(logInput)),
+                          std::istreambuf_iterator<char>());
+    const bool diagnosticsLogged =
+        log.find("[cog]: horizontal center-of-gravity offsets are retained but not applied") !=
+            std::string::npos &&
+        log.find("[rot_pnt_long]: recognized and retained but not applied to vehicle physics") !=
+            std::string::npos;
+    logInput.close();
     openbus::probe::removeProbeDirectory(root);
 
-    if (!loaded) {
+    if (!loaded || !diagnosticsLogged) {
         std::cerr << "Shared vehicle definition did not load an OVH config and vehicle model\n";
         return 1;
     }

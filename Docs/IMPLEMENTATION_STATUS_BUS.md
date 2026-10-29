@@ -7,10 +7,10 @@ Scope: the vehicle `.bus` file, its model CFG, and the passenger-cabin/path file
 | Keyword / family | Status | Current boundary |
 | --- | --- | --- |
 | `[fixed]`, `[scriptshare]` | Not implemented | BUS-level fixed/static selection and shared-script semantics are not applied. |
-| `[view_schedule]`, `[view_ticketselling]` | Parsed only | The loader recognizes the records, but does not retain/use the full view labels and selection behavior. |
-| `[cog]` | Partial | Not consistently reconciled with `[schwerpunkt]`; use of the two CG forms together is not established. |
+| `[view_schedule]`, `[view_ticketselling]` | Parsed only | The loader diagnoses the unsupported selection behavior but does not retain/use the full view labels. |
+| `[cog]` | Partial | Its z coordinate supplies the physics height when `[schwerpunkt]` is absent. OpenBus gives `[schwerpunkt]` precedence and warns on disagreement; nonzero x/y offsets are retained and warned about but not applied. Native precedence is unverified. |
 | `[rollwiderstand]` | Active subset | A non-negative authored force in newtons opposes longitudinal motion; negative values are rejected, and when absent the previous mass-scaled OpenBus fallback is retained. Native OMSI physics parity remains unverified. |
-| `[rot_pnt_long]` | Parsed only | The longitudinal rotation point is consumed but does not currently affect vehicle physics. |
+| `[rot_pnt_long]` | Parsed only | The longitudinal rotation point is retained and diagnosed but does not affect vehicle physics. |
 | `[ai_deltaheight]` | Active subset | Applied as a vertical offset to AI vehicle placement, including map-route updates; player vehicles are unchanged. Native OMSI sign/unit parity still needs live validation. |
 | `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`, `[ai_veh_type]`, `[sinus]` | Not implemented | Family-specific AI/drivetrain behavior is absent. |
 | `[coupling_front]`, `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, `[couple_front_open_for_sound]` | Not implemented | Coupling and multi-vehicle behavior are absent; articulated multi-body physics is not implemented. |

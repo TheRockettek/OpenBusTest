@@ -81,6 +81,7 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     : window_(nullptr), assetRequestManager_(std::make_unique<AssetRequestManager>()),
       reflectionRenderer_(std::make_unique<openbus::rendering::ReflectionRenderer>()) {
     TraceScope trace("startup", "RenderLoop::RenderLoop");
+    simulationState_.sharedVariables().setSoundAvailable(soundEngine_.isAvailable());
     if (const char* diagnostics = openbus::getEnvironment("OPENBUS_SCRIPT_DIAGNOSTICS")) {
         drivetrainDiagnosticsEnabled_ = std::string(diagnostics) == "1";
     }
@@ -825,12 +826,7 @@ std::size_t RenderLoop::trafficVehicleCount() const {
 }
 
 void RenderLoop::SetWeather(int precipitationType, double precipitationRate) {
-    if (precipitationType < 0 || precipitationType > 2 || !std::isfinite(precipitationRate) ||
-        precipitationRate < 0.0 || precipitationRate > 1.0) {
-        throw std::invalid_argument("Weather precipitation settings are invalid");
-    }
-    simulationState_.sharedVariables().set("preciptype", static_cast<float>(precipitationType));
-    simulationState_.sharedVariables().set("preciprate", static_cast<float>(precipitationRate));
+    simulationState_.sharedVariables().setPrecipitation(precipitationType, precipitationRate);
 }
 
 void RenderLoop::SetPlayerVehicle(Vehicle* model) {

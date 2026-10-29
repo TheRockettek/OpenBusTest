@@ -192,9 +192,9 @@ void SystemVariables::updateSimulationClock(double elapsedSeconds) {
     const year_month_day startDate{year{clockStartYear_},
                                    month{static_cast<unsigned>(clockStartMonth_)},
                                    day{static_cast<unsigned>(clockStartDay_)}};
-    const auto start =
-        sys_days{startDate} + seconds{static_cast<long long>(std::floor(clockStartTimeSeconds_))};
-    const auto current = start + seconds{static_cast<long long>(std::floor(elapsedSeconds))};
+    const auto current =
+        sys_days{startDate} +
+        seconds{static_cast<long long>(std::floor(clockStartTimeSeconds_ + elapsedSeconds))};
     const sys_days currentDate = floor<days>(current);
     const year_month_day calendarDate{currentDate};
     const year_month_day firstDayOfYear{calendarDate.year(), January, day{1}};
@@ -207,6 +207,20 @@ void SystemVariables::updateSimulationClock(double elapsedSeconds) {
         {"year", static_cast<float>(static_cast<int>(calendarDate.year()))},
         {"dayofyear", static_cast<float>((currentDate - sys_days{firstDayOfYear}).count())},
     });
+}
+
+void SystemVariables::setPrecipitation(int type, double rate) {
+    if (type < 0 || type > 2 || !std::isfinite(rate) || rate < 0.0 || rate > 1.0) {
+        throw std::invalid_argument("Weather precipitation settings are invalid");
+    }
+    setValues({
+        {"preciptype", static_cast<float>(type)},
+        {"preciprate", static_cast<float>(rate)},
+    });
+}
+
+void SystemVariables::setSoundAvailable(bool available) {
+    set("nosound", available ? 0.0F : 1.0F);
 }
 
 void SystemVariables::updateFrame(float timegap, float getTime, float cursorX, float cursorY) {
@@ -264,6 +278,8 @@ void configureVehicle(Variables& variables) {
         {"cabinair_temp", 20.0},
         {"cabinair_abshum", 10.0},
         {"cabinair_relhum", 0.0},
+        {"preciptype", 0.0},
+        {"preciprate", 0.0},
         {"dirt_norm", 0.0},
         {"dirtrate", 0.0},
         {"schedule_active", 0.0},
@@ -323,6 +339,13 @@ void configureVehicle(Variables& variables) {
 
 Vehicle::Vehicle() : Variables(ScriptObjectKind::Vehicle) {
     configureVehicle(*this);
+}
+
+void Vehicle::updateEnvironment(const SystemVariables& system) {
+    setValues({
+        {"preciptype", system.get("preciptype")},
+        {"preciprate", system.get("preciprate")},
+    });
 }
 
 void Vehicle::updateFrame() {

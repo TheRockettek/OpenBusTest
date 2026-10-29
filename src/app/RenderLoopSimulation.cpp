@@ -242,6 +242,8 @@ void RenderLoop::finishPendingTrafficVehicleLoads() {
                         "tt_busstop_name", state.timetableDestinationName);
                 }
             }
+            state.pendingInitializationVehicle->variables.updateEnvironment(
+                simulationState_.sharedVariables());
             DeferredStep step;
             {
                 TraceScope initializeTrace("traffic",

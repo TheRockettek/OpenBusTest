@@ -59,6 +59,22 @@ sharedVehicleDefinition(const std::filesystem::path& busConfigPath,
                 " and model root: " + definition->modelRoot.string());
     definition->vehicleConfiguration = loadVehicleConfig(busConfigPath, configKind);
 
+    for (const ConfigurationDiagnostic& diagnostic :
+         definition->vehicleConfiguration.diagnostics.entries) {
+        if (diagnostic.keyword != "cog" && diagnostic.keyword != "rot_pnt_long" &&
+            diagnostic.keyword != "view_schedule" && diagnostic.keyword != "view_ticketselling") {
+            continue;
+        }
+        const std::string severity =
+            diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? "error" : "warning";
+        gameLog.Log(
+            diagnostic.severity == ConfigurationDiagnostic::Severity::Error ? LogLevel::Error
+                                                                              : LogLevel::Warning,
+            "CFG " + severity + " file=" + busConfigPath.generic_string() +
+                " line " + std::to_string(diagnostic.line) + " [" +
+                diagnostic.keyword + "]: " + diagnostic.message);
+    }
+
     openbus::scripting::Vehicle modelVariables;
     definition->modelConfiguration =
         configKind == VehicleFileKind::Bus

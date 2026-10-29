@@ -402,6 +402,17 @@ std::vector<int> MapRenderer::trafficSplineIds(int pathTypeCode) const {
     return {};
 }
 
+std::vector<int> MapRenderer::trafficSplineIdsInTiles(
+    int pathTypeCode, const std::vector<std::pair<int, int>>& tiles) const {
+    if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
+        return impl_->roadTrafficRouteNetwork.splineIdsInTiles(tiles);
+    }
+    if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN) {
+        return impl_->humanTrafficRouteNetwork.splineIdsInTiles(tiles);
+    }
+    return {};
+}
+
 std::vector<int> MapRenderer::trafficRouteStartSplineIds(int pathTypeCode) const {
     if (pathTypeCode == openbus::map::MAP_SPLINE_PATH_TYPE_ROAD) {
         std::vector<int> ids;

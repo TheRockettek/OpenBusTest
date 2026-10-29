@@ -408,10 +408,12 @@ BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath,
     }
     for (const ConfigurationDiagnostic& diagnostic : source.diagnostics.entries) {
         if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error &&
-            openbus::config::lower(diagnostic.keyword) == "rollwiderstand") {
-            throw std::runtime_error("Invalid BUS [rollwiderstand] in " + configPath.string() +
-                                     " at line " + std::to_string(diagnostic.line) + ": " +
-                                     diagnostic.message);
+            (openbus::config::lower(diagnostic.keyword) == "rollwiderstand" ||
+             openbus::config::lower(diagnostic.keyword) == "cog" ||
+             openbus::config::lower(diagnostic.keyword) == "schwerpunkt")) {
+            throw std::runtime_error("Invalid BUS [" + diagnostic.keyword + "] in " +
+                                     configPath.string() + " at line " +
+                                     std::to_string(diagnostic.line) + ": " + diagnostic.message);
         }
     }
     if (source.massTonnes <= 0.0) {
@@ -424,8 +426,9 @@ BusConfiguration loadBusConfiguration(const std::filesystem::path& configPath,
                                  configPath.string());
     }
     if (!source.hasCenterOfGravityHeight || source.centerOfGravityHeight <= 0.0) {
-        throw std::runtime_error("Bus configuration has no positive [schwerpunkt]: " +
-                                 configPath.string());
+        throw std::runtime_error(
+            "Bus configuration has no positive [schwerpunkt] or [cog] height: " +
+            configPath.string());
     }
     if (!source.hasWheelHalfWidth) {
         source.wheelHalfWidth = DEFAULT_WHEEL_HALF_WIDTH;

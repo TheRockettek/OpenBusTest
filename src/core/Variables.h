@@ -53,6 +53,8 @@ class SystemVariables : public Variables {
 
     void configureSimulationClock(int year, int month, int day, double timeSeconds);
     void updateSimulationClock(double elapsedSeconds);
+    void setPrecipitation(int type, double rate);
+    void setSoundAvailable(bool available);
 
     // Cursor position is separate from handler-scoped OMSI mouse_x/y deltas.
     void updateFrame(float timegap, float getTime, float cursorX, float cursorY);
@@ -84,6 +86,7 @@ class Vehicle : public ::Variables {
     Vehicle();
 
     void updateFrame();
+    void updateEnvironment(const SystemVariables& system);
 };
 
 class Human : public ::Variables {

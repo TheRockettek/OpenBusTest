@@ -712,6 +712,7 @@ struct Vehicle {
             }
             return;
         }
+        variables.updateEnvironment(simulationState.sharedVariables());
         {
             TraceScope definitionTrace("startup", "Vehicle::Vehicle.loadDefinition");
             load(*definition);

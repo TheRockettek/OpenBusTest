@@ -75,6 +75,8 @@ struct VehicleConfig {
     std::optional<double> rollingResistanceForceNewtons;
     double centerOfGravityHeight = 0.0;
     bool hasCenterOfGravityHeight = false;
+    std::optional<std::array<double, 3>> centerOfGravity;
+    std::optional<double> longitudinalRotationPoint;
     double aiDeltaHeight = 0.0;
     bool hasAiDeltaHeight = false;
     double inverseMinimumTurnRadius = 0.0;

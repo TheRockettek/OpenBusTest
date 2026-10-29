@@ -455,6 +455,7 @@ class MapTrafficRouteNetwork {
     void finalize();
     std::optional<MapTrafficRoute> buildRoute(int splineId, std::size_t segmentLimit = 1024) const;
     std::vector<int> splineIds() const;
+    std::vector<int> splineIdsInTiles(const std::vector<std::pair<int, int>>& tiles) const;
     std::vector<int> routeStartSplineIds() const;
     std::optional<MapTrafficSplineEndpointStatus> endpointStatus(int splineId) const;
 

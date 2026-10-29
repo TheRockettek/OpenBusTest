@@ -5075,6 +5075,51 @@ int main(int argc, char** argv) {
         network.finalize();
         require(network.splineIds() == std::vector<int>({10, 11}),
                 "traffic route start IDs are returned in deterministic order");
+        require(network.splineIdsInTiles({{1, 2}}) == std::vector<int>({10, 11}) &&
+                    network.splineIdsInTiles({{1, 3}}).empty() &&
+                    network.splineIdsInTiles({}).empty(),
+                "traffic spline filtering uses the owning active tiles");
+        MapTrafficRouteNetwork tileFilteredNetwork;
+        bool unfinalizedTileLookupRejected = false;
+        try {
+            static_cast<void>(tileFilteredNetwork.splineIdsInTiles({{1, 2}}));
+        } catch (const std::logic_error&) {
+            unfinalizedTileLookupRejected = true;
+        }
+        require(unfinalizedTileLookupRejected, "tile filtering requires a finalized network");
+        auto invalidSpline = makeSpline(35, 0, 0, 0.0);
+        invalidSpline.geometryValid = false;
+        tileFilteredNetwork.addTileSplines(
+            {makeSpline(32, 0, 0, 0.0), makeSpline(30, 0, 0, 0.0), invalidSpline}, 1, 2);
+        tileFilteredNetwork.addTileSplines({makeSpline(31, 0, 0, 0.0),
+                                             makeSpline(33, 0, 0, 0.0)}, -2, 4);
+        tileFilteredNetwork.addTileSplines({makeSpline(33, 0, 0, 0.0),
+                                             makeSpline(34, 0, 0, 0.0)}, 8, 9);
+        tileFilteredNetwork.finalize();
+        const std::vector<std::pair<int, int>> debugTiles = {{-2, 4}, {1, 2}, {-2, 4}};
+        const auto filteredIds = tileFilteredNetwork.splineIdsInTiles(debugTiles);
+        require(filteredIds == std::vector<int>({30, 31, 32, 35}),
+                "tile filtering retains sorted unique unambiguous IDs");
+        std::vector<int> originalDebugIds;
+        for (const int id : tileFilteredNetwork.splineIds()) {
+            const auto candidate = tileFilteredNetwork.buildRoute(id);
+            if (candidate && !candidate->segments.empty()) {
+                const auto& spline = candidate->segments.front().spline;
+                if (std::find(debugTiles.begin(), debugTiles.end(),
+                              std::pair{spline.tileX, spline.tileY}) != debugTiles.end()) {
+                    originalDebugIds.push_back(id);
+                }
+            }
+        }
+        std::vector<int> filteredDebugIds;
+        for (const int id : filteredIds) {
+            const auto candidate = tileFilteredNetwork.buildRoute(id);
+            if (candidate && !candidate->segments.empty()) {
+                filteredDebugIds.push_back(id);
+            }
+        }
+        require(filteredDebugIds == originalDebugIds,
+                "pre-filtering preserves the debug routes selected by the original algorithm");
         require(network.routeStartSplineIds() == std::vector<int>({10}),
                 "connected splines expose one deterministic start for their full route");
         const auto firstEndpoints = network.endpointStatus(10);

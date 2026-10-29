@@ -446,6 +446,10 @@ SoundEngine::SoundEngine() : backend_(std::make_unique<Backend>()) {}
 
 SoundEngine::~SoundEngine() = default;
 
+bool SoundEngine::isAvailable() const {
+    return backend_->context != nullptr;
+}
+
 void SoundEngine::setListenerPose(const std::array<double, 3>& position,
                                   const std::array<double, 3>& forward,
                                   const std::array<double, 3>& up) {

@@ -4,6 +4,7 @@
 #include "physics/BusConfiguration.h"
 #include "ProbeTempDirectory.h"
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -103,6 +104,30 @@ int main() {
                           "[add_camera_reflexion_2_static]\n1\n2\n3\n0\n40\n10\n-5\n12\n");
     const VehicleConfig reflectionCameras =
         loadVehicleConfig(reflectionCameraPath, VehicleFileKind::Bus, false);
+    const std::filesystem::path inactiveRecordsPath = root / "inactive_records.bus";
+    writeResistanceConfig(inactiveRecordsPath,
+                          "[add_camera_driver]\n1\n2\n3\n0\n40\n10\n-5\n"
+                          "[view_schedule]\n0\nSchedule view\n"
+                          "[view_ticketselling]\n1\nTicket view\n"
+                          "[rot_pnt_long]\n-2.5\n"
+                          "[ai_deltaheight]\n0.4\n");
+    const VehicleConfig inactiveRecords =
+        loadVehicleConfig(inactiveRecordsPath, VehicleFileKind::Bus, false);
+    const auto hasIgnoredWarning = [&](const std::string& keyword) {
+        return std::any_of(inactiveRecords.diagnostics.entries.begin(),
+                           inactiveRecords.diagnostics.entries.end(),
+                           [&](const ConfigurationDiagnostic& diagnostic) {
+                               return diagnostic.severity == ConfigurationDiagnostic::Severity::Warning &&
+                                      diagnostic.keyword == keyword && diagnostic.line > 0 &&
+                                      diagnostic.message.find("not ") != std::string::npos;
+                           });
+    };
+    const bool inactiveRecordsReported =
+        !inactiveRecords.diagnostics.hasErrors() &&
+        inactiveRecords.longitudinalRotationPoint == -2.5 &&
+        inactiveRecords.hasAiDeltaHeight && inactiveRecords.aiDeltaHeight == 0.4 &&
+        hasIgnoredWarning("view_schedule") && hasIgnoredWarning("view_ticketselling") &&
+        hasIgnoredWarning("rot_pnt_long");
     const std::filesystem::path axleLabelsPath = root / "axle_labels.bus";
     std::ofstream axleLabels(axleLabelsPath);
     axleLabels << "[model]\nmodel.cfg\n"
@@ -157,7 +182,7 @@ int main() {
         reflections[3].pan == 10.0 && reflections[3].tilt == -5.0;
     openbus::probe::removeProbeDirectory(root);
 
-    if (!reflectionCameraKeywordsParsed || !ovhModelLoaded) {
+    if (!reflectionCameraKeywordsParsed || !ovhModelLoaded || !inactiveRecordsReported) {
         std::cerr << "Reflection camera parsing or OVH vehicle model loading failed\n";
         return 1;
     }

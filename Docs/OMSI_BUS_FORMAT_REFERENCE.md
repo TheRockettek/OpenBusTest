@@ -253,6 +253,10 @@ the common German-language counterpart to the z component of `[cog]`.
 
 Use one convention consistently in a vehicle. For the OpenBus model, the
 current target is a 1.0 m aggregate CG height.
+OpenBus uses `[cog]` z when `[schwerpunkt]` is absent; otherwise it uses
+`[schwerpunkt]` and warns if the heights differ. Horizontal `[cog]` offsets
+are retained but not applied, and produce a warning. This precedence is an
+OpenBus policy, not verified OMSI behavior.
 
 ### `[boundingbox]`
 
@@ -532,4 +536,3 @@ achse_antrieb
    guessing their meaning.
 10. Test a new file first with identity, model, physics, and one script; add
     optional AI, coupling, rail, and camera sections incrementally.
-

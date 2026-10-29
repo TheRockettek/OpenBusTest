@@ -1,7 +1,9 @@
 #include "core/Variables.h"
 
 #include <iostream>
+#include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -40,6 +42,17 @@ int main() {
                          simulation.sharedVariables().get("dayofyear") == 0.0F &&
                          simulation.sharedVariables().get("time") == 0.0F,
                      "simulation clock advances across year boundary");
+    simulation.sharedVariables().configureSimulationClock(2024, 12, 31, 86399.75);
+    simulation.sharedVariables().updateSimulationClock(0.20);
+    valid &= require(simulation.sharedVariables().get("day") == 31.0F &&
+                         simulation.sharedVariables().get("time") == 86399.0F,
+                     "fractional start remains on its original day before midnight");
+    simulation.sharedVariables().updateSimulationClock(0.25);
+    valid &= require(simulation.sharedVariables().get("year") == 2025.0F &&
+                         simulation.sharedVariables().get("month") == 1.0F &&
+                         simulation.sharedVariables().get("day") == 1.0F &&
+                         simulation.sharedVariables().get("time") == 0.0F,
+                     "fractional start and elapsed time carry across midnight");
     bool rejectedInvalidCalendar = false;
     try {
         simulation.sharedVariables().configureSimulationClock(2025, 2, 29, 0.0);
@@ -66,8 +79,8 @@ int main() {
 
     simulation.sharedVariables().set("mouse_x", 9.0F);
     simulation.sharedVariables().set("mouse_y", -4.0F);
-    simulation.sharedVariables().set("preciptype", 1.0F);
-    simulation.sharedVariables().set("preciprate", 0.75F);
+    simulation.sharedVariables().setPrecipitation(1, 0.75);
+    simulation.sharedVariables().setSoundAvailable(true);
     simulation.sharedVariables().updateFrame(0.125F, 10.0F, 800.0F, 600.0F);
     valid &= require(simulation.sharedVariables().get("mouse_x") == 0.0F &&
                          simulation.sharedVariables().get("mouse_y") == 0.0F &&
@@ -75,8 +88,25 @@ int main() {
                          simulation.sharedVariables().get("mouse_cursor_y") == 600.0F &&
                          simulation.sharedVariables().get("timegap") == 0.125F &&
                          simulation.sharedVariables().get("preciptype") == 1.0F &&
-                         simulation.sharedVariables().get("preciprate") == 0.75F,
+                         simulation.sharedVariables().get("preciprate") == 0.75F &&
+                         simulation.sharedVariables().get("nosound") == 0.0F,
                      "frame refresh resets motion but preserves weather and cursor/time state");
+    simulation.sharedVariables().setSoundAvailable(false);
+    valid &= require(simulation.sharedVariables().get("nosound") == 1.0F,
+                     "unavailable sound is published to scripts");
+    for (const auto& [type, rate] :
+         {std::pair{-1, 0.5}, std::pair{3, 0.5}, std::pair{1, -0.1},
+          std::pair{2, 1.1}, std::pair{1, std::numeric_limits<double>::quiet_NaN()}}) {
+        bool rejected = false;
+        try {
+            simulation.sharedVariables().setPrecipitation(type, rate);
+        } catch (const std::invalid_argument&) {
+            rejected = true;
+        }
+        valid &= require(rejected && simulation.sharedVariables().get("preciptype") == 1.0F &&
+                             simulation.sharedVariables().get("preciprate") == 0.75F,
+                         "invalid weather is rejected without changing either variable");
+    }
 
     vehicle.setString("ident", "probe");
     valid &= require(vehicle.hasString("ident") && vehicle.getString("ident") == "probe",

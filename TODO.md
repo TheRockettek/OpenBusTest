@@ -268,9 +268,13 @@ for alignment is not mistaken for supporting it.
 - [ ] Retain the labels and implement the view selection behavior for
   `[view_schedule]` and `[view_ticketselling]`; current parsing only records
   that the keyword occurred and validates that a driver camera exists.
-- [ ] Parse and use `[cog]` in a consistent way with `[schwerpunkt]`.
-- [ ] Store and apply `[rot_pnt_long]`; it is currently consumed without
-  physics semantics.
+- [~] `[cog]` coordinates are retained and its positive z value supplies the
+  physics CG height when `[schwerpunkt]` is absent. `[schwerpunkt]` takes
+  precedence regardless of record order, with a warning if heights disagree;
+  nonzero horizontal offsets are explicitly reported but are not applied.
+  Native precedence and horizontal CG physics remain unverified/incomplete.
+- [~] `[rot_pnt_long]` is retained and diagnosed as not applied; implement
+  its longitudinal rotation-point physics semantics.
 - [ ] Add the documented vehicle-family records `[rowdy_factor]`, `[boogies]`,
   `[ai_brakeperformance]`, `[ai_veh_type]`, and `[sinus]`, or explicitly mark
   them unsupported when their family-specific semantics cannot be preserved.
@@ -409,16 +413,19 @@ for alignment is not mistaken for supporting it.
 
 #### Documented script API gaps
 
-The following documented system macros still dispatch to safe placeholder
-handlers rather than real route, timetable, passenger-path, terrain, or
-arrival-board data:
+The following documented system macros are partial or still dispatch to safe
+placeholder handlers rather than complete route, timetable, passenger-path,
+terrain, or arrival-board data:
 
 - [ ] HOF/route lookups: `GetTerminusIndex`, `GetTerminusCode`,
   `GetTerminusString`, `GetBusstopIndex`, `GetBusstopString`, `GetRouteIndex`,
   `GetRouteTerminusIndex`, `GetBusstopCount`, and `GetRouteBusstopIdent`.
-- [ ] Timetable lookups: `GetTTLineString`, `GetTTTerminusIndex`,
-  `GetTTBusstopCount`, `GetTTBusstopIndex`, `GetTTDelay`, `GetTTBusstopName`,
-  `GetTTBusstopArr`, and `GetTTBusstopDep`.
+- [~] Timetable lookups: scheduled AI buses publish line and destination
+  strings before script initialization for `GetTTLineString` and
+  `GetTTBusstopName`; both script backends have focused lookup tests.
+  Complete native stop-name semantics and `GetTTTerminusIndex`,
+  `GetTTBusstopCount`, `GetTTBusstopIndex`, `GetTTDelay`, `GetTTBusstopArr`,
+  and `GetTTBusstopDep` remain incomplete.
 - [~] Ticket/passenger macros: `GiveChangeCoin`, `GetTicketName`, and
   `GetTicketValue` use map ticket/currency data and `GetHumanCountOnSeat` reads
   the current seat-occupancy variables. Ticket purchasing/payment and
@@ -430,10 +437,15 @@ arrival-board data:
 - [~] The selected simulation calendar updates `Time`, `Day`, `Month`, `Year`,
   and zero-based `DayOfYear` across midnight. Traffic density weekday classes
   now change at the selected calendar's midnight, including weekend and week
-  boundaries; focused clock and density probes cover a Friday-night start.
-  Add host-owned updates for the remaining default-only system variables:
-  `Pause`, `NoSound`,
-  `PrecipType`, `PrecipRate`, `coll_pos_*`, `coll_energy`,
+  boundaries; focused clock and density probes cover a Friday-night start and
+  fractional start-time carry across midnight.
+  Selected precipitation initializes `PrecipType`/`PrecipRate` for both
+  scripts and rendering, and active vehicles refresh their local counterparts;
+  both script backends have regression coverage.
+  `NoSound` reports OpenAL context availability at startup and each frame,
+  with Linux null/unavailable-driver probes; device loss and per-clip failure
+  are not detected. Add host-owned updates for default-only variables:
+  `Pause`, `coll_pos_*`, `coll_energy`,
   `Weather_Temperature`, `Weather_AbsHum`, `AutoClutch`, `SunAlt`, and
   `wearlifespan`.
 - [~] `humans_count` now reports the passenger service's occupied-seat count,
@@ -1012,12 +1024,12 @@ limitations.
 - [~] `RenderLoopDraw.cpp` now filters scenery traffic segments to the active
   tile window once per debug draw and reuses that ordered view for endpoint
   lookup, path geometry, signal stop lines, and signal details. Traffic routes
-  are built once per overlay rebuild and their active first segments are reused
-  for endpoint lookup and debug geometry. Routes still must be built before
-  their active-tile membership can be checked because `MapRenderer` exposes
-  tile coordinates only on the built route; avoiding those out-of-window builds
-  needs a pre-build spline-to-tile lookup. Sampled AI actor poses are also still
-  recomputed.
+  are filtered by their indexed owning tile before route construction; their
+  active first segments are reused for endpoint lookup and debug geometry.
+  A traffic-runtime probe compares the pre-filtered results with the previous
+  route-first selection, including ambiguous IDs and multiple tiles. Sampled
+  AI actor poses are still recomputed; measured overlay performance remains
+  to be validated on representative maps.
 - [~] `OpenBusVehicleIndirectReuseProbe` checks opaque/transparent list reuse,
   script-variable-driven material reclassification, and view-dependent
   transparent sorting on CPU and compute-indirect paths. Reflection-pass

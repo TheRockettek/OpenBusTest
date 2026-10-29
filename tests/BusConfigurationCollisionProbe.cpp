@@ -1,7 +1,9 @@
 #include "physics/BusConfiguration.h"
 #include "config/ModelConfigTypes.h"
+#include "config/VehicleConfigLoader.h"
 #include "ProbeTempDirectory.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -12,13 +14,13 @@
 
 namespace {
 
-void writeBusConfig(const std::filesystem::path& path, const std::string& extra = {}) {
+void writeBusConfig(const std::filesystem::path& path, const std::string& extra = {},
+                    const std::string& centerOfGravity = "[schwerpunkt]\n1.2\n") {
     std::ofstream config(path);
     config << "[model]\nmodel.cfg\n"
               "[mass]\n12.0\n"
               "[boundingbox]\n2.4\n12.0\n3.2\n0\n0\n1.6\n"
-              "[schwerpunkt]\n1.2\n"
-              "[newachse]\nachse_long\n0\n"
+              << centerOfGravity << "[newachse]\nachse_long\n0\n"
               "achse_maxwidth\n2.2\n"
               "achse_minwidth\n1.8\n"
               "achse_raddurchmesser\n1.0\n"
@@ -171,11 +173,74 @@ int main() {
         nestedModelConfiguration.parts.size() == 1 &&
         nestedModelConfiguration.parts.front().objPath == nestedMeshPath;
 
+    const auto hasCogDiagnostic = [](const VehicleConfig& config,
+                                     ConfigurationDiagnostic::Severity severity,
+                                     const std::string& message) {
+        return std::any_of(config.diagnostics.entries.begin(), config.diagnostics.entries.end(),
+                           [&](const ConfigurationDiagnostic& diagnostic) {
+                               return diagnostic.keyword == "cog" &&
+                                      diagnostic.severity == severity && diagnostic.line != 0 &&
+                                      diagnostic.message.find(message) != std::string::npos;
+                           });
+    };
+    const auto cogPath = root / "cog.bus";
+    writeBusConfig(cogPath, "", "[cog]\n0.1\n-0.2\n1.4\n");
+    const VehicleConfig cog = loadVehicleConfig(cogPath, VehicleFileKind::Bus, false);
+    const BusConfiguration cogPhysics = loadBusConfiguration(cogPath);
+    const bool cogApplied =
+        !cog.diagnostics.hasErrors() && cog.centerOfGravity.has_value() &&
+        *cog.centerOfGravity == std::array<double, 3>{0.1, -0.2, 1.4} &&
+        nearlyEqual(cogPhysics.centerOfGravityHeight, 1.4) &&
+        nearlyEqual(cogPhysics.collisionOffsetZ, 0.8) &&
+        hasCogDiagnostic(cog, ConfigurationDiagnostic::Severity::Warning, "not applied");
+    bool precedenceWorks = true;
+    for (const std::string& records :
+         {"[cog]\n0\n0\n1.4\n[schwerpunkt]\n1.2\n",
+          "[schwerpunkt]\n1.2\n[cog]\n0\n0\n1.4\n"}) {
+        writeBusConfig(cogPath, "", records);
+        const VehicleConfig config = loadVehicleConfig(cogPath, VehicleFileKind::Bus, false);
+        const BusConfiguration physics = loadBusConfiguration(cogPath);
+        precedenceWorks = precedenceWorks && !config.diagnostics.hasErrors() &&
+                          nearlyEqual(physics.centerOfGravityHeight, 1.2) &&
+                          hasCogDiagnostic(config, ConfigurationDiagnostic::Severity::Warning,
+                                           "takes precedence");
+    }
+    writeBusConfig(cogPath, "", "[cog]\n0\n0\n1.2\n[schwerpunkt]\n1.2\n");
+    const VehicleConfig matchingCog = loadVehicleConfig(cogPath, VehicleFileKind::Bus, false);
+    precedenceWorks = precedenceWorks && !matchingCog.diagnostics.hasErrors() &&
+                      nearlyEqual(loadBusConfiguration(cogPath).centerOfGravityHeight, 1.2) &&
+                      !hasCogDiagnostic(matchingCog, ConfigurationDiagnostic::Severity::Warning,
+                                        "takes precedence");
+    bool invalidCogRejected = true;
+    for (const std::string& records :
+         {"[cog]\n0\n0\n0\n", "[cog]\n0\nnan\n1.4\n",
+          "[cog]\n0\n0\n[schwerpunkt]\n1.2\n"}) {
+        writeBusConfig(cogPath, "", records);
+        const VehicleConfig config = loadVehicleConfig(cogPath, VehicleFileKind::Bus, false);
+        bool rejected = false;
+        try {
+            static_cast<void>(loadBusConfiguration(cogPath));
+        } catch (const std::runtime_error&) {
+            rejected = true;
+        }
+        const std::string expectedMessage =
+            records == "[cog]\n0\n0\n0\n" ? "positive" : "expected";
+        invalidCogRejected = invalidCogRejected && rejected &&
+                             hasCogDiagnostic(config, ConfigurationDiagnostic::Severity::Error,
+                                              expectedMessage);
+    }
+    writeBusConfig(cogPath, "", "[cog]\n0\n0\n1.4\n[schwerpunkt]\nnan\n");
+    try {
+        static_cast<void>(loadBusConfiguration(cogPath));
+        invalidCogRejected = false;
+    } catch (const std::runtime_error&) {
+    }
     openbus::probe::removeProbeDirectory(root);
     if (!meshWasBuilt || !modelBoundsApplied || !wheelColliderMatchesVisualEnvelope ||
         !authoredResistanceWasTransferred || !authoredResistanceAppearsInExport ||
         !boxFallbackApplied ||
-        !negativeRollingResistanceRejected || !nestedModelMeshResolved) {
+        !negativeRollingResistanceRejected || !nestedModelMeshResolved || !cogApplied ||
+        !precedenceWorks || !invalidCogRejected) {
         std::cerr << "Bus collision mesh, wheel collider fit, nocollision filtering, model "
                      "bounding box, or nested model-root resolution failed\n";
         return 1;

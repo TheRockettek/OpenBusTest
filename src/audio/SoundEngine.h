@@ -13,6 +13,7 @@ class SoundEngine : public SoundPlayback {
     SoundEngine(const SoundEngine&) = delete;
     SoundEngine& operator=(const SoundEngine&) = delete;
 
+    bool isAvailable() const;
     void setListenerPose(const std::array<double, 3>& position,
                          const std::array<double, 3>& forward, const std::array<double, 3>& up);
     SoundPlaybackHandle play(const std::filesystem::path& path, bool looped,

@@ -13,6 +13,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <tuple>
 
 namespace {
 
@@ -28,7 +29,7 @@ bool check(const VehicleConfig& configuration, const char* backend) {
     if (!selectBackend(backend)) {
         return false;
     }
-    Variables local(ScriptObjectKind::Vehicle);
+    openbus::scripting::Vehicle local;
     SimulationState simulation;
     auto& system = simulation.sharedVariables();
     system.updateFrame(0.125F, 10.0F, 100.0F, 200.0F);
@@ -45,6 +46,22 @@ bool check(const VehicleConfig& configuration, const char* backend) {
     local.setString("tt_line_string", "42");
     local.setString("tt_busstop_name", "Central Station");
     ScriptRuntime runtime(configuration, local, simulation);
+    for (const auto& [type, rate, available] :
+         {std::tuple{1, 0.75, true}, std::tuple{2, 0.25, false},
+          std::tuple{0, 0.0, true}}) {
+        system.setPrecipitation(type, rate);
+        system.setSoundAvailable(available);
+        local.updateEnvironment(system);
+        runtime.invokeEntryPoint("trigger_system_environment");
+        if (local.get("environment_preciptype") != static_cast<float>(type) ||
+            local.get("environment_preciprate") != static_cast<float>(rate) ||
+            local.get("local_preciptype") != static_cast<float>(type) ||
+            local.get("local_preciprate") != static_cast<float>(rate) ||
+            local.get("environment_nosound") != (available ? 0.0F : 1.0F)) {
+            std::cerr << backend << ": environment system variables were not published\n";
+            return false;
+        }
+    }
     runtime.invokeEntryPoint("trigger_passenger_ticketing");
     if (local.get("ticket_value_result") != 2.5F ||
         local.getString("ticket_name_result") != "Single Ride" ||
@@ -220,6 +237,12 @@ int main() {
         std::ofstream source(script);
         source << "{trigger:edge}\n(L.L.edge_press) 1 + (S.L.edge_press)\n{end}\n"
                   "{trigger:edge_off}\n(L.L.edge_release) 1 + (S.L.edge_release)\n{end}\n"
+                  "{trigger:system_environment}\n"
+                  "(L.S.PrecipType) (S.L.environment_preciptype)\n"
+                  "(L.S.PrecipRate) (S.L.environment_preciprate)\n"
+                  "(L.L.PrecipType) (S.L.local_preciptype)\n"
+                  "(L.L.PrecipRate) (S.L.local_preciprate)\n"
+                  "(L.S.NoSound) (S.L.environment_nosound)\n{end}\n"
                   "{trigger:passenger_ticketing}\n"
                   "0 (M.V.getticketvalue) (S.L.ticket_value_result)\n"
                   "1 (M.V.getticketvalue) (S.L.nonfinite_ticket_value_result)\n"

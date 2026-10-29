@@ -139,19 +139,13 @@ activeTrafficSplineRoutes(const openbus::rendering::MapRenderer& mapRenderer,
     std::vector<ActiveTrafficSplineRoute> activeRoutes;
     for (const int pathTypeCode :
          {openbus::map::MAP_SPLINE_PATH_TYPE_ROAD, openbus::map::MAP_SPLINE_PATH_TYPE_HUMAN}) {
-        for (const int splineId : mapRenderer.trafficSplineIds(pathTypeCode)) {
+        for (const int splineId : mapRenderer.trafficSplineIdsInTiles(pathTypeCode, activeTiles)) {
             std::optional<openbus::map::MapTrafficRoute> route =
                 mapRenderer.buildTrafficRoute(splineId, pathTypeCode);
             if (!route.has_value() || route->segments.empty()) {
                 continue;
             }
             openbus::map::MapTrafficRouteSegment& firstSegment = route->segments.front();
-            const openbus::map::MapSplinePlacementReference& splineReference = firstSegment.spline;
-            if (std::find(activeTiles.begin(), activeTiles.end(),
-                          std::pair{splineReference.tileX, splineReference.tileY}) ==
-                activeTiles.end()) {
-                continue;
-            }
             activeRoutes.push_back({splineId, pathTypeCode, std::move(firstSegment)});
         }
     }

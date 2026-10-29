@@ -35,7 +35,8 @@ bool readValues(Reader& reader, const std::string& keyword, std::size_t count,
 }
 
 bool readDoubleRecord(Reader& reader, const std::string& keyword, std::size_t count,
-                      std::vector<double>& values, ConfigurationDiagnostics& diagnostics) {
+                      std::vector<double>& values, ConfigurationDiagnostics& diagnostics,
+                      std::size_t lineNumber = 0) {
     std::vector<std::string> raw;
     if (!readValues(reader, keyword, count, raw, diagnostics)) {
         return false;
@@ -45,7 +46,7 @@ bool readDoubleRecord(Reader& reader, const std::string& keyword, std::size_t co
     for (const std::string& value : raw) {
         double parsed = 0.0;
         if (!parseDouble(value, parsed)) {
-            diagnostics.error(0, keyword, "expected numeric values");
+            diagnostics.error(lineNumber, keyword, "expected numeric values");
             return false;
         }
         values.push_back(parsed);
@@ -544,6 +545,7 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
 
     std::size_t scheduleLine = 0;
     std::size_t ticketSellingLine = 0;
+    std::size_t cogLine = 0;
     Line line;
     while (reader.next(line)) {
         if (!line.isKeyword()) {
@@ -718,6 +720,8 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             } else {
                 ticketSellingLine = line.number;
             }
+            result.diagnostics.warning(line.number, keyword,
+                                       "recognized but view selection is not implemented");
             continue;
         }
         if (keyword == "newachse") {
@@ -771,11 +775,33 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             }
             continue;
         }
+        if (keyword == "cog") {
+            std::vector<double> values;
+            if (readDoubleRecord(reader, keyword, 3, values, result.diagnostics, line.number)) {
+                if (values[2] <= 0.0) {
+                    result.diagnostics.error(line.number, keyword,
+                                             "center-of-gravity height must be positive");
+                } else {
+                    result.centerOfGravity = std::array<double, 3>{values[0], values[1], values[2]};
+                    cogLine = line.number;
+                    if (values[0] != 0.0 || values[1] != 0.0) {
+                        result.diagnostics.warning(
+                            line.number, keyword,
+                            "horizontal center-of-gravity offsets are retained but not applied");
+                    }
+                }
+            } else {
+                result.diagnostics.error(line.number, keyword, "expected three finite coordinates");
+            }
+            continue;
+        }
         if (keyword == "schwerpunkt") {
             std::vector<double> values;
-            if (readDoubleRecord(reader, keyword, 1, values, result.diagnostics)) {
+            if (readDoubleRecord(reader, keyword, 1, values, result.diagnostics, line.number)) {
                 result.centerOfGravityHeight = values[0];
                 result.hasCenterOfGravityHeight = true;
+            } else {
+                result.diagnostics.error(line.number, keyword, "expected a finite height");
             }
             continue;
         }
@@ -814,6 +840,11 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                 } else if (keyword == "ai_deltaheight") {
                     result.aiDeltaHeight = values[0];
                     result.hasAiDeltaHeight = true;
+                } else {
+                    result.longitudinalRotationPoint = values[0];
+                    result.diagnostics.warning(
+                        line.number, keyword,
+                        "recognized and retained but not applied to vehicle physics");
                 }
             }
             continue;
@@ -825,6 +856,15 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
             line.keyword(), "unknown vehicle keyword");
     }
 
+    if (result.centerOfGravity) {
+        if (!result.hasCenterOfGravityHeight) {
+            result.centerOfGravityHeight = (*result.centerOfGravity)[2];
+            result.hasCenterOfGravityHeight = true;
+        } else if (result.centerOfGravityHeight != (*result.centerOfGravity)[2]) {
+            result.diagnostics.warning(
+                cogLine, "cog", "[schwerpunkt] takes precedence over the different [cog] height");
+        }
+    }
     if (result.modelPath.empty()) {
         result.diagnostics.error(0, "model", "vehicle configuration has no [model] entry");
     }

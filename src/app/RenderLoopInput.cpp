@@ -132,9 +132,11 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         framebufferWidth_ = std::max(width, 1);
         framebufferHeight_ = std::max(height, 1);
         glfwGetCursorPos(window_, &cursorX, &cursorY);
+        simulationState_.sharedVariables().setSoundAvailable(soundEngine_.isAvailable());
         simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
             if (!vehicle->mapTrafficRouteFinished) {
+                vehicle->variables.updateEnvironment(simulationState_.sharedVariables());
                 vehicle->updateFrameVariables(vehicle.get() != playerVehicle_, timegap);
             }
         }

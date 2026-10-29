@@ -34,6 +34,10 @@ volume mix, not acoustic occlusion or low-pass filtering.
 
 The current backend decodes RIFF/WAVE PCM (8-, 16-, 24-, or 32-bit) and 32-bit IEEE-float audio, with mono or stereo channels, then plays through OpenAL. Compressed/non-WAV formats such as Ogg Vorbis or MP3 are not decoded by this path. OpenAL listener/source positions and optional Doppler are active; these backend capabilities do not establish complete OMSI sound-CFG semantics.
 
+The `NoSound` system variable reports whether OpenAL context initialization
+succeeded. It does not detect subsequent device loss or failures of individual
+clips. Linux probes exercise successful null-device and failed-device startup.
+
 ## Evidence and related pages
 
 Implementation references: [VehicleSoundBank.cpp](../src/audio/VehicleSoundBank.cpp), [VehicleSoundBank.h](../src/audio/VehicleSoundBank.h), [SoundEngine.cpp](../src/audio/SoundEngine.cpp), and [VehicleConfigLoader.cpp](../src/config/VehicleConfigLoader.cpp). Regression coverage is in [SoundEngineProbe.cpp](../tests/SoundEngineProbe.cpp). BUS/model limitations are documented in [BUS status](IMPLEMENTATION_STATUS_BUS.md); see the [configuration status index](CONFIGURATION_IMPLEMENTATION_STATUS.md) for all file families.

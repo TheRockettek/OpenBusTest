@@ -352,13 +352,20 @@ The simulation clock variables (Time, Day, Month, Year, DayOfYear), Timegap,
 GetTime, mouse_x, and mouse_y are updated by the runtime. mouse_x and mouse_y
 are handler-scoped drag deltas; mouse_cursor_x and mouse_cursor_y are OpenBus
 extensions containing cursor coordinates.
+OpenBus currently publishes DayOfYear as zero-based (0 on January 1), unlike
+the one-based OMSI convention described above.
+
+PrecipType and PrecipRate are initialized from the selected weather and share
+the values used by precipitation rendering. Their predefined vehicle-local
+counterparts are refreshed from the system values before initialization and
+each active frame. NoSound is 0 when an OpenAL
+context was created and 1 when audio initialization failed; it is refreshed
+each frame. It does not report individual clip failures or device loss.
 
 The following documented system variables are declared, but do not currently
-receive live host values: NoSound, Pause, PrecipType, PrecipRate, coll_pos_x,
-coll_pos_y, coll_pos_z, coll_energy, Weather_Temperature, Weather_AbsHum,
-AutoClutch, and SunAlt. Unless a script sets them, their initialized defaults
-are returned. In particular, precipitation values used by rendering are not
-yet synchronized to these script variables, and collision values are not
+receive live host values: Pause, coll_pos_x, coll_pos_y, coll_pos_z, coll_energy,
+Weather_Temperature, Weather_AbsHum, AutoClutch, and SunAlt. Unless a script
+sets them, their initialized defaults are returned. Collision values are not
 populated when a collision trigger runs.
 
 wearlifespan is initialized as a system variable, but the documented behavior

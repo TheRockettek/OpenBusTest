@@ -40,10 +40,10 @@ and [scenery status](IMPLEMENTATION_STATUS_SCENERY.md) for full limitations.
 | Keyword(s) | Status | Details |
 | --- | --- | --- |
 | `[fixed]`, `[scriptshare]` | Not implemented | BUS-level fixed/static selection and shared-script semantics are not applied. |
-| `[view_schedule]`, `[view_ticketselling]` | Parsed only | Full view labels and selection behavior are not retained or used. |
-| `[cog]` | Partial | Combined use with `[schwerpunkt]` is not consistently reconciled. |
+| `[view_schedule]`, `[view_ticketselling]` | Parsed only | Full view labels and selection behavior are not retained or used; a diagnostic reports the missing behavior. |
+| `[cog]` | Partial | Its z coordinate supplies the CG height when `[schwerpunkt]` is absent. `[schwerpunkt]` takes precedence with a warning on disagreement; nonzero x/y offsets are retained and warned about but not applied. Native precedence remains unverified. |
 | `[rollwiderstand]`, `[ai_deltaheight]`, `[sound_ai]` | Partial | Working subsets exist; native physics, placement, and AI audio parity remain unverified. |
-| `[rot_pnt_long]` | Parsed only | It does not currently affect vehicle physics. |
+| `[rot_pnt_long]` | Parsed only | The coordinate is retained and diagnosed, but does not affect vehicle physics. |
 | `[rowdy_factor]`, `[boogies]`, `[ai_brakeperformance]`, `[ai_veh_type]`, `[sinus]` | Not implemented | Family-specific AI/drivetrain behavior is absent. |
 | `[coupling_front]`, `[coupling_back]`, `[coupling_front_character]`, `[couple_back]`, `[couple_front_open_for_sound]` | Not implemented | Coupling and articulated multi-vehicle behavior are absent. |
 | `[control_cable_front]`, `[control_cable_back]` | Not implemented | Cross-vehicle control/electrical variable transfer is absent. |
