@@ -377,6 +377,29 @@ TrafficSignalDebugStats MapRenderer::trafficSignalDebugStats() const {
     return stats;
 }
 
+std::vector<TrafficSignalHeadDebugInfo>
+MapRenderer::trafficSignalHeadDebugInfo(double signalClockSeconds) const {
+    std::vector<TrafficSignalHeadDebugInfo> result;
+    result.reserve(impl_->activeSceneryScriptStateIndices.size());
+    for (const std::size_t stateIndex : impl_->activeSceneryScriptStateIndices) {
+        const Impl::SceneryScriptState& scriptState = *impl_->sceneryScriptStates[stateIndex];
+        if (!scriptState.trafficSignal.has_value() || !scriptState.variableParentId.has_value()) {
+            continue;
+        }
+        TrafficSignalHeadDebugInfo info;
+        info.objectId = scriptState.mapObjectId;
+        info.linkedJunctionObjectId = scriptState.variableParentId;
+        info.position = scriptState.worldPosition;
+        info.tileX = scriptState.ownerTileX;
+        info.tileY = scriptState.ownerTileY;
+        info.lightIndex = scriptState.trafficSignal->lightIndex;
+        info.phase = openbus::map::mapTrafficSignalStateAtTime(*scriptState.trafficSignal,
+                                                               signalClockSeconds);
+        result.push_back(std::move(info));
+    }
+    return result;
+}
+
 std::optional<openbus::map::MapTrafficRoute> MapRenderer::buildTrafficRoute(int splineId) const {
     return impl_->trafficRouteNetwork.buildRoute(splineId);
 }

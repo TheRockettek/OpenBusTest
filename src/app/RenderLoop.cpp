@@ -539,6 +539,11 @@ bool RenderLoop::AddTrafficVehicle(
     trafficState.workerActorTemplate =
         std::make_shared<const openbus::map::MapTrafficActor>(trafficState.actor);
     trafficState.spawnCandidates = std::move(spawnCandidates);
+    if (!isBus) {
+        trafficState.workerSpawnCandidates =
+            std::make_shared<const std::vector<openbus::map::MapTrafficSpawnCandidate>>(
+                trafficState.spawnCandidates);
+    }
     trafficState.scheduledDepartureMinutes = std::move(scheduledDepartureMinutes);
     trafficState.scheduledDepartureProfileIndices = std::move(scheduledDepartureProfileIndices);
     trafficState.timetableProfiles = std::move(timetableProfiles);

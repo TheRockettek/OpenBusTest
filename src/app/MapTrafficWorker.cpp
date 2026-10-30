@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <exception>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
@@ -18,6 +19,137 @@ namespace openbus::app {
 namespace {
 
 constexpr double kDefaultTrafficSimulationRateHz = 60.0;
+
+std::optional<MapTrafficWorker::PopulationSpawn>
+findPopulationSpawn(const MapTrafficWorker::PopulationCandidate& candidate,
+                    const MapTrafficWorker::PopulationSearchContext& context,
+                    const std::set<std::pair<int, int>>& activeTiles,
+                    MapTrafficWorker::PopulationDecision& decision) {
+    using namespace openbus::map;
+    const auto& search = *candidate.spawnSearch;
+    if (!search.actor || (!candidate.isBus && !search.candidates)) {
+        throw std::invalid_argument("Population search is missing immutable route data");
+    }
+    const MapTrafficActor& actor = *search.actor;
+    auto& diagnostics = decision.roadSearchDiagnostics;
+    openbus::rendering::TraceScope trace("traffic", "MapTrafficWorker::populationSpawnSearch");
+    if (candidate.isBus) {
+        const auto pose = sampleMapTrafficActorPose(actor.route, 0.0, search.lateralOffsetMeters,
+                                                    actor.rearAxleOffsetMeters);
+        if (!pose) {
+            throw std::runtime_error("Could not sample a scheduled traffic spawn position");
+        }
+        MapTrafficWorker::BusSearchDiagnostics busDiagnostics;
+        busDiagnostics.pose = *pose;
+        const double radius = std::hypot(actor.lengthMeters, actor.widthMeters) * 0.5 + 2.0;
+        busDiagnostics.hidden =
+            context.spawnInView ||
+            (context.cameraValid &&
+             mapTrafficEntryHiddenFromCameras(pose->position, radius, context.mainCamera,
+                                              context.reflectionCameras, 50.0));
+        busDiagnostics.frontBlocked =
+            context.playerMoving && mapTrafficSpawnInsideForwardExclusion(
+                                        context.playerPose, context.playerLengthMeters,
+                                        context.playerWidthMeters, *pose, actor.widthMeters, 30.0);
+        busDiagnostics.clear =
+            !busDiagnostics.frontBlocked &&
+            mapTrafficHasClearance({*pose, actor.lengthMeters, actor.widthMeters}, context.occupied,
+                                   2.0);
+        busDiagnostics.onActiveTile =
+            mapTrafficPoseOnActiveTile(*pose, context.activeTiles, context.tileSize);
+        if (!busDiagnostics.hidden || !busDiagnostics.clear || !busDiagnostics.onActiveTile) {
+            decision.busSearchDiagnostics = std::move(busDiagnostics);
+            return std::nullopt;
+        }
+        const double priority =
+            context.hasPlayerPose
+                ? mapTrafficSpawnPriorityDistanceMeters(context.playerPose, *pose,
+                                                        context.predictedForwardDistanceMeters)
+                : 0.0;
+        return MapTrafficWorker::PopulationSpawn{0.0, *pose, 0, priority};
+    }
+    if (context.diagnostics) {
+        ++diagnostics.vehiclesChecked;
+    }
+    std::optional<MapTrafficWorker::PopulationSpawn> best;
+    const std::size_t count = search.candidates->size();
+    for (std::size_t index = 0; index < count; ++index) {
+        if (std::ranges::find(search.rejectedCandidates, index) !=
+            search.rejectedCandidates.end()) {
+            if (context.diagnostics) {
+                ++diagnostics.rejectedCandidates;
+            }
+            continue;
+        }
+        const auto& spawn = (*search.candidates)[index];
+        const double distance = spawn.distanceMeters;
+        if (context.diagnostics) {
+            ++diagnostics.candidatesChecked;
+        }
+        if (!activeTiles.contains({spawn.tileX, spawn.tileY})) {
+            if (context.diagnostics) {
+                ++diagnostics.inactiveCandidateTiles;
+                if (!diagnostics.firstInactiveCandidateTile) {
+                    diagnostics.firstInactiveCandidateTile = {spawn.tileX, spawn.tileY};
+                }
+            }
+            continue;
+        }
+        const auto pose = sampleMapTrafficActorPose(
+            actor.route, distance, search.lateralOffsetMeters, actor.rearAxleOffsetMeters);
+        if (!pose) {
+            throw std::runtime_error("Could not sample a traffic spawn position");
+        }
+        if (!mapTrafficPoseOnActiveTile(*pose, context.activeTiles, context.tileSize)) {
+            if (context.diagnostics) {
+                ++diagnostics.posesOutsideActiveTiles;
+            }
+            continue;
+        }
+        if (context.playerMoving &&
+            mapTrafficSpawnInsideForwardExclusion(context.playerPose, context.playerLengthMeters,
+                                                  context.playerWidthMeters, *pose,
+                                                  actor.widthMeters, 30.0)) {
+            if (context.diagnostics) {
+                ++diagnostics.frontZoneRejectedCandidates;
+            }
+            continue;
+        }
+        const double priority =
+            context.hasPlayerPose
+                ? mapTrafficSpawnPriorityDistanceMeters(context.playerPose, *pose,
+                                                        context.predictedForwardDistanceMeters)
+                : 0.0;
+        if (best && !(priority < best->priorityMeters)) {
+            if (context.diagnostics) {
+                ++diagnostics.lowerPriorityCandidates;
+            }
+            continue;
+        }
+        const double radius = std::hypot(actor.lengthMeters, actor.widthMeters) * 0.5 + 2.0;
+        if (!context.spawnInView &&
+            (!context.cameraValid ||
+             !mapTrafficEntryHiddenFromCameras(pose->position, radius, context.mainCamera,
+                                               context.reflectionCameras, 50.0))) {
+            if (context.diagnostics) {
+                ++diagnostics.visibleCandidates;
+            }
+            continue;
+        }
+        if (!mapTrafficHasClearance({*pose, actor.lengthMeters, actor.widthMeters},
+                                    context.occupied, 3.0)) {
+            if (context.diagnostics) {
+                ++diagnostics.obstructedCandidates;
+            }
+            continue;
+        }
+        if (context.diagnostics) {
+            ++diagnostics.clearCandidates;
+        }
+        best = MapTrafficWorker::PopulationSpawn{distance, *pose, index, priority};
+    }
+    return best;
+}
 
 void applyMotion(openbus::map::MapTrafficActor& actor,
                  const MapTrafficWorker::ActorMotion& motion) {
@@ -60,6 +192,133 @@ void preserveMovementState(openbus::map::MapTrafficActor& destination,
 
 } // namespace
 
+MapTrafficWorker::PopulationBalance::PopulationBalance(
+    const std::vector<PopulationCandidate>& candidates, std::size_t roadTarget,
+    std::size_t busTarget, std::size_t humanTarget,
+    const std::vector<openbus::map::MapAiRoadTrafficGroupPopulation>& groupTargets,
+    bool useGroupPopulation)
+    : roadTarget_(roadTarget), busTarget_(busTarget), humanTarget_(humanTarget),
+      useGroupPopulation_(useGroupPopulation) {
+    if (useGroupPopulation_) {
+        groupTargets_.reserve(groupTargets.size());
+        for (const auto& group : groupTargets) {
+            groupTargets_.emplace(group.groupIndex, group.populationCount);
+        }
+    }
+    for (const auto& candidate : candidates) {
+        if (candidate.active) {
+            ++countFor(candidate);
+        }
+    }
+}
+
+std::size_t
+MapTrafficWorker::PopulationBalance::targetFor(const PopulationCandidate& candidate) const {
+    if (candidate.isHuman) {
+        return humanTarget_;
+    }
+    if (candidate.isBus) {
+        return busTarget_;
+    }
+    if (useGroupPopulation_) {
+        if (!candidate.groupIndex) {
+            return 0;
+        }
+        const auto target = groupTargets_.find(*candidate.groupIndex);
+        return target == groupTargets_.end() ? 0 : target->second;
+    }
+    return roadTarget_;
+}
+
+std::size_t
+MapTrafficWorker::PopulationBalance::countFor(const PopulationCandidate& candidate) const {
+    if (candidate.isHuman) {
+        return activeHumanCount_;
+    }
+    if (candidate.isBus) {
+        return activeBusCount_;
+    }
+    if (useGroupPopulation_ && candidate.groupIndex) {
+        const auto count = activeCountsByGroup_.find(*candidate.groupIndex);
+        return count == activeCountsByGroup_.end() ? 0 : count->second;
+    }
+    return activeRoadCount_;
+}
+
+std::size_t& MapTrafficWorker::PopulationBalance::countFor(const PopulationCandidate& candidate) {
+    if (candidate.isHuman) {
+        return activeHumanCount_;
+    }
+    if (candidate.isBus) {
+        return activeBusCount_;
+    }
+    if (useGroupPopulation_ && candidate.groupIndex) {
+        return activeCountsByGroup_[*candidate.groupIndex];
+    }
+    return activeRoadCount_;
+}
+
+bool MapTrafficWorker::PopulationBalance::needsSpawn(const PopulationCandidate& candidate) const {
+    return !candidate.active && countFor(candidate) < targetFor(candidate);
+}
+
+bool MapTrafficWorker::PopulationBalance::needsDespawn(const PopulationCandidate& candidate) const {
+    return candidate.active && countFor(candidate) > targetFor(candidate);
+}
+
+std::optional<MapTrafficWorker::PopulationSpawn> MapTrafficWorker::revalidatePopulationSpawn(
+    const PopulationCandidate& current, const PopulationBalance& balance,
+    const PopulationDecision& decision, const openbus::map::MapTrafficActor& actor,
+    const std::vector<openbus::map::MapTrafficSpawnCandidate>& candidates,
+    const std::vector<std::size_t>& rejectedCandidates, const PopulationSearchContext& context,
+    const std::vector<openbus::map::MapTrafficObstacle>& occupied, bool scheduledDepartureDue) {
+    using namespace openbus::map;
+    if (current.isHuman || decision.isHuman || current.stateIndex != decision.stateIndex ||
+        current.generation != decision.generation || !decision.spawn || !decision.spawnLocation ||
+        !balance.needsSpawn(current) || (current.isBus && !scheduledDepartureDue)) {
+        return std::nullopt;
+    }
+    const std::size_t index = decision.spawnLocation->candidateIndex;
+    double distance = 0.0;
+    if (!current.isBus) {
+        if (index >= candidates.size() ||
+            std::ranges::find(rejectedCandidates, index) != rejectedCandidates.end()) {
+            return std::nullopt;
+        }
+        const auto& candidate = candidates[index];
+        if (std::ranges::find(context.activeTiles, std::pair{candidate.tileX, candidate.tileY}) ==
+            context.activeTiles.end()) {
+            return std::nullopt;
+        }
+        distance = candidate.distanceMeters;
+    }
+    const auto pose = sampleMapTrafficActorPose(actor, distance);
+    if (!pose) {
+        throw std::runtime_error("Could not sample a traffic spawn position during admission");
+    }
+    if (!mapTrafficPoseOnActiveTile(*pose, context.activeTiles, context.tileSize) ||
+        (context.playerMoving && mapTrafficSpawnInsideForwardExclusion(
+                                     context.playerPose, context.playerLengthMeters,
+                                     context.playerWidthMeters, *pose, actor.widthMeters, 30.0))) {
+        return std::nullopt;
+    }
+    const double radius = std::hypot(actor.lengthMeters, actor.widthMeters) * 0.5 + 2.0;
+    if ((!context.spawnInView &&
+         (!context.cameraValid ||
+          !mapTrafficEntryHiddenFromCameras(pose->position, radius, context.mainCamera,
+                                            context.reflectionCameras, 50.0))) ||
+        !mapTrafficHasClearance({*pose, actor.lengthMeters, actor.widthMeters}, occupied,
+                                current.isBus ? 2.0 : 3.0)) {
+        return std::nullopt;
+    }
+    const double priority =
+        context.hasPlayerPose
+            ? mapTrafficSpawnPriorityDistanceMeters(context.playerPose, *pose,
+                                                    context.predictedForwardDistanceMeters)
+            : 0.0;
+    return PopulationSpawn{distance, *pose, index, priority};
+}
+
 struct MapTrafficWorker::Impl {
     struct InputSnapshot {
         std::vector<ActorInput> actors;
@@ -100,6 +359,8 @@ struct MapTrafficWorker::Impl {
 
     void run() {
         std::unique_lock lock(mutex);
+        bool lastWasPopulation = false;
+        double populationProcessingSeconds = 0.0;
         while (true) {
             wake.wait(lock, [this] {
                 return stopping || hasPopulationRequest ||
@@ -108,83 +369,70 @@ struct MapTrafficWorker::Impl {
             if (stopping) {
                 return;
             }
-            if (hasPopulationRequest) {
+            if (hasPopulationRequest && (!lastWasPopulation || !hasInput ||
+                                         pendingElapsedSeconds < simulationStepSeconds)) {
                 auto candidates = std::move(populationCandidates);
                 const std::size_t roadTarget = populationRoadTarget;
                 const std::size_t busTarget = populationBusTarget;
                 const std::size_t humanTarget = populationHumanTarget;
                 auto groupTargets = std::move(populationGroupTargets);
                 const bool useGroupPopulation = populationUseGroups;
+                auto searchContext = std::move(populationSearchContext);
                 hasPopulationRequest = false;
+                lastWasPopulation = true;
                 lock.unlock();
+                const auto populationStart = std::chrono::steady_clock::now();
                 std::vector<PopulationDecision> decisions;
                 try {
+                    openbus::rendering::TraceScope trace("traffic",
+                                                         "MapTrafficWorker::populationPlan");
                     decisions.reserve(candidates.size());
-                    std::unordered_map<std::size_t, std::size_t> activeCountsByGroup;
-                    std::size_t activeRoadCount = 0;
-                    std::size_t activeBusCount = 0;
-                    std::size_t activeHumanCount = 0;
-                    const auto targetFor = [&](const PopulationCandidate& candidate) {
-                        if (candidate.isHuman) {
-                            return humanTarget;
-                        }
-                        if (candidate.isBus) {
-                            return busTarget;
-                        }
-                        if (useGroupPopulation) {
-                            if (!candidate.groupIndex.has_value()) {
-                                return std::size_t{0};
-                            }
-                            const auto target = std::find_if(
-                                groupTargets.begin(), groupTargets.end(), [&](const auto& group) {
-                                    return group.groupIndex == *candidate.groupIndex;
-                                });
-                            return target == groupTargets.end() ? std::size_t{0}
-                                                                : target->populationCount;
-                        }
-                        return roadTarget;
-                    };
-                    const auto countFor =
-                        [&](const PopulationCandidate& candidate) -> std::size_t& {
-                        if (candidate.isHuman) {
-                            return activeHumanCount;
-                        }
-                        if (candidate.isBus) {
-                            return activeBusCount;
-                        }
-                        if (useGroupPopulation && candidate.groupIndex.has_value()) {
-                            return activeCountsByGroup[*candidate.groupIndex];
-                        }
-                        return activeRoadCount;
-                    };
+                    PopulationBalance balance(candidates, roadTarget, busTarget, humanTarget,
+                                              groupTargets, useGroupPopulation);
                     for (const PopulationCandidate& candidate : candidates) {
-                        if (candidate.active) {
-                            ++countFor(candidate);
-                        }
                         decisions.push_back({candidate.stateIndex, candidate.generation,
                                              candidate.isHuman, false, false});
                     }
+                    if (searchContext) {
+                        const std::set<std::pair<int, int>> activeTiles(
+                            searchContext->activeTiles.begin(), searchContext->activeTiles.end());
+                        for (std::size_t index = 0; index < candidates.size(); ++index) {
+                            PopulationCandidate& candidate = candidates[index];
+                            if (candidate.spawnSearch && balance.needsSpawn(candidate)) {
+                                decisions[index].searchedSpawn = true;
+                                auto spawn = findPopulationSpawn(candidate, *searchContext,
+                                                                 activeTiles, decisions[index]);
+                                candidate.canSpawn = spawn.has_value();
+                                if (spawn) {
+                                    candidate.spawnPriorityMeters = spawn->priorityMeters;
+                                    decisions[index].spawnLocation = std::move(spawn);
+                                }
+                            }
+                        }
+                    }
                     for (std::size_t index = 0; index < candidates.size(); ++index) {
                         const PopulationCandidate& candidate = candidates[index];
-                        if (!candidate.isHuman && candidate.active && candidate.canDespawn &&
-                            countFor(candidate) > targetFor(candidate)) {
+                        if (!candidate.isHuman && candidate.canDespawn &&
+                            balance.needsDespawn(candidate)) {
                             decisions[index].despawn = true;
-                            --countFor(candidate);
+                            --balance.countFor(candidate);
                         }
                     }
                     for (std::size_t index = candidates.size(); index > 0; --index) {
                         const std::size_t candidateIndex = index - 1;
                         const PopulationCandidate& candidate = candidates[candidateIndex];
-                        if (candidate.isHuman && candidate.active && candidate.canDespawn &&
-                            countFor(candidate) > targetFor(candidate)) {
+                        if (candidate.isHuman && candidate.canDespawn &&
+                            balance.needsDespawn(candidate)) {
                             decisions[candidateIndex].despawn = true;
-                            --countFor(candidate);
+                            --balance.countFor(candidate);
                         }
                     }
                     std::vector<std::size_t> spawnOrder;
                     spawnOrder.reserve(candidates.size());
                     for (std::size_t index = 0; index < candidates.size(); ++index) {
-                        spawnOrder.push_back(index);
+                        if (!candidates[index].active && candidates[index].canSpawn) {
+                            spawnOrder.push_back(index);
+                        }
                     }
                     std::stable_sort(spawnOrder.begin(), spawnOrder.end(),
                                      [&](std::size_t first, std::size_t second) {
@@ -193,10 +441,9 @@ struct MapTrafficWorker::Impl {
                                      });
                     for (const std::size_t index : spawnOrder) {
                         const PopulationCandidate& candidate = candidates[index];
-                        if (!candidate.active && candidate.canSpawn &&
-                            countFor(candidate) < targetFor(candidate)) {
+                        if (balance.needsSpawn(candidate)) {
                             decisions[index].spawn = true;
-                            ++countFor(candidate);
+                            ++balance.countFor(candidate);
                         }
                     }
                 } catch (...) {
@@ -204,14 +451,20 @@ struct MapTrafficWorker::Impl {
                     workerException = std::current_exception();
                     pendingElapsedSeconds = 0.0;
                     hasInput = false;
+                    hasPopulationRequest = false;
                     continue;
                 }
                 lock.lock();
+                populationProcessingSeconds +=
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                  populationStart)
+                        .count();
                 latestPopulationDecisions = std::move(decisions);
                 hasLatestPopulationDecisions = true;
                 continue;
             }
             const auto tickProcessingStart = std::chrono::steady_clock::now();
+            lastWasPopulation = false;
             const std::shared_ptr<const InputSnapshot> tickInput = submittedInput;
             const double simulationStepSecondsForTick = simulationStepSeconds;
             pendingElapsedSeconds -= simulationStepSecondsForTick;
@@ -399,7 +652,8 @@ struct MapTrafficWorker::Impl {
                 const double tickProcessingSeconds =
                     std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                                   tickProcessingStart)
-                        .count();
+                        .count() +
+                    std::exchange(populationProcessingSeconds, 0.0);
                 workingActors = std::move(advancedActors);
                 std::vector<ActorResult> completedActorResults;
                 completedActorResults.reserve(workingActors.size());
@@ -446,6 +700,7 @@ struct MapTrafficWorker::Impl {
     std::size_t populationHumanTarget = 0;
     std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> populationGroupTargets;
     bool populationUseGroups = false;
+    std::optional<PopulationSearchContext> populationSearchContext;
     bool hasPopulationRequest = false;
     std::vector<WorkingActor> workingActors;
     std::vector<WorkingHuman> workingHumans;
@@ -512,7 +767,7 @@ void MapTrafficWorker::submitPopulationPlan(
     std::vector<PopulationCandidate> candidates, std::size_t roadTarget, std::size_t busTarget,
     std::size_t humanTarget,
     std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> groupTargets,
-    bool useGroupPopulation) {
+    bool useGroupPopulation, std::optional<PopulationSearchContext> searchContext) {
     std::lock_guard lock(impl_->mutex);
     if (impl_->workerException) {
         std::rethrow_exception(impl_->workerException);
@@ -523,6 +778,7 @@ void MapTrafficWorker::submitPopulationPlan(
     impl_->populationHumanTarget = humanTarget;
     impl_->populationGroupTargets = std::move(groupTargets);
     impl_->populationUseGroups = useGroupPopulation;
+    impl_->populationSearchContext = std::move(searchContext);
     impl_->hasPopulationRequest = true;
     impl_->wake.notify_one();
 }

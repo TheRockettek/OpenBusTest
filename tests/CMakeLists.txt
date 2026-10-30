@@ -129,6 +129,8 @@ add_test(NAME OpenBusMapTrafficIncrementalLaneNetworkProbe
     COMMAND OpenBusMapTrafficRuntimeProbe --incremental-lane-network)
 add_test(NAME OpenBusMapTrafficTJunctionProbe
     COMMAND OpenBusMapTrafficRuntimeProbe --t-junction)
+add_test(NAME OpenBusMapTrafficJunctionSubstepProbe
+    COMMAND OpenBusMapTrafficRuntimeProbe --junction-substep-equivalence)
 add_test(NAME OpenBusMapTrafficPriorityOrderProbe
     COMMAND OpenBusMapTrafficRuntimeProbe --authored-priority-order)
 add_test(NAME OpenBusMapTrafficDenseQueueProbe

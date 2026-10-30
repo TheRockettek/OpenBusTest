@@ -41,6 +41,16 @@ struct TrafficSignalDebugStats {
     std::array<std::size_t, 13> modelsByPhase = {};
 };
 
+struct TrafficSignalHeadDebugInfo {
+    std::optional<int> objectId;
+    std::optional<int> linkedJunctionObjectId;
+    std::array<double, 3> position = {};
+    int tileX = 0;
+    int tileY = 0;
+    std::size_t lightIndex = 0;
+    std::optional<int> phase;
+};
+
 struct TrafficPathDebugSegment {
     std::vector<std::array<double, 3>> points;
     double pathTypeCode = 0.0;
@@ -87,6 +97,8 @@ class MapRenderer {
     MapRenderStats renderStats() const;
     std::uint64_t trafficDebugGeometryRevision() const noexcept;
     TrafficSignalDebugStats trafficSignalDebugStats() const;
+    std::vector<TrafficSignalHeadDebugInfo>
+    trafficSignalHeadDebugInfo(double signalClockSeconds) const;
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId) const;
     std::optional<openbus::map::MapTrafficRoute> buildTrafficRoute(int splineId,
                                                                    int pathTypeCode) const;

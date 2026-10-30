@@ -1048,7 +1048,10 @@ updates, so priority arbitration, junction admission and crossing reservations a
 exercised. Besides the average update time it prints a `state_hash` of every
 actor's distance, speed, junction wait, block reason and junction claim after every
 update. An optimization that must not change behaviour should leave that hash
-unchanged.
+unchanged. `--benchmark-junction-substeps` uses the same grid with 80 updates
+of 0.2 seconds each, exercising four 0.05-second simulation substeps per update.
+The `OpenBusMapTrafficJunctionSubstepProbe` regression compares combined
+substeps with separate updates for actor movement, blocking and claims.
 
 The focused T-junction regression simulates major-road through traffic and a
 vehicle turning onto the minor road for 30 simulated seconds in 300 updates. It

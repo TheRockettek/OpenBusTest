@@ -385,6 +385,10 @@ std::optional<MapTrafficPose> sampleMapTrafficRoute(const MapTrafficRoute& route
 // The rear axle follows the route; the returned pose is the vehicle model origin.
 std::optional<MapTrafficPose> sampleMapTrafficActorPose(const MapTrafficActor& actor,
                                                         double distanceMeters);
+std::optional<MapTrafficPose> sampleMapTrafficActorPose(const MapTrafficRoute& route,
+                                                        double distanceMeters,
+                                                        double lateralOffsetMeters,
+                                                        double rearAxleOffsetMeters);
 std::optional<MapTrafficRoutePosition>
 mapTrafficRoutePositionOnSpline(const MapTrafficRoute& route, int splineId,
                                 std::size_t sceneryPathIndex, double splinePositionMeters,

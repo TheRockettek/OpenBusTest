@@ -505,6 +505,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             scriptState->trafficSignalsByLightIndex = std::move(sceneryTrafficSignalsByLightIndex);
             scriptState->mapObjectId = mapObjectId;
             scriptState->variableParentId = variableParentId;
+            scriptState->worldPosition = {worldX, worldY, worldZ};
             scriptState->trafficLightModel = trafficLightModel;
             scriptStateIndex = impl_->sceneryScriptStates.size();
             impl_->sceneryScriptStates.push_back(std::move(scriptState));

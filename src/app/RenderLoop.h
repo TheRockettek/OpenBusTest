@@ -415,6 +415,8 @@ class RenderLoop {
         double cachedTravelHeadingRadians = 0.0;
         std::uint64_t cachedPoseGeneration = 0;
         std::vector<openbus::map::MapTrafficSpawnCandidate> spawnCandidates;
+        std::shared_ptr<const std::vector<openbus::map::MapTrafficSpawnCandidate>>
+            workerSpawnCandidates;
         std::vector<double> scheduledDepartureMinutes;
         std::vector<int> scheduledDepartureProfileIndices;
         std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles;
@@ -432,7 +434,6 @@ class RenderLoop {
         int timetableTerminusIndex = -1;
         bool isBus = false;
         bool populationEnabled = false;
-        double spawnPriorityMeters = std::numeric_limits<double>::infinity();
         bool vehicleLoadFailed = false;
         bool reducedTrafficDetail = false;
         bool scheduledTripActive = false;
@@ -452,6 +453,7 @@ class RenderLoop {
         double stoppedSecondsSinceProgress = 0.0;
         bool stuckDiagnosticLogged = false;
         std::uint64_t workerGeneration = 0;
+        std::optional<std::uint64_t> inactiveResetGeneration;
     };
     struct PassengerStopRouteState {
         openbus::map::MapTrafficActor actor;
@@ -498,6 +500,7 @@ class RenderLoop {
     double configuredAiSimulationRateHz_ = 0.0;
     double currentAiWorkerTickMilliseconds_ = 0.0;
     std::unique_ptr<openbus::app::MapTrafficWorker> trafficWorker_;
+    bool trafficPopulationPlanPending_ = false;
     const openbus::map::MapAiTimetableProfile*
     trafficTimetableProfileForDeparture(const TrafficVehicleState& state,
                                         std::size_t departureIndex) const;

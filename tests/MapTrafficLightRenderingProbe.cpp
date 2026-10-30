@@ -311,6 +311,12 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
         check(stats.activeSignalModels == 2 && stats.modelsWithoutPhase == 0 &&
                   stats.modelsByPhase[phase] >= 1 && stats.controllerDrivenModels == 2,
               "Visible head did not inherit its labelled editor-only controller phase");
+        const auto signalHeads = renderer.trafficSignalHeadDebugInfo(clock);
+        check(signalHeads.size() == 1 && signalHeads.front().objectId == 101 &&
+                  signalHeads.front().linkedJunctionObjectId == 100 &&
+                  signalHeads.front().lightIndex == 0 && signalHeads.front().phase == phase &&
+                  signalHeads.front().tileX == 0 && signalHeads.front().tileY == 0,
+              "F2 signal-head diagnostics show its linked junction and current light phase");
         glDepthMask(GL_TRUE);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

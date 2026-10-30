@@ -4615,7 +4615,53 @@ std::vector<openbus::map::MapTrafficActor> makeJunctionGridActors() {
     return actors;
 }
 
-void benchmarkDrivingJunctionGrid() {
+void verifyJunctionSubstepEquivalence() {
+    using namespace openbus::map;
+    auto combinedActors = makeJunctionGridActors();
+    auto separateActors = combinedActors;
+    std::vector<MapTrafficActor*> combined;
+    std::vector<MapTrafficActor*> separate;
+    for (std::size_t index = 0; index < combinedActors.size(); ++index) {
+        combined.push_back(&combinedActors[index]);
+        separate.push_back(&separateActors[index]);
+    }
+    const auto blockerIndex = [](const std::vector<MapTrafficActor>& actors,
+                                 const MapTrafficActor* blocker) {
+        for (std::size_t index = 0; index < actors.size(); ++index) {
+            if (&actors[index] == blocker) {
+                return index;
+            }
+        }
+        return actors.size();
+    };
+    for (int update = 0; update < 8; ++update) {
+        const double startTime = update * 0.2;
+        advanceMapTrafficDriving(combined, {}, 0.2, startTime);
+        for (int step = 0; step < 4; ++step) {
+            advanceMapTrafficDriving(separate, {}, 0.05, startTime + step * 0.05);
+        }
+        for (std::size_t index = 0; index < combinedActors.size(); ++index) {
+            const auto& actual = combinedActors[index];
+            const auto& expected = separateActors[index];
+            require(std::abs(actual.distanceMeters - expected.distanceMeters) < 1.0e-8 &&
+                        std::abs(actual.speedMetersPerSecond - expected.speedMetersPerSecond) <
+                            1.0e-8 &&
+                        std::abs(actual.targetSpeedMetersPerSecond -
+                                 expected.targetSpeedMetersPerSecond) < 1.0e-8 &&
+                        actual.blockReason == expected.blockReason &&
+                        blockerIndex(combinedActors, actual.blockingActor) ==
+                            blockerIndex(separateActors, expected.blockingActor) &&
+                        actual.junctionClaimEndMeters.has_value() ==
+                            expected.junctionClaimEndMeters.has_value() &&
+                        (!actual.junctionClaimEndMeters ||
+                         std::abs(*actual.junctionClaimEndMeters -
+                                  *expected.junctionClaimEndMeters) < 1.0e-8),
+                    "combined junction substeps preserve movement, priorities, and claims");
+        }
+    }
+}
+
+void benchmarkDrivingJunctionGrid(bool multiSubstep = false) {
     using namespace openbus::map;
     std::vector<MapTrafficActor> actors = makeJunctionGridActors();
     // Covers every actor's state after every update for before/after checks.
@@ -4629,7 +4675,8 @@ void benchmarkDrivingJunctionGrid() {
         std::memcpy(&bits, &value, sizeof(bits));
         mix(bits);
     };
-    constexpr int updates = 600;
+    const int updates = multiSubstep ? 80 : 600;
+    const double stepSeconds = multiSubstep ? 0.2 : 1.0 / 60.0;
     double movingMilliseconds = 0.0;
     for (int update = 0; update < updates; ++update) {
         std::vector<MapTrafficActor*> pointers;
@@ -4641,7 +4688,7 @@ void benchmarkDrivingJunctionGrid() {
             }
         }
         const auto start = std::chrono::steady_clock::now();
-        advanceMapTrafficDriving(pointers, {}, 1.0 / 60.0, update / 60.0);
+        advanceMapTrafficDriving(pointers, {}, stepSeconds, update * stepSeconds);
         movingMilliseconds +=
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
                 .count();
@@ -4661,6 +4708,7 @@ void benchmarkDrivingJunctionGrid() {
     }
     std::cout << std::setprecision(17) << "TRAFFIC_JUNCTION_BENCHMARK actors=" << actors.size()
               << " updates=" << updates << " ms_per_update=" << movingMilliseconds / updates
+              << " step_seconds=" << stepSeconds
               << " finished=" << finished << " distance_sum=" << distanceSum
               << " state_hash=" << std::hex << stateHash << std::dec << '\n';
 }
@@ -5513,6 +5561,14 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-junctions") {
             benchmarkDrivingJunctionGrid();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-junction-substeps") {
+            benchmarkDrivingJunctionGrid(true);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--junction-substep-equivalence") {
+            verifyJunctionSubstepEquivalence();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--benchmark-queue") {

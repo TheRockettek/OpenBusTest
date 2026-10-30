@@ -1,5 +1,7 @@
 #include "app/MapTrafficWorker.h"
+#include "map/MapTileWindow.h"
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <iostream>
@@ -73,6 +75,40 @@ openbus::app::MapTrafficWorker::HumanInput makeHumanInput(
 
 int main() {
     try {
+        using Worker = openbus::app::MapTrafficWorker;
+        const std::vector<Worker::PopulationCandidate> balanceCandidates = {
+            {0, 0, 1, false, false, true},
+            {1, 0, 1, false, false, true},
+            {2, 0, 2, false, false, false},
+            {3, 0, 3, false, false, false},
+            {4, 0, std::nullopt, false, false, false},
+            {5, 0, std::nullopt, false, true, true},
+            {6, 0, std::nullopt, true, false, true},
+        };
+        const Worker::PopulationBalance groupedBalance(balanceCandidates, 2, 1, 2,
+                                                        {{1, 1}, {2, 1}}, true);
+        require(groupedBalance.countFor(balanceCandidates[0]) == 2 &&
+                    groupedBalance.targetFor(balanceCandidates[0]) == 1 &&
+                    groupedBalance.needsDespawn(balanceCandidates[0]) &&
+                    groupedBalance.countFor(balanceCandidates[2]) == 0 &&
+                    groupedBalance.targetFor(balanceCandidates[2]) == 1 &&
+                    groupedBalance.needsSpawn(balanceCandidates[2]) &&
+                    groupedBalance.targetFor(balanceCandidates[3]) == 0 &&
+                    !groupedBalance.needsSpawn(balanceCandidates[3]) &&
+                    groupedBalance.targetFor(balanceCandidates[4]) == 0 &&
+                    groupedBalance.countFor(balanceCandidates[5]) == 1 &&
+                    groupedBalance.targetFor(balanceCandidates[5]) == 1 &&
+                    !groupedBalance.needsDespawn(balanceCandidates[5]) &&
+                    groupedBalance.countFor(balanceCandidates[6]) == 1 &&
+                    groupedBalance.targetFor(balanceCandidates[6]) == 2,
+                "population demand respects separate road group, bus, and human targets");
+        const Worker::PopulationBalance ungroupedBalance(balanceCandidates, 2, 1, 2, {}, false);
+        require(ungroupedBalance.countFor(balanceCandidates[2]) == 2 &&
+                    ungroupedBalance.targetFor(balanceCandidates[2]) == 2 &&
+                    !ungroupedBalance.needsSpawn(balanceCandidates[2]) &&
+                    ungroupedBalance.countFor(balanceCandidates[4]) == 2,
+                "ungrouped road demand counts all road vehicles against the shared target");
+
         openbus::app::MapTrafficWorker worker;
         openbus::map::MapTrafficActor vehicle = makeActor();
         vehicle.route.segments[0].spline.placement.radius = 25.0;
@@ -185,6 +221,42 @@ int main() {
                 "nearer eligible vehicle spawn candidates are selected first");
 
         worker.submitPopulationPlan(
+            {{0, 0, 1, false, false, true, false, true},
+             {1, 0, 1, false, false, true, false, true},
+             {2, 0, 2, false, false, false, true, false, 20.0},
+             {3, 0, 2, false, false, false, true, false, 10.0},
+             {4, 0, 1, false, false, false, true, false, 1.0}},
+            2, 0, 0, {{1, 1}, {2, 1}}, true);
+        populationDecisions.reset();
+        const auto groupPriorityDeadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!populationDecisions && std::chrono::steady_clock::now() < groupPriorityDeadline) {
+            populationDecisions = worker.takePopulationDecisions();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        require(populationDecisions.has_value() && populationDecisions->size() == 5 &&
+                    (*populationDecisions)[0].despawn && !(*populationDecisions)[1].despawn &&
+                    !(*populationDecisions)[2].spawn && (*populationDecisions)[3].spawn &&
+                    !(*populationDecisions)[4].spawn,
+                "group deficits remain eligible when another group fills the global target");
+
+        worker.submitPopulationPlan(
+            {{0, 0, std::nullopt, false, false, false, false, false, 1.0},
+             {1, 0, std::nullopt, false, false, false, true, false, 5.0},
+             {2, 0, std::nullopt, false, false, false, true, false, 5.0}},
+            1, 0, 0, {}, false);
+        populationDecisions.reset();
+        const auto tieDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!populationDecisions && std::chrono::steady_clock::now() < tieDeadline) {
+            populationDecisions = worker.takePopulationDecisions();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        require(populationDecisions.has_value() && populationDecisions->size() == 3 &&
+                    !(*populationDecisions)[0].spawn && (*populationDecisions)[1].spawn &&
+                    !(*populationDecisions)[2].spawn,
+                "ineligible candidates are skipped and equal spawn priorities keep input order");
+
+        worker.submitPopulationPlan(
             {{4, 1, 7, false, false, true, false, true}}, 0, 0, 0, {}, true);
         populationDecisions.reset();
         const auto despawnDeadline =
@@ -215,6 +287,232 @@ int main() {
                     (*populationDecisions)[1].despawn &&
                     (*populationDecisions)[1].isHuman,
                 "the worker plans human population and unloads the newest eligible actor first");
+
+        Worker searchWorker;
+        auto searchActor = makeActor();
+        searchActor.lengthMeters = 4.0;
+        searchActor.widthMeters = 2.0;
+        searchActor.rearAxleOffsetMeters = -1.0;
+        const auto firstPose = openbus::map::sampleMapTrafficActorPose(searchActor, 20.0);
+        const auto secondPose = openbus::map::sampleMapTrafficActorPose(searchActor, 40.0);
+        const auto thirdPose = openbus::map::sampleMapTrafficActorPose(searchActor, 60.0);
+        require(firstPose && secondPose && thirdPose, "spawn probe poses can be sampled");
+        const auto actorTemplate =
+            std::make_shared<const openbus::map::MapTrafficActor>(searchActor);
+        auto spawnCandidates =
+            std::make_shared<std::vector<openbus::map::MapTrafficSpawnCandidate>>();
+        for (const auto& [distance, pose] :
+             std::vector<std::pair<double, openbus::map::MapTrafficPose>>{
+                 {20.0, *firstPose}, {40.0, *secondPose}, {60.0, *thirdPose}}) {
+            spawnCandidates->push_back({distance, openbus::map::mapWorldTile(pose.position[0]),
+                                        openbus::map::mapWorldTile(pose.position[1])});
+        }
+        Worker::PopulationCandidate searchCandidate{8, 42, std::nullopt, false, false, false};
+        searchCandidate.spawnSearch =
+            Worker::PopulationSpawnSearch{actorTemplate, spawnCandidates, {}, 0.0};
+        Worker::PopulationSearchContext searchContext;
+        for (const auto& candidate : *spawnCandidates) {
+            searchContext.activeTiles.emplace_back(candidate.tileX, candidate.tileY);
+        }
+        searchContext.spawnInView = true;
+        searchContext.hasPlayerPose = true;
+        const double directionX = secondPose->position[0] - firstPose->position[0];
+        const double directionY = secondPose->position[1] - firstPose->position[1];
+        const double directionLength = std::hypot(directionX, directionY);
+        require(directionLength > 0.0, "spawn probe route has distinct poses");
+        searchContext.playerPose = *firstPose;
+        searchContext.playerPose.position[0] -= directionX / directionLength * 10.0;
+        searchContext.playerPose.position[1] -= directionY / directionLength * 10.0;
+        searchContext.playerPose.headingRadians = std::atan2(directionY, directionX);
+        searchContext.playerMoving = true;
+        searchContext.playerLengthMeters = 4.0;
+        searchContext.playerWidthMeters = 2.0;
+        searchContext.diagnostics = true;
+        const auto search = [&](const Worker::PopulationCandidate& candidate,
+                                const Worker::PopulationSearchContext& context,
+                                std::size_t roadTarget = 1, std::size_t busTarget = 0) {
+            searchWorker.submitPopulationPlan({candidate}, roadTarget, busTarget, 0, {}, false,
+                                              context);
+            std::optional<std::vector<Worker::PopulationDecision>> result;
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (!result && std::chrono::steady_clock::now() < deadline) {
+                result = searchWorker.takePopulationDecisions();
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            require(result && result->size() == 1, "worker publishes a spawn search result");
+            return result->front();
+        };
+        auto decision = search(searchCandidate, searchContext);
+        require(decision.spawn && decision.generation == 42 && decision.spawnLocation &&
+                    decision.spawnLocation->candidateIndex == 2 &&
+                    decision.roadSearchDiagnostics.frontZoneRejectedCandidates == 2,
+                "moving-player exclusion and priority are applied on the worker");
+        searchContext.playerMoving = false;
+        decision = search(searchCandidate, searchContext);
+        require(decision.spawnLocation && decision.spawnLocation->candidateIndex == 0,
+                "stationary player permits the nearest road candidate");
+        const auto proposedRoadSpawn = decision;
+        const Worker::PopulationBalance admissionBalance({searchCandidate}, 1, 0, 0, {}, false);
+        const auto revalidate = [&](const Worker::PopulationCandidate& current,
+                                    const Worker::PopulationBalance& balance,
+                                    const Worker::PopulationDecision& proposal,
+                                    const Worker::PopulationSearchContext& context,
+                                    const std::vector<openbus::map::MapTrafficObstacle>& occupied,
+                                    bool departureDue = true) {
+            return Worker::revalidatePopulationSpawn(current, balance, proposal, searchActor,
+                                                     *spawnCandidates, {}, context, occupied,
+                                                     departureDue);
+        };
+        require(revalidate(searchCandidate, admissionBalance, proposedRoadSpawn, searchContext, {})
+                    .has_value(),
+                "current safe spawn proposals pass main-thread revalidation");
+        auto changedCandidate = searchCandidate;
+        ++changedCandidate.generation;
+        require(!revalidate(changedCandidate, admissionBalance, proposedRoadSpawn, searchContext, {}),
+                "revalidation rejects a stale actor generation");
+        const Worker::PopulationBalance noRoadDemand({searchCandidate}, 0, 0, 0, {}, false);
+        require(!revalidate(searchCandidate, noRoadDemand, proposedRoadSpawn, searchContext, {}),
+                "revalidation rejects proposals when the current target is full");
+        auto changedContext = searchContext;
+        changedContext.activeTiles.clear();
+        require(!revalidate(searchCandidate, admissionBalance, proposedRoadSpawn, changedContext, {}),
+                "revalidation rejects proposals when the active tile changes");
+        changedContext = searchContext;
+        changedContext.playerMoving = true;
+        require(!revalidate(searchCandidate, admissionBalance, proposedRoadSpawn, changedContext, {}),
+                "revalidation rejects a proposal newly ahead of the moving player");
+        changedContext = searchContext;
+        changedContext.spawnInView = false;
+        changedContext.cameraValid = false;
+        require(!revalidate(searchCandidate, admissionBalance, proposedRoadSpawn, changedContext, {}),
+                "revalidation rejects a proposal after the camera becomes invalid");
+        require(!revalidate(searchCandidate, admissionBalance, proposedRoadSpawn, searchContext,
+                            {{*firstPose, 4.0, 2.0}}),
+                "revalidation rejects a position occupied after the worker snapshot");
+        require(!Worker::revalidatePopulationSpawn(
+                    searchCandidate, admissionBalance, proposedRoadSpawn, searchActor,
+                    *spawnCandidates, {0}, searchContext, {}, true),
+                "revalidation rejects a candidate rejected after the worker snapshot");
+        Worker::PopulationCandidate anotherCandidate = searchCandidate;
+        anotherCandidate.stateIndex = 10;
+        Worker::PopulationDecision anotherProposal = proposedRoadSpawn;
+        anotherProposal.stateIndex = 10;
+        require(!revalidate(anotherCandidate, admissionBalance, anotherProposal, searchContext,
+                            {{*firstPose, 4.0, 2.0}}),
+                "later proposals cannot overlap a spawn already admitted in the same pass");
+        Worker::PopulationBalance filledBalance({searchCandidate, anotherCandidate}, 1, 0, 0, {},
+                                                 false);
+        ++filledBalance.countFor(searchCandidate);
+        require(!revalidate(anotherCandidate, filledBalance, anotherProposal, searchContext, {}),
+                "later proposals cannot exceed a target filled by an earlier admission");
+        searchContext.occupied.push_back({*firstPose, 4.0, 2.0});
+        decision = search(searchCandidate, searchContext);
+        require(decision.spawnLocation && decision.spawnLocation->candidateIndex == 1 &&
+                    decision.roadSearchDiagnostics.obstructedCandidates == 1,
+                "worker skips occupied candidates and selects the nearest clear one");
+        searchContext.occupied.clear();
+        searchCandidate.spawnSearch->rejectedCandidates = {0, 1};
+        decision = search(searchCandidate, searchContext);
+        require(decision.spawnLocation && decision.spawnLocation->candidateIndex == 2 &&
+                    decision.roadSearchDiagnostics.rejectedCandidates == 2,
+                "worker respects rejected spawn candidates");
+        searchCandidate.spawnSearch->rejectedCandidates.clear();
+        searchCandidate.spawnSearch->lateralOffsetMeters = 1.5;
+        const auto offsetPose =
+            openbus::map::sampleMapTrafficActorPose(searchActor.route, 20.0, 1.5,
+                                                     searchActor.rearAxleOffsetMeters);
+        decision = search(searchCandidate, searchContext);
+        require(offsetPose && decision.spawnLocation &&
+                    std::abs(decision.spawnLocation->pose.position[0] - offsetPose->position[0]) <
+                        1.0e-6 &&
+                    std::abs(decision.spawnLocation->pose.position[1] - offsetPose->position[1]) <
+                        1.0e-6,
+                "worker samples the snapshot lateral offset and rear axle geometry");
+        searchCandidate.spawnSearch->lateralOffsetMeters = 0.0;
+        searchContext.activeTiles.clear();
+        decision = search(searchCandidate, searchContext);
+        require(!decision.spawn && decision.roadSearchDiagnostics.inactiveCandidateTiles == 3,
+                "worker rejects candidates outside the active tile snapshot");
+        searchContext.activeTiles.emplace_back((*spawnCandidates)[0].tileX,
+                                               (*spawnCandidates)[0].tileY);
+        searchCandidate.spawnSearch->rejectedCandidates = {1, 2};
+        searchContext.spawnInView = false;
+        searchContext.cameraValid = false;
+        decision = search(searchCandidate, searchContext);
+        require(!decision.spawn, "worker requires a valid camera when spawning out of view");
+        searchContext.cameraValid = true;
+        searchContext.mainCamera.position = {1000.0, 1000.0, 0.0};
+        searchContext.mainCamera.viewProjection = {1.0, 0.0, 0.0, 0.0,
+                                                    0.0, 1.0, 0.0, 0.0,
+                                                    0.0, 0.0, 1.0, 0.0,
+                                                    0.0, 0.0, 0.0, 1.0};
+        decision = search(searchCandidate, searchContext);
+        require(decision.spawn, "worker accepts a candidate hidden from the main camera");
+        require(revalidate(searchCandidate, admissionBalance, proposedRoadSpawn, searchContext, {})
+                    .has_value(),
+                "revalidation accepts a proposal hidden from the current main camera");
+        auto reflection = searchContext.mainCamera;
+        reflection.position = firstPose->position;
+        searchContext.reflectionCameras.push_back(reflection);
+        decision = search(searchCandidate, searchContext);
+        require(!decision.spawn, "worker rejects candidates visible to reflection cameras");
+        require(!revalidate(searchCandidate, admissionBalance, proposedRoadSpawn, searchContext, {}),
+                "revalidation rejects a proposal visible to a newly moved reflection camera");
+        searchContext.reflectionCameras.clear();
+        decision = search(searchCandidate, searchContext, 0);
+        require(!decision.spawn && !decision.searchedSpawn,
+                "worker skips route search when the population is already at target");
+
+        Worker::PopulationCandidate busCandidate{9, 7, std::nullopt, false, true, false};
+        busCandidate.spawnSearch =
+            Worker::PopulationSpawnSearch{actorTemplate, nullptr, {}, 0.0};
+        searchContext.activeTiles.clear();
+        const auto busPose = openbus::map::sampleMapTrafficActorPose(searchActor, 0.0);
+        require(busPose.has_value(), "scheduled bus entry pose can be sampled");
+        searchContext.activeTiles.emplace_back(openbus::map::mapWorldTile(busPose->position[0]),
+                                               openbus::map::mapWorldTile(busPose->position[1]));
+        searchContext.spawnInView = true;
+        decision = search(busCandidate, searchContext, 0, 1);
+        require(decision.spawn && decision.spawnLocation &&
+                    decision.spawnLocation->distanceMeters == 0.0,
+                "worker proposes the scheduled bus entry");
+        const Worker::PopulationBalance busAdmissionBalance({busCandidate}, 0, 1, 0, {}, false);
+        require(revalidate(busCandidate, busAdmissionBalance, decision, searchContext, {}, true) &&
+                    !revalidate(busCandidate, busAdmissionBalance, decision, searchContext, {},
+                                false),
+                "scheduled bus admission rechecks that its departure is still due");
+        searchContext.occupied.push_back({*busPose, 4.0, 2.0});
+        decision = search(busCandidate, searchContext, 0, 1);
+        require(!decision.spawn && decision.searchedSpawn && decision.busSearchDiagnostics &&
+                    !decision.busSearchDiagnostics->clear,
+                "worker rejects an obstructed scheduled bus entry");
+
+        Worker busyWorker;
+        std::atomic<std::size_t> submittedPlans = 0;
+        std::jthread planner([&](std::stop_token stop) {
+            const std::vector<Worker::PopulationCandidate> candidates(
+                1000, {0, 0, std::nullopt, false, false, false});
+            while (!stop.stop_requested()) {
+                busyWorker.submitPopulationPlan(candidates, 0, 0, 0, {}, false);
+                ++submittedPlans;
+                std::this_thread::yield();
+            }
+        });
+        while (submittedPlans.load() == 0) {
+            std::this_thread::yield();
+        }
+        busyWorker.submit({makeVehicleInput(0, 0, makeActor())}, {}, {}, {}, {}, {}, 0.05, 0.05);
+        std::optional<Worker::UpdateResults> busyResults;
+        const auto busyDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!busyResults && std::chrono::steady_clock::now() < busyDeadline) {
+            busyResults = busyWorker.takeLatestResults();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        planner.request_stop();
+        planner.join();
+        require(busyResults && !busyResults->actors.empty() &&
+                    busyResults->actors[0].motion.distanceMeters > 10.0,
+                "movement progresses while population requests continuously arrive");
 
         auto conditionalSignalProgram =
             std::make_shared<openbus::map::MapTrafficSignalProgram>();

@@ -453,6 +453,22 @@ trafficSignalDebugLabel(const openbus::rendering::TrafficPathDebugSegment& segme
     return lines;
 }
 
+const char* trafficSignalPhaseName(std::optional<int> phase) {
+    if (!phase.has_value() || *phase < 0 || *phase > 12) {
+        return "UNKNOWN";
+    }
+    if (*phase <= 5) {
+        return "STOP";
+    }
+    if (*phase <= 8) {
+        return "GO";
+    }
+    if (*phase <= 11) {
+        return "CLEARANCE";
+    }
+    return "DARK";
+}
+
 std::array<float, 3> trafficPriorityDebugColor(double priority) {
     const double boundedPriority = std::clamp(priority, 0.0, 255.0);
     constexpr std::array<double, 5> stops = {0.0, 64.0, 128.0, 192.0, 255.0};
@@ -2817,6 +2833,39 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             ImGui::Text("Signal models: %zu active, %zu controller-driven, %zu without phase",
                         signalStats.activeSignalModels, signalStats.controllerDrivenModels,
                         signalStats.modelsWithoutPhase);
+            const auto signalHeads =
+                mapRenderer_->trafficSignalHeadDebugInfo(simulation.simulationTime());
+            ImGui::Text("Signal heads linked to junction/controllers:");
+            if (signalHeads.empty()) {
+                ImGui::TextDisabled("No linked signal heads in active tiles");
+            }
+            for (std::size_t index = 0; index < signalHeads.size(); ++index) {
+                const auto& head = signalHeads[index];
+                ImVec4 phaseColor(1.0F, 0.3F, 0.25F, 1.0F);
+                if (head.phase && *head.phase >= 6 && *head.phase <= 8) {
+                    phaseColor = ImVec4(0.2F, 1.0F, 0.3F, 1.0F);
+                } else if (head.phase && *head.phase >= 9 && *head.phase <= 11) {
+                    phaseColor = ImVec4(1.0F, 0.75F, 0.15F, 1.0F);
+                }
+                ImGui::PushID(static_cast<int>(index));
+                const std::string objectId =
+                    head.objectId ? std::to_string(*head.objectId) : std::string("?");
+                const std::string parentId = head.linkedJunctionObjectId
+                                                 ? std::to_string(*head.linkedJunctionObjectId)
+                                                 : std::string("?");
+                ImGui::Text("Head #%s -> Junction/controller #%s, light %zu", objectId.c_str(),
+                            parentId.c_str(), head.lightIndex);
+                ImGui::SameLine();
+                if (head.phase.has_value()) {
+                    ImGui::TextColored(phaseColor, "Phase %d (%s)", *head.phase,
+                                       trafficSignalPhaseName(head.phase));
+                } else {
+                    ImGui::TextColored(phaseColor, "Phase ? (%s)",
+                                       trafficSignalPhaseName(head.phase));
+                }
+                ImGui::PopID();
+            }
+            ImGui::Separator();
             ImGui::Text("Models by phase:");
             ImGui::SameLine();
             for (std::size_t phaseIndex = 0; phaseIndex < signalStats.modelsByPhase.size();
@@ -2908,6 +2957,27 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                           std::to_string(segment.trafficSignal->lightIndex);
                 drawWorldLabel(labelPosition, label, IM_COL32(255, 255, 255, 255),
                                IM_COL32(32, 24, 16, 220));
+            }
+            const auto worldSignalHeads =
+                mapRenderer_->trafficSignalHeadDebugInfo(simulation.simulationTime());
+            for (const auto& head : worldSignalHeads) {
+                std::array<double, 3> labelPosition = head.position;
+                labelPosition[2] += 2.2;
+                const std::string label =
+                    "TL" + (head.objectId ? std::to_string(*head.objectId) : std::string("?")) +
+                    " -> J" +
+                    (head.linkedJunctionObjectId ? std::to_string(*head.linkedJunctionObjectId)
+                                                 : std::string("?")) +
+                    " L" + std::to_string(head.lightIndex) + " PH" +
+                    (head.phase ? std::to_string(*head.phase) : std::string("?")) + " " +
+                    trafficSignalPhaseName(head.phase);
+                ImU32 phaseColor = IM_COL32(255, 80, 65, 255);
+                if (head.phase && *head.phase >= 6 && *head.phase <= 8) {
+                    phaseColor = IM_COL32(70, 255, 100, 255);
+                } else if (head.phase && *head.phase >= 9 && *head.phase <= 11) {
+                    phaseColor = IM_COL32(255, 195, 50, 255);
+                }
+                drawWorldLabel(labelPosition, label, phaseColor, IM_COL32(20, 24, 28, 230));
             }
             for (const auto& [stopId, candidate] : stopCandidates) {
                 const std::size_t waiting = scheduledPassengerQueues_.at(stopId);
