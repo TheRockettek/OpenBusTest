@@ -2,10 +2,13 @@
 #include "map/MapTileWindow.h"
 
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
 namespace {
@@ -71,10 +74,112 @@ openbus::app::MapTrafficWorker::HumanInput makeHumanInput(
             advanceWhileInactive};
 }
 
+void benchmarkHandoff(std::size_t actorCount, std::size_t segmentCount) {
+    using Worker = openbus::app::MapTrafficWorker;
+    constexpr int ticks = 120;
+    constexpr double step = 0.02;
+    std::vector<Worker::ActorInput> inputs;
+    inputs.reserve(actorCount);
+    for (std::size_t actorIndex = 0; actorIndex < actorCount; ++actorIndex) {
+        auto actor = makeActor();
+        actor.route.segments.clear();
+        actor.route.cumulativeEndDistances.clear();
+        actor.route.totalLength = static_cast<double>(segmentCount) * 100.0;
+        const double x = static_cast<double>(actorIndex) * 100.0;
+        for (std::size_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex) {
+            openbus::map::MapTrafficRouteSegment segment;
+            segment.spline.placement.splineId = static_cast<int>(segmentIndex + 1);
+            const double y = static_cast<double>(segmentIndex) * 100.0;
+            segment.points = {{x, y, 0.0}, {x, y + 100.0, 0.0}};
+            actor.route.segments.push_back(std::move(segment));
+            actor.route.cumulativeEndDistances.push_back(y + 100.0);
+        }
+        inputs.push_back(makeVehicleInput(actorIndex, 0, std::move(actor)));
+    }
+
+    Worker worker;
+    worker.setSimulationRateHz(50.0);
+    std::optional<Worker::UpdateResults> result;
+    std::uint64_t hash = 14695981039346656037ULL;
+    const auto mixInteger = [&](std::uint64_t value) {
+        hash ^= value;
+        hash *= 1099511628211ULL;
+    };
+    const auto mixDouble = [&](double value) { mixInteger(std::bit_cast<std::uint64_t>(value)); };
+    for (int tick = 0; tick < ticks; ++tick) {
+        worker.submit(inputs, {}, {}, {}, {}, {}, step, static_cast<double>(tick + 1) * step);
+        result.reset();
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!result && std::chrono::steady_clock::now() < deadline) {
+            result = worker.takeLatestResults();
+            if (!result) {
+                std::this_thread::yield();
+            }
+        }
+        require(result && result->actors.size() == actorCount &&
+                    std::abs(result->elapsedSeconds - step) < 1e-9,
+                "handoff benchmark must complete exactly one step per submission");
+        for (const auto& actor : result->actors) {
+            mixInteger(actor.stateIndex);
+            mixInteger(actor.generation);
+            mixDouble(actor.motion.distanceMeters);
+            mixDouble(actor.motion.speedMetersPerSecond);
+            mixDouble(actor.motion.targetSpeedMetersPerSecond);
+            mixDouble(actor.motion.lateralOffsetMeters);
+            mixDouble(actor.motion.junctionWaitSeconds);
+            mixInteger(actor.motion.scheduledStopDistanceMeters.has_value());
+            if (actor.motion.scheduledStopDistanceMeters) {
+                mixDouble(*actor.motion.scheduledStopDistanceMeters);
+            }
+            mixInteger(static_cast<std::uint64_t>(actor.motion.blockReason));
+            mixInteger(actor.motion.blockingObstacleIndex.has_value());
+            if (actor.motion.blockingObstacleIndex) {
+                mixInteger(*actor.motion.blockingObstacleIndex);
+            }
+            mixInteger(actor.motion.junctionClaimEndMeters.has_value());
+            if (actor.motion.junctionClaimEndMeters) {
+                mixDouble(*actor.motion.junctionClaimEndMeters);
+            }
+            mixInteger(actor.motion.committedSignalSegmentIndex.has_value());
+            if (actor.motion.committedSignalSegmentIndex) {
+                mixInteger(*actor.motion.committedSignalSegmentIndex);
+            }
+            mixInteger(actor.blockingActorStateIndex.has_value());
+            if (actor.blockingActorStateIndex) {
+                mixInteger(*actor.blockingActorStateIndex);
+            }
+            mixInteger(actor.blockingActorGeneration.has_value());
+            if (actor.blockingActorGeneration) {
+                mixInteger(*actor.blockingActorGeneration);
+            }
+            for (double coordinate : actor.pose.position) {
+                mixDouble(coordinate);
+            }
+            mixDouble(actor.pose.headingRadians);
+            mixInteger(static_cast<std::uint64_t>(actor.pose.splineId));
+            mixDouble(actor.pose.pitchRadians);
+            mixDouble(actor.pose.rollRadians);
+            mixDouble(actor.travelHeadingRadians);
+        }
+    }
+    std::cout << "HANDOFF actors=" << actorCount << " segments=" << segmentCount
+              << " ticks=" << ticks << " avg_tick_ms="
+              << worker.averageTickProcessingSeconds() * 1000.0 << " state_hash=" << std::hex
+              << hash << std::dec << '\n';
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-handoff") {
+            benchmarkHandoff(96, 80);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--benchmark-handoff-500-300") {
+            benchmarkHandoff(500, 300);
+            return 0;
+        }
         using Worker = openbus::app::MapTrafficWorker;
         const std::vector<Worker::PopulationCandidate> balanceCandidates = {
             {0, 0, 1, false, false, true},
@@ -185,6 +290,82 @@ int main() {
                     results->humans[1].generation == 1 &&
                     results->humans[1].distanceMeters > 60.0,
                 "new generations do not inherit stale actor movement state");
+
+        auto cachedInput = makeVehicleInput(5, 10, makeActor());
+        worker.submit({cachedInput}, {}, {}, {}, {}, {}, 0.05, 0.15);
+        results = waitForResults();
+        require(results && results->actors.size() == 1,
+                "initial cached actor tick completes");
+        const double firstDistance = results->actors[0].motion.distanceMeters;
+        cachedInput.motion.distanceMeters = 80.0;
+        cachedInput.motion.lateralOffsetMeters = 2.0;
+        cachedInput.motion.scheduledStopDistanceMeters = 45.0;
+        cachedInput.reducedSpeedLookahead = true;
+        worker.submit({cachedInput}, {}, {}, {}, {}, {}, 0.05, 0.20);
+        results = waitForResults();
+        require(results && results->actors.size() == 1 &&
+                    results->actors[0].motion.distanceMeters > firstDistance &&
+                    results->actors[0].motion.distanceMeters < 20.0 &&
+                    results->actors[0].motion.lateralOffsetMeters == 2.0 &&
+                    results->actors[0].motion.scheduledStopDistanceMeters == 45.0,
+                "reused actors preserve worker movement while applying fresh snapshot fields");
+        const double secondDistance = results->actors[0].motion.distanceMeters;
+        auto replacement = makeActor();
+        replacement.route.segments[0].spline.placement.localX = 50.0;
+        cachedInput.actorTemplate =
+            std::make_shared<const openbus::map::MapTrafficActor>(replacement);
+        worker.submit({cachedInput}, {}, {}, {}, {}, {}, 0.05, 0.25);
+        results = waitForResults();
+        require(results && results->actors.size() == 1 &&
+                    results->actors[0].motion.distanceMeters > secondDistance &&
+                    results->actors[0].motion.distanceMeters < 20.0,
+                "same-generation template replacement retains worker movement");
+        replacement.lateralOffsetMeters = cachedInput.motion.lateralOffsetMeters;
+        const auto replacementPose = openbus::map::sampleMapTrafficActorPose(
+            replacement, results->actors[0].motion.distanceMeters);
+        require(replacementPose &&
+                    std::abs(results->actors[0].pose.position[0] -
+                             replacementPose->position[0]) < 1e-6 &&
+                    std::abs(results->actors[0].pose.position[1] -
+                             replacementPose->position[1]) < 1e-6,
+                "same-generation template replacement refreshes route geometry");
+        ++cachedInput.generation;
+        cachedInput.motion.scheduledStopDistanceMeters.reset();
+        worker.submit({cachedInput}, {}, {}, {}, {}, {}, 0.05, 0.30);
+        results = waitForResults();
+        require(results && results->actors.size() == 1 &&
+                    results->actors[0].generation == cachedInput.generation &&
+                    results->actors[0].motion.distanceMeters >= 80.0 &&
+                    !results->actors[0].motion.scheduledStopDistanceMeters,
+                "generation changes reset retained worker movement and snapshot fields");
+
+        auto following = makeActor();
+        auto leading = makeActor();
+        leading.distanceMeters = 16.0;
+        leading.speedMetersPerSecond = 0.0;
+        leading.targetSpeedMetersPerSecond = 0.0;
+        leading.cruiseSpeedMetersPerSecond = 0.0;
+        auto followingInput = makeVehicleInput(6, 1, std::move(following));
+        auto leadingInput = makeVehicleInput(7, 1, std::move(leading));
+        worker.submit({followingInput, leadingInput}, {}, {}, {}, {}, {}, 0.05, 0.35);
+        results = waitForResults();
+        require(results && results->actors.size() == 2 &&
+                    results->actors[0].blockingActorStateIndex == 7 &&
+                    results->actors[0].blockingActorGeneration == 1,
+                "worker resolves a following actor's blocker identity");
+        worker.submit({followingInput, leadingInput}, {}, {}, {}, {}, {}, 0.05, 0.40);
+        results = waitForResults();
+        require(results && results->actors.size() == 2 &&
+                    results->actors[0].blockingActorStateIndex == 7 &&
+                    results->actors[0].blockingActorGeneration == 1,
+                "worker carries blocker identity across retained actor ticks");
+        ++leadingInput.generation;
+        worker.submit({followingInput, leadingInput}, {}, {}, {}, {}, {}, 0.05, 0.45);
+        results = waitForResults();
+        require(results && results->actors.size() == 2 &&
+                    results->actors[0].blockingActorStateIndex == 7 &&
+                    results->actors[0].blockingActorGeneration == 2,
+                "worker replaces a stale blocker generation with the current actor");
 
         worker.submitPopulationPlan(
             {{0, 0, 3, false, false, true, false, true},

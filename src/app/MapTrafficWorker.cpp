@@ -382,6 +382,7 @@ struct MapTrafficWorker::Impl {
     struct WorkingActor {
         std::size_t stateIndex = 0;
         std::uint64_t generation = 0;
+        std::shared_ptr<const openbus::map::MapTrafficActor> actorTemplate;
         openbus::map::MapTrafficActor actor;
         std::optional<std::size_t> blockingActorStateIndex;
         std::optional<std::uint64_t> blockingActorGeneration;
@@ -549,34 +550,65 @@ struct MapTrafficWorker::Impl {
             lock.unlock();
 
             try {
-                std::vector<ActorInput> tickActors = tickInput->actors;
-                std::vector<HumanInput> tickHumans = tickInput->humans;
-                std::vector<openbus::map::MapTrafficObstacle> tickObstacles = tickInput->obstacles;
-                std::vector<openbus::map::MapTrafficObstacle> humanObstacles =
-                    tickInput->humanObstacles;
-                auto tickSignalControllers = tickInput->signalControllers;
-                auto tickBusPriorityRequests = tickInput->busPriorityRequests;
+                const auto& tickActors = tickInput->actors;
+                const auto& tickHumans = tickInput->humans;
+                const auto& tickObstacles = tickInput->obstacles;
+                const auto& humanObstacles = tickInput->humanObstacles;
+                const auto& tickSignalControllers = tickInput->signalControllers;
+                const auto& tickBusPriorityRequests = tickInput->busPriorityRequests;
                 std::unordered_map<std::size_t, std::size_t> previousActorByState;
                 previousActorByState.reserve(workingActors.size());
                 for (std::size_t index = 0; index < workingActors.size(); ++index) {
                     previousActorByState.emplace(workingActors[index].stateIndex, index);
                 }
+                std::unordered_map<std::size_t, std::size_t> actorPositionByState;
+                actorPositionByState.reserve(tickActors.size());
+                bool uniqueActorStates = true;
+                for (std::size_t index = 0; index < tickActors.size(); ++index) {
+                    uniqueActorStates &=
+                        actorPositionByState.emplace(tickActors[index].stateIndex, index).second;
+                }
+                struct Blocker {
+                    std::optional<std::size_t> stateIndex;
+                    std::optional<std::uint64_t> generation;
+                };
+                std::vector<Blocker> blockers;
+                blockers.reserve(tickActors.size());
                 std::vector<openbus::map::MapTrafficActor> runtimeActors;
                 runtimeActors.reserve(tickActors.size());
-                for (ActorInput& actor : tickActors) {
+                for (const ActorInput& actor : tickActors) {
                     const auto previous = previousActorByState.find(actor.stateIndex);
                     const bool hasPrevious =
                         previous != previousActorByState.end() &&
                         workingActors[previous->second].generation == actor.generation;
-                    runtimeActors.push_back(*actor.actorTemplate);
+                    const bool reuseActor =
+                        hasPrevious && uniqueActorStates &&
+                        workingActors[previous->second].actorTemplate == actor.actorTemplate;
+                    if (reuseActor) {
+                        runtimeActors.push_back(std::move(workingActors[previous->second].actor));
+                    } else {
+                        runtimeActors.push_back(*actor.actorTemplate);
+                    }
                     openbus::map::MapTrafficActor& runtimeActor = runtimeActors.back();
-                    applyMotion(runtimeActor, actor.motion);
+                    if (reuseActor) {
+                        // These two motion fields come from each new snapshot, not the last tick.
+                        runtimeActor.lateralOffsetMeters = actor.motion.lateralOffsetMeters;
+                        runtimeActor.scheduledStopDistanceMeters =
+                            actor.motion.scheduledStopDistanceMeters;
+                    } else {
+                        applyMotion(runtimeActor, actor.motion);
+                    }
                     runtimeActor.reducedSpeedLookahead = actor.reducedSpeedLookahead;
                     if (hasPrevious) {
                         const WorkingActor& previousActor = workingActors[previous->second];
-                        preserveMovementState(runtimeActor, previousActor.actor);
-                        actor.blockingActorStateIndex = previousActor.blockingActorStateIndex;
-                        actor.blockingActorGeneration = previousActor.blockingActorGeneration;
+                        if (!reuseActor) {
+                            preserveMovementState(runtimeActor, previousActor.actor);
+                        }
+                        blockers.push_back({previousActor.blockingActorStateIndex,
+                                            previousActor.blockingActorGeneration});
+                    } else {
+                        blockers.push_back(
+                            {actor.blockingActorStateIndex, actor.blockingActorGeneration});
                     }
                     runtimeActor.blockingActor = nullptr;
                 }
@@ -611,19 +643,14 @@ struct MapTrafficWorker::Impl {
                 openbus::rendering::TraceScope trace("traffic",
                                                      "MapTrafficWorker::advanceMapTrafficDriving");
 
-                std::unordered_map<std::size_t, std::size_t> actorPositionByState;
-                actorPositionByState.reserve(tickActors.size());
                 for (std::size_t index = 0; index < tickActors.size(); ++index) {
-                    actorPositionByState.emplace(tickActors[index].stateIndex, index);
-                }
-                for (std::size_t index = 0; index < tickActors.size(); ++index) {
-                    const auto blocker = tickActors[index].blockingActorStateIndex;
+                    const auto blocker = blockers[index].stateIndex;
                     const auto blockerPosition = blocker.has_value()
                                                      ? actorPositionByState.find(*blocker)
                                                      : actorPositionByState.end();
                     if (blockerPosition != actorPositionByState.end() &&
                         tickActors[blockerPosition->second].generation ==
-                            tickActors[index].blockingActorGeneration) {
+                            blockers[index].generation) {
                         runtimeActors[index].blockingActor =
                             &runtimeActors[blockerPosition->second];
                     }
@@ -675,6 +702,7 @@ struct MapTrafficWorker::Impl {
                     WorkingActor advanced;
                     advanced.stateIndex = tickActors[index].stateIndex;
                     advanced.generation = tickActors[index].generation;
+                    advanced.actorTemplate = tickActors[index].actorTemplate;
                     advanced.actor = std::move(runtimeActors[index]);
                     if (advanced.actor.blockingActor != nullptr) {
                         const auto blocker =
