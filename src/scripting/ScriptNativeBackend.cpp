@@ -44,10 +44,11 @@ const std::string& ScriptRuntime::Impl::nativePeekString() const {
     return stringStack.empty() ? empty : stringStack.back();
 }
 
-void ScriptRuntime::Impl::warnPlaceholderMacro(const std::string& name) {
-    if (warnedPlaceholderMacros.insert(name).second) {
+void ScriptRuntime::Impl::warnUnavailableMacro(const std::string& name) {
+    if (warnedUnavailableMacros.insert(name).second) {
         log(LogLevel::Warning,
-            "system macro " + name + " is not implemented; returning a placeholder");
+            "system macro " + name +
+                " has no provider data available; returning its fallback result");
     }
 }
 
@@ -62,8 +63,24 @@ float ScriptRuntime::Impl::nrSpecRandom(float seed) {
         }
         return 0.0F;
     }
-    std::minstd_rand random(static_cast<unsigned int>(truncated));
+    unsigned int fleetHash = 0;
+    for (const unsigned char character : localState.getString("number")) {
+        fleetHash ^= character;
+        fleetHash *= 16777619U;
+    }
+    std::minstd_rand random(static_cast<unsigned int>(truncated) ^ fleetHash);
     return static_cast<float>(random()) / static_cast<float>(std::minstd_rand::max());
+}
+
+float ScriptRuntime::Impl::heightAbovePoint(float x, float y, float z) {
+    if (onHeightAbovePoint) {
+        const std::optional<float> height = onHeightAbovePoint(x, y, z);
+        if (height.has_value() && std::isfinite(*height)) {
+            return *height;
+        }
+    }
+    warnUnavailableMacro("getheightabovepoint");
+    return 0.0F;
 }
 
 void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
@@ -142,19 +159,116 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
         const bool validIndex = popNonnegativeIndex(stopIndex);
         const std::string key = validIndex ? indexedName("tt_busstop_name_", stopIndex) : "";
         stringStack.push_back(validIndex ? localState.getString(key) : std::string{});
+    } else if (name == "getterminusindex") {
+        int code = -1;
+        const bool validCode = popNonnegativeIndex(code);
+        if (!hasHofData) {
+            warnUnavailableMacro(name);
+        }
+        const auto found = validCode
+                               ? std::find_if(hofData.termini.begin(), hofData.termini.end(),
+                                              [code](const HofTerminus& terminus) {
+                                                  return terminus.code == code;
+                                              })
+                               : hofData.termini.end();
+        pushNumber(found == hofData.termini.end()
+                       ? -1.0F
+                       : static_cast<float>(std::distance(hofData.termini.begin(), found)));
+    } else if (name == "getterminuscode") {
+        int index = -1;
+        const bool validIndex = popNonnegativeIndex(index);
+        if (!hasHofData) {
+            warnUnavailableMacro(name);
+        }
+        pushNumber(validIndex && static_cast<std::size_t>(index) < hofData.termini.size()
+                       ? static_cast<float>(hofData.termini[static_cast<std::size_t>(index)].code)
+                       : 0.0F);
+    } else if (name == "getterminusstring" || name == "getbusstopstring") {
+        int stringIndex = -1;
+        int itemIndex = -1;
+        const bool validStringIndex = popNonnegativeIndex(stringIndex);
+        const bool validItemIndex = popNonnegativeIndex(itemIndex);
+        if (!hasHofData) {
+            warnUnavailableMacro(name);
+        }
+        const std::vector<std::string>* strings = nullptr;
+        if (validStringIndex && validItemIndex) {
+            if (name == "getterminusstring" &&
+                static_cast<std::size_t>(itemIndex) < hofData.termini.size()) {
+                strings = &hofData.termini[static_cast<std::size_t>(itemIndex)].strings;
+            } else if (name == "getbusstopstring" &&
+                       static_cast<std::size_t>(itemIndex) < hofData.busstops.size()) {
+                strings = &hofData.busstops[static_cast<std::size_t>(itemIndex)].strings;
+            }
+        }
+        stringStack.push_back(strings && static_cast<std::size_t>(stringIndex) < strings->size()
+                                  ? (*strings)[static_cast<std::size_t>(stringIndex)]
+                                  : std::string{});
     } else if (name == "getbusstopindex") {
-        nativePopString();
-        warnPlaceholderMacro(name);
-        pushNumber(-1.0F);
-    } else if (name == "getterminusindex" || name == "getrouteindex") {
-        popFloats(1);
-        warnPlaceholderMacro(name);
-        pushNumber(-1.0);
-    } else if (name == "getterminusstring" || name == "getbusstopstring" ||
-               name == "getroutebusstopident") {
-        popFloats(2);
-        warnPlaceholderMacro(name);
-        pushString();
+        const std::string ident = openbus::config::trim(nativePopString());
+        if (!hasHofData) {
+            warnUnavailableMacro(name);
+        }
+        const auto found = std::find_if(hofData.busstops.begin(), hofData.busstops.end(),
+                                        [&ident](const HofBusstop& busstop) {
+                                            return openbus::config::lower(busstop.ident) ==
+                                                   openbus::config::lower(ident);
+                                        });
+        pushNumber(found == hofData.busstops.end()
+                       ? -1.0F
+                       : static_cast<float>(std::distance(hofData.busstops.begin(), found)));
+    } else if (name == "getrouteindex") {
+        int code = -1;
+        const bool validCode = popNonnegativeIndex(code);
+        if (!hasHofData) {
+            warnUnavailableMacro(name);
+        }
+        const auto found =
+            validCode
+                ? std::find_if(hofData.routes.begin(), hofData.routes.end(),
+                               [code](const HofRoute& route) {
+                                   int routeCode = 0;
+                                   return openbus::config::parseInt(route.code, routeCode) &&
+                                          routeCode == code;
+                               })
+                : hofData.routes.end();
+        pushNumber(found == hofData.routes.end()
+                       ? -1.0F
+                       : static_cast<float>(std::distance(hofData.routes.begin(), found)));
+    } else if (name == "getrouteterminusindex" || name == "getbusstopcount") {
+        int routeIndex = -1;
+        const bool validIndex = popNonnegativeIndex(routeIndex);
+        if (!hasHofData) {
+            warnUnavailableMacro(name);
+        }
+        const HofRoute* route =
+            validIndex && static_cast<std::size_t>(routeIndex) < hofData.routes.size()
+                ? &hofData.routes[static_cast<std::size_t>(routeIndex)]
+                : nullptr;
+        const float result =
+            route == nullptr
+                ? 0.0F
+                : name == "getrouteterminusindex"
+                      ? (route->hasTerminusIndex ? static_cast<float>(route->terminusIndex) : 0.0F)
+                      : static_cast<float>(route->busstopIdents.size());
+        pushNumber(result);
+    } else if (name == "getroutebusstopident") {
+        int stopIndex = -1;
+        int routeIndex = -1;
+        const bool validStopIndex = popNonnegativeIndex(stopIndex);
+        const bool validRouteIndex = popNonnegativeIndex(routeIndex);
+        if (!hasHofData) {
+            warnUnavailableMacro(name);
+        }
+        const HofRoute* route =
+            validRouteIndex && static_cast<std::size_t>(routeIndex) < hofData.routes.size()
+                ? &hofData.routes[static_cast<std::size_t>(routeIndex)]
+                : nullptr;
+        stringStack.push_back(route && validStopIndex &&
+                                      static_cast<std::size_t>(stopIndex) <
+                                          route->busstopIdents.size()
+                                  ? route->busstopIdents[static_cast<std::size_t>(stopIndex)]
+                                  : std::string{});
     } else if (name == "gethumancountonpathlink" || name == "gethumancountonseat") {
         int index = -1;
         const bool validIndex = floatToInt(nativePopFloat(), index) && index >= 0;
@@ -162,15 +276,26 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
             name == "gethumancountonseat" ? "human_count_on_seat_" : "human_count_on_path_link_";
         const float count = validIndex ? localState.get(indexedName(prefix, index)) : 0.0F;
         pushNumber(std::isfinite(count) ? count : 0.0F);
-    } else if (name == "getdepotstringglobal" || name == "getarrbusline" ||
-               name == "getarrbusterminus") {
+    } else if (name == "getdepotstringglobal") {
+        int stringIndex = -1;
+        const bool validIndex = popNonnegativeIndex(stringIndex);
+        if (!hasHofData) {
+            warnUnavailableMacro(name);
+        }
+        stringStack.push_back(validIndex &&
+                                      static_cast<std::size_t>(stringIndex) <
+                                          hofData.globalStrings.size()
+                                  ? hofData.globalStrings[static_cast<std::size_t>(stringIndex)]
+                                  : std::string{});
+    } else if (name == "getarrbusline" || name == "getarrbusterminus") {
         popFloats(1);
-        warnPlaceholderMacro(name);
+        warnUnavailableMacro(name);
         pushString();
     } else if (name == "getheightabovepoint") {
-        popFloats(3);
-        warnPlaceholderMacro(name);
-        pushNumber(0.0);
+        const float z = nativePopFloat();
+        const float y = nativePopFloat();
+        const float x = nativePopFloat();
+        pushNumber(heightAbovePoint(x, y, z));
     } else if (name == "nrspecrandom") {
         pushNumber(nrSpecRandom(nativePopFloat()));
     } else if (name == "getttbusstopcount") {
@@ -192,10 +317,9 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
         const char* prefix = name == "getttbusstoparr" ? "tt_busstop_arr_" : "tt_busstop_dep_";
         const float time = validIndex ? localState.get(indexedName(prefix, stopIndex)) : 0.0F;
         pushNumber(std::isfinite(time) ? time : 0.0F);
-    } else if (name == "getterminuscode" || name == "getrouteterminusindex" ||
-               name == "getbusstopcount" || name == "getarrbustimediff") {
+    } else if (name == "getarrbustimediff") {
         popFloats(1);
-        warnPlaceholderMacro(name);
+        warnUnavailableMacro(name);
         pushNumber(0.0);
     } else if (name == "stnewtex") {
         int index = -1;
@@ -667,6 +791,11 @@ bool ScriptRuntime::Impl::executeNativeFunction(const std::string& functionName,
                 }
                 break;
             case OscOpcode::CallSystemMacro:
+                if (!localState.supportsSystemMacro(instruction.name)) {
+                    errors.push_back("native OSC system macro " + instruction.name +
+                                     " is unavailable for this script object");
+                    return false;
+                }
                 executeSystemMacro(instruction.name);
                 break;
             case OscOpcode::SoundTrigger:

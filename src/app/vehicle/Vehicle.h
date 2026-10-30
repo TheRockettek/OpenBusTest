@@ -689,6 +689,7 @@ struct Vehicle {
         if (!setupOptions.depotPath.empty()) {
             variables.setString("hof_file", setupOptions.depotPath.generic_string());
             variables.setString("hof_name", setupOptions.depotName);
+            variables.setString("yard", setupOptions.depotName);
         }
         odometerMetres =
             vehicleConfiguration.hasOdometerInitial
@@ -717,6 +718,15 @@ struct Vehicle {
                         soundBank.trigger(soundEngine, name, file, static_cast<float>(controlValue),
                                           variables, soundViewpoint);
                     }
+                },
+                [this](float x, float y, float z) -> std::optional<float> {
+                    if (odeSimulation == nullptr) {
+                        return std::nullopt;
+                    }
+                    const std::optional<double> height =
+                        odeSimulation->heightAbovePoint(x, y, z, modelOffsetZ);
+                    return height.has_value() ? std::optional<float>(static_cast<float>(*height))
+                                              : std::nullopt;
                 });
         }
         for (const std::string& error : scripts->errors()) {

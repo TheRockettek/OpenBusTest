@@ -18,6 +18,11 @@ struct WheelStaticContactSettings {
     double cfm = 1.0e-5;
 };
 
+struct BusCollisionEvent {
+    std::array<double, 3> position;
+    double energy = 0.0;
+};
+
 class BusSimulation {
   public:
     explicit BusSimulation(World& world, BusConfiguration configuration, VehiclePlacement placement,
@@ -55,6 +60,9 @@ class BusSimulation {
     std::array<double, 3> centerOfGravity() const;
     std::array<double, 3> outsideCameraCenter() const;
     BodyPose chassisPose() const;
+    std::optional<BusCollisionEvent> consumeCollisionEvent();
+    std::optional<double> heightAbovePoint(double x, double y, double z,
+                                           double modelOffsetZ = 0.0) const;
     ChassisCollisionBox chassisCollisionBox() const;
     BodyPose wheelPose(std::size_t index) const;
     BodyPose wheelMountPose(std::size_t index) const;

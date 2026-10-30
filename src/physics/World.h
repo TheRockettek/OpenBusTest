@@ -27,6 +27,9 @@ class World {
 
     void updateOnFoot(OnFootState& state, double elapsedSeconds, double yawRadians, double forward,
                       double right, bool jump) const;
+    std::optional<double> raycastStatic(const std::array<double, 3>& origin,
+                                        const std::array<double, 3>& direction,
+                                        double maxDistance) const;
     void addMapTileCollision(int tileX, int tileY, std::optional<TerrainCollisionGrid> terrain,
                              std::vector<StaticCollisionMesh> staticCollision,
                              std::vector<MapPoleCollision> poles = {});

@@ -761,6 +761,58 @@ void World::updateOnFoot(OnFootState& state, double elapsedSeconds, double yawRa
     dGeomDestroy(capsule);
 }
 
+std::optional<double> World::raycastStatic(const std::array<double, 3>& origin,
+                                           const std::array<double, 3>& direction,
+                                           double maxDistance) const {
+    if (!std::isfinite(maxDistance) || maxDistance <= 0.0 ||
+        !std::all_of(origin.begin(), origin.end(), [](double value) { return std::isfinite(value); }) ||
+        !std::all_of(direction.begin(), direction.end(),
+                     [](double value) { return std::isfinite(value); })) {
+        return std::nullopt;
+    }
+    const double directionLength =
+        std::sqrt(direction[0] * direction[0] + direction[1] * direction[1] +
+                  direction[2] * direction[2]);
+    if (directionLength <= std::numeric_limits<double>::epsilon()) {
+        return std::nullopt;
+    }
+    dGeomID ray = dCreateRay(nullptr, maxDistance);
+    if (ray == nullptr) {
+        throw std::runtime_error("Could not create collision ray");
+    }
+    const double normalizedDirection[3] = {direction[0] / directionLength,
+                                           direction[1] / directionLength,
+                                           direction[2] / directionLength};
+    dGeomRaySet(ray, origin[0], origin[1], origin[2], normalizedDirection[0],
+                normalizedDirection[1], normalizedDirection[2]);
+    dGeomRaySetLength(ray, maxDistance);
+    struct RayQuery {
+        dGeomID ray;
+        double closestDistance;
+    } query{ray, maxDistance};
+    const auto callback = +[](void* data, dGeomID first, dGeomID second) {
+        auto& current = *static_cast<RayQuery*>(data);
+        const dGeomID other = first == current.ray ? second : first;
+        if (dGeomGetBody(other) != nullptr || dGeomIsSpace(other)) {
+            return;
+        }
+        dContactGeom contact = {};
+        if (dCollide(current.ray, other, 1, &contact, sizeof(contact)) > 0 &&
+            contact.depth >= 0.0 && contact.depth < current.closestDistance) {
+            current.closestDistance = contact.depth;
+        }
+    };
+    try {
+        dSpaceCollide2(ray, reinterpret_cast<dGeomID>(impl_->ode.space), &query, callback);
+    } catch (...) {
+        dGeomDestroy(ray);
+        throw;
+    }
+    dGeomDestroy(ray);
+    return query.closestDistance < maxDistance ? std::optional<double>(query.closestDistance)
+                                               : std::nullopt;
+}
+
 void World::addMapTileCollision(int tileX, int tileY, std::optional<TerrainCollisionGrid> terrain,
                                 std::vector<StaticCollisionMesh> staticCollision,
                                 std::vector<MapPoleCollision> poles) {

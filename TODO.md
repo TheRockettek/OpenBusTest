@@ -252,9 +252,21 @@ by parser alignment and should not be described as supported:
 - Complete OMSI input configuration and action semantics. Vehicle bindings
   can inherit `[vehicles]`/`[entry]` assignments from `Inputs/keyboard.cfg`,
   with OpenBus defaults for unsupported or absent assignments.
-- Remaining script system data providers such as route, terminus, ticket,
-  passenger-count, ground-height, and arrival-board lookups; safe fallbacks
-  remain in `ScriptRuntime`.
+- Script macro HOF route, terminus, bus-stop, and global-string lookups are
+  backed by the selected vehicle depot file. Ticket data comes from the active
+  map ticket pack, vehicle seat counts from the passenger service, and timetable
+  data from scheduled map AI buses. `GetHeightAbovePoint` raycasts through the
+  live static collision world. Remaining providers are scenery bus-stop arrival
+  queues and live passenger counts on path links; their macros return safe
+  results and report unavailable provider data.
+- System trigger dispatch now reports chassis contacts and scheduled AI target
+  and bus-stop changes. Passenger stop-request, rail-joint, repair, and
+  refueling event sources remain unsupported.
+- Predefined local variables now expose live ODE wheel/brake data, odometer and
+  passenger counts, weather, collision details, and scheduled-map-bus values.
+  Environmental lighting, surface IDs, fuel, door requests, train state, and
+  other listed variables without a host simulation remain defaults or
+  script-owned.
 
 Done when unsupported configuration is visible in diagnostics and the README
 claims only behavior that is active in the runtime.

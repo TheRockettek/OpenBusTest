@@ -1,6 +1,7 @@
 #include "physics/BusSimulation.h"
 #include "physics/World.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -50,6 +51,14 @@ int main() {
         World world;
         BusSimulation simulation(world, configuration(),
                                  VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+        const auto initialGroundDistance = world.raycastStatic({0.0, 0.0, 5.0},
+                                                                {0.0, 0.0, -1.0}, 20.0);
+        require(initialGroundDistance.has_value() && std::abs(*initialGroundDistance - 5.0) < 0.002,
+                "Collision ray must find the default ground plane");
+        const auto vehicleGroundDistance = simulation.heightAbovePoint(0.0, 0.0, 5.0);
+        require(vehicleGroundDistance.has_value() &&
+                    std::abs(*vehicleGroundDistance - 5.0) < 0.002,
+                "Vehicle-local height query must map through the chassis pose");
         simulation.setFrozen(true);
         const auto busPosition = simulation.chassisPose().position;
         OnFootState state{{0.0, 0.0, 0.0}};
@@ -96,6 +105,11 @@ int main() {
         wall.vertices = {2, -10, 0, 2, 10, 0, 2, 10, 5, 2, -10, 5};
         wall.indices = {0, 2, 1, 0, 3, 2};
         world.addMapTileCollision(0, 0, std::nullopt, {platform, wall});
+        const auto streamedGroundDistance = world.raycastStatic({0.0, 0.0, 5.0},
+                                                                 {0.0, 0.0, -1.0}, 20.0);
+        require(streamedGroundDistance.has_value() &&
+                    std::abs(*streamedGroundDistance - 3.0) < 0.002,
+                "Collision ray must prefer streamed static geometry over the ground plane");
         state = {{0.0, 0.0, 2.0}};
         advance(world, state, 120, 0.0, 1.0, 0.0);
         require(state.grounded && std::abs(state.feetPosition[2] - 2.0) < 0.002,
@@ -106,6 +120,22 @@ int main() {
         advance(world, state, 120);
         require(state.grounded && std::abs(state.feetPosition[2]) < 0.002,
                 "Walker must fall when streamed support is removed");
+
+        StaticCollisionMesh collisionWall;
+        collisionWall.vertices = {0, -10, -10, 0, 10, -10, 0, 10, 10, 0, -10, 10};
+        collisionWall.indices = {0, 2, 1, 0, 3, 2};
+        World collisionWorld(0.0, {}, {collisionWall}, false);
+        BusSimulation collisionSimulation(collisionWorld, configuration(),
+                                          VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+        collisionSimulation.step(0.0);
+        const auto collisionEvent = collisionSimulation.consumeCollisionEvent();
+        require(collisionEvent.has_value() && std::isfinite(collisionEvent->energy) &&
+                    std::all_of(collisionEvent->position.begin(), collisionEvent->position.end(),
+                                [](double value) { return std::isfinite(value); }),
+                "Chassis contact must produce one collision event with local contact data");
+        collisionSimulation.step(0.0);
+        require(!collisionSimulation.consumeCollisionEvent().has_value(),
+                "Persistent chassis contact must not retrigger collision every physics step");
 
         StaticCollisionMesh ceiling;
         ceiling.vertices = {-10, -10, 2.2, 10, -10, 2.2, 10, 10, 2.2, -10, 10, 2.2};

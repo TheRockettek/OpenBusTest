@@ -27,6 +27,52 @@ bool selectBackend(const char* backend) {
 #endif
 }
 
+bool checkHofMacros(const VehicleConfig& configuration, const char* backend) {
+    if (!selectBackend(backend)) {
+        return false;
+    }
+    openbus::scripting::Vehicle local;
+    local.setString("hof_file",
+                    (configuration.sourcePath.parent_path() / "fixture.hof").string());
+    SimulationState simulation;
+    ScriptRuntime runtime(configuration, local, simulation);
+    runtime.invokeEntryPoint("trigger_hof_lookups");
+    const bool passed =
+        runtime.errors().empty() && local.get("terminus_index_result") == 1.0F &&
+        local.get("terminus_index_sentinel") == 1000.0F &&
+        local.get("terminus_code_result") == 42.0F &&
+        local.get("terminus_code_sentinel") == 1041.0F &&
+        local.getString("terminus_string_result") == "Hauptbahnhof" &&
+        local.get("busstop_index_result") == 1.0F &&
+        local.get("busstop_index_sentinel") == 1.0F &&
+        local.getString("busstop_string_result") == "Airport" &&
+        local.get("route_index_result") == 0.0F &&
+        local.get("route_index_sentinel") == 1000.0F &&
+        local.get("route_terminus_result") == 7.0F &&
+        local.get("route_count_result") == 2.0F &&
+        local.getString("route_stop_result") == "STOP_B" &&
+        local.getString("global_string_result") == "City Transport";
+    if (!passed) {
+        std::cerr << backend << ": HOF system macro lookups returned unexpected data\n";
+        return false;
+    }
+    local.setString("number", "1001");
+    local.set("random_seed", 42.0F);
+    runtime.invokeEntryPoint("trigger_random_seed");
+    const float firstFleetValue = local.get("random_result");
+    runtime.invokeEntryPoint("trigger_random_seed");
+    const float repeatedFleetValue = local.get("random_result");
+    local.setString("number", "1002");
+    runtime.invokeEntryPoint("trigger_random_seed");
+    const bool randomPassed = firstFleetValue == repeatedFleetValue &&
+                              std::isfinite(firstFleetValue) &&
+                              firstFleetValue != local.get("random_result");
+    if (!randomPassed) {
+        std::cerr << backend << ": seeded random value did not vary consistently by fleet number\n";
+    }
+    return randomPassed;
+}
+
 bool check(const VehicleConfig& configuration, const char* backend) {
     if (!selectBackend(backend)) {
         return false;
@@ -75,9 +121,9 @@ bool check(const VehicleConfig& configuration, const char* backend) {
         system.setSoundAvailable(available);
         local.updateEnvironment(system);
         runtime.invokeEntryPoint("trigger_system_environment");
-        if (local.get("environment_preciptype") != static_cast<float>(type) ||
+        if (local.get("environment_preciptype") != static_cast<float>(type + 1) ||
             local.get("environment_preciprate") != static_cast<float>(rate) ||
-            local.get("local_preciptype") != static_cast<float>(type) ||
+            local.get("local_preciptype") != static_cast<float>(type + 1) ||
             local.get("local_preciprate") != static_cast<float>(rate) ||
             local.get("environment_nosound") != (available ? 0.0F : 1.0F)) {
             std::cerr << backend << ": environment system variables were not published\n";
@@ -363,7 +409,75 @@ bool checkSceneryPlaceholders(const VehicleConfig& configuration, const char* ba
             }
         }
     }
+    const std::size_t errorsBeforeOutOfKindMacro = runtime.errors().size();
+    runtime.invokeEntryPoint("trigger_out_of_kind_macro");
+    if (runtime.errors().size() != errorsBeforeOutOfKindMacro + 1 ||
+        local.get("out_of_kind_followup") != 0.0F) {
+        std::cerr << backend << ": out-of-kind macro did not fail the script entry point\n";
+        return false;
+    }
     return true;
+}
+
+bool checkHeightProvider(const VehicleConfig& configuration, const char* backend) {
+    if (!selectBackend(backend)) {
+        return false;
+    }
+    openbus::scripting::Vehicle local;
+    SimulationState simulation;
+    std::array<float, 3> receivedPoint = {};
+    bool providerCalled = false;
+    ScriptRuntime runtime(
+        configuration, local, simulation, {},
+        [&receivedPoint, &providerCalled](float x, float y, float z) -> std::optional<float> {
+            receivedPoint = {x, y, z};
+            providerCalled = true;
+            return x + 10.0F * y + 100.0F * z;
+        });
+    runtime.invokeEntryPoint("trigger_height_provider");
+    const bool passed = providerCalled && receivedPoint == std::array<float, 3>{1.0F, 2.0F, 3.0F} &&
+                        runtime.errors().empty() &&
+                        local.get("height_provider_result") == 321.0F &&
+                        local.get("height_provider_sentinel") == 444.0F;
+    if (!passed) {
+        std::cerr << backend << ": ground-height provider mismatch called=" << providerCalled
+                  << " point=" << receivedPoint[0] << ',' << receivedPoint[1] << ','
+                  << receivedPoint[2] << " result=" << local.get("height_provider_result")
+                  << " sentinel=" << local.get("height_provider_sentinel")
+                  << " errors=" << runtime.errors().size() << '\n';
+    }
+    return passed;
+}
+
+bool checkSystemTriggers(const VehicleConfig& configuration, const char* backend) {
+    if (!selectBackend(backend)) {
+        return false;
+    }
+    openbus::scripting::Vehicle local;
+    SimulationState simulation;
+    ScriptRuntime runtime(configuration, local, simulation);
+    runtime.invokeSystemTrigger("collision");
+    runtime.invokeSystemTrigger("int_haltewunsch");
+    runtime.invokeSystemTrigger("RAILBOND_3");
+    runtime.invokeSystemTrigger("AI_SCHEDULED_SETTARGET");
+    runtime.invokeSystemTrigger("ai_scheduled_setbusstop");
+    const float repairDuration = runtime.invokeSystemTrigger("malfunction_gettime");
+    runtime.invokeSystemTrigger("malfunction_reset");
+    runtime.invokeSystemTrigger("veh_tank");
+    const bool passed =
+        runtime.errors().empty() && repairDuration == 12.5F &&
+        local.get("trigger_collision_count") == 1.0F &&
+        local.get("trigger_int_haltewunsch_count") == 1.0F &&
+        local.get("trigger_railbond_count") == 1.0F &&
+        local.get("trigger_ai_target_count") == 1.0F &&
+        local.get("trigger_ai_busstop_count") == 1.0F &&
+        local.get("repair_duration") == 12.5F &&
+        local.get("trigger_malfunction_reset_count") == 1.0F &&
+        local.get("trigger_veh_tank_count") == 1.0F;
+    if (!passed) {
+        std::cerr << backend << ": system trigger dispatch or return-stack mismatch\n";
+    }
+    return passed;
 }
 
 } // namespace
@@ -411,6 +525,21 @@ int main() {
                   "2 (M.V.givechangecoin)\n"
                   "1.5 (M.V.givechangecoin)\n"
                   "-1 (M.V.givechangecoin)\n{end}\n"
+                  "{trigger:hof_lookups}\n"
+                  "999 84 (M.V.getterminusindex) (S.L.terminus_index_result) + "
+                  "(S.L.terminus_index_sentinel)\n"
+                  "999 0 (M.V.getterminuscode) (S.L.terminus_code_result) + "
+                  "(S.L.terminus_code_sentinel)\n"
+                  "0 1 (M.V.getterminusstring) (S.$.terminus_string_result)\n"
+                  "\"STOP_B\" (M.V.getbusstopindex) (S.L.busstop_index_result)\n"
+                  "1 (S.L.busstop_index_sentinel)\n"
+                  "1 0 (M.V.getbusstopstring) (S.$.busstop_string_result)\n"
+                  "1000 1001 (M.V.getrouteindex) (S.L.route_index_result) + "
+                  "(S.L.route_index_sentinel)\n"
+                  "0 (M.V.getrouteterminusindex) (S.L.route_terminus_result)\n"
+                  "0 (M.V.getbusstopcount) (S.L.route_count_result)\n"
+                  "0 1 (M.V.getroutebusstopident) (S.$.route_stop_result)\n"
+                  "1 (M.V.getdepotstringglobal) (S.$.global_string_result)\n{end}\n"
                   "{trigger:placeholder_stack}\n"
                   "123 (M.V.getttterminusindex) (S.L.tt_terminus_result) + (S.L.tt_terminus_sentinel)\n"
                   "123 (M.V.getttbusstopcount) (S.L.tt_count_result) + (S.L.tt_count_sentinel)\n"
@@ -434,12 +563,34 @@ int main() {
                   "$length (S.L.route_stop_length) $+ (S.$.route_stop_combined)\n"
                   "(L.$.lookup_ident) 123 1 (M.V.getdepotstringglobal) (S.L.depot_string_sentinel) "
                   "$length (S.L.depot_string_length) $+ (S.$.depot_string_combined)\n{end}\n"
+                  "{trigger:height_provider}\n"
+                  "123 1 2 3 (M.V.getheightabovepoint) (S.L.height_provider_result) + "
+                  "(S.L.height_provider_sentinel)\n{end}\n"
+                  "{trigger:collision}\n"
+                  "(L.L.trigger_collision_count) 1 + (S.L.trigger_collision_count)\n{end}\n"
+                  "{trigger:int_haltewunsch}\n"
+                  "(L.L.trigger_int_haltewunsch_count) 1 + (S.L.trigger_int_haltewunsch_count)\n{end}\n"
+                  "{trigger:railbond_3}\n"
+                  "(L.L.trigger_railbond_count) 1 + (S.L.trigger_railbond_count)\n{end}\n"
+                  "{trigger:ai_scheduled_settarget}\n"
+                  "(L.L.trigger_ai_target_count) 1 + (S.L.trigger_ai_target_count)\n{end}\n"
+                  "{trigger:ai_scheduled_setbusstop}\n"
+                  "(L.L.trigger_ai_busstop_count) 1 + (S.L.trigger_ai_busstop_count)\n{end}\n"
+                  "{trigger:malfunction_gettime}\n"
+                  "12.5 (S.L.repair_duration)\n{end}\n"
+                  "{trigger:malfunction_reset}\n"
+                  "(L.L.trigger_malfunction_reset_count) 1 + (S.L.trigger_malfunction_reset_count)\n{end}\n"
+                  "{trigger:veh_tank}\n"
+                  "(L.L.trigger_veh_tank_count) 1 + (S.L.trigger_veh_tank_count)\n{end}\n"
                   "{trigger:arrival_placeholders}\n"
                   "123 7 (M.V.getarrbustimediff) (S.L.arrival_time_result) + (S.L.arrival_time_sentinel)\n"
                   "(L.$.lookup_ident) 123 1 (M.V.getarrbusline) (S.L.arrival_line_sentinel) "
                   "$length (S.L.arrival_line_length) $+ (S.$.arrival_line_combined)\n"
                   "(L.$.lookup_ident) 123 1 (M.V.getarrbusterminus) (S.L.arrival_terminus_sentinel) "
                   "$length (S.L.arrival_terminus_length) $+ (S.$.arrival_terminus_combined)\n{end}\n"
+                  "{trigger:out_of_kind_macro}\n"
+                  "(M.V.getttlinestring) (S.$.out_of_kind_result)\n"
+                  "1 (S.L.out_of_kind_followup)\n{end}\n"
                   "{trigger:random_seed}\n"
                   "123 (L.L.random_seed) (M.V.nrspecrandom) "
                   "(S.L.random_result) + (S.L.random_sentinel)\n{end}\n"
@@ -471,6 +622,18 @@ int main() {
                   "{trigger:control_off}\n(L.L.release_count) 1 + (S.L.release_count)\n"
                   "(L.S.mouse_y) (S.L.release_mouse)\n{end}\n";
     }
+    {
+        std::ofstream hof(root / "fixture.hof");
+        hof << "stringcount_terminus\n2\n"
+               "stringcount_busstop\n2\n"
+               "[addterminus]\n42\nTERM42\nCity Center\nHauptbahnhof\n"
+               "[addterminus]\n84\nTERM84\nAirport\nFlughafen\n"
+               "[addbusstop]\nSTOP_A\nCentral Station\nHbf\n"
+               "[addbusstop]\nSTOP_B\nAirport\nAirport stop\n"
+               "[infosystem_trip]\n1001\nRoute A\n7\n100\n"
+               "[infosystem_busstop_list]\n2\nSTOP_A\nSTOP_B\n"
+               "[global_strings]\n2\nTransit Company\nCity Transport\n";
+    }
     std::string error;
     if (!convertOscToLua(script, generatedLuaPath(script), error)) {
         std::cerr << error << '\n';
@@ -485,8 +648,14 @@ int main() {
     configuration.scripts = {script.filename().string()};
     const bool nativePassed = check(configuration, "native");
     const bool luaPassed = check(configuration, "lua");
+    const bool nativeHofPassed = checkHofMacros(configuration, "native");
+    const bool luaHofPassed = checkHofMacros(configuration, "lua");
     const bool nativeSceneryPassed = checkSceneryPlaceholders(configuration, "native");
     const bool luaSceneryPassed = checkSceneryPlaceholders(configuration, "lua");
+    const bool nativeHeightPassed = checkHeightProvider(configuration, "native");
+    const bool luaHeightPassed = checkHeightProvider(configuration, "lua");
+    const bool nativeTriggersPassed = checkSystemTriggers(configuration, "native");
+    const bool luaTriggersPassed = checkSystemTriggers(configuration, "lua");
     Logger::Flush();
     std::ifstream logInput(logPath);
     const bool logOpened = logInput.is_open();
@@ -494,20 +663,20 @@ int main() {
                           std::istreambuf_iterator<char>());
     bool warningCountsValid = logOpened;
     for (const std::string& message : {
-             std::string("system macro getbusstopindex is not implemented"),
-             std::string("system macro getterminusindex is not implemented"),
-             std::string("system macro getterminuscode is not implemented"),
-             std::string("system macro getterminusstring is not implemented"),
-             std::string("system macro getbusstopstring is not implemented"),
-             std::string("system macro getrouteindex is not implemented"),
-             std::string("system macro getrouteterminusindex is not implemented"),
-             std::string("system macro getbusstopcount is not implemented"),
-             std::string("system macro getroutebusstopident is not implemented"),
-             std::string("system macro getdepotstringglobal is not implemented"),
-             std::string("system macro getarrbusline is not implemented"),
-             std::string("system macro getarrbusterminus is not implemented"),
-             std::string("system macro getarrbustimediff is not implemented"),
-             std::string("system macro getheightabovepoint is not implemented"),
+             std::string("system macro getbusstopindex has no provider data available"),
+             std::string("system macro getterminusindex has no provider data available"),
+             std::string("system macro getterminuscode has no provider data available"),
+             std::string("system macro getterminusstring has no provider data available"),
+             std::string("system macro getbusstopstring has no provider data available"),
+             std::string("system macro getrouteindex has no provider data available"),
+             std::string("system macro getrouteterminusindex has no provider data available"),
+             std::string("system macro getbusstopcount has no provider data available"),
+             std::string("system macro getroutebusstopident has no provider data available"),
+             std::string("system macro getdepotstringglobal has no provider data available"),
+             std::string("system macro getarrbusline has no provider data available"),
+             std::string("system macro getarrbusterminus has no provider data available"),
+             std::string("system macro getarrbustimediff has no provider data available"),
+             std::string("system macro getheightabovepoint has no provider data available"),
              std::string("NrSpecRandom seed is outside the supported range"),
          }) {
         std::size_t count = 0;
@@ -524,7 +693,9 @@ int main() {
     }
     logInput.close();
     openbus::probe::removeProbeDirectory(root);
-    return nativePassed && luaPassed && nativeSceneryPassed && luaSceneryPassed &&
+    return nativePassed && luaPassed && nativeHofPassed && luaHofPassed &&
+                   nativeSceneryPassed && luaSceneryPassed && nativeHeightPassed &&
+                   luaHeightPassed && nativeTriggersPassed && luaTriggersPassed &&
                    warningCountsValid
                ? 0
                : 1;

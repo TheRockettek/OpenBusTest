@@ -269,10 +269,41 @@ int main() {
     const double leftHeight = simulation.wheelPose(0).position[2];
     openbus::scripting::Vehicle variables;
     simulation.updateVariables(variables, 0.6, -1.0, 0.0);
-    const double expectedSpeedKmh = simulation.speed() * 3.6;
-    if (variables.get("velocity") != static_cast<float>(expectedSpeedKmh) ||
-        variables.get("velocity_ground") != static_cast<float>(expectedSpeedKmh)) {
-        std::cerr << "script velocity variables were not expressed in km/h\n";
+    const double expectedGroundSpeedKmh = simulation.speed() * 3.6;
+    double drivenWheelSpeedKmh = 0.0;
+    std::size_t drivenWheelCount = 0;
+    for (std::size_t axleIndex = 0; axleIndex < simulation.axleCount(); ++axleIndex) {
+        if (!simulation.axle(axleIndex).driven) {
+            continue;
+        }
+        for (const char* side : {"l", "r"}) {
+            drivenWheelSpeedKmh +=
+                variables.get("wheel_rotationspeed_" + std::to_string(axleIndex) + "_" + side) *
+                simulation.wheelRadius(axleIndex * 2) * 3.6 * 2.0 *
+                3.141592653589793 / 60.0;
+            ++drivenWheelCount;
+        }
+    }
+    drivenWheelSpeedKmh /= static_cast<double>(drivenWheelCount);
+    if (variables.get("velocity") != static_cast<float>(drivenWheelSpeedKmh) ||
+        variables.get("velocity_ground") != static_cast<float>(expectedGroundSpeedKmh)) {
+        std::cerr << "script wheel and ground velocity variables did not use their respective sources\n";
+        return 1;
+    }
+
+    World brakeForceWorld(0.0, {}, {}, false);
+    BusSimulation brakeForceSimulation(brakeForceWorld, testConfiguration(),
+                                       VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    brakeForceSimulation.stepWithWheelTorqueAndBrakeForces(0.0, 0.0,
+                                                           {1000.0, 2000.0, 3000.0, 4000.0});
+    openbus::scripting::Vehicle brakeForceVariables;
+    brakeForceSimulation.updateVariables(brakeForceVariables, 0.0, 0.0, 0.0);
+    if (brakeForceVariables.get("brakeforce") != 10000.0F ||
+        brakeForceVariables.get("axle_brakeforce_0_l") != 1000.0F ||
+        brakeForceVariables.get("axle_brakeforce_0_r") != 2000.0F ||
+        brakeForceVariables.get("axle_brakeforce_1_l") != 3000.0F ||
+        brakeForceVariables.get("axle_brakeforce_1_r") != 4000.0F) {
+        std::cerr << "predefined local brake forces did not reflect the live wheel inputs\n";
         return 1;
     }
 
@@ -306,6 +337,15 @@ int main() {
         std::cerr << "script wheel speeds were inconsistent with integrated forward rotation: "
                      "expected about "
                   << expectedWheelSpeedRpm << " rpm, got " << actualWheelSpeedRpm << " rpm\n";
+        return 1;
+    }
+    const double wheelSpeedKmh =
+        averageDrivenWheelRpm * wheelSpeedCheck.wheelRadius(2) * 3.6 *
+        2.0 * 3.141592653589793 / 60.0;
+    if (wheelSpeedVariables.get("velocity") != static_cast<float>(wheelSpeedKmh) ||
+        wheelSpeedVariables.get("velocity_ground") !=
+            static_cast<float>(wheelSpeedCheck.speed() * 3.6)) {
+        std::cerr << "wheel-spin velocity must differ from ground velocity\n";
         return 1;
     }
 

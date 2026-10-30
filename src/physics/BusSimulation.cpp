@@ -121,6 +121,7 @@ struct BusSimulation::Impl {
         dReal frictionUtilization = 0.0;
         dReal driveTorque = 0.0;
         dReal brakeTorque = 0.0;
+        dReal brakeForce = 0.0;
         bool wheelspin = false;
         bool skid = false;
     };
@@ -149,6 +150,37 @@ struct BusSimulation::Impl {
     CollisionProfileCounters collisionProfileCounters;
     std::chrono::steady_clock::time_point collisionProfileWindowStart;
     bool collisionProfileWindowStarted = false;
+    bool chassisCollisionActive = false;
+    bool chassisCollisionDetectedThisStep = false;
+    double chassisCollisionStepEnergy = 0.0;
+    BusCollisionEvent chassisCollisionStepEvent = {};
+    std::optional<BusCollisionEvent> pendingCollisionEvent;
+
+    void recordChassisCollision(const dContactGeom& contact) {
+        const bool firstContactThisStep = !chassisCollisionDetectedThisStep;
+        chassisCollisionDetectedThisStep = true;
+        dVector3 pointVelocity = {};
+        dBodyGetPointVel(chassis, contact.pos[0], contact.pos[1], contact.pos[2], pointVelocity);
+        const double normalSpeed = pointVelocity[0] * contact.normal[0] +
+                                   pointVelocity[1] * contact.normal[1] +
+                                   pointVelocity[2] * contact.normal[2];
+        const double energy = 0.5 * configuration.mass * normalSpeed * normalSpeed;
+        if (!firstContactThisStep && energy <= chassisCollisionStepEnergy) {
+            return;
+        }
+        chassisCollisionStepEnergy = energy;
+        const dReal* bodyPosition = dBodyGetPosition(chassis);
+        const dReal* rotation = dBodyGetRotation(chassis);
+        const double dx = contact.pos[0] - bodyPosition[0];
+        const double dy = contact.pos[1] - bodyPosition[1];
+        const double dz = contact.pos[2] - bodyPosition[2];
+        chassisCollisionStepEvent = {
+            {rotation[0] * dx + rotation[4] * dy + rotation[8] * dz,
+             rotation[1] * dx + rotation[5] * dy + rotation[9] * dz,
+             rotation[2] * dx + rotation[6] * dy + rotation[10] * dz +
+                 configuration.centerOfGravityHeight},
+            energy};
+    }
 
     dReal suspensionAnchorZ(std::size_t index) const {
         return corners[index].wheelRadius + SUSP_REST - configuration.centerOfGravityHeight;
@@ -215,6 +247,13 @@ struct BusSimulation::Impl {
         if (profileRecording) {
             ++simulation->collisionProfileCounters.narrowphaseCalls;
             simulation->collisionProfileCounters.contacts += static_cast<std::uint64_t>(count);
+        }
+        const bool firstIsChassis = dGeomGetBody(first) == simulation->chassis;
+        const bool secondIsChassis = dGeomGetBody(second) == simulation->chassis;
+        if (count > 0 && firstIsChassis != secondIsChassis) {
+            for (int index = 0; index < count; ++index) {
+                simulation->recordChassisCollision(contacts[index].geom);
+            }
         }
         {
             openbus::rendering::TraceScope contactCreation(
@@ -692,6 +731,7 @@ struct BusSimulation::Impl {
             dJointSetHingeParam(corners[index].wheelJoint, dParamFMax, brakeCapacity);
             corners[index].driveTorque = driveTorquePerWheel;
             corners[index].brakeTorque = brakeTorque;
+            corners[index].brakeForce = wheelBrakeForce;
             corners[index].longitudinalForce =
                 (driveTorquePerWheel + brakeTorque) / corners[index].wheelRadius;
             corners[index].lateralForce = 0.0;
@@ -748,7 +788,14 @@ struct BusSimulation::Impl {
         if (!frozen) {
             applyCornerForces(driveCommand, steering, wheelBrakeForces, wheelSpringFactors,
                               scriptDriven);
+            chassisCollisionDetectedThisStep = false;
+            chassisCollisionStepEnergy = 0.0;
             world.collideAndStep(fixedStep, this, &nearCallback);
+            if (chassisCollisionDetectedThisStep && !chassisCollisionActive &&
+                !pendingCollisionEvent.has_value()) {
+                pendingCollisionEvent = chassisCollisionStepEvent;
+            }
+            chassisCollisionActive = chassisCollisionDetectedThisStep;
             refreshWheelTelemetry();
         }
         logCollisionProfileIfDue();
@@ -846,16 +893,15 @@ void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, doub
                                     double steering, double brake) const {
     variables.set("throttle", std::clamp(throttle, -1.0, 1.0));
     variables.set("brake", std::clamp(brake, 0.0, 1.0));
-    // OMSI vehicle scripts expect velocity in km/h, while ODE reports m/s.
-    const double speedKmh = speed() * 3.6;
-    variables.set("velocity", speedKmh);
-    variables.set("velocity_ground", speedKmh);
+    const double groundSpeedKmh = speed() * 3.6;
     variables.set("steering", std::clamp(steering, -1.0, 1.0));
     variables.set("steeringangle", steeringAngle());
     // OMSI scripts expect wheel rotation speeds in rpm; ODE reports rad/s.
     constexpr double radiansPerSecondToRpm = 60.0 / (2.0 * PI);
     double drivenWheelSpeed = 0.0;
+    double drivenWheelLinearSpeed = 0.0;
     std::size_t drivenWheelCount = 0;
+    double totalBrakeForce = 0.0;
     for (std::size_t index = 0; index < impl_->corners.size(); ++index) {
         const std::size_t axleIndex = index / 2;
         const char* side = index % 2 == 0 ? "l" : "r";
@@ -866,14 +912,25 @@ void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, doub
         variables.set("axle_suspension" + prefix, impl_->corners[index].animationSuspension);
         variables.set("axle_steering_" + std::to_string(axleIndex) + "_" + side,
                       dJointGetHingeAngle(impl_->corners[index].steeringJoint));
+        variables.set("axle_brakeforce" + prefix, impl_->corners[index].brakeForce);
+        totalBrakeForce += impl_->corners[index].brakeForce;
         if (impl_->configuration.axles[axleIndex].driven) {
             drivenWheelSpeed += wheelSpeedRpm;
+            drivenWheelLinearSpeed += impl_->corners[index].wheelOmega *
+                                      impl_->corners[index].wheelRadius;
             ++drivenWheelCount;
         }
     }
+    const double wheelSpeedKmh =
+        drivenWheelCount == 0
+            ? 0.0
+            : drivenWheelLinearSpeed / static_cast<double>(drivenWheelCount) * 3.6;
+    variables.set("velocity", wheelSpeedKmh);
+    variables.set("velocity_ground", groundSpeedKmh);
     variables.set("n_wheel", drivenWheelCount == 0
                                  ? 0.0
                                  : drivenWheelSpeed / static_cast<double>(drivenWheelCount));
+    variables.set("brakeforce", totalBrakeForce);
 }
 
 double BusSimulation::positionX() const {
@@ -950,6 +1007,31 @@ BodyPose BusSimulation::chassisPose() const {
     return {{position[0], position[1], position[2]},
             {rotation[0], rotation[1], rotation[2], rotation[4], rotation[5], rotation[6],
              rotation[8], rotation[9], rotation[10]}};
+}
+
+std::optional<BusCollisionEvent> BusSimulation::consumeCollisionEvent() {
+    std::optional<BusCollisionEvent> event = std::move(impl_->pendingCollisionEvent);
+    impl_->pendingCollisionEvent.reset();
+    return event;
+}
+
+std::optional<double> BusSimulation::heightAbovePoint(double x, double y, double z,
+                                                       double modelOffsetZ) const {
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
+        !std::isfinite(modelOffsetZ)) {
+        return std::nullopt;
+    }
+    const BodyPose pose = chassisPose();
+    const std::array<double, 3> local = {x, y, z + modelOffsetZ -
+                                                    impl_->configuration.centerOfGravityHeight};
+    const std::array<double, 3> worldPoint = {
+        pose.position[0] + pose.rotation[0] * local[0] + pose.rotation[1] * local[1] +
+            pose.rotation[2] * local[2],
+        pose.position[1] + pose.rotation[3] * local[0] + pose.rotation[4] * local[1] +
+            pose.rotation[5] * local[2],
+        pose.position[2] + pose.rotation[6] * local[0] + pose.rotation[7] * local[1] +
+            pose.rotation[8] * local[2]};
+    return impl_->world.raycastStatic(worldPoint, {0.0, 0.0, -1.0}, 1000.0);
 }
 
 ChassisCollisionBox BusSimulation::chassisCollisionBox() const {

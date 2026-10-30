@@ -1,6 +1,8 @@
 #include "core/Variables.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <ctime>
 #include <limits>
@@ -110,6 +112,11 @@ bool Variables::supportsSystemMacro(const std::string& name) const {
 }
 
 bool Variables::supportsSystemTrigger(const std::string& name) const {
+    std::string normalized = name;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char character) {
+                       return static_cast<char>(std::tolower(character));
+                   });
     static const std::unordered_set<std::string> vehicleTriggers = {
         "collision",
         "int_haltewunsch",
@@ -119,11 +126,14 @@ bool Variables::supportsSystemTrigger(const std::string& name) const {
         "malfunction_reset",
         "veh_tank",
     };
+    const bool railBondTrigger =
+        normalized.size() == 10 && normalized.compare(0, 9, "railbond_") == 0 &&
+        normalized.back() >= '0' && normalized.back() <= '3';
     if (objectKind_ == ScriptObjectKind::Vehicle) {
-        return vehicleTriggers.count(name) != 0 || name.rfind("railbond_", 0) == 0;
+        return vehicleTriggers.count(normalized) != 0 || railBondTrigger;
     }
     if (objectKind_ == ScriptObjectKind::Human) {
-        return name == "int_haltewunsch" || name.rfind("railbond_", 0) == 0;
+        return normalized == "int_haltewunsch" || railBondTrigger;
     }
     return false;
 }
@@ -151,16 +161,11 @@ SystemVariables::SystemVariables() : Variables(ScriptObjectKind::System) {
         {"mouse_y", 0.0},
         {"mouse_cursor_x", 0.0},
         {"mouse_cursor_y", 0.0},
-        {"preciptype", 0.0},
+        {"preciptype", 1.0},
         {"preciprate", 0.0},
-        {"coll_pos_x", 0.0},
-        {"coll_pos_y", 0.0},
-        {"coll_pos_z", 0.0},
-        {"coll_energy", 0.0},
         {"weather_temperature", 20.0},
         {"weather_abshum", 10.0},
         {"autoclutch", 0.0},
-        {"wearlifespan", 1.0},
         {"sunalt", 60.0},
     });
     configureSimulationClock(localDate.tm_year + 1900, localDate.tm_mon + 1, localDate.tm_mday,
@@ -213,8 +218,9 @@ void SystemVariables::setPrecipitation(int type, double rate) {
     if (type < 0 || type > 2 || !std::isfinite(rate) || rate < 0.0 || rate > 1.0) {
         throw std::invalid_argument("Weather precipitation settings are invalid");
     }
+    // The renderer uses 0-based weather types; OMSI scripts use values 1 through 3.
     setValues({
-        {"preciptype", static_cast<float>(type)},
+        {"preciptype", static_cast<float>(type + 1)},
         {"preciprate", static_cast<float>(rate)},
     });
 }
@@ -268,6 +274,10 @@ void configureVehicle(Variables& variables) {
         {"target_index_int", 0.0},
         {"ai_scheduled_atstation", 0.0},
         {"ai_scheduled_atstation_side", 0.0},
+        {"coll_pos_x", 0.0},
+        {"coll_pos_y", 0.0},
+        {"coll_pos_z", 0.0},
+        {"coll_energy", 0.0},
         {"giventicket", -1.0},
         {"humans_count", 0.0},
         {"ff_vib_period", 0.0},
@@ -278,7 +288,7 @@ void configureVehicle(Variables& variables) {
         {"cabinair_temp", 20.0},
         {"cabinair_abshum", 10.0},
         {"cabinair_relhum", 0.0},
-        {"preciptype", 0.0},
+        {"preciptype", 1.0},
         {"preciprate", 0.0},
         {"dirt_norm", 0.0},
         {"dirtrate", 0.0},

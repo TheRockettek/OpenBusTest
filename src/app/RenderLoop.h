@@ -208,7 +208,7 @@ class RenderLoop {
     void beginFrame(double fixedTimeStep = -1.0);
     void updatePlayerVariables(const BusSimulation& simulation, double throttle, double steering,
                                double brake);
-    void updatePostPhysicsVariables(const BusSimulation& simulation);
+    void updatePostPhysicsVariables(BusSimulation& simulation);
     void draw(const BusSimulation& simulation, const World& world);
     void endFrame();
     void captureViews(const BusSimulation& simulation, const World& world,

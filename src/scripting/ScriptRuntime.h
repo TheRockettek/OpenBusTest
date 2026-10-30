@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -25,7 +26,8 @@ class ScriptRuntime {
 
     ScriptRuntime(
         const VehicleConfig& configuration, Variables& localState, SimulationState& sharedState,
-        std::function<void(const std::string&, const std::string&, float)> soundTrigger = {});
+        std::function<void(const std::string&, const std::string&, float)> soundTrigger = {},
+        std::function<std::optional<float>(float, float, float)> heightAbovePoint = {});
     ~ScriptRuntime();
 
     ScriptRuntime(const ScriptRuntime&) = delete;
@@ -38,7 +40,7 @@ class ScriptRuntime {
     void initialize();
     void update(bool isAiVehicle);
     void invokeEntryPoint(const std::string& functionName);
-    void invokeSystemTrigger(const std::string& triggerName);
+    float invokeSystemTrigger(const std::string& triggerName);
     void invokeInputEvent(const std::string& keyName, bool pressed);
     void invokeKeyBinding(const std::string& bindingName, bool pressed, bool logEvent = true);
     void invokeMouseEvent(const std::string& eventName);

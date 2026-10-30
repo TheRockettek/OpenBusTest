@@ -255,10 +255,10 @@ int ScriptRuntime::Impl::safeCurrentLineNumber(lua_State* lua) {
 
 int ScriptRuntime::Impl::safeGetHeightAbovePoint(lua_State* lua) {
     Impl* runtime = runtimeFor(lua);
-    popSystemFloat(runtime);
-    popSystemFloat(runtime);
-    popSystemFloat(runtime);
-    return returnSystemFloat(lua, 0.0);
+    const float z = popSystemFloat(runtime);
+    const float y = popSystemFloat(runtime);
+    const float x = popSystemFloat(runtime);
+    return returnSystemFloat(lua, runtime->heightAbovePoint(x, y, z));
 }
 
 int ScriptRuntime::Impl::safeNrSpecRandom(lua_State* lua) {

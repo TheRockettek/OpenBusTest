@@ -226,6 +226,14 @@ RenderLoop::trafficTimetableProfileForDeparture(const TrafficVehicleState& state
 
 void RenderLoop::publishTrafficTimetableData(Vehicle& vehicle, const TrafficVehicleState& state,
                                              std::size_t departureIndex) const {
+    vehicle.variables.setString("setlineto", state.timetableLineName);
+    vehicle.variables.set("ai_target_index", static_cast<float>(state.timetableTerminusIndex));
+    vehicle.variables.set("target_index_int", static_cast<float>(state.timetableTerminusIndex));
+    vehicle.variables.set("schedule_active", state.scheduledTripActive ? 1.0F : 0.0F);
+    vehicle.variables.setString(
+        "act_busstop", state.nextPassengerStopIndex < state.passengerStops.size()
+                           ? state.passengerStops[state.nextPassengerStopIndex].name
+                           : std::string{});
     vehicle.variables.set("tt_terminus_index", static_cast<float>(state.timetableTerminusIndex));
     vehicle.variables.set("tt_delay", 0.0F);
     vehicle.variables.set("tt_busstop_count", static_cast<float>(state.passengerStops.size()));
@@ -325,6 +333,14 @@ void RenderLoop::finishPendingTrafficVehicleLoads() {
                     Vehicle* const loadedVehicle = state.pendingInitializationVehicle.get();
                     vehicles_.push_back(std::move(state.pendingInitializationVehicle));
                     state.vehicle = loadedVehicle;
+                    if (state.isBus && !state.passengerStops.empty() &&
+                        loadedVehicle->scripts) {
+                        loadedVehicle->scripts->invokeSystemTrigger("ai_scheduled_settarget");
+                        if (state.nextPassengerStopIndex < state.passengerStops.size()) {
+                            loadedVehicle->scripts->invokeSystemTrigger(
+                                "ai_scheduled_setbusstop");
+                        }
+                    }
                 }
                 break;
             }
@@ -623,6 +639,9 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             return;
         }
         state.scheduledTripActive = false;
+        if (state.vehicle != nullptr) {
+            state.vehicle->variables.set("schedule_active", 0.0F);
+        }
         while (mapTrafficScheduledDepartureDue(currentSimulationTime,
                                                state.nextScheduledDepartureElapsedSeconds)) {
             advanceScheduledDeparture(state, currentSimulationTime);
@@ -644,6 +663,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
             if (state.passengerStopArrived && !state.vehicle->passengerService.dwelling()) {
                 state.passengerStopArrived = false;
+                state.vehicle->variables.set("ai_scheduled_atstation", -1.0F);
                 ++state.nextPassengerStopIndex;
                 state.vehicle->variables.set(
                     "tt_busstop_index",
@@ -651,6 +671,15 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                                                 state.passengerStops.empty()
                                                     ? std::size_t{0}
                                                     : state.passengerStops.size() - 1)));
+                if (state.nextPassengerStopIndex < state.passengerStops.size()) {
+                    state.vehicle->variables.setString(
+                        "act_busstop", state.passengerStops[state.nextPassengerStopIndex].name);
+                    if (state.vehicle->scripts) {
+                        state.vehicle->scripts->invokeSystemTrigger("ai_scheduled_setbusstop");
+                    }
+                } else {
+                    state.vehicle->variables.setString("act_busstop", "");
+                }
             }
             if (state.passengerStopArrived) {
                 state.actor.scheduledStopDistanceMeters = state.actor.distanceMeters;
@@ -1288,11 +1317,19 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     state.lastScheduledDepartureMinutes =
                         state.scheduledDepartureMinutes[state.nextScheduledDepartureIndex];
                     state.scheduledTripActive = true;
+                    state.vehicle->variables.set("ai_scheduled_atstation", 0.0F);
                     state.activeTimetableDepartureIndex = state.nextScheduledDepartureIndex;
                     state.activeScheduledDepartureElapsedSeconds =
                         state.nextScheduledDepartureElapsedSeconds;
                     publishTrafficTimetableData(*state.vehicle, state,
                                                 state.activeTimetableDepartureIndex);
+                    if (state.vehicle->scripts) {
+                        state.vehicle->scripts->invokeSystemTrigger("ai_scheduled_settarget");
+                        if (state.nextPassengerStopIndex < state.passengerStops.size()) {
+                            state.vehicle->scripts->invokeSystemTrigger(
+                                "ai_scheduled_setbusstop");
+                        }
+                    }
                     for (const MapTrafficPassengerStop& stop : state.passengerStops) {
                         const auto queue = scheduledPassengerQueues_.find(stop.stopId);
                         const auto initialQueue =
@@ -1636,6 +1673,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                             "Scheduled bus reached a passenger stop while already dwelling");
                     }
                     trafficVehicle.passengerStopArrived = true;
+                    trafficVehicle.vehicle->variables.set("ai_scheduled_atstation", 1.0F);
                     trafficVehicle.actor.scheduledStopDistanceMeters =
                         trafficVehicle.actor.distanceMeters;
                 }
@@ -1852,12 +1890,25 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
     }
 }
 
-void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
+void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
     simulationState_.sharedVariables().updateSimulationClock(simulation.simulationTime());
     if (playerVehicle_ != nullptr) {
         playerVehicle_->updateSimulationVariables(
             simulation, playerVehicle_->variables.get("throttle"),
             playerVehicle_->variables.get("steering"), playerVehicle_->variables.get("brake"));
+        if (const std::optional<BusCollisionEvent> collision = simulation.consumeCollisionEvent()) {
+            playerVehicle_->variables.set("coll_pos_x",
+                                          static_cast<float>(collision->position[0]));
+            playerVehicle_->variables.set("coll_pos_y",
+                                          static_cast<float>(collision->position[1]));
+            playerVehicle_->variables.set("coll_pos_z",
+                                          static_cast<float>(collision->position[2]));
+            playerVehicle_->variables.set("coll_energy",
+                                          static_cast<float>(collision->energy));
+            if (playerVehicle_->scripts) {
+                playerVehicle_->scripts->invokeSystemTrigger("collision");
+            }
+        }
         if (activePlayerPassengerStop_) {
             const auto queue = scheduledPassengerQueues_.find(*activePlayerPassengerStop_);
             if (queue != scheduledPassengerQueues_.end()) {

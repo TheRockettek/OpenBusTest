@@ -36,9 +36,9 @@ the OpenBus mouse_cursor_x and mouse_cursor_y variables.
 PrecipType
 What kind of water is falling from the sky?
 
-0 = No precipitation;
-1 = Rain;
-2 = Snow.
+1 = No precipitation;
+2 = Rain;
+3 = Snow.
 The default buses use this to ensure the sound of raindrops hitting the roof only plays when it is raining.
 
 PrecipRate
@@ -175,6 +175,18 @@ ai_scheduled_setbusstop
 malfunction_gettime
 malfunction_reset
 veh_tank
+
+`ScriptRuntime::invokeSystemTrigger` dispatches vehicle and human triggers to
+their `trigger_<name>` entry points and returns the top numeric stack value.
+Chassis contacts populate `coll_pos_x/y/z` and `coll_energy` before dispatching
+`collision`; the reported energy is the chassis's normal translational impact
+energy. Scheduled map AI buses dispatch `ai_scheduled_settarget` when loaded or
+a trip begins, and `ai_scheduled_setbusstop` when their next stop changes.
+
+OpenBus currently has no event source for `int_haltewunsch`, `railbond_#`,
+`malfunction_gettime`, `malfunction_reset`, or `veh_tank`; those triggers can
+still be invoked explicitly, but passenger stop requests, rail joints, repair,
+and refueling behavior are not simulated.
 
 System Macros
 
@@ -368,21 +380,40 @@ extensions containing cursor coordinates.
 DayOfYear uses the one-based OMSI convention (1 on January 1). This replaces
 the previous OpenBus zero-based behavior.
 
-PrecipType and PrecipRate are initialized from the selected weather and share
-the values used by precipitation rendering. Their predefined vehicle-local
-counterparts are refreshed from the system values before initialization and
-each active frame. NoSound is 0 when an OpenAL
+PrecipType uses OMSI values (1 = none, 2 = rain, 3 = snow); OpenBus maps its
+internal weather enum to these values for scripts and maps back for rendering.
+PrecipRate is initialized from the selected weather. Both share the values used
+by precipitation rendering, and their predefined vehicle-local counterparts
+are refreshed from the system values before initialization and each active
+frame. NoSound is 0 when an OpenAL
 context was created and 1 when audio initialization failed; it is refreshed
 each frame. It does not report individual clip failures or device loss.
 
 The following documented system variables are declared, but do not currently
-receive live host values: Pause, coll_pos_x, coll_pos_y, coll_pos_z, coll_energy,
-Weather_Temperature, Weather_AbsHum, AutoClutch, and SunAlt. Unless a script
-sets them, their initialized defaults are returned. Collision values are not
-populated when a collision trigger runs.
+receive live host values: Pause, Weather_Temperature, Weather_AbsHum, AutoClutch,
+and SunAlt. Unless a script sets them, their initialized defaults are returned.
 
-wearlifespan is initialized as a system variable, but the documented behavior
-uses the predefined local variable of the same name instead.
+Predefined Local Variables
+
+The physics runtime refreshes wheel rotation, wheel speed, suspension, steering,
+`Brakeforce`, and per-wheel `Axle_Brakeforce` from the active ODE simulation.
+`Velocity` is derived from driven-wheel rotation, while `Velocity_Ground` uses
+chassis speed and `n_Wheel` reports the driven-wheel RPM average. The odometer
+counters are updated from vehicle displacement, passenger counts from the live
+passenger service, and precipitation from the selected environment.
+
+Scheduled map AI buses publish `SetLineTo`, `AI_target_index`,
+`target_index_int`, `act_busstop`, and `schedule_active`; they update
+`AI_Scheduled_AtStation` at stop arrival and departure. The selected depot name
+is also exposed as `yard`. `coll_pos_x/y/z` and `coll_energy` are populated
+before the `collision` trigger runs.
+
+Other predefined names are declared with safe defaults or are script-owned;
+OpenBus does not currently simulate fuel level, maintenance condition, road
+wetness, environmental brightness, door request/open state, train coupling or
+rail telemetry, seat adjustment, force feedback, cabin-air or exterior dirt
+simulation, and scenery night-use/approach state. Scenery traffic-light phase
+is populated when its parent signal sequence is available.
 
 Macros With Runtime Behavior
 
@@ -394,41 +425,52 @@ parity is not verified. Finite seeds are truncated toward zero and must fit an
 unsigned integer. Invalid seeds return zero and log one warning per runtime.
 
 GetTicketName and GetTicketValue read indexed ticket data from local or shared
-script state. GiveChangeCoin reads the indexed coin value and updates OpenBus
-cash-dispensing state. These are script-state integrations, not a complete
-OMSI ticket machine or fare system. GetHumanCountOnPathLink and
-GetHumanCountOnSeat read indexed counts from local script state; they are not
-backed by a complete passenger/path-link simulation.
+script state. The map loader publishes the active ticket pack there.
+GiveChangeCoin reads the indexed denomination from local or shared script state
+and updates OpenBus cash-dispensing state. These are script-state integrations,
+not a complete OMSI ticket machine or fare system. GetHumanCountOnPathLink and
+GetHumanCountOnSeat read indexed counts from local script state; vehicle seat
+counts are refreshed from the live passenger service, while path-link counts
+have no live passenger-path provider yet.
 
 Scheduled map AI buses retain their `.ttl` departure profile selections and
 the `.ttp` stop timing profile. Their line, destination, stop names, and
 arrival/departure times are published before scripts initialize. `GetTTDelay`
 returns the signed difference in seconds between simulation time and the
-timetable's expected time at the AI bus's current route position. `GetTTTerminusIndex`
-returns the zero-based index of the last mapped stop on the AI bus's route, or `-1`
-when the route has no mapped stops.
+timetable's expected time at the AI bus's current route position. `GetTTTerminusIndex` returns the zero-based index of the last mapped stop on
+the AI bus's route, or `-1` when the route has no mapped stops.
 
-Macros Still Returning Placeholder Results
+The vehicle route and depot macros read the selected `hof_file` from the loaded
+HOF data: termini come from `[addterminus]`/`[addterminus_list]`, bus stops from
+`[addbusstop]`/`[addbusstop_list]`, routes and their stop lists from
+`[infosystem_trip]`/`[infosystem_busstop_list]`, and depot strings from
+`[global_strings]`. Route indexes follow HOF trip order. `GetRouteTerminusIndex`
+returns the trip's terminus-index field; `GetBusstopCount` and
+`GetRouteBusstopIdent` use that trip's stop list. Without a selected, readable
+HOF file, these macros return the documented missing/empty result and warn once
+per macro.
 
-Vehicle route, terminus, and bus-stop lookup:
-GetTerminusIndex, GetTerminusCode, GetTerminusString, GetBusstopIndex,
-GetBusstopString, GetRouteIndex, GetRouteTerminusIndex, GetBusstopCount, and
-GetRouteBusstopIdent.
+`NrSpecRandom` combines the integer seed with a stable hash of the vehicle's
+`number`, so equal fleet numbers and seeds produce repeatable values while
+different fleet numbers can vary. The generator is OpenBus-specific; parity
+with OMSI's exact random sequence is not verified.
 
-Other vehicle queries:
-GetHeightAbovePoint and GetDepotStringGlobal.
+`GetHeightAbovePoint` transforms the supplied vehicle-local point through the
+live chassis pose and raycasts downward against the active static collision
+world, including streamed map geometry. It returns zero and logs once when no
+ground surface is available.
 
-Scenery arrival queries:
-GetArrBusLine, GetArrBusTerminus, and GetArrBusTimeDiff.
+Macros whose host data source is not currently exposed are:
 
-The remaining macros above are recognized by the script runtime, but their
-query results are placeholders: empty strings, zero, or -1. A complete
-implementation requires the corresponding route/depot, geometry, or arrival
-data to be made available to scripts. These placeholders log a warning once
-per runtime and macro when invoked.
+- `GetArrBusLine`, `GetArrBusTerminus`, and `GetArrBusTimeDiff`: scenery script
+ runtimes do not currently receive parent bus-stop arrival queues.
+
+These macros consume their documented operands and return an empty string or
+zero when their host data source is unavailable. The runtime logs that missing
+provider once per macro.
 
 Backend compatibility limitation: native string stores currently consume the
 top string, while converted Lua string stores leave it on the stack. Native
-system-macro dispatch also does not enforce the object-kind availability
-checks used when registering Lua macros. Native OMSI behavior for string stores
-and out-of-kind macro calls has not been verified.
+system-macro dispatch enforces the same object-kind availability checks as Lua
+macro registration. Native OMSI behavior for string stores and out-of-kind
+macro calls has not been verified.

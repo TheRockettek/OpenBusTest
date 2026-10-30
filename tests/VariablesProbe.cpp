@@ -26,6 +26,8 @@ int main() {
     bool valid = true;
     valid &= require(simulation.sharedVariables().has("timegap"), "system timegap");
     valid &= require(!simulation.sharedVariables().has("throttle"), "system excludes throttle");
+    valid &= require(simulation.sharedVariables().get("preciptype") == 1.0F,
+                     "system precipitation defaults to the OMSI clear value");
     simulation.sharedVariables().configureSimulationClock(2024, 2, 28, 86398.0);
     simulation.sharedVariables().updateSimulationClock(3.0);
     valid &= require(simulation.sharedVariables().get("year") == 2024.0F &&
@@ -85,8 +87,17 @@ int main() {
                      "scenery macro capability");
     valid &= require(!human.supportsSystemMacro("getrouteindex"), "human excludes vehicle macro");
     valid &= require(vehicle.supportsSystemTrigger("collision"), "vehicle trigger capability");
+    valid &= require(vehicle.supportsSystemTrigger("AI_SCHEDULED_SETTARGET") &&
+                         vehicle.supportsSystemTrigger("railbond_3"),
+                     "system triggers are case-insensitive and include the listed rail axles");
+    valid &= require(!vehicle.supportsSystemTrigger("railbond_4") &&
+                         !vehicle.supportsSystemTrigger("railbond_invalid"),
+                     "unsupported railbond indexes are rejected");
     valid &= require(!sceneryObject.supportsSystemTrigger("collision"),
                      "scenery excludes vehicle trigger");
+    valid &= require(human.supportsSystemTrigger("int_haltewunsch") &&
+                         !human.supportsSystemTrigger("ai_scheduled_settarget"),
+                     "human trigger capabilities are object-kind scoped");
 
     simulation.sharedVariables().set("mouse_x", 9.0F);
     simulation.sharedVariables().set("mouse_y", -4.0F);
@@ -98,7 +109,7 @@ int main() {
                          simulation.sharedVariables().get("mouse_cursor_x") == 800.0F &&
                          simulation.sharedVariables().get("mouse_cursor_y") == 600.0F &&
                          simulation.sharedVariables().get("timegap") == 0.125F &&
-                         simulation.sharedVariables().get("preciptype") == 1.0F &&
+                         simulation.sharedVariables().get("preciptype") == 2.0F &&
                          simulation.sharedVariables().get("preciprate") == 0.75F &&
                          simulation.sharedVariables().get("nosound") == 0.0F,
                      "frame refresh resets motion but preserves weather and cursor/time state");
@@ -108,16 +119,16 @@ int main() {
     const auto environment =
         openbus::scripting::Vehicle::captureEnvironment(simulation.sharedVariables());
     vehicle.updateEnvironment(environment);
-    valid &= require(vehicle.get("preciptype") == 1.0F && vehicle.get("preciprate") == 0.75F,
+    valid &= require(vehicle.get("preciptype") == 2.0F && vehicle.get("preciprate") == 0.75F,
                      "a shared frame environment publishes weather to a vehicle");
-    vehicle.set("preciptype", 2.0F);
+    vehicle.set("preciptype", 3.0F);
     vehicle.set("preciprate", 0.0F);
     vehicle.updateEnvironment(environment);
-    valid &= require(vehicle.get("preciptype") == 1.0F && vehicle.get("preciprate") == 0.75F,
+    valid &= require(vehicle.get("preciptype") == 2.0F && vehicle.get("preciprate") == 0.75F,
                      "a shared frame environment restores script-modified weather");
     simulation.sharedVariables().setPrecipitation(2, 0.25);
     vehicle.updateEnvironment(simulation.sharedVariables());
-    valid &= require(vehicle.get("preciptype") == 2.0F && vehicle.get("preciprate") == 0.25F,
+    valid &= require(vehicle.get("preciptype") == 3.0F && vehicle.get("preciprate") == 0.25F,
                      "direct environment updates still capture the current weather");
     simulation.sharedVariables().setPrecipitation(1, 0.75);
     for (const auto& [type, rate] :
@@ -129,7 +140,7 @@ int main() {
         } catch (const std::invalid_argument&) {
             rejected = true;
         }
-        valid &= require(rejected && simulation.sharedVariables().get("preciptype") == 1.0F &&
+        valid &= require(rejected && simulation.sharedVariables().get("preciptype") == 2.0F &&
                              simulation.sharedVariables().get("preciprate") == 0.75F,
                          "invalid weather is rejected without changing either variable");
     }

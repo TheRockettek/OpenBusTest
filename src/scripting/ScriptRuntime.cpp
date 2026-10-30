@@ -4,9 +4,11 @@
 
 ScriptRuntime::ScriptRuntime(
     const VehicleConfig& configuration, Variables& localState, SimulationState& sharedState,
-    std::function<void(const std::string&, const std::string&, float)> soundTrigger)
+    std::function<void(const std::string&, const std::string&, float)> soundTrigger,
+    std::function<std::optional<float>(float, float, float)> heightAbovePoint)
     : impl_(std::make_unique<Impl>(configuration, localState, sharedState)) {
     impl_->onSoundTrigger = std::move(soundTrigger);
+    impl_->onHeightAbovePoint = std::move(heightAbovePoint);
 }
 
 ScriptRuntime::~ScriptRuntime() = default;
@@ -185,27 +187,31 @@ void ScriptRuntime::invokeEntryPoint(const std::string& functionName) {
     if (impl_ && (impl_->nativeBackend || impl_->state) && !functionName.empty()) {
         impl_->floatStack.clear();
         impl_->stringStack.clear();
+        const std::size_t errorCount = impl_->errors.size();
         const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                                   : impl_->invoke(functionName.c_str());
-        if (!invoked) {
+        if (!invoked && impl_->errors.size() == errorCount) {
             impl_->log(LogLevel::Warning, "warning: entry point " + functionName + " not found");
         }
     }
 }
 
-void ScriptRuntime::invokeSystemTrigger(const std::string& triggerName) {
-    if (impl_ && (impl_->nativeBackend || impl_->state) &&
-        impl_->localState.supportsSystemTrigger(triggerName)) {
-        impl_->floatStack.clear();
-        impl_->stringStack.clear();
-        const std::string functionName = "trigger_" + scriptName(triggerName);
-        const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
-                                                  : impl_->invoke(functionName.c_str());
-        if (!invoked) {
-            impl_->log(LogLevel::Warning, "warning: system trigger " + triggerName + " -> " +
-                                              functionName + " not found");
-        }
+float ScriptRuntime::invokeSystemTrigger(const std::string& triggerName) {
+    if (!impl_ || (!impl_->nativeBackend && !impl_->state) ||
+        !impl_->localState.supportsSystemTrigger(triggerName)) {
+        return 0.0F;
     }
+    impl_->floatStack.clear();
+    impl_->stringStack.clear();
+    const std::string functionName = "trigger_" + scriptName(triggerName);
+    const std::size_t errorCount = impl_->errors.size();
+    const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
+                                              : impl_->invoke(functionName.c_str());
+    if (!invoked && impl_->errors.size() == errorCount) {
+        impl_->log(LogLevel::Warning, "warning: system trigger " + triggerName + " -> " +
+                                          functionName + " not found");
+    }
+    return impl_->nativePeekFloat();
 }
 
 void ScriptRuntime::invokeInputEvent(const std::string& keyName, bool pressed) {

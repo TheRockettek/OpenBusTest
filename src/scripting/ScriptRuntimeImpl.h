@@ -33,6 +33,7 @@ extern "C" {
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <string_view>
@@ -80,17 +81,44 @@ struct ScriptRuntime::Impl {
         lua_CFunction function = nullptr;
     };
 
+    struct HofTerminus {
+        int code = 0;
+        std::vector<std::string> strings;
+    };
+
+    struct HofBusstop {
+        std::string ident;
+        std::vector<std::string> strings;
+    };
+
+    struct HofRoute {
+        std::string code;
+        int terminusIndex = 0;
+        bool hasTerminusIndex = false;
+        std::vector<std::string> busstopIdents;
+    };
+
+    struct HofData {
+        std::vector<HofTerminus> termini;
+        std::vector<HofBusstop> busstops;
+        std::vector<HofRoute> routes;
+        std::vector<std::string> globalStrings;
+    };
+
     lua_State* state = nullptr;
     VehicleConfig configuration;
     std::string scriptIdentity;
     Variables& localState;
     SimulationState& sharedState;
     std::function<void(const std::string&, const std::string&, float)> onSoundTrigger;
+    std::function<std::optional<float>(float, float, float)> onHeightAbovePoint;
     ScriptEnvironment scriptEnvironment;
     std::vector<std::string> errors;
     std::vector<float> floatStack;
     std::vector<std::string> stringStack;
-    std::unordered_set<std::string> warnedPlaceholderMacros;
+    std::unordered_set<std::string> warnedUnavailableMacros;
+    HofData hofData;
+    bool hasHofData = false;
     bool warnedInvalidRandomSeed = false;
     std::unordered_map<int, ScriptTexture> scriptTextures;
     std::unordered_map<int, std::pair<int, int>> scriptTextureDimensions;
@@ -166,7 +194,9 @@ struct ScriptRuntime::Impl {
     const std::string& nativePeekString() const;
 
     void executeSystemMacro(const std::string& name);
-    void warnPlaceholderMacro(const std::string& name);
+    void warnUnavailableMacro(const std::string& name);
+    float heightAbovePoint(float x, float y, float z);
+    void loadHofData();
     float nrSpecRandom(float seed);
 
     bool executeNativeFunction(const std::string& functionName, int callDepth = 0);
@@ -201,6 +231,8 @@ struct ScriptRuntime::Impl {
                                                ? configuration.selectedRegistration
                                                : configuration.selectedVehicleNumber);
         }
+
+        loadHofData();
 
         if (tryInitializeNativeBackend()) {
             return;
@@ -288,7 +320,6 @@ struct ScriptRuntime::Impl {
     // TODO: Implement current line number
     static int safeCurrentLineNumber(lua_State* lua);
 
-    // TODO: Implement vehicle-relative ground ray casting.
     static int safeGetHeightAbovePoint(lua_State* lua);
 
     static int safeNrSpecRandom(lua_State* lua);

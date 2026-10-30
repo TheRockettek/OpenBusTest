@@ -2451,15 +2451,15 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
     if (!renderingReflection_ && (cameraView_ == 0 || freeCameraEnabled_)) {
         const float precipitationTypeValue = simulationState_.sharedVariables().get("preciptype");
         const float precipitationRate = simulationState_.sharedVariables().get("preciprate");
-        if (!std::isfinite(precipitationTypeValue) || precipitationTypeValue < 0.0F ||
-            precipitationTypeValue > 2.0F ||
+        if (!std::isfinite(precipitationTypeValue) || precipitationTypeValue < 1.0F ||
+            precipitationTypeValue > 3.0F ||
             std::floor(precipitationTypeValue) != precipitationTypeValue ||
             !std::isfinite(precipitationRate) || precipitationRate < 0.0F ||
             precipitationRate > 1.0F) {
             throw std::runtime_error("Weather system variables contain invalid precipitation data");
         }
         const auto precipitationType = static_cast<openbus::rendering::PrecipitationType>(
-            static_cast<int>(precipitationTypeValue));
+            static_cast<int>(precipitationTypeValue) - 1);
         const std::vector<openbus::rendering::PrimitiveVertex> precipitationVertices =
             openbus::rendering::makePrecipitationVertices(precipitationType, precipitationRate,
                                                           simulation.simulationTime());
