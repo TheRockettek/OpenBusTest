@@ -206,14 +206,12 @@ bool mapTrafficPoseOnActiveTile(const MapTrafficPose& pose,
                                 const std::vector<std::pair<int, int>>& activeTiles,
                                 double tileSize = OMSI_TILE_SIZE_METERS);
 bool mapTrafficSpawnInsideForwardExclusion(const MapTrafficPose& playerPose,
-                                           double playerLengthMeters,
-                                           double playerWidthMeters,
-                                           const MapTrafficPose& spawnPose,
-                                           double spawnWidthMeters,
+                                           double playerLengthMeters, double playerWidthMeters,
+                                           const MapTrafficPose& spawnPose, double spawnWidthMeters,
                                            double forwardDistanceMeters) noexcept;
 double mapTrafficSpawnPriorityDistanceMeters(const MapTrafficPose& playerPose,
-                                              const MapTrafficPose& spawnPose,
-                                              double predictedForwardDistanceMeters) noexcept;
+                                             const MapTrafficPose& spawnPose,
+                                             double predictedForwardDistanceMeters) noexcept;
 
 // Returns a signed lateral offset relative to travel direction: positive is right, negative
 // is left. The supplied distance is a non-negative magnitude.

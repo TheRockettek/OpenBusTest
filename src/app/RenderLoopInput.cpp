@@ -134,9 +134,11 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         glfwGetCursorPos(window_, &cursorX, &cursorY);
         simulationState_.sharedVariables().setSoundAvailable(soundEngine_.isAvailable());
         simulationState_.sharedVariables().updateFrame(timegap, currentTime, cursorX, cursorY);
+        const auto environment =
+            openbus::scripting::Vehicle::captureEnvironment(simulationState_.sharedVariables());
         for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
             if (!vehicle->mapTrafficRouteFinished) {
-                vehicle->variables.updateEnvironment(simulationState_.sharedVariables());
+                vehicle->variables.updateEnvironment(environment);
                 vehicle->updateFrameVariables(vehicle.get() != playerVehicle_, timegap);
             }
         }

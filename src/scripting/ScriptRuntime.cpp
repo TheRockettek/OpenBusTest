@@ -403,7 +403,7 @@ void ScriptRuntime::update(bool isAiVehicle) {
                 impl_->invokeFrame(isAiVehicle);
             }
         }
-        {
+        if (impl_->localState.get("refresh_strings") != 0.0) {
             openbus::rendering::TraceScope textTextureTrace("script",
                                                             "ScriptRuntime.update.textTextures");
             impl_->updateTextTextures();

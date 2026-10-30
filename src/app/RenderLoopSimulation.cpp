@@ -210,8 +210,9 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
     }
 }
 
-const openbus::map::MapAiTimetableProfile* RenderLoop::trafficTimetableProfileForDeparture(
-    const TrafficVehicleState& state, std::size_t departureIndex) const {
+const openbus::map::MapAiTimetableProfile*
+RenderLoop::trafficTimetableProfileForDeparture(const TrafficVehicleState& state,
+                                                std::size_t departureIndex) const {
     if (state.timetableProfiles.empty() ||
         departureIndex >= state.scheduledDepartureProfileIndices.size()) {
         return nullptr;
@@ -235,10 +236,9 @@ void RenderLoop::publishTrafficTimetableData(Vehicle& vehicle, const TrafficVehi
     vehicle.variables.set("tt_busstop_index", static_cast<float>(currentStopIndex));
     const openbus::map::MapAiTimetableProfile* profile =
         trafficTimetableProfileForDeparture(state, departureIndex);
-    const double departureSeconds =
-        departureIndex < state.scheduledDepartureMinutes.size()
-            ? state.scheduledDepartureMinutes[departureIndex] * 60.0
-            : 0.0;
+    const double departureSeconds = departureIndex < state.scheduledDepartureMinutes.size()
+                                        ? state.scheduledDepartureMinutes[departureIndex] * 60.0
+                                        : 0.0;
     constexpr double secondsPerDay = 24.0 * 60.0 * 60.0;
     for (std::size_t stopIndex = 0; stopIndex < state.passengerStops.size(); ++stopIndex) {
         const openbus::map::MapTrafficPassengerStop& stop = state.passengerStops[stopIndex];
@@ -248,14 +248,12 @@ void RenderLoop::publishTrafficTimetableData(Vehicle& vehicle, const TrafficVehi
         if (profile != nullptr &&
             stop.timetableStationIndex < profile->arrivalOffsetSeconds.size() &&
             stop.timetableStationIndex < profile->departureOffsetSeconds.size()) {
-            arrivalSeconds =
-                std::fmod(departureSeconds +
-                              profile->arrivalOffsetSeconds[stop.timetableStationIndex],
-                          secondsPerDay);
-            departureAtStopSeconds =
-                std::fmod(departureSeconds +
-                              profile->departureOffsetSeconds[stop.timetableStationIndex],
-                          secondsPerDay);
+            arrivalSeconds = std::fmod(
+                departureSeconds + profile->arrivalOffsetSeconds[stop.timetableStationIndex],
+                secondsPerDay);
+            departureAtStopSeconds = std::fmod(
+                departureSeconds + profile->departureOffsetSeconds[stop.timetableStationIndex],
+                secondsPerDay);
         }
         vehicle.variables.set("tt_busstop_arr_" + std::to_string(stopIndex),
                               static_cast<float>(arrivalSeconds));
@@ -307,7 +305,7 @@ void RenderLoop::finishPendingTrafficVehicleLoads() {
                             state.passengerStops[stopIndex].name);
                     }
                     publishTrafficTimetableData(*state.pendingInitializationVehicle, state,
-                                                 state.nextScheduledDepartureIndex);
+                                                state.nextScheduledDepartureIndex);
                 }
             }
             state.pendingInitializationVehicle->variables.updateEnvironment(
@@ -356,15 +354,13 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             return 0.0;
         }
         const auto arrivalOffset = [&](std::size_t stopIndex) {
-            const std::size_t stationIndex =
-                state.passengerStops[stopIndex].timetableStationIndex;
+            const std::size_t stationIndex = state.passengerStops[stopIndex].timetableStationIndex;
             return stationIndex < profile->arrivalOffsetSeconds.size()
                        ? profile->arrivalOffsetSeconds[stationIndex]
                        : 0.0;
         };
         const auto departureOffset = [&](std::size_t stopIndex) {
-            const std::size_t stationIndex =
-                state.passengerStops[stopIndex].timetableStationIndex;
+            const std::size_t stationIndex = state.passengerStops[stopIndex].timetableStationIndex;
             return stationIndex < profile->departureOffsetSeconds.size()
                        ? profile->departureOffsetSeconds[stationIndex]
                        : 0.0;
@@ -385,12 +381,9 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     : departureOffset(0);
             return elapsedSinceDeparture - expected;
         }
-        for (std::size_t stopIndex = 0; stopIndex + 1 < state.passengerStops.size();
-             ++stopIndex) {
-            const double fromDistance =
-                state.passengerStops[stopIndex].routeDistanceMeters;
-            const double toDistance =
-                state.passengerStops[stopIndex + 1].routeDistanceMeters;
+        for (std::size_t stopIndex = 0; stopIndex + 1 < state.passengerStops.size(); ++stopIndex) {
+            const double fromDistance = state.passengerStops[stopIndex].routeDistanceMeters;
+            const double toDistance = state.passengerStops[stopIndex + 1].routeDistanceMeters;
             if (std::abs(distance - fromDistance) <= stopPositionToleranceMeters) {
                 return elapsedSinceDeparture - dwellProgress(stopIndex);
             }
@@ -404,12 +397,10 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
         }
         const std::size_t lastStopIndex = state.passengerStops.size() - 1;
-        const double lastStopDistance =
-            state.passengerStops[lastStopIndex].routeDistanceMeters;
-        const double expected =
-            std::abs(distance - lastStopDistance) <= stopPositionToleranceMeters
-                ? dwellProgress(lastStopIndex)
-                : departureOffset(lastStopIndex);
+        const double lastStopDistance = state.passengerStops[lastStopIndex].routeDistanceMeters;
+        const double expected = std::abs(distance - lastStopDistance) <= stopPositionToleranceMeters
+                                    ? dwellProgress(lastStopIndex)
+                                    : departureOffset(lastStopIndex);
         return elapsedSinceDeparture - expected;
     };
     if (!trafficWorker_) {
@@ -679,10 +670,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             std::atan2(chassis.rotation[0], chassis.rotation[3]);
         hasPlayerSpawnReferencePose = true;
         const double playerSpeedMetersPerSecond = std::abs(simulation.speed());
-        playerBusMoving =
-            playerSpeedMetersPerSecond > MAP_TRAFFIC_STOPPED_SPEED_METERS_PER_SECOND;
-        playerPredictedForwardDistanceMeters =
-            std::min(playerSpeedMetersPerSecond * 4.0, 60.0);
+        playerBusMoving = playerSpeedMetersPerSecond > MAP_TRAFFIC_STOPPED_SPEED_METERS_PER_SECOND;
+        playerPredictedForwardDistanceMeters = std::min(playerSpeedMetersPerSecond * 4.0, 60.0);
     } else {
         playerSpawnReferencePose.position = onFootState_.feetPosition;
         playerSpawnReferencePose.headingRadians = freeCameraPose_.yawRadians;
@@ -717,14 +706,19 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             playerObstacleIndex = external.size() - 1;
         }
     }
-    std::unordered_map<const MapTrafficActor*, const TrafficVehicleState*> trafficStateByActor;
-    {
+    const TrafficVehicleState* trafficVehicleData = trafficVehicles_.data();
+    if (indexedTrafficVehicleData_ != trafficVehicleData ||
+        indexedTrafficVehicleCount_ != trafficVehicles_.size()) {
         TraceScope actorIndexTrace("traffic", "RenderLoop::updateTrafficDriving.actorStateIndex");
-        trafficStateByActor.reserve(trafficVehicles_.size());
+        trafficStateByActor_.clear();
+        trafficStateByActor_.reserve(trafficVehicles_.size());
         for (const TrafficVehicleState& state : trafficVehicles_) {
-            trafficStateByActor.emplace(&state.actor, &state);
+            trafficStateByActor_.emplace(&state.actor, &state);
         }
+        indexedTrafficVehicleData_ = trafficVehicleData;
+        indexedTrafficVehicleCount_ = trafficVehicles_.size();
     }
+    const auto& trafficStateByActor = trafficStateByActor_;
     // Follow the actual blocker chain; proximity to an unrelated bus must not mask a deadlock.
     const auto legitimateStoppedWait = [&](const TrafficVehicleState& waitingVehicle) {
         if (waitingVehicle.actor.speedMetersPerSecond >
@@ -1044,7 +1038,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             std::optional<std::pair<int, int>> firstInactiveCandidateTile;
         };
         const auto isInsidePlayerFrontExclusion = [&](const MapTrafficPose& pose,
-                                                       double vehicleWidthMeters) {
+                                                      double vehicleWidthMeters) {
             return playerVehicle_ != nullptr && playerBusMoving &&
                    openbus::map::mapTrafficSpawnInsideForwardExclusion(
                        playerSpawnReferencePose, playerVehicle_->trafficLengthMeters,
@@ -1053,8 +1047,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         const auto spawnPriorityForPose = [&](const MapTrafficPose& pose) {
             return hasPlayerSpawnReferencePose
                        ? openbus::map::mapTrafficSpawnPriorityDistanceMeters(
-                             playerSpawnReferencePose, pose,
-                             playerPredictedForwardDistanceMeters)
+                             playerSpawnReferencePose, pose, playerPredictedForwardDistanceMeters)
                        : 0.0;
         };
         const auto findRoadSpawn =
@@ -1132,9 +1125,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                                                 const MapTrafficPose& entryPose, bool entryHidden,
                                                 bool entryClear, bool entryOnActiveTile,
                                                 bool frontBlocked) {
-            const unsigned blockerMask =
-                (entryHidden ? 0u : 1u) | (entryClear ? 0u : 2u) |
-                (entryOnActiveTile ? 0u : 4u) | (frontBlocked ? 8u : 0u);
+            const unsigned blockerMask = (entryHidden ? 0u : 1u) | (entryClear ? 0u : 2u) |
+                                         (entryOnActiveTile ? 0u : 4u) | (frontBlocked ? 8u : 0u);
             const double cameraDistanceMeters =
                 lastMainCameraPoseValid_
                     ? std::hypot(
@@ -1218,8 +1210,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                                                entryOnActiveTile, frontBlocked);
                         continue;
                     }
-                    spawn = RoadSpawnLocation{0.0, *entryPose, 0,
-                                              spawnPriorityForPose(*entryPose)};
+                    spawn = RoadSpawnLocation{0.0, *entryPose, 0, spawnPriorityForPose(*entryPose)};
                 } else {
                     spawn = findRoadSpawn(state, nullptr);
                     if (!spawn.has_value()) {
@@ -1304,8 +1295,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     state.lastScheduledDepartureMinutes =
                         state.scheduledDepartureMinutes[state.nextScheduledDepartureIndex];
                     state.scheduledTripActive = true;
-                    state.activeTimetableDepartureIndex =
-                        state.nextScheduledDepartureIndex;
+                    state.activeTimetableDepartureIndex = state.nextScheduledDepartureIndex;
                     state.activeScheduledDepartureElapsedSeconds =
                         state.nextScheduledDepartureElapsedSeconds;
                     publishTrafficTimetableData(*state.vehicle, state,
@@ -1367,9 +1357,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                             mapTrafficSpawnInView_ || hiddenAtPose(state.actor, *entryPose);
                         const bool frontBlocked =
                             isInsidePlayerFrontExclusion(*entryPose, state.actor.widthMeters);
-                        const bool entryClear = !frontBlocked &&
-                                                canSpawnMapTrafficEntry(state.actor, true,
-                                                                        occupied);
+                        const bool entryClear =
+                            !frontBlocked && canSpawnMapTrafficEntry(state.actor, true, occupied);
                         const bool entryOnActiveTile = poseOnActiveTile(*entryPose);
                         canSpawn = entryHidden && entryClear && entryOnActiveTile;
                         if (canSpawn) {
@@ -1381,9 +1370,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                         }
                     }
                 } else {
-                    const auto roadSpawn =
-                        findRoadSpawn(state, trafficSpawnDiagnosticsEnabled_ ? &roadSpawnDiagnostics
-                                                                             : nullptr);
+                    const auto roadSpawn = findRoadSpawn(
+                        state, trafficSpawnDiagnosticsEnabled_ ? &roadSpawnDiagnostics : nullptr);
                     canSpawn = roadSpawn.has_value();
                     if (roadSpawn.has_value()) {
                         state.spawnPriorityMeters = roadSpawn->priorityDistanceMeters;
@@ -1830,10 +1818,9 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         }
         const double delaySeconds = scheduledDelaySeconds(state, currentSimulationTime);
         state.vehicle->variables.set(
-            "tt_delay",
-            static_cast<float>(std::clamp(
-                delaySeconds, -static_cast<double>((std::numeric_limits<float>::max)()),
-                static_cast<double>((std::numeric_limits<float>::max)()))));
+            "tt_delay", static_cast<float>(std::clamp(
+                            delaySeconds, -static_cast<double>((std::numeric_limits<float>::max)()),
+                            static_cast<double>((std::numeric_limits<float>::max)()))));
     }
 }
 

@@ -152,6 +152,44 @@ int main(int argc, char** argv) {
         setModelViewMatrix(identityMatrix());
         setPerspective(64, 64, 90);
         glViewport(0, 0, 64, 64);
+        std::optional<ViewFrustum> sharedVisibilityFrustum;
+        vehicle.frustumCulling = true;
+        vehicle.prepareFrameVisibility(ViewpointContext::PlayerExterior, 64, 64, 0.0,
+                                       &sharedVisibilityFrustum);
+        if (sharedVisibilityFrustum) {
+            std::cerr << "Visibility built a frustum without any reflection parts\n";
+            passed = false;
+        }
+        vehicle.displayLists[0].reflectionTextureIndices = {0};
+        vehicle.prepareFrameVisibility(ViewpointContext::PlayerExterior, 64, 64, 0.0);
+        const bool localReflectionVisible = vehicle.needsReflectionTexture(0);
+        const int localReflectionSize = vehicle.requiredReflectionSize(0);
+        vehicle.prepareFrameVisibility(ViewpointContext::PlayerExterior, 64, 64, 0.0,
+                                       &sharedVisibilityFrustum);
+        if (!sharedVisibilityFrustum || !localReflectionVisible ||
+            vehicle.needsReflectionTexture(0) != localReflectionVisible ||
+            vehicle.requiredReflectionSize(0) != localReflectionSize) {
+            std::cerr << "Shared visibility frustum changed reflection requirements\n";
+            passed = false;
+        }
+        setModelViewMatrix(translationMatrix({100, 0, 0}));
+        vehicle.prepareFrameVisibility(ViewpointContext::PlayerExterior, 64, 64, 0.0,
+                                       &sharedVisibilityFrustum);
+        if (vehicle.needsReflectionTexture(0)) {
+            std::cerr << "Shared visibility frustum did not cull an off-screen reflection\n";
+            passed = false;
+        }
+        vehicle.frustumCulling = false;
+        std::optional<ViewFrustum> disabledVisibilityFrustum;
+        vehicle.prepareFrameVisibility(ViewpointContext::PlayerExterior, 64, 64, 0.0,
+                                       &disabledVisibilityFrustum);
+        if (disabledVisibilityFrustum || !vehicle.needsReflectionTexture(0)) {
+            std::cerr << "Disabled frustum culling changed reflection visibility\n";
+            passed = false;
+        }
+        vehicle.displayLists[0].reflectionTextureIndices.clear();
+        vehicle.frustumCulling = true;
+        setModelViewMatrix(identityMatrix());
         dispatchCompute = pglDispatchCompute;
         pglDispatchCompute = recordDispatch;
         const auto draw = [&](VehicleRenderPass pass, double threshold = 0.0) {

@@ -458,6 +458,10 @@ class RenderLoop {
         std::vector<openbus::map::MapTrafficPassengerStop> stops;
     };
     std::vector<TrafficVehicleState> trafficVehicles_;
+    std::unordered_map<const openbus::map::MapTrafficActor*, const TrafficVehicleState*>
+        trafficStateByActor_;
+    const TrafficVehicleState* indexedTrafficVehicleData_ = nullptr;
+    std::size_t indexedTrafficVehicleCount_ = 0;
     std::vector<PassengerStopRouteState> passengerStopRoutes_;
     std::unordered_map<int, std::size_t> scheduledPassengerQueues_;
     std::unordered_map<int, std::size_t> scheduledPassengerInitialQueues_;

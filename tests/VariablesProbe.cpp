@@ -105,6 +105,21 @@ int main() {
     simulation.sharedVariables().setSoundAvailable(false);
     valid &= require(simulation.sharedVariables().get("nosound") == 1.0F,
                      "unavailable sound is published to scripts");
+    const auto environment =
+        openbus::scripting::Vehicle::captureEnvironment(simulation.sharedVariables());
+    vehicle.updateEnvironment(environment);
+    valid &= require(vehicle.get("preciptype") == 1.0F && vehicle.get("preciprate") == 0.75F,
+                     "a shared frame environment publishes weather to a vehicle");
+    vehicle.set("preciptype", 2.0F);
+    vehicle.set("preciprate", 0.0F);
+    vehicle.updateEnvironment(environment);
+    valid &= require(vehicle.get("preciptype") == 1.0F && vehicle.get("preciprate") == 0.75F,
+                     "a shared frame environment restores script-modified weather");
+    simulation.sharedVariables().setPrecipitation(2, 0.25);
+    vehicle.updateEnvironment(simulation.sharedVariables());
+    valid &= require(vehicle.get("preciptype") == 2.0F && vehicle.get("preciprate") == 0.25F,
+                     "direct environment updates still capture the current weather");
+    simulation.sharedVariables().setPrecipitation(1, 0.75);
     for (const auto& [type, rate] :
          {std::pair{-1, 0.5}, std::pair{3, 0.5}, std::pair{1, -0.1},
           std::pair{2, 1.1}, std::pair{1, std::numeric_limits<double>::quiet_NaN()}}) {

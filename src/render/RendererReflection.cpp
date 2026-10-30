@@ -276,11 +276,17 @@ unsigned int reflectionTextureForIndex(int index) {
 }
 
 int reflectionTextureIndex(const std::string& textureName) {
+    constexpr std::string_view prefix = "reflexion";
+    const auto candidate = std::search(
+        textureName.begin(), textureName.end(), prefix.begin(), prefix.end(),
+        [](unsigned char character, char expected) { return std::tolower(character) == expected; });
+    if (candidate == textureName.end()) {
+        return -1;
+    }
     std::string stem = std::filesystem::path(textureName).stem().string();
     std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char character) {
         return static_cast<char>(std::tolower(character));
     });
-    constexpr std::string_view prefix = "reflexion";
     if (stem.rfind(prefix, 0) != 0 || stem.size() == prefix.size()) {
         return -1;
     }

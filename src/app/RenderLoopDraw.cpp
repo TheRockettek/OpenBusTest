@@ -1163,6 +1163,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             if (playerVehicle_ != nullptr) {
                 playerVehicle_->setOdeSimulation(simulation);
             }
+            std::optional<ViewFrustum> visibilityFrustum;
             for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
                 if (vehicle->mapTrafficRouteFinished ||
                     (vehicle->followsMapTrafficRoute && !vehicle->mapTrafficTileActive)) {
@@ -1172,13 +1173,14 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 if (vehicle.get() == playerVehicle_) {
                     applyPose(chassis);
                     vehicle->prepareFrameVisibility(context, framebufferWidth_, framebufferHeight_,
-                                                    mainViewMinimumObjectViewportFraction_);
+                                                    mainViewMinimumObjectViewportFraction_,
+                                                    &visibilityFrustum);
                 } else {
                     applyVehiclePlacement(
                         makeModelRootPlacement(vehicle->placement, vehicle->modelOffsetZ));
-                    vehicle->prepareFrameVisibility(RenderViewContext::NonPlayer, framebufferWidth_,
-                                                    framebufferHeight_,
-                                                    mainViewMinimumObjectViewportFraction_);
+                    vehicle->prepareFrameVisibility(
+                        RenderViewContext::NonPlayer, framebufferWidth_, framebufferHeight_,
+                        mainViewMinimumObjectViewportFraction_, &visibilityFrustum);
                 }
                 popMatrix();
             }

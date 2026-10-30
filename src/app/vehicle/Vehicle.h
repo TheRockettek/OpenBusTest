@@ -484,7 +484,8 @@ struct Vehicle {
     void cacheReflectionTextureIndices(DisplayPart& part) const;
 
     void prepareFrameVisibility(RenderViewContext context, int viewportWidth, int viewportHeight,
-                                double minimumObjectViewportFraction);
+                                double minimumObjectViewportFraction,
+                                std::optional<ViewFrustum>* sharedFrustum = nullptr);
 
     bool needsReflectionTexture(std::size_t reflectionIndex) const;
 

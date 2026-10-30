@@ -1500,8 +1500,8 @@ int main() {
                             .timetableRoutes[matchedRoute.routeStart.timetableRouteIndex];
                     std::vector<openbus::map::MapTrafficPassengerStop> passengerStops;
                     passengerStops.reserve(timetable.stations.size());
-                    for (std::size_t stationIndex = 0;
-                         stationIndex < timetable.stations.size(); ++stationIndex) {
+                    for (std::size_t stationIndex = 0; stationIndex < timetable.stations.size();
+                         ++stationIndex) {
                         const openbus::map::MapAiTimetableRoute::Station& station =
                             timetable.stations[stationIndex];
                         const auto stationPosition =
@@ -1583,11 +1583,9 @@ int main() {
                         throw std::logic_error(
                             "Timetable departure profile indices are not aligned");
                     }
-                    std::vector<std::vector<int>> profilePartitions(
-                        departurePartitions.size());
+                    std::vector<std::vector<int>> profilePartitions(departurePartitions.size());
                     for (std::size_t departureIndex = 0;
-                         departureIndex <
-                         timetable.scheduledDepartureProfileIndices.size();
+                         departureIndex < timetable.scheduledDepartureProfileIndices.size();
                          ++departureIndex) {
                         profilePartitions[departureIndex % profilePartitions.size()].push_back(
                             timetable.scheduledDepartureProfileIndices[departureIndex]);

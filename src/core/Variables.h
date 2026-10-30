@@ -83,10 +83,17 @@ namespace openbus::scripting {
 
 class Vehicle : public ::Variables {
   public:
+    struct Environment {
+        float precipitationType;
+        float precipitationRate;
+    };
+
     Vehicle();
 
+    static Environment captureEnvironment(const SystemVariables& system);
     void updateFrame();
     void updateEnvironment(const SystemVariables& system);
+    void updateEnvironment(const Environment& environment);
 };
 
 class Human : public ::Variables {

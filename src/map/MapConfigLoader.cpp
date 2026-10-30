@@ -825,32 +825,29 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                     ++next;
                 }
                 double durationMinutes = 0.0;
-                if (next >= tripLines.size() ||
-                    isSectionHeaderLine(trim(tripLines[next])) ||
+                if (next >= tripLines.size() || isSectionHeaderLine(trim(tripLines[next])) ||
                     !parseReal(trim(tripLines[next]), durationMinutes) ||
                     !std::isfinite(durationMinutes) || durationMinutes < 0.0) {
                     diagnostics.warning(lineIndex + 1, "profile",
                                         "invalid or truncated timetable profile in " +
                                             pathToUtf8(tripPath.filename()));
                 } else {
-                    route.profiles.push_back(
-                        {profileName, durationMinutes, {}, {}, {}, {}});
+                    route.profiles.push_back({profileName, durationMinutes, {}, {}, {}, {}});
                 }
                 if (next < tripLines.size() && !isSectionHeaderLine(trim(tripLines[next]))) {
                     lineIndex = next;
                 } else if (next > 0) {
                     lineIndex = next - 1;
                 }
-            } else if (section == "[profile_man_arr_time]" ||
-                       section == "[profile_man_dep_time]") {
+            } else if (section == "[profile_man_arr_time]" || section == "[profile_man_dep_time]") {
                 std::size_t next = lineIndex + 1;
                 while (next < tripLines.size() && trim(tripLines[next]).empty()) {
                     ++next;
                 }
                 int stationIndex = -1;
-                const bool validIndex =
-                    next < tripLines.size() && !isSectionHeaderLine(trim(tripLines[next])) &&
-                    parseInteger(trim(tripLines[next]), stationIndex);
+                const bool validIndex = next < tripLines.size() &&
+                                        !isSectionHeaderLine(trim(tripLines[next])) &&
+                                        parseInteger(trim(tripLines[next]), stationIndex);
                 if (validIndex) {
                     ++next;
                 }
@@ -1022,8 +1019,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
             lineIndex = next > 0 ? next - 1 : lineIndex;
         }
     }
-    const auto sortDepartures = [](std::vector<double>& minutes,
-                                   std::vector<int>& profileIndices) {
+    const auto sortDepartures = [](std::vector<double>& minutes, std::vector<int>& profileIndices) {
         if (minutes.size() != profileIndices.size()) {
             throw std::logic_error("Timetable departures and profile indices lost alignment");
         }
@@ -1032,18 +1028,16 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
         for (std::size_t index = 0; index < minutes.size(); ++index) {
             departures.emplace_back(minutes[index], profileIndices[index]);
         }
-        std::stable_sort(departures.begin(), departures.end(),
-                         [](const auto& left, const auto& right) {
-                             return left.first < right.first;
-                         });
+        std::stable_sort(
+            departures.begin(), departures.end(),
+            [](const auto& left, const auto& right) { return left.first < right.first; });
         for (std::size_t index = 0; index < departures.size(); ++index) {
             minutes[index] = departures[index].first;
             profileIndices[index] = departures[index].second;
         }
     };
     for (MapAiTimetableRoute& route : aiTraffic.timetableRoutes) {
-        sortDepartures(route.scheduledDepartureMinutes,
-                       route.scheduledDepartureProfileIndices);
+        sortDepartures(route.scheduledDepartureMinutes, route.scheduledDepartureProfileIndices);
     }
     for (MapAiPassengerTimetable& timetable : aiTraffic.passengerTimetables) {
         sortDepartures(timetable.scheduledDepartureMinutes,
@@ -1146,9 +1140,8 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                     hasRoutePosition = true;
                 }
             }
-            if (stationIndex > 0 &&
-                (!hasRoutePosition ||
-                 alongRouteMeters[stationIndex] <= alongRouteMeters[stationIndex - 1])) {
+            if (stationIndex > 0 && (!hasRoutePosition || alongRouteMeters[stationIndex] <=
+                                                              alongRouteMeters[stationIndex - 1])) {
                 alongRouteMeters[stationIndex] = alongRouteMeters[stationIndex - 1] + 500.0;
             }
         }
@@ -1162,9 +1155,9 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 for (const auto& [stationIndex, minutesAfterDeparture] : source) {
                     if (stationIndex < 0 ||
                         static_cast<std::size_t>(stationIndex) >= stationCount) {
-                        diagnostics.warning(
-                            0, section,
-                            "timetable profile stop index is outside " + route.timetableKey);
+                        diagnostics.warning(0, section,
+                                            "timetable profile stop index is outside " +
+                                                route.timetableKey);
                         continue;
                     }
                     destination[static_cast<std::size_t>(stationIndex)] =
@@ -1204,12 +1197,12 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 } else if (departures[index]) {
                     arrivalSeconds = departureSeconds = *departures[index];
                 } else {
-                    const auto previous = std::find_if(
-                        timedStations.rbegin(), timedStations.rend(),
-                        [index](std::size_t station) { return station < index; });
-                    const auto next = std::find_if(
-                        timedStations.begin(), timedStations.end(),
-                        [index](std::size_t station) { return station > index; });
+                    const auto previous =
+                        std::find_if(timedStations.rbegin(), timedStations.rend(),
+                                     [index](std::size_t station) { return station < index; });
+                    const auto next =
+                        std::find_if(timedStations.begin(), timedStations.end(),
+                                     [index](std::size_t station) { return station > index; });
                     if (previous != timedStations.rend() && next != timedStations.end()) {
                         const std::size_t previousIndex = *previous;
                         const std::size_t nextIndex = *next;
@@ -1226,15 +1219,13 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                                 ? (alongRouteMeters[index] - alongRouteMeters[previousIndex]) /
                                       distanceSpan
                                 : 0.0;
-                        arrivalSeconds =
-                            startSeconds + (endSeconds - startSeconds) * fraction;
+                        arrivalSeconds = startSeconds + (endSeconds - startSeconds) * fraction;
                         departureSeconds = arrivalSeconds;
                     } else if (previous != timedStations.rend()) {
                         const std::size_t previousIndex = *previous;
                         arrivalSeconds = departureSeconds =
-                            departures[previousIndex]
-                                ? *departures[previousIndex]
-                                : arrivals[previousIndex].value_or(0.0);
+                            departures[previousIndex] ? *departures[previousIndex]
+                                                      : arrivals[previousIndex].value_or(0.0);
                     } else if (next != timedStations.end()) {
                         const std::size_t nextIndex = *next;
                         arrivalSeconds = departureSeconds =
@@ -2681,7 +2672,8 @@ std::size_t mapTrafficPopulationForDensity(std::size_t basePopulation,
     }
 
     Logger mapLog("Map");
-    mapLog.Log("Map traffic population for density: basePopulation = {}" + std::to_string(basePopulation));
+    mapLog.Log("Map traffic population for density: basePopulation = {}" +
+               std::to_string(basePopulation));
     mapLog.Log("Map traffic population for density: density = {}" + std::to_string(*density));
     mapLog.Log("Map traffic population for density: scaled = {}" + std::to_string(scaled));
     mapLog.Log("Map traffic population for density: rounded = {}" + std::to_string(rounded));

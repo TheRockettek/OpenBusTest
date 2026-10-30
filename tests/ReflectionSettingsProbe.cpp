@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -28,6 +29,23 @@ int main(int argc, char** argv) {
         return 1;
     }
     const bool expected = mode != "disabled";
+    for (const auto& [name, index] : {
+             std::pair{"plain_texture.dds", -1},
+             std::pair{"directory/reflexion12.dds", 12},
+             std::pair{"directory/REFLEXION0002.PNG", 2},
+             std::pair{"reflexion+7.dds", 7},
+             std::pair{"reflexion12extra.dds", 12},
+             std::pair{"prefixreflexion3.dds", -1},
+             std::pair{"reflexion/name.dds", -1},
+             std::pair{"reflexion.dds", -1},
+             std::pair{"reflexion-1.dds", -1},
+             std::pair{"reflexionxyz.dds", -1},
+         }) {
+        if (openbus::rendering::reflectionTextureIndex(name) != index) {
+            std::cerr << "Unexpected reflection texture index for " << name << '\n';
+            return 1;
+        }
+    }
     if (!setTransparency(mode == "default" ? "" : expected ? "1" : "0")) {
         std::cerr << "Could not configure mirror transparency environment\n";
         return 1;

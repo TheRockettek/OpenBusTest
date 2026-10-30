@@ -455,8 +455,7 @@ bool RenderLoop::AddTrafficVehicle(
         }
         if (scheduledDepartureProfileIndices.empty()) {
             scheduledDepartureProfileIndices.resize(scheduledDepartureMinutes.size(), 0);
-        } else if (scheduledDepartureProfileIndices.size() !=
-                   scheduledDepartureMinutes.size()) {
+        } else if (scheduledDepartureProfileIndices.size() != scheduledDepartureMinutes.size()) {
             throw std::invalid_argument(
                 "Map bus timetable departures and profiles are not aligned");
         }
@@ -466,10 +465,9 @@ bool RenderLoop::AddTrafficVehicle(
             scheduledTrips.emplace_back(scheduledDepartureMinutes[index],
                                         std::max(0, scheduledDepartureProfileIndices[index]));
         }
-        std::stable_sort(scheduledTrips.begin(), scheduledTrips.end(),
-                         [](const auto& left, const auto& right) {
-                             return left.first < right.first;
-                         });
+        std::stable_sort(
+            scheduledTrips.begin(), scheduledTrips.end(),
+            [](const auto& left, const auto& right) { return left.first < right.first; });
         for (std::size_t index = 0; index < scheduledTrips.size(); ++index) {
             scheduledDepartureMinutes[index] = scheduledTrips[index].first;
             scheduledDepartureProfileIndices[index] = scheduledTrips[index].second;
@@ -542,8 +540,7 @@ bool RenderLoop::AddTrafficVehicle(
         std::make_shared<const openbus::map::MapTrafficActor>(trafficState.actor);
     trafficState.spawnCandidates = std::move(spawnCandidates);
     trafficState.scheduledDepartureMinutes = std::move(scheduledDepartureMinutes);
-    trafficState.scheduledDepartureProfileIndices =
-        std::move(scheduledDepartureProfileIndices);
+    trafficState.scheduledDepartureProfileIndices = std::move(scheduledDepartureProfileIndices);
     trafficState.timetableProfiles = std::move(timetableProfiles);
     trafficState.timetableLineName = std::move(timetableLineName);
     trafficState.timetableDestinationName = std::move(timetableDestinationName);

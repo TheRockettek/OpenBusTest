@@ -189,10 +189,8 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
     } else if (name == "getttbusstoparr" || name == "getttbusstopdep") {
         int stopIndex = -1;
         const bool validIndex = popNonnegativeIndex(stopIndex);
-        const char* prefix =
-            name == "getttbusstoparr" ? "tt_busstop_arr_" : "tt_busstop_dep_";
-        const float time =
-            validIndex ? localState.get(indexedName(prefix, stopIndex)) : 0.0F;
+        const char* prefix = name == "getttbusstoparr" ? "tt_busstop_arr_" : "tt_busstop_dep_";
+        const float time = validIndex ? localState.get(indexedName(prefix, stopIndex)) : 0.0F;
         pushNumber(std::isfinite(time) ? time : 0.0F);
     } else if (name == "getterminuscode" || name == "getrouteterminusindex" ||
                name == "getbusstopcount" || name == "getarrbustimediff") {

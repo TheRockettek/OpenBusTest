@@ -29,7 +29,8 @@ void Vehicle::cacheReflectionTextureIndices(DisplayPart& part) const {
 }
 
 void Vehicle::prepareFrameVisibility(RenderViewContext context, int viewportWidth,
-                                     int viewportHeight, double minimumObjectViewportFraction) {
+                                     int viewportHeight, double minimumObjectViewportFraction,
+                                     std::optional<ViewFrustum>* sharedFrustum) {
     TraceScope trace("render", "Vehicle::prepareFrameVisibility");
     ++materialSelectionGeneration;
     {
@@ -44,13 +45,8 @@ void Vehicle::prepareFrameVisibility(RenderViewContext context, int viewportWidt
     const auto& projection = openbus::rendering::projectionMatrix();
     const double viewportWidthPixels = static_cast<double>(std::max(viewportWidth, 1));
     const double viewportHeightPixels = static_cast<double>(std::max(viewportHeight, 1));
-    ViewFrustum frustum;
-    {
-        TraceScope phase("render", "Vehicle::prepareFrameVisibility.frustum");
-        if (frustumCulling) {
-            frustum = buildViewFrustum(projection);
-        }
-    }
+    std::optional<ViewFrustum> localFrustum;
+    auto& frustum = sharedFrustum != nullptr ? *sharedFrustum : localFrustum;
     {
         TraceScope phase("render", "Vehicle::prepareFrameVisibility.scanParts");
         for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
@@ -81,8 +77,14 @@ void Vehicle::prepareFrameVisibility(RenderViewContext context, int viewportWidt
             }
             const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
             const std::array<double, 4> eye = transformPoint(modelView, local);
-            if (frustumCulling && sphereOutsideFrustum(frustum, eye, part.radius)) {
-                continue;
+            if (frustumCulling) {
+                if (!frustum) {
+                    TraceScope phase("render", "Vehicle::prepareFrameVisibility.frustum");
+                    frustum = buildViewFrustum(projection);
+                }
+                if (sphereOutsideFrustum(*frustum, eye, part.radius)) {
+                    continue;
+                }
             }
             const Matrix4 animation = animationTransformForPart(part);
             const std::array<double, 3> halfSize = {std::max(part.size[0] * 0.5, 0.0),

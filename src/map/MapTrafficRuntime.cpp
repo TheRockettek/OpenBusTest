@@ -52,10 +52,8 @@ bool mapTrafficPoseOnActiveTile(const MapTrafficPose& pose,
 }
 
 bool mapTrafficSpawnInsideForwardExclusion(const MapTrafficPose& playerPose,
-                                           double playerLengthMeters,
-                                           double playerWidthMeters,
-                                           const MapTrafficPose& spawnPose,
-                                           double spawnWidthMeters,
+                                           double playerLengthMeters, double playerWidthMeters,
+                                           const MapTrafficPose& spawnPose, double spawnWidthMeters,
                                            double forwardDistanceMeters) noexcept {
     if (forwardDistanceMeters < 0.0) {
         return false;
@@ -73,8 +71,8 @@ bool mapTrafficSpawnInsideForwardExclusion(const MapTrafficPose& playerPose,
 }
 
 double mapTrafficSpawnPriorityDistanceMeters(const MapTrafficPose& playerPose,
-                                              const MapTrafficPose& spawnPose,
-                                              double predictedForwardDistanceMeters) noexcept {
+                                             const MapTrafficPose& spawnPose,
+                                             double predictedForwardDistanceMeters) noexcept {
     const double forwardX = std::cos(playerPose.headingRadians);
     const double forwardY = std::sin(playerPose.headingRadians);
     const double relativeX = spawnPose.position[0] - playerPose.position[0];
@@ -4938,8 +4936,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 firstPath == 0 ? 0.0 : route.cumulativeEndDistances[firstPath - 1];
             const double padding = std::abs(candidate.rearAxleOffsetMeters) + 2.0;
             const double rangeStart = std::max(0.0, corridorStart - padding);
-            const double rangeEnd = std::min(route.totalLength,
-                                             route.cumulativeEndDistances[endPath] + padding);
+            const double rangeEnd =
+                std::min(route.totalLength, route.cumulativeEndDistances[endPath] + padding);
             const auto first = std::lower_bound(route.cumulativeEndDistances.begin(),
                                                 route.cumulativeEndDistances.end(), rangeStart);
             const std::size_t firstSegment =
@@ -4947,9 +4945,10 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             const double firstStart =
                 firstSegment == 0 ? 0.0 : route.cumulativeEndDistances[firstSegment - 1];
             const double firstEnd = route.cumulativeEndDistances[firstSegment];
-            const double originDistance = firstStart + std::min(1.0e-4, (firstEnd - firstStart) * 0.25);
-            const auto origin = sampleMapTrafficRouteRaw(route, originDistance,
-                                                        candidate.lateralOffsetMeters);
+            const double originDistance =
+                firstStart + std::min(1.0e-4, (firstEnd - firstStart) * 0.25);
+            const auto origin =
+                sampleMapTrafficRouteRaw(route, originDistance, candidate.lateralOffsetMeters);
             if (!origin || std::abs(origin->pitchRadians) > 1.0e-8) {
                 return false;
             }
@@ -4972,16 +4971,15 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 }
                 const double inset = std::min(1.0e-4, (end - start) * 0.25);
                 for (const double distance : {start + inset, (start + end) * 0.5, end - inset}) {
-                    const auto pose = sampleMapTrafficRouteRaw(route, distance,
-                                                              candidate.lateralOffsetMeters);
+                    const auto pose =
+                        sampleMapTrafficRouteRaw(route, distance, candidate.lateralOffsetMeters);
                     if (!pose || std::abs(pose->pitchRadians) > 1.0e-8 ||
                         std::abs(std::remainder(pose->headingRadians - origin->headingRadians,
                                                 2.0 * std::numbers::pi)) > 1.0e-8 ||
                         std::hypot(pose->position[0] - origin->position[0] -
                                        dx * (distance - originDistance),
                                    pose->position[1] - origin->position[1] -
-                                       dy * (distance - originDistance)) >
-                            1.0e-5 ||
+                                       dy * (distance - originDistance)) > 1.0e-5 ||
                         std::abs(pose->position[2] - origin->position[2]) > 1.0e-5) {
                         return false;
                     }
@@ -5007,9 +5005,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
             const bool exactStraight = points.size() == 2 && straightActorRoute;
             if (!exactStraight) {
                 cache.exactStraightPaths = false;
-                cache.positionUncertaintyMeters =
-                    std::abs(candidate.lateralOffsetMeters) +
-                    2.0 * std::abs(candidate.rearAxleOffsetMeters);
+                cache.positionUncertaintyMeters = std::abs(candidate.lateralOffsetMeters) +
+                                                  2.0 * std::abs(candidate.rearAxleOffsetMeters);
             }
             double distance = index == 0 ? 0.0 : route.cumulativeEndDistances[index - 1];
             for (std::size_t point = 1; point < points.size(); ++point) {
@@ -5025,7 +5022,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     }
                     if (exactStraight) {
                         const double heading = std::atan2(to[0] - from[0], to[1] - from[1]);
-                        const auto offset = mapSplineRightOffset(heading, candidate.lateralOffsetMeters);
+                        const auto offset =
+                            mapSplineRightOffset(heading, candidate.lateralOffsetMeters);
                         for (std::size_t axis = 0; axis < 2; ++axis) {
                             clipped[axis] += offset[axis];
                             adjustedTo[axis] += offset[axis];
@@ -6602,8 +6600,8 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                 junctionAdmissionStopDistance =
                     std::min(junctionAdmissionStopDistance, stopDistance);
                 const double gap = std::max(0.0, stopDistance - actor.distanceMeters);
-                limitTarget(junctionApproachSpeed(gap),
-                            MapTrafficBlockReason::JunctionTraffic, priorityTraffic);
+                limitTarget(junctionApproachSpeed(gap), MapTrafficBlockReason::JunctionTraffic,
+                            priorityTraffic);
             }
             const double movementLookahead =
                 compactJunction && junctionEntryStopGap <= lookahead

@@ -341,10 +341,18 @@ Vehicle::Vehicle() : Variables(ScriptObjectKind::Vehicle) {
     configureVehicle(*this);
 }
 
+Vehicle::Environment Vehicle::captureEnvironment(const SystemVariables& system) {
+    return {system.get("preciptype"), system.get("preciprate")};
+}
+
 void Vehicle::updateEnvironment(const SystemVariables& system) {
+    updateEnvironment(captureEnvironment(system));
+}
+
+void Vehicle::updateEnvironment(const Environment& environment) {
     setValues({
-        {"preciptype", system.get("preciptype")},
-        {"preciprate", system.get("preciprate")},
+        {"preciptype", environment.precipitationType},
+        {"preciprate", environment.precipitationRate},
     });
 }
 

@@ -740,6 +740,9 @@ bool ScriptRuntime::Impl::drawBitmapFontText(ScriptTexture& texture, const std::
 }
 
 void ScriptRuntime::Impl::updateTextTextures(bool force) {
+    if (!force && localState.get("refresh_strings") == 0.0) {
+        return;
+    }
     std::string vehicleName = scriptIdentity;
     if (!configuration.selectedRegistration.empty()) {
         vehicleName += " [" + configuration.selectedRegistration;
@@ -753,9 +756,6 @@ void ScriptRuntime::Impl::updateTextTextures(bool force) {
     }
     const std::string traceName = "updateTextTextures: " + vehicleName;
     openbus::rendering::TraceScope trace("script", traceName.c_str());
-    if (!force && localState.get("refresh_strings") == 0.0) {
-        return;
-    }
     for (auto& entry : textTextureDefinitions) {
         const int index = entry.first;
         const std::string entryTraceName = "updateTextTextures: index " + std::to_string(index);
