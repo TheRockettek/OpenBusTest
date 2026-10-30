@@ -4075,6 +4075,37 @@ bool mapTrafficRouteSamplingCannotFail(const MapTrafficRoute& route, double late
 
 } // namespace
 
+MapTrafficDrivingRouteMetadata analyzeMapTrafficDrivingRoute(const MapTrafficRoute& route) {
+    std::size_t routeHash = 0;
+    const auto combineRouteHash = [&](std::size_t value) {
+        routeHash ^= value + std::size_t{0x9e3779b9} + (routeHash << 6) + (routeHash >> 2);
+    };
+    combineRouteHash(std::hash<bool>{}(route.closed));
+    combineRouteHash(std::hash<bool>{}(route.loopStartDistance.has_value()));
+    if (route.loopStartDistance.has_value()) {
+        combineRouteHash(std::hash<double>{}(*route.loopStartDistance));
+    }
+    combineRouteHash(route.segments.size());
+    for (const MapTrafficRouteSegment& segment : route.segments) {
+        combineRouteHash(std::hash<bool>{}(segment.reversed));
+        combineRouteHash(std::hash<double>{}(segment.pathLateralMeters));
+        combineRouteHash(std::hash<double>{}(segment.pathHeightMeters));
+        combineRouteHash(segment.points.empty() ? 0U : 1U);
+        if (segment.points.empty()) {
+            combineRouteHash(std::hash<int>{}(segment.spline.placement.splineId));
+            combineRouteHash(std::hash<int>{}(segment.spline.tileX));
+            combineRouteHash(std::hash<int>{}(segment.spline.tileY));
+        } else {
+            for (const auto& point : segment.points) {
+                for (const double coordinate : point) {
+                    combineRouteHash(std::hash<double>{}(coordinate));
+                }
+            }
+        }
+    }
+    return {routeHash, mapTrafficRouteSamplingCannotFail(route, 0.0)};
+}
+
 bool mapTrafficActorBehindObstacle(const MapTrafficActor& actor, const MapTrafficObstacle& obstacle,
                                    double maximumGapMeters) {
     if (!std::isfinite(maximumGapMeters) || maximumGapMeters < 0.0) {
@@ -4497,7 +4528,8 @@ double mapTrafficCurveSpeedLimit(const MapTrafficRoute& route, double distanceMe
 
 void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                               const std::vector<MapTrafficObstacle>& obstacles,
-                              double elapsedSeconds, double signalClockSeconds) {
+                              double elapsedSeconds, double signalClockSeconds,
+                              std::span<const MapTrafficDrivingRouteMetadata> routeMetadata) {
     openbus::rendering::TraceScope trace("traffic", "MapTrafficRuntime::advanceMapTrafficDriving");
     if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
         !std::isfinite(signalClockSeconds) || signalClockSeconds < 0.0) {
@@ -4541,6 +4573,11 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         }
         validateFootprint(actorFootprint(*actor, actor->distanceMeters));
     }
+    if (!routeMetadata.empty() && routeMetadata.size() != actors.size()) {
+        throw std::invalid_argument(trafficInputError(
+            "Traffic route metadata does not match the actor snapshot",
+            "actorCount=", actors.size(), "metadataCount=", routeMetadata.size()));
+    }
     std::unordered_map<const MapTrafficActor*, std::size_t> actorIndexByPointer;
     actorIndexByPointer.reserve(actors.size());
     for (std::size_t index = 0; index < actors.size(); ++index) {
@@ -4549,10 +4586,19 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
     // Some optimizations below skip or defer route-sampling queries that throw on malformed
     // routes. They are only enabled when no such query can fail; otherwise the queries run
     // eagerly in their original order so the same exception is raised at the same point.
-    const bool deferrableSamplingQueries =
-        std::all_of(actors.begin(), actors.end(), [](const MapTrafficActor* actor) {
-            return mapTrafficRouteSamplingCannotFail(actor->route, actor->lateralOffsetMeters);
-        });
+    bool deferrableSamplingQueries = true;
+    if (routeMetadata.empty()) {
+        deferrableSamplingQueries =
+            std::all_of(actors.begin(), actors.end(), [](const MapTrafficActor* actor) {
+                return mapTrafficRouteSamplingCannotFail(actor->route, actor->lateralOffsetMeters);
+            });
+    } else {
+        for (std::size_t index = 0; index < actors.size(); ++index) {
+            deferrableSamplingQueries = deferrableSamplingQueries &&
+                                        routeMetadata[index].samplingCannotFail &&
+                                        std::isfinite(actors[index]->lateralOffsetMeters);
+        }
+    }
     for (const auto& obstacle : obstacles) {
         validateFootprint(obstacle);
     }
@@ -4623,28 +4669,34 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
     for (std::size_t actorIndex = 0; actorIndex < actors.size(); ++actorIndex) {
         const MapTrafficActor& actor = *actors[actorIndex];
         std::size_t routeHash = std::hash<double>{}(actor.lateralOffsetMeters);
-        combineRouteHash(routeHash, std::hash<bool>{}(actor.route.closed));
-        combineRouteHash(routeHash, std::hash<bool>{}(actor.route.loopStartDistance.has_value()));
-        if (actor.route.loopStartDistance.has_value()) {
-            combineRouteHash(routeHash, std::hash<double>{}(*actor.route.loopStartDistance));
-        }
-        combineRouteHash(routeHash, actor.route.segments.size());
-        for (const MapTrafficRouteSegment& segment : actor.route.segments) {
-            combineRouteHash(routeHash, std::hash<bool>{}(segment.reversed));
-            combineRouteHash(routeHash, std::hash<double>{}(segment.pathLateralMeters));
-            combineRouteHash(routeHash, std::hash<double>{}(segment.pathHeightMeters));
-            combineRouteHash(routeHash, segment.points.empty() ? 0U : 1U);
-            if (segment.points.empty()) {
-                combineRouteHash(routeHash, std::hash<int>{}(segment.spline.placement.splineId));
-                combineRouteHash(routeHash, std::hash<int>{}(segment.spline.tileX));
-                combineRouteHash(routeHash, std::hash<int>{}(segment.spline.tileY));
-            } else {
-                for (const auto& point : segment.points) {
-                    for (const double coordinate : point) {
-                        combineRouteHash(routeHash, std::hash<double>{}(coordinate));
+        if (routeMetadata.empty()) {
+            combineRouteHash(routeHash, std::hash<bool>{}(actor.route.closed));
+            combineRouteHash(routeHash,
+                             std::hash<bool>{}(actor.route.loopStartDistance.has_value()));
+            if (actor.route.loopStartDistance.has_value()) {
+                combineRouteHash(routeHash, std::hash<double>{}(*actor.route.loopStartDistance));
+            }
+            combineRouteHash(routeHash, actor.route.segments.size());
+            for (const MapTrafficRouteSegment& segment : actor.route.segments) {
+                combineRouteHash(routeHash, std::hash<bool>{}(segment.reversed));
+                combineRouteHash(routeHash, std::hash<double>{}(segment.pathLateralMeters));
+                combineRouteHash(routeHash, std::hash<double>{}(segment.pathHeightMeters));
+                combineRouteHash(routeHash, segment.points.empty() ? 0U : 1U);
+                if (segment.points.empty()) {
+                    combineRouteHash(routeHash,
+                                     std::hash<int>{}(segment.spline.placement.splineId));
+                    combineRouteHash(routeHash, std::hash<int>{}(segment.spline.tileX));
+                    combineRouteHash(routeHash, std::hash<int>{}(segment.spline.tileY));
+                } else {
+                    for (const auto& point : segment.points) {
+                        for (const double coordinate : point) {
+                            combineRouteHash(routeHash, std::hash<double>{}(coordinate));
+                        }
                     }
                 }
             }
+        } else {
+            combineRouteHash(routeHash, routeMetadata[actorIndex].routeHash);
         }
         auto& matchingClasses = routeClassesByHash[routeHash];
         bool matchedExistingClass = false;

@@ -383,6 +383,7 @@ struct MapTrafficWorker::Impl {
         std::size_t stateIndex = 0;
         std::uint64_t generation = 0;
         std::shared_ptr<const openbus::map::MapTrafficActor> actorTemplate;
+        openbus::map::MapTrafficDrivingRouteMetadata routeMetadata;
         openbus::map::MapTrafficActor actor;
         std::optional<std::size_t> blockingActorStateIndex;
         std::optional<std::uint64_t> blockingActorGeneration;
@@ -574,16 +575,23 @@ struct MapTrafficWorker::Impl {
                 };
                 std::vector<Blocker> blockers;
                 blockers.reserve(tickActors.size());
+                std::vector<openbus::map::MapTrafficDrivingRouteMetadata> actorRouteMetadata;
+                actorRouteMetadata.reserve(tickActors.size());
                 std::vector<openbus::map::MapTrafficActor> runtimeActors;
                 runtimeActors.reserve(tickActors.size());
                 for (const ActorInput& actor : tickActors) {
                     const auto previous = previousActorByState.find(actor.stateIndex);
+                    const bool sameTemplate =
+                        previous != previousActorByState.end() &&
+                        workingActors[previous->second].actorTemplate == actor.actorTemplate;
                     const bool hasPrevious =
                         previous != previousActorByState.end() &&
                         workingActors[previous->second].generation == actor.generation;
-                    const bool reuseActor =
-                        hasPrevious && uniqueActorStates &&
-                        workingActors[previous->second].actorTemplate == actor.actorTemplate;
+                    const bool reuseActor = hasPrevious && uniqueActorStates && sameTemplate;
+                    actorRouteMetadata.push_back(sameTemplate
+                                                     ? workingActors[previous->second].routeMetadata
+                                                     : openbus::map::analyzeMapTrafficDrivingRoute(
+                                                           actor.actorTemplate->route));
                     if (reuseActor) {
                         runtimeActors.push_back(std::move(workingActors[previous->second].actor));
                     } else {
@@ -674,8 +682,9 @@ struct MapTrafficWorker::Impl {
                 openbus::map::advanceMapTrafficSignalControllers(
                     tickSignalControllers, signalActors, simulationStepSecondsForTick,
                     signalClockSeconds, tickBusPriorityRequests);
-                openbus::map::advanceMapTrafficDriving(
-                    actorPointers, tickObstacles, simulationStepSecondsForTick, signalClockSeconds);
+                openbus::map::advanceMapTrafficDriving(actorPointers, tickObstacles,
+                                                       simulationStepSecondsForTick,
+                                                       signalClockSeconds, actorRouteMetadata);
 
                 std::vector<HumanResult> advancedHumanResults;
                 advancedHumanResults.reserve(runtimeHumans.size());
@@ -703,6 +712,7 @@ struct MapTrafficWorker::Impl {
                     advanced.stateIndex = tickActors[index].stateIndex;
                     advanced.generation = tickActors[index].generation;
                     advanced.actorTemplate = tickActors[index].actorTemplate;
+                    advanced.routeMetadata = actorRouteMetadata[index];
                     advanced.actor = std::move(runtimeActors[index]);
                     if (advanced.actor.blockingActor != nullptr) {
                         const auto blocker =
@@ -718,9 +728,7 @@ struct MapTrafficWorker::Impl {
                     advancedActors.push_back(std::move(advanced));
                 }
                 std::vector<openbus::map::MapTrafficPose> advancedPoses;
-                std::vector<double> advancedTravelHeadings;
                 advancedPoses.reserve(advancedActors.size());
-                advancedTravelHeadings.reserve(advancedActors.size());
                 for (const WorkingActor& actor : advancedActors) {
                     const auto pose = openbus::map::sampleMapTrafficActorPose(
                         actor.actor, actor.actor.distanceMeters);
@@ -728,31 +736,7 @@ struct MapTrafficWorker::Impl {
                         throw std::runtime_error("Could not sample an advanced map traffic actor");
                     }
                     advancedPoses.push_back(*pose);
-                    advancedTravelHeadings.push_back(pose->headingRadians);
                 }
-
-                std::unordered_map<std::size_t, std::uint64_t> activeStates;
-                activeStates.reserve(tickActors.size());
-                for (const ActorInput& actor : tickActors) {
-                    activeStates.emplace(actor.stateIndex, actor.generation);
-                }
-                std::vector<WorkingActor> activeActors;
-                std::vector<openbus::map::MapTrafficPose> activePoses;
-                std::vector<double> activeTravelHeadings;
-                activeActors.reserve(advancedActors.size());
-                activePoses.reserve(advancedPoses.size());
-                activeTravelHeadings.reserve(advancedTravelHeadings.size());
-                for (std::size_t index = 0; index < advancedActors.size(); ++index) {
-                    const WorkingActor& actor = advancedActors[index];
-                    const auto active = activeStates.find(actor.stateIndex);
-                    if (active == activeStates.end() || active->second != actor.generation) {
-                        continue;
-                    }
-                    activeActors.push_back(std::move(advancedActors[index]));
-                    activePoses.push_back(advancedPoses[index]);
-                    activeTravelHeadings.push_back(advancedTravelHeadings[index]);
-                }
-                advancedActors = std::move(activeActors);
                 const double tickProcessingSeconds =
                     std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                                   tickProcessingStart)
@@ -766,7 +750,7 @@ struct MapTrafficWorker::Impl {
                     completedActorResults.push_back(
                         {actor.stateIndex, actor.generation, captureMotion(actor.actor),
                          actor.blockingActorStateIndex, actor.blockingActorGeneration,
-                         activePoses[index], activeTravelHeadings[index]});
+                         advancedPoses[index], advancedPoses[index].headingRadians});
                 }
                 workingHumans = std::move(runtimeHumans);
                 lock.lock();

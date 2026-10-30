@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -84,6 +85,12 @@ struct MapTrafficRoute {
     bool closed = false;
     std::optional<double> loopStartDistance;
     bool startsAtEntryLane = false;
+};
+
+struct MapTrafficDrivingRouteMetadata {
+    // Reuse only while the route is unchanged; sampling also depends on each actor's offset.
+    std::size_t routeHash = 0;
+    bool samplingCannotFail = false;
 };
 
 struct MapTrafficRoutePosition {
@@ -455,10 +462,12 @@ bool mapTrafficEntryHiddenFromCameras(const std::array<double, 3>& position, dou
                                       double minimumDistanceMeters);
 double mapTrafficCurveSpeedLimit(const MapTrafficRoute& route, double distanceMeters,
                                  double cruiseSpeedMetersPerSecond, double minimumTurnRadiusMeters);
+MapTrafficDrivingRouteMetadata analyzeMapTrafficDrivingRoute(const MapTrafficRoute& route);
 // Uses small synchronous steps and swept footprints; never moves external obstacles.
 void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                               const std::vector<MapTrafficObstacle>& obstacles,
-                              double elapsedSeconds, double signalClockSeconds = 0.0);
+                              double elapsedSeconds, double signalClockSeconds = 0.0,
+                              std::span<const MapTrafficDrivingRouteMetadata> routeMetadata = {});
 void advanceMapTrafficSignalControllers(
     const std::vector<std::shared_ptr<MapTrafficSignalController>>& controllers,
     const std::vector<MapTrafficActor*>& actors, double elapsedSeconds, double initialClockSeconds,
