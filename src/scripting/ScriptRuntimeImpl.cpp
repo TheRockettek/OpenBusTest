@@ -2,6 +2,8 @@
 
 #include "scripting/ScriptRuntimeImpl.h"
 
+#include <system_error>
+
 Logger scriptRuntimeLogger = Logger("ScriptRuntime");
 
 namespace script_detail {
@@ -25,8 +27,20 @@ std::shared_ptr<const OscProgram> cachedNativeProgram(const std::filesystem::pat
                                                       std::string& error, bool& compiledThisCall) {
     static std::mutex cacheMutex;
     static std::unordered_map<std::string, std::shared_ptr<const OscProgram>> cache;
-    std::string key = std::filesystem::absolute(sourcePath).lexically_normal().generic_string();
+    std::error_code canonicalError;
+    std::filesystem::path normalizedPath =
+        std::filesystem::weakly_canonical(sourcePath, canonicalError);
+    if (canonicalError) {
+        canonicalError.clear();
+        normalizedPath = std::filesystem::absolute(sourcePath, canonicalError);
+    }
+    if (canonicalError) {
+        normalizedPath = sourcePath.lexically_normal();
+    }
+    std::string key = normalizedPath.generic_string();
+#ifdef _WIN32
     key = lower(std::move(key));
+#endif
     std::lock_guard<std::mutex> lock(cacheMutex);
     const auto cached = cache.find(key);
     if (cached != cache.end()) {

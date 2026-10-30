@@ -778,11 +778,11 @@ class Emitter {
     // --------------------------------------------------------------- operator
     void emit_ident(std::string& out, int depth, const std::string& op, int ln) {
         // All operators interact with the live stack, so flush any pending push first.
-        // Exception: 'pi' and 'l0'-'l7' are pure pushes - handle them via push_float.
+        // Exception: 'pi' and 'l0'-'l9' are pure pushes - handle them via push_float.
         // We handle those before the flush below.
 
-        // ---- registers  l0-l7  (push register value) - treated as a push
-        if (op.size() == 2 && op[0] == 'l' && op[1] >= '0' && op[1] <= '7') {
+        // ---- registers  l0-l9  (push register value) - treated as a push
+        if (op.size() == 2 && op[0] == 'l' && op[1] >= '0' && op[1] <= '9') {
             int r = op[1] - '0';
             push_float(out, depth, "_r" + std::to_string(r));
             return;
@@ -804,8 +804,8 @@ class Emitter {
             return;
         }
 
-        // ---- registers  s0-s7  (peek top; must flush so _fs is live)
-        if (op.size() == 2 && op[0] == 's' && op[1] >= '0' && op[1] <= '7') {
+        // ---- registers  s0-s9  (peek top; must flush so _fs is live)
+        if (op.size() == 2 && op[0] == 's' && op[1] >= '0' && op[1] <= '9') {
             flush_pending(out, depth);
             int r = op[1] - '0';
             out += ind(depth) + "_r" + std::to_string(r) + "=" + peek_float_expr() + "\n";
@@ -1234,8 +1234,8 @@ class Emitter {
         out += "  return (a~=0)==(b~=0)\n";
         out += "end\n";
         out += "\n";
-        out += "-- Shared registers  (s0-s7 / l0-l7)\n";
-        out += "local _r0,_r1,_r2,_r3,_r4,_r5,_r6,_r7 = 0,0,0,0,0,0,0,0\n";
+        out += "-- Shared registers  (s0-s9 / l0-l9)\n";
+        out += "local _r0,_r1,_r2,_r3,_r4,_r5,_r6,_r7,_r8,_r9 = 0,0,0,0,0,0,0,0,0,0\n";
         out += "\n";
         while (peek().type != TT::Eof) {
             Token& t = peek();
@@ -1347,9 +1347,9 @@ class BytecodeCompiler {
 
     void compileIdentifier(const Token& token, std::vector<OscInstruction>& code) {
         const std::string& op = token.val;
-        if (op.size() == 2 && op[0] == 'l' && op[1] >= '0' && op[1] <= '7') {
+        if (op.size() == 2 && op[0] == 'l' && op[1] >= '0' && op[1] <= '9') {
             code.push_back({OscOpcode::LoadRegister, 0.0, op[1] - '0', {}});
-        } else if (op.size() == 2 && op[0] == 's' && op[1] >= '0' && op[1] <= '7') {
+        } else if (op.size() == 2 && op[0] == 's' && op[1] >= '0' && op[1] <= '9') {
             code.push_back({OscOpcode::StoreRegister, 0.0, op[1] - '0', {}});
         } else if (op == "pi") {
             code.push_back({OscOpcode::PushNumber, 3.1415927F, 0, {}});

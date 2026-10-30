@@ -128,7 +128,7 @@ struct ScriptRuntime::Impl {
     std::uint64_t revisionCounter = 0;
     std::vector<std::unique_ptr<LuaFunctionBinding>> luaFunctionBindings;
     std::vector<std::shared_ptr<const OscProgram>> nativePrograms;
-    std::array<float, 8> nativeRegisters = {};
+    std::array<float, kOscRegisterCount> nativeRegisters = {};
     bool nativeBackend = false;
 
     static bool floatToInt(float value, int& result);

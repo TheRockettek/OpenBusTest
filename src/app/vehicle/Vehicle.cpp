@@ -14,19 +14,25 @@ void Vehicle::updateFrameVariables(bool isAiVehicle, double timeStep) {
 
 void Vehicle::updateScripts(bool isAiVehicle) {
     TraceScope trace("script", "Vehicle::updateScripts");
-    for (std::size_t seatIndex = 0; seatIndex < passengerService.seatCount(); ++seatIndex) {
-        variables.set("human_count_on_seat_" + std::to_string(seatIndex),
-                      static_cast<float>(passengerService.passengerCountOnSeat(seatIndex)));
+    {
+        TraceScope passengerVariables("script", "Vehicle::updateScripts.passengerVariables");
+        for (std::size_t seatIndex = 0; seatIndex < passengerService.seatCount(); ++seatIndex) {
+            variables.set("human_count_on_seat_" + std::to_string(seatIndex),
+                          static_cast<float>(passengerService.passengerCountOnSeat(seatIndex)));
+        }
+        const float onboardPassengerCount =
+            static_cast<float>(passengerService.onboardPassengerCount());
+        variables.set("passengers_onboard", onboardPassengerCount);
+        variables.set("humans_count", onboardPassengerCount);
     }
-    const float onboardPassengerCount =
-        static_cast<float>(passengerService.onboardPassengerCount());
-    variables.set("passengers_onboard", onboardPassengerCount);
-    variables.set("humans_count", onboardPassengerCount);
-    if (scripts) {
-        const std::size_t scriptErrorCount = scripts->errors().size();
-        scripts->update(isAiVehicle);
-        for (std::size_t index = scriptErrorCount; index < scripts->errors().size(); ++index) {
-            gameLog.Error("Lua frame error: " + scripts->errors()[index]);
+    {
+        TraceScope runtime("script", "Vehicle::updateScripts.runtime");
+        if (scripts) {
+            const std::size_t scriptErrorCount = scripts->errors().size();
+            scripts->update(isAiVehicle);
+            for (std::size_t index = scriptErrorCount; index < scripts->errors().size(); ++index) {
+                gameLog.Error("Lua frame error: " + scripts->errors()[index]);
+            }
         }
     }
 }

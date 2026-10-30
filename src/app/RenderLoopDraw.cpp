@@ -3140,6 +3140,62 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             lastStatsTitleTime_ = titleUpdateTime;
         }
     }
+#if OPENBUS_ENABLE_PERF_TRACE
+    {
+        static bool wasRecording = false;
+        static std::chrono::steady_clock::time_point lastProfileSummaryTime;
+        const bool recording = !renderingReflection_ && openbus::rendering::IsRecording();
+        if (recording && !wasRecording) {
+            Vehicle::consumeDrawProfileStats();
+            lastProfileSummaryTime = std::chrono::steady_clock::now();
+        } else if (recording) {
+            const auto now = std::chrono::steady_clock::now();
+            const double elapsedSeconds =
+                std::chrono::duration<double>(now - lastProfileSummaryTime).count();
+            if (elapsedSeconds >= 2.0) {
+                const Vehicle::DrawProfileStats stats = Vehicle::consumeDrawProfileStats();
+                const std::uint64_t totalSorts =
+                    stats.transparentSortCacheHits + stats.transparentSortCacheMisses;
+                const double cacheHitPercent =
+                    totalSorts == 0 ? 0.0
+                                    : 100.0 * static_cast<double>(stats.transparentSortCacheHits) /
+                                          static_cast<double>(totalSorts);
+                std::ostringstream summary;
+                summary << std::fixed << std::setprecision(1) << "Vehicle draw profile ("
+                        << elapsedSeconds << " s): transparent sort "
+                        << stats.transparentSortCacheHits << " cache hits / "
+                        << stats.transparentSortCacheMisses << " misses (" << cacheHitPercent
+                        << "% hit), " << stats.transparentTrianglesSorted
+                        << " triangles sorted; indirect culling " << stats.indirectPrepareCalls
+                        << " preparations, " << stats.indirectItems << " items, "
+                        << stats.indirectDispatches << " dispatches, "
+                        << stats.indirectDispatchFailures << " failures, "
+                        << stats.indirectEmptyCandidateSkips
+                        << " empty-candidate preparations skipped; "
+                        << stats.indirectCandidateParts << " candidate parts, rejected "
+                        << stats.indirectRejectedForStateOrView << " by state/view, "
+                        << stats.indirectRejectedByFrustum << " by frustum, "
+                        << stats.indirectRejectedByLod << " by LOD, "
+                        << stats.indirectRejectedByProjectedSize << " by projected size, "
+                        << stats.indirectEligibleParts << " eligible, "
+                        << stats.indirectEmptyResultPreparations
+                        << " preparations yielded no items.";
+                for (const Vehicle::DrawProfileStats::TransparentSortBatch& batch :
+                     stats.topTransparentSortBatches) {
+                    summary << "\n  transparent sort part=\"" << batch.meshName << "\"";
+                    if (!batch.meshIdentifier.empty()) {
+                        summary << " id=\"" << batch.meshIdentifier << "\"";
+                    }
+                    summary << " batch=" << batch.batchIndex << " vertices=" << batch.vertexCount
+                            << " misses=" << batch.misses << " triangles=" << batch.trianglesSorted;
+                }
+                gameLog.Log(LogLevel::Info, summary.str());
+                lastProfileSummaryTime = now;
+            }
+        }
+        wasRecording = recording;
+    }
+#endif
 }
 
 void RenderLoop::endFrame() {

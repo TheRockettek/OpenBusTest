@@ -1973,13 +1973,17 @@ void RenderLoop::updatePostPhysicsVariables(const BusSimulation& simulation) {
 void RenderLoop::updateScripts() {
     TraceScope trace("script", "RenderLoop::updateScripts");
     const auto updatePlayerAndMapScripts = [&] {
-        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-            if (vehicle.get() == playerVehicle_ && !vehicle->mapTrafficRouteFinished &&
-                (!vehicle->followsMapTrafficRoute || vehicle->mapTrafficTileActive)) {
-                vehicle->updateScripts(false);
+        {
+            TraceScope playerTrace("script", "RenderLoop::updateScripts.playerVehicle");
+            for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+                if (vehicle.get() == playerVehicle_ && !vehicle->mapTrafficRouteFinished &&
+                    (!vehicle->followsMapTrafficRoute || vehicle->mapTrafficTileActive)) {
+                    vehicle->updateScripts(false);
+                }
             }
         }
         if (mapRenderer_ != nullptr) {
+            TraceScope mapTrace("script", "RenderLoop::updateScripts.map");
             mapRenderer_->updateScripts();
         }
     };
@@ -2025,10 +2029,13 @@ void RenderLoop::updateScripts() {
     for (int tick = 0; tick < aiSchedule.ticks; ++tick) {
         simulationState_.sharedVariables().set("timegap", aiScriptTimeStep);
         TraceScope aiTrace("script", "RenderLoop::updateAiVehicleScripts");
-        for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
-            if (vehicle.get() != playerVehicle_ && !vehicle->mapTrafficRouteFinished &&
-                (!vehicle->followsMapTrafficRoute || vehicle->mapTrafficTileActive)) {
-                vehicle->updateScripts(true);
+        {
+            TraceScope aiVehiclesTrace("script", "RenderLoop::updateScripts.activeAiVehicles");
+            for (const std::unique_ptr<Vehicle>& vehicle : vehicles_) {
+                if (vehicle.get() != playerVehicle_ && !vehicle->mapTrafficRouteFinished &&
+                    (!vehicle->followsMapTrafficRoute || vehicle->mapTrafficTileActive)) {
+                    vehicle->updateScripts(true);
+                }
             }
         }
     }

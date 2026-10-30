@@ -708,7 +708,10 @@ bool ScriptRuntime::Impl::tryInitializeNativeBackend() {
             nativePrograms.clear();
             return false;
         }
-        nativePrograms.push_back(std::move(program));
+        if (std::find(nativePrograms.begin(), nativePrograms.end(), program) ==
+            nativePrograms.end()) {
+            nativePrograms.push_back(std::move(program));
+        }
     }
     nativeBackend = !nativePrograms.empty();
     if (nativeBackend && compiledAnyScript) {

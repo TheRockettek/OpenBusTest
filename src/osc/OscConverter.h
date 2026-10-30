@@ -1,11 +1,13 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-inline constexpr char kOscConverterVersion[] = "14";
+inline constexpr char kOscConverterVersion[] = "16";
+inline constexpr std::size_t kOscRegisterCount = 10;
 
 enum class OscOpcode {
     PushNumber,

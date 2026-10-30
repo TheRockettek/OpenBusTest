@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <ode/ode.h>
@@ -85,6 +86,14 @@ int checkedOdeCount(std::size_t count, const char* label) {
 } // namespace
 
 struct BusSimulation::Impl {
+    struct CollisionProfileCounters {
+        std::uint64_t callbackPairs = 0;
+        std::uint64_t filteredPairs = 0;
+        std::uint64_t narrowphaseCalls = 0;
+        std::uint64_t contacts = 0;
+        std::uint64_t contactJoints = 0;
+    };
+
     struct Corner {
         dReal x;
         dReal y;
@@ -137,6 +146,9 @@ struct BusSimulation::Impl {
     bool dropReported = false;
     bool frozen = false;
     double simulationTime = 0.0;
+    CollisionProfileCounters collisionProfileCounters;
+    std::chrono::steady_clock::time_point collisionProfileWindowStart;
+    bool collisionProfileWindowStarted = false;
 
     dReal suspensionAnchorZ(std::size_t index) const {
         return corners[index].wheelRadius + SUSP_REST - configuration.centerOfGravityHeight;
@@ -172,6 +184,10 @@ struct BusSimulation::Impl {
 
     static void nearCallback(void* context, dGeomID first, dGeomID second) {
         auto* simulation = static_cast<Impl*>(context);
+        const bool profileRecording = openbus::rendering::IsRecording();
+        if (profileRecording) {
+            ++simulation->collisionProfileCounters.callbackPairs;
+        }
         World& world = simulation->world;
         const bool firstHasBody = dGeomGetBody(first) != nullptr;
         const bool secondHasBody = dGeomGetBody(second) != nullptr;
@@ -180,6 +196,9 @@ struct BusSimulation::Impl {
         const bool isPoleContact = firstIsPole || secondIsPole;
         if ((!firstHasBody && !secondHasBody) ||
             (firstHasBody && secondHasBody && !isPoleContact)) {
+            if (profileRecording) {
+                ++simulation->collisionProfileCounters.filteredPairs;
+            }
             return;
         }
         const bool firstIsWheel = simulation->wheelGeometries.contains(first);
@@ -187,28 +206,77 @@ struct BusSimulation::Impl {
         const bool isWheelStaticContact =
             (firstIsWheel && !secondHasBody) || (secondIsWheel && !firstHasBody);
         dContact contacts[4] = {};
-        const int count = dCollide(first, second, 4, &contacts[0].geom, sizeof(dContact));
-        for (int index = 0; index < count; ++index) {
-            if (firstIsPole && secondHasBody && !secondIsPole) {
-                world.recordMapPoleContact(first);
-            } else if (secondIsPole && firstHasBody && !firstIsPole) {
-                world.recordMapPoleContact(second);
-            }
-            if (firstIsPole && dGeomGetBody(second) == simulation->chassis) {
-                world.recordMapPoleImpact(first, simulation->chassis, contacts[index].geom);
-            } else if (secondIsPole && dGeomGetBody(first) == simulation->chassis) {
-                world.recordMapPoleImpact(second, simulation->chassis, contacts[index].geom);
-            }
-            contacts[index].surface.mode = dContactSoftERP | dContactSoftCFM | dContactApprox1;
-            contacts[index].surface.mu = ROAD_FRICTION_COEFFICIENT;
-            contacts[index].surface.soft_erp =
-                isWheelStaticContact ? simulation->wheelStaticContact.erp : 0.8;
-            contacts[index].surface.soft_cfm =
-                isWheelStaticContact ? simulation->wheelStaticContact.cfm : 1e-6;
-            const dJointID contact =
-                dJointCreateContact(world.physicsWorld(), world.contactGroup(), &contacts[index]);
-            dJointAttach(contact, dGeomGetBody(first), dGeomGetBody(second));
+        int count = 0;
+        {
+            openbus::rendering::TraceScope narrowphase(
+                "physics", "BusSimulation::nearCallback.dCollide");
+            count = dCollide(first, second, 4, &contacts[0].geom, sizeof(dContact));
         }
+        if (profileRecording) {
+            ++simulation->collisionProfileCounters.narrowphaseCalls;
+            simulation->collisionProfileCounters.contacts += static_cast<std::uint64_t>(count);
+        }
+        {
+            openbus::rendering::TraceScope contactCreation(
+                "physics", "BusSimulation::nearCallback.createContactJoints");
+            for (int index = 0; index < count; ++index) {
+                if (firstIsPole && secondHasBody && !secondIsPole) {
+                    world.recordMapPoleContact(first);
+                } else if (secondIsPole && firstHasBody && !firstIsPole) {
+                    world.recordMapPoleContact(second);
+                }
+                if (firstIsPole && dGeomGetBody(second) == simulation->chassis) {
+                    world.recordMapPoleImpact(first, simulation->chassis, contacts[index].geom);
+                } else if (secondIsPole && dGeomGetBody(first) == simulation->chassis) {
+                    world.recordMapPoleImpact(second, simulation->chassis, contacts[index].geom);
+                }
+                contacts[index].surface.mode =
+                    dContactSoftERP | dContactSoftCFM | dContactApprox1;
+                contacts[index].surface.mu = ROAD_FRICTION_COEFFICIENT;
+                contacts[index].surface.soft_erp =
+                    isWheelStaticContact ? simulation->wheelStaticContact.erp : 0.8;
+                contacts[index].surface.soft_cfm =
+                    isWheelStaticContact ? simulation->wheelStaticContact.cfm : 1e-6;
+                const dJointID contact = dJointCreateContact(
+                    world.physicsWorld(), world.contactGroup(), &contacts[index]);
+                dJointAttach(contact, dGeomGetBody(first), dGeomGetBody(second));
+                if (profileRecording) {
+                    ++simulation->collisionProfileCounters.contactJoints;
+                }
+            }
+        }
+    }
+
+    void logCollisionProfileIfDue() {
+        const bool profileRecording = openbus::rendering::IsRecording();
+        if (!profileRecording) {
+            collisionProfileCounters = {};
+            collisionProfileWindowStarted = false;
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (!collisionProfileWindowStarted) {
+            collisionProfileWindowStart = now;
+            collisionProfileWindowStarted = true;
+            return;
+        }
+        const double elapsedSeconds =
+            std::chrono::duration<double>(now - collisionProfileWindowStart).count();
+        if (elapsedSeconds < 2.0) {
+            return;
+        }
+        simulationLog.Log(
+            LogLevel::Info,
+            "Physics collision profile (" + std::to_string(elapsedSeconds) +
+                " s): callback pairs=" + std::to_string(collisionProfileCounters.callbackPairs) +
+                ", filtered pairs=" + std::to_string(collisionProfileCounters.filteredPairs) +
+                ", dCollide calls=" +
+                std::to_string(collisionProfileCounters.narrowphaseCalls) +
+                ", contacts=" + std::to_string(collisionProfileCounters.contacts) +
+                ", contact joints=" +
+                std::to_string(collisionProfileCounters.contactJoints));
+        collisionProfileCounters = {};
+        collisionProfileWindowStart = now;
     }
 
     Impl(World& simulationWorld, BusConfiguration vehicle, VehiclePlacement vehiclePlacement,
@@ -686,6 +754,7 @@ struct BusSimulation::Impl {
             world.collideAndStep(fixedStep, this, &nearCallback);
             refreshWheelTelemetry();
         }
+        logCollisionProfileIfDue();
         simulationTime += fixedStep;
     }
 

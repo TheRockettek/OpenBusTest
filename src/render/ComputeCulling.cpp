@@ -500,39 +500,55 @@ static bool dispatchCulling(std::span<const CullingItem> items, const CullingPla
             storageBindingsCaptured = true;
         }
     }
-    pglBindBuffer(storageBuffer, buffers[0]);
-    pglBufferData(storageBuffer, static_cast<std::ptrdiff_t>(items.size_bytes()), items.data(),
-                  streamDraw);
-    pglBindBuffer(storageBuffer, output);
-    pglBufferData(storageBuffer,
-                  static_cast<std::ptrdiff_t>(items.size() * sizeof(std::uint32_t) *
-                                              (visibility         ? 1
-                                               : occlusionProxies ? 10
-                                                                  : 5)),
-                  nullptr, streamDraw);
-    const bool uploadLod = !lodBufferInitialized ||
-                           !std::equal(lodBoundaries.begin(), lodBoundaries.end(),
-                                       uploadedLodBoundaries.begin(), uploadedLodBoundaries.end());
-    if (uploadLod) {
-        pglBindBuffer(storageBuffer, buffers[2]);
-        const float dummy = 0.0F;
-        pglBufferData(
-            storageBuffer,
-            static_cast<std::ptrdiff_t>(std::max(lodBoundaries.size_bytes(), sizeof(float))),
-            lodBoundaries.empty() ? &dummy : lodBoundaries.data(), streamDraw);
+    const char* uploadName = visibility ? "ComputeCulling::dispatchAndReadback.uploadBuffers"
+                                        : "ComputeCulling::dispatchIndirect.uploadBuffers";
+    bool uploadLod = false;
+    {
+        TraceScope upload("render", uploadName);
+        pglBindBuffer(storageBuffer, buffers[0]);
+        pglBufferData(storageBuffer, static_cast<std::ptrdiff_t>(items.size_bytes()), items.data(),
+                      streamDraw);
+        pglBindBuffer(storageBuffer, output);
+        pglBufferData(storageBuffer,
+                      static_cast<std::ptrdiff_t>(items.size() * sizeof(std::uint32_t) *
+                                                  (visibility         ? 1
+                                                   : occlusionProxies ? 10
+                                                                      : 5)),
+                      nullptr, streamDraw);
+        uploadLod = !lodBufferInitialized ||
+                    !std::equal(lodBoundaries.begin(), lodBoundaries.end(),
+                                uploadedLodBoundaries.begin(), uploadedLodBoundaries.end());
+        if (uploadLod) {
+            pglBindBuffer(storageBuffer, buffers[2]);
+            const float dummy = 0.0F;
+            pglBufferData(
+                storageBuffer,
+                static_cast<std::ptrdiff_t>(std::max(lodBoundaries.size_bytes(), sizeof(float))),
+                lodBoundaries.empty() ? &dummy : lodBoundaries.data(), streamDraw);
+        }
     }
-    pglBindBufferBase(storageBuffer, 0, buffers[0]);
-    pglBindBufferBase(storageBuffer, 1, output);
-    pglBindBufferBase(storageBuffer, 2, buffers[2]);
-    pglUseProgram(program);
-    pglUniform4fv(planesLocation, 6, planes[0].data());
-    pglUniform1i(countLocation, static_cast<GLint>(items.size()));
-    pglUniform1i(indirectLocation, visibility ? 0 : 1);
-    pglUniform1i(proxyCommandsLocation, occlusionProxies ? 1 : 0);
-    pglUniform1f(projectionScaleLocation, projectedSize.projectionScale);
-    pglUniform1f(minimumFractionLocation, projectedSize.minimumFraction);
-    pglDispatchCompute(static_cast<GLuint>((items.size() + 63) / 64), 1, 1);
-    pglMemoryBarrier(visibility ? 0x0200 /* BUFFER_UPDATE */ : 0x0040 /* COMMAND */);
+    const char* dispatchSetupName = visibility ? "ComputeCulling::dispatchAndReadback.configure"
+                                               : "ComputeCulling::dispatchIndirect.configure";
+    {
+        TraceScope setup("render", dispatchSetupName);
+        pglBindBufferBase(storageBuffer, 0, buffers[0]);
+        pglBindBufferBase(storageBuffer, 1, output);
+        pglBindBufferBase(storageBuffer, 2, buffers[2]);
+        pglUseProgram(program);
+        pglUniform4fv(planesLocation, 6, planes[0].data());
+        pglUniform1i(countLocation, static_cast<GLint>(items.size()));
+        pglUniform1i(indirectLocation, visibility ? 0 : 1);
+        pglUniform1i(proxyCommandsLocation, occlusionProxies ? 1 : 0);
+        pglUniform1f(projectionScaleLocation, projectedSize.projectionScale);
+        pglUniform1f(minimumFractionLocation, projectedSize.minimumFraction);
+    }
+    const char* executeName = visibility ? "ComputeCulling::dispatchAndReadback.execute"
+                                         : "ComputeCulling::dispatchIndirect.execute";
+    {
+        TraceScope execute("render", executeName);
+        pglDispatchCompute(static_cast<GLuint>((items.size() + 63) / 64), 1, 1);
+        pglMemoryBarrier(visibility ? 0x0200 /* BUFFER_UPDATE */ : 0x0040 /* COMMAND */);
+    }
     // CPU submission needs this view's result for sorting/material resolution.
     // This read blocks; an indirect renderer would remove that synchronization.
     if (visibility) {

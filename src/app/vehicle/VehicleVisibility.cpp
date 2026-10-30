@@ -40,6 +40,8 @@ void Vehicle::prepareFrameVisibility(RenderViewContext context, int viewportWidt
         visibleOpaquePickPartIndices.clear();
         visibleReflectionTextureIndices.clear();
         reflectionRequiredSizes.clear();
+        indirectCandidatePartIndices.clear();
+        indirectCandidatePartIndices.reserve(displayLists.size());
     }
     const auto& modelView = openbus::rendering::modelViewMatrix();
     const auto& projection = openbus::rendering::projectionMatrix();
@@ -55,7 +57,13 @@ void Vehicle::prepareFrameVisibility(RenderViewContext context, int viewportWidt
                 part.visibleVariable.empty() ||
                 variables.get(part.visibleVariable) == static_cast<double>(part.visibleValue);
             variableVisibleParts[partIndex] = visible;
-            if (!visible || !openbus::rendering::viewpointMatches(part.viewpoint, context)) {
+            if (!visible) {
+                continue;
+            }
+            if (!part.batches.empty()) {
+                indirectCandidatePartIndices.push_back(partIndex);
+            }
+            if (!openbus::rendering::viewpointMatches(part.viewpoint, context)) {
                 continue;
             }
             const bool lodMatches =

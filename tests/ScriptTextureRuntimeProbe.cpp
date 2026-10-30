@@ -546,6 +546,45 @@ int main() {
             return 1;
         }
     }
+    const std::filesystem::path registerScriptPath = root / "register9.osc";
+    {
+        std::ofstream registerScript(registerScriptPath);
+        registerScript << "{init}\n"
+                          "42 s9 l9 (S.L.register_nine)\n"
+                          "0 (S.L.frame_count)\n"
+                          "{end}\n"
+                          "{frame}\n"
+                          "(L.L.frame_count) 1 + (S.L.frame_count)\n"
+                          "{end}\n";
+    }
+    VehicleConfig registerConfiguration;
+    registerConfiguration.sourcePath = root / "register.bus";
+    registerConfiguration.scripts = {registerScriptPath.filename().string(),
+                                     registerScriptPath.filename().string()};
+    registerConfiguration.floatVariables = {"register_nine", "frame_count"};
+    if (!setScriptBackend("native")) {
+        std::cerr << "could not select native backend for OSC register 9 probe\n";
+        return 1;
+    }
+    {
+        Variables registerVariables(ScriptObjectKind::Vehicle);
+        SimulationState registerSimulation;
+        ScriptRuntime registerRuntime(registerConfiguration, registerVariables,
+                                      registerSimulation);
+        registerRuntime.initialize();
+        registerRuntime.update(false);
+        if (registerVariables.get("register_nine") != 42.0 ||
+            registerVariables.get("frame_count") != 1.0) {
+            std::cerr << "native OSC register 9 or duplicate-script deduplication failed\n";
+            return 1;
+        }
+    }
+    std::string registerLuaError;
+    if (!convertOscToLua(registerScriptPath, generatedLuaPath(registerScriptPath),
+                         registerLuaError)) {
+        std::cerr << "could not generate Lua register 9 probe: " << registerLuaError << "\n";
+        return 1;
+    }
     std::string numericLuaError;
     if (!convertOscToLua(numericScriptPath, generatedLuaPath(numericScriptPath), numericLuaError)) {
         std::cerr << "could not generate numeric semantics Lua probe: " << numericLuaError << "\n";
@@ -575,6 +614,19 @@ int main() {
                       << " and=" << numericVariables.get("boolean_and")
                       << " or=" << numericVariables.get("boolean_or")
                       << " compare=" << numericVariables.get("boolean_compare") << "\n";
+            return 1;
+        }
+    }
+    {
+        Variables registerVariables(ScriptObjectKind::Vehicle);
+        SimulationState registerSimulation;
+        ScriptRuntime registerRuntime(registerConfiguration, registerVariables,
+                                      registerSimulation);
+        registerRuntime.initialize();
+        registerRuntime.update(false);
+        if (registerVariables.get("register_nine") != 42.0 ||
+            registerVariables.get("frame_count") != 1.0) {
+            std::cerr << "generated Lua register 9 or duplicate-script handling failed\n";
             return 1;
         }
     }

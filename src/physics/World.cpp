@@ -952,13 +952,29 @@ void World::recordMapPoleImpact(dGeomID geometry, dBodyID vehicleBody,
 }
 
 void World::collideAndStep(dReal fixedStep, void* context, dNearCallback callback) {
+    openbus::rendering::TraceScope trace("physics", "World::collideAndStep");
     impl_->poleContactsCurrent.clear();
     impl_->poleCollisionContactsCurrent.clear();
     impl_->poleImpactsCurrent.clear();
-    dSpaceCollide(impl_->ode.space, context, callback);
-    impl_->applyPoleImpacts();
-    impl_->updatePoleBends(fixedStep);
-    dWorldStep(impl_->ode.world, fixedStep);
-    dJointGroupEmpty(impl_->ode.contacts);
+    {
+        openbus::rendering::TraceScope phase("physics", "World::collideAndStep.collisionCallbacks");
+        dSpaceCollide(impl_->ode.space, context, callback);
+    }
+    {
+        openbus::rendering::TraceScope phase("physics", "World::collideAndStep.applyPoleImpacts");
+        impl_->applyPoleImpacts();
+    }
+    {
+        openbus::rendering::TraceScope phase("physics", "World::collideAndStep.updatePoleBends");
+        impl_->updatePoleBends(fixedStep);
+    }
+    {
+        openbus::rendering::TraceScope phase("physics", "World::collideAndStep.odeStep");
+        dWorldStep(impl_->ode.world, fixedStep);
+    }
+    {
+        openbus::rendering::TraceScope phase("physics", "World::collideAndStep.clearContacts");
+        dJointGroupEmpty(impl_->ode.contacts);
+    }
     impl_->poleContactsPrevious = impl_->poleContactsCurrent;
 }

@@ -3,6 +3,19 @@
 #include "app/vehicle/Vehicle.h"
 #include "app/vehicle/VehicleDrawSorting.h"
 
+#include <algorithm>
+#include <map>
+#include <tuple>
+
+namespace {
+
+Vehicle::DrawProfileStats vehicleDrawProfileStats;
+using TransparentSortProfileKey = std::tuple<std::string, std::string, std::size_t, std::size_t>;
+std::map<TransparentSortProfileKey, Vehicle::DrawProfileStats::TransparentSortBatch>
+    transparentSortBatchProfileStats;
+
+} // namespace
+
 void Vehicle::setOneSidedFrontFaceConvention() {
     glFrontFace(GL_CW);
     // Face selection is conditional in the model shader so generated and
@@ -139,7 +152,8 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
     }
 }
 
-GLuint Vehicle::sortTransparentBatch(Batch& batch) {
+GLuint Vehicle::sortTransparentBatch(Batch& batch, const DisplayPart& part,
+                                     std::size_t batchIndex) {
     const auto& modelView = openbus::rendering::modelViewMatrix();
     const std::array<double, 3> depthAxis =
         openbus::app::vehicle::transparentTriangleDepthAxis(modelView);
@@ -147,28 +161,56 @@ GLuint Vehicle::sortTransparentBatch(Batch& batch) {
     for (const Batch::TransparentSortCacheEntry& entry : batch.transparentSortCache) {
         if (entry.valid && entry.source == source && entry.vertexCount == batch.vertices.size() &&
             entry.depthAxis == depthAxis) {
+            if (openbus::rendering::IsRecording()) {
+                ++vehicleDrawProfileStats.transparentSortCacheHits;
+            }
             TraceScope cacheHit("render", "Vehicle::draw.transparentSortCacheHit");
             return entry.indexBuffer;
         }
+    }
+    auto profileEntry = transparentSortBatchProfileStats.end();
+    if (openbus::rendering::IsRecording()) {
+        ++vehicleDrawProfileStats.transparentSortCacheMisses;
+        const TransparentSortProfileKey key{part.meshName, part.meshIdentifier, batchIndex,
+                                            batch.vertices.size()};
+        profileEntry = transparentSortBatchProfileStats.try_emplace(key).first;
+        auto& batchStats = profileEntry->second;
+        batchStats.meshName = part.meshName;
+        batchStats.meshIdentifier = part.meshIdentifier;
+        batchStats.batchIndex = batchIndex;
+        batchStats.vertexCount = batch.vertices.size();
+        ++batchStats.misses;
     }
     TraceScope sortTrace("render", "Vehicle::draw.transparentTriangleSort");
     static thread_local std::vector<openbus::app::vehicle::TransparentTriangleDepth>
         triangleDepthScratch;
     static thread_local std::vector<std::size_t> triangleOrderScratch;
     static thread_local std::vector<GLuint> sortedIndices;
-    openbus::app::vehicle::transparentTriangleOrder(batch.vertices, modelView, triangleDepthScratch,
-                                                    triangleOrderScratch);
+    {
+        TraceScope phase("render", "Vehicle::draw.transparentTriangleSort.depthOrder");
+        openbus::app::vehicle::transparentTriangleOrder(batch.vertices, modelView,
+                                                        triangleDepthScratch, triangleOrderScratch);
+    }
     const std::vector<std::size_t>& triangleOrder = triangleOrderScratch;
     if (triangleOrder.empty() ||
         batch.vertices.size() > static_cast<std::size_t>(std::numeric_limits<GLuint>::max())) {
         return 0;
     }
     sortedIndices.resize(batch.vertices.size());
-    std::size_t sortedIndex = 0;
-    for (const std::size_t index : triangleOrder) {
-        sortedIndices[sortedIndex++] = static_cast<GLuint>(index);
-        sortedIndices[sortedIndex++] = static_cast<GLuint>(index + 1);
-        sortedIndices[sortedIndex++] = static_cast<GLuint>(index + 2);
+    {
+        TraceScope phase("render", "Vehicle::draw.transparentTriangleSort.buildIndices");
+        std::size_t sortedIndex = 0;
+        for (const std::size_t index : triangleOrder) {
+            sortedIndices[sortedIndex++] = static_cast<GLuint>(index);
+            sortedIndices[sortedIndex++] = static_cast<GLuint>(index + 1);
+            sortedIndices[sortedIndex++] = static_cast<GLuint>(index + 2);
+        }
+    }
+    if (openbus::rendering::IsRecording()) {
+        vehicleDrawProfileStats.transparentTrianglesSorted += triangleOrder.size();
+        if (profileEntry != transparentSortBatchProfileStats.end()) {
+            profileEntry->second.trianglesSorted += triangleOrder.size();
+        }
     }
     sortTrace.finish();
     std::size_t cacheSlot = batch.transparentSortCache.size();
@@ -203,6 +245,30 @@ GLuint Vehicle::sortTransparentBatch(Batch& batch) {
     entry.indexBuffer = indexBuffer;
     entry.valid = true;
     return indexBuffer;
+}
+
+Vehicle::DrawProfileStats Vehicle::consumeDrawProfileStats() {
+    DrawProfileStats result = vehicleDrawProfileStats;
+    result.topTransparentSortBatches.reserve(transparentSortBatchProfileStats.size());
+    for (const auto& [key, stats] : transparentSortBatchProfileStats) {
+        static_cast<void>(key);
+        result.topTransparentSortBatches.push_back(stats);
+    }
+    std::sort(result.topTransparentSortBatches.begin(), result.topTransparentSortBatches.end(),
+              [](const DrawProfileStats::TransparentSortBatch& first,
+                 const DrawProfileStats::TransparentSortBatch& second) {
+                  if (first.trianglesSorted != second.trianglesSorted) {
+                      return first.trianglesSorted > second.trianglesSorted;
+                  }
+                  return first.misses > second.misses;
+              });
+    constexpr std::size_t maxLoggedBatches = 5;
+    if (result.topTransparentSortBatches.size() > maxLoggedBatches) {
+        result.topTransparentSortBatches.resize(maxLoggedBatches);
+    }
+    vehicleDrawProfileStats = {};
+    transparentSortBatchProfileStats.clear();
+    return result;
 }
 
 void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
@@ -259,7 +325,8 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
 
     if (reusePreparedDraw) {
         indirect = preparedDrawIndirect;
-    } else if (openbus::rendering::indirectCullingAvailable()) {
+    } else if (openbus::rendering::indirectCullingAvailable() &&
+               !indirectCandidatePartIndices.empty()) {
         TraceScope phase("render", "Vehicle::draw.prepareIndirect");
         using namespace openbus::rendering;
         static thread_local std::vector<CullingItem> items;
@@ -270,37 +337,83 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
         const auto cullingPlanes = makeCullingPlanes(projection);
         const auto projectedSize =
             makeCullingProjectedSize(projection, minimumObjectViewportFraction);
-        for (DisplayPart& part : displayLists) {
-            part.indirectEligible = false;
-            for (Batch& batch : part.batches)
-                batch.indirectSlot = std::numeric_limits<std::size_t>::max();
-            const std::size_t partIndex = static_cast<std::size_t>(&part - displayLists.data());
-            if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex] ||
-                !openbus::rendering::viewpointMatches(part.viewpoint, context))
-                continue;
-            auto item = makeCullingItem(modelView, animatedPartCenter(part), part.radius);
-            item.metadata[0] = frustumCulling ? CullFrustum : 0U;
-            item.metadata[0] |= CullProjectedSize;
-            if (part.lodIndex >= 0 && !boundaries.empty()) {
-                item.metadata[0] |= CullLod;
-                item.metadata[1] = static_cast<std::uint32_t>(part.lodIndex);
-                item.metadata[3] = static_cast<std::uint32_t>(boundaries.size());
-            }
-            if (!cullingFrustumMayIntersect(item, cullingPlanes) ||
-                !cullingLodMayMatch(item, boundaries) ||
-                !cullingProjectedSizeMayPass(item, projectedSize))
-                continue;
-            part.indirectEligible = true;
-            for (Batch& batch : part.batches) {
-                item.draw[0] = batch.vertexCount <=
-                                       static_cast<std::size_t>(std::numeric_limits<GLsizei>::max())
-                                   ? static_cast<std::uint32_t>(batch.vertexCount)
-                                   : std::numeric_limits<std::uint32_t>::max();
-                batch.indirectSlot = items.size();
-                items.push_back(item);
+        const bool profileRecording = openbus::rendering::IsRecording();
+        {
+            TraceScope itemBuild("render", "Vehicle::draw.prepareIndirect.collectItems");
+            for (const std::size_t partIndex : indirectCandidatePartIndices) {
+                if (profileRecording) {
+                    ++vehicleDrawProfileStats.indirectCandidateParts;
+                }
+                if (partIndex >= displayLists.size()) {
+                    if (profileRecording) {
+                        ++vehicleDrawProfileStats.indirectRejectedForStateOrView;
+                    }
+                    continue;
+                }
+                DisplayPart& part = displayLists[partIndex];
+                part.indirectEligible = false;
+                if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex] ||
+                    !openbus::rendering::viewpointMatches(part.viewpoint, context)) {
+                    if (profileRecording) {
+                        ++vehicleDrawProfileStats.indirectRejectedForStateOrView;
+                    }
+                    continue;
+                }
+                auto item = makeCullingItem(modelView, animatedPartCenter(part), part.radius);
+                item.metadata[0] = frustumCulling ? CullFrustum : 0U;
+                item.metadata[0] |= CullProjectedSize;
+                if (part.lodIndex >= 0 && !boundaries.empty()) {
+                    item.metadata[0] |= CullLod;
+                    item.metadata[1] = static_cast<std::uint32_t>(part.lodIndex);
+                    item.metadata[3] = static_cast<std::uint32_t>(boundaries.size());
+                }
+                if (!cullingFrustumMayIntersect(item, cullingPlanes)) {
+                    if (profileRecording) {
+                        ++vehicleDrawProfileStats.indirectRejectedByFrustum;
+                    }
+                    continue;
+                }
+                if (!cullingLodMayMatch(item, boundaries)) {
+                    if (profileRecording) {
+                        ++vehicleDrawProfileStats.indirectRejectedByLod;
+                    }
+                    continue;
+                }
+                if (!cullingProjectedSizeMayPass(item, projectedSize)) {
+                    if (profileRecording) {
+                        ++vehicleDrawProfileStats.indirectRejectedByProjectedSize;
+                    }
+                    continue;
+                }
+                if (profileRecording) {
+                    ++vehicleDrawProfileStats.indirectEligibleParts;
+                }
+                part.indirectEligible = true;
+                for (Batch& batch : part.batches) {
+                    item.draw[0] = batch.vertexCount <= static_cast<std::size_t>(
+                                                            std::numeric_limits<GLsizei>::max())
+                                       ? static_cast<std::uint32_t>(batch.vertexCount)
+                                       : std::numeric_limits<std::uint32_t>::max();
+                    batch.indirectSlot = items.size();
+                    items.push_back(item);
+                }
             }
         }
-        indirect = preparedIndirectBatch.dispatch(items, cullingPlanes, boundaries, projectedSize);
+        if (profileRecording) {
+            ++vehicleDrawProfileStats.indirectPrepareCalls;
+            vehicleDrawProfileStats.indirectItems += items.size();
+            vehicleDrawProfileStats.indirectEmptyResultPreparations += items.empty() ? 1U : 0U;
+        }
+        const bool dispatched =
+            preparedIndirectBatch.dispatch(items, cullingPlanes, boundaries, projectedSize);
+        if (profileRecording && !items.empty()) {
+            ++vehicleDrawProfileStats.indirectDispatches;
+            vehicleDrawProfileStats.indirectDispatchFailures += dispatched ? 0U : 1U;
+        }
+        indirect = dispatched;
+    } else if (openbus::rendering::indirectCullingAvailable() &&
+               openbus::rendering::IsRecording()) {
+        ++vehicleDrawProfileStats.indirectEmptyCandidateSkips;
     }
     const auto selectIndirect = [&](const Batch& batch) {
         if (indirect) {
@@ -538,7 +651,10 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                 }
                 GLuint transparentIndexBuffer = 0;
                 if (alphaMode == 2 && batch.textTextureIndex < 0 && !batch.transmap.name.empty()) {
-                    transparentIndexBuffer = sortTransparentBatch(batch);
+                    const std::size_t batchIndex =
+                        static_cast<std::size_t>(&batch - transparent.part->batches.data());
+                    transparentIndexBuffer =
+                        sortTransparentBatch(batch, *transparent.part, batchIndex);
                 }
                 selectIndirect(batch);
                 drawBatch(batch, alpha, false, nullptr, batch.textTextureIndex >= 0 ? 2 : -1,

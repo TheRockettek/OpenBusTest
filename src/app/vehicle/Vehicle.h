@@ -125,6 +125,34 @@ using openbus::rendering::translationMatrix;
 using openbus::rendering::ViewFrustum;
 
 struct Vehicle {
+    struct DrawProfileStats {
+        struct TransparentSortBatch {
+            std::string meshName;
+            std::string meshIdentifier;
+            std::size_t batchIndex = 0;
+            std::size_t vertexCount = 0;
+            std::uint64_t misses = 0;
+            std::uint64_t trianglesSorted = 0;
+        };
+
+        std::uint64_t transparentSortCacheHits = 0;
+        std::uint64_t transparentSortCacheMisses = 0;
+        std::uint64_t transparentTrianglesSorted = 0;
+        std::uint64_t indirectPrepareCalls = 0;
+        std::uint64_t indirectItems = 0;
+        std::uint64_t indirectDispatches = 0;
+        std::uint64_t indirectDispatchFailures = 0;
+        std::uint64_t indirectEmptyCandidateSkips = 0;
+        std::uint64_t indirectCandidateParts = 0;
+        std::uint64_t indirectRejectedForStateOrView = 0;
+        std::uint64_t indirectRejectedByFrustum = 0;
+        std::uint64_t indirectRejectedByLod = 0;
+        std::uint64_t indirectRejectedByProjectedSize = 0;
+        std::uint64_t indirectEligibleParts = 0;
+        std::uint64_t indirectEmptyResultPreparations = 0;
+        std::vector<TransparentSortBatch> topTransparentSortBatches;
+    };
+
     ModelLoadingPolicy loadingPolicy;
     enum class DeferredTrafficInitializationStep {
         Waiting,
@@ -365,6 +393,7 @@ struct Vehicle {
     std::vector<DisplayPart*> opaquePartsScratch;
     std::vector<TransparentBatch> noDepthOpaqueBatchesScratch;
     std::vector<TransparentBatch> transparentBatchesScratch;
+    std::vector<std::size_t> indirectCandidatePartIndices;
     openbus::rendering::IndirectCullingBatch preparedIndirectBatch;
     std::vector<bool> variableVisibleParts;
     std::vector<std::size_t> visibleClickablePartIndices;
@@ -759,11 +788,12 @@ struct Vehicle {
                    const std::array<double, 3>* overrideColor = nullptr, int alphaModeOverride = -1,
                    bool forceDepthTest = false, GLuint transparentIndexBuffer = 0);
 
-    GLuint sortTransparentBatch(Batch& batch);
+    GLuint sortTransparentBatch(Batch& batch, const DisplayPart& part, std::size_t batchIndex);
 
     void draw(RenderViewContext context, VehicleRenderPass renderPass = VehicleRenderPass::All,
               const Matrix4* groundShadowTransform = nullptr,
               double minimumObjectViewportFraction = 0.0);
+    static DrawProfileStats consumeDrawProfileStats();
 
     bool areObjectsLoaded() const;
 
