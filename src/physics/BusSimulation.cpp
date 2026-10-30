@@ -208,8 +208,8 @@ struct BusSimulation::Impl {
         dContact contacts[4] = {};
         int count = 0;
         {
-            openbus::rendering::TraceScope narrowphase(
-                "physics", "BusSimulation::nearCallback.dCollide");
+            openbus::rendering::TraceScope narrowphase("physics",
+                                                       "BusSimulation::nearCallback.dCollide");
             count = dCollide(first, second, 4, &contacts[0].geom, sizeof(dContact));
         }
         if (profileRecording) {
@@ -230,8 +230,7 @@ struct BusSimulation::Impl {
                 } else if (secondIsPole && dGeomGetBody(first) == simulation->chassis) {
                     world.recordMapPoleImpact(second, simulation->chassis, contacts[index].geom);
                 }
-                contacts[index].surface.mode =
-                    dContactSoftERP | dContactSoftCFM | dContactApprox1;
+                contacts[index].surface.mode = dContactSoftERP | dContactSoftCFM | dContactApprox1;
                 contacts[index].surface.mu = ROAD_FRICTION_COEFFICIENT;
                 contacts[index].surface.soft_erp =
                     isWheelStaticContact ? simulation->wheelStaticContact.erp : 0.8;
@@ -270,11 +269,9 @@ struct BusSimulation::Impl {
             "Physics collision profile (" + std::to_string(elapsedSeconds) +
                 " s): callback pairs=" + std::to_string(collisionProfileCounters.callbackPairs) +
                 ", filtered pairs=" + std::to_string(collisionProfileCounters.filteredPairs) +
-                ", dCollide calls=" +
-                std::to_string(collisionProfileCounters.narrowphaseCalls) +
+                ", dCollide calls=" + std::to_string(collisionProfileCounters.narrowphaseCalls) +
                 ", contacts=" + std::to_string(collisionProfileCounters.contacts) +
-                ", contact joints=" +
-                std::to_string(collisionProfileCounters.contactJoints));
+                ", contact joints=" + std::to_string(collisionProfileCounters.contactJoints));
         collisionProfileCounters = {};
         collisionProfileWindowStart = now;
     }

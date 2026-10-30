@@ -383,18 +383,24 @@ MapRenderer::trafficSignalHeadDebugInfo(double signalClockSeconds) const {
     result.reserve(impl_->activeSceneryScriptStateIndices.size());
     for (const std::size_t stateIndex : impl_->activeSceneryScriptStateIndices) {
         const Impl::SceneryScriptState& scriptState = *impl_->sceneryScriptStates[stateIndex];
-        if (!scriptState.trafficSignal.has_value() || !scriptState.variableParentId.has_value()) {
+        if (!scriptState.trafficLightModel &&
+            (!scriptState.trafficSignal.has_value() ||
+             !scriptState.resolvedSignalParentObjectId.has_value())) {
             continue;
         }
         TrafficSignalHeadDebugInfo info;
         info.objectId = scriptState.mapObjectId;
-        info.linkedJunctionObjectId = scriptState.variableParentId;
+        info.linkedJunctionObjectId = scriptState.resolvedSignalParentObjectId.has_value()
+                                          ? scriptState.resolvedSignalParentObjectId
+                                          : scriptState.variableParentId;
         info.position = scriptState.worldPosition;
         info.tileX = scriptState.ownerTileX;
         info.tileY = scriptState.ownerTileY;
-        info.lightIndex = scriptState.trafficSignal->lightIndex;
-        info.phase = openbus::map::mapTrafficSignalStateAtTime(*scriptState.trafficSignal,
-                                                               signalClockSeconds);
+        if (scriptState.trafficSignal.has_value()) {
+            info.lightIndex = scriptState.trafficSignal->lightIndex;
+            info.phase = openbus::map::mapTrafficSignalStateAtTime(*scriptState.trafficSignal,
+                                                                   signalClockSeconds);
+        }
         result.push_back(std::move(info));
     }
     return result;

@@ -165,7 +165,7 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
         check(static_cast<bool>(output), "Could not write broken probe scenery texture");
     }
     writeText(root / "head.sco",
-              "[trafficlight]\n[script]\n1\nscript\\traf_car.osc\n"
+              "[script]\n1\nscript\\traf_car.osc\n"
               "[varnamelist]\n1\nscript\\traf_car_varlist.txt\n"
               "[mesh]\nred.x\n[matl]\ntraf_LED.tga\n0\n[matl_alpha]\n2\n"
               "[visible]\nmain_red\n1\n"
@@ -173,6 +173,8 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
               "[visible]\nmain_yellow\n1\n"
               "[mesh]\ngreen.x\n[matl]\ntraf_LED.tga\n0\n[matl_alpha]\n2\n"
               "[visible]\nmain_green\n1\n");
+    writeText(root / "support.sco",
+              "[new_attachment]\nhead_mount\nattach_trans\n0\n0\n0\n");
     writeText(root / "Script" / "traf_car_varlist.txt",
               "main_Red\nmain_Yellow\nmain_Green\nsupp_Green\nTime_last\n");
     writeText(root / "Script" / "traf_car.osc",
@@ -187,11 +189,13 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
               "{end}\n");
     writeText(root / "controller.sco",
               "[onlyeditor]\n[traffic_lights_group]\n6\n"
-              "[traffic_light]\nOther approach\n[phase]\n0\n6\n"
               "[traffic_light]\nSelected approach\n[phase]\n0\n2\n"
               "[phase]\n6\n2\n[phase]\n9\n2\n"
+              "[traffic_light]\nOther approach\n[phase]\n0\n6\n"
               "[traffic_light_jump]\n0\n10\n6\n2\n"
-              "[path]\n0\n0\n0\n0\n0\n20\n0\n0\n0\n3\n0\n0\n"
+              "[path]\n60\n0\n0\n0\n0\n10\n0\n0\n0\n3\n0\n0\n"
+              "[use_traffic_light]\n0\n"
+              "[path]\n80\n0\n0\n0\n0\n10\n0\n0\n0\n3\n0\n0\n"
               "[use_traffic_light]\n1\n"
               "[mesh]\ngreen.x\n" +
                   std::string(conditional ? "[traffic_light_stop]\n1\n4\n0\n"
@@ -199,10 +203,15 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
                                           : ""));
     writeText(root / "tile.map",
               splineTileText(1) +
-                  "[object]\n0\ncontroller.sco\n100\n0\n0\n5\n0\n0\n0\n0\n"
+                      "[object]\n0\ncontroller.sco\n15340\n0\n0\n5\n0\n0\n0\n0\n"
                   "[rule]\n0\npriority\n192\n0\n"
-                  "[object]\n0\nhead.sco\n101\n0\n0\n1\n0\n0\n0\n1\n1\n[varparent]\n100\n"
-                  "[attachObj]\n0\nshared.sco\n301\n204\n0\n0\n0\n0\n0\n0\n");
+                      "[object]\n0\nsupport.sco\n15400\n0\n0\n5\n0\n0\n0\n0\n0\n"
+                      "[object]\n0\nsupport.sco\n15401\n80\n0\n5\n0\n0\n0\n0\n0\n"
+                      "[attachObj]\n0\nhead.sco\n47862\n15400\n0\n0\n0\n0\n0\n0\n"
+                      "[varparent]\n15340\n"
+                      "[attachObj]\n0\nhead.sco\n47735\n15401\n0\n0\n0\n0\n0\n0\n"
+                      "[varparent]\n15340\n"
+                      "[attachObj]\n0\nshared.sco\n301\n204\n0\n0\n0\n0\n0\n0\n");
     {
         std::ofstream output(root / "tile.map", std::ios::binary | std::ios::app);
         output << "[water]\n";
@@ -273,15 +282,17 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
             renderer.renderStats().totalTextures == 4,
         "Initial road, water, and asynchronously decoded ground-layer textures must be published");
     const auto& paths = renderer.sceneryTrafficPathSegments();
-    check(paths.size() == 1 && paths.front().trafficSignal.has_value() &&
+    check(    paths.size() == 2 && paths.front().trafficSignal.has_value() &&
               paths.front().pathIndex == 0 && paths.front().widthMeters == 3.0 &&
               paths.front().trafficSignal->lightIndex == 0 &&
               paths.front().trafficSignal->program != nullptr &&
               paths.front().trafficSignal->program->controlPoints.size() == (conditional ? 2U : 0U) &&
               paths.front().pathRules.groups.size() == 1 &&
-              paths.front().pathRules.groups.front().priority == 192.0,
+              paths.front().pathRules.groups.front().priority == 192.0 &&
+              paths.back().trafficSignal.has_value() &&
+              paths.back().trafficSignal->lightIndex == 1,
           "SCO F2 path must retain its map traffic rule and controller/stopline data");
-    const auto aiRoute = renderer.buildDrivingRoute(100);
+    const auto aiRoute = renderer.buildDrivingRoute(15340);
     check(aiRoute.has_value() && !aiRoute->segments.empty() &&
               aiRoute->segments.front().trafficSignal.has_value() &&
               aiRoute->segments.front().pathRules.groups.size() == 1 &&
@@ -291,7 +302,7 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     signalApproach.route = *aiRoute;
     check(openbus::map::mapTrafficActorWaitingAtSignal(signalApproach, 0.0),
           "AI actor on an SCO route must stop at its red signal");
-    check(renderer.renderStats().activeSceneryObjects == 2,
+    check(renderer.renderStats().activeSceneryObjects == 3,
           "Cross-tile spline parents must resolve for active attached scenery");
     setPerspective(32, 32, 90);
     setModelViewMatrix(translationMatrix({0, 0, -12}));
@@ -308,15 +319,23 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
         renderer.updateTrafficSignalScripts(clock);
         renderer.updateScripts();
         const auto stats = renderer.trafficSignalDebugStats();
-        check(stats.activeSignalModels == 2 && stats.modelsWithoutPhase == 0 &&
-                  stats.modelsByPhase[phase] >= 1 && stats.controllerDrivenModels == 2,
+        check(stats.activeSignalModels == 3 && stats.modelsWithoutPhase == 0 &&
+                  stats.modelsByPhase[phase] >= 1 && stats.controllerDrivenModels == 3,
               "Visible head did not inherit its labelled editor-only controller phase");
         const auto signalHeads = renderer.trafficSignalHeadDebugInfo(clock);
-        check(signalHeads.size() == 1 && signalHeads.front().objectId == 101 &&
-                  signalHeads.front().linkedJunctionObjectId == 100 &&
-                  signalHeads.front().lightIndex == 0 && signalHeads.front().phase == phase &&
-                  signalHeads.front().tileX == 0 && signalHeads.front().tileY == 0,
-              "F2 signal-head diagnostics show its linked junction and current light phase");
+        const auto firstHead = std::find_if(
+            signalHeads.begin(), signalHeads.end(),
+            [](const auto& head) { return head.objectId == 47862; });
+        const auto secondHead = std::find_if(
+            signalHeads.begin(), signalHeads.end(),
+            [](const auto& head) { return head.objectId == 47735; });
+        check(signalHeads.size() == 2 && firstHead != signalHeads.end() &&
+                  firstHead->linkedJunctionObjectId == 15340 && firstHead->lightIndex == 0 &&
+                  firstHead->phase == phase && firstHead->tileX == 0 && firstHead->tileY == 0 &&
+                  secondHead != signalHeads.end() &&
+                  secondHead->linkedJunctionObjectId == 15340 &&
+                  secondHead->lightIndex == 1 && secondHead->phase == 0,
+              "Heads sharing a junction resolve separate nearby signal-path light indices");
         glDepthMask(GL_TRUE);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -354,7 +373,7 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     renderer.updateTrafficSignalScripts(6.2);
     renderer.updateScripts();
     const auto priorityStats = renderer.trafficSignalDebugStats();
-    check(priorityStats.modelsByPhase[6] >= 1 && priorityStats.controllerDrivenModels == 2,
+    check(priorityStats.modelsByPhase[6] >= 1 && priorityStats.controllerDrivenModels == 3,
           "player bus approaching the stopline activates its configured green priority phase");
     check(glGetError() == GL_NO_ERROR, "Traffic-light rendering produced an OpenGL error");
 
@@ -375,6 +394,63 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, asyncPixel.data());
     check(asyncPixel[0] > 250 && asyncPixel[1] < 5 && asyncPixel[2] < 5,
           "Traffic-light lamp scripts must run after asynchronous initial-window loading");
+
+    writeText(root / "signal_heads.map",
+              splineTileText(10) +
+                  "[object]\n0\nsupport.sco\n15400\n0\n0\n5\n0\n0\n0\n0\n0\n"
+                  "[object]\n0\nsupport.sco\n15401\n80\n0\n5\n0\n0\n0\n0\n0\n"
+                  "[attachObj]\n0\nhead.sco\n47862\n15400\n0\n0\n0\n0\n0\n1\n5\n"
+                  "[varparent]\n15340\n"
+                  "[attachObj]\n0\nhead.sco\n47735\n15401\n0\n0\n0\n0\n0\n1\n1\n"
+                  "[varparent]\n15340\n");
+    std::string crossTileController = "[onlyeditor]\n[traffic_lights_group]\n6\n";
+    for (int lightIndex = 0; lightIndex < 7; ++lightIndex) {
+        crossTileController += "[traffic_light]\nLight " + std::to_string(lightIndex) +
+                               "\n[phase]\n" + (lightIndex == 1 ? "6" : "0") + "\n6\n";
+    }
+    for (int lightIndex = 0; lightIndex < 7; ++lightIndex) {
+        crossTileController += "[path]\n" + std::to_string(lightIndex * 20) +
+                               "\n0\n0\n0\n0\n10\n0\n0\n0\n3\n0\n0\n"
+                               "[use_traffic_light]\n" +
+                               std::to_string(lightIndex) + "\n";
+    }
+    crossTileController += "[mesh]\ngreen.x\n";
+    writeText(root / "cross_tile_controller.sco", crossTileController);
+    writeText(root / "signal_controller.map",
+              splineTileText(11) +
+                  "[object]\n0\ncross_tile_controller.sco\n15340\n0\n0\n5\n0\n0\n0\n0\n");
+    openbus::map::MapDefinition crossTileMap;
+    crossTileMap.rootPath = root;
+    crossTileMap.coordinates = map.coordinates;
+    crossTileMap.groundTextures = map.groundTextures;
+    for (int tileX = 0; tileX <= 1; ++tileX) {
+        openbus::map::MapTileReference signalTile;
+        signalTile.x = tileX;
+        signalTile.textPath = root / (tileX == 0 ? "signal_heads.map" : "signal_controller.map");
+        signalTile.terrainPath = root / "tile.terrain";
+        signalTile.hasTerrainFile = true;
+        crossTileMap.tiles.push_back(std::move(signalTile));
+    }
+    SimulationState crossTileSimulation;
+    AssetRequestManager crossTileAssets;
+    MapRenderer crossTileRenderer(crossTileMap, 0, 0, 0, 0, root, crossTileSimulation,
+                                  crossTileAssets, true);
+    for (int attempt = 0; attempt < 1000 && !crossTileRenderer.initialWindowReady(); ++attempt) {
+        crossTileRenderer.updateStreaming(0.0, 0.0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    check(crossTileRenderer.initialWindowReady(), "Cross-tile signal fixture must finish loading");
+    const auto crossTileHeads = crossTileRenderer.trafficSignalHeadDebugInfo(0.0);
+    const auto crossTileFirst = std::find_if(
+        crossTileHeads.begin(), crossTileHeads.end(),
+        [](const auto& head) { return head.objectId == 47862; });
+    const auto crossTileSecond = std::find_if(
+        crossTileHeads.begin(), crossTileHeads.end(),
+        [](const auto& head) { return head.objectId == 47735; });
+    check(crossTileFirst != crossTileHeads.end() && crossTileFirst->lightIndex == 5 &&
+              crossTileFirst->phase == 0 && crossTileSecond != crossTileHeads.end() &&
+              crossTileSecond->lightIndex == 1 && crossTileSecond->phase == 6,
+          "Asynchronously loaded cross-tile heads must resolve their explicit SCO light indices");
 
     const std::vector<openbus::map::MapTileCoordinate> originalWindow = {{0, 0}};
     const std::vector<openbus::map::MapTileCoordinate> nextWindow = {{4, 0}, {5, 0}};

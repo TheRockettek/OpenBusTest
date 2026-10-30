@@ -2835,9 +2835,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         signalStats.modelsWithoutPhase);
             const auto signalHeads =
                 mapRenderer_->trafficSignalHeadDebugInfo(simulation.simulationTime());
-            ImGui::Text("Signal heads linked to junction/controllers:");
+            ImGui::Text("Signal heads (including unresolved links):");
             if (signalHeads.empty()) {
-                ImGui::TextDisabled("No linked signal heads in active tiles");
+                ImGui::TextDisabled("No traffic-light model objects found in active tiles");
             }
             for (std::size_t index = 0; index < signalHeads.size(); ++index) {
                 const auto& head = signalHeads[index];
@@ -2853,8 +2853,10 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                 const std::string parentId = head.linkedJunctionObjectId
                                                  ? std::to_string(*head.linkedJunctionObjectId)
                                                  : std::string("?");
-                ImGui::Text("Head #%s -> Junction/controller #%s, light %zu", objectId.c_str(),
-                            parentId.c_str(), head.lightIndex);
+                const std::string lightIndex =
+                    head.lightIndex ? std::to_string(*head.lightIndex) : std::string("?");
+                ImGui::Text("Head #%s -> Junction/controller #%s, light %s", objectId.c_str(),
+                            parentId.c_str(), lightIndex.c_str());
                 ImGui::SameLine();
                 if (head.phase.has_value()) {
                     ImGui::TextColored(phaseColor, "Phase %d (%s)", *head.phase,
@@ -2968,8 +2970,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     " -> J" +
                     (head.linkedJunctionObjectId ? std::to_string(*head.linkedJunctionObjectId)
                                                  : std::string("?")) +
-                    " L" + std::to_string(head.lightIndex) + " PH" +
-                    (head.phase ? std::to_string(*head.phase) : std::string("?")) + " " +
+                    " L" + (head.lightIndex ? std::to_string(*head.lightIndex) : std::string("?")) +
+                    " PH" + (head.phase ? std::to_string(*head.phase) : std::string("?")) + " " +
                     trafficSignalPhaseName(head.phase);
                 ImU32 phaseColor = IM_COL32(255, 80, 65, 255);
                 if (head.phase && *head.phase >= 6 && *head.phase <= 8) {
@@ -3171,10 +3173,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         << stats.indirectDispatches << " dispatches, "
                         << stats.indirectDispatchFailures << " failures, "
                         << stats.indirectEmptyCandidateSkips
-                        << " empty-candidate preparations skipped; "
-                        << stats.indirectCandidateParts << " candidate parts, rejected "
-                        << stats.indirectRejectedForStateOrView << " by state/view, "
-                        << stats.indirectRejectedByFrustum << " by frustum, "
+                        << " empty-candidate preparations skipped; " << stats.indirectCandidateParts
+                        << " candidate parts, rejected " << stats.indirectRejectedForStateOrView
+                        << " by state/view, " << stats.indirectRejectedByFrustum << " by frustum, "
                         << stats.indirectRejectedByLod << " by LOD, "
                         << stats.indirectRejectedByProjectedSize << " by projected size, "
                         << stats.indirectEligibleParts << " eligible, "

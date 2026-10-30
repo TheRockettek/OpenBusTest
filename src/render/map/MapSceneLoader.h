@@ -293,6 +293,7 @@ class MapSceneLoader {
     std::unordered_set<int> ambiguousMapObjectIds;
     std::unordered_map<int, std::uint64_t> mapObjectTileKeysById;
     std::unordered_map<int, std::string> mapObjectAssetPathsById;
+    std::unordered_map<int, int> mapObjectVariableParentsById;
     std::unordered_map<int, openbus::map::MapSplinePlacementReference> mapSplinesById;
     std::unordered_set<int> ambiguousMapSplineIds;
     openbus::map::MapRoadConnectionIndex roadConnections;

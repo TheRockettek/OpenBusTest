@@ -261,7 +261,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
                                         const std::vector<openbus::map::MapTileRule>*
                                             placementRules = nullptr,
                                         std::optional<int> mapObjectId = std::nullopt,
-                                        std::optional<int> variableParentId = std::nullopt) {
+                                        std::optional<int> variableParentId = std::nullopt,
+                                        std::optional<int> attachedParentId = std::nullopt) {
         const std::filesystem::path configPath = resolveSceneryConfigPath(assetPath);
         if (configPath.empty()) {
             recordSkipped(skipped, "scenery placements whose .sco config was not found",
@@ -504,7 +505,9 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             scriptState->trafficSignal = std::move(sceneryTrafficSignal);
             scriptState->trafficSignalsByLightIndex = std::move(sceneryTrafficSignalsByLightIndex);
             scriptState->mapObjectId = mapObjectId;
-            scriptState->variableParentId = variableParentId;
+            scriptState->variableParentId =
+                variableParentId.has_value() ? variableParentId : attachedParentId;
+            scriptState->resolvedSignalParentObjectId = scriptState->variableParentId;
             scriptState->worldPosition = {worldX, worldY, worldZ};
             scriptState->trafficLightModel = trafficLightModel;
             scriptStateIndex = impl_->sceneryScriptStates.size();
@@ -612,7 +615,8 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
         addSceneryInstance(placement->assetPath, description, placement->pose.x, placement->pose.y,
                            placement->pose.z, 0.0, placement->pose.rotationDegrees,
                            placement->pose.rotationCount, &placement->pose.orientationMatrix,
-                           object.labels, &object.rules, object.id, object.variableParentId);
+                           object.labels, &object.rules, object.id, object.variableParentId,
+                           object.attachedToObjectId);
     }
     for (const openbus::map::MapSplineAttachment& attachment : tile.splineAttachments) {
         const std::string description =

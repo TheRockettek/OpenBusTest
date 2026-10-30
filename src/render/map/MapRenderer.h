@@ -47,7 +47,7 @@ struct TrafficSignalHeadDebugInfo {
     std::array<double, 3> position = {};
     int tileX = 0;
     int tileY = 0;
-    std::size_t lightIndex = 0;
+    std::optional<std::size_t> lightIndex;
     std::optional<int> phase;
 };
 

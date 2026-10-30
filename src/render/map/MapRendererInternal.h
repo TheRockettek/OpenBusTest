@@ -364,6 +364,7 @@ struct MapRenderer::Impl {
         std::map<std::size_t, openbus::map::MapTrafficSignalSchedule> trafficSignalsByLightIndex;
         std::optional<int> mapObjectId;
         std::optional<int> variableParentId;
+        std::optional<int> resolvedSignalParentObjectId;
         std::array<double, 3> worldPosition = {};
         bool trafficLightModel = false;
         std::map<std::pair<bool, int>, DynamicSceneryTexture> dynamicTextures;

@@ -1224,6 +1224,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
         pendingTileAssetKeys.erase(key);
         preparedTileRoads.erase(roadData);
         contentChanged = true;
+        resolveTrafficLightVariableParents();
         static_cast<void>(uploadRoadBatches(waitForCompletion));
         if (!waitForCompletion && !roadVertices.empty()) {
             if (!finishTrafficLaneNetworkPreparation(waitForCompletion)) {
@@ -1259,7 +1260,6 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
         reportTileProgress("traffic lane preparation");
         return TileLoadStatus::Pending;
     }
-    resolveTrafficLightVariableParents();
     const bool activeTilesReady =
         std::all_of(tileCoordinates.begin(), tileCoordinates.end(), [this](const auto& coordinate) {
             return loadedContentTileKeys.contains(tileKey(coordinate.first, coordinate.second));
@@ -1290,50 +1290,182 @@ void MapSceneLoader::resolveTrafficLightVariableParents() {
 
     for (const std::unique_ptr<Impl::SceneryScriptState>& scriptState :
          impl_->sceneryScriptStates) {
-        if (!scriptState->trafficLightModel || scriptState->trafficSignal.has_value() ||
-            !scriptState->variableParentId.has_value()) {
+        const bool resolveInheritedTrafficHead = scriptState->trafficLightModel &&
+                                                 scriptState->variableParentId.has_value() &&
+                                                 scriptState->trafficSignalsByLightIndex.empty();
+        if (resolveInheritedTrafficHead) {
+            // SCO paths can arrive in later tile-content updates, so earlier matches are
+            // provisional.
+            scriptState->trafficSignal.reset();
+            scriptState->resolvedSignalParentObjectId = scriptState->variableParentId;
+        } else if (scriptState->trafficSignal.has_value() ||
+                   !scriptState->variableParentId.has_value()) {
             continue;
         }
-        const auto parentState = statesByObjectId.find(*scriptState->variableParentId);
-        if (!ambiguousStateObjectIds.contains(*scriptState->variableParentId) &&
-            parentState != statesByObjectId.end()) {
-            const auto& parentSchedules = parentState->second->trafficSignalsByLightIndex;
-            if (parentSchedules.size() == 1) {
-                scriptState->trafficSignal = parentSchedules.begin()->second;
-                continue;
+        std::optional<int> parentObjectId = scriptState->variableParentId;
+        std::vector<int> parentChain;
+        std::unordered_set<int> visitedParentIds;
+        while (parentObjectId.has_value() && visitedParentIds.insert(*parentObjectId).second &&
+               !ambiguousStateObjectIds.contains(*parentObjectId)) {
+            parentChain.push_back(*parentObjectId);
+            const auto parentState = statesByObjectId.find(*parentObjectId);
+            if (parentState != statesByObjectId.end()) {
+                const auto& parentSchedules = parentState->second->trafficSignalsByLightIndex;
+                if (parentSchedules.empty() && parentState->second->trafficSignal.has_value()) {
+                    scriptState->trafficSignal = parentState->second->trafficSignal;
+                } else if (parentSchedules.size() == 1) {
+                    scriptState->trafficSignal = parentSchedules.begin()->second;
+                } else {
+                    for (const std::string& label : scriptState->placementLabels) {
+                        int lightIndex = -1;
+                        const auto [end, error] =
+                            std::from_chars(label.data(), label.data() + label.size(), lightIndex);
+                        if (error != std::errc{} || end != label.data() + label.size() ||
+                            lightIndex < 0) {
+                            continue;
+                        }
+                        const auto schedule =
+                            parentSchedules.find(static_cast<std::size_t>(lightIndex));
+                        if (schedule != parentSchedules.end()) {
+                            scriptState->trafficSignal = schedule->second;
+                            break;
+                        }
+                    }
+                }
+                if (scriptState->trafficSignal.has_value()) {
+                    scriptState->resolvedSignalParentObjectId = *parentObjectId;
+                    break;
+                }
+                if (!parentSchedules.empty()) {
+                    break;
+                }
             }
-            for (const std::string& label : scriptState->placementLabels) {
-                int lightIndex = -1;
-                const auto [end, error] =
-                    std::from_chars(label.data(), label.data() + label.size(), lightIndex);
-                if (error != std::errc{} || end != label.data() + label.size() || lightIndex < 0) {
+
+            const auto attachedParent = attachedObjectsById.find(*parentObjectId);
+            if (attachedParent != attachedObjectsById.end()) {
+                parentObjectId = attachedParent->second.parentId;
+            } else {
+                const auto variableParent = mapObjectVariableParentsById.find(*parentObjectId);
+                parentObjectId = variableParent == mapObjectVariableParentsById.end()
+                                     ? std::nullopt
+                                     : std::optional<int>(variableParent->second);
+            }
+        }
+        if (!scriptState->trafficSignal.has_value() &&
+            (scriptState->trafficLightModel || scriptState->variableParentId.has_value())) {
+            constexpr double maxSignalHeadPathDistanceMeters = 30.0;
+            constexpr double ambiguousSignalPathDistanceMeters = 1.0;
+            struct NearbySignalPath {
+                const TrafficPathDebugSegment* segment = nullptr;
+                double distanceSquared = std::numeric_limits<double>::infinity();
+            };
+            std::vector<NearbySignalPath> nearbySignalPaths;
+            for (const TrafficPathDebugSegment& segment : impl_->sceneryTrafficPathSegments) {
+                if (!segment.trafficSignal.has_value() ||
+                    segment.pathTypeCode != openbus::map::MAP_SPLINE_PATH_TYPE_ROAD ||
+                    segment.points.size() < 2) {
                     continue;
                 }
-                const auto schedule = parentSchedules.find(static_cast<std::size_t>(lightIndex));
-                if (schedule != parentSchedules.end()) {
-                    scriptState->trafficSignal = schedule->second;
-                    break;
+                double distanceSquared = std::numeric_limits<double>::infinity();
+                for (std::size_t pointIndex = 1; pointIndex < segment.points.size(); ++pointIndex) {
+                    const auto& start = segment.points[pointIndex - 1];
+                    const auto& end = segment.points[pointIndex];
+                    const double dx = end[0] - start[0];
+                    const double dy = end[1] - start[1];
+                    const double lengthSquared = dx * dx + dy * dy;
+                    const double projection =
+                        lengthSquared > 1.0e-12
+                            ? std::clamp(((scriptState->worldPosition[0] - start[0]) * dx +
+                                          (scriptState->worldPosition[1] - start[1]) * dy) /
+                                             lengthSquared,
+                                         0.0, 1.0)
+                            : 0.0;
+                    const double offsetX =
+                        scriptState->worldPosition[0] - start[0] - projection * dx;
+                    const double offsetY =
+                        scriptState->worldPosition[1] - start[1] - projection * dy;
+                    distanceSquared =
+                        std::min(distanceSquared, offsetX * offsetX + offsetY * offsetY);
+                }
+                nearbySignalPaths.push_back({&segment, distanceSquared});
+            }
+            const auto belongsToParentChain = [&](const TrafficPathDebugSegment& segment) {
+                return segment.mapObjectId.has_value() &&
+                       std::find(parentChain.begin(), parentChain.end(),
+                                 *segment.mapObjectId) != parentChain.end();
+            };
+            const bool hasParentOwnedSignalPaths =
+                std::any_of(nearbySignalPaths.begin(), nearbySignalPaths.end(),
+                            [&](const NearbySignalPath& candidate) {
+                                return belongsToParentChain(*candidate.segment);
+                            });
+            if (hasParentOwnedSignalPaths) {
+                std::erase_if(nearbySignalPaths, [&](const NearbySignalPath& candidate) {
+                    return !belongsToParentChain(*candidate.segment);
+                });
+            }
+            std::sort(nearbySignalPaths.begin(), nearbySignalPaths.end(),
+                      [](const NearbySignalPath& first, const NearbySignalPath& second) {
+                          return first.distanceSquared < second.distanceSquared;
+                      });
+            if (!nearbySignalPaths.empty() &&
+                (hasParentOwnedSignalPaths ||
+                 nearbySignalPaths.front().distanceSquared <=
+                     maxSignalHeadPathDistanceMeters * maxSignalHeadPathDistanceMeters)) {
+                const TrafficPathDebugSegment& nearest = *nearbySignalPaths.front().segment;
+                const auto sameSignal = [&](const TrafficPathDebugSegment& candidate) {
+                    const auto& nearestSignal = *nearest.trafficSignal;
+                    const auto& candidateSignal = *candidate.trafficSignal;
+                    return nearestSignal.lightIndex == candidateSignal.lightIndex &&
+                           ((nearestSignal.controller != nullptr &&
+                             nearestSignal.controller == candidateSignal.controller) ||
+                            (nearestSignal.controller == nullptr &&
+                             candidateSignal.controller == nullptr &&
+                             nearest.mapObjectId == candidate.mapObjectId));
+                };
+                const double nearestDistance = std::sqrt(nearbySignalPaths.front().distanceSquared);
+                bool ambiguous = false;
+                for (std::size_t index = 1; index < nearbySignalPaths.size(); ++index) {
+                    const NearbySignalPath& candidate = nearbySignalPaths[index];
+                    if (std::sqrt(candidate.distanceSquared) - nearestDistance >=
+                        ambiguousSignalPathDistanceMeters) {
+                        break;
+                    }
+                    if (!sameSignal(*candidate.segment)) {
+                        ambiguous = true;
+                        break;
+                    }
+                }
+                if (!ambiguous) {
+                    scriptState->trafficSignal = nearest.trafficSignal;
+                    scriptState->resolvedSignalParentObjectId = nearest.mapObjectId;
                 }
             }
         }
         if (!scriptState->trafficSignal.has_value()) {
-            const auto parentTile = mapObjectTileKeysById.find(*scriptState->variableParentId);
+            const int unresolvedParentId = parentChain.empty() ? 0 : parentChain.back();
+            const auto parentTile = mapObjectTileKeysById.find(unresolvedParentId);
             if (parentTile != mapObjectTileKeysById.end() &&
-                !ambiguousStateObjectIds.contains(*scriptState->variableParentId) &&
+                !ambiguousStateObjectIds.contains(unresolvedParentId) &&
                 !loadedContentTileKeys.contains(parentTile->second)) {
                 continue;
             }
-            const std::string selection =
-                scriptState->placementLabels.empty()
-                    ? "no light-index label"
-                    : "light-index labels=" + scriptState->placementLabels.front();
-            recordSkipped(skipped, "[trafficlight] variable parents without a matching schedule",
-                          "object ID=" +
-                              (scriptState->mapObjectId.has_value()
-                                   ? std::to_string(*scriptState->mapObjectId)
-                                   : std::string("unknown")) +
-                              " parentObjectId=" + std::to_string(*scriptState->variableParentId) +
-                              " " + selection);
+            std::ostringstream chain;
+            for (const int id : parentChain) {
+                if (chain.tellp() > 0) {
+                    chain << " -> ";
+                }
+                chain << id;
+            }
+            if (scriptState->trafficLightModel) {
+                recordSkipped(skipped,
+                              "[trafficlight] variable parents without a matching schedule",
+                              "object ID=" +
+                                  (scriptState->mapObjectId.has_value()
+                                       ? std::to_string(*scriptState->mapObjectId)
+                                       : std::string("unknown")) +
+                                  " parent chain=" + chain.str());
+            }
         }
     }
 }
@@ -1869,6 +2001,9 @@ void MapSceneLoader::indexMapContent() {
             registerObjectId(object.id, MapObjectRecordKind::Scenery, tileName, tileReference.x,
                              tileReference.y);
             mapObjectAssetPathsById.try_emplace(object.id, object.assetPath);
+            if (object.variableParentId.has_value()) {
+                mapObjectVariableParentsById.try_emplace(object.id, *object.variableParentId);
+            }
             IndexedSceneryObject indexed;
             indexed.assetPath = object.assetPath;
             indexed.transformValid = object.transformValid;
@@ -1888,6 +2023,9 @@ void MapSceneLoader::indexMapContent() {
             registerObjectId(object.id, MapObjectRecordKind::Attached, tileName, tileReference.x,
                              tileReference.y);
             mapObjectAssetPathsById.try_emplace(object.id, object.assetPath);
+            if (object.variableParentId.has_value()) {
+                mapObjectVariableParentsById.try_emplace(object.id, *object.variableParentId);
+            }
             IndexedAttachedObject indexed;
             indexed.assetPath = object.assetPath;
             indexed.parentId = object.attachedToObjectId;
@@ -1905,6 +2043,10 @@ void MapSceneLoader::indexMapContent() {
             registerObjectId(attachment.id, MapObjectRecordKind::SplineAttachment, tileName,
                              tileReference.x, tileReference.y);
             mapObjectAssetPathsById.try_emplace(attachment.id, attachment.assetPath);
+            if (attachment.variableParentId.has_value()) {
+                mapObjectVariableParentsById.try_emplace(attachment.id,
+                                                         *attachment.variableParentId);
+            }
             if (!splineAttachmentTileById.try_emplace(attachment.id, tileReferenceIndex).second) {
                 recordSkipped(skipped, "map placements with duplicate object IDs",
                               tileLabel(tileReference.x, tileReference.y) +
