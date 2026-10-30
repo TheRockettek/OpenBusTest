@@ -2338,6 +2338,29 @@ std::vector<MapTrafficSpawnCandidate> mapTrafficRouteSpawnCandidates(const MapTr
     }
     const double endpointMargin = std::max(8.0, vehicleLengthMeters * 0.5 + 4.0);
     const double spacing = std::max(12.0, vehicleLengthMeters + 6.0);
+    constexpr double junctionPenaltyMeters = 20.0;
+    constexpr double signalApproachDistanceMeters = 25.0;
+    const double loopStart = route.loopStartDistance.value_or(0.0);
+    double wrappedSignal = std::numeric_limits<double>::infinity();
+    if (route.closed || route.loopStartDistance.has_value()) {
+        for (std::size_t index = 0; index < route.segments.size(); ++index) {
+            const double start = index == 0 ? 0.0 : route.cumulativeEndDistances[index - 1];
+            if (start >= loopStart && route.segments[index].trafficSignal.has_value()) {
+                wrappedSignal = start + route.totalLength - loopStart;
+                break;
+            }
+        }
+    }
+    std::vector<double> nextSignalEntry(route.segments.size(),
+                                        std::numeric_limits<double>::infinity());
+    double nextSignal = wrappedSignal;
+    for (std::size_t index = route.segments.size(); index > 0; --index) {
+        const std::size_t segmentIndex = index - 1;
+        if (route.segments[segmentIndex].trafficSignal.has_value()) {
+            nextSignal = segmentIndex == 0 ? 0.0 : route.cumulativeEndDistances[segmentIndex - 1];
+        }
+        nextSignalEntry[segmentIndex] = nextSignal;
+    }
     std::vector<MapTrafficSpawnCandidate> candidates;
     const auto appendSpanCandidates = [&](std::size_t segmentIndex, double spanStart,
                                           double spanEnd) {
@@ -2353,8 +2376,22 @@ std::vector<MapTrafficSpawnCandidate> mapTrafficRouteSpawnCandidates(const MapTr
                 throw std::runtime_error("Could not sample a map traffic spawn candidate position");
             }
             const double tileSize = route.segments[segmentIndex].spline.coordinates.tileSize;
+            const auto actualSegment = std::lower_bound(
+                route.cumulativeEndDistances.begin(), route.cumulativeEndDistances.end(), distance);
+            const std::size_t actualIndex = static_cast<std::size_t>(
+                std::distance(route.cumulativeEndDistances.begin(), actualSegment));
+            const auto& actualRouteSegment = route.segments[actualIndex];
+            const double signalDistance = nextSignalEntry[actualIndex] - distance;
+            const double signalPenalty = std::clamp(signalApproachDistanceMeters - signalDistance,
+                                                    0.0, signalApproachDistanceMeters);
+            const double locationPenalty =
+                (actualRouteSegment.sceneryPathIndex.has_value() ? junctionPenaltyMeters : 0.0) +
+                signalPenalty;
+            const double entryPreference =
+                route.startsAtEntryLane ? std::clamp((30.0 - distance) * 0.5, 0.0, 10.0) : 0.0;
             candidates.push_back({distance, mapWorldTile(pose->position[0], tileSize),
-                                  mapWorldTile(pose->position[1], tileSize)});
+                                  mapWorldTile(pose->position[1], tileSize), locationPenalty,
+                                  entryPreference});
         }
     };
     for (std::size_t index = 0; index < route.segments.size();) {
@@ -3217,6 +3254,7 @@ std::optional<MapTrafficRoute> MapTrafficLaneNetwork::buildRoute(
         return std::nullopt;
     }
     MapTrafficRoute route;
+    route.startsAtEntryLane = incoming_[current] == 0;
     const auto matchesRequiredLane = [&](std::size_t lane, std::size_t requiredIndex) {
         return requiredIndex < effectiveRequiredSplineSequence.size() &&
                segments_[lane].spline.placement.splineId ==

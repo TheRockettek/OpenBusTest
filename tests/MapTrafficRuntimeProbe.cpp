@@ -1145,12 +1145,21 @@ void verifyDrivingBehavior() {
     require(connectedSpawnRoute.has_value(),
             "a connected road lane builds a route for interior spawn candidates");
     const auto spawnCandidates = mapTrafficRouteSpawnCandidates(*connectedSpawnRoute, 4.5);
-    require(spawnCandidates.size() == 2,
+    require(spawnCandidates.size() == 2 && connectedSpawnRoute->startsAtEntryLane,
             "road spawn candidates include connected route interiors, not terminal dead ends");
     requireNear(spawnCandidates[0].distanceMeters, 8.0,
                 "road spawn candidates keep a vehicle-sized margin from the route start");
     requireNear(spawnCandidates[1].distanceMeters, 28.0,
                 "road spawn candidates include interior positions beyond the first lane");
+    const auto subdividedEntryCandidates =
+        mapTrafficRouteSpawnCandidates(subdivideMapTrafficRoute(*connectedSpawnRoute), 4.5);
+    const auto internalRoute = connectedSpawnLanes.buildRoute(1011);
+    require(internalRoute && !internalRoute->startsAtEntryLane &&
+                spawnCandidates.front().entryPreferenceMeters == 10.0 &&
+                subdividedEntryCandidates.front().entryPreferenceMeters == 10.0 &&
+                mapTrafficRouteSpawnCandidates(*internalRoute, 4.5).front().entryPreferenceMeters ==
+                    0.0,
+            "only actual network entry lanes receive a spawn preference, including after subdivision");
     require(spawnCandidates[0].tileX == 0 && spawnCandidates[0].tileY == 0 &&
                 spawnCandidates[1].tileX == 0 && spawnCandidates[1].tileY == 0,
             "road spawn candidates report their sampled world tile");
@@ -1201,6 +1210,22 @@ void verifyDrivingBehavior() {
                                 return candidate.distanceMeters >= 60.0;
                             }),
             "road traffic never spawns inside a signalized SCO path beyond its stopline");
+    require(std::all_of(signalSafeSpawnCandidates.begin(), signalSafeSpawnCandidates.end(),
+                        [](const openbus::map::MapTrafficSpawnCandidate& candidate) {
+                            return candidate.locationPenaltyMeters >= 20.0;
+                        }),
+            "SCO junction paths are less preferred than ordinary road interiors");
+    require(signalSafeSpawnCandidates.back().locationPenaltyMeters == 29.0,
+            "signal approach penalties account for a signal across a closed route boundary");
+    auto approachRoute = signalizedSpawnRoute;
+    approachRoute.segments[0].trafficSignal.reset();
+    approachRoute.segments[0].sceneryPathIndex.reset();
+    approachRoute.segments[1].trafficSignal = openbus::map::MapTrafficSignalSchedule{};
+    const auto approachCandidates = mapTrafficRouteSpawnCandidates(approachRoute, 4.5);
+    require(approachCandidates.size() == 4 &&
+                approachCandidates.front().locationPenaltyMeters == 0.0 &&
+                approachCandidates.back().locationPenaltyMeters == 9.0,
+            "candidates close to an upcoming signal stopline receive a graded penalty");
     MapTrafficLaneNetwork crossTileSpawnLanes;
     crossTileSpawnLanes.addSegment(
         straight(1013, 0.0, OMSI_TILE_SIZE_METERS - 60.0, 0.0, 120.0));

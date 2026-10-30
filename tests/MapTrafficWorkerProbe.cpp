@@ -351,6 +351,62 @@ int main() {
         decision = search(searchCandidate, searchContext);
         require(decision.spawnLocation && decision.spawnLocation->candidateIndex == 0,
                 "stationary player permits the nearest road candidate");
+        auto crowdedContext = searchContext;
+        crowdedContext.playerPose = *firstPose;
+        for (const double lateral : {8.0, 9.0, 10.0}) {
+            auto obstaclePose = *firstPose;
+            obstaclePose.position[0] -= directionY / directionLength * lateral;
+            obstaclePose.position[1] += directionX / directionLength * lateral;
+            crowdedContext.occupied.push_back({obstaclePose, 4.0, 2.0});
+        }
+        const auto uncrowdedDecision = search(searchCandidate, crowdedContext);
+        require(uncrowdedDecision.spawnLocation &&
+                    uncrowdedDecision.spawnLocation->candidateIndex == 2,
+                "spawn selection prefers a less crowded nearby road location");
+        auto elevatedContext = crowdedContext;
+        for (auto& obstacle : elevatedContext.occupied) {
+            obstacle.pose.position[2] += 10.0;
+        }
+        const auto elevatedDecision = search(searchCandidate, elevatedContext);
+        require(elevatedDecision.spawnLocation &&
+                    elevatedDecision.spawnLocation->candidateIndex == 0,
+                "vehicles on a different road elevation do not bias spawn distribution");
+        auto penalizedCandidates =
+            std::make_shared<std::vector<openbus::map::MapTrafficSpawnCandidate>>(*spawnCandidates);
+        (*penalizedCandidates)[0].locationPenaltyMeters = 50.0;
+        auto penalizedCandidate = searchCandidate;
+        penalizedCandidate.spawnSearch->candidates = penalizedCandidates;
+        const auto saferDecision = search(penalizedCandidate, searchContext);
+        require(saferDecision.spawnLocation && saferDecision.spawnLocation->candidateIndex == 1,
+                "a less awkward spawn location can outweigh modest player proximity");
+        penalizedCandidate.spawnSearch->rejectedCandidates = {1, 2};
+        const auto fallbackDecision = search(penalizedCandidate, searchContext);
+        require(fallbackDecision.spawnLocation && fallbackDecision.spawnLocation->candidateIndex == 0,
+                "a penalized location remains available when no alternative is eligible");
+        auto entryCandidates =
+            std::make_shared<std::vector<openbus::map::MapTrafficSpawnCandidate>>(*spawnCandidates);
+        (*entryCandidates)[1].entryPreferenceMeters = 25.0;
+        auto entryCandidate = searchCandidate;
+        entryCandidate.spawnSearch->candidates = entryCandidates;
+        const auto entryDecision = search(entryCandidate, searchContext);
+        require(entryDecision.spawnLocation && entryDecision.spawnLocation->candidateIndex == 1,
+                "an entry-lane preference influences the worker's spawn selection");
+        auto secondCandidate = searchCandidate;
+        secondCandidate.stateIndex = 9;
+        searchWorker.submitPopulationPlan({searchCandidate, secondCandidate}, 2, 0, 0, {}, false,
+                                          searchContext);
+        std::optional<std::vector<Worker::PopulationDecision>> batchDecisions;
+        const auto batchDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!batchDecisions && std::chrono::steady_clock::now() < batchDeadline) {
+            batchDecisions = searchWorker.takePopulationDecisions();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        require(batchDecisions && batchDecisions->size() == 2 &&
+                    (*batchDecisions)[0].spawn && (*batchDecisions)[1].spawn &&
+                    (*batchDecisions)[0].spawnLocation && (*batchDecisions)[1].spawnLocation &&
+                    (*batchDecisions)[0].spawnLocation->candidateIndex !=
+                        (*batchDecisions)[1].spawnLocation->candidateIndex,
+                "a population batch reserves earlier proposals and spreads later spawns");
         const auto proposedRoadSpawn = decision;
         const Worker::PopulationBalance admissionBalance({searchCandidate}, 1, 0, 0, {}, false);
         const auto revalidate = [&](const Worker::PopulationCandidate& current,

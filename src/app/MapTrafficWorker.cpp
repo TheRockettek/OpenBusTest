@@ -3,10 +3,12 @@
 #include "core/PerfTrace.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <exception>
+#include <map>
 #include <mutex>
 #include <set>
 #include <stdexcept>
@@ -20,10 +22,56 @@ namespace {
 
 constexpr double kDefaultTrafficSimulationRateHz = 60.0;
 
+class SpawnCrowdingIndex {
+  public:
+    explicit SpawnCrowdingIndex(const std::vector<openbus::map::MapTrafficObstacle>& obstacles) {
+        for (const auto& obstacle : obstacles) {
+            add(obstacle);
+        }
+    }
+
+    void add(const openbus::map::MapTrafficObstacle& obstacle) {
+        cells_[cell(obstacle.pose)].push_back(obstacle.pose.position);
+    }
+
+    double penalty(const openbus::map::MapTrafficPose& pose) const {
+        const auto [cellX, cellY] = cell(pose);
+        double result = 0.0;
+        for (int x = -1; x <= 1; ++x) {
+            for (int y = -1; y <= 1; ++y) {
+                const auto found = cells_.find({cellX + x, cellY + y});
+                if (found == cells_.end()) {
+                    continue;
+                }
+                for (const auto& position : found->second) {
+                    if (std::abs(position[2] - pose.position[2]) > 4.0) {
+                        continue;
+                    }
+                    const double distance =
+                        std::hypot(position[0] - pose.position[0], position[1] - pose.position[1]);
+                    result += 25.0 * std::max(0.0, 1.0 - distance / cellSizeMeters);
+                }
+            }
+        }
+        return std::min(result, 60.0);
+    }
+
+  private:
+    static constexpr double cellSizeMeters = 50.0;
+
+    static std::pair<int, int> cell(const openbus::map::MapTrafficPose& pose) {
+        return {static_cast<int>(std::floor(pose.position[0] / cellSizeMeters)),
+                static_cast<int>(std::floor(pose.position[1] / cellSizeMeters))};
+    }
+
+    std::map<std::pair<int, int>, std::vector<std::array<double, 3>>> cells_;
+};
+
 std::optional<MapTrafficWorker::PopulationSpawn>
 findPopulationSpawn(const MapTrafficWorker::PopulationCandidate& candidate,
                     const MapTrafficWorker::PopulationSearchContext& context,
                     const std::set<std::pair<int, int>>& activeTiles,
+                    const SpawnCrowdingIndex& crowding,
                     MapTrafficWorker::PopulationDecision& decision) {
     using namespace openbus::map;
     const auto& search = *candidate.spawnSearch;
@@ -115,11 +163,13 @@ findPopulationSpawn(const MapTrafficWorker::PopulationCandidate& candidate,
             }
             continue;
         }
-        const double priority =
+        const double proximity =
             context.hasPlayerPose
                 ? mapTrafficSpawnPriorityDistanceMeters(context.playerPose, *pose,
                                                         context.predictedForwardDistanceMeters)
                 : 0.0;
+        const double priority = proximity + spawn.locationPenaltyMeters -
+                                spawn.entryPreferenceMeters + crowding.penalty(*pose);
         if (best && !(priority < best->priorityMeters)) {
             if (context.diagnostics) {
                 ++diagnostics.lowerPriorityCandidates;
@@ -393,15 +443,20 @@ struct MapTrafficWorker::Impl {
                         decisions.push_back({candidate.stateIndex, candidate.generation,
                                              candidate.isHuman, false, false});
                     }
+                    std::set<std::pair<int, int>> activeTiles;
+                    const std::vector<openbus::map::MapTrafficObstacle> noObstacles;
+                    SpawnCrowdingIndex crowding(searchContext ? searchContext->occupied
+                                                              : noObstacles);
                     if (searchContext) {
-                        const std::set<std::pair<int, int>> activeTiles(
-                            searchContext->activeTiles.begin(), searchContext->activeTiles.end());
+                        activeTiles.insert(searchContext->activeTiles.begin(),
+                                           searchContext->activeTiles.end());
                         for (std::size_t index = 0; index < candidates.size(); ++index) {
                             PopulationCandidate& candidate = candidates[index];
                             if (candidate.spawnSearch && balance.needsSpawn(candidate)) {
                                 decisions[index].searchedSpawn = true;
-                                auto spawn = findPopulationSpawn(candidate, *searchContext,
-                                                                 activeTiles, decisions[index]);
+                                auto spawn =
+                                    findPopulationSpawn(candidate, *searchContext, activeTiles,
+                                                        crowding, decisions[index]);
                                 candidate.canSpawn = spawn.has_value();
                                 if (spawn) {
                                     candidate.spawnPriorityMeters = spawn->priorityMeters;
@@ -439,11 +494,32 @@ struct MapTrafficWorker::Impl {
                                          return candidates[first].spawnPriorityMeters <
                                                 candidates[second].spawnPriorityMeters;
                                      });
+                    bool reservedSpawn = false;
                     for (const std::size_t index : spawnOrder) {
                         const PopulationCandidate& candidate = candidates[index];
                         if (balance.needsSpawn(candidate)) {
+                            if (reservedSpawn && searchContext && candidate.spawnSearch) {
+                                decisions[index].roadSearchDiagnostics = {};
+                                decisions[index].busSearchDiagnostics.reset();
+                                decisions[index].spawnLocation =
+                                    findPopulationSpawn(candidate, *searchContext, activeTiles,
+                                                        crowding, decisions[index]);
+                                if (!decisions[index].spawnLocation) {
+                                    continue;
+                                }
+                            }
                             decisions[index].spawn = true;
                             ++balance.countFor(candidate);
+                            if (searchContext && candidate.spawnSearch &&
+                                decisions[index].spawnLocation) {
+                                const auto& actor = *candidate.spawnSearch->actor;
+                                openbus::map::MapTrafficObstacle reservation{
+                                    decisions[index].spawnLocation->pose, actor.lengthMeters,
+                                    actor.widthMeters};
+                                searchContext->occupied.push_back(reservation);
+                                crowding.add(reservation);
+                                reservedSpawn = true;
+                            }
                         }
                     }
                 } catch (...) {

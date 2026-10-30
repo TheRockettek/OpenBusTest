@@ -83,6 +83,7 @@ struct MapTrafficRoute {
     double totalLength = 0.0;
     bool closed = false;
     std::optional<double> loopStartDistance;
+    bool startsAtEntryLane = false;
 };
 
 struct MapTrafficRoutePosition {
@@ -94,6 +95,8 @@ struct MapTrafficSpawnCandidate {
     double distanceMeters = 0.0;
     int tileX = 0;
     int tileY = 0;
+    double locationPenaltyMeters = 0.0;
+    double entryPreferenceMeters = 0.0;
 };
 
 // Last constraint that held a driving actor below cruise speed; used for stall diagnostics.

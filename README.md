@@ -1,9 +1,9 @@
 # OpenBus
 
-OpenBus is a C++ bus simulator prototype built on the
-[Open Dynamics Engine (ODE)](https://www.ode.org/). It combines fixed-step bus
-physics with OpenGL vehicle rendering and partial OMSI map rendering. This is
-a prototype, not a fully OMSI-compatible simulator.
+OpenBus is a C++ bus simulator prototype built on the [Open Dynamics Engine
+(ODE)](https://www.ode.org/). It combines fixed-step bus physics with OpenGL
+vehicle rendering and partial OMSI map rendering. This is a prototype, not a
+fully OMSI-compatible simulator.
 
 ## Compatibility and validation status
 
@@ -28,86 +28,84 @@ including bus model CFG keywords selected by `OPENBUS_MODEL_CONFIG`, see the
 
 ### Map runtime scope
 
-Startup progress is written to the console and `game.log`, including configuration
-loading, renderer initialization, map phases, and each terrain/index/content tile.
-Each log entry includes elapsed milliseconds, a severity (`DEBUG`, `INFO`,
-`WARNING`, or `ERROR`), and its module, for example
+Startup progress is written to the console and `game.log`, including
+configuration loading, renderer initialization, map phases, and each
+terrain/index/content tile. Each log entry includes elapsed milliseconds, a
+severity (`DEBUG`, `INFO`, `WARNING`, or `ERROR`), and its module, for example
 `[123] [WARNING] Game Texture missing`. All levels are written to both outputs;
 severity labels do not filter messages. Set `OPENBUS_LOG_FILE` to change the log
-file path (the file is replaced at startup).
-If the log file cannot be opened or written, the logger reports the failure on
-standard error and continues writing entries to the console.
-Tile messages include the current file and counts; phase summaries and content
-tile completions include elapsed milliseconds. If loading appears stuck after an
-unhandled-configuration-tag warning, check the subsequent progress messages for
-the active stage or tile. These logs do not require performance tracing.
+file path (the file is replaced at startup). If the log file cannot be opened or
+written, the logger reports the failure on standard error and continues writing
+entries to the console. Tile messages include the current file and counts; phase
+summaries and content tile completions include elapsed milliseconds. If loading
+appears stuck after an unhandled-configuration-tag warning, check the subsequent
+progress messages for the active stage or tile. These logs do not require
+performance tracing.
 
 Interactive startup opens an ImGui setup screen. It lists maps with a
 `global.cfg` under the configured OMSI root and `.bus` vehicles under
-`Vehicles`. Choose a vehicle by its `[friendlyname]` manufacturer and type,
-then choose its default appearance or a discovered `.cti` livery, an optional
-HOF depot, and a configured number/registration. CTI texture replacements
-apply to the selected vehicle. The depot's HOF path and name are exposed to
-vehicle scripts as `hof_file` and `hof_name`; HOF timetable and destination
-loading are not implemented yet. Choose a map and one of its entrypoints; the
-date/time defaults to the host's current local date and time. **Start in bus**
-enters the selected vehicle immediately, while **Start on foot** lets the
-player enter it later.
-Use **WASD** to walk relative to your view and **Space** to jump while grounded.
-**F4** toggles mouse look and releases the cursor again to use the on-foot panel.
-Walking uses gravity and a collision capsule against terrain, roads, and static
-scenery; it is not the bus's flying debug camera. Map and collision streaming
-follow the walker. The hidden bus's collision outline is not drawn on foot.
-Use the in-game **Spawn selected bus** button to enter the chosen vehicle at the
-selected entrypoint. Interactive vehicle selection uses each `.bus` file's
-own `[model]` entry; `OPENBUS_BUS_CONFIG` and `OPENBUS_MODEL_CONFIG` remain
-available for benchmark/custom runs. Benchmark mode bypasses the interactive
-menu and continues to honor the environment-selected map, spawn, and
-`OPENBUS_MAP_AI_HOUR` values.
-ImGui manages the cursor during setup and on foot; after a bus is spawned,
-the game manages the steering crosshair and clickable-control cursors.
-Bus physics stays frozen while on foot and resumes when the bus is spawned.
+`Vehicles`. Choose a vehicle by its `[friendlyname]` manufacturer and type, then
+choose its default appearance or a discovered `.cti` livery, an optional HOF
+depot, and a configured number/registration. CTI texture replacements apply to
+the selected vehicle. The depot's HOF path and name are exposed to vehicle
+scripts as `hof_file` and `hof_name`; HOF timetable and destination loading are
+not implemented yet. Choose a map and one of its entrypoints; the date/time
+defaults to the host's current local date and time. **Start in bus** enters the
+selected vehicle immediately, while **Start on foot** lets the player enter it
+later. Use **WASD** to walk relative to your view and **Space** to jump while
+grounded. **F4** toggles mouse look and releases the cursor again to use the
+on-foot panel. Walking uses gravity and a collision capsule against terrain,
+roads, and static scenery; it is not the bus's flying debug camera. Map and
+collision streaming follow the walker. The hidden bus's collision outline is not
+drawn on foot. Use the in-game **Spawn selected bus** button to enter the chosen
+vehicle at the selected entrypoint. Interactive vehicle selection uses each
+`.bus` file's own `[model]` entry; `OPENBUS_BUS_CONFIG` and
+`OPENBUS_MODEL_CONFIG` remain available for benchmark/custom runs. Benchmark
+mode bypasses the interactive menu and continues to honor the
+environment-selected map, spawn, and `OPENBUS_MAP_AI_HOUR` values. ImGui manages
+the cursor during setup and on foot; after a bus is spawned, the game manages
+the steering crosshair and clickable-control cursors. Bus physics stays frozen
+while on foot and resumes when the bus is spawned.
 
 Startup parses tile text once and caches the parsed tile records/global
 placement-attachment index, then constructs render geometry only for listed
 tiles in a two-tile Chebyshev window around the selected spawn point (up to 5×5
-tiles).
-It uses the first `[groundtex]` entry as the
-base and applies numeric per-tile `.map.<index>.dds` alpha masks to subsequent
-`[groundtex]` layers. Set `OPENBUS_MAP_GROUNDTEX` to a zero-based
-`[groundtex]` index to preview that texture uniformly, bypassing per-tile masks.
-Detail-layer and seasonal selection remain unsupported. Terrain, road, and
-scenery geometry and their window-owned GPU textures/buffers are created only
-for that active window. On a tile crossing, a background worker builds and
-uploads a complete replacement window using a GLFW shared OpenGL context; the
-current window remains drawable until the replacement is ready, then its GPU
-resources are released. If shared-context creation fails, loading falls back to
-the synchronous path. Terrain and roads then use distance/frustum
-rejection, scenery uses spatial chunks and per-instance culling, and `[visible]`
-is checked per model part. Scenery runtimes are initialized/ticked only while
-their source tile is active; their per-placement script state survives window
-reloads. Scripts are not paused merely because the camera frustum excludes them.
-Tile crossings still rebuild the full active window (rather than only the
-entering tile), but construction and upload happen on the worker. Initial map
-window construction at startup remains synchronous. Scenery script runtimes
-created by a streamed window are initialized on the main script thread, at most
-32 new runtimes per frame. Parsed tile records and the global placement index
-remain CPU-cached for cross-tile attachment resolution. GPU contention and
-boundary latency have not been measured.
+tiles). It uses the first `[groundtex]` entry as the base and applies numeric
+per-tile `.map.<index>.dds` alpha masks to subsequent `[groundtex]` layers. Set
+`OPENBUS_MAP_GROUNDTEX` to a zero-based `[groundtex]` index to preview that
+texture uniformly, bypassing per-tile masks. Detail-layer and seasonal selection
+remain unsupported. Terrain, road, and scenery geometry and their window-owned
+GPU textures/buffers are created only for that active window. On a tile
+crossing, a background worker builds and uploads a complete replacement window
+using a GLFW shared OpenGL context; the current window remains drawable until
+the replacement is ready, then its GPU resources are released. If shared-context
+creation fails, loading falls back to the synchronous path. Terrain and roads
+then use distance/frustum rejection, scenery uses spatial chunks and
+per-instance culling, and `[visible]` is checked per model part. Scenery
+runtimes are initialized/ticked only while their source tile is active; their
+per-placement script state survives window reloads. Scripts are not paused
+merely because the camera frustum excludes them. Tile crossings still rebuild
+the full active window (rather than only the entering tile), but construction
+and upload happen on the worker. Initial map window construction at startup
+remains synchronous. Scenery script runtimes created by a streamed window are
+initialized on the main script thread, at most 32 new runtimes per frame. Parsed
+tile records and the global placement index remain CPU-cached for cross-tile
+attachment resolution. GPU contention and boundary latency have not been
+measured.
 
 ODE terrain and road/scenery collision is loaded separately around the player:
-the load radius is one tile, and collision remains resident until a tile is
-more than two tiles away, but only for tiles with successfully uploaded render
+the load radius is one tile, and collision remains resident until a tile is more
+than two tiles away, but only for tiles with successfully uploaded render
 geometry in the current window. Terrain and road/scenery collision meshes are
 prepared on a background CPU worker; ODE objects are published/removed on the
-simulation thread, at most one completed tile per update.
-Thus collision is independent of the camera frustum and scenery `[visible]`,
-and collision residency also updates if the resident geometry set changes while
-the player remains in the same center tile.
-The initial collision neighborhood is warmed synchronously before gameplay;
-runtime collision preparation is asynchronous, but ODE setup can still cost time
-on publication. If preparation falls behind the player, temporary contact gaps
-are possible. Physics residency follows loaded map tiles, not camera visibility.
+simulation thread, at most one completed tile per update. Thus collision is
+independent of the camera frustum and scenery `[visible]`, and collision
+residency also updates if the resident geometry set changes while the player
+remains in the same center tile. The initial collision neighborhood is warmed
+synchronously before gameplay; runtime collision preparation is asynchronous,
+but ODE setup can still cost time on publication. If preparation falls behind
+the player, temporary contact gaps are possible. Physics residency follows
+loaded map tiles, not camera visibility.
 
 Random map road traffic uses `.ovh` and `.bus` entries from supported
 `[aigroup_2]` groups. `Normal`, `NormalCar(s)`, and `Taxi` use normal-car path
@@ -116,269 +114,258 @@ rules; `Emergency` and `Ambulance` use ambulance rules; `Trucks` and
 legacy vehicle-list formats are not supported by this runtime. Depot `.bus`
 entries continue to provide scheduled AI buses on timetable routes.
 `OPENBUS_MAP_AI_COUNT` sets the density-scaled road-vehicle base population
-(default `200`, maximum `1000`).
-Trucks are permitted on road paths by default unless the map's path rules
-explicitly prohibit them; configured group and path density rules still apply.
-For mirrored road splines, OpenBus flips unidirectional lane directions along
-with their lateral positions, including one-way carriageways. Bidirectional and
-pedestrian paths keep their authored directions. This correction is an OpenBus
-compatibility policy, not verified
-native OMSI behavior. Set `OPENBUS_MIRRORED_ROAD_DIRECTIONS=authored` to
-restore the previous behavior for maps that intentionally use mirrored
-directions; `correct` is the default.
-Connected type-0 road paths authored by scenery objects also contribute
-traffic lanes and spawn positions. These point-backed paths appear as unlabeled
-lines in the F2 path overlay, unlike spline routes labeled `S<ID>` or `H<ID>`.
-The selected start date/time drives the in-game traffic clock's `Time` system
-variable, which advances using elapsed simulation time. The selected date sets
-the system variables `Day`, `Month`, and `Year`;
-`DayOfYear` is computed from that date. Traffic weekday schedules derive
-their starting weekday from this same calendar (Sunday `0` through Saturday
-`6`), and the date advances with simulation time across midnight and year
-boundaries. Chrono tile overrides are currently disabled; the base map tile
-files are used regardless of the selected date. The setup screen defaults to
-the host's local date and time. The selected date is fixed for the session;
-changing the simulation date and selector-based
-`[selobject]`/`[selspline]` edits are not yet applied.
-The current traffic clock is previewed as `TIME HH:MM` in the status HUD.
-Road and pedestrian populations follow their map density schedules as the
+(default `200`, maximum `1000`). Trucks are permitted on road paths by default
+unless the map's path rules explicitly prohibit them; configured group and path
+density rules still apply. For mirrored road splines, OpenBus flips
+unidirectional lane directions along with their lateral positions, including
+one-way carriageways. Bidirectional and pedestrian paths keep their authored
+directions. This correction is an OpenBus compatibility policy, not verified
+native OMSI behavior. Set `OPENBUS_MIRRORED_ROAD_DIRECTIONS=authored` to restore
+the previous behavior for maps that intentionally use mirrored directions;
+`correct` is the default. Connected type-0 road paths authored by scenery
+objects also contribute traffic lanes and spawn positions. These point-backed
+paths appear as unlabeled lines in the F2 path overlay, unlike spline routes
+labeled `S<ID>` or `H<ID>`. The selected start date/time drives the in-game
+traffic clock's `Time` system variable, which advances using elapsed simulation
+time. The selected date sets the system variables `Day`, `Month`, and `Year`;
+`DayOfYear` is computed from that date. Traffic weekday schedules derive their
+starting weekday from this same calendar (Sunday `0` through Saturday `6`), and
+the date advances with simulation time across midnight and year boundaries.
+Chrono tile overrides are currently disabled; the base map tile files are used
+regardless of the selected date. The setup screen defaults to the host's local
+date and time. The selected date is fixed for the session; changing the
+simulation date and selector-based `[selobject]`/`[selspline]` edits are not yet
+applied. The current traffic clock is previewed as `TIME HH:MM` in the status
+HUD. Road and pedestrian populations follow their map density schedules as the
 clock advances, with active population targets recalculated once per simulated
-minute rather than every rendered frame. A pool sized for each schedule's maximum is queued at
-startup; vehicle instances are constructed and their scripts loaded on asset
-workers, while model mesh parsing is deferred to asynchronous requests.
-For unscheduled traffic, separate group peaks can require a queued pool larger
-than any simultaneous target. There is no fixed active population cap; available
-pool capacity and safe spawn positions can still limit the active population.
-Active vehicle meshes use the per-frame upload budget in order of distance to
-the player, so nearby traffic is prioritized over farther vehicles.
-`OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER` scales the map's scheduled density
-factor for road vehicles, buses, and pedestrians (default `1.0`, maximum
+minute rather than every rendered frame. A pool sized for each schedule's
+maximum is queued at startup; vehicle instances are constructed and their
+scripts loaded on asset workers, while model mesh parsing is deferred to
+asynchronous requests. For unscheduled traffic, separate group peaks can require
+a queued pool larger than any simultaneous target. There is no fixed active
+population cap; available pool capacity and safe spawn positions can still limit
+the active population. Active vehicle meshes use the per-frame upload budget in
+order of distance to the player, so nearby traffic is prioritized over farther
+vehicles. `OPENBUS_MAP_TRAFFIC_DENSITY_MULTIPLIER` scales the map's scheduled
+density factor for road vehicles, buses, and pedestrians (default `1.0`, maximum
 `1000.0`). The target is the base population times the map's density factor
 times this multiplier; high values can request very large pools and consume
-substantial resources. The `run.bat` testing
-launcher defaults it to `10.0`, and `profile.bat` sets it to `100` for denser
-profiling traffic; `run.bat` respects a value already set in the
-environment; set it to `1.0` for normal scheduled density.
-Pedestrian `.hum` and model CFG parsing, mesh parsing, and texture decoding
-also use workers. OpenGL uploads and script initialization remain on the
-main/render thread. Road vehicles and buses wait in an inactive queue until
+substantial resources. The `run.bat` testing launcher defaults it to `10.0`, and
+`profile.bat` sets it to `100` for denser profiling traffic; `run.bat` respects
+a value already set in the environment; set it to `1.0` for normal scheduled
+density. Pedestrian `.hum` and model CFG parsing, mesh parsing, and texture
+decoding also use workers. OpenGL uploads and script initialization remain on
+the main/render thread. Road vehicles and buses wait in an inactive queue until
 their model and scripts are ready. Road traffic may be admitted at clear,
 off-screen interior positions on connected lanes; scheduled buses remain
-restricted to connected endpoints or their authored timetable origins.
-Candidate tile ownership is derived from each sampled world position, so
-interior positions on splines crossing tile boundaries can be admitted when
-their actual tile is active. Isolated splines and terminal dead ends are
-excluded from road-traffic spawn candidates. Pool construction first
-prioritizes routes with spawn candidates in the current active tile window for
-the initial target population, then fills remaining capacity with map-wide
-routes; every route is checked for an active-tile candidate before local
-priority admission. The runtime active-tile guard remains in force. Admission requires a
+restricted to connected endpoints or their authored timetable origins. Candidate
+tile ownership is derived from each sampled world position, so interior
+positions on splines crossing tile boundaries can be admitted when their actual
+tile is active. Isolated splines and terminal dead ends are excluded from
+road-traffic spawn candidates. Pool construction first prioritizes routes with
+spawn candidates in the current active tile window for the initial target
+population, then fills remaining capacity with map-wide routes; every route is
+checked for an active-tile candidate before local priority admission. Among
+eligible locations, the worker balances proximity to the player against nearby
+traffic, and prefers ordinary road interiors over SCO junction paths and
+approaches close to signal stop lines. Positions near actual network entry lanes
+receive a modest preference. These are preferences, not additional hard
+exclusions. Spawn proposals in the same population plan reserve their positions
+so subsequent vehicles can choose different locations. Scheduled bus origins are
+unchanged. The runtime active-tile guard remains in force. Admission requires a
 clear vehicle footprint, an entry outside the main camera frustum, and at least
 50 m clearance from the camera (plus the vehicle radius). Density reductions
-remove surplus vehicles only off-screen. Vehicles are retired when they reach
-an open route end; subsequent spawns still obey the off-screen and clearance
-checks.
-For visual debugging, set `OPENBUS_MAP_AI_SPAWN_VISIBLE=1` to allow road AI
-vehicles and scheduled buses to spawn while the camera can see their entry
+remove surplus vehicles only off-screen. Vehicles are retired when they reach an
+open route end; subsequent spawns still obey the off-screen and clearance
+checks. For visual debugging, set `OPENBUS_MAP_AI_SPAWN_VISIBLE=1` to allow road
+AI vehicles and scheduled buses to spawn while the camera can see their entry
 positions. Active-tile and vehicle-clearance checks still apply; the default
-remains off-screen-only.
-`.ttl` timetable departure times are
-parsed and linked to `.ttp` trips. Matched buses wait for their next departure
-at or after the configured starting hour before endpoint admission, including
-midnight rollover. Admission waits until the endpoint tile is active, the
-endpoint is outside the camera views, and its vehicle-sized clearance is
-available; a due bus remains queued while any of those conditions is false.
-When
-multiple pooled buses serve a route, its departure list is partitioned so each
-bus gets a disjoint subset of departure times. Timetable `.ttr` entries retain
-repeated scenery-object IDs and their selected path indexes, so scheduled route
-validation checks the complete ordered path rather than matching only shared
-road sections. Repeated timetable checkpoints on an ordinary map spline are
-matched to that spline's single route segment, while repeated placed-scenery
-object IDs retain distinct path selectors. Exact timetable-selected scenery
-paths can bridge small authored vertical offsets (up to 2.5 m) when their
-horizontal endpoints and headings align; ordinary road-traffic connectivity
-keeps its stricter limits. Cotterell
-startup validation has recognized complete routes for line 12, U28, and one
-U18 trip; other trips may be explicitly logged as partial timetable-origin
-prefix fallbacks
-when the map graph cannot reproduce their full authored sequence. A departure
-that exactly matches the configured start hour is eligible immediately,
-including when the hour is represented as a decimal value. A live Cotterell
-check confirmed a minute-483 bus departs once its endpoint tile is active, the
-entry is clear, and the camera no longer sees it. A one-bus run then confirmed
-route progress at 100 m intervals through 700 m and arrival at the open route
-end after 785.68 m.
-Pedestrian model choices come from the map's `humans.txt`; `drivers.txt` is
-reserved for AI driver models and is not used as a pedestrian roster.
-Pedestrians follow the authored human-path offsets and heights, render the
-configured `.hum` model meshes and textures, and wait at scheduled pedestrian
-crossing paths while their assigned signal phase is not green (states 6-8).
-Procedural gait animation, including lowering outstretched arms, is applied to
-loaded pedestrian meshes; full skeletal skinning and `[links]` behavior are
-not implemented. OMSI `[setbone]` records,
-including signed pedestrian bone indices, are accepted without applying
-skeletal transforms. Active pedestrian traffic actors also occupy collision
-footprints, so road AI stops/yields rather than sweeping through them.
-Pedestrians likewise pause
-before occupied vehicle footprints and resume when clear; this is kinematic
-avoidance, not physical collision response.
-Vehicles follow the lane offsets, heights, and effective travel directions shown
-by the F2 overlay, including scenery junction paths. Matching lane endpoints
-join within 0.5 m horizontally and vertically; opposite-direction lanes are not
-used as a forced return route. Road vehicles make reproducible seeded choices
-among compatible straight, left, and right movements. Turns tighter than the
-vehicle's minimum turning radius are rejected; authored radius data is used
-when present, otherwise a conservative class/wheelbase estimate is used.
-Genuine loops continue forward without reversing. Conflicting junction paths
-use swept-footprint reservations; authored path/group priority takes precedence.
-AI vehicle bodies follow the sampled road surface in all three rotations: yaw
-tracks the route at the rear axle, pitch follows the authored grade, and roll follows
-road cant. Pitch and roll use the vehicle's heading-relative axes so uphill
-travel raises the nose regardless of compass direction. Lane positions include
-the authored road skew and height offsets. The configured rearmost axle follows
-the route and the vehicle body pivots around it; when axle data is unavailable,
-the rear axle is estimated at 30% of the configured bounding-box length behind
-the model origin.
-AI collision footprints and their F2 visualizations use the same body pose.
-Among equal priorities, movements under 45° are treated as straight-like,
-45–100° bends go next, and sharper turns go last. Faster approaches (under
-3 m/s, under 8 m/s, or more, based on cruise speed so braking does not reverse
-the ranking) go before slower ones, and only then does the earlier junction
-arrival win; yielding vehicles leave an additional 2 m before conflict points.
-Right turns yielding to straight-through traffic stop 4 m before the junction
-entry when needed, keeping the waiting vehicle clear of the crossing path so
-through traffic can pass instead of deadlocking against it. Synthetic
-regressions verify that a waiting lower-priority movement yields to an
-approaching higher-priority vehicle, crossing movements remain clear, and both
-make progress. When a long turning vehicle's front extends into the junction
-while its center is still alongside a straight-going vehicle, it can yield to
-that vehicle if priority and the sampled stopping distance permit; physical
-collision checks still apply. Complete
-native OMSI right-of-way behavior remains unverified.
+remains off-screen-only. `.ttl` timetable departure times are parsed and linked
+to `.ttp` trips. Matched buses wait for their next departure at or after the
+configured starting hour before endpoint admission, including midnight rollover.
+Admission waits until the endpoint tile is active, the endpoint is outside the
+camera views, and its vehicle-sized clearance is available; a due bus remains
+queued while any of those conditions is false. When multiple pooled buses serve
+a route, its departure list is partitioned so each bus gets a disjoint subset of
+departure times. Timetable `.ttr` entries retain repeated scenery-object IDs and
+their selected path indexes, so scheduled route validation checks the complete
+ordered path rather than matching only shared road sections. Repeated timetable
+checkpoints on an ordinary map spline are matched to that spline's single route
+segment, while repeated placed-scenery object IDs retain distinct path
+selectors. Exact timetable-selected scenery paths can bridge small authored
+vertical offsets (up to 2.5 m) when their horizontal endpoints and headings
+align; ordinary road-traffic connectivity keeps its stricter limits. Cotterell
+startup validation has recognized complete routes for line 12, U28, and one U18
+trip; other trips may be explicitly logged as partial timetable-origin prefix
+fallbacks when the map graph cannot reproduce their full authored sequence. A
+departure that exactly matches the configured start hour is eligible
+immediately, including when the hour is represented as a decimal value. A live
+Cotterell check confirmed a minute-483 bus departs once its endpoint tile is
+active, the entry is clear, and the camera no longer sees it. A one-bus run then
+confirmed route progress at 100 m intervals through 700 m and arrival at the
+open route end after 785.68 m. Pedestrian model choices come from the map's
+`humans.txt`; `drivers.txt` is reserved for AI driver models and is not used as
+a pedestrian roster. Pedestrians follow the authored human-path offsets and
+heights, render the configured `.hum` model meshes and textures, and wait at
+scheduled pedestrian crossing paths while their assigned signal phase is not
+green (states 6-8). Procedural gait animation, including lowering outstretched
+arms, is applied to loaded pedestrian meshes; full skeletal skinning and
+`[links]` behavior are not implemented. OMSI `[setbone]` records, including
+signed pedestrian bone indices, are accepted without applying skeletal
+transforms. Active pedestrian traffic actors also occupy collision footprints,
+so road AI stops/yields rather than sweeping through them. Pedestrians likewise
+pause before occupied vehicle footprints and resume when clear; this is
+kinematic avoidance, not physical collision response. Vehicles follow the lane
+offsets, heights, and effective travel directions shown by the F2 overlay,
+including scenery junction paths. Matching lane endpoints join within 0.5 m
+horizontally and vertically; opposite-direction lanes are not used as a forced
+return route. Road vehicles make reproducible seeded choices among compatible
+straight, left, and right movements. Turns tighter than the vehicle's minimum
+turning radius are rejected; authored radius data is used when present,
+otherwise a conservative class/wheelbase estimate is used. Genuine loops
+continue forward without reversing. Conflicting junction paths use
+swept-footprint reservations; authored path/group priority takes precedence. AI
+vehicle bodies follow the sampled road surface in all three rotations: yaw
+tracks the route at the rear axle, pitch follows the authored grade, and roll
+follows road cant. Pitch and roll use the vehicle's heading-relative axes so
+uphill travel raises the nose regardless of compass direction. Lane positions
+include the authored road skew and height offsets. The configured rearmost axle
+follows the route and the vehicle body pivots around it; when axle data is
+unavailable, the rear axle is estimated at 30% of the configured bounding-box
+length behind the model origin. AI collision footprints and their F2
+visualizations use the same body pose. Among equal priorities, movements under
+45° are treated as straight-like, 45–100° bends go next, and sharper turns go
+last. Faster approaches (under 3 m/s, under 8 m/s, or more, based on cruise
+speed so braking does not reverse the ranking) go before slower ones, and only
+then does the earlier junction arrival win; yielding vehicles leave an
+additional 2 m before conflict points. Right turns yielding to straight-through
+traffic stop 4 m before the junction entry when needed, keeping the waiting
+vehicle clear of the crossing path so through traffic can pass instead of
+deadlocking against it. Synthetic regressions verify that a waiting
+lower-priority movement yields to an approaching higher-priority vehicle,
+crossing movements remain clear, and both make progress. When a long turning
+vehicle's front extends into the junction while its center is still alongside a
+straight-going vehicle, it can yield to that vehicle if priority and the sampled
+stopping distance permit; physical collision checks still apply. Complete native
+OMSI right-of-way behavior remains unverified.
 
-Traffic accelerates at up to 1.6 m/s^2 and normally brakes at up to 3 m/s^2.
-If a signal becomes blocking inside a moving vehicle's braking distance
-(`speed^2 / (2 * 3 m/s^2)`, measured to the front-clearance stop point),
-the vehicle commits to passing that signal rather than stopping instantly.
-The decision lasts until it enters the signalized path; following, junction
-priority, and collision checks still apply. Vehicles with enough room to stop,
-and vehicles already waiting at red, continue to obey the signal.
-Lookahead reduces speed before bends only when the current speed would exceed
-the curve's safe speed, estimated with a 4.0 m/s^2 lateral-acceleration limit.
-A speed-dependent following headway (0.5 s at walking pace rising to
-1.5 s at 13 m/s) plus a 2 m standstill buffer respond to vehicles ahead,
-including the player bus, so slow and stopped queues close up to about 2–3 m
-while faster traffic keeps a longer gap. Oriented vehicle footprints and
-small swept movement steps prevent AI from advancing through occupied space;
-an emergency stop can exceed comfortable braking when a blockage appears too
-close. A vehicle can continue when its next swept step increases separation
-from an external obstacle, so a pedestrian close behind does not hold it in
-place while it moves away. Likewise, a close vehicle behind cannot hold a
-leader that is moving away; physical separation is still checked throughout
-the swept movement. Once a vehicle is committed to a junction, the
+Traffic accelerates at up to 1.6 m/s^2 and normally brakes at up to 3 m/s^2. If
+a signal becomes blocking inside a moving vehicle's braking distance (`speed^2 /
+(2 * 3 m/s^2)`, measured to the front-clearance stop point), the vehicle commits
+to passing that signal rather than stopping instantly. The decision lasts until
+it enters the signalized path; following, junction priority, and collision
+checks still apply. Vehicles with enough room to stop, and vehicles already
+waiting at red, continue to obey the signal. Lookahead reduces speed before
+bends only when the current speed would exceed the curve's safe speed, estimated
+with a 4.0 m/s^2 lateral-acceleration limit. A speed-dependent following headway
+(0.5 s at walking pace rising to 1.5 s at 13 m/s) plus a 2 m standstill buffer
+respond to vehicles ahead, including the player bus, so slow and stopped queues
+close up to about 2–3 m while faster traffic keeps a longer gap. Oriented
+vehicle footprints and small swept movement steps prevent AI from advancing
+through occupied space; an emergency stop can exceed comfortable braking when a
+blockage appears too close. A vehicle can continue when its next swept step
+increases separation from an external obstacle, so a pedestrian close behind
+does not hold it in place while it moves away. Likewise, a close vehicle behind
+cannot hold a leader that is moving away; physical separation is still checked
+throughout the swept movement. Once a vehicle is committed to a junction, the
 swept collision margin is reduced while still preventing physical footprint
 overlap. All committed vehicle turns use a 0.15 m clearance from external
-vehicle footprints instead of the normal 0.5 m, allowing close, collision-free turns
-when the configured bounding boxes are conservative. Vehicles in the same lane,
-moving or stopped, are followed with a damped
-gap model instead of being treated as parked obstacles, so a queue keeps flowing
-through a junction behind a moving leader and creeps up behind a stopped one. Before entering a junction, a vehicle claims it
-and waits at the entry line while any vehicle inside or already admitted would
-cross or merge into its path, so two approaches never lock each other inside
-the box. Straight, separated opposing lanes can pass without treating the whole
-junction as a single shared corridor; uncertain geometry retains conservative
-checks. A vehicle approaching a junction constraint below 2 km/h settles to a
-stop within 0.25 m of its stopping point instead of creeping indefinitely.
-A vehicle approaching on a lower-priority spline gives way at its
-entry line to any higher-priority vehicle whose path crosses or merges into its
-junction movement and would arrive within the same conflict window (plus a
-0.75-second safety margin accounting for vehicle occupancy); traffic that has
-already cleared before the turn arrives does not hold it back;
-higher-priority vehicles do not wait for such a vehicle's unused claim. Waiting
-time orders junction admission among vehicles of equal priority. Approach priority
-uses the lowest priority across the current spline and connected route splines
-within 150 m, so short low-priority connectors still affect right-of-way. If a collision
-cycle nevertheless traps two vehicles inside a junction, the lower-priority
-vehicle backs out to the approach when its swept path is clear, then waits for
-the other vehicle to exit. Crossing movements use time-aware three-second
-lookahead reservations; road-sign right-of-way rules
-beyond authored spline priority are not yet modeled.
-Queues, actual endpoint spawns, junction entry speeds, off-screen population
-unloads, route-end recycling, and lane-network statistics are logged.
-Route planning tries an alternative branch if a later turn is impossible,
-rejecting the entry route if no drivable exit or loop is reachable. Vehicles
-exit only at unconnected lane ends; missing or misaligned authored connections
-can still terminate a route.
-AI buses are selected separately from depot bus definitions. When a connected
-route matches a timetable's complete `.ttr` spline chain, buses follow that
-route and use its parsed departures; complete matches take priority over
-fallbacks. If no complete match exists, OpenBus can use an explicitly logged,
+vehicle footprints instead of the normal 0.5 m, allowing close, collision-free
+turns when the configured bounding boxes are conservative. Vehicles in the same
+lane, moving or stopped, are followed with a damped gap model instead of being
+treated as parked obstacles, so a queue keeps flowing through a junction behind
+a moving leader and creeps up behind a stopped one. Before entering a junction,
+a vehicle claims it and waits at the entry line while any vehicle inside or
+already admitted would cross or merge into its path, so two approaches never
+lock each other inside the box. Straight, separated opposing lanes can pass
+without treating the whole junction as a single shared corridor; uncertain
+geometry retains conservative checks. A vehicle approaching a junction
+constraint below 2 km/h settles to a stop within 0.25 m of its stopping point
+instead of creeping indefinitely. A vehicle approaching on a lower-priority
+spline gives way at its entry line to any higher-priority vehicle whose path
+crosses or merges into its junction movement and would arrive within the same
+conflict window (plus a 0.75-second safety margin accounting for vehicle
+occupancy); traffic that has already cleared before the turn arrives does not
+hold it back; higher-priority vehicles do not wait for such a vehicle's unused
+claim. Waiting time orders junction admission among vehicles of equal priority.
+Approach priority uses the lowest priority across the current spline and
+connected route splines within 150 m, so short low-priority connectors still
+affect right-of-way. If a collision cycle nevertheless traps two vehicles inside
+a junction, the lower-priority vehicle backs out to the approach when its swept
+path is clear, then waits for the other vehicle to exit. Crossing movements use
+time-aware three-second lookahead reservations; road-sign right-of-way rules
+beyond authored spline priority are not yet modeled. Queues, actual endpoint
+spawns, junction entry speeds, off-screen population unloads, route-end
+recycling, and lane-network statistics are logged. Route planning tries an
+alternative branch if a later turn is impossible, rejecting the entry route if
+no drivable exit or loop is reachable. Vehicles exit only at unconnected lane
+ends; missing or misaligned authored connections can still terminate a route. AI
+buses are selected separately from depot bus definitions. When a connected route
+matches a timetable's complete `.ttr` spline chain, buses follow that route and
+use its parsed departures; complete matches take priority over fallbacks. If no
+complete match exists, OpenBus can use an explicitly logged,
 itinerary-inaccurate fallback only when it can follow at least two consecutive
-timetable entries from the trip's first checkpoint. Such a bus follows only
-the matched prefix, stops at that prefix's end, and does not register player
+timetable entries from the trip's first checkpoint. Such a bus follows only the
+matched prefix, stops at that prefix's end, and does not register player
 passenger stops as if the full itinerary were available. Fallbacks do not skip
 missing checkpoints or invent connections. They start at the timetable origin
 and still wait for a clear, off-screen admission position. Set
 `OPENBUS_MAP_BUS_COUNT` to control their population (default `20`, maximum
 `200`; `0` disables map AI buses). The bounded bus pool is created at startup
 and buses are admitted at scheduled times. Traffic remains lane-constrained and
-kinematic:
-signal/sign compliance, overtaking, lane changing, articulated swept-body
-physics, and collision response when the player drives into AI are not implemented.
+kinematic: signal/sign compliance, overtaking, lane changing, articulated
+swept-body physics, and collision response when the player drives into AI are
+not implemented.
 
 Road and timetable route networks are indexed from every tile listed in
-`global.cfg` at map startup. AI vehicles retain those predefined lane routes while
-rendering tiles stream in and out around the player; crossing a tile boundary
-does not truncate or rebuild an actor's route.
+`global.cfg` at map startup. AI vehicles retain those predefined lane routes
+while rendering tiles stream in and out around the player; crossing a tile
+boundary does not truncate or rebuild an actor's route.
 
 Ordinary scenery gets a bilinearly sampled terrain height plus its authored
 vertical placement value, unless its SCO/model declares `[absheight]`, in which
-case the authored vertical coordinate is absolute.
-Same-tile spline attachments/repeaters use typed spline-relative placement;
-cross-tile chains are not complete. `[attachObj]` children resolve their parent
-placement IDs across map tiles and use the indexed `[new_attachment]` point from
-the parent SCO/model config, including the authored anchor and child rotations.
-Missing parents/anchors and attachment cycles are skipped with diagnostics.
+case the authored vertical coordinate is absolute. Same-tile spline
+attachments/repeaters use typed spline-relative placement; cross-tile chains are
+not complete. `[attachObj]` children resolve their parent placement IDs across
+map tiles and use the indexed `[new_attachment]` point from the parent SCO/model
+config, including the authored anchor and child rotations. Missing
+parents/anchors and attachment cycles are skipped with diagnostics.
 `[varparent]` references are resolved against map placement IDs. Traffic-light
 models marked `[trafficlight]` inherit the signal phase schedule from their
 referenced parent so their scripts can drive the visible lamps. When a parent
-defines multiple signal groups, the numeric placement label selects the
-matching group; uncovered time at the end of a group's cycle is phase `12`
-(off). SCO `[traffic_light_jump]` entries are read as
-`phase_to_interrupt`, `trigger_distance`, `target_phase`, and `min_green_time`;
-the target uses OMSI green states `6`-`8`.
-An approaching player bus or AI bus requests pre-emption for its linked signal;
-the target phase is applied when the configured interrupt state is active and
-other signal groups are not green, held for the configured minimum, then the
-fixed cycle resumes. F2 path diagnostics show these entries as `BP...`.
-Other scenery-script variable inheritance is not evaluated, and `[varparent]`
-is not a spatial attachment link.
-`[spline_terrain_align]` currently tilts marked scenery so its local up axis
-follows the sampled terrain normal, without changing its position. OMSI's exact
-semantics for this marker have not been independently verified, so this is a
-conservative renderer interpretation; `[spline_terrain_align_2]` remains
-unsupported.
-Scenery `[texttexture]` and `[scripttexture]` materials are bound per placed
-instance, with independent live texture state and transparent text blending;
-visual parity against installed directional-sign assets still needs validation.
-Supported scenery meshes include O3D and static text, binary, and MSZIP-compressed `.x`;
+defines multiple signal groups, the numeric placement label selects the matching
+group; uncovered time at the end of a group's cycle is phase `12` (off). SCO
+`[traffic_light_jump]` entries are read as `phase_to_interrupt`,
+`trigger_distance`, `target_phase`, and `min_green_time`; the target uses OMSI
+green states `6`-`8`. An approaching player bus or AI bus requests pre-emption
+for its linked signal; the target phase is applied when the configured interrupt
+state is active and other signal groups are not green, held for the configured
+minimum, then the fixed cycle resumes. F2 path diagnostics show these entries as
+`BP...`. Other scenery-script variable inheritance is not evaluated, and
+`[varparent]` is not a spatial attachment link. `[spline_terrain_align]`
+currently tilts marked scenery so its local up axis follows the sampled terrain
+normal, without changing its position. OMSI's exact semantics for this marker
+have not been independently verified, so this is a conservative renderer
+interpretation; `[spline_terrain_align_2]` remains unsupported. Scenery
+`[texttexture]` and `[scripttexture]` materials are bound per placed instance,
+with independent live texture state and transparent text blending; visual parity
+against installed directional-sign assets still needs validation. Supported
+scenery meshes include O3D and static text, binary, and MSZIP-compressed `.x`;
 configured nonzero LOD parts are selected by distance using the vehicle LOD
 threshold mapping. Animated/skinned `.x` content remains unsupported, and
-`[tree]` assets use a crossed-texture-plane preview rather than their helper mesh.
-`.sli` rendering parses a subset of
-`[texture]`, `[profile]`, and `[profilepnt]` records and tessellates straight
-and signed-radius centerlines, but complete road/profile, banking, material,
-and lane-marking behavior is not established. Road UV V uses a valid parsed
-v11+ spline chain offset as its longitudinal origin; visual continuity and
-OMSI parity still need confirmation against linked installed splines.
+`[tree]` assets use a crossed-texture-plane preview rather than their helper
+mesh. `.sli` rendering parses a subset of `[texture]`, `[profile]`, and
+`[profilepnt]` records and tessellates straight and signed-radius centerlines,
+but complete road/profile, banking, material, and lane-marking behavior is not
+established. Road UV V uses a valid parsed v11+ spline chain offset as its
+longitudinal origin; visual continuity and OMSI parity still need confirmation
+against linked installed splines.
 
-The following map behavior is **not implemented** or remains explicitly
-partial:
+The following map behavior is **not implemented** or remains explicitly partial:
 
-- Animated/skinned DirectX `.x` content; static text, binary, and MSZIP-compressed
-  `.x` meshes now load. The tree preview is not the original mesh. Cross-tile
-  repeater-master resolution, full `[attachObj]` scripting,
+- Animated/skinned DirectX `.x` content; static text, binary, and
+  MSZIP-compressed `.x` meshes now load. The tree preview is not the original
+  mesh. Cross-tile repeater-master resolution, full `[attachObj]` scripting,
   scenery script-driven animation/material changes, scenery mouse events, and
   attached/repeater scenery collision are incomplete. Per-placement scenery
   `init`/`frame`, `[visible]`, `[usetexttexture]`, and `[usescripttexture]`
@@ -398,30 +385,31 @@ partial:
   lightmaps, Chrono map variants, and asynchronous map construction are absent.
   Per-tile DDS filenames are inventoried, but their payloads and mapping to
   `[groundtex]` ordinals are unresolved. All map geometry stays resident after
-  construction; active-window gating does not free GPU memory.
-  `.map.water` records are size/finite-value validated and reported, but their
-  spatial height ordering is unresolved, so no water geometry is drawn.
-  Unimplemented bracketed sections in tile files and `global.cfg` are reported
-  with line numbers during map loading. Global identity, description, seasons,
-  and other documented metadata are retained; road/passenger density points
-  drive provisional, separate AI population targets.
-  `[variable_terrain]` and `[variable_terrainlightmap]` markers are recognized
-  and reported, but their dynamic terrain/lightmap behavior is not rendered.
-  `[varparent]` and spline-terrain alignment data remain partial. `[rule]` and
-  `[kill_rule]` apply supported group-specific speed, density, priority, and
-  vehicle-access settings to road paths; see the [OMSI map format reference](Docs/OMSI2_MAP_FORMAT_REFERENCE.md).
-  The separate `unsched_trafficdens.txt` group/day schedule applies its hourly
-  curves to the road-traffic population target, startup pool composition,
-  and per-group active targets. The maximum reserved pool is fixed at startup,
-  but unfilled reservations are retried as connected road lanes stream in.
-  Weekday schedules use the selected map calendar and change day at its
-  midnight, rather than 24 hours after startup.
-- Scheduled OMSI AI buses use matched timetable routes and departures; fixed
-  SCO traffic-light schedules stop road traffic and pedestrians on linked
-  paths. Signalized scenery instances expose the active phase through
-  `trafficlightphase` for model scripts/visibility variables. Visible light heads
-  linked by `[varparent]` retain their selected controller schedule even when
-  the junction controller is `[onlyeditor]`; its geometry remains hidden.
+  construction; active-window gating does not free GPU memory. `.map.water`
+  records are size/finite-value validated and reported, but their spatial height
+  ordering is unresolved, so no water geometry is drawn. Unimplemented bracketed
+  sections in tile files and `global.cfg` are reported with line numbers during
+  map loading. Global identity, description, seasons, and other documented
+  metadata are retained; road/passenger density points drive provisional,
+  separate AI population targets. `[variable_terrain]` and
+  `[variable_terrainlightmap]` markers are recognized and reported, but their
+  dynamic terrain/lightmap behavior is not rendered. `[varparent]` and
+  spline-terrain alignment data remain partial. `[rule]` and `[kill_rule]` apply
+  supported group-specific speed, density, priority, and vehicle-access settings
+  to road paths; see the [OMSI map format
+  reference](Docs/OMSI2_MAP_FORMAT_REFERENCE.md). The separate
+  `unsched_trafficdens.txt` group/day schedule applies its hourly curves to the
+  road-traffic population target, startup pool composition, and per-group active
+  targets. The maximum reserved pool is fixed at startup, but unfilled
+  reservations are retried as connected road lanes stream in. Weekday schedules
+  use the selected map calendar and change day at its midnight, rather than 24
+  hours after startup.
+- Scheduled OMSI AI buses use matched timetable routes and departures; fixed SCO
+  traffic-light schedules stop road traffic and pedestrians on linked paths.
+  Signalized scenery instances expose the active phase through
+  `trafficlightphase` for model scripts/visibility variables. Visible light
+  heads linked by `[varparent]` retain their selected controller schedule even
+  when the junction controller is `[onlyeditor]`; its geometry remains hidden.
   The GPU traffic-light probe verifies red, green, yellow, and back to red for
   fixed-cycle and controller-driven schedules through the placement loader,
   model script, visibility, and rendered pixels. Bus-priority rules are
@@ -435,8 +423,9 @@ track the missing runtime paths and visual evidence.
 
 ## Source layout
 
-The engine is split into one static library per module (see `src/CMakeLists.txt`).
-Headers are included by module-qualified paths, e.g. `#include "render/CoreRenderer.h"`.
+The engine is split into one static library per module (see
+`src/CMakeLists.txt`). Headers are included by module-qualified paths, e.g.
+`#include "render/CoreRenderer.h"`.
 
 | Folder | CMake target | Responsibility | Depends on |
 | --- | --- | --- | --- |
@@ -452,16 +441,18 @@ Headers are included by module-qualified paths, e.g. `#include "render/CoreRende
 | `src/render` | `openbus_render` | OpenGL renderer, asset requests, camera/matrix math, reflections; `render/map` builds and draws the map scene | assets, config, map, physics, scripting |
 | `src/app` | `OpenBus` executable | Entry point, render loop (`RenderLoop*.cpp`), HUD and per-vehicle rendering in `app/vehicle` | all modules |
 
-Large subsystems keep their public header small and place implementation details in an
-internal header (`*Internal.h` / `*Impl.h`) shared by focused translation units:
+Large subsystems keep their public header small and place implementation details
+in an internal header (`*Internal.h` / `*Impl.h`) shared by focused translation
+units:
 
 - `app/RenderLoop*.cpp`: lifecycle, input/camera, simulation/scripts, drawing.
-- `render/map/MapSceneLoader.*`: map scene construction (terrain, scenery assets, tile content);
-  `MapRendererDraw.cpp`: per-frame map drawing.
-- `scripting/Script{RuntimeImpl,Textures,NativeBackend,LuaBindings}.cpp`: runtime core,
-  script textures, native OSC backend and Lua bindings.
+- `render/map/MapSceneLoader.*`: map scene construction (terrain, scenery
+  assets, tile content); `MapRendererDraw.cpp`: per-frame map drawing.
+- `scripting/Script{RuntimeImpl,Textures,NativeBackend,LuaBindings}.cpp`:
+  runtime core, script textures, native OSC backend and Lua bindings.
 
-Vendored code lives in `third_party/` (Lua 5.1, sol2) and is built separately from engine modules.
+Vendored code lives in `third_party/` (Lua 5.1, sol2) and is built separately
+from engine modules.
 
 ## Prerequisites
 
@@ -493,8 +484,8 @@ On Debian or Ubuntu, install the native development packages:
 sudo apt install build-essential cmake libode-dev libglfw3-dev libglu1-mesa-dev libopenal-dev liblua5.1-0-dev zlib1g-dev
 ```
 
-The Linux build uses the system GLFW/ODE packages when available and falls
-back to downloading GLFW during CMake configuration when GLFW is not found.
+The Linux build uses the system GLFW/ODE packages when available and falls back
+to downloading GLFW during CMake configuration when GLFW is not found.
 
 If `glfw3` is not available through `CMAKE_PREFIX_PATH`, the build now falls
 back to downloading GLFW 3.4 during CMake configure. This still requires
@@ -511,15 +502,14 @@ using the helper.
 .\run.bat
 ```
 
-Native MSVC is rejected because its CMake C++23 mapping is
-`/std:c++latest`, not an exact C++23 mode. The Windows `run.bat` helper
-initializes the MSVC x64 environment and uses standalone Clang-cl with the
-Visual Studio-bundled Ninja executable. Its `windows-clang-ninja` preset builds
-in `build-ninja` using 12 parallel jobs; the original NMake `build-ode`
-directory remains untouched. The first Ninja build compiles from scratch, while
-subsequent builds recompile only changed sources. For a manual NMake configure
-from `cmd.exe`, the helper's environment variables and preset paths can be
-overridden before invoking it:
+Native MSVC is rejected because its CMake C++23 mapping is `/std:c++latest`, not
+an exact C++23 mode. The Windows `run.bat` helper initializes the MSVC x64
+environment and uses standalone Clang-cl with the Visual Studio-bundled Ninja
+executable. Its `windows-clang-ninja` preset builds in `build-ninja` using 12
+parallel jobs; the original NMake `build-ode` directory remains untouched. The
+first Ninja build compiles from scratch, while subsequent builds recompile only
+changed sources. For a manual NMake configure from `cmd.exe`, the helper's
+environment variables and preset paths can be overridden before invoking it:
 
 ```bat
 call windows_clang_env.bat
@@ -568,9 +558,9 @@ cmake --build <build-directory> --target check-probes --parallel 12
 ```
 
 The target builds probe dependencies before running tests, including probe
-variants registered with CTest. GPU probes may be reported as skipped when
-their required graphics context is unavailable. The opt-in bgfx lighting
-preview is a developer tool, not part of the automated test suite.
+variants registered with CTest. GPU probes may be reported as skipped when their
+required graphics context is unavailable. The opt-in bgfx lighting preview is a
+developer tool, not part of the automated test suite.
 
 ## Linting
 
@@ -620,37 +610,37 @@ Without an argument, the helper uses `OMSI_ROOT` if set, or prompts for a
 directory. Set `OPENBUS_BUILD_DIR` to use a different existing CMake build
 directory.
 
-The auditor recursively checks `.bus` files, recognized model `.cfg` files,
-and `.osc` scripts without writing translated Lua files. Build/output, vendor,
-and virtual-environment directories are skipped. Results distinguish
-`INVALID` from `UNSUPPORTED`; unknown `.cfg` families are reported as
-unsupported instead of being parsed under the wrong grammar. OSC reported as
-unsupported by OpenBus's native compiler is not treated as definitely invalid.
-The process returns 1 if invalid files were found, 0 otherwise, and 2 for an
-invalid invocation/root path.
+The auditor recursively checks `.bus` files, recognized model `.cfg` files, and
+`.osc` scripts without writing translated Lua files. Build/output, vendor, and
+virtual-environment directories are skipped. Results distinguish `INVALID` from
+`UNSUPPORTED`; unknown `.cfg` families are reported as unsupported instead of
+being parsed under the wrong grammar. OSC reported as unsupported by OpenBus's
+native compiler is not treated as definitely invalid. The process returns 1 if
+invalid files were found, 0 otherwise, and 2 for an invalid invocation/root
+path.
 
 ### Optional binary mesh bundle
 
-To reduce startup parsing and file-open overhead, generate an `.obx` bundle
-from converted OBJ meshes. The wrapper configures and builds the bundle tool
-in `build-ninja`; its arguments are the model root and optional output path:
+To reduce startup parsing and file-open overhead, generate an `.obx` bundle from
+converted OBJ meshes. The wrapper configures and builds the bundle tool in
+`build-ninja`; its arguments are the model root and optional output path:
 
 ```powershell
 .\bundle.bat MAN_DL05\Model\DL05_obj
 ```
 
 `bundle.bat` configures/builds `obj_bundle` in `build-ninja` and passes the
-arguments to it. Copy or rename the resulting file to `openbus.obx` beside the model's
-converted meshes. OpenBus uses matching bundle entries when available and
-falls back to OBJ files for missing entries, so the bundle is optional.
-The model CFG still controls mesh order, visibility, animations, and material
+arguments to it. Copy or rename the resulting file to `openbus.obx` beside the
+model's converted meshes. OpenBus uses matching bundle entries when available
+and falls back to OBJ files for missing entries, so the bundle is optional. The
+model CFG still controls mesh order, visibility, animations, and material
 overrides.
 
 The Windows build writes a symbolized `game.crash` report with exception
 details, registers, module names, and source lines when matching PDB files are
-available. It also writes `game.crash.dmp`, which can be opened in Visual
-Studio or WinDbg with the matching executable and PDB. The Linux build writes
-a `game.crash` stack trace for fatal POSIX signals and unexpected termination.
+available. It also writes `game.crash.dmp`, which can be opened in Visual Studio
+or WinDbg with the matching executable and PDB. The Linux build writes a
+`game.crash` stack trace for fatal POSIX signals and unexpected termination.
 Build with debug symbols when detailed function names are needed, for example
 with `-DCMAKE_BUILD_TYPE=Debug`.
 
@@ -663,56 +653,56 @@ with `-DCMAKE_BUILD_TYPE=Debug`.
 - ODE contact joints for chassis/ground and wheel/ground collisions
 - Per-wheel ODE bodies with cylinder geometry, suspension slider joints,
   steering hinges, and wheel rotation hinges
-- Per-corner spring-damper suspension, anti-roll forces, tyre friction,
-  braking, rolling resistance, aerodynamic drag, steering, bounded chassis
-  attitude stabilization, and automatic gearing
+- Per-corner spring-damper suspension, anti-roll forces, tyre friction, braking,
+  rolling resistance, aerodynamic drag, steering, bounded chassis attitude
+  stabilization, and automatic gearing
 - Wheel torque, wheelspin, and skid telemetry derived from the ODE wheel bodies
 - Fixed-rate physics (60 Hz by default) with a bounded catch-up budget; if a
   frame exceeds that budget, excess accumulated time is dropped to avoid a
   spiral of death
 
 Interactive vehicle physics is loaded from the `.bus` selected in the startup
-menu. Benchmark/custom runs can select a bus with `OPENBUS_BUS_CONFIG`.
-Relative paths are resolved against the standard Steam installation at
-`C:\Program Files (x86)\Steam\steamapps\common\OMSI 2`; set `OPENBUS_OMSI_ROOT`
-when OMSI is installed elsewhere:
+menu. Benchmark/custom runs can select a bus with `OPENBUS_BUS_CONFIG`. Relative
+paths are resolved against the standard Steam installation at `C:\Program Files
+(x86)\Steam\steamapps\common\OMSI 2`; set `OPENBUS_OMSI_ROOT` when OMSI is
+installed elsewhere:
 
 ```powershell
 $env:OPENBUS_OMSI_ROOT = "D:\SteamLibrary\steamapps\common\OMSI 2"
 ```
 
-Vehicle values are not duplicated in C++.
-Articulated vehicles are outside the currently supported scope. The
-`openbus_articulated` configuration flag is retained for inspection only; it
-does not create additional ODE bodies, joints, collision shapes, or rendered
-sections, so articulated models must not be treated as supported vehicles.
-The parsed configuration is written to `OpenBus_configuration.json` at startup.
-Parsed model parts, materials, visibility variables, animation variables, and
-wheel bindings are written to `OpenBus_model_configuration.json` as well. For
-parts with `[animparent]`, `parent_animations` shows the variables inherited
-from the referenced mesh, which makes door-glass control variables visible.
+Vehicle values are not duplicated in C++. Articulated vehicles are outside the
+currently supported scope. The `openbus_articulated` configuration flag is
+retained for inspection only; it does not create additional ODE bodies, joints,
+collision shapes, or rendered sections, so articulated models must not be
+treated as supported vehicles. The parsed configuration is written to
+`OpenBus_configuration.json` at startup. Parsed model parts, materials,
+visibility variables, animation variables, and wheel bindings are written to
+`OpenBus_model_configuration.json` as well. For parts with `[animparent]`,
+`parent_animations` shows the variables inherited from the referenced mesh,
+which makes door-glass control variables visible.
 
 The model variable store initializes OMSI-style system variables with the local
 system date at midday: `Time` is `43200`, `Day`, `Month`, and `Year` come from
 the current date, and `DayOfYear` is the zero-based day index. Defaults include
 `NoSound=1`, `Pause=0`, `PrecipType=0`, `PrecipRate=0`,
 `Weather_Temperature=20`, `Weather_AbsHum=10`, `Envir_Brightness=1`,
-`AutoClutch=0`, and `SunAlt=60`.
-`Timegap`, `GetTime`, `mouse_x`, and `mouse_y` are updated from the renderer
-each frame. Precipitation values are persistent shared system variables, so
-configured weather and script overrides survive frame updates.
+`AutoClutch=0`, and `SunAlt=60`. `Timegap`, `GetTime`, `mouse_x`, and `mouse_y`
+are updated from the renderer each frame. Precipitation values are persistent
+shared system variables, so configured weather and script overrides survive
+frame updates.
 
 The initial weather slice renders rain or snow particles in exterior and free
 camera views. Set `OPENBUS_WEATHER=rain` or `snow`; `clear` (the default)
 disables precipitation. `OPENBUS_WEATHER_RATE` accepts `0`–`1` and defaults to
 `0.5` for rain/snow. Weather settings populate the shared `PrecipType` and
-`PrecipRate` system variables before scripts run, so scripts can override
-them. This does not yet load OMSI map weather schedules or render fog,
-windshield effects, wet roads, or snow accumulation.
+`PrecipRate` system variables before scripts run, so scripts can override them.
+This does not yet load OMSI map weather schedules or render fog, windshield
+effects, wet roads, or snow accumulation.
 
 For benchmark/custom runs, `OPENBUS_BUS_CONFIG` accepts an absolute path or a
-path relative to `OPENBUS_OMSI_ROOT`. Set the optional `OPENBUS_MODEL_CONFIG`
-to select a `.cfg` explicitly; otherwise the loader uses the `.bus` file's
+path relative to `OPENBUS_OMSI_ROOT`. Set the optional `OPENBUS_MODEL_CONFIG` to
+select a `.cfg` explicitly; otherwise the loader uses the `.bus` file's
 `[model]` entry. These settings do not override interactive vehicle selection.
 For example, both paths below are relative to the OMSI installation root:
 
@@ -723,16 +713,15 @@ $env:OPENBUS_MODEL_CONFIG = "Vehicles/Caetano Levante/Model/model_caetano.cfg"
 ```
 
 Every rendered vehicle must provide a `VehiclePlacement` containing its world
-`x/y/z` position and yaw in degrees. The renderer can load multiple vehicles
-in one process by calling `RenderLoop::AddVehicle` once per `.bus`/`.cfg` pair.
-The first vehicle is connected to the shared bus simulation; additional
-vehicles are scripted AI models rendered at their declared placements. Set
+`x/y/z` position and yaw in degrees. The renderer can load multiple vehicles in
+one process by calling `RenderLoop::AddVehicle` once per `.bus`/`.cfg` pair. The
+first vehicle is connected to the shared bus simulation; additional vehicles are
+scripted AI models rendered at their declared placements. Set
 `OPENBUS_AI_BUS_CONFIG` and `OPENBUS_AI_MODEL_CONFIG` together to add AI
 vehicles. `OPENBUS_AI_COUNT` selects the number to spawn (defaults to 1 and is
-limited to 200); multiple instances are arranged in a grid. `run.bat` opens
-the interactive vehicle selector and defaults the map to Cotterell. The
-launcher supplies the MAN DL05 config defaults only when benchmark mode is
-enabled.
+limited to 200); multiple instances are arranged in a grid. `run.bat` opens the
+interactive vehicle selector and defaults the map to Cotterell. The launcher
+supplies the MAN DL05 config defaults only when benchmark mode is enabled.
 
 The loader uses `[mass]`, `[boundingbox]`, `[schwerpunkt]`, and `[newachse]`
 records, including axle spring, damper, load, and driven flags. The
@@ -789,8 +778,8 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   without holding a middle button. The cursor is captured until `F4` is pressed
   again, and arrow keys continue to select camera views. Set
   `OPENBUS_MOUSE_LOOK=1` to enable it at startup.
-- Hold right mouse and drag vertically: adjust FOV in configured views, or
-  move closer/farther in the outside orbit view
+- Hold right mouse and drag vertically: adjust FOV in configured views, or move
+  closer/farther in the outside orbit view
 - Scroll up/down: zoom in/out
 - Press `F3` to toggle the no-clip free camera. Use the up/down arrows to move
   forward/back and left/right to strafe; use `Page Up` / `Page Down` to move
@@ -808,47 +797,44 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   radius); the debug wireframe refreshes as tiles enter and leave that set.
 - Press `F2` to show traffic paths in the active map tiles, including authored
   lane offsets and scenery-object junction paths. SCO `[path]` records are
-  tessellated as local spline segments from their position, heading, radius,
-  and length fields. Road paths are colored by priority (0 purple, 64 blue,
-  128 green, 192 yellow, and 255 red), with a matching F2 legend; human paths
-  are magenta. Arrows on paths show their travel direction; bidirectional
-  paths have arrows in both directions, and their spline labels show `[BIDIR]`.
-  `H` labels identify pedestrian splines; `S` labels identify road splines.
-  Green wireframe boxes mark the waiting-passenger slots at
-  registered timetable stops within 75 m. Their labels show the stop name, ID,
-  and waiting count; an empty queue shows its first potential slot. Positions
-  use nearby authored passenger areas when available; `[fallback]` identifies
-  generated roadside positions when no area is matched.
-  Amber wireframes show editor-only `[busstop]` objects, and cyan wireframes
-  show editor-only passenger areas and their authored cabin positions. Labels
-  show the map object ID and any stop name. Each passenger area is associated
-  with the nearest editor bus stop within 30 m and 2 m vertically; this
-  proximity rule is an approximation, not verified native OMSI linking.
-  Waiting passengers use its authored positions first; excess passengers are
-  distributed inside the authored passenger-area bounds. When no area is
-  matched, the generated roadside queue is used.
-  White arrows above active AI vehicles
-  show the vehicle's actual facing direction for comparison. Orange squares
-  mark unconnected directed starts; red Xs mark unconnected
+  tessellated as local spline segments from their position, heading, radius, and
+  length fields. Road paths are colored by priority (0 purple, 64 blue, 128
+  green, 192 yellow, and 255 red), with a matching F2 legend; human paths are
+  magenta. Arrows on paths show their travel direction; bidirectional paths have
+  arrows in both directions, and their spline labels show `[BIDIR]`. `H` labels
+  identify pedestrian splines; `S` labels identify road splines. Green wireframe
+  boxes mark the waiting-passenger slots at registered timetable stops within 75
+  m. Their labels show the stop name, ID, and waiting count; an empty queue
+  shows its first potential slot. Positions use nearby authored passenger areas
+  when available; `[fallback]` identifies generated roadside positions when no
+  area is matched. Amber wireframes show editor-only `[busstop]` objects, and
+  cyan wireframes show editor-only passenger areas and their authored cabin
+  positions. Labels show the map object ID and any stop name. Each passenger
+  area is associated with the nearest editor bus stop within 30 m and 2 m
+  vertically; this proximity rule is an approximation, not verified native OMSI
+  linking. Waiting passengers use its authored positions first; excess
+  passengers are distributed inside the authored passenger-area bounds. When no
+  area is matched, the generated roadside queue is used. White arrows above
+  active AI vehicles show the vehicle's actual facing direction for comparison.
+  Orange squares mark unconnected directed starts; red Xs mark unconnected
   directed ends. Connected endpoints have no marker: they have reciprocal links
   or a matching map or scenery path endpoint within 0.5 m horizontally and
   vertically. Matching endpoints are joined in the overlay with a short colored
-  connector when a visible gap remains; this does not change AI route connectivity.
-  Traffic-light phase, cycle, control-point, and bus priority diagnostics appear
-  in an ImGui panel while F2 is active. The top-left ImGui status panel shows the
-  simulation date and time to the second, player coordinates, the current map
-  tile and whether it is active, along with map/traffic statistics.
-  Signalized road paths show a stopline across the authored path width, placed
-  0.75 m before the controlled path entry (the AI stopping boundary). The ImGui
-  traffic-light panel lists junction/object ID (`J`), path (`P`), light (`L`),
-  current phase (`PH`), controller clock (`T`), cycle and each phase/duration
-  (`C`/`S`), conditional stop control points (`CP`), and bus-priority rules
-  (`BP`).
-  Signal stoplines are red for stop phases, amber for changeover phases, and
-  green for permissive phases. Editor-only junction controller records remain
-  included in this diagnostic overlay.
-  The status overlay also reports active traffic-light models (`TL`), the
-  controller-driven subset (`C`), and counts by current `trafficlightphase`
+  connector when a visible gap remains; this does not change AI route
+  connectivity. Traffic-light phase, cycle, control-point, and bus priority
+  diagnostics appear in an ImGui panel while F2 is active. The top-left ImGui
+  status panel shows the simulation date and time to the second, player
+  coordinates, the current map tile and whether it is active, along with
+  map/traffic statistics. Signalized road paths show a stopline across the
+  authored path width, placed 0.75 m before the controlled path entry (the AI
+  stopping boundary). The ImGui traffic-light panel lists junction/object ID
+  (`J`), path (`P`), light (`L`), current phase (`PH`), controller clock (`T`),
+  cycle and each phase/duration (`C`/`S`), conditional stop control points
+  (`CP`), and bus-priority rules (`BP`). Signal stoplines are red for stop
+  phases, amber for changeover phases, and green for permissive phases.
+  Editor-only junction controller records remain included in this diagnostic
+  overlay. The status overlay also reports active traffic-light models (`TL`),
+  the controller-driven subset (`C`), and counts by current `trafficlightphase`
   value (`PH`); `?:N` marks models whose phase is unavailable.
 - Map-driven road vehicles use deterministic starts on authored road routes
   containing at least two linked splines. AI buses are further restricted to
@@ -874,9 +860,9 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 - Reflection mirrors render at `256x256` by default. Set
   `OPENBUS_REFLECTION_SIZE=256`, `512`, or `1024` to choose the square mirror
   target resolution.
-- Mirrors update every frame by default. Set `OPENBUS_REFLECTION_INTERVAL=4`
-  to update them once every four rendered frames; values below `1` are treated
-  as `1`.
+- Mirrors update every frame by default. Set `OPENBUS_REFLECTION_INTERVAL=4` to
+  update them once every four rendered frames; values below `1` are treated as
+  `1`.
 - Set `OPENBUS_REFLECTION_MAX_FPS=60` to cap mirror refreshes at 60 FPS without
   limiting the main game. The cap is unset by default; when both reflection
   controls are configured, the interval and time-based cap both apply.
@@ -884,10 +870,10 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   launchers, which preserve an explicitly supplied value. Set
   `OPENBUS_REFLECTION_TRANSPARENT=0` to render opaque geometry only and reduce
   mirror workload. This also removes alpha-tested and alpha-blended vehicle
-  bodywork, not just glass: some AI vehicles will show only their wheels.
-  Leave it enabled for complete vehicles in mirrors. The render benchmark
-  explicitly disables it for its opaque-only workload. This setting is
-  read once on the first mirror draw and retained for the process lifetime.
+  bodywork, not just glass: some AI vehicles will show only their wheels. Leave
+  it enabled for complete vehicles in mirrors. The render benchmark explicitly
+  disables it for its opaque-only workload. This setting is read once on the
+  first mirror draw and retained for the process lifetime.
 - Set `OPENBUS_MATERIAL_BATCHING=1` to use the experimental material-table
   shader path. It combines compatible opaque geometry and supports up to 8
   ordinary 2D base textures per group; transparent, animated-material, and
@@ -901,38 +887,39 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   backends. Conditions and logical inputs treat zero as false and any non-zero
   value as true; logical and comparison results are canonical `0` or `1`.
 - Scripts normally follow the render rate. Set `OPENBUS_SCRIPT_HZ=30` to run
-  vehicle and scenery scripts at 30 Hz while rendering continues at the display rate;
-  fixed-rate script ticks receive `Timegap=1/30`. Each update runs at most eight catch-up
-  ticks and clamps elapsed time to 250 ms. If more whole ticks remain, they are dropped to
-  keep script work bounded; the fractional remainder is retained and dropped time is logged
-  periodically. Invalid or non-finite rates are logged and scripts follow the render rate.
-- Stationary-pointer hover checks refresh every 75 ms (about 13.33 Hz) by default.
-  Set `OPENBUS_HOVER_HZ=30` to refresh at 30 Hz, or `OPENBUS_HOVER_HZ=0` to
-  check every rendered input frame. Rates are clamped to 0–1000 Hz; invalid or
-  non-finite values are logged and retain the default. Cursor movement, camera
-  changes and clickable-state changes still invalidate the cache immediately;
-  clicks are not throttled by this setting.
+  vehicle and scenery scripts at 30 Hz while rendering continues at the display
+  rate; fixed-rate script ticks receive `Timegap=1/30`. Each update runs at most
+  eight catch-up ticks and clamps elapsed time to 250 ms. If more whole ticks
+  remain, they are dropped to keep script work bounded; the fractional remainder
+  is retained and dropped time is logged periodically. Invalid or non-finite
+  rates are logged and scripts follow the render rate.
+- Stationary-pointer hover checks refresh every 75 ms (about 13.33 Hz) by
+  default. Set `OPENBUS_HOVER_HZ=30` to refresh at 30 Hz, or
+  `OPENBUS_HOVER_HZ=0` to check every rendered input frame. Rates are clamped to
+  0–1000 Hz; invalid or non-finite values are logged and retain the default.
+  Cursor movement, camera changes and clickable-state changes still invalidate
+  the cache immediately; clicks are not throttled by this setting.
 - Profiling retains at most `1,000,000` events by default. Set
   `OPENBUS_TRACE_MAX_EVENTS=250000` or another positive value to lower the
   memory ceiling. Trace events are flushed incrementally to the JSON file while
   profiling runs, rather than being held until shutdown.
 - Trace scopes shorter than `1` microsecond are omitted by default. Set
-  `OPENBUS_TRACE_MIN_US=5` to omit scopes shorter than five microseconds;
-  values below `1` are treated as `1`.
+  `OPENBUS_TRACE_MIN_US=5` to omit scopes shorter than five microseconds; values
+  below `1` are treated as `1`.
 - Set `OPENBUS_TRACE_TRAFFIC_DETAIL=1` while tracing to split individual traffic
-  lookahead samples into curve/speed-limit and clearance scopes. This can produce
-  many events and add profiling overhead; leave it unset for normal profiling.
-- Optional texture downscaling: set `OPENBUS_TEXTURE_SCALE=0.5` before
-  launching to upload half-resolution textures; valid range is `0.25`-`1.0`.
-  OpenBus does not include a texture-conversion helper; create BC3 DDS files
-  with your preferred compatible tool if needed.
-- Mesh rendering uses frustum selection and sorted opaque/transparent batches
-  to reduce off-screen work and state churn. Set `OPENBUS_FRUSTUM_CULLING=0`
-  to disable culling for debugging. Opaque parts are front-to-back and
-  transparent parts back-to-front; this is not hardware occlusion-query
-  culling.
-- Set `OPENBUS_WHEELS_FROM_ODE=1` to bypass wheel `newanim` transforms and
-  place each wheel from its matching ODE body pose. The default is `0`.
+  lookahead samples into curve/speed-limit and clearance scopes. This can
+  produce many events and add profiling overhead; leave it unset for normal
+  profiling.
+- Optional texture downscaling: set `OPENBUS_TEXTURE_SCALE=0.5` before launching
+  to upload half-resolution textures; valid range is `0.25`-`1.0`. OpenBus does
+  not include a texture-conversion helper; create BC3 DDS files with your
+  preferred compatible tool if needed.
+- Mesh rendering uses frustum selection and sorted opaque/transparent batches to
+  reduce off-screen work and state churn. Set `OPENBUS_FRUSTUM_CULLING=0` to
+  disable culling for debugging. Opaque parts are front-to-back and transparent
+  parts back-to-front; this is not hardware occlusion-query culling.
+- Set `OPENBUS_WHEELS_FROM_ODE=1` to bypass wheel `newanim` transforms and place
+  each wheel from its matching ODE body pose. The default is `0`.
 - Doppler pitch shifting is disabled by default. Set `OPENBUS_DOPPLER=1` (also
   accepts `true`, `yes`, or `on`) before launch to enable OpenAL Doppler using
   listener and moving-loop velocity estimates. Velocities are reset after long
@@ -951,8 +938,8 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   collision offsets, OBJ vertices, normals, and mesh pivots.
 - O3D pivot matrices are animation metadata, not additional mesh placement
   transforms. Mirrored meshes are detected from pivot determinant and
-  face/normal agreement; only those meshes have winding correction and
-  clockwise back-face culling enabled.
+  face/normal agreement; only those meshes have winding correction and clockwise
+  back-face culling enabled.
 - `[newanim]` records and their origin commands are processed in configuration
   order. Origin-only records are valid. `anim_rot`/`anim_trans` use the
   converted local animation frame, `delay` is rate-based smoothing, and
@@ -960,10 +947,10 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   transforms for body and wheel/detail meshes.
 - When `MAN_DL05/Model/DL05.cfg` is available, the highest-detail `[LOD] 0.25`
   model block is rendered with driver-viewpoint mesh filtering
-- OBJ texture coordinates follow the converter's existing V-axis conversion
-  plus the final OpenGL image-origin correction;
-- MAN DL05 OBJ lateral coordinates are mirrored into the simulator convention
-  so the modeled right-side exit remains on the vehicle's right
+- OBJ texture coordinates follow the converter's existing V-axis conversion plus
+  the final OpenGL image-origin correction;
+- MAN DL05 OBJ lateral coordinates are mirrored into the simulator convention so
+  the modeled right-side exit remains on the vehicle's right
 - TGA, BMP, PNG/JPEG, and DXT1/DXT5 DDS texture data are decoded for model
   materials, including BMP and PNG payloads with a `.dds` filename
 - OBJ `mtllib`/`usemtl` groups are rendered with their material textures;
@@ -977,13 +964,13 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   render through a separate static translucent pass
 - Opaque DXT1 textures preserve color-index 3 as opaque, preventing roof
   materials from becoming transparent and exposing interior geometry
-- Texture lookup diagnostics are written to `OpenBus_textures.log`; entries
-  are deduplicated and record loaded files, missing source files, and decode
+- Texture lookup diagnostics are written to `OpenBus_textures.log`; entries are
+  deduplicated and record loaded files, missing source files, and decode
   failures
 - The visible chassis and wheels use the live ODE body position and rotation,
   including chassis pitch/roll, suspension travel, steering, and wheel rotation
-- A red three-axis marker shows the aggregate mass-weighted center of gravity
-  at the configured 1.0 m bus CG height
+- A red three-axis marker shows the aggregate mass-weighted center of gravity at
+  the configured 1.0 m bus CG height
 - The configured 11,500 kg bus mass includes the wheel and suspension bodies;
   the chassis body mass is reduced accordingly so the complete ODE assembly
   totals 11,500 kg
@@ -1003,30 +990,31 @@ The Chrome trace is written to `openbus_trace.json`; `OPENBUS_TRACE_FILE`
 overrides its path. Pausing drains pending events and leaves a valid JSON file
 that can be opened in Perfetto or a Chrome trace viewer without exiting.
 Resuming adds to that file; paused time and scopes spanning a pause are not
-recorded. Timestamps retain the real gaps between recording intervals. The
-event limit applies across all intervals in the run. The first recording in
-a new run overwrites the output file; starting paused does not touch it.
+recorded. Timestamps retain the real gaps between recording intervals. The event
+limit applies across all intervals in the run. The first recording in a new run
+overwrites the output file; starting paused does not touch it.
 
 For automatic startup/loading captures, launch an instrumented executable
 directly with `OPENBUS_TRACE=1`. This opt-in preserves automated benchmark
 capture behaviour. Normal builds with `OPENBUS_ENABLE_PERF_TRACE=OFF` do not
 record; F10 logs that a profiling build is needed.
 
-`RenderLoop::draw` includes separate scopes for ground-height sampling, collision
-debug rendering, the status HUD (text update, rasterization, upload, and submission),
-and window-title updates. The HUD is the final overlay and restores the scene's
-depth-enabled, blend-disabled, culling-disabled state without querying the driver.
-Trace durations are CPU wall times, not GPU execution times: driver backpressure
-can appear in a GL call or in `RenderLoop::endFrame.swapBuffers`. Compare whole
-`main` frame times rather than treating a shorter draw scope as an equal FPS gain.
+`RenderLoop::draw` includes separate scopes for ground-height sampling,
+collision debug rendering, the status HUD (text update, rasterization, upload,
+and submission), and window-title updates. The HUD is the final overlay and
+restores the scene's depth-enabled, blend-disabled, culling-disabled state
+without querying the driver. Trace durations are CPU wall times, not GPU
+execution times: driver backpressure can appear in a GL call or in
+`RenderLoop::endFrame.swapBuffers`. Compare whole `main` frame times rather than
+treating a shorter draw scope as an equal FPS gain.
 
 Traffic captures break `RenderLoop::updateTrafficDriving.vehicleMovement` into
-actor collection and runtime advance. `MapTrafficRuntime::advanceMapTrafficDriving`
-then reports route classification, substep occupancy/claims, priority-pair
-arbitration, and actor movement stages; actor movement includes following and
-obstacle projection, route lookahead, junction admission, swept movement, and
-reservations. Use these nested spans in Perfetto to find which part dominates
-vehicle movement time.
+actor collection and runtime advance.
+`MapTrafficRuntime::advanceMapTrafficDriving` then reports route classification,
+substep occupancy/claims, priority-pair arbitration, and actor movement stages;
+actor movement includes following and obstacle projection, route lookahead,
+junction admission, swept movement, and reservations. Use these nested spans in
+Perfetto to find which part dominates vehicle movement time.
 
 AI traffic uses moving occupancy rather than fixed-distance blocks: following
 targets account for leader speed, braking distance, and time headway, while
@@ -1039,18 +1027,18 @@ order, so the first conflict, yielding, and stall diagnostics match a full scan.
 For a repeatable free-flow lookahead benchmark, run
 `build-release-ninja\OpenBusMapTrafficRuntimeProbe.exe --benchmark-lookahead`
 after building the `OpenBusMapTrafficRuntimeProbe` target in Release mode. It
-reports average update time for 69 actors over 30 updates plus final distance and
-speed totals for before/after comparisons. This synthetic case stresses distant
-reservations; it is not a substitute for profiling a populated map.
+reports average update time for 69 actors over 30 updates plus final distance
+and speed totals for before/after comparisons. This synthetic case stresses
+distant reservations; it is not a substitute for profiling a populated map.
 
 `--benchmark-junctions` runs 72 actors through a 3×3 grid of junctions for 600
-updates, so priority arbitration, junction admission and crossing reservations are
-exercised. Besides the average update time it prints a `state_hash` of every
-actor's distance, speed, junction wait, block reason and junction claim after every
-update. An optimization that must not change behaviour should leave that hash
-unchanged. `--benchmark-junction-substeps` uses the same grid with 80 updates
-of 0.2 seconds each, exercising four 0.05-second simulation substeps per update.
-The `OpenBusMapTrafficJunctionSubstepProbe` regression compares combined
+updates, so priority arbitration, junction admission and crossing reservations
+are exercised. Besides the average update time it prints a `state_hash` of every
+actor's distance, speed, junction wait, block reason and junction claim after
+every update. An optimization that must not change behaviour should leave that
+hash unchanged. `--benchmark-junction-substeps` uses the same grid with 80
+updates of 0.2 seconds each, exercising four 0.05-second simulation substeps per
+update. The `OpenBusMapTrafficJunctionSubstepProbe` regression compares combined
 substeps with separate updates for actor movement, blocking and claims.
 
 The focused T-junction regression simulates major-road through traffic and a
@@ -1060,12 +1048,12 @@ junction without stalling. Run it with
 `build-release-ninja\OpenBusMapTrafficRuntimeProbe.exe --t-junction`, or select
 the `OpenBusMapTrafficTJunctionProbe` CTest test.
 
-Some traffic optimizations skip or defer route-sampling queries, for example curve
-limits that cannot lower the target speed, or lazily computed arrival windows. They
-are enabled only when every actor's route provably cannot fail to sample. Otherwise
-`advanceMapTrafficDriving` evaluates those queries eagerly in their original order,
-so a malformed route still raises the same exception at the same update. The probe's
-malformed-route checks guard this behaviour.
+Some traffic optimizations skip or defer route-sampling queries, for example
+curve limits that cannot lower the target speed, or lazily computed arrival
+windows. They are enabled only when every actor's route provably cannot fail to
+sample. Otherwise `advanceMapTrafficDriving` evaluates those queries eagerly in
+their original order, so a malformed route still raises the same exception at
+the same update. The probe's malformed-route checks guard this behaviour.
 
 ## Loading benchmark
 
@@ -1073,8 +1061,8 @@ malformed-route checks guard this behaviour.
 with `OPENBUS_BUS_CONFIG` set to MAN DL05 and benchmark mode enabled. Close the
 application after each run finishes loading. It records the existing object-load
 completion marker only; texture completion has no runtime marker. Per-run logs,
-optional traces, and CSV results are kept under `render-benchmark-results`.
-Use `-BuildDirectory`, `-BusConfig`, `-Map`, and `-Runs` to select the build,
+optional traces, and CSV results are kept under `render-benchmark-results`. Use
+`-BuildDirectory`, `-BusConfig`, `-Map`, and `-Runs` to select the build,
 vehicle, map, and sample count. The benchmark disables map and external AI
 populations so the object-load measurement belongs to the selected bus. For
 `-EnableTrace`, configure and build the `windows-clang-benchmark` preset; the
@@ -1083,42 +1071,43 @@ file was written.
 
 ## Repeatable render benchmark
 
-Run `benchmark_rendering.bat` to build an isolated Release executable
-with tracing enabled, then benchmark 720p, 1080p, 1440p, 4K, and 5120x1440.
-The runner is `benchmark_rendering.py`, requires Python 3.9 or newer, and uses
-only the standard library; set `OPENBUS_PYTHON` if `python` is not on PATH.
-The runner performs five runs per resolution by default, in deterministic
-seeded order; use `--runs 1` for a quick check or `--seed N` to change the order.
-After building, the Python runner can also be launched directly with
-`python benchmark_rendering.py`. Each run measures baseline rendering,
-user-facing camera cycling, third-person zoom, driving controls, and dashboard
-interaction. Benchmark mode currently creates a visible GLFW window, uses a
-fixed 60 Hz simulation step, and disables VSync. Actual dimensions are checked
-and mismatched runs are skipped before warm-up and measurement.
-Normal simulator launches remain visible and retain the standard `build-ode`
-build. `profile.bat` uses the separate `build-benchmark-ninja` directory for
-its tracing-enabled benchmark build.
+Run `benchmark_rendering.bat` to build an isolated Release executable with
+tracing enabled, then benchmark 720p, 1080p, 1440p, 4K, and 5120x1440. The
+runner is `benchmark_rendering.py`, requires Python 3.9 or newer, and uses only
+the standard library; set `OPENBUS_PYTHON` if `python` is not on PATH. The
+runner performs five runs per resolution by default, in deterministic seeded
+order; use `--runs 1` for a quick check or `--seed N` to change the order. After
+building, the Python runner can also be launched directly with `python
+benchmark_rendering.py`. Each run measures baseline rendering, user-facing
+camera cycling, third-person zoom, driving controls, and dashboard interaction.
+Benchmark mode currently creates a visible GLFW window, uses a fixed 60 Hz
+simulation step, and disables VSync. Actual dimensions are checked and
+mismatched runs are skipped before warm-up and measurement. Normal simulator
+launches remain visible and retain the standard `build-ode` build. `profile.bat`
+uses the separate `build-benchmark-ninja` directory for its tracing-enabled
+benchmark build.
 
 `--warmup-frames` is a total distributed across the five phases (60 by default,
 12 per phase). Each phase is then measured twice per resolution run, with 120
 fixed-step frames per visit by default (two seconds at 60 Hz), slowing camera,
-zoom, steering, and dashboard-look progressions to half their previous rate.
-Use `--phase-repeats` and `--phase-frames` to adjust those values. Results are written to
-`render-benchmark-results/`. The `*_runs.csv` and `*_scopes.csv` files record
-requested window, actual window, framebuffer sizes, framebuffer/window scale
-factors, and flag any framebuffer that differs from the requested resolution.
-`render_benchmark_frametimes.csv` reports one measured-frame summary row per
-run, including average, p90, and p95 frame times in milliseconds across all
-measured phases and repeats; the same metrics are also included in
-`render_benchmark_runs.csv`. Percentiles use linear interpolation over the
-sorted frame-time samples. Skipped runs remain in the run and frame-time summary
-files with a status and reason but no timing metrics. Use `--require-exact-resolution`
-to return a failure status if any run is clamped. The `*_frames.csv` file records
-one row per main-frame or selected renderer-scope event, including timestamp,
-inclusive duration, and self time. Nested calls stay separate so reflection
-draws are not accidentally summed into a misleading per-frame total. High-volume
-`Vehicle::drawBatch.prepareAndSubmit` events are included only when they last at
-least 0.1 ms, keeping normal batch submissions from overwhelming the report.
+zoom, steering, and dashboard-look progressions to half their previous rate. Use
+`--phase-repeats` and `--phase-frames` to adjust those values. Results are
+written to `render-benchmark-results/`. The `*_runs.csv` and `*_scopes.csv`
+files record requested window, actual window, framebuffer sizes,
+framebuffer/window scale factors, and flag any framebuffer that differs from the
+requested resolution. `render_benchmark_frametimes.csv` reports one
+measured-frame summary row per run, including average, p90, and p95 frame times
+in milliseconds across all measured phases and repeats; the same metrics are
+also included in `render_benchmark_runs.csv`. Percentiles use linear
+interpolation over the sorted frame-time samples. Skipped runs remain in the run
+and frame-time summary files with a status and reason but no timing metrics. Use
+`--require-exact-resolution` to return a failure status if any run is clamped.
+The `*_frames.csv` file records one row per main-frame or selected
+renderer-scope event, including timestamp, inclusive duration, and self time.
+Nested calls stay separate so reflection draws are not accidentally summed into
+a misleading per-frame total. High-volume `Vehicle::drawBatch.prepareAndSubmit`
+events are included only when they last at least 0.1 ms, keeping normal batch
+submissions from overwhelming the report.
 
 The `*_scopes.csv` file groups Chrome trace scopes by phase and reports
 occurrence count, summed inclusive elapsed wall time, summed self time, average,
@@ -1143,8 +1132,7 @@ Bus-only model construction is documented separately in
 general surfaces, passenger cabins, paths, sounds, environment, AI/network,
 controls, and metadata remain in
 [Docs/OMSI_CFG_GENERAL_REFERENCE.md](C:/Users/blane/Desktop/OpenBusTest/Docs/OMSI_CFG_GENERAL_REFERENCE.md).
-The original CFG files remain in place so their relative paths continue to
-work.
+The original CFG files remain in place so their relative paths continue to work.
 
 The OMSI 2 map-package reference is in
 [Docs/OMSI2_MAP_FORMAT_REFERENCE.md](C:/Users/blane/Desktop/OpenBusTest/Docs/OMSI2_MAP_FORMAT_REFERENCE.md).

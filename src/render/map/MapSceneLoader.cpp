@@ -1391,8 +1391,8 @@ void MapSceneLoader::resolveTrafficLightVariableParents() {
             }
             const auto belongsToParentChain = [&](const TrafficPathDebugSegment& segment) {
                 return segment.mapObjectId.has_value() &&
-                       std::find(parentChain.begin(), parentChain.end(),
-                                 *segment.mapObjectId) != parentChain.end();
+                       std::find(parentChain.begin(), parentChain.end(), *segment.mapObjectId) !=
+                           parentChain.end();
             };
             const bool hasParentOwnedSignalPaths =
                 std::any_of(nearbySignalPaths.begin(), nearbySignalPaths.end(),

@@ -51,11 +51,14 @@ attachments, terrain/water, collision, inverse conversion, and GPU vertex precis
 With `OPENBUS_MAP_AI_SPAWN_DIAGNOSTICS=1`, road spawn admission logs report
 `vehiclesAtTarget` for inactive vehicles whose road group (or shared road
 population) is already full. Such vehicles do not scan spawn candidates.
-`lowerPriority` counts candidate poses skipped after a closer clear candidate
-was found; `visible`, `obstructed`, and `clear` count checks actually performed,
+`lowerPriority` counts candidate poses skipped after a better-scored clear candidate
+was found; scoring combines player proximity, nearby traffic, SCO junction paths,
+approaching signal stop lines, and a modest preference for network entry lanes.
+`visible`, `obstructed`, and `clear` count checks actually performed,
 not every candidate on the route. Search counters describe the most recently
 consumed worker plan. Road and due scheduled-bus spawn searches run on the AI
-worker using a snapshot; proposals are revalidated on the main thread against
+worker using a snapshot; planned positions are reserved within each batch so
+later proposals can select different clear positions. Proposals are revalidated on the main thread against
 current population targets, tile, camera, player and clearance state before
 admission. Scheduled-bus waiting diagnostics describe the worker snapshot.
 Only one population plan is in flight, and the worker alternates
