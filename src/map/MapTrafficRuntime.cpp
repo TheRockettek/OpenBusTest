@@ -51,6 +51,41 @@ bool mapTrafficPoseOnActiveTile(const MapTrafficPose& pose,
     return std::find(activeTiles.begin(), activeTiles.end(), tile) != activeTiles.end();
 }
 
+bool mapTrafficSpawnInsideForwardExclusion(const MapTrafficPose& playerPose,
+                                           double playerLengthMeters,
+                                           double playerWidthMeters,
+                                           const MapTrafficPose& spawnPose,
+                                           double spawnWidthMeters,
+                                           double forwardDistanceMeters) noexcept {
+    if (forwardDistanceMeters < 0.0) {
+        return false;
+    }
+    const double forwardX = std::cos(playerPose.headingRadians);
+    const double forwardY = std::sin(playerPose.headingRadians);
+    const double relativeX = spawnPose.position[0] - playerPose.position[0];
+    const double relativeY = spawnPose.position[1] - playerPose.position[1];
+    const double forward = relativeX * forwardX + relativeY * forwardY;
+    const double lateral = -relativeX * forwardY + relativeY * forwardX;
+    const double playerFront = playerLengthMeters * 0.5;
+    const double halfWidth = (playerWidthMeters + spawnWidthMeters) * 0.5 + 0.5;
+    return forward >= playerFront && forward <= playerFront + forwardDistanceMeters &&
+           std::abs(lateral) <= halfWidth;
+}
+
+double mapTrafficSpawnPriorityDistanceMeters(const MapTrafficPose& playerPose,
+                                              const MapTrafficPose& spawnPose,
+                                              double predictedForwardDistanceMeters) noexcept {
+    const double forwardX = std::cos(playerPose.headingRadians);
+    const double forwardY = std::sin(playerPose.headingRadians);
+    const double relativeX = spawnPose.position[0] - playerPose.position[0];
+    const double relativeY = spawnPose.position[1] - playerPose.position[1];
+    const double forward = relativeX * forwardX + relativeY * forwardY;
+    const double lateral = -relativeX * forwardY + relativeY * forwardX;
+    const double pathEnd = std::max(0.0, predictedForwardDistanceMeters);
+    const double closestForward = std::clamp(forward, 0.0, pathEnd);
+    return std::hypot(forward - closestForward, lateral);
+}
+
 std::map<int, std::vector<MapTrafficPose>>
 mapTrafficAssignPassengerPositions(const std::vector<MapPassengerStopAnchor>& stops,
                                    const std::vector<MapPassengerWaitingArea>& areas,

@@ -170,6 +170,21 @@ int main() {
                 "the worker selects population candidates against per-group and bus targets");
 
         worker.submitPopulationPlan(
+            {{6, 0, std::nullopt, false, false, false, true, false, 80.0},
+             {7, 0, std::nullopt, false, false, false, true, false, 5.0}},
+            1, 0, 0, {}, false);
+        populationDecisions.reset();
+        const auto priorityDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (!populationDecisions && std::chrono::steady_clock::now() < priorityDeadline) {
+            populationDecisions = worker.takePopulationDecisions();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        require(populationDecisions.has_value() && populationDecisions->size() == 2 &&
+                    !(*populationDecisions)[0].spawn && (*populationDecisions)[1].spawn &&
+                    (*populationDecisions)[1].stateIndex == 7,
+                "nearer eligible vehicle spawn candidates are selected first");
+
+        worker.submitPopulationPlan(
             {{4, 1, 7, false, false, true, false, true}}, 0, 0, 0, {}, true);
         populationDecisions.reset();
         const auto despawnDeadline =

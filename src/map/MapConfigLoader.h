@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace openbus::map {
@@ -132,6 +133,15 @@ struct MapAiDepotDefinition {
     std::vector<std::size_t> busTypeDefinitionIndices;
 };
 
+struct MapAiTimetableProfile {
+    std::string name;
+    double durationMinutes = 0.0;
+    std::vector<std::pair<int, double>> manualArrivalMinutes;
+    std::vector<std::pair<int, double>> manualDepartureMinutes;
+    std::vector<double> arrivalOffsetSeconds;
+    std::vector<double> departureOffsetSeconds;
+};
+
 struct MapAiTimetableRoute {
     // The .ttp filename stem referenced by [addtrip] in a .ttl file.
     std::string timetableKey;
@@ -164,6 +174,9 @@ struct MapAiTimetableRoute {
     std::vector<TrackEntry> trackEntries;
     // Parsed schedule values are minutes after midnight; dispatch is handled separately.
     std::vector<double> scheduledDepartureMinutes;
+    // Profile index from the corresponding .ttl [addtrip], kept aligned with departures.
+    std::vector<int> scheduledDepartureProfileIndices;
+    std::vector<MapAiTimetableProfile> profiles;
 };
 
 struct MapAiTimetableStationPosition {
@@ -201,6 +214,8 @@ struct MapAiPassengerTimetable {
     std::string timetableKey;
     std::vector<int> stationIds;
     std::vector<double> scheduledDepartureMinutes;
+    std::vector<int> scheduledDepartureProfileIndices;
+    std::vector<MapAiTimetableProfile> profiles;
 };
 
 struct MapAiPassengerStopCall {

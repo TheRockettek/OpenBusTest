@@ -4,6 +4,9 @@
 #include "app/MapTrafficWorker.h"
 #include "render/map/MapRenderer.h"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <numbers>
 #include <set>
 #include <unordered_map>
@@ -207,6 +210,60 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
     }
 }
 
+const openbus::map::MapAiTimetableProfile* RenderLoop::trafficTimetableProfileForDeparture(
+    const TrafficVehicleState& state, std::size_t departureIndex) const {
+    if (state.timetableProfiles.empty() ||
+        departureIndex >= state.scheduledDepartureProfileIndices.size()) {
+        return nullptr;
+    }
+    const int requestedProfile =
+        std::max(0, state.scheduledDepartureProfileIndices[departureIndex]);
+    const std::size_t profileIndex =
+        std::min(static_cast<std::size_t>(requestedProfile), state.timetableProfiles.size() - 1);
+    return &state.timetableProfiles[profileIndex];
+}
+
+void RenderLoop::publishTrafficTimetableData(Vehicle& vehicle, const TrafficVehicleState& state,
+                                             std::size_t departureIndex) const {
+    vehicle.variables.set("tt_terminus_index", static_cast<float>(state.timetableTerminusIndex));
+    vehicle.variables.set("tt_delay", 0.0F);
+    vehicle.variables.set("tt_busstop_count", static_cast<float>(state.passengerStops.size()));
+    const std::size_t currentStopIndex =
+        state.passengerStops.empty()
+            ? 0
+            : std::min(state.nextPassengerStopIndex, state.passengerStops.size() - 1);
+    vehicle.variables.set("tt_busstop_index", static_cast<float>(currentStopIndex));
+    const openbus::map::MapAiTimetableProfile* profile =
+        trafficTimetableProfileForDeparture(state, departureIndex);
+    const double departureSeconds =
+        departureIndex < state.scheduledDepartureMinutes.size()
+            ? state.scheduledDepartureMinutes[departureIndex] * 60.0
+            : 0.0;
+    constexpr double secondsPerDay = 24.0 * 60.0 * 60.0;
+    for (std::size_t stopIndex = 0; stopIndex < state.passengerStops.size(); ++stopIndex) {
+        const openbus::map::MapTrafficPassengerStop& stop = state.passengerStops[stopIndex];
+        vehicle.variables.setString("tt_busstop_name_" + std::to_string(stopIndex), stop.name);
+        double arrivalSeconds = 0.0;
+        double departureAtStopSeconds = 0.0;
+        if (profile != nullptr &&
+            stop.timetableStationIndex < profile->arrivalOffsetSeconds.size() &&
+            stop.timetableStationIndex < profile->departureOffsetSeconds.size()) {
+            arrivalSeconds =
+                std::fmod(departureSeconds +
+                              profile->arrivalOffsetSeconds[stop.timetableStationIndex],
+                          secondsPerDay);
+            departureAtStopSeconds =
+                std::fmod(departureSeconds +
+                              profile->departureOffsetSeconds[stop.timetableStationIndex],
+                          secondsPerDay);
+        }
+        vehicle.variables.set("tt_busstop_arr_" + std::to_string(stopIndex),
+                              static_cast<float>(arrivalSeconds));
+        vehicle.variables.set("tt_busstop_dep_" + std::to_string(stopIndex),
+                              static_cast<float>(departureAtStopSeconds));
+    }
+}
+
 void RenderLoop::finishPendingTrafficVehicleLoads() {
     TraceScope trace("traffic", "RenderLoop::finishPendingTrafficVehicleLoads");
     using DeferredStep = Vehicle::DeferredTrafficInitializationStep;
@@ -240,6 +297,17 @@ void RenderLoop::finishPendingTrafficVehicleLoads() {
                         "tt_line_string", state.timetableLineName);
                     state.pendingInitializationVehicle->variables.setString(
                         "tt_busstop_name", state.timetableDestinationName);
+                    state.pendingInitializationVehicle->variables.set(
+                        "tt_busstop_count", static_cast<float>(state.passengerStops.size()));
+                    state.pendingInitializationVehicle->variables.set("tt_busstop_index", 0.0F);
+                    for (std::size_t stopIndex = 0; stopIndex < state.passengerStops.size();
+                         ++stopIndex) {
+                        state.pendingInitializationVehicle->variables.setString(
+                            "tt_busstop_name_" + std::to_string(stopIndex),
+                            state.passengerStops[stopIndex].name);
+                    }
+                    publishTrafficTimetableData(*state.pendingInitializationVehicle, state,
+                                                 state.nextScheduledDepartureIndex);
                 }
             }
             state.pendingInitializationVehicle->variables.updateEnvironment(
@@ -277,6 +345,73 @@ void RenderLoop::finishPendingTrafficVehicleLoads() {
 void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double elapsedSeconds) {
     TraceScope trace("traffic", "RenderLoop::updateTrafficDriving");
     using namespace openbus::map;
+    const auto scheduledDelaySeconds = [&](const TrafficVehicleState& state,
+                                           double simulationTime) {
+        if (!state.scheduledTripActive || state.passengerStops.empty()) {
+            return 0.0;
+        }
+        const MapAiTimetableProfile* profile =
+            trafficTimetableProfileForDeparture(state, state.activeTimetableDepartureIndex);
+        if (profile == nullptr) {
+            return 0.0;
+        }
+        const auto arrivalOffset = [&](std::size_t stopIndex) {
+            const std::size_t stationIndex =
+                state.passengerStops[stopIndex].timetableStationIndex;
+            return stationIndex < profile->arrivalOffsetSeconds.size()
+                       ? profile->arrivalOffsetSeconds[stationIndex]
+                       : 0.0;
+        };
+        const auto departureOffset = [&](std::size_t stopIndex) {
+            const std::size_t stationIndex =
+                state.passengerStops[stopIndex].timetableStationIndex;
+            return stationIndex < profile->departureOffsetSeconds.size()
+                       ? profile->departureOffsetSeconds[stationIndex]
+                       : 0.0;
+        };
+        const double elapsedSinceDeparture =
+            std::max(0.0, simulationTime - state.activeScheduledDepartureElapsedSeconds);
+        const double distance = state.actor.distanceMeters;
+        constexpr double stopPositionToleranceMeters = 0.25;
+        const auto dwellProgress = [&](std::size_t stopIndex) {
+            return std::clamp(elapsedSinceDeparture, arrivalOffset(stopIndex),
+                              departureOffset(stopIndex));
+        };
+        const double firstStopDistance = state.passengerStops.front().routeDistanceMeters;
+        if (distance <= firstStopDistance + stopPositionToleranceMeters) {
+            const double expected =
+                std::abs(distance - firstStopDistance) <= stopPositionToleranceMeters
+                    ? dwellProgress(0)
+                    : departureOffset(0);
+            return elapsedSinceDeparture - expected;
+        }
+        for (std::size_t stopIndex = 0; stopIndex + 1 < state.passengerStops.size();
+             ++stopIndex) {
+            const double fromDistance =
+                state.passengerStops[stopIndex].routeDistanceMeters;
+            const double toDistance =
+                state.passengerStops[stopIndex + 1].routeDistanceMeters;
+            if (std::abs(distance - fromDistance) <= stopPositionToleranceMeters) {
+                return elapsedSinceDeparture - dwellProgress(stopIndex);
+            }
+            if (distance < toDistance && toDistance > fromDistance) {
+                const double fraction =
+                    std::clamp((distance - fromDistance) / (toDistance - fromDistance), 0.0, 1.0);
+                const double expected =
+                    departureOffset(stopIndex) +
+                    (arrivalOffset(stopIndex + 1) - departureOffset(stopIndex)) * fraction;
+                return elapsedSinceDeparture - expected;
+            }
+        }
+        const std::size_t lastStopIndex = state.passengerStops.size() - 1;
+        const double lastStopDistance =
+            state.passengerStops[lastStopIndex].routeDistanceMeters;
+        const double expected =
+            std::abs(distance - lastStopDistance) <= stopPositionToleranceMeters
+                ? dwellProgress(lastStopIndex)
+                : departureOffset(lastStopIndex);
+        return elapsedSinceDeparture - expected;
+    };
     if (!trafficWorker_) {
         trafficWorker_ = std::make_unique<openbus::app::MapTrafficWorker>();
     }
@@ -513,6 +648,12 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             if (state.passengerStopArrived && !state.vehicle->passengerService.dwelling()) {
                 state.passengerStopArrived = false;
                 ++state.nextPassengerStopIndex;
+                state.vehicle->variables.set(
+                    "tt_busstop_index",
+                    static_cast<float>(std::min(state.nextPassengerStopIndex,
+                                                state.passengerStops.empty()
+                                                    ? std::size_t{0}
+                                                    : state.passengerStops.size() - 1)));
             }
             if (state.passengerStopArrived) {
                 state.actor.scheduledStopDistanceMeters = state.actor.distanceMeters;
@@ -527,6 +668,26 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
     std::vector<MapTrafficObstacle> external;
     std::size_t externalVehicleObstacleCount = 0;
     std::optional<std::size_t> playerObstacleIndex;
+    MapTrafficPose playerSpawnReferencePose;
+    bool hasPlayerSpawnReferencePose = false;
+    bool playerBusMoving = false;
+    double playerPredictedForwardDistanceMeters = 0.0;
+    if (playerVehicle_ != nullptr) {
+        const auto chassis = simulation.chassisPose();
+        playerSpawnReferencePose.position = chassis.position;
+        playerSpawnReferencePose.headingRadians =
+            std::atan2(chassis.rotation[0], chassis.rotation[3]);
+        hasPlayerSpawnReferencePose = true;
+        const double playerSpeedMetersPerSecond = std::abs(simulation.speed());
+        playerBusMoving =
+            playerSpeedMetersPerSecond > MAP_TRAFFIC_STOPPED_SPEED_METERS_PER_SECOND;
+        playerPredictedForwardDistanceMeters =
+            std::min(playerSpeedMetersPerSecond * 4.0, 60.0);
+    } else {
+        playerSpawnReferencePose.position = onFootState_.feetPosition;
+        playerSpawnReferencePose.headingRadians = freeCameraPose_.yawRadians;
+        hasPlayerSpawnReferencePose = true;
+    }
     {
         TraceScope obstacleTrace("traffic",
                                  "RenderLoop::updateTrafficDriving.externalObstacleCollection");
@@ -536,9 +697,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             }
             MapTrafficPose pose;
             if (vehicle.get() == playerVehicle_) {
-                const auto chassis = simulation.chassisPose();
-                pose.position = chassis.position;
-                pose.headingRadians = std::atan2(chassis.rotation[0], chassis.rotation[3]);
+                pose = playerSpawnReferencePose;
             } else {
                 pose.position = vehicle->placement.position;
                 pose.headingRadians =
@@ -870,6 +1029,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             double distanceMeters = 0.0;
             MapTrafficPose pose;
             std::size_t candidateIndex = 0;
+            double priorityDistanceMeters = std::numeric_limits<double>::infinity();
         };
         struct RoadSpawnDiagnostics {
             std::size_t vehiclesChecked = 0;
@@ -880,7 +1040,22 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             std::size_t visibleCandidates = 0;
             std::size_t obstructedCandidates = 0;
             std::size_t clearCandidates = 0;
+            std::size_t frontZoneRejectedCandidates = 0;
             std::optional<std::pair<int, int>> firstInactiveCandidateTile;
+        };
+        const auto isInsidePlayerFrontExclusion = [&](const MapTrafficPose& pose,
+                                                       double vehicleWidthMeters) {
+            return playerVehicle_ != nullptr && playerBusMoving &&
+                   openbus::map::mapTrafficSpawnInsideForwardExclusion(
+                       playerSpawnReferencePose, playerVehicle_->trafficLengthMeters,
+                       playerVehicle_->trafficWidthMeters, pose, vehicleWidthMeters, 30.0);
+        };
+        const auto spawnPriorityForPose = [&](const MapTrafficPose& pose) {
+            return hasPlayerSpawnReferencePose
+                       ? openbus::map::mapTrafficSpawnPriorityDistanceMeters(
+                             playerSpawnReferencePose, pose,
+                             playerPredictedForwardDistanceMeters)
+                       : 0.0;
         };
         const auto findRoadSpawn =
             [&](const TrafficVehicleState& state,
@@ -888,6 +1063,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             if (diagnostics != nullptr) {
                 ++diagnostics->vehiclesChecked;
             }
+            std::optional<RoadSpawnLocation> bestSpawn;
             for (std::size_t candidateIndex = 0; candidateIndex < state.spawnCandidates.size();
                  ++candidateIndex) {
                 if (std::ranges::find(state.rejectedSpawnCandidateIndices, candidateIndex) !=
@@ -921,6 +1097,12 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     }
                     continue;
                 }
+                if (isInsidePlayerFrontExclusion(*pose, state.actor.widthMeters)) {
+                    if (diagnostics != nullptr) {
+                        ++diagnostics->frontZoneRejectedCandidates;
+                    }
+                    continue;
+                }
                 if (!mapTrafficSpawnInView_ && !hiddenAtPose(state.actor, *pose)) {
                     if (diagnostics != nullptr) {
                         ++diagnostics->visibleCandidates;
@@ -933,19 +1115,26 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     if (diagnostics != nullptr) {
                         ++diagnostics->clearCandidates;
                     }
-                    return RoadSpawnLocation{spawn.distanceMeters, *pose, candidateIndex};
+                    const double priorityDistanceMeters = spawnPriorityForPose(*pose);
+                    if (!bestSpawn.has_value() ||
+                        priorityDistanceMeters < bestSpawn->priorityDistanceMeters) {
+                        bestSpawn = RoadSpawnLocation{spawn.distanceMeters, *pose, candidateIndex,
+                                                      priorityDistanceMeters};
+                    }
                 }
                 if (diagnostics != nullptr) {
                     ++diagnostics->obstructedCandidates;
                 }
             }
-            return std::nullopt;
+            return bestSpawn;
         };
         const auto logBusAdmissionWaiting = [&](TrafficVehicleState& state,
                                                 const MapTrafficPose& entryPose, bool entryHidden,
-                                                bool entryClear, bool entryOnActiveTile) {
+                                                bool entryClear, bool entryOnActiveTile,
+                                                bool frontBlocked) {
             const unsigned blockerMask =
-                (entryHidden ? 0u : 1u) | (entryClear ? 0u : 2u) | (entryOnActiveTile ? 0u : 4u);
+                (entryHidden ? 0u : 1u) | (entryClear ? 0u : 2u) |
+                (entryOnActiveTile ? 0u : 4u) | (frontBlocked ? 8u : 0u);
             const double cameraDistanceMeters =
                 lastMainCameraPoseValid_
                     ? std::hypot(
@@ -961,6 +1150,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                               std::to_string(entryPose.splineId) +
                               ", hidden=" + std::to_string(entryHidden) +
                               ", clear=" + std::to_string(entryClear) +
+                              ", frontBlocked=" + std::to_string(frontBlocked) +
                               ", activeTile=" + std::to_string(entryOnActiveTile) +
                               ", cameraValid=" + std::to_string(lastMainCameraPoseValid_) +
                               ", cameraDistance=" + std::to_string(cameraDistanceMeters) +
@@ -976,7 +1166,17 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         {
             TraceScope applyPopulationTrace(
                 "traffic", "RenderLoop::updateTrafficDriving.applyPopulationDecisions");
-            for (std::size_t stateIndex = 0; stateIndex < trafficVehicles_.size(); ++stateIndex) {
+            std::vector<std::size_t> populationDecisionOrder;
+            populationDecisionOrder.reserve(trafficVehicles_.size());
+            for (std::size_t index = 0; index < trafficVehicles_.size(); ++index) {
+                populationDecisionOrder.push_back(index);
+            }
+            std::stable_sort(populationDecisionOrder.begin(), populationDecisionOrder.end(),
+                             [&](std::size_t first, std::size_t second) {
+                                 return trafficVehicles_[first].spawnPriorityMeters <
+                                        trafficVehicles_[second].spawnPriorityMeters;
+                             });
+            for (const std::size_t stateIndex : populationDecisionOrder) {
                 auto& state = trafficVehicles_[stateIndex];
                 if (state.vehicle == nullptr || state.vehicleLoadFailed ||
                     state.deadlockRemovalCommitted) {
@@ -1008,14 +1208,18 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     }
                     const bool entryHidden =
                         mapTrafficSpawnInView_ || hiddenAtPose(state.actor, *entryPose);
-                    const bool entryClear = canSpawnMapTrafficEntry(state.actor, true, occupied);
+                    const bool frontBlocked =
+                        isInsidePlayerFrontExclusion(*entryPose, state.actor.widthMeters);
+                    const bool entryClear =
+                        !frontBlocked && canSpawnMapTrafficEntry(state.actor, true, occupied);
                     const bool entryOnActiveTile = poseOnActiveTile(*entryPose);
                     if (!entryHidden || !entryClear || !entryOnActiveTile) {
                         logBusAdmissionWaiting(state, *entryPose, entryHidden, entryClear,
-                                               entryOnActiveTile);
+                                               entryOnActiveTile, frontBlocked);
                         continue;
                     }
-                    spawn = RoadSpawnLocation{0.0, *entryPose, 0};
+                    spawn = RoadSpawnLocation{0.0, *entryPose, 0,
+                                              spawnPriorityForPose(*entryPose)};
                 } else {
                     spawn = findRoadSpawn(state, nullptr);
                     if (!spawn.has_value()) {
@@ -1090,10 +1294,22 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                                state.actor.distanceMeters) {
                         ++state.nextPassengerStopIndex;
                     }
+                    state.vehicle->variables.set(
+                        "tt_busstop_index",
+                        static_cast<float>(std::min(state.nextPassengerStopIndex,
+                                                    state.passengerStops.empty()
+                                                        ? std::size_t{0}
+                                                        : state.passengerStops.size() - 1)));
                     state.passengerStopArrived = false;
                     state.lastScheduledDepartureMinutes =
                         state.scheduledDepartureMinutes[state.nextScheduledDepartureIndex];
                     state.scheduledTripActive = true;
+                    state.activeTimetableDepartureIndex =
+                        state.nextScheduledDepartureIndex;
+                    state.activeScheduledDepartureElapsedSeconds =
+                        state.nextScheduledDepartureElapsedSeconds;
+                    publishTrafficTimetableData(*state.vehicle, state,
+                                                state.activeTimetableDepartureIndex);
                     for (const MapTrafficPassengerStop& stop : state.passengerStops) {
                         const auto queue = scheduledPassengerQueues_.find(stop.stopId);
                         const auto initialQueue =
@@ -1126,6 +1342,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                                   "RenderLoop::updateTrafficDriving.buildPopulationPlan");
         for (std::size_t stateIndex = 0; stateIndex < trafficVehicles_.size(); ++stateIndex) {
             TrafficVehicleState& state = trafficVehicles_[stateIndex];
+            state.spawnPriorityMeters = std::numeric_limits<double>::infinity();
             if (!state.isBus) {
                 loadedRoadVehicles += state.vehicle != nullptr;
                 pendingRoadVehicleLoads +=
@@ -1148,27 +1365,37 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                             currentSimulationTime, state.nextScheduledDepartureElapsedSeconds)) {
                         const bool entryHidden =
                             mapTrafficSpawnInView_ || hiddenAtPose(state.actor, *entryPose);
-                        const bool entryClear =
-                            canSpawnMapTrafficEntry(state.actor, true, occupied);
+                        const bool frontBlocked =
+                            isInsidePlayerFrontExclusion(*entryPose, state.actor.widthMeters);
+                        const bool entryClear = !frontBlocked &&
+                                                canSpawnMapTrafficEntry(state.actor, true,
+                                                                        occupied);
                         const bool entryOnActiveTile = poseOnActiveTile(*entryPose);
                         canSpawn = entryHidden && entryClear && entryOnActiveTile;
+                        if (canSpawn) {
+                            state.spawnPriorityMeters = spawnPriorityForPose(*entryPose);
+                        }
                         if (!canSpawn) {
                             logBusAdmissionWaiting(state, *entryPose, entryHidden, entryClear,
-                                                   entryOnActiveTile);
+                                                   entryOnActiveTile, frontBlocked);
                         }
                     }
                 } else {
-                    canSpawn =
+                    const auto roadSpawn =
                         findRoadSpawn(state, trafficSpawnDiagnosticsEnabled_ ? &roadSpawnDiagnostics
-                                                                             : nullptr)
-                            .has_value();
+                                                                             : nullptr);
+                    canSpawn = roadSpawn.has_value();
+                    if (roadSpawn.has_value()) {
+                        state.spawnPriorityMeters = roadSpawn->priorityDistanceMeters;
+                    }
                 }
             }
             const bool canDespawn =
                 state.populationEnabled && hidden(state.actor, state.actor.distanceMeters);
             populationCandidates.push_back({stateIndex, state.workerGeneration,
                                             state.actor.unscheduledGroupIndex, false, state.isBus,
-                                            state.populationEnabled, canSpawn, canDespawn});
+                                            state.populationEnabled, canSpawn, canDespawn,
+                                            state.spawnPriorityMeters});
         }
         trafficWorker_->submitPopulationPlan(
             std::move(populationCandidates), targetRoadTrafficCount_, targetBusTrafficCount_,
@@ -1209,6 +1436,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                     std::to_string(roadSpawnDiagnostics.inactiveCandidateTiles) +
                     ", posesOutsideActiveTiles=" +
                     std::to_string(roadSpawnDiagnostics.posesOutsideActiveTiles) +
+                    ", frontZoneRejected=" +
+                    std::to_string(roadSpawnDiagnostics.frontZoneRejectedCandidates) +
                     ", firstInactiveCandidateTile=" + firstInactiveCandidateTile +
                     ", activeTileCoordinates=" + activeTileCoordinates +
                     ", visible=" + std::to_string(roadSpawnDiagnostics.visibleCandidates) +
@@ -1594,6 +1823,17 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 trafficVehicle.stuckDiagnosticLogged = true;
             }
         }
+    }
+    for (TrafficVehicleState& state : trafficVehicles_) {
+        if (!state.isBus || state.vehicle == nullptr) {
+            continue;
+        }
+        const double delaySeconds = scheduledDelaySeconds(state, currentSimulationTime);
+        state.vehicle->variables.set(
+            "tt_delay",
+            static_cast<float>(std::clamp(
+                delaySeconds, -static_cast<double>((std::numeric_limits<float>::max)()),
+                static_cast<double>((std::numeric_limits<float>::max)()))));
     }
 }
 

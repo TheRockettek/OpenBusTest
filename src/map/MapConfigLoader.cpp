@@ -812,8 +812,75 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                                         "invalid or truncated timetable station ID in " +
                                             pathToUtf8(tripPath.filename()));
                 }
+            } else if (section == "[profile]") {
+                std::size_t next = lineIndex + 1;
+                while (next < tripLines.size() && trim(tripLines[next]).empty()) {
+                    ++next;
+                }
+                const std::string profileName =
+                    next < tripLines.size() && !isSectionHeaderLine(trim(tripLines[next]))
+                        ? trim(tripLines[next++])
+                        : std::string{};
+                while (next < tripLines.size() && trim(tripLines[next]).empty()) {
+                    ++next;
+                }
+                double durationMinutes = 0.0;
+                if (next >= tripLines.size() ||
+                    isSectionHeaderLine(trim(tripLines[next])) ||
+                    !parseReal(trim(tripLines[next]), durationMinutes) ||
+                    !std::isfinite(durationMinutes) || durationMinutes < 0.0) {
+                    diagnostics.warning(lineIndex + 1, "profile",
+                                        "invalid or truncated timetable profile in " +
+                                            pathToUtf8(tripPath.filename()));
+                } else {
+                    route.profiles.push_back(
+                        {profileName, durationMinutes, {}, {}, {}, {}});
+                }
+                if (next < tripLines.size() && !isSectionHeaderLine(trim(tripLines[next]))) {
+                    lineIndex = next;
+                } else if (next > 0) {
+                    lineIndex = next - 1;
+                }
+            } else if (section == "[profile_man_arr_time]" ||
+                       section == "[profile_man_dep_time]") {
+                std::size_t next = lineIndex + 1;
+                while (next < tripLines.size() && trim(tripLines[next]).empty()) {
+                    ++next;
+                }
+                int stationIndex = -1;
+                const bool validIndex =
+                    next < tripLines.size() && !isSectionHeaderLine(trim(tripLines[next])) &&
+                    parseInteger(trim(tripLines[next]), stationIndex);
+                if (validIndex) {
+                    ++next;
+                }
+                while (next < tripLines.size() && trim(tripLines[next]).empty()) {
+                    ++next;
+                }
+                double minutesAfterDeparture = 0.0;
+                if (!validIndex || stationIndex < 0 || next >= tripLines.size() ||
+                    isSectionHeaderLine(trim(tripLines[next])) ||
+                    !parseReal(trim(tripLines[next]), minutesAfterDeparture) ||
+                    !std::isfinite(minutesAfterDeparture) || minutesAfterDeparture < 0.0 ||
+                    route.profiles.empty()) {
+                    diagnostics.warning(
+                        lineIndex + 1, section.substr(1, section.size() - 2),
+                        "invalid, truncated, or orphaned timetable profile time in " +
+                            pathToUtf8(tripPath.filename()));
+                } else {
+                    auto& times = section == "[profile_man_arr_time]"
+                                      ? route.profiles.back().manualArrivalMinutes
+                                      : route.profiles.back().manualDepartureMinutes;
+                    times.emplace_back(stationIndex, minutesAfterDeparture);
+                }
+                if (next < tripLines.size() && !isSectionHeaderLine(trim(tripLines[next]))) {
+                    lineIndex = next;
+                } else if (next > 0) {
+                    lineIndex = next - 1;
+                }
             }
         }
+        passengerTimetable.profiles = route.profiles;
         if (routeHeaderFields != 3 || route.destinationName.empty() || route.lineName.empty() ||
             route.stationCount == 0) {
             continue;
@@ -942,22 +1009,45 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                                     "departure references missing trip " + fields[0] + " in " +
                                         pathToUtf8(linePath.filename()));
             } else {
+                tripIndex = std::max(0, tripIndex);
                 if (route != aiTraffic.timetableRoutes.end()) {
                     route->scheduledDepartureMinutes.push_back(departureMinutes);
+                    route->scheduledDepartureProfileIndices.push_back(tripIndex);
                 }
                 if (passengerTimetable != aiTraffic.passengerTimetables.end()) {
                     passengerTimetable->scheduledDepartureMinutes.push_back(departureMinutes);
+                    passengerTimetable->scheduledDepartureProfileIndices.push_back(tripIndex);
                 }
             }
             lineIndex = next > 0 ? next - 1 : lineIndex;
         }
     }
+    const auto sortDepartures = [](std::vector<double>& minutes,
+                                   std::vector<int>& profileIndices) {
+        if (minutes.size() != profileIndices.size()) {
+            throw std::logic_error("Timetable departures and profile indices lost alignment");
+        }
+        std::vector<std::pair<double, int>> departures;
+        departures.reserve(minutes.size());
+        for (std::size_t index = 0; index < minutes.size(); ++index) {
+            departures.emplace_back(minutes[index], profileIndices[index]);
+        }
+        std::stable_sort(departures.begin(), departures.end(),
+                         [](const auto& left, const auto& right) {
+                             return left.first < right.first;
+                         });
+        for (std::size_t index = 0; index < departures.size(); ++index) {
+            minutes[index] = departures[index].first;
+            profileIndices[index] = departures[index].second;
+        }
+    };
     for (MapAiTimetableRoute& route : aiTraffic.timetableRoutes) {
-        std::sort(route.scheduledDepartureMinutes.begin(), route.scheduledDepartureMinutes.end());
+        sortDepartures(route.scheduledDepartureMinutes,
+                       route.scheduledDepartureProfileIndices);
     }
     for (MapAiPassengerTimetable& timetable : aiTraffic.passengerTimetables) {
-        std::sort(timetable.scheduledDepartureMinutes.begin(),
-                  timetable.scheduledDepartureMinutes.end());
+        sortDepartures(timetable.scheduledDepartureMinutes,
+                       timetable.scheduledDepartureProfileIndices);
         if (!mapAiPassengerTimetableHasResolvedLinks(aiTraffic, timetable)) {
             diagnostics.warning(
                 0, "passenger_timetable",
@@ -984,6 +1074,8 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
         route.stationCount = calls.size();
         route.stationIds = timetable.stationIds;
         route.scheduledDepartureMinutes = timetable.scheduledDepartureMinutes;
+        route.scheduledDepartureProfileIndices = timetable.scheduledDepartureProfileIndices;
+        route.profiles = timetable.profiles;
         bool completeRoute = true;
         for (std::size_t stationIndex = 0; stationIndex < calls.size(); ++stationIndex) {
             const MapAiPassengerStopCall& call = calls[stationIndex];
@@ -1026,6 +1118,137 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
             continue;
         }
         aiTraffic.timetableRoutes.push_back(std::move(route));
+    }
+
+    for (MapAiTimetableRoute& route : aiTraffic.timetableRoutes) {
+        if (route.profiles.empty()) {
+            route.profiles.emplace_back();
+        }
+        const std::size_t stationCount = route.stationCount;
+        std::vector<double> alongRouteMeters(stationCount, 0.0);
+        std::vector<double> trackEntryStarts(route.trackEntries.size(), 0.0);
+        double accumulatedTrackMeters = 0.0;
+        for (std::size_t trackIndex = 0; trackIndex < route.trackEntries.size(); ++trackIndex) {
+            trackEntryStarts[trackIndex] = accumulatedTrackMeters;
+            const double length = route.trackEntries[trackIndex].lengthMeters;
+            if (std::isfinite(length) && length > 0.0) {
+                accumulatedTrackMeters += length;
+            }
+        }
+        for (std::size_t stationIndex = 0; stationIndex < stationCount; ++stationIndex) {
+            bool hasRoutePosition = false;
+            if (stationIndex < route.stations.size()) {
+                const auto position =
+                    mapAiTimetableStationPosition(route, route.stations[stationIndex]);
+                if (position && position->trackEntryIndex < trackEntryStarts.size()) {
+                    alongRouteMeters[stationIndex] =
+                        trackEntryStarts[position->trackEntryIndex] + position->offsetMeters;
+                    hasRoutePosition = true;
+                }
+            }
+            if (stationIndex > 0 &&
+                (!hasRoutePosition ||
+                 alongRouteMeters[stationIndex] <= alongRouteMeters[stationIndex - 1])) {
+                alongRouteMeters[stationIndex] = alongRouteMeters[stationIndex - 1] + 500.0;
+            }
+        }
+
+        for (MapAiTimetableProfile& profile : route.profiles) {
+            std::vector<std::optional<double>> arrivals(stationCount);
+            std::vector<std::optional<double>> departures(stationCount);
+            const auto collectTimes = [&](const std::vector<std::pair<int, double>>& source,
+                                          std::vector<std::optional<double>>& destination,
+                                          const char* section) {
+                for (const auto& [stationIndex, minutesAfterDeparture] : source) {
+                    if (stationIndex < 0 ||
+                        static_cast<std::size_t>(stationIndex) >= stationCount) {
+                        diagnostics.warning(
+                            0, section,
+                            "timetable profile stop index is outside " + route.timetableKey);
+                        continue;
+                    }
+                    destination[static_cast<std::size_t>(stationIndex)] =
+                        minutesAfterDeparture * 60.0;
+                }
+            };
+            collectTimes(profile.manualArrivalMinutes, arrivals, "profile_man_arr_time");
+            collectTimes(profile.manualDepartureMinutes, departures, "profile_man_dep_time");
+
+            const double durationSeconds =
+                profile.durationMinutes > 0.0 && std::isfinite(profile.durationMinutes)
+                    ? profile.durationMinutes * 60.0
+                    : 600.0;
+            if (stationCount > 0 && !arrivals[0] && !departures[0]) {
+                departures[0] = 0.0;
+            }
+            if (stationCount > 1 && !arrivals.back() && !departures.back()) {
+                arrivals.back() = durationSeconds;
+            }
+            std::vector<std::size_t> timedStations;
+            for (std::size_t index = 0; index < stationCount; ++index) {
+                if (arrivals[index] || departures[index]) {
+                    timedStations.push_back(index);
+                }
+            }
+            profile.arrivalOffsetSeconds.resize(stationCount);
+            profile.departureOffsetSeconds.resize(stationCount);
+            double lastDepartureSeconds = 0.0;
+            for (std::size_t index = 0; index < stationCount; ++index) {
+                double arrivalSeconds = 0.0;
+                double departureSeconds = 0.0;
+                if (arrivals[index] && departures[index]) {
+                    arrivalSeconds = *arrivals[index];
+                    departureSeconds = std::max(*departures[index], arrivalSeconds);
+                } else if (arrivals[index]) {
+                    arrivalSeconds = departureSeconds = *arrivals[index];
+                } else if (departures[index]) {
+                    arrivalSeconds = departureSeconds = *departures[index];
+                } else {
+                    const auto previous = std::find_if(
+                        timedStations.rbegin(), timedStations.rend(),
+                        [index](std::size_t station) { return station < index; });
+                    const auto next = std::find_if(
+                        timedStations.begin(), timedStations.end(),
+                        [index](std::size_t station) { return station > index; });
+                    if (previous != timedStations.rend() && next != timedStations.end()) {
+                        const std::size_t previousIndex = *previous;
+                        const std::size_t nextIndex = *next;
+                        const double startSeconds = departures[previousIndex]
+                                                        ? *departures[previousIndex]
+                                                        : arrivals[previousIndex].value_or(0.0);
+                        const double endSeconds = arrivals[nextIndex]
+                                                      ? *arrivals[nextIndex]
+                                                      : departures[nextIndex].value_or(0.0);
+                        const double distanceSpan =
+                            alongRouteMeters[nextIndex] - alongRouteMeters[previousIndex];
+                        const double fraction =
+                            distanceSpan > 0.0
+                                ? (alongRouteMeters[index] - alongRouteMeters[previousIndex]) /
+                                      distanceSpan
+                                : 0.0;
+                        arrivalSeconds =
+                            startSeconds + (endSeconds - startSeconds) * fraction;
+                        departureSeconds = arrivalSeconds;
+                    } else if (previous != timedStations.rend()) {
+                        const std::size_t previousIndex = *previous;
+                        arrivalSeconds = departureSeconds =
+                            departures[previousIndex]
+                                ? *departures[previousIndex]
+                                : arrivals[previousIndex].value_or(0.0);
+                    } else if (next != timedStations.end()) {
+                        const std::size_t nextIndex = *next;
+                        arrivalSeconds = departureSeconds =
+                            arrivals[nextIndex] ? *arrivals[nextIndex]
+                                                : departures[nextIndex].value_or(0.0);
+                    }
+                }
+                arrivalSeconds = std::max(arrivalSeconds, lastDepartureSeconds);
+                departureSeconds = std::max(departureSeconds, arrivalSeconds);
+                profile.arrivalOffsetSeconds[index] = arrivalSeconds;
+                profile.departureOffsetSeconds[index] = departureSeconds;
+                lastDepartureSeconds = departureSeconds;
+            }
+        }
     }
 }
 

@@ -21,6 +21,7 @@
 #include <deque>
 #include <filesystem>
 #include <future>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -142,7 +143,9 @@ class RenderLoop {
                            bool registerPassengerRouteOnly = false,
                            std::optional<std::size_t> passengerRouteIndex = std::nullopt,
                            std::size_t* registeredPassengerRouteIndex = nullptr,
-                           bool requireActiveTileSpawnCandidate = false);
+                           bool requireActiveTileSpawnCandidate = false,
+                           std::vector<int> scheduledDepartureProfileIndices = {},
+                           std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles = {});
     int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -413,6 +416,8 @@ class RenderLoop {
         std::uint64_t cachedPoseGeneration = 0;
         std::vector<openbus::map::MapTrafficSpawnCandidate> spawnCandidates;
         std::vector<double> scheduledDepartureMinutes;
+        std::vector<int> scheduledDepartureProfileIndices;
+        std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles;
         std::vector<openbus::map::MapTrafficPassengerStop> passengerStops;
         std::optional<std::size_t> passengerRouteIndex;
         std::string timetableLineName;
@@ -422,12 +427,16 @@ class RenderLoop {
         double nextScheduledDepartureElapsedSeconds = 0.0;
         double lastScheduledDepartureMinutes = 0.0;
         std::size_t nextScheduledDepartureIndex = 0;
+        std::size_t activeTimetableDepartureIndex = 0;
+        double activeScheduledDepartureElapsedSeconds = 0.0;
+        int timetableTerminusIndex = -1;
         bool isBus = false;
         bool populationEnabled = false;
+        double spawnPriorityMeters = std::numeric_limits<double>::infinity();
         bool vehicleLoadFailed = false;
         bool reducedTrafficDetail = false;
         bool scheduledTripActive = false;
-        unsigned lastScheduledAdmissionDiagnosticBlockerMask = 8;
+        unsigned lastScheduledAdmissionDiagnosticBlockerMask = 16;
         double lastScheduledAdmissionDiagnosticCameraDistanceMeters = -1.0;
         double lastScheduledProgressDiagnosticDistanceMeters = -1.0;
         bool deadlocked = false;
@@ -485,6 +494,11 @@ class RenderLoop {
     double configuredAiSimulationRateHz_ = 0.0;
     double currentAiWorkerTickMilliseconds_ = 0.0;
     std::unique_ptr<openbus::app::MapTrafficWorker> trafficWorker_;
+    const openbus::map::MapAiTimetableProfile*
+    trafficTimetableProfileForDeparture(const TrafficVehicleState& state,
+                                        std::size_t departureIndex) const;
+    void publishTrafficTimetableData(Vehicle& vehicle, const TrafficVehicleState& state,
+                                     std::size_t departureIndex) const;
     void finishPendingTrafficVehicleLoads();
     void updateTrafficDriving(const BusSimulation& simulation, double elapsedSeconds);
     struct HumanTrafficState {

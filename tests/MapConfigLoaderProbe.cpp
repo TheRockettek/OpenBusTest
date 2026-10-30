@@ -143,10 +143,19 @@ void runFixtureProbe() {
         writeUtf16Le(timetableDirectory / "FixtureTrip.ttp",
                      "[trip]\nFixtureLine\nTown End\n12\n"
                      "[station]\n15479\n1\nMain Stop\n0\n0\n0\n3.5\n5\n"
-                     "[station]\n15480\n1\nInvalid Tile\n-1\n0\n0\n0\n5\n");
+                     "[station]\n15480\n1\nInvalid Tile\n-1\n0\n0\n0\n5\n"
+                     "[profile]\nStandard\n13\n"
+                     "[profile_man_arr_time]\n0\n0.250\n"
+                     "[profile_man_dep_time]\n0\n0.500\n"
+                     "[profile]\nExpress\n8\n"
+                     "[profile_man_arr_time]\n0\n1.500\n"
+                     "[profile_man_dep_time]\n0\n2.000\n");
         writeUtf16Le(timetableDirectory / "BusOnly.ttp",
                      "[trip]\n\nTown End\n12\n"
-                     "[station_typ2]\n15479\n[station_typ2]\n15480\n");
+                     "[station_typ2]\n15479\n[station_typ2]\n15480\n"
+                     "[profile]\nStandard\n12\n"
+                     "[profile_man_arr_time]\n0\n1.000\n"
+                     "[profile_man_dep_time]\n0\n1.250\n");
         writeUtf16Le(timetableDirectory / "BusOnly.ttl", "[newtour]\nBus\n1\nDep.: 8:15:0\n"
                                                          "[addtrip]\nBusOnly\n0\n495.000\n");
         writeUtf16Le(timetableDirectory / "Busstops.cfg",
@@ -166,7 +175,7 @@ void runFixtureProbe() {
                      "[track_entry]\n30274\n0\n0\n3\n10\n0\n");
         writeUtf16Le(timetableDirectory / "Fixture.ttl",
                      "[newtour]\nDriver\n1\n"
-                     "Dep.: 8:15:0\n[addtrip]\nFixtureTrip\n0\n495.000\n"
+                     "Dep.: 8:15:0\n[addtrip]\nFixtureTrip\n1\n495.000\n"
                      "Dep.: 6:45:0\n[addtrip]\nFixtureTrip\n0\n405.000\n");
         {
             std::ofstream terrain(root / "tile_0_0.map.terrain", std::ios::binary);
@@ -737,8 +746,24 @@ void runFixtureProbe() {
                             {30273, 0, 1, 10.0}, {30273, 1, 1, 10.0},
                             {30274, 0, 0, 10.0}} &&
                     definition.aiTraffic.timetableRoutes[0].scheduledDepartureMinutes ==
-                        std::vector<double>{405.0, 495.0},
-                "timetable routes retain ordered path selectors, stations, and departures");
+                        std::vector<double>{405.0, 495.0} &&
+                    definition.aiTraffic.timetableRoutes[0]
+                            .scheduledDepartureProfileIndices == std::vector<int>{0, 1} &&
+                    definition.aiTraffic.timetableRoutes[0].profiles.size() == 2 &&
+                    definition.aiTraffic.timetableRoutes[0].profiles[0].name == "Standard" &&
+                    definition.aiTraffic.timetableRoutes[0]
+                            .profiles[0]
+                            .arrivalOffsetSeconds == std::vector<double>{15.0} &&
+                    definition.aiTraffic.timetableRoutes[0]
+                            .profiles[0]
+                            .departureOffsetSeconds == std::vector<double>{30.0} &&
+                    definition.aiTraffic.timetableRoutes[0]
+                            .profiles[1]
+                            .arrivalOffsetSeconds == std::vector<double>{90.0} &&
+                    definition.aiTraffic.timetableRoutes[0]
+                            .profiles[1]
+                            .departureOffsetSeconds == std::vector<double>{120.0},
+                "timetable routes retain stations, aligned profile selections, and stop times");
         const auto preciseStationPosition = openbus::map::mapAiTimetableStationPosition(
             definition.aiTraffic.timetableRoutes[0],
             definition.aiTraffic.timetableRoutes[0].stations[0]);
@@ -784,6 +809,15 @@ void runFixtureProbe() {
                     definition.aiTraffic.timetableRoutes[1].stations.size() == 2 &&
                     definition.aiTraffic.timetableRoutes[1].stations[0].trackEntryIndex == 0 &&
                     definition.aiTraffic.timetableRoutes[1].stations[1].trackEntryIndex == 2 &&
+                    definition.aiTraffic.timetableRoutes[1]
+                            .scheduledDepartureProfileIndices == std::vector<int>{0} &&
+                    definition.aiTraffic.timetableRoutes[1].profiles.size() == 1 &&
+                    definition.aiTraffic.timetableRoutes[1]
+                            .profiles[0]
+                            .arrivalOffsetSeconds == std::vector<double>{60.0, 720.0} &&
+                    definition.aiTraffic.timetableRoutes[1]
+                            .profiles[0]
+                            .departureOffsetSeconds == std::vector<double>{75.0, 720.0} &&
                     definition.aiTraffic.timetableRoutes[1].splineIds ==
                         std::vector<int>{1, 2} &&
                     openbus::map::mapAiPassengerTimetableHasResolvedLinks(definition.aiTraffic,

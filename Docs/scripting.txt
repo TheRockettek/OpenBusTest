@@ -230,6 +230,7 @@ GetTTBusstopCount
 GetTTBusstopIndex
 GetTTDelay
 GetTTBusstopName
+f0 Timetable Busstop Index
 
 GetTTBusstopArr
 f0 Timetable Busstop Index
@@ -237,15 +238,19 @@ f0 Timetable Busstop Index
 GetTTBusstopDep
 f0 Timetable Busstop Index
 
-OpenBus currently returns zero for the timetable numeric lookups above. The
-four lookups without listed inputs preserve the numeric stack; arrival and
-departure consume their timetable stop index. A warning is logged once per
-runtime and macro when these placeholders are used.
+The timetable numeric macros are implemented for scheduled AI buses.
+`GetTTBusstopCount` and `GetTTBusstopIndex` expose the retained route's stop
+count and current stop. `GetTTTerminusIndex` returns the zero-based index of
+the last mapped stop on the route, or `-1` when no stops are mapped.
+`GetTTDelay` reports signed seconds against the selected timetable profile.
+`GetTTBusstopArr` and `GetTTBusstopDep` consume a route stop index and return
+that stop's profile time, or zero when no profile time is available.
 
-Scheduled map AI buses receive the matched timetable line and destination before
-their scripts initialize. GetTTLineString returns the timetable line name, and
-GetTTBusstopName returns the timetable destination name; model scripts can use
-these macros to populate their destination signs.
+Scheduled map AI buses receive the matched timetable line, destination, stop
+names, and times before their scripts initialize. `GetTTLineString` returns the
+timetable line name. `GetTTBusstopName` consumes a route stop index and returns
+the corresponding stop name; the destination name is retained in the
+`tt_busstop_name` script variable.
 
 GiveChangeCoin
 f0 Coin Index
@@ -395,10 +400,13 @@ OMSI ticket machine or fare system. GetHumanCountOnPathLink and
 GetHumanCountOnSeat read indexed counts from local script state; they are not
 backed by a complete passenger/path-link simulation.
 
-Scheduled map AI buses receive their matched timetable line and destination
-before scripts initialize. GetTTLineString and GetTTBusstopName return those
-values for that use case; other timetable queries listed below are not thereby
-implemented.
+Scheduled map AI buses retain their `.ttl` departure profile selections and
+the `.ttp` stop timing profile. Their line, destination, stop names, and
+arrival/departure times are published before scripts initialize. `GetTTDelay`
+returns the signed difference in seconds between simulation time and the
+timetable's expected time at the AI bus's current route position. `GetTTTerminusIndex`
+returns the zero-based index of the last mapped stop on the AI bus's route, or `-1`
+when the route has no mapped stops.
 
 Macros Still Returning Placeholder Results
 
@@ -407,21 +415,17 @@ GetTerminusIndex, GetTerminusCode, GetTerminusString, GetBusstopIndex,
 GetBusstopString, GetRouteIndex, GetRouteTerminusIndex, GetBusstopCount, and
 GetRouteBusstopIdent.
 
-Timetable queries beyond the matched line and destination:
-GetTTTerminusIndex, GetTTBusstopCount, GetTTBusstopIndex, GetTTDelay,
-GetTTBusstopArr, and GetTTBusstopDep.
-
 Other vehicle queries:
 GetHeightAbovePoint and GetDepotStringGlobal.
 
 Scenery arrival queries:
 GetArrBusLine, GetArrBusTerminus, and GetArrBusTimeDiff.
 
-The currently registered macros above are recognized by the script runtime,
-but their query results are placeholders: empty strings, zero, or -1. A
-complete implementation requires the corresponding route/timetable/depot,
-geometry, or arrival data to be made available to scripts. These placeholders
-log a warning once per runtime and macro when invoked.
+The remaining macros above are recognized by the script runtime, but their
+query results are placeholders: empty strings, zero, or -1. A complete
+implementation requires the corresponding route/depot, geometry, or arrival
+data to be made available to scripts. These placeholders log a warning once
+per runtime and macro when invoked.
 
 Backend compatibility limitation: native string stores currently consume the
 top string, while converted Lua string stores leave it on the stack. Native

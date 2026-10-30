@@ -63,7 +63,7 @@ also remain incomplete. See [BUS status](IMPLEMENTATION_STATUS_BUS.md).
 | `[stepsoundpack]` | The record is loaded, but complete step-sound playback and route use are absent. |
 | Passenger mass and seated-human rendering | Not implemented; boarding movement is a roadside visual approximation and alighting movement is absent. |
 | Ticket requests, cash/card transactions, ticket-selling UI, coin dispensing | Not implemented; map ticket/coin records only feed the documented script macros. |
-| HOF, timetable, stop-announcement, arrival-board integration | Not implemented; route/timetable script lookups retain placeholder behavior. |
+| HOF, stop-announcement, arrival-board integration | Not implemented; generic HOF and route lookup macros retain placeholder behavior. Scheduled AI bus scripts receive profile-based arrival/departure times and route-based delay. `GetTTTerminusIndex` returns the zero-based index of the last mapped stop on that bus's route, or `-1` when no stops are mapped. |
 
 See [BUS and passenger/path status](IMPLEMENTATION_STATUS_BUS.md#passenger-cabin-and-path-cfgs).
 

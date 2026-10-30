@@ -735,6 +735,20 @@ void verifyDrivingBehavior() {
                 !mapTrafficPoseOnActiveTile({{OMSI_TILE_SIZE_METERS * 2.1, 10.0, 0.0}, 0.0, 0},
                                             {{0, 0}}),
             "map traffic tile gating admits only poses in the active tile set");
+    const MapTrafficPose playerSpawnPose{{0.0, 0.0, 0.0}, 0.0, 0};
+    require(mapTrafficSpawnInsideForwardExclusion(
+                playerSpawnPose, 4.0, 2.0, {{10.0, 0.0, 0.0}, 0.0, 0}, 2.0, 30.0) &&
+                !mapTrafficSpawnInsideForwardExclusion(
+                    playerSpawnPose, 4.0, 2.0, {{10.0, 4.0, 0.0}, 0.0, 0}, 2.0, 30.0) &&
+                !mapTrafficSpawnInsideForwardExclusion(
+                    playerSpawnPose, 4.0, 2.0, {{-5.0, 0.0, 0.0}, 0.0, 0}, 2.0, 30.0),
+            "the player-front spawn exclusion covers only the forward corridor");
+    requireNear(mapTrafficSpawnPriorityDistanceMeters(
+                    playerSpawnPose, {{10.0, 3.0, 0.0}, 0.0, 0}, 20.0),
+                3.0, "spawn priority measures distance to the predicted travel path");
+    requireNear(mapTrafficSpawnPriorityDistanceMeters(
+                    playerSpawnPose, {{-5.0, 0.0, 0.0}, 0.0, 0}, 20.0),
+                5.0, "spawn priority also includes locations behind the player");
     MapTrafficSignalSchedule cycleSignal;
     cycleSignal.cycleDurationSeconds = 10.0;
     cycleSignal.phases = {{0, 3.0}, {6, 5.0}, {9, 2.0}};

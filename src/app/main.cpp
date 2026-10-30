@@ -1500,8 +1500,10 @@ int main() {
                             .timetableRoutes[matchedRoute.routeStart.timetableRouteIndex];
                     std::vector<openbus::map::MapTrafficPassengerStop> passengerStops;
                     passengerStops.reserve(timetable.stations.size());
-                    for (const openbus::map::MapAiTimetableRoute::Station& station :
-                         timetable.stations) {
+                    for (std::size_t stationIndex = 0;
+                         stationIndex < timetable.stations.size(); ++stationIndex) {
+                        const openbus::map::MapAiTimetableRoute::Station& station =
+                            timetable.stations[stationIndex];
                         const auto stationPosition =
                             openbus::map::mapAiTimetableStationPosition(timetable, station);
                         if (!stationPosition) {
@@ -1525,7 +1527,7 @@ int main() {
                              station.positionOnPreviousTrackEntryMeters
                                  ? std::optional<double>(stationPosition->offsetMeters)
                                  : std::nullopt,
-                             station.name});
+                             station.name, stationIndex});
                     }
                     std::optional<std::size_t> passengerRouteIndex;
                     if (matchedRoute.routeStart.itineraryInaccurateFallback) {
@@ -1576,7 +1578,23 @@ int main() {
                     const auto departurePartitions =
                         openbus::map::mapTrafficPartitionScheduledDepartures(
                             timetable.scheduledDepartureMinutes, busesPerRoute[routeIndex]);
-                    for (const auto& departures : departurePartitions) {
+                    if (timetable.scheduledDepartureProfileIndices.size() !=
+                        timetable.scheduledDepartureMinutes.size()) {
+                        throw std::logic_error(
+                            "Timetable departure profile indices are not aligned");
+                    }
+                    std::vector<std::vector<int>> profilePartitions(
+                        departurePartitions.size());
+                    for (std::size_t departureIndex = 0;
+                         departureIndex <
+                         timetable.scheduledDepartureProfileIndices.size();
+                         ++departureIndex) {
+                        profilePartitions[departureIndex % profilePartitions.size()].push_back(
+                            timetable.scheduledDepartureProfileIndices[departureIndex]);
+                    }
+                    for (std::size_t partitionIndex = 0;
+                         partitionIndex < departurePartitions.size(); ++partitionIndex) {
+                        const auto& departures = departurePartitions[partitionIndex];
                         if (addedBuses >= busPoolLimit) {
                             break;
                         }
@@ -1603,7 +1621,8 @@ int main() {
                                     matchedRoute.routeStart.allowReverseTraversalForRequired,
                                     busPassengerStops, timetable.lineName,
                                     timetable.destinationName, std::nullopt, false,
-                                    passengerRouteIndex)) {
+                                    passengerRouteIndex, nullptr, false,
+                                    profilePartitions[partitionIndex], timetable.profiles)) {
                                 ++addedBuses;
                             } else {
                                 applicationLog.Warning(
@@ -1806,11 +1825,18 @@ int main() {
         }
         humanTrafficTrace.finish();
 
+        std::optional<int> lastTrafficPopulationMinute;
+        std::optional<int> lastTrafficPopulationWeekdayMask;
         const auto updateMapTrafficPopulation = [&] {
             const double trafficHour = openbus::map::mapTrafficHourAtElapsedSeconds(
                 mapAiStartHour, simulation->simulationTime());
             const int trafficWeekdayMask = openbus::map::mapTrafficWeekdayMaskAtElapsedSeconds(
                 mapAiStartWeekdayIndex, mapAiStartHour, simulation->simulationTime());
+            const int trafficMinute = static_cast<int>(std::floor(trafficHour * 60.0));
+            if (lastTrafficPopulationMinute == trafficMinute &&
+                lastTrafficPopulationWeekdayMask == trafficWeekdayMask) {
+                return;
+            }
             const std::optional<double> groupDensity = openbus::map::mapAiRoadTrafficDensityAtHour(
                 mapDefinition.aiTraffic, availableAiRoadVehicles, trafficHour, trafficWeekdayMask);
             const std::optional<double> roadDensity =
@@ -1832,6 +1858,8 @@ int main() {
             renderer.SetHumanTrafficPopulation(
                 mapTrafficPopulationForTestDensity(static_cast<std::size_t>(mapHumanBaseCount),
                                                    passengerDensity, mapTrafficDensityMultiplier));
+            lastTrafficPopulationMinute = trafficMinute;
+            lastTrafficPopulationWeekdayMask = trafficWeekdayMask;
         };
         applicationLog.Log("Map traffic clock starts at " + std::to_string(mapAiStartHour) +
                            "h on " + std::to_string(mapCalendarYear) + "-" +

@@ -138,7 +138,10 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
     } else if (name == "getttlinestring") {
         stringStack.push_back(localState.getString("tt_line_string"));
     } else if (name == "getttbusstopname") {
-        stringStack.push_back(localState.getString("tt_busstop_name"));
+        int stopIndex = -1;
+        const bool validIndex = popNonnegativeIndex(stopIndex);
+        const std::string key = validIndex ? indexedName("tt_busstop_name_", stopIndex) : "";
+        stringStack.push_back(validIndex ? localState.getString(key) : std::string{});
     } else if (name == "getbusstopindex") {
         nativePopString();
         warnPlaceholderMacro(name);
@@ -170,14 +173,27 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
         pushNumber(0.0);
     } else if (name == "nrspecrandom") {
         pushNumber(nrSpecRandom(nativePopFloat()));
-    } else if (name == "getttterminusindex" || name == "getttbusstopcount" ||
-               name == "getttbusstopindex" || name == "getttdelay") {
-        warnPlaceholderMacro(name);
-        pushNumber(0.0F);
+    } else if (name == "getttbusstopcount") {
+        const float count = localState.get("tt_busstop_count");
+        pushNumber(std::isfinite(count) && count > 0.0F ? count : 0.0F);
+    } else if (name == "getttbusstopindex") {
+        const float index = localState.get("tt_busstop_index");
+        pushNumber(std::isfinite(index) && index >= 0.0F ? index : 0.0F);
+    } else if (name == "getttterminusindex") {
+        const float index =
+            localState.has("tt_terminus_index") ? localState.get("tt_terminus_index") : -1.0F;
+        pushNumber(std::isfinite(index) ? index : -1.0F);
+    } else if (name == "getttdelay") {
+        const float delay = localState.get("tt_delay");
+        pushNumber(std::isfinite(delay) ? delay : 0.0F);
     } else if (name == "getttbusstoparr" || name == "getttbusstopdep") {
-        nativePopFloat();
-        warnPlaceholderMacro(name);
-        pushNumber(0.0F);
+        int stopIndex = -1;
+        const bool validIndex = popNonnegativeIndex(stopIndex);
+        const char* prefix =
+            name == "getttbusstoparr" ? "tt_busstop_arr_" : "tt_busstop_dep_";
+        const float time =
+            validIndex ? localState.get(indexedName(prefix, stopIndex)) : 0.0F;
+        pushNumber(std::isfinite(time) ? time : 0.0F);
     } else if (name == "getterminuscode" || name == "getrouteterminusindex" ||
                name == "getbusstopcount" || name == "getarrbustimediff") {
         popFloats(1);

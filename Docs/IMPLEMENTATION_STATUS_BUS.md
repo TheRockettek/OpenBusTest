@@ -84,7 +84,7 @@ override is applied.
 - Boarding into configured seat slots and next-stop alighting are active. Boarding movement is only a roadside visual approximation; cabin path-link traversal and alighting movement are absent. Passenger mass is not applied, and seated humans are not rendered.
 - Map ticket-pack and currency coin records populate the `getticketname`, `getticketvalue`, and `givechangecoin` script macros for player and AI vehicles. Ticket requests, card/cash transactions, ticket-selling UI, and animated/audible/physical coin dispensing are absent.
 - Extended path fields and actual step-sound playback/route use remain incomplete.
-- HOF, timetable, stop-announcement, and arrival-board integration is absent; documented route/timetable script lookups still use safe placeholder behavior.
+- HOF, stop-announcement, and arrival-board integration remains absent. Scheduled AI bus scripts receive timetable stop names, profile-selected arrival/departure times, and route-based delay; `GetTTTerminusIndex` returns the zero-based index of the last mapped stop on the bus route, or `-1` when no stops are mapped.
 
 ## Evidence and related pages
 

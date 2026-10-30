@@ -448,13 +448,16 @@ terrain, or arrival-board data:
   exercise their numeric and string stack contracts. `GetBusstopIndex` consumes
   its string argument without disturbing the numeric stack.
 - [~] Timetable lookups: scheduled AI buses publish line and destination
-  strings before script initialization for `GetTTLineString` and
-  `GetTTBusstopName`; both script backends have focused lookup tests.
-  Complete native stop-name semantics and `GetTTTerminusIndex`,
-  `GetTTBusstopCount`, `GetTTBusstopIndex`, `GetTTDelay`, `GetTTBusstopArr`,
-  and `GetTTBusstopDep` remain incomplete. Their zero-valued placeholders now
-  preserve the documented input stack and log once per runtime when used;
-  native and Lua regressions cover all six.
+  strings, ordered stop names, and selected `.ttp` arrival/departure profile
+  times before script initialization. `.ttl` profile selections remain aligned
+  with each departure, and `GetTTDelay` tracks schedule offset along the active
+  route.
+  `GetTTBusstopCount`, `GetTTBusstopIndex`, and indexed `GetTTBusstopName`
+  return the active map timetable's passenger-stop data in both backends;
+  `GetTTDelay`, `GetTTBusstopArr`, and `GetTTBusstopDep` now return schedule
+  values in seconds. `GetTTTerminusIndex` reads the retained value and returns
+  `-1` for scheduled AI buses because the source timetable currently provides no
+  terminus index. Native and Lua probes verify the lookups and stack contracts.
 - [~] Ticket/passenger macros: `GiveChangeCoin`, `GetTicketName`, and
   `GetTicketValue` use map ticket/currency data and `GetHumanCountOnSeat` reads
   the current seat-occupancy variables. Ticket purchasing/payment and

@@ -45,6 +45,14 @@ bool check(const VehicleConfig& configuration, const char* backend) {
     local.set("cash_coin_value_2", std::numeric_limits<float>::infinity());
     local.set("human_count_on_seat_2", 1.0F);
     local.set("human_count_on_path_link_7", 3.0F);
+    local.set("tt_busstop_count", 2.0F);
+    local.set("tt_busstop_index", 1.0F);
+    local.set("tt_terminus_index", 1.0F);
+    local.set("tt_delay", -1.3F);
+    local.set("tt_busstop_arr_7", 12345.0F);
+    local.set("tt_busstop_dep_7", 23456.0F);
+    local.setString("tt_busstop_name_0", "Central Station");
+    local.setString("tt_busstop_name_1", "Market Street");
     local.setString("tt_line_string", "42");
     local.setString("tt_busstop_name", "Central Station");
     ScriptRuntime runtime(configuration, local, simulation);
@@ -89,7 +97,8 @@ bool check(const VehicleConfig& configuration, const char* backend) {
         local.get("cash_coin_dispensed_count_1") != 1.0F || local.get("seat_human_count") != 1.0F ||
         local.get("path_link_human_count") != 3.0F ||
         local.getString("timetable_line_result") != "42" ||
-        local.getString("timetable_destination_result") != "Central Station" ||
+        local.getString("timetable_destination_result") != "Market Street" ||
+        !local.getString("invalid_timetable_stop_result").empty() ||
         local.get("nonfinite_ticket_value_result") != 0.0F ||
         local.get("invalid_ticket_value_result") != 0.0F ||
         !local.getString("invalid_ticket_name_result").empty()) {
@@ -109,9 +118,24 @@ bool check(const VehicleConfig& configuration, const char* backend) {
         runtime.invokeEntryPoint("trigger_placeholder_stack");
         for (const char* name : {"tt_terminus", "tt_count", "tt_index", "tt_delay",
                                  "tt_arrival", "tt_departure"}) {
-            if (local.get(std::string(name) + "_result") != 0.0F ||
-                local.get(std::string(name) + "_sentinel") != 123.0F) {
-                std::cerr << backend << ": timetable placeholder corrupted stack: " << name
+            const std::string_view macroName(name);
+            const float expected =
+                macroName == "tt_terminus" ? 1.0F
+                : macroName == "tt_count"  ? 2.0F
+                : macroName == "tt_index"  ? 1.0F
+                : macroName == "tt_delay"  ? -1.3F
+                : macroName == "tt_arrival" ? 12345.0F
+                                            : 23456.0F;
+            const float expectedSentinel =
+                macroName == "tt_terminus" ? 124.0F
+                : macroName == "tt_count"  ? 125.0F
+                : macroName == "tt_index"  ? 124.0F
+                : macroName == "tt_delay"  ? 121.7F
+                : macroName == "tt_arrival" ? 12468.0F
+                                            : 23579.0F;
+            if (local.get(std::string(name) + "_result") != expected ||
+                local.get(std::string(name) + "_sentinel") != expectedSentinel) {
+                std::cerr << backend << ": timetable macro result or stack mismatch: " << name
                           << '\n';
                 return false;
             }
@@ -380,7 +404,8 @@ int main() {
                   "2 (M.V.gethumancountonseat) (S.L.seat_human_count)\n"
                   "7 (M.V.gethumancountonpathlink) (S.L.path_link_human_count)\n"
                   "(M.V.getttlinestring) (S.$.timetable_line_result)\n"
-                  "(M.V.getttbusstopname) (S.$.timetable_destination_result)\n"
+                  "1 (M.V.getttbusstopname) (S.$.timetable_destination_result)\n"
+                  "9 (M.V.getttbusstopname) (S.$.invalid_timetable_stop_result)\n"
                   "0 (M.V.givechangecoin)\n"
                   "1 (M.V.givechangecoin)\n"
                   "2 (M.V.givechangecoin)\n"
@@ -469,12 +494,6 @@ int main() {
                           std::istreambuf_iterator<char>());
     bool warningCountsValid = logOpened;
     for (const std::string& message : {
-             std::string("system macro getttterminusindex is not implemented"),
-             std::string("system macro getttbusstopcount is not implemented"),
-             std::string("system macro getttbusstopindex is not implemented"),
-             std::string("system macro getttdelay is not implemented"),
-             std::string("system macro getttbusstoparr is not implemented"),
-             std::string("system macro getttbusstopdep is not implemented"),
              std::string("system macro getbusstopindex is not implemented"),
              std::string("system macro getterminusindex is not implemented"),
              std::string("system macro getterminuscode is not implemented"),

@@ -373,7 +373,8 @@ bool RenderLoop::AddTrafficVehicle(
     std::string timetableLineName, std::string timetableDestinationName,
     std::optional<std::size_t> trafficRuleGroupIndex, bool registerPassengerRouteOnly,
     std::optional<std::size_t> passengerRouteIndex, std::size_t* registeredPassengerRouteIndex,
-    bool requireActiveTileSpawnCandidate) {
+    bool requireActiveTileSpawnCandidate, std::vector<int> scheduledDepartureProfileIndices,
+    std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles) {
     TraceScope trace("startup", "RenderLoop::AddTrafficVehicle");
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
@@ -452,8 +453,41 @@ bool RenderLoop::AddTrafficVehicle(
                         [](double minute) { return !std::isfinite(minute) || minute < 0.0; })) {
             throw std::invalid_argument("Map bus timetable departures are invalid");
         }
-        std::sort(scheduledDepartureMinutes.begin(), scheduledDepartureMinutes.end());
-    } else if (!scheduledDepartureMinutes.empty()) {
+        if (scheduledDepartureProfileIndices.empty()) {
+            scheduledDepartureProfileIndices.resize(scheduledDepartureMinutes.size(), 0);
+        } else if (scheduledDepartureProfileIndices.size() !=
+                   scheduledDepartureMinutes.size()) {
+            throw std::invalid_argument(
+                "Map bus timetable departures and profiles are not aligned");
+        }
+        std::vector<std::pair<double, int>> scheduledTrips;
+        scheduledTrips.reserve(scheduledDepartureMinutes.size());
+        for (std::size_t index = 0; index < scheduledDepartureMinutes.size(); ++index) {
+            scheduledTrips.emplace_back(scheduledDepartureMinutes[index],
+                                        std::max(0, scheduledDepartureProfileIndices[index]));
+        }
+        std::stable_sort(scheduledTrips.begin(), scheduledTrips.end(),
+                         [](const auto& left, const auto& right) {
+                             return left.first < right.first;
+                         });
+        for (std::size_t index = 0; index < scheduledTrips.size(); ++index) {
+            scheduledDepartureMinutes[index] = scheduledTrips[index].first;
+            scheduledDepartureProfileIndices[index] = scheduledTrips[index].second;
+        }
+        for (const openbus::map::MapAiTimetableProfile& profile : timetableProfiles) {
+            const auto validOffsets = [](const std::vector<double>& offsets) {
+                return std::all_of(offsets.begin(), offsets.end(), [](double seconds) {
+                    return std::isfinite(seconds) && seconds >= 0.0;
+                });
+            };
+            if (profile.arrivalOffsetSeconds.size() != profile.departureOffsetSeconds.size() ||
+                !validOffsets(profile.arrivalOffsetSeconds) ||
+                !validOffsets(profile.departureOffsetSeconds)) {
+                throw std::invalid_argument("Map bus timetable profile times are invalid");
+            }
+        }
+    } else if (!scheduledDepartureMinutes.empty() || !scheduledDepartureProfileIndices.empty() ||
+               !timetableProfiles.empty()) {
         throw std::invalid_argument("Only map buses can have timetable departures");
     }
     actor.speedMetersPerSecond = 0.0;
@@ -508,6 +542,9 @@ bool RenderLoop::AddTrafficVehicle(
         std::make_shared<const openbus::map::MapTrafficActor>(trafficState.actor);
     trafficState.spawnCandidates = std::move(spawnCandidates);
     trafficState.scheduledDepartureMinutes = std::move(scheduledDepartureMinutes);
+    trafficState.scheduledDepartureProfileIndices =
+        std::move(scheduledDepartureProfileIndices);
+    trafficState.timetableProfiles = std::move(timetableProfiles);
     trafficState.timetableLineName = std::move(timetableLineName);
     trafficState.timetableDestinationName = std::move(timetableDestinationName);
     if (!isBus && !passengerStops.empty()) {
@@ -563,6 +600,8 @@ bool RenderLoop::AddTrafficVehicle(
     if (!trafficState.passengerStops.empty()) {
         trafficState.passengerStops.back().passengersAlighting =
             (std::numeric_limits<std::size_t>::max)();
+        trafficState.timetableTerminusIndex =
+            static_cast<int>(trafficState.passengerStops.size() - 1);
     }
     if (registerPassengerRouteOnly) {
         if (!isBus || trafficState.passengerStops.empty()) {

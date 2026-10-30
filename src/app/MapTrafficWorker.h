@@ -4,6 +4,7 @@
 #include "map/MapConfigLoader.h"
 
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -78,6 +79,7 @@ class MapTrafficWorker {
         bool active = false;
         bool canSpawn = false;
         bool canDespawn = false;
+        double spawnPriorityMeters = std::numeric_limits<double>::infinity();
     };
 
     struct PopulationDecision {

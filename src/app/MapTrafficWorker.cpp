@@ -181,7 +181,17 @@ struct MapTrafficWorker::Impl {
                             --countFor(candidate);
                         }
                     }
+                    std::vector<std::size_t> spawnOrder;
+                    spawnOrder.reserve(candidates.size());
                     for (std::size_t index = 0; index < candidates.size(); ++index) {
+                        spawnOrder.push_back(index);
+                    }
+                    std::stable_sort(spawnOrder.begin(), spawnOrder.end(),
+                                     [&](std::size_t first, std::size_t second) {
+                                         return candidates[first].spawnPriorityMeters <
+                                                candidates[second].spawnPriorityMeters;
+                                     });
+                    for (const std::size_t index : spawnOrder) {
                         const PopulationCandidate& candidate = candidates[index];
                         if (!candidate.active && candidate.canSpawn &&
                             countFor(candidate) < targetFor(candidate)) {

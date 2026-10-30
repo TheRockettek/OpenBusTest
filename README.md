@@ -142,7 +142,8 @@ changing the simulation date and selector-based
 `[selobject]`/`[selspline]` edits are not yet applied.
 The current traffic clock is previewed as `TIME HH:MM` in the status HUD.
 Road and pedestrian populations follow their map density schedules as the
-clock advances. A pool sized for each schedule's maximum is queued at
+clock advances, with active population targets recalculated once per simulated
+minute rather than every rendered frame. A pool sized for each schedule's maximum is queued at
 startup; vehicle instances are constructed and their scripts loaded on asset
 workers, while model mesh parsing is deferred to asynchronous requests.
 For unscheduled traffic, separate group peaks can require a queued pool larger
