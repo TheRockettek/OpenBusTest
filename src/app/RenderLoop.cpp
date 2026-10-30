@@ -872,6 +872,22 @@ void RenderLoop::SetWeather(int precipitationType, double precipitationRate) {
     simulationState_.sharedVariables().setPrecipitation(precipitationType, precipitationRate);
 }
 
+void RenderLoop::SetWeather(int precipitationType, double precipitationRate,
+                            double temperatureCelsius,
+                            double absoluteHumidityGramsPerCubicMeter) {
+    simulationState_.sharedVariables().setWeather(
+        precipitationType, precipitationRate, temperatureCelsius,
+        absoluteHumidityGramsPerCubicMeter);
+}
+
+void RenderLoop::SetAutoClutch(bool enabled) {
+    simulationState_.sharedVariables().setAutoClutch(enabled);
+}
+
+void RenderLoop::SetSunAltitude(double altitudeDegrees) {
+    simulationState_.sharedVariables().setSunAltitude(altitudeDegrees);
+}
+
 void RenderLoop::SetPlayerVehicle(Vehicle* model) {
     playerVehicle_ = model;
     if (playerVehicle_ != nullptr) {

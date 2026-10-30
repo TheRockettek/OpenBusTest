@@ -271,7 +271,7 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
                                   : std::string{});
     } else if (name == "gethumancountonpathlink" || name == "gethumancountonseat") {
         int index = -1;
-        const bool validIndex = floatToInt(nativePopFloat(), index) && index >= 0;
+        const bool validIndex = popNonnegativeIndex(index);
         const char* prefix =
             name == "gethumancountonseat" ? "human_count_on_seat_" : "human_count_on_path_link_";
         const float count = validIndex ? localState.get(indexedName(prefix, index)) : 0.0F;
@@ -483,7 +483,7 @@ bool ScriptRuntime::Impl::executeNativeFunction(const std::string& functionName,
                 localState.set(instruction.name, nativePeekFloat());
                 break;
             case OscOpcode::StoreLocalString:
-                localState.setString(instruction.name, nativePopString());
+                localState.setString(instruction.name, nativePeekString());
                 break;
             case OscOpcode::LoadSystem:
                 floatStack.push_back(sharedState.sharedVariables().get(instruction.name));

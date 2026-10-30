@@ -153,6 +153,7 @@ int main() {
     writeResistanceConfig(inactiveRecordsPath,
                           "[add_camera_driver]\n1\n2\n3\n0\n40\n10\n-5\n"
                           "[view_schedule]\n0\nSchedule view\n"
+                          "[view_schedule]\n2\nSchedule route\n"
                           "[view_ticketselling]\n1\nTicket view\n"
                           "[rot_pnt_long]\n-2.5\n"
                           "[ai_deltaheight]\n0.4\n");
@@ -171,8 +172,22 @@ int main() {
         !inactiveRecords.diagnostics.hasErrors() &&
         inactiveRecords.longitudinalRotationPoint == -2.5 &&
         inactiveRecords.hasAiDeltaHeight && inactiveRecords.aiDeltaHeight == 0.4 &&
+        inactiveRecords.scheduleViews.size() == 2 &&
+        inactiveRecords.scheduleViews[0].viewIndex == 0 &&
+        inactiveRecords.scheduleViews[0].label == "Schedule view" &&
+        inactiveRecords.scheduleViews[1].viewIndex == 2 &&
+        inactiveRecords.scheduleViews[1].label == "Schedule route" &&
+        inactiveRecords.ticketSellingViews.size() == 1 &&
+        inactiveRecords.ticketSellingViews[0].viewIndex == 1 &&
+        inactiveRecords.ticketSellingViews[0].label == "Ticket view" &&
         hasIgnoredWarning("view_schedule") && hasIgnoredWarning("view_ticketselling") &&
         hasIgnoredWarning("rot_pnt_long");
+    const std::filesystem::path invalidViewPath = root / "invalid_view.bus";
+    writeResistanceConfig(invalidViewPath, "[view_schedule]\n-1\nInvalid view\n");
+    const VehicleConfig invalidView =
+        loadVehicleConfig(invalidViewPath, VehicleFileKind::Bus, false);
+    const bool invalidViewRejected =
+        invalidView.diagnostics.hasErrors() && invalidView.scheduleViews.empty();
     const std::filesystem::path axleLabelsPath = root / "axle_labels.bus";
     std::ofstream axleLabels(axleLabelsPath);
     axleLabels << "[model]\nmodel.cfg\n"
@@ -227,7 +242,8 @@ int main() {
         reflections[3].pan == 10.0 && reflections[3].tilt == -5.0;
     openbus::probe::removeProbeDirectory(root);
 
-    if (!reflectionCameraKeywordsParsed || !ovhModelLoaded || !inactiveRecordsReported) {
+    if (!reflectionCameraKeywordsParsed || !ovhModelLoaded || !inactiveRecordsReported ||
+        !invalidViewRejected) {
         std::cerr << "Reflection camera parsing or OVH vehicle model loading failed\n";
         return 1;
     }
@@ -309,6 +325,20 @@ int main() {
         !passengerPathRoute(cabinPoints, cabinLinks, 30, 10).empty() ||
         passengerPathRoute(cabinPoints, cabinLinks, 20, 20) != std::vector<int>{20}) {
         std::cerr << "Passenger cabin path routing did not preserve link direction\n";
+        return 1;
+    }
+    const std::vector<std::array<double, 3>> travelPath = {
+        {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {3.0, 0.0, 0.0}};
+    const std::vector<std::optional<std::size_t>> travelPathLinks = {std::nullopt, 4};
+    const auto travelProfile = passengerPathLinkProgressProfile(travelPath, travelPathLinks);
+    if (travelProfile.size() != 2 || std::abs(travelProfile[0].first - (1.0 / 3.0)) > 1.0e-9 ||
+        travelProfile[0].second || travelProfile[1].first != 1.0 ||
+        travelProfile[1].second != 4 ||
+        passengerPathLinkAtProgress(travelPath, travelPathLinks, 0.2) ||
+        passengerPathLinkAtProgress(travelPath, travelPathLinks, 0.5) != 4 ||
+        passengerPathLinkAtProgress(travelPath, travelPathLinks, 1.5) != 4 ||
+        passengerPathLinkAtProgress(travelPath, {std::nullopt}, 0.5)) {
+        std::cerr << "Passenger path progress did not identify the active cabin pathlink\n";
         return 1;
     }
     return 0;

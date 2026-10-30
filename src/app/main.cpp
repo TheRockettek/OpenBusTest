@@ -61,34 +61,68 @@ bool booleanEnvironmentValue(const char* name, bool fallback) {
                              " must be one of 1/0, true/false, yes/no, or on/off");
 }
 
-std::pair<int, double> weatherSettingsFromEnvironment() {
+struct WeatherSettings {
+    int precipitationType = 0;
+    double precipitationRate = 0.0;
+    double temperatureCelsius = 20.0;
+    double absoluteHumidityGramsPerCubicMeter = 10.0;
+};
+
+double finiteEnvironmentDouble(const char* name, double fallback) {
+    const std::string configuredValue = environmentValue(name);
+    if (configuredValue.empty()) {
+        return fallback;
+    }
+    char* end = nullptr;
+    const double value = std::strtod(configuredValue.c_str(), &end);
+    if (end == configuredValue.c_str() || *end != '\0' || !std::isfinite(value)) {
+        throw std::runtime_error(std::string(name) + " must be a finite number");
+    }
+    return value;
+}
+
+WeatherSettings weatherSettingsFromEnvironment() {
     std::string weather = environmentValue("OPENBUS_WEATHER");
     std::transform(weather.begin(), weather.end(), weather.begin(), [](unsigned char character) {
         return static_cast<char>(std::tolower(character));
     });
-    int precipitationType = 0;
+    WeatherSettings settings;
     if (weather.empty() || weather == "clear") {
-        precipitationType = 0;
+        settings.precipitationType = 0;
     } else if (weather == "rain") {
-        precipitationType = 1;
+        settings.precipitationType = 1;
     } else if (weather == "snow") {
-        precipitationType = 2;
+        settings.precipitationType = 2;
     } else {
         throw std::runtime_error("OPENBUS_WEATHER must be clear, rain, or snow");
     }
 
     const std::string configuredRate = environmentValue("OPENBUS_WEATHER_RATE");
-    if (configuredRate.empty()) {
-        return {precipitationType, precipitationType == 0 ? 0.0 : 0.5};
+    settings.precipitationRate = settings.precipitationType == 0 ? 0.0 : 0.5;
+    if (!configuredRate.empty()) {
+        char* end = nullptr;
+        settings.precipitationRate = std::strtod(configuredRate.c_str(), &end);
+        if (end == configuredRate.c_str() || *end != '\0' ||
+            !std::isfinite(settings.precipitationRate) || settings.precipitationRate < 0.0 ||
+            settings.precipitationRate > 1.0 ||
+            (settings.precipitationType == 0 && settings.precipitationRate != 0.0)) {
+            throw std::runtime_error(
+                "OPENBUS_WEATHER_RATE must be in [0, 1] and non-zero only for rain or snow");
+        }
     }
-    char* end = nullptr;
-    const double rate = std::strtod(configuredRate.c_str(), &end);
-    if (end == configuredRate.c_str() || *end != '\0' || !std::isfinite(rate) || rate < 0.0 ||
-        rate > 1.0 || (precipitationType == 0 && rate != 0.0)) {
+    settings.temperatureCelsius =
+        finiteEnvironmentDouble("OPENBUS_WEATHER_TEMPERATURE", settings.temperatureCelsius);
+    settings.absoluteHumidityGramsPerCubicMeter =
+        finiteEnvironmentDouble("OPENBUS_WEATHER_ABSHUM",
+                                settings.absoluteHumidityGramsPerCubicMeter);
+    if (settings.temperatureCelsius <= -273.15) {
+        throw std::runtime_error("OPENBUS_WEATHER_TEMPERATURE must be above absolute zero");
+    }
+    if (settings.absoluteHumidityGramsPerCubicMeter < 0.0) {
         throw std::runtime_error(
-            "OPENBUS_WEATHER_RATE must be in [0, 1] and non-zero only for rain or snow");
+            "OPENBUS_WEATHER_ABSHUM must be non-negative");
     }
-    return {precipitationType, rate};
+    return settings;
 }
 
 int positiveEnvironmentInt(const char* name, int fallback, int maximum) {
@@ -1041,13 +1075,28 @@ int main() {
             mapDefinition, omsiRootPath(), *world, 2, 2, std::move(preloadedTerrainTiles));
         simulationTrace.finish();
 
-        const auto [precipitationType, precipitationRate] = weatherSettingsFromEnvironment();
-        renderer.SetWeather(precipitationType, precipitationRate);
-        const char* weatherName = precipitationType == 1   ? "rain"
-                                  : precipitationType == 2 ? "snow"
-                                                           : "clear";
+        const WeatherSettings weather = weatherSettingsFromEnvironment();
+        renderer.SetWeather(weather.precipitationType, weather.precipitationRate,
+                            weather.temperatureCelsius,
+                            weather.absoluteHumidityGramsPerCubicMeter);
+        const bool automaticClutchEnabled =
+            booleanEnvironmentValue("OPENBUS_AUTO_CLUTCH", false);
+        renderer.SetAutoClutch(automaticClutchEnabled);
+        const double sunAltitude =
+            finiteEnvironmentDouble("OPENBUS_SUN_ALTITUDE", 60.0);
+        renderer.SetSunAltitude(sunAltitude);
+        const char* weatherName = weather.precipitationType == 1   ? "rain"
+                                  : weather.precipitationType == 2 ? "snow"
+                                                                   : "clear";
         applicationLog.Log("Weather initialized: " + std::string(weatherName) +
-                           ", precipitation rate=" + std::to_string(precipitationRate) + ".");
+                           ", precipitation rate=" +
+                           std::to_string(weather.precipitationRate) +
+                           ", temperature C=" + std::to_string(weather.temperatureCelsius) +
+                           ", absolute humidity g/m3=" +
+                           std::to_string(weather.absoluteHumidityGramsPerCubicMeter) +
+                           ", auto clutch=" +
+                           std::string(automaticClutchEnabled ? "enabled" : "disabled") +
+                           ", sun altitude degrees=" + std::to_string(sunAltitude) + ".");
         applicationLog.Log("Loading map scene: terrain, tile index, scenery and roads.");
         renderer.showStartupStatus("Loading map assets and preparing the spawn-area render tiles.");
         openbus::rendering::TraceScope mapSceneTrace("startup", "main.initializeMapScene");
@@ -2007,7 +2056,9 @@ int main() {
                 previousTime = currentTime;
 
                 renderer.beginFrame();
-                renderer.updateOnFoot(*world, elapsed);
+                if (!renderer.isPaused()) {
+                    renderer.updateOnFoot(*world, elapsed);
+                }
                 if (const std::optional<SpawnBusRequest> spawnRequest =
                         renderer.consumeSpawnBusRequest();
                     spawnRequest.has_value() && playerVehicle == nullptr) {
@@ -2081,35 +2132,38 @@ int main() {
                         renderer.SetSpawnBusError(message);
                     }
                 }
-                if (renderer.consumeRaisePlayerRequest()) {
+                if (!renderer.isPaused() && renderer.consumeRaisePlayerRequest()) {
                     simulation->translateVertically(5.0);
                     applicationLog.Log("Raised player vehicle 5 m above its current location");
                 }
 
-                renderer.updatePlayerVariables(*simulation, renderer.throttle(),
-                                               renderer.steering(), renderer.brake());
-                simulation->updateWithWheelTorqueAndBrakeForces(
-                    elapsed, renderer.physicsWheelTorque(), renderer.physicsSteering(),
-                    renderer.physicsWheelBrakeForces(simulation->axleCount()),
-                    renderer.physicsAxleSpringFactors(simulation->axleCount()));
-                updateMapTrafficPopulation();
-                renderer.updatePostPhysicsVariables(*simulation);
-                const auto streamingPosition = renderer.streamingPosition(*simulation);
-                renderer.updateMapStreaming(streamingPosition[0], streamingPosition[1]);
-                const auto loadedTiles = renderer.loadedMapTiles();
-                if (loadedTiles != roadTrafficPoolLoadedTiles) {
-                    roadTrafficPoolLoadedTiles = loadedTiles;
-                    if (queueAdditionalMapRoadTraffic) {
-                        queueAdditionalMapRoadTraffic();
+                if (!renderer.isPaused()) {
+                    renderer.updatePlayerVariables(*simulation, renderer.throttle(),
+                                                   renderer.steering(), renderer.brake());
+                    simulation->updateWithWheelTorqueAndBrakeForces(
+                        elapsed, renderer.physicsWheelTorque(), renderer.physicsSteering(),
+                        renderer.physicsWheelBrakeForces(simulation->axleCount()),
+                        renderer.physicsAxleSpringFactors(simulation->axleCount()));
+                    updateMapTrafficPopulation();
+                    renderer.updatePostPhysicsVariables(*simulation);
+                    const auto streamingPosition = renderer.streamingPosition(*simulation);
+                    renderer.updateMapStreaming(streamingPosition[0], streamingPosition[1]);
+                    const auto loadedTiles = renderer.loadedMapTiles();
+                    if (loadedTiles != roadTrafficPoolLoadedTiles) {
+                        roadTrafficPoolLoadedTiles = loadedTiles;
+                        if (queueAdditionalMapRoadTraffic) {
+                            queueAdditionalMapRoadTraffic();
+                        }
                     }
-                }
-                collisionStreamer->update(streamingPosition[0], streamingPosition[1], loadedTiles);
-                renderer.updateMapPoleStates(world->mapPoleStates());
-                const std::size_t collisionTileCount = collisionStreamer->loadedTileCount();
-                if (collisionTileCount != reportedCollisionTileCount) {
-                    applicationLog.Log("Map collision streaming progress: resident tiles=" +
-                                       std::to_string(collisionTileCount) + ".");
-                    reportedCollisionTileCount = collisionTileCount;
+                    collisionStreamer->update(streamingPosition[0], streamingPosition[1],
+                                              loadedTiles);
+                    renderer.updateMapPoleStates(world->mapPoleStates());
+                    const std::size_t collisionTileCount = collisionStreamer->loadedTileCount();
+                    if (collisionTileCount != reportedCollisionTileCount) {
+                        applicationLog.Log("Map collision streaming progress: resident tiles=" +
+                                           std::to_string(collisionTileCount) + ".");
+                        reportedCollisionTileCount = collisionTileCount;
+                    }
                 }
                 renderer.draw(*simulation, *world);
 

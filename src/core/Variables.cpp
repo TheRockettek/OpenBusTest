@@ -215,14 +215,39 @@ void SystemVariables::updateSimulationClock(double elapsedSeconds) {
 }
 
 void SystemVariables::setPrecipitation(int type, double rate) {
-    if (type < 0 || type > 2 || !std::isfinite(rate) || rate < 0.0 || rate > 1.0) {
-        throw std::invalid_argument("Weather precipitation settings are invalid");
+    setWeather(type, rate, get("weather_temperature"), get("weather_abshum"));
+}
+
+void SystemVariables::setWeather(int type, double rate, double temperatureCelsius,
+                                 double absoluteHumidityGramsPerCubicMeter) {
+    if (type < 0 || type > 2 || !std::isfinite(rate) || rate < 0.0 || rate > 1.0 ||
+        !std::isfinite(temperatureCelsius) || temperatureCelsius <= -273.15 ||
+        !std::isfinite(absoluteHumidityGramsPerCubicMeter) ||
+        absoluteHumidityGramsPerCubicMeter < 0.0) {
+        throw std::invalid_argument("Weather settings are invalid");
     }
     // The renderer uses 0-based weather types; OMSI scripts use values 1 through 3.
     setValues({
         {"preciptype", static_cast<float>(type + 1)},
         {"preciprate", static_cast<float>(rate)},
+        {"weather_temperature", static_cast<float>(temperatureCelsius)},
+        {"weather_abshum", static_cast<float>(absoluteHumidityGramsPerCubicMeter)},
     });
+}
+
+void SystemVariables::setAutoClutch(bool enabled) {
+    set("autoclutch", enabled ? 1.0F : 0.0F);
+}
+
+void SystemVariables::setSunAltitude(double altitudeDegrees) {
+    if (!std::isfinite(altitudeDegrees) || altitudeDegrees < -90.0 || altitudeDegrees > 90.0) {
+        throw std::invalid_argument("Sun altitude must be finite and between -90 and 90 degrees");
+    }
+    set("sunalt", static_cast<float>(altitudeDegrees));
+}
+
+void SystemVariables::setPaused(bool paused) {
+    set("pause", paused ? 1.0F : 0.0F);
 }
 
 void SystemVariables::setSoundAvailable(bool available) {

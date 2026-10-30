@@ -684,21 +684,32 @@ which makes door-glass control variables visible.
 
 The model variable store initializes OMSI-style system variables with the local
 system date at midday: `Time` is `43200`, `Day`, `Month`, and `Year` come from
-the current date, and `DayOfYear` is the zero-based day index. Defaults include
-`NoSound=1`, `Pause=0`, `PrecipType=0`, `PrecipRate=0`,
+the current date, and `DayOfYear` uses OMSI's one-based convention. Defaults include
+`NoSound=1`, `Pause=0`, `PrecipType=1` (clear), `PrecipRate=0`,
 `Weather_Temperature=20`, `Weather_AbsHum=10`, `Envir_Brightness=1`,
 `AutoClutch=0`, and `SunAlt=60`. `Timegap`, `GetTime`, `mouse_x`, and `mouse_y`
 are updated from the renderer each frame. Precipitation values are persistent
-shared system variables, so configured weather and script overrides survive
-frame updates.
+shared system variables, so configured weather survives frame updates.
 
 The initial weather slice renders rain or snow particles in exterior and free
 camera views. Set `OPENBUS_WEATHER=rain` or `snow`; `clear` (the default)
 disables precipitation. `OPENBUS_WEATHER_RATE` accepts `0`–`1` and defaults to
-`0.5` for rain/snow. Weather settings populate the shared `PrecipType` and
-`PrecipRate` system variables before scripts run, so scripts can override them.
-This does not yet load OMSI map weather schedules or render fog, windshield
-effects, wet roads, or snow accumulation.
+`0.5` for rain/snow. `OPENBUS_WEATHER_TEMPERATURE` sets `Weather_Temperature`
+in degrees Celsius (default `20`), and `OPENBUS_WEATHER_ABSHUM` sets
+`Weather_AbsHum` in g/m3 (default `10`). Temperature must be above absolute
+zero and absolute humidity must be non-negative. Set `OPENBUS_AUTO_CLUTCH` to
+`1`, `true`, `yes`, or `on` to publish `AutoClutch=1` (default `0`); this
+reports the setting to scripts but does not yet implement automatic clutch
+control. `OPENBUS_SUN_ALTITUDE` overrides `SunAlt` in degrees (default `60`,
+valid range `-90` through `90`); it is not calculated from map location or
+simulation time. Press `P` to pause and resume the simulation; rendering and
+free-camera movement continue while physics, traffic, passenger service, the
+simulation clock, script frames, and vehicle key/mouse script events are paused.
+Active key and mouse interactions receive release events as pause begins. Weather
+settings populate the shared `PrecipType`,
+`PrecipRate`, `Weather_Temperature`, and `Weather_AbsHum` system variables
+before scripts run. This does not yet load OMSI map weather schedules or render
+fog, windshield effects, wet roads, or snow accumulation.
 
 For benchmark/custom runs, `OPENBUS_BUS_CONFIG` accepts an absolute path or a
 path relative to `OPENBUS_OMSI_ROOT`. Set the optional `OPENBUS_MODEL_CONFIG` to

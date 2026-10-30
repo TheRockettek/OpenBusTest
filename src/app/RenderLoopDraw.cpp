@@ -781,7 +781,24 @@ std::optional<std::size_t> passengerCabinPathPointIndex(const Vehicle& bus, int 
     return static_cast<std::size_t>(std::distance(bus.passengerPathPoints.begin(), point));
 }
 
-std::vector<std::array<double, 3>>
+struct PassengerCabinTravelPathData {
+    std::vector<std::array<double, 3>> positions;
+    std::vector<std::optional<std::size_t>> segmentLinkIndices;
+};
+
+std::optional<std::size_t> passengerCabinPathLinkIndex(const Vehicle& bus, int fromPoint,
+                                                       int toPoint) {
+    for (std::size_t index = 0; index < bus.passengerPathLinks.size(); ++index) {
+        const PassengerPathLink& link = bus.passengerPathLinks[index];
+        if ((link.from == fromPoint && link.to == toPoint) ||
+            (!link.oneWay && link.from == toPoint && link.to == fromPoint)) {
+            return index;
+        }
+    }
+    return std::nullopt;
+}
+
+PassengerCabinTravelPathData
 passengerCabinTravelPath(const Vehicle& bus, const openbus::map::MapTrafficPose& vehiclePose,
                          const std::array<double, 3>& startWorld,
                          const std::array<double, 3>& endLocal, bool boarding) {
@@ -845,30 +862,36 @@ passengerCabinTravelPath(const Vehicle& bus, const openbus::map::MapTrafficPose&
     if (pointRoute.empty()) {
         return {};
     }
-    std::vector<std::array<double, 3>> localPath;
-    localPath.reserve(pointRoute.size() + 2);
-    localPath.push_back(startLocal);
+    PassengerCabinTravelPathData path;
+    path.positions.reserve(pointRoute.size() + 2);
+    path.segmentLinkIndices.reserve(pointRoute.size() + 1);
+    path.positions.push_back(startLocal);
+    const auto appendPoint = [&](const std::array<double, 3>& point,
+                                 std::optional<std::size_t> linkIndex) {
+        if (path.positions.back() != point) {
+            path.segmentLinkIndices.push_back(linkIndex);
+            path.positions.push_back(point);
+        }
+    };
+    int previousRoutePoint = -1;
     for (const int pointId : pointRoute) {
         const auto pointIndex = passengerCabinPathPointIndex(bus, pointId);
         if (!pointIndex) {
             return {};
         }
-        const auto& point = bus.passengerPathPoints[*pointIndex].position;
-        if (localPath.back() != point) {
-            localPath.push_back(point);
-        }
+        appendPoint(bus.passengerPathPoints[*pointIndex].position,
+                    previousRoutePoint < 0
+                        ? std::nullopt
+                        : passengerCabinPathLinkIndex(bus, previousRoutePoint, pointId));
+        previousRoutePoint = pointId;
     }
-    if (localPath.back() != endLocal) {
-        localPath.push_back(endLocal);
+    appendPoint(endLocal, std::nullopt);
+    for (auto& point : path.positions) {
+        point = {vehiclePose.position[0] + point[0] * cosine - point[1] * sine,
+                 vehiclePose.position[1] + point[0] * sine + point[1] * cosine,
+                 vehiclePose.position[2] + point[2]};
     }
-    std::vector<std::array<double, 3>> worldPath;
-    worldPath.reserve(localPath.size());
-    for (const auto& point : localPath) {
-        worldPath.push_back({vehiclePose.position[0] + point[0] * cosine - point[1] * sine,
-                             vehiclePose.position[1] + point[0] * sine + point[1] * cosine,
-                             vehiclePose.position[2] + point[2]});
-    }
-    return worldPath;
+    return path;
 }
 
 openbus::map::MapTrafficPose
@@ -1202,7 +1225,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             }
         }
     }
-    if (!renderingReflection_ && !freeCameraEnabled_ && !mouseLookEnabled_ &&
+    if (!paused_ && !renderingReflection_ && !freeCameraEnabled_ && !mouseLookEnabled_ &&
         playerVehicle_ != nullptr && mouseInteractionPending_) {
         TraceScope phase("input", "RenderLoop::draw.interaction");
         // Reflections, captures and repeated draws are not additional input frames.
@@ -1638,34 +1661,37 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             [&](Vehicle& bus, const openbus::map::MapTrafficPose& busPose, std::size_t modelOffset,
                 const openbus::map::MapTrafficActor* routeActor, const Vehicle* routeVehicle,
                 const openbus::map::MapTrafficPassengerStop* boardingStop) {
-                if (mapRenderer_ == nullptr || scheduledPassengerHumanModels_.empty() ||
-                    !lastMainCameraPoseValid_) {
+                auto& service = bus.passengerService;
+                if (mapRenderer_ == nullptr) {
                     return;
                 }
+                const bool canDrawPassengers =
+                    !scheduledPassengerHumanModels_.empty() && lastMainCameraPoseValid_;
                 const double busCameraDistance =
-                    std::hypot(busPose.position[0] - lastMainCameraPose_.position[0],
-                               busPose.position[1] - lastMainCameraPose_.position[1]);
-                if (busCameraDistance > 75.0) {
-                    return;
-                }
+                    canDrawPassengers
+                        ? std::hypot(busPose.position[0] - lastMainCameraPose_.position[0],
+                                     busPose.position[1] - lastMainCameraPose_.position[1])
+                        : std::numeric_limits<double>::infinity();
+                const bool busInRange = canDrawPassengers && busCameraDistance <= 75.0;
                 const std::size_t seatCount =
                     std::min(bus.passengerPositions.size(), bus.passengerService.seatCount());
                 const auto alightingSeat = bus.passengerService.alightingSeatIndex();
-                for (std::size_t seatIndex = 0; seatIndex < seatCount; ++seatIndex) {
-                    if (bus.passengerService.passengerCountOnSeat(seatIndex) == 0 ||
-                        (alightingSeat && *alightingSeat == seatIndex)) {
-                        continue;
+                if (busInRange) {
+                    for (std::size_t seatIndex = 0; seatIndex < seatCount; ++seatIndex) {
+                        if (bus.passengerService.passengerCountOnSeat(seatIndex) == 0 ||
+                            (alightingSeat && *alightingSeat == seatIndex)) {
+                            continue;
+                        }
+                        const auto passengerPose =
+                            passengerCabinSeatPose(busPose, bus.passengerPositions[seatIndex]);
+                        const std::size_t modelIndex =
+                            bus.passengerService.passengerModelIndexOnSeat(seatIndex).value_or(
+                                modelOffset + seatIndex) %
+                            scheduledPassengerHumanModels_.size();
+                        mapRenderer_->drawHumanTrafficActor(
+                            scheduledPassengerHumanModels_[modelIndex], passengerPose, 0.0, 0.0);
                     }
-                    const auto passengerPose =
-                        passengerCabinSeatPose(busPose, bus.passengerPositions[seatIndex]);
-                    const std::size_t modelIndex =
-                        bus.passengerService.passengerModelIndexOnSeat(seatIndex).value_or(
-                            modelOffset + seatIndex) %
-                        scheduledPassengerHumanModels_.size();
-                    mapRenderer_->drawHumanTrafficActor(scheduledPassengerHumanModels_[modelIndex],
-                                                        passengerPose, 0.0, 0.0);
                 }
-                const auto& service = bus.passengerService;
                 if (boardingStop == nullptr || service.currentStopId() != boardingStop->stopId ||
                     routeActor == nullptr) {
                     return;
@@ -1676,11 +1702,11 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     throw std::runtime_error("Cannot sample a bus passenger boarding pose");
                 }
                 const double stopCameraDistance =
-                    std::hypot(stopPose->position[0] - lastMainCameraPose_.position[0],
-                               stopPose->position[1] - lastMainCameraPose_.position[1]);
-                if (stopCameraDistance > 75.0) {
-                    return;
-                }
+                    canDrawPassengers
+                        ? std::hypot(stopPose->position[0] - lastMainCameraPose_.position[0],
+                                     stopPose->position[1] - lastMainCameraPose_.position[1])
+                        : std::numeric_limits<double>::infinity();
+                const bool stopInRange = busInRange && stopCameraDistance <= 75.0;
                 const double passengerSide =
                     openbus::map::mapTrafficPassengerSideSign(mapRenderer_->leftHandTraffic());
                 const double laneOffset =
@@ -1717,14 +1743,19 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     return pose;
                 };
                 const auto drawPassengerBetweenPoses =
-                    [&](const std::vector<std::array<double, 3>>& path, double progress,
+                    [&](const PassengerCabinTravelPathData& path, double progress,
                         double startHeading, double endHeading, std::size_t modelIndex) {
                         const double easedProgress = progress * progress * (3.0 - 2.0 * progress);
-                        const auto passengerPose = samplePassengerTravelPath(
-                            path, easedProgress, startHeading, endHeading);
-                        mapRenderer_->drawHumanTrafficActor(
-                            scheduledPassengerHumanModels_[modelIndex], passengerPose,
-                            simulation.simulationTime() * 2.0, 1.0);
+                        service.setPassengerPathLinkProgressProfile(
+                            passengerPathLinkProgressProfile(path.positions,
+                                                             path.segmentLinkIndices));
+                        if (stopInRange) {
+                            const auto passengerPose = samplePassengerTravelPath(
+                                path.positions, easedProgress, startHeading, endHeading);
+                            mapRenderer_->drawHumanTrafficActor(
+                                scheduledPassengerHumanModels_[modelIndex], passengerPose,
+                                simulation.simulationTime() * 2.0, 1.0);
+                        }
                     };
                 if (service.alightingPassenger()) {
                     const auto seat = service.alightingSeatIndex();
@@ -1732,16 +1763,19 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         const auto seatPose =
                             passengerCabinSeatPose(busPose, bus.passengerPositions[*seat]);
                         const auto outsidePose = curbPose();
-                        std::vector<std::array<double, 3>> path = passengerCabinTravelPath(
+                        PassengerCabinTravelPathData path = passengerCabinTravelPath(
                             bus, busPose, seatPose.position,
                             passengerCabinLocalPoint(busPose, outsidePose.position), false);
-                        if (path.empty()) {
-                            path = {seatPose.position, outsidePose.position};
+                        if (path.positions.empty()) {
+                            path.positions = {seatPose.position, outsidePose.position};
+                            path.segmentLinkIndices = {std::nullopt};
                         }
                         const std::size_t modelIndex =
-                            bus.passengerService.passengerModelIndexOnSeat(*seat).value_or(
-                                modelOffset + *seat) %
-                            scheduledPassengerHumanModels_.size();
+                            scheduledPassengerHumanModels_.empty()
+                                ? 0
+                                : service.passengerModelIndexOnSeat(*seat).value_or(
+                                      modelOffset + *seat) %
+                                      scheduledPassengerHumanModels_.size();
                         drawPassengerBetweenPoses(path, service.alightingProgress(),
                                                   seatPose.headingRadians,
                                                   outsidePose.headingRadians, modelIndex);
@@ -1753,29 +1787,36 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         const auto seatPose =
                             passengerCabinSeatPose(busPose, bus.passengerPositions[*boardingSeat]);
                         const auto outsidePose = queuePoseForPassenger();
-                        std::vector<std::array<double, 3>> path = passengerCabinTravelPath(
+                        PassengerCabinTravelPathData path = passengerCabinTravelPath(
                             bus, busPose, outsidePose.position,
                             passengerCabinLocalPosition(bus.passengerPositions[*boardingSeat]),
                             true);
-                        if (path.empty()) {
-                            path = {outsidePose.position, curbPose().position, seatPose.position};
+                        if (path.positions.empty()) {
+                            path.positions = {outsidePose.position, curbPose().position,
+                                              seatPose.position};
+                            path.segmentLinkIndices = {std::nullopt, std::nullopt};
                         }
                         const std::size_t modelIndex =
-                            service.boardingPassengerModelIndex().value_or(
-                                modelOffset + static_cast<std::size_t>(boardingStop->stopId) +
-                                *boardingSeat) %
-                            scheduledPassengerHumanModels_.size();
+                            scheduledPassengerHumanModels_.empty()
+                                ? 0
+                                : service.boardingPassengerModelIndex().value_or(
+                                      modelOffset + static_cast<std::size_t>(boardingStop->stopId) +
+                                      *boardingSeat) %
+                                      scheduledPassengerHumanModels_.size();
                         drawPassengerBetweenPoses(path, service.boardingProgress(),
                                                   outsidePose.headingRadians,
                                                   seatPose.headingRadians, modelIndex);
                     } else {
-                        const std::size_t modelIndex =
-                            service.boardingPassengerModelIndex().value_or(
-                                modelOffset + static_cast<std::size_t>(boardingStop->stopId)) %
-                            scheduledPassengerHumanModels_.size();
-                        mapRenderer_->drawHumanTrafficActor(
-                            scheduledPassengerHumanModels_[modelIndex], curbPose(),
-                            simulation.simulationTime() * 2.0, 1.0);
+                        if (!scheduledPassengerHumanModels_.empty() && stopInRange) {
+                            const std::size_t modelIndex =
+                                service.boardingPassengerModelIndex().value_or(
+                                    modelOffset +
+                                    static_cast<std::size_t>(boardingStop->stopId)) %
+                                scheduledPassengerHumanModels_.size();
+                            mapRenderer_->drawHumanTrafficActor(
+                                scheduledPassengerHumanModels_[modelIndex], curbPose(),
+                                simulation.simulationTime() * 2.0, 1.0);
+                        }
                     }
                 }
             };

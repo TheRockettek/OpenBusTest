@@ -716,13 +716,29 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                 result.diagnostics.error(line.number, keyword,
                                          "keyword is only valid in a Bus configuration");
             }
+            std::vector<std::string> values;
+            if (!readValues(reader, keyword, 2, values, result.diagnostics)) {
+                continue;
+            }
+            VehicleViewEntry entry;
+            entry.label = trim(values[1]);
+            if (!parseInt(values[0], entry.viewIndex) || entry.viewIndex < 0 ||
+                entry.label.empty()) {
+                result.diagnostics.error(
+                    line.number, keyword,
+                    "expected a non-negative view index and a non-empty label");
+                continue;
+            }
             if (keyword == "view_schedule") {
                 scheduleLine = line.number;
+                result.scheduleViews.push_back(std::move(entry));
             } else {
                 ticketSellingLine = line.number;
+                result.ticketSellingViews.push_back(std::move(entry));
             }
             result.diagnostics.warning(line.number, keyword,
-                                       "recognized but view selection is not implemented");
+                                       "view index and label retained; view selection is not "
+                                       "implemented");
             continue;
         }
         if (keyword == "newachse") {
@@ -1053,6 +1069,67 @@ std::vector<int> passengerPathRoute(const std::vector<PassengerPathPoint>& point
     }
     std::reverse(route.begin(), route.end());
     return route;
+}
+
+std::vector<std::pair<double, std::optional<std::size_t>>>
+passengerPathLinkProgressProfile(
+    const std::vector<std::array<double, 3>>& path,
+    const std::vector<std::optional<std::size_t>>& segmentLinks) {
+    std::vector<std::pair<double, std::optional<std::size_t>>> profile;
+    if (path.size() < 2 || segmentLinks.size() != path.size() - 1) {
+        return profile;
+    }
+    double totalLength = 0.0;
+    for (std::size_t index = 1; index < path.size(); ++index) {
+        const auto& from = path[index - 1];
+        const auto& to = path[index];
+        const double length =
+            std::hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+        if (!std::isfinite(length) || !std::isfinite(totalLength + length)) {
+            return {};
+        }
+        totalLength += length;
+    }
+    if (totalLength <= 1.0e-9) {
+        return profile;
+    }
+
+    profile.reserve(segmentLinks.size());
+    double cumulativeLength = 0.0;
+    for (std::size_t index = 1; index < path.size(); ++index) {
+        const auto& from = path[index - 1];
+        const auto& to = path[index];
+        const double length =
+            std::hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+        if (length <= 1.0e-9) {
+            continue;
+        }
+        cumulativeLength += length;
+        const double endProgress = std::min(1.0, cumulativeLength / totalLength);
+        if (profile.empty() || endProgress > profile.back().first) {
+            profile.emplace_back(endProgress, segmentLinks[index - 1]);
+        }
+    }
+    if (!profile.empty()) {
+        profile.back().first = 1.0;
+    }
+    return profile;
+}
+
+std::optional<std::size_t>
+passengerPathLinkAtProgress(const std::vector<std::array<double, 3>>& path,
+                            const std::vector<std::optional<std::size_t>>& segmentLinks,
+                            double progress) {
+    if (!std::isfinite(progress)) {
+        return std::nullopt;
+    }
+    const auto profile = passengerPathLinkProgressProfile(path, segmentLinks);
+    const double clampedProgress = std::clamp(progress, 0.0, 1.0);
+    const auto segment = std::find_if(
+        profile.begin(), profile.end(), [clampedProgress](const auto& candidate) {
+            return clampedProgress <= candidate.first;
+        });
+    return segment == profile.end() ? std::nullopt : segment->second;
 }
 
 std::filesystem::path soundConfigPathForVehicle(const VehicleConfig& configuration,

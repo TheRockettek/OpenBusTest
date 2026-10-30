@@ -7,7 +7,7 @@ Scope: the vehicle `.bus` file, its model CFG, and the passenger-cabin/path file
 | Keyword / family | Status | Current boundary |
 | --- | --- | --- |
 | `[fixed]`, `[scriptshare]` | Not implemented | BUS-level fixed/static selection and shared-script semantics are not applied. |
-| `[view_schedule]`, `[view_ticketselling]` | Parsed only | The loader diagnoses the unsupported selection behavior but does not retain/use the full view labels. |
+| `[view_schedule]`, `[view_ticketselling]` | Partial | View indexes and labels are retained, including repeated entries; runtime schedule/ticket view selection is not implemented. |
 | `[cog]` | Partial | Its z coordinate supplies the physics height when `[schwerpunkt]` is absent. OpenBus gives `[schwerpunkt]` precedence and warns on disagreement; nonzero x/y offsets are retained and warned about but not applied. Native precedence is unverified. |
 | `[rollwiderstand]` | Active subset | A non-negative authored force in newtons opposes longitudinal motion; negative values are rejected, and when absent the previous mass-scaled OpenBus fallback is retained. Native OMSI physics parity remains unverified. |
 | `[rot_pnt_long]` | Parsed only | The longitudinal rotation point is retained and diagnosed but does not affect vehicle physics. |

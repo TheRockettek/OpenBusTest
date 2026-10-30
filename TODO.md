@@ -257,8 +257,10 @@ by parser alignment and should not be described as supported:
   map ticket pack, vehicle seat counts from the passenger service, and timetable
   data from scheduled map AI buses. `GetHeightAbovePoint` raycasts through the
   live static collision world. Remaining providers are scenery bus-stop arrival
-  queues and live passenger counts on path links; their macros return safe
-  results and report unavailable provider data.
+  queues; those macros return safe results and report unavailable provider data.
+  `GetHumanCountOnPathLink` reports occupancy for the active simulated
+  boarding/alighting passenger on authored vehicle-cabin path links; map/scenery
+  path-link occupancy remains unsupported.
 - System trigger dispatch now reports chassis contacts and scheduled AI target
   and bus-stop changes. Passenger stop-request, rail-joint, repair, and
   refueling event sources remain unsupported.
@@ -283,9 +285,9 @@ for alignment is not mistaken for supporting it.
 
 - [~] BUS-level `[fixed]` and `[scriptshare]` are explicitly diagnosed as
   unsupported; their runtime semantics are not implemented.
-- [ ] Retain the labels and implement the view selection behavior for
-  `[view_schedule]` and `[view_ticketselling]`; current parsing only records
-  that the keyword occurred and validates that a driver camera exists.
+- [~] `[view_schedule]` and `[view_ticketselling]` entries retain their
+  non-negative view indexes and labels, including repeated entries. Runtime
+  schedule/ticket view selection is not implemented.
 - [~] `[cog]` coordinates are retained and its positive z value supplies the
   physics CG height when `[schwerpunkt]` is absent. `[schwerpunkt]` takes
   precedence regardless of record order, with a warning if heights disagree;
@@ -449,16 +451,12 @@ for alignment is not mistaken for supporting it.
 
 #### Documented script API gaps
 
-The following documented system macros are partial or still dispatch to safe
-placeholder handlers rather than complete route, timetable, passenger-path,
-terrain, or arrival-board data:
-
-- [~] HOF/route lookups: `GetTerminusIndex`, `GetTerminusCode`,
+- [x] HOF/route lookups: `GetTerminusIndex`, `GetTerminusCode`,
   `GetTerminusString`, `GetBusstopIndex`, `GetBusstopString`, `GetRouteIndex`,
-  `GetRouteTerminusIndex`, `GetBusstopCount`, and `GetRouteBusstopIdent` remain
-  placeholders. They warn once per runtime and macro; native and Lua probes
-  exercise their numeric and string stack contracts. `GetBusstopIndex` consumes
-  its string argument without disturbing the numeric stack.
+  `GetRouteTerminusIndex`, `GetBusstopCount`, `GetRouteBusstopIdent`, and
+  `GetDepotStringGlobal` use the selected HOF data in both backends. HOF
+  lookups warn once per runtime and macro when no readable depot file is
+  available; native and Lua probes cover results and stack behavior.
 - [~] Timetable lookups: scheduled AI buses publish line and destination
   strings, ordered stop names, and selected `.ttp` arrival/departure profile
   times before script initialization. `.ttl` profile selections remain aligned
@@ -467,22 +465,25 @@ terrain, or arrival-board data:
   `GetTTBusstopCount`, `GetTTBusstopIndex`, and indexed `GetTTBusstopName`
   return the active map timetable's passenger-stop data in both backends;
   `GetTTDelay`, `GetTTBusstopArr`, and `GetTTBusstopDep` now return schedule
-  values in seconds. `GetTTTerminusIndex` reads the retained value and returns
-  `-1` for scheduled AI buses because the source timetable currently provides no
-  terminus index. Native and Lua probes verify the lookups and stack contracts.
+  values in seconds. `GetTTTerminusIndex` uses the last mapped passenger stop as
+  the route terminus, or `-1` when no stops are mapped. Native and Lua probes
+  verify the lookups and stack contracts.
 - [~] Ticket/passenger macros: `GiveChangeCoin`, `GetTicketName`, and
   `GetTicketValue` use map ticket/currency data and `GetHumanCountOnSeat` reads
-  the current seat-occupancy variables. Ticket purchasing/payment and
-  `GetHumanCountOnPathLink` producers remain unimplemented.
-- [~] World and depot lookups: `GetHeightAbovePoint`, `GetDepotStringGlobal`,
-  `GetArrBusLine`, `GetArrBusTerminus`, and `GetArrBusTimeDiff` remain
-  placeholders. Both backends now warn once per runtime and macro, with
-  vehicle and scenery probes checking their respective stack contracts.
-- [ ] Resolve OSC backend differences before claiming stack and object-kind
-  parity: native `(S.$...)` consumes a string while the Lua converter peeks it;
-  the documented native OMSI behavior needs verification. Native system-macro
-  dispatch also bypasses the vehicle/scenery availability check used when
-  registering Lua macros, so out-of-kind calls behave differently.
+  the current seat-occupancy variables. `GetHumanCountOnPathLink` reports the
+  active boarding/alighting passenger's authored cabin pathlink; scenery/world
+  pathlink occupancy and ticket purchasing/payment remain unimplemented.
+- [~] World lookup: `GetHeightAbovePoint` raycasts against the live static
+  collision world and returns a safe zero with a warning when no provider is
+  available. Vehicle probes cover provider results and stack behavior.
+- [ ] Arrival-board lookups: `GetArrBusLine`, `GetArrBusTerminus`, and
+  `GetArrBusTimeDiff` need the parent bus-stop association and arrival queue,
+  which scenery script runtimes do not currently receive.
+- [~] Native and converted Lua backends now preserve the top string on chained
+  `(S.$...)` stores, and native system-macro dispatch enforces object-kind
+  availability like Lua registration. A cross-backend probe covers chained
+  stores. Exact OMSI parity for string-store stack behavior and out-of-kind
+  macro calls still needs independent verification.
 - [~] Verify OMSI parity for `NrSpecRandom`; OpenBus now provides deterministic
   seeded output, and both backends reject non-finite/out-of-range seeds with a
   once-per-runtime warning instead of performing undefined conversions.
@@ -497,10 +498,14 @@ terrain, or arrival-board data:
   both script backends have regression coverage.
   `NoSound` reports OpenAL context availability at startup and each frame,
   with Linux null/unavailable-driver probes; device loss and per-clip failure
-  are not detected. Add host-owned updates for default-only variables:
-  `Pause`, `coll_pos_*`, `coll_energy`,
-  `Weather_Temperature`, `Weather_AbsHum`, `AutoClutch`, `SunAlt`, and
-  `wearlifespan`.
+  are not detected. `Weather_Temperature` and `Weather_AbsHum` now publish
+  validated host-configured values through `OPENBUS_WEATHER_TEMPERATURE` and
+  `OPENBUS_WEATHER_ABSHUM`; `AutoClutch` reflects the opt-in
+  `OPENBUS_AUTO_CLUTCH` setting, without implementing drivetrain assistance.
+  `SunAlt` can be set with `OPENBUS_SUN_ALTITUDE`, but is not computed from map
+  location and time. `Pause` is connected to the `P` toggle and stops physics,
+  traffic, passenger service, the simulation clock, and script frames while
+  rendering continues. `wearlifespan` is vehicle-local, not a system variable.
 - [~] `humans_count` now reports the passenger service's occupied-seat count,
   matching `passengers_onboard` for player and AI vehicles. Replace default-only
   values for documented variable families whose producers are absent:

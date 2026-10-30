@@ -54,6 +54,11 @@ class SystemVariables : public Variables {
     void configureSimulationClock(int year, int month, int day, double timeSeconds);
     void updateSimulationClock(double elapsedSeconds);
     void setPrecipitation(int type, double rate);
+    void setWeather(int type, double rate, double temperatureCelsius,
+                    double absoluteHumidityGramsPerCubicMeter);
+    void setAutoClutch(bool enabled);
+    void setSunAltitude(double altitudeDegrees);
+    void setPaused(bool paused);
     void setSoundAvailable(bool available);
 
     // Cursor position is separate from handler-scoped OMSI mouse_x/y deltas.

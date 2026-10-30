@@ -190,6 +190,10 @@ class RenderLoop {
         bool allowReverseTraversalForRequired = false) const;
     std::size_t trafficVehicleCount() const;
     void SetWeather(int precipitationType, double precipitationRate);
+    void SetWeather(int precipitationType, double precipitationRate, double temperatureCelsius,
+                    double absoluteHumidityGramsPerCubicMeter);
+    void SetAutoClutch(bool enabled);
+    void SetSunAltitude(double altitudeDegrees);
 
     void SetPlayerVehicle(Vehicle* vehicle);
     bool runStartupMenu(const std::filesystem::path& omsiRoot, StartupSelection& selection);
@@ -206,6 +210,9 @@ class RenderLoop {
     std::vector<std::pair<int, int>> activeMapTiles() const;
 
     void beginFrame(double fixedTimeStep = -1.0);
+    bool isPaused() const noexcept {
+        return paused_;
+    }
     void updatePlayerVariables(const BusSimulation& simulation, double throttle, double steering,
                                double brake);
     void updatePostPhysicsVariables(BusSimulation& simulation);
@@ -298,8 +305,10 @@ class RenderLoop {
     // Driver camera whose eye position the authored reflection directions are designed for.
     int reflectionReferenceCamera_ = -1;
     bool previousFreeCameraToggleState_ = false;
+    bool previousPauseToggleState_ = false;
     bool previousProfileToggleState_ = false;
     bool previousMouseLookToggleState_ = false;
+    bool paused_ = false;
     bool mouseControlEnabled_ = false;
     double mouseThrottle_ = 0.0;
     double mouseSteering_ = 0.0;

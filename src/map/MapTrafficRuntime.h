@@ -316,6 +316,9 @@ class MapPassengerServiceRuntime {
     std::optional<std::size_t> alightingSeatIndex() const noexcept;
     std::optional<std::size_t> boardingPassengerModelIndex() const noexcept;
     std::size_t waitingPassengers(int stopId) const noexcept;
+    void setPassengerPathLinkProgressProfile(
+        std::vector<std::pair<double, std::optional<std::size_t>>> profile);
+    std::size_t passengerCountOnPathLink(std::size_t linkIndex) const noexcept;
     std::size_t passengerCountOnSeat(std::size_t seatIndex) const noexcept;
     std::optional<std::size_t> passengerModelIndexOnSeat(std::size_t seatIndex) const noexcept;
     std::size_t onboardPassengerCount() const noexcept;
@@ -334,7 +337,13 @@ class MapPassengerServiceRuntime {
     std::vector<std::size_t> queuedAlightingSeats_;
     std::optional<std::size_t> alightingSeat_;
     double alightingAccumulatorSeconds_ = 0.0;
+    std::optional<std::size_t> passengerPathLinkIndex_;
+    std::vector<std::pair<double, std::optional<std::size_t>>>
+        passengerPathLinkProgressProfile_;
     bool dwelling_ = false;
+
+    void clearPassengerPathLinkProgressProfile() noexcept;
+    void updatePassengerPathLinkIndex() noexcept;
 };
 
 void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service, int stopId,

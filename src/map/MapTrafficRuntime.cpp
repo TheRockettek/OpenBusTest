@@ -493,6 +493,7 @@ bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
     }
     currentStopId_ = stop.stopId;
     nextStopId_ = stop.nextStopId;
+    clearPassengerPathLinkProgressProfile();
     queuedAlightingSeats_.clear();
     alightingSeat_.reset();
     alightingAccumulatorSeconds_ = 0.0;
@@ -547,6 +548,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
             seatPassengerModelIndices_[*alightingSeat_].reset();
             alightingSeat_.reset();
             alightingAccumulatorSeconds_ = 0.0;
+            clearPassengerPathLinkProgressProfile();
             if (!queuedAlightingSeats_.empty()) {
                 alightingSeat_ = queuedAlightingSeats_.front();
                 queuedAlightingSeats_.erase(queuedAlightingSeats_.begin());
@@ -576,6 +578,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
             boardingPassengerModelIndex_ =
                 mapScheduledPassengerModelIdentity(currentStopId_, waiting);
             boardingAccumulatorSeconds_ = 0.0;
+            clearPassengerPathLinkProgressProfile();
         }
         const double timeToBoard = boardingIntervalSeconds - boardingAccumulatorSeconds_;
         const double boardingTime = std::min(activeSeconds, timeToBoard);
@@ -587,6 +590,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
             boardingSeat_.reset();
             boardingPassengerModelIndex_.reset();
             boardingAccumulatorSeconds_ = 0.0;
+            clearPassengerPathLinkProgressProfile();
         }
     }
     dwellRemainingSeconds_ =
@@ -600,12 +604,14 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
             boardingSeat_.reset();
             boardingPassengerModelIndex_.reset();
             boardingAccumulatorSeconds_ = 0.0;
+            clearPassengerPathLinkProgressProfile();
         }
     }
     if (dwellRemainingSeconds_ <= 1.0e-9 && !boardingSeat_ && !alightingSeat_) {
         dwellRemainingSeconds_ = 0.0;
         dwelling_ = false;
     }
+    updatePassengerPathLinkIndex();
 }
 
 bool MapPassengerServiceRuntime::dwelling() const noexcept {
@@ -648,6 +654,50 @@ MapPassengerServiceRuntime::boardingPassengerModelIndex() const noexcept {
 std::size_t MapPassengerServiceRuntime::waitingPassengers(int stopId) const noexcept {
     const auto found = waitingByStop_.find(stopId);
     return found == waitingByStop_.end() ? 0 : found->second;
+}
+
+void MapPassengerServiceRuntime::setPassengerPathLinkProgressProfile(
+    std::vector<std::pair<double, std::optional<std::size_t>>> profile) {
+    double previousProgress = 0.0;
+    for (const auto& segment : profile) {
+        const double endProgress = segment.first;
+        if (!std::isfinite(endProgress) || endProgress <= previousProgress ||
+            endProgress > 1.0) {
+            throw std::invalid_argument(
+                "Passenger path-link progress profile must have increasing ends in (0, 1]");
+        }
+        previousProgress = endProgress;
+    }
+    if (!profile.empty() && previousProgress != 1.0) {
+        throw std::invalid_argument("Passenger path-link progress profile must end at 1");
+    }
+    passengerPathLinkProgressProfile_ = std::move(profile);
+    updatePassengerPathLinkIndex();
+}
+
+void MapPassengerServiceRuntime::clearPassengerPathLinkProgressProfile() noexcept {
+    passengerPathLinkProgressProfile_.clear();
+    passengerPathLinkIndex_.reset();
+}
+
+void MapPassengerServiceRuntime::updatePassengerPathLinkIndex() noexcept {
+    passengerPathLinkIndex_.reset();
+    if (!boardingSeat_ && !alightingSeat_) {
+        return;
+    }
+    const double progress = boardingSeat_ ? boardingProgress() : alightingProgress();
+    const double easedProgress = progress * progress * (3.0 - 2.0 * progress);
+    const auto segment = std::find_if(
+        passengerPathLinkProgressProfile_.begin(), passengerPathLinkProgressProfile_.end(),
+        [easedProgress](const auto& candidate) { return easedProgress <= candidate.first; });
+    if (segment != passengerPathLinkProgressProfile_.end()) {
+        passengerPathLinkIndex_ = segment->second;
+    }
+}
+
+std::size_t
+MapPassengerServiceRuntime::passengerCountOnPathLink(std::size_t linkIndex) const noexcept {
+    return (boardingSeat_ || alightingSeat_) && passengerPathLinkIndex_ == linkIndex ? 1 : 0;
 }
 
 std::size_t MapPassengerServiceRuntime::passengerCountOnSeat(std::size_t seatIndex) const noexcept {

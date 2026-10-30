@@ -40,7 +40,7 @@ and [scenery status](IMPLEMENTATION_STATUS_SCENERY.md) for full limitations.
 | Keyword(s) | Status | Details |
 | --- | --- | --- |
 | `[fixed]`, `[scriptshare]` | Not implemented | BUS-level fixed/static selection and shared-script semantics are not applied. |
-| `[view_schedule]`, `[view_ticketselling]` | Parsed only | Full view labels and selection behavior are not retained or used; a diagnostic reports the missing behavior. |
+| `[view_schedule]`, `[view_ticketselling]` | Partial | View indexes and labels are retained, including repeated entries; runtime selection behavior remains unimplemented and is diagnosed. |
 | `[cog]` | Partial | Its z coordinate supplies the CG height when `[schwerpunkt]` is absent. `[schwerpunkt]` takes precedence with a warning on disagreement; nonzero x/y offsets are retained and warned about but not applied. Native precedence remains unverified. |
 | `[rollwiderstand]`, `[ai_deltaheight]`, `[sound_ai]` | Partial | Working subsets exist; native physics, placement, and AI audio parity remain unverified. |
 | `[rot_pnt_long]` | Parsed only | The coordinate is retained and diagnosed, but does not affect vehicle physics. |

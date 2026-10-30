@@ -103,21 +103,35 @@ bool check(const VehicleConfig& configuration, const char* backend) {
     local.setString("tt_busstop_name", "Central Station");
     ScriptRuntime runtime(configuration, local, simulation);
     system.configureSimulationClock(2024, 12, 31, 86399.0);
+    system.setPaused(true);
     runtime.invokeEntryPoint("trigger_system_environment");
+    if (local.getString("string_store_first") != "Stack preserved" ||
+        local.getString("string_store_second") != "Stack preserved") {
+        std::cerr << backend << ": string stores did not preserve the stack value\n";
+        return false;
+    }
     if (local.get("environment_dayofyear") != 366.0F) {
         std::cerr << backend << ": leap-year day was not published to scripts\n";
         return false;
     }
+    if (local.get("environment_pause") != 1.0F) {
+        std::cerr << backend << ": paused state was not published to scripts\n";
+        return false;
+    }
+    system.setPaused(false);
     system.updateSimulationClock(1.0);
     runtime.invokeEntryPoint("trigger_system_environment");
-    if (local.get("environment_dayofyear") != 1.0F) {
-        std::cerr << backend << ": new-year day was not published to scripts\n";
+    if (local.get("environment_dayofyear") != 1.0F ||
+        local.get("environment_pause") != 0.0F) {
+        std::cerr << backend << ": new-year day or resumed state was not published to scripts\n";
         return false;
     }
     for (const auto& [type, rate, available] :
          {std::tuple{1, 0.75, true}, std::tuple{2, 0.25, false},
           std::tuple{0, 0.0, true}}) {
-        system.setPrecipitation(type, rate);
+        system.setWeather(type, rate, 18.5, 6.25);
+        system.setAutoClutch(true);
+        system.setSunAltitude(-12.5);
         system.setSoundAvailable(available);
         local.updateEnvironment(system);
         runtime.invokeEntryPoint("trigger_system_environment");
@@ -125,6 +139,10 @@ bool check(const VehicleConfig& configuration, const char* backend) {
             local.get("environment_preciprate") != static_cast<float>(rate) ||
             local.get("local_preciptype") != static_cast<float>(type + 1) ||
             local.get("local_preciprate") != static_cast<float>(rate) ||
+            local.get("environment_temperature") != 18.5F ||
+            local.get("environment_abshum") != 6.25F ||
+            local.get("environment_autoclutch") != 1.0F ||
+            local.get("environment_sunalt") != -12.5F ||
             local.get("environment_nosound") != (available ? 0.0F : 1.0F)) {
             std::cerr << backend << ": environment system variables were not published\n";
             return false;
@@ -142,6 +160,8 @@ bool check(const VehicleConfig& configuration, const char* backend) {
         local.get("cash_coin_dispensed_count_0") != 1.0F ||
         local.get("cash_coin_dispensed_count_1") != 1.0F || local.get("seat_human_count") != 1.0F ||
         local.get("path_link_human_count") != 3.0F ||
+        local.get("invalid_path_link_human_count") != 0.0F ||
+        local.get("invalid_path_link_sentinel") != 123.0F ||
         local.getString("timetable_line_result") != "42" ||
         local.getString("timetable_destination_result") != "Market Street" ||
         !local.getString("invalid_timetable_stop_result").empty() ||
@@ -506,7 +526,14 @@ int main() {
                   "(L.L.PrecipType) (S.L.local_preciptype)\n"
                   "(L.L.PrecipRate) (S.L.local_preciprate)\n"
                   "(L.S.NoSound) (S.L.environment_nosound)\n"
-                  "(L.S.DayOfYear) (S.L.environment_dayofyear)\n{end}\n"
+                  "(L.S.DayOfYear) (S.L.environment_dayofyear)\n"
+                  "(L.S.Weather_Temperature) (S.L.environment_temperature)\n"
+                  "(L.S.Weather_AbsHum) (S.L.environment_abshum)\n"
+                  "(L.S.AutoClutch) (S.L.environment_autoclutch)\n"
+                  "(L.S.SunAlt) (S.L.environment_sunalt)\n"
+                  "(L.S.Pause) (S.L.environment_pause)\n"
+                  "\"Stack preserved\" (S.$.string_store_first) "
+                  "(S.$.string_store_second)\n{end}\n"
                   "{trigger:passenger_ticketing}\n"
                   "0 (M.V.getticketvalue) (S.L.ticket_value_result)\n"
                   "1 (M.V.getticketvalue) (S.L.nonfinite_ticket_value_result)\n"
@@ -517,6 +544,8 @@ int main() {
                   "2 (M.V.getticketname) (S.$.shared_ticket_name_result)\n"
                   "2 (M.V.gethumancountonseat) (S.L.seat_human_count)\n"
                   "7 (M.V.gethumancountonpathlink) (S.L.path_link_human_count)\n"
+                  "123 7.5 (M.V.gethumancountonpathlink) "
+                  "(S.L.invalid_path_link_human_count) + (S.L.invalid_path_link_sentinel)\n"
                   "(M.V.getttlinestring) (S.$.timetable_line_result)\n"
                   "1 (M.V.getttbusstopname) (S.$.timetable_destination_result)\n"
                   "9 (M.V.getttbusstopname) (S.$.invalid_timetable_stop_result)\n"
@@ -531,7 +560,7 @@ int main() {
                   "999 0 (M.V.getterminuscode) (S.L.terminus_code_result) + "
                   "(S.L.terminus_code_sentinel)\n"
                   "0 1 (M.V.getterminusstring) (S.$.terminus_string_result)\n"
-                  "\"STOP_B\" (M.V.getbusstopindex) (S.L.busstop_index_result)\n"
+                  "\" stop_b \" (M.V.getbusstopindex) (S.L.busstop_index_result)\n"
                   "1 (S.L.busstop_index_sentinel)\n"
                   "1 0 (M.V.getbusstopstring) (S.$.busstop_string_result)\n"
                   "1000 1001 (M.V.getrouteindex) (S.L.route_index_result) + "

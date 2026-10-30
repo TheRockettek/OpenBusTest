@@ -449,12 +449,20 @@ void verifyPassengerServiceBehavior() {
                 !alightingService.boardingPassenger() &&
                 alightingService.waitingPassengers(900) == 1,
             "alighting starts first and prevents boarding through the same cabin exit");
-    alightingService.advance(0.5);
+    alightingService.setPassengerPathLinkProgressProfile(
+        {{0.7, std::size_t{2}}, {1.0, std::nullopt}});
+    require(alightingService.passengerCountOnPathLink(2) == 1,
+            "an active alighting passenger occupies its current cabin pathlink");
+    alightingService.advance(0.15);
+    require(alightingService.passengerCountOnPathLink(2) == 0,
+            "simulation progress moves an alighting passenger off the previous pathlink");
+    alightingService.advance(0.35);
     require(!alightingService.alightingPassenger() &&
                 alightingService.passengerCountOnSeat(0) == 0 &&
                 alightingService.boardingPassenger() &&
+                alightingService.passengerCountOnPathLink(2) == 0 &&
                 std::abs(alightingService.boardingProgress() - (1.0 / 6.0)) < 1.0e-9,
-            "boarding begins only after alighting clears the shared exit");
+            "boarding begins after alighting clears its pathlink occupancy and shared exit");
 
     MapPassengerServiceRuntime firstBus(1);
     MapPassengerServiceRuntime secondBus(1);
@@ -497,11 +505,24 @@ void verifyPassengerServiceBehavior() {
                 boardingService.passengerCountOnSeat(0) == 0 &&
                 boardingService.waitingPassengers(600) == 2,
             "a reserved passenger has visible intermediate boarding progress");
-    boardingService.advance(0.375);
+    boardingService.setPassengerPathLinkProgressProfile(
+        {{0.8, std::size_t{1}}, {1.0, std::size_t{2}}});
+    require(boardingService.passengerCountOnPathLink(0) == 0 &&
+                boardingService.passengerCountOnPathLink(1) == 1,
+            "an active boarding passenger occupies only its current cabin pathlink");
+    boardingService.advance(0.15);
+    require(boardingService.passengerCountOnPathLink(1) == 1,
+            "simulation progress retains occupancy within the current pathlink");
+    boardingService.advance(0.04);
+    require(boardingService.passengerCountOnPathLink(1) == 0 &&
+                boardingService.passengerCountOnPathLink(2) == 1,
+            "simulation progress advances a boarding passenger to the next pathlink");
+    boardingService.advance(0.185);
     require(!boardingService.boardingPassenger() && !boardingService.boardingSeatIndex() &&
                 boardingService.passengerCountOnSeat(0) == 1 &&
+                boardingService.passengerCountOnPathLink(1) == 0 &&
                 boardingService.passengerModelIndexOnSeat(0) == 602,
-            "boarding preserves the passenger identity when they take their seat");
+            "boarding clears pathlink occupancy and preserves the passenger identity at the seat");
     require(boardingService.arrive({.stopId = 700, .dwellSeconds = 0.75, .nextStopId = 0}),
             "passenger destination opens an alighting animation");
     boardingService.advance(0.375);

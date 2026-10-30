@@ -20,6 +20,10 @@ void Vehicle::updateScripts(bool isAiVehicle) {
             variables.set("human_count_on_seat_" + std::to_string(seatIndex),
                           static_cast<float>(passengerService.passengerCountOnSeat(seatIndex)));
         }
+        for (std::size_t linkIndex = 0; linkIndex < passengerPathLinks.size(); ++linkIndex) {
+            variables.set("human_count_on_path_link_" + std::to_string(linkIndex),
+                          static_cast<float>(passengerService.passengerCountOnPathLink(linkIndex)));
+        }
         const float onboardPassengerCount =
             static_cast<float>(passengerService.onboardPassengerCount());
         variables.set("passengers_onboard", onboardPassengerCount);

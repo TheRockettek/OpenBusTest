@@ -100,6 +100,46 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     if (imguiEnabled_) {
         imguiLayer_->beginFrame(playerVehicle_ == nullptr);
     }
+    const bool pauseTogglePressed = glfwGetKey(window_, GLFW_KEY_P) == GLFW_PRESS;
+    const bool pauseToggleAllowed =
+        fixedTimeStep < 0.0 && (!imguiEnabled_ || !ImGui::GetIO().WantCaptureKeyboard);
+    if (pauseToggleAllowed && pauseTogglePressed && !previousPauseToggleState_) {
+        if (!paused_) {
+            const auto releaseMouse = [this](const std::string& event) {
+                if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
+                    playerVehicle_->scripts->invokeMouseRelease(event);
+                }
+            };
+            mouseInteraction_.cancel(releaseMouse);
+            if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
+                const auto& bindings = vehicleKeyBindings();
+                for (std::size_t index = 0;
+                     index < bindings.size() && index < previousVehicleKeyStates_.size();
+                     ++index) {
+                    if (!previousVehicleKeyStates_[index]) {
+                        continue;
+                    }
+                    const VehicleKeyBinding& binding = bindings[index];
+                    if (binding.action != "mouse_control_toggle" &&
+                        binding.action != "debug_dump_variables" &&
+                        binding.key != GLFW_KEY_F2 && binding.key != GLFW_KEY_F3 &&
+                        binding.key != GLFW_KEY_P) {
+                        playerVehicle_->scripts->invokeKeyBinding(binding.action, false, false);
+                    }
+                }
+            }
+            pendingMouseClick_ = false;
+            clickableHoverCacheValid_ = false;
+            clickableHoverCacheHit_ = false;
+            glfwSetCursor(window_, nullptr);
+        }
+        paused_ = !paused_;
+        simulationState_.sharedVariables().setPaused(paused_);
+        gameLog.Log(paused_ ? "Simulation paused (press P to resume)"
+                            : "Simulation resumed");
+    }
+    previousPauseToggleState_ = pauseTogglePressed;
+
     const double currentTime = glfwGetTime();
     frameStartTimes_.push_back(currentTime);
     const double frameWindowStart = currentTime - 3.0;
@@ -116,12 +156,15 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
     }
     const double wallTimegap =
         hasPreviousVariableTime_ ? std::max(0.0, currentTime - previousVariableTime_) : 0.0;
-    const double timegap =
+    const double requestedTimegap =
+        fixedTimeStep >= 0.0 && std::isfinite(fixedTimeStep) ? fixedTimeStep : wallTimegap;
+    const double timegap = paused_ ? 0.0 : requestedTimegap;
+    const double cameraTimegap =
         fixedTimeStep >= 0.0 && std::isfinite(fixedTimeStep) ? fixedTimeStep : wallTimegap;
     previousVariableTime_ = currentTime;
     hasPreviousVariableTime_ = true;
     frameTimeStep_ = timegap;
-    mouseInteractionPending_ = true;
+    mouseInteractionPending_ = !paused_;
     int width = 1;
     int height = 1;
     double cursorX = 0.0;
@@ -178,7 +221,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                 }
             }
             if (!mouseControlToggle && !dumpVariables && !freeCameraToggle &&
-                !trafficSplineDebugToggle && playerVehicle_ != nullptr && playerVehicle_->scripts &&
+                binding.key != GLFW_KEY_P && !trafficSplineDebugToggle && !paused_ &&
+                playerVehicle_ != nullptr && playerVehicle_->scripts &&
                 openbus::input::shouldDispatchKeyBinding(binding.flags, pressed,
                                                          previousVehicleKeyStates_[index])) {
                 playerVehicle_->scripts->invokeKeyBinding(binding.action, pressed, changed);
@@ -288,7 +332,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                 static_cast<double>(glfwGetKey(window_, GLFW_KEY_PAGE_UP) == GLFW_PRESS) -
                 static_cast<double>(glfwGetKey(window_, GLFW_KEY_PAGE_DOWN) == GLFW_PRESS);
             freeCameraPose_ = openbus::rendering::moveFreeCamera(
-                freeCameraPose_, forward, right, vertical, timegap, freeCameraSpeed_);
+                freeCameraPose_, forward, right, vertical, cameraTimegap, freeCameraSpeed_);
         }
     }
     {

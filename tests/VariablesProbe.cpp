@@ -28,6 +28,48 @@ int main() {
     valid &= require(!simulation.sharedVariables().has("throttle"), "system excludes throttle");
     valid &= require(simulation.sharedVariables().get("preciptype") == 1.0F,
                      "system precipitation defaults to the OMSI clear value");
+    simulation.sharedVariables().setWeather(2, 0.25, 12.5, 8.75);
+    valid &= require(simulation.sharedVariables().get("preciptype") == 3.0F &&
+                         simulation.sharedVariables().get("preciprate") == 0.25F &&
+                         simulation.sharedVariables().get("weather_temperature") == 12.5F &&
+                         simulation.sharedVariables().get("weather_abshum") == 8.75F,
+                     "weather settings publish precipitation and ambient conditions together");
+    bool rejectedInvalidWeather = false;
+    try {
+        simulation.sharedVariables().setWeather(1, 0.5, -273.15, 3.0);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidWeather = true;
+    }
+    valid &= require(rejectedInvalidWeather &&
+                         simulation.sharedVariables().get("preciptype") == 3.0F &&
+                         simulation.sharedVariables().get("preciprate") == 0.25F &&
+                         simulation.sharedVariables().get("weather_temperature") == 12.5F &&
+                         simulation.sharedVariables().get("weather_abshum") == 8.75F,
+                     "invalid weather settings are rejected atomically");
+    simulation.sharedVariables().setAutoClutch(true);
+    valid &= require(simulation.sharedVariables().get("autoclutch") == 1.0F,
+                     "automatic clutch setting is published as enabled");
+    simulation.sharedVariables().setAutoClutch(false);
+    valid &= require(simulation.sharedVariables().get("autoclutch") == 0.0F,
+                     "automatic clutch setting is published as disabled");
+    simulation.sharedVariables().setSunAltitude(-12.5);
+    valid &= require(simulation.sharedVariables().get("sunalt") == -12.5F,
+                     "sun altitude setting is published to scripts");
+    bool rejectedInvalidSunAltitude = false;
+    try {
+        simulation.sharedVariables().setSunAltitude(90.1);
+    } catch (const std::invalid_argument&) {
+        rejectedInvalidSunAltitude = true;
+    }
+    valid &= require(rejectedInvalidSunAltitude &&
+                         simulation.sharedVariables().get("sunalt") == -12.5F,
+                     "invalid sun altitude is rejected without changing the prior value");
+    simulation.sharedVariables().setPaused(true);
+    valid &= require(simulation.sharedVariables().get("pause") == 1.0F,
+                     "paused state is exposed to scripts");
+    simulation.sharedVariables().setPaused(false);
+    valid &= require(simulation.sharedVariables().get("pause") == 0.0F,
+                     "resumed state is exposed to scripts");
     simulation.sharedVariables().configureSimulationClock(2024, 2, 28, 86398.0);
     simulation.sharedVariables().updateSimulationClock(3.0);
     valid &= require(simulation.sharedVariables().get("year") == 2024.0F &&

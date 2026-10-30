@@ -216,8 +216,9 @@ f0 String Index
 GetBusstopIndex
 $0 Busstop Ident
 
-OpenBus consumes the identifier and currently returns -1 as an unsupported
-lookup, with a warning once per runtime.
+Returns the zero-based index of the matching bus-stop identifier in the selected
+HOF file, or -1 when it is not present. Matching ignores surrounding whitespace
+and letter case.
 
 GetBusstopString
 f2 Busstop Index
@@ -389,9 +390,25 @@ frame. NoSound is 0 when an OpenAL
 context was created and 1 when audio initialization failed; it is refreshed
 each frame. It does not report individual clip failures or device loss.
 
-The following documented system variables are declared, but do not currently
-receive live host values: Pause, Weather_Temperature, Weather_AbsHum, AutoClutch,
-and SunAlt. Unless a script sets them, their initialized defaults are returned.
+`Weather_Temperature` and `Weather_AbsHum` are set from the host weather
+configuration (`OPENBUS_WEATHER_TEMPERATURE` in degrees Celsius and
+`OPENBUS_WEATHER_ABSHUM` in g/m3; defaults are 20 and 10). These values are
+published together with precipitation before scripts run.
+
+`AutoClutch` reflects the opt-in `OPENBUS_AUTO_CLUTCH` host setting (0 by
+default, 1 when enabled). It is reported to scripts; it does not enable
+automatic clutch behavior in the drivetrain.
+
+`SunAlt` reflects the optional `OPENBUS_SUN_ALTITUDE` setting in degrees,
+defaulting to 60 and restricted to -90 through 90. OpenBus does not yet
+calculate sun position from simulation time and map location.
+
+`Pause` is 1 while the simulation is paused with `P`, and 0 after resuming with
+`P`. Physics, traffic, passenger service, the simulation clock, and script
+frames and vehicle key/mouse script events stop while paused; rendering, window
+input, and free-camera movement continue. An active mouse interaction receives
+its release event, and held vehicle key bindings receive their release events,
+as pause begins so script controls can reset.
 
 Predefined Local Variables
 
@@ -430,8 +447,13 @@ GiveChangeCoin reads the indexed denomination from local or shared script state
 and updates OpenBus cash-dispensing state. These are script-state integrations,
 not a complete OMSI ticket machine or fare system. GetHumanCountOnPathLink and
 GetHumanCountOnSeat read indexed counts from local script state; vehicle seat
-counts are refreshed from the live passenger service, while path-link counts
-have no live passenger-path provider yet.
+counts are refreshed from the live passenger service. During simulated
+boarding/alighting, `GetHumanCountOnPathLink` reports the active passenger on
+the corresponding authored cabin `[pathlink]`; it returns zero outside cabin
+links or when no cabin path is available. Occupancy follows passenger-service
+progress rather than camera visibility. Link indexes are zero-based in
+`[pathlink]` declaration order. Scenery/world path-link occupancy is not
+simulated.
 
 Scheduled map AI buses retain their `.ttl` departure profile selections and
 the `.ttp` stop timing profile. Their line, destination, stop names, and
@@ -446,9 +468,10 @@ HOF data: termini come from `[addterminus]`/`[addterminus_list]`, bus stops from
 `[infosystem_trip]`/`[infosystem_busstop_list]`, and depot strings from
 `[global_strings]`. Route indexes follow HOF trip order. `GetRouteTerminusIndex`
 returns the trip's terminus-index field; `GetBusstopCount` and
-`GetRouteBusstopIdent` use that trip's stop list. Without a selected, readable
-HOF file, these macros return the documented missing/empty result and warn once
-per macro.
+`GetRouteBusstopIdent` use that trip's stop list. `GetBusstopIndex` searches
+the HOF bus-stop list by identifier, ignoring case and surrounding whitespace.
+Without a selected, readable HOF file, these macros return the documented
+missing/empty result and warn once per macro.
 
 `NrSpecRandom` combines the integer seed with a stable hash of the vehicle's
 `number`, so equal fleet numbers and seeds produce repeatable values while
@@ -469,8 +492,8 @@ These macros consume their documented operands and return an empty string or
 zero when their host data source is unavailable. The runtime logs that missing
 provider once per macro.
 
-Backend compatibility limitation: native string stores currently consume the
-top string, while converted Lua string stores leave it on the stack. Native
-system-macro dispatch enforces the same object-kind availability checks as Lua
-macro registration. Native OMSI behavior for string stores and out-of-kind
-macro calls has not been verified.
+Both backends preserve the top string when `(S.$...)` stores it, matching the
+stack behavior of numeric stores; a cross-backend probe covers chained stores.
+System-macro availability is also restricted by object kind in both backends.
+Exact OMSI parity for string-store stack behavior and out-of-kind macro calls
+has not been independently verified.

@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 enum class VehicleFileKind { Vehicle, Bus };
@@ -25,6 +26,11 @@ struct VehicleCamera {
     double tilt = 0.0;
     // Reflection cameras re-aim as the player's eye moves unless authored with a *_static keyword.
     bool followsViewer = true;
+};
+
+struct VehicleViewEntry {
+    int viewIndex = -1;
+    std::string label;
 };
 
 struct ConstantCurvePoint {
@@ -66,6 +72,8 @@ struct VehicleConfig {
     std::optional<int> vehicleType;
     std::filesystem::path modelPath;
     std::vector<VehicleCamera> cameras;
+    std::vector<VehicleViewEntry> scheduleViews;
+    std::vector<VehicleViewEntry> ticketSellingViews;
     int standardDriverCamera = -1;
     std::array<double, 3> outsideCameraCenter = {};
     bool hasOutsideCameraCenter = false;
@@ -139,6 +147,14 @@ void prepareScriptConfiguration(VehicleConfig& configuration, bool convertScript
 std::vector<int> passengerPathRoute(const std::vector<PassengerPathPoint>& points,
                                     const std::vector<PassengerPathLink>& links, int fromPoint,
                                     int toPoint);
+std::vector<std::pair<double, std::optional<std::size_t>>>
+passengerPathLinkProgressProfile(
+    const std::vector<std::array<double, 3>>& path,
+    const std::vector<std::optional<std::size_t>>& segmentLinks);
+std::optional<std::size_t>
+passengerPathLinkAtProgress(const std::vector<std::array<double, 3>>& path,
+                            const std::vector<std::optional<std::size_t>>& segmentLinks,
+                            double progress);
 std::size_t registrationOptionCount(const VehicleConfig& configuration);
 // Selects the parallel number/plate entry, wrapping within their paired range.
 void selectRegistrationAtIndex(VehicleConfig& configuration, std::size_t index);
