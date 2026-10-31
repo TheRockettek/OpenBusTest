@@ -27,8 +27,7 @@ class PreparedMapTextures {
         images_.erase(key);
     }
 
-    template <typename Upload>
-    auto upload(const std::string& key, Upload&& uploadImage) {
+    template <typename Upload> auto upload(const std::string& key, Upload&& uploadImage) {
         const auto image = images_.find(key);
         auto result = std::forward<Upload>(uploadImage)(
             image == images_.end() ? nullptr : image->second.get());

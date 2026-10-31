@@ -5,6 +5,8 @@
 
 #include "render/map/MapRendererInternal.h"
 #include "render/map/PreparedMapTextures.h"
+#include "render/map/PreparedTerrainTexturePaths.h"
+#include "render/map/SharedMapTextureImages.h"
 #include "render/AssetRequestManager.h"
 
 #include <exception>
@@ -50,6 +52,7 @@ class MapSceneLoader {
         std::vector<std::uint32_t> indices;
         std::unordered_map<std::string, std::shared_ptr<Image>> decodedTextures;
         std::unordered_map<std::string, std::string> textureErrors;
+        PreparedTerrainTexturePaths texturePaths;
         float minimumHeight = 0.0F;
         float maximumHeight = 0.0F;
     };
@@ -91,6 +94,8 @@ class MapSceneLoader {
         std::vector<PreparedSceneryTreeBatch> treeBatches;
         std::unordered_map<std::string, std::filesystem::path> resolvedTexturePaths;
         std::unordered_map<std::string, std::shared_ptr<Image>> decodedTextures;
+        std::size_t textureLookups = 0;
+        std::size_t textureResolutions = 0;
         std::filesystem::path modelConfigPath;
         std::filesystem::path modelRoot;
         std::filesystem::path externalModelConfigPath;
@@ -178,8 +183,9 @@ class MapSceneLoader {
                                             const openbus::map::MapCoordinates& coordinates,
                                             bool hasWaterMarker,
                                             const std::filesystem::path& waterPath);
-    std::vector<std::string> requestTileSceneryAssets(const openbus::map::MapTileData& tile,
-                                                      std::uint64_t tileKeyValue);
+    std::vector<std::string> collectTileSceneryAssets(const openbus::map::MapTileData& tile);
+    void requestTileSceneryAssets(const std::vector<std::string>& assetKeys,
+                                  std::uint64_t tileKeyValue);
     bool completeSceneryAssetPreparation(std::uint64_t tileKeyValue, bool waitForCompletion);
     bool sceneryAssetPreparationsReady(const std::vector<std::string>& assetKeys) const;
     bool tilePreparationRetryReady(std::uint64_t tileKeyValue) const;
@@ -187,7 +193,8 @@ class MapSceneLoader {
                                       const std::string& stage, const std::filesystem::path& path,
                                       std::exception_ptr error, bool waitForCompletion);
     static PreparedSceneryAsset prepareSceneryAsset(const std::filesystem::path& configPath,
-                                                    const std::filesystem::path& omsiRoot);
+                                                    const std::filesystem::path& omsiRoot,
+                                                    SharedMapTextureImages& textureImages);
     static PreparedSceneryMesh prepareSceneryMesh(const std::filesystem::path& meshPath);
     void resolveTrafficLightVariableParents();
     bool uploadRoadBatches(bool waitForCompletion);
@@ -236,6 +243,8 @@ class MapSceneLoader {
     SkipSummaries skipped;
     std::unordered_map<std::string, GLuint> textureCache;
     PreparedMapTextures preparedTextureImages;
+    std::shared_ptr<SharedMapTextureImages> sharedSceneryTextureImages_ =
+        std::make_shared<SharedMapTextureImages>();
     std::unordered_map<std::string, std::string> preparedTextureErrors;
     std::filesystem::path baseTexturePath_;
     std::future<Image> baseTextureRequest_;
@@ -282,6 +291,13 @@ class MapSceneLoader {
 
     std::size_t tilesProcessed = 0;
     std::size_t sceneryPlacementsParsed = 0;
+    std::size_t sceneryAssetCollectionPasses = 0;
+    std::size_t sceneryAssetPathResolutions = 0;
+    std::size_t sceneryAssetRequestBatches = 0;
+    std::size_t sceneryTextureLookups = 0;
+    std::size_t sceneryTextureResolutions = 0;
+    std::size_t terrainTextureResolutions = 0;
+    std::size_t terrainTexturePathReuses = 0;
     std::size_t splinePlacementsParsed = 0;
     bool roadTrafficLaneNetworkDirty = false;
     bool humanTrafficLaneNetworkDirty = false;

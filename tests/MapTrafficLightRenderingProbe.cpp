@@ -14,6 +14,7 @@
 
 #include <array>
 #include <bit>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -84,6 +85,31 @@ bool logContains(const std::filesystem::path& path, const std::string& first,
         }
     }
     return false;
+}
+
+std::size_t multiBatchSummaryCount(const std::filesystem::path& path) {
+    std::ifstream input(path);
+    std::string line;
+    std::size_t matches = 0;
+    constexpr std::string_view expected =
+        "scenery key collections=1, scenery path resolutions=19, scenery request batches=";
+    while (std::getline(input, line)) {
+        const auto start = line.find(expected);
+        if (start == std::string::npos) {
+            continue;
+        }
+        std::size_t batches = 0;
+        const char* number = line.data() + start + expected.size();
+        const auto parsed = std::from_chars(number, line.data() + line.size(), batches);
+        if (parsed.ec == std::errc() && batches >= 3 &&
+            line.find("scenery texture lookups=18, scenery texture resolutions=17") !=
+                std::string::npos &&
+            line.find("terrain texture resolutions=1, terrain texture path reuses=3") !=
+                std::string::npos) {
+            ++matches;
+        }
+    }
+    return matches;
 }
 
 void writeTinyTerrain(const std::filesystem::path& path) {
@@ -510,6 +536,63 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
           "Tiles sharing a scenery asset must both publish their placements");
     check(streamedStats.totalTextures == 7,
           "Streamed road and terrain tiles must reuse shared textures and publish tile masks");
+
+    openbus::map::MapDefinition batchMap;
+    batchMap.rootPath = root;
+    batchMap.coordinates = map.coordinates;
+    batchMap.groundTextures = map.groundTextures;
+    batchMap.groundTextures[1].detailTexturePath = "ground-layer.tga";
+    std::string batchObjects;
+    for (int assetIndex = 0; assetIndex < 17; ++assetIndex) {
+        const std::string assetName = "batch_scenery_" + std::to_string(assetIndex);
+        std::string tree = "[tree]\nretry.tga\n10\n10\n1\n1\n";
+        if (assetIndex == 0) {
+            tree += "[tree]\nretry.tga\n10\n10\n1\n1\n";
+        }
+        writeText(root / (assetName + ".sco"), tree);
+        for (int copy = 0; copy < 3; ++copy) {
+            const int objectId = 50000 + assetIndex * 3 + copy;
+            batchObjects += "[object]\n0\n" + assetName + ".sco\n" +
+                            std::to_string(objectId) + "\n0\n0\n0\n0\n0\n0\n0\n";
+        }
+    }
+    batchObjects += "[object]\n0\nBATCH_SCENERY_0.SCO\n50100\n0\n0\n0\n0\n0\n0\n0\n"
+                    "[object]\n0\nmissing_batch.sco\n50101\n0\n0\n0\n0\n0\n0\n0\n"
+                    "[object]\n0\nmissing_batch.sco\n50102\n0\n0\n0\n0\n0\n0\n0\n";
+    writeText(root / "batch_tile.map", "[version]\n14\n[terrain]\n" + batchObjects);
+    openbus::map::MapTileReference batchTile;
+    batchTile.textPath = root / "batch_tile.map";
+    batchTile.terrainPath = root / "tile.terrain";
+    batchTile.hasTerrainFile = true;
+    batchTile.groundTextureSidecars.push_back({"2", root / "tile.map.2.tga"});
+    batchMap.tiles.push_back(batchTile);
+    {
+        MapRenderer batchRenderer(batchMap, 0, 0, 0, 0, root, simulation, assets);
+        check(batchRenderer.initialWindowReady(),
+              "Synchronous multi-batch scenery preparation must finish");
+        check(batchRenderer.renderStats().activeSceneryObjects == 52,
+              "Synchronous preparation must retain all placements and path aliases");
+    }
+    {
+        MapRenderer batchRenderer(batchMap, 0, 0, 0, 0, root, simulation, assets, true);
+        const auto batchDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!batchRenderer.initialWindowReady() &&
+               std::chrono::steady_clock::now() < batchDeadline) {
+            batchRenderer.updateStreaming(0, 0);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        check(batchRenderer.initialWindowReady(),
+              "Asynchronous multi-batch scenery preparation must finish");
+        check(batchRenderer.renderStats().activeSceneryObjects == 52,
+              "Asynchronous preparation must retain all placements and path aliases");
+    }
+    const auto batchLogDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (multiBatchSummaryCount(probeLog) < 2 &&
+           std::chrono::steady_clock::now() < batchLogDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    check(multiBatchSummaryCount(probeLog) >= 2,
+          "Both multi-batch preparation modes must resolve each distinct authored path once");
 
     openbus::map::MapDefinition startupMap;
     startupMap.rootPath = root;

@@ -184,13 +184,17 @@ bool MapSceneLoader::finishTrafficLaneNetworkPreparation(bool waitForCompletion)
 }
 
 std::vector<std::string>
-MapSceneLoader::requestTileSceneryAssets(const openbus::map::MapTileData& tile,
-                                         std::uint64_t tileKeyValue) {
+MapSceneLoader::collectTileSceneryAssets(const openbus::map::MapTileData& tile) {
+    ++sceneryAssetCollectionPasses;
     std::vector<std::string> assetKeys;
-    std::vector<std::pair<std::string, std::filesystem::path>> configPaths;
+    std::unordered_set<std::string> requestedPaths;
     std::unordered_set<std::string> requestedKeys;
     std::unordered_set<int> visitedObjectIds;
     const auto addAsset = [&](const std::string& assetPath) {
+        if (!requestedPaths.insert(assetPath).second) {
+            return;
+        }
+        ++sceneryAssetPathResolutions;
         const std::filesystem::path configPath = resolveSceneryConfigPath(assetPath);
         if (configPath.empty()) {
             return;
@@ -198,10 +202,6 @@ MapSceneLoader::requestTileSceneryAssets(const openbus::map::MapTileData& tile,
         const std::string key = openbus::pathToUtf8(configPath.lexically_normal());
         if (requestedKeys.insert(key).second) {
             assetKeys.push_back(key);
-            if (!sceneryAssetBatches.contains(key) && !preparedSceneryAssetConfigs.contains(key) &&
-                !pendingSceneryAssetRequests.contains(key)) {
-                configPaths.emplace_back(key, configPath);
-            }
         }
     };
     const auto addParentChain = [&](int parentId) {
@@ -228,6 +228,11 @@ MapSceneLoader::requestTileSceneryAssets(const openbus::map::MapTileData& tile,
         addAsset(attachment.assetPath);
     }
     std::sort(assetKeys.begin(), assetKeys.end());
+    return assetKeys;
+}
+
+void MapSceneLoader::requestTileSceneryAssets(const std::vector<std::string>& assetKeys,
+                                              std::uint64_t tileKeyValue) {
     constexpr std::size_t maxPendingSceneryAssetPreparations = 8;
     std::size_t availablePreparations =
         pendingSceneryAssetRequests.size() < maxPendingSceneryAssetPreparations
@@ -240,39 +245,35 @@ MapSceneLoader::requestTileSceneryAssets(const openbus::map::MapTileData& tile,
         }
         auto request = pendingSceneryAssetRequests.find(key);
         if (request == pendingSceneryAssetRequests.end()) {
-            const auto configPath =
-                std::find_if(configPaths.begin(), configPaths.end(),
-                             [&key](const auto& entry) { return entry.first == key; });
-            if (configPath == configPaths.end()) {
-                throw std::logic_error("Scenery asset preparation path was not captured");
-            }
             if (availablePreparations == 0) {
                 continue;
             }
-            const std::filesystem::path path = configPath->second;
+            const std::filesystem::path path = openbus::pathFromUtf8(key);
             const std::filesystem::path omsiRootPath = omsiRoot;
-            auto future = assetRequests_
-                              ->submit([path, omsiRootPath] {
-                                  TraceScope preparationTrace(
-                                      "map", "MapSceneLoader.prepareSceneryAsset.work");
-                                  auto prepared = std::make_shared<PreparedSceneryAsset>();
-                                  try {
-                                      *prepared = prepareSceneryAsset(path, omsiRootPath);
-                                  } catch (...) {
-                                      prepared->preparationError = std::current_exception();
-                                  }
-                                  return prepared;
-                              })
-                              .share();
+            const auto textureImages = sharedSceneryTextureImages_;
+            auto future =
+                assetRequests_
+                    ->submit([path, omsiRootPath, textureImages] {
+                        TraceScope preparationTrace("map",
+                                                    "MapSceneLoader.prepareSceneryAsset.work");
+                        auto prepared = std::make_shared<PreparedSceneryAsset>();
+                        try {
+                            *prepared = prepareSceneryAsset(path, omsiRootPath, *textureImages);
+                        } catch (...) {
+                            prepared->preparationError = std::current_exception();
+                        }
+                        return prepared;
+                    })
+                    .share();
             request = pendingSceneryAssetRequests.emplace(key, std::move(future)).first;
             --availablePreparations;
         }
         requests.push_back({key, request->second});
     }
     if (!requests.empty()) {
+        ++sceneryAssetRequestBatches;
         pendingTileSceneryRequests.insert_or_assign(tileKeyValue, std::move(requests));
     }
-    return assetKeys;
 }
 
 bool MapSceneLoader::completeSceneryAssetPreparation(std::uint64_t tileKeyValue,
@@ -408,7 +409,8 @@ void MapSceneLoader::recordTilePreparationFailure(std::uint64_t tileKeyValue,
 
 MapSceneLoader::PreparedSceneryAsset
 MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
-                                    const std::filesystem::path& omsiRootPath) {
+                                    const std::filesystem::path& omsiRootPath,
+                                    SharedMapTextureImages& textureImages) {
     PreparedSceneryAsset prepared;
     prepared.objectConfiguration = loadSceneryObjectFile(configPath);
     prepared.modelConfigPath = resolveSceneryObjectModelConfigPath(prepared.objectConfiguration);
@@ -456,6 +458,11 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
         if (textureName.empty()) {
             return;
         }
+        ++prepared.textureLookups;
+        if (prepared.resolvedTexturePaths.contains(textureName)) {
+            return;
+        }
+        ++prepared.textureResolutions;
         const std::filesystem::path texturePath = map_detail::findSceneryTexture(
             configPath.parent_path(), prepared.modelRoot, omsiRootPath, textureName);
         prepared.resolvedTexturePaths.try_emplace(textureName, texturePath);
@@ -466,12 +473,15 @@ MapSceneLoader::prepareSceneryAsset(const std::filesystem::path& configPath,
         if (prepared.decodedTextures.contains(key)) {
             return;
         }
-        Image image;
-        if (!TextureLoader::readImage(texturePath, image)) {
-            throw std::runtime_error("Could not decode scenery texture: " +
-                                     openbus::pathToUtf8(texturePath));
-        }
-        prepared.decodedTextures.emplace(key, std::make_shared<Image>(std::move(image)));
+        auto image = textureImages.getOrDecode(key, [&texturePath] {
+            auto decoded = std::make_shared<Image>();
+            if (!TextureLoader::readImage(texturePath, *decoded)) {
+                throw std::runtime_error("Could not decode scenery texture: " +
+                                         openbus::pathToUtf8(texturePath));
+            }
+            return decoded;
+        });
+        prepared.decodedTextures.emplace(key, std::move(image));
     };
     for (const SceneryTreeDefinition& tree : prepared.objectConfiguration.trees) {
         decodeTexture(tree.texturePath);
@@ -1164,8 +1174,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
         auto assetKeys = pendingTileAssetKeys.find(key);
         if (assetKeys == pendingTileAssetKeys.end()) {
             assetKeys =
-                pendingTileAssetKeys.emplace(key, requestTileSceneryAssets(tileData->second, key))
-                    .first;
+                pendingTileAssetKeys.emplace(key, collectTileSceneryAssets(tileData->second)).first;
         }
         if (assetKeys != pendingTileAssetKeys.end() &&
             !sceneryAssetPreparationsReady(assetKeys->second)) {
@@ -1173,7 +1182,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
                 while (!sceneryAssetPreparationsReady(assetKeys->second)) {
                     reportTileProgress("scenery/model preparation");
                     if (!pendingTileSceneryRequests.contains(key)) {
-                        static_cast<void>(requestTileSceneryAssets(tileData->second, key));
+                        requestTileSceneryAssets(assetKeys->second, key);
                     }
                     if (pendingTileSceneryRequests.contains(key)) {
                         static_cast<void>(completeSceneryAssetPreparation(key, true));
@@ -1181,7 +1190,7 @@ MapSceneLoader::loadActiveTiles(const std::vector<std::pair<int, int>>& tileCoor
                 }
             } else {
                 if (!pendingTileSceneryRequests.contains(key)) {
-                    static_cast<void>(requestTileSceneryAssets(tileData->second, key));
+                    requestTileSceneryAssets(assetKeys->second, key);
                 }
                 continue;
             }
@@ -1617,6 +1626,11 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                                     }
                                 }
                                 std::unordered_set<std::string> requestedTexturePaths;
+                                const auto resolveTexture = [&](const std::string& name) {
+                                    return prepared.texturePaths.resolve(name, [&] {
+                                        return groundTexturePath(textureMap, omsiRootPath, name);
+                                    });
+                                };
                                 const auto decodeTexture = [&](const std::filesystem::path& path) {
                                     const std::string imageKey =
                                         openbus::pathToUtf8(path.lexically_normal());
@@ -1643,16 +1657,14 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                                 for (const auto& [textureIndex, sidecar] : layersByIndex) {
                                     const auto& groundTexture = groundTextures[textureIndex];
                                     try {
-                                        decodeTexture(groundTexturePath(textureMap, omsiRootPath,
-                                                                        groundTexture.texturePath));
+                                        decodeTexture(resolveTexture(groundTexture.texturePath));
                                     } catch (const std::exception&) {
                                         // The renderer reports unresolved paths with tile context.
                                     }
                                     if (!groundTexture.detailTexturePath.empty()) {
                                         try {
                                             decodeTexture(
-                                                groundTexturePath(textureMap, omsiRootPath,
-                                                                  groundTexture.detailTexturePath));
+                                                resolveTexture(groundTexture.detailTexturePath));
                                         } catch (const std::exception&) {
                                             // Detail paths are optional and logged at publication.
                                         }
@@ -1757,6 +1769,10 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                 buffer.baseDetailTextureScale = {baseDetailScale, baseDetailScale};
             }
             if (!uniformGroundTexturePreview) {
+                const auto resolveTexture = [&](const std::string& name) {
+                    return prepared.texturePaths.resolve(
+                        name, [&] { return groundTexturePath(map, omsiRoot, name); });
+                };
                 std::map<std::size_t, const openbus::map::MapGroundTextureSidecar*> layersByIndex;
                 for (const openbus::map::MapGroundTextureSidecar& sidecar :
                      tile.groundTextureSidecars) {
@@ -1780,8 +1796,8 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                 for (const auto& [textureIndex, sidecar] : layersByIndex) {
                     try {
                         ModelMaterial layer;
-                        const std::filesystem::path layerTexturePath = groundTexturePath(
-                            map, omsiRoot, map.groundTextures[textureIndex].texturePath);
+                        const std::filesystem::path layerTexturePath =
+                            resolveTexture(map.groundTextures[textureIndex].texturePath);
                         layer.texture = getTexture(layerTexturePath);
                         layer.textured = true;
                         const openbus::map::MapGroundTextureTiling tiling =
@@ -1795,7 +1811,7 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                         if (!detailTextureName.empty()) {
                             try {
                                 const std::filesystem::path detailTexturePath =
-                                    groundTexturePath(map, omsiRoot, detailTextureName);
+                                    resolveTexture(detailTextureName);
                                 layer.detailTexture = getTexture(detailTexturePath);
                                 layer.useDetailTexture = true;
                                 const float detailTextureScale =
@@ -1823,6 +1839,8 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
                     }
                 }
             }
+            terrainTextureResolutions += prepared.texturePaths.resolutions();
+            terrainTexturePathReuses += prepared.texturePaths.reuses();
             buffer.minZ = prepared.minimumHeight;
             buffer.maxZ = prepared.maximumHeight;
             pglGenBuffers(1, &buffer.buffer);
@@ -2164,26 +2182,35 @@ bool MapSceneLoader::uploadRoadBatches(bool waitForCompletion) {
 }
 
 void MapSceneLoader::logSummary() const {
-    gameLog.Log("Map render result: terrain tiles=" + std::to_string(impl_->terrainBuffers.size()) +
-                ", scenery instances=" + std::to_string(impl_->sceneryInstanceCount) +
-                ", scenery batches=" + std::to_string(impl_->sceneryBatches.size()) +
-                ", scenery variable states=" + std::to_string(impl_->sceneryScriptStates.size()) +
-                ", scenery script runtimes=" + std::to_string(impl_->sceneryScriptRuntimeCount) +
-                ", road batches=" + std::to_string(impl_->roadBatches.size()) +
-                ", water batches=" + std::to_string(impl_->waterBatches.size()) +
-                ", cached textures=" + std::to_string(textureCache.size()) +
-                ", prepared CPU images=" + std::to_string(preparedTextureImages.count()) +
-                ", prepared CPU image bytes=" + std::to_string(preparedTextureImages.bytes()) +
-                ".");
+    const auto sceneryTextureStats = sharedSceneryTextureImages_->stats();
+    gameLog.Log(
+        "Map render result: terrain tiles=" + std::to_string(impl_->terrainBuffers.size()) +
+        ", scenery instances=" + std::to_string(impl_->sceneryInstanceCount) +
+        ", scenery batches=" + std::to_string(impl_->sceneryBatches.size()) +
+        ", scenery variable states=" + std::to_string(impl_->sceneryScriptStates.size()) +
+        ", scenery script runtimes=" + std::to_string(impl_->sceneryScriptRuntimeCount) +
+        ", road batches=" + std::to_string(impl_->roadBatches.size()) +
+        ", water batches=" + std::to_string(impl_->waterBatches.size()) +
+        ", cached textures=" + std::to_string(textureCache.size()) +
+        ", prepared CPU images=" + std::to_string(preparedTextureImages.count()) +
+        ", prepared CPU image bytes=" + std::to_string(preparedTextureImages.bytes()) +
+        ", scenery image decode attempts=" + std::to_string(sceneryTextureStats.decodeAttempts) +
+        ", shared scenery image uses=" + std::to_string(sceneryTextureStats.sharedImageUses) +
+        ", scenery key collections=" + std::to_string(sceneryAssetCollectionPasses) +
+        ", scenery path resolutions=" + std::to_string(sceneryAssetPathResolutions) +
+        ", scenery request batches=" + std::to_string(sceneryAssetRequestBatches) +
+        ", scenery texture lookups=" + std::to_string(sceneryTextureLookups) +
+        ", scenery texture resolutions=" + std::to_string(sceneryTextureResolutions) +
+        ", terrain texture resolutions=" + std::to_string(terrainTextureResolutions) +
+        ", terrain texture path reuses=" + std::to_string(terrainTexturePathReuses) + ".");
     logSkipped(skipped);
     gameLog.Log("Map loading complete in " + std::to_string(elapsedMilliseconds(mapLoadStart)) +
                 " ms.");
 }
 
-void MapSceneLoader::rememberPreparedTexture(const std::string& key,
-                                             std::shared_ptr<Image> image) {
-    const bool uploaded = textureCache.contains(key + "|repeat") ||
-                          textureCache.contains(key + "|clamp");
+void MapSceneLoader::rememberPreparedTexture(const std::string& key, std::shared_ptr<Image> image) {
+    const bool uploaded =
+        textureCache.contains(key + "|repeat") || textureCache.contains(key + "|clamp");
     preparedTextureImages.remember(key, std::move(image), uploaded);
 }
 

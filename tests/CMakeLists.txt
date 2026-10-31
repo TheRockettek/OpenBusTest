@@ -71,6 +71,10 @@ openbus_add_probe(OpenBusVehicleInputBindingsProbe VehicleInputBindingsProbe.cpp
 # Assets
 openbus_add_probe(OpenBusTextureLoaderProbe TextureLoaderProbe.cpp LIBS openbus_assets)
 openbus_add_probe(OpenBusPreparedMapTexturesProbe PreparedMapTexturesProbe.cpp LIBS openbus_assets)
+openbus_add_probe(OpenBusPreparedTerrainTexturePathsProbe PreparedTerrainTexturePathsProbe.cpp
+    LIBS openbus_assets)
+openbus_add_probe(OpenBusSharedMapTextureImagesProbe SharedMapTextureImagesProbe.cpp
+    LIBS openbus_assets Threads::Threads)
 openbus_add_probe(OpenBusO3DLoaderProbe O3DLoaderProbe.cpp LIBS openbus_assets
     ARGS "${PROJECT_SOURCE_DIR}/uno3d/SitzeU.o3d")
 # Exercise text-X geometry parsing without requiring an OpenGL context.

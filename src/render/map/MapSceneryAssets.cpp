@@ -33,7 +33,7 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
         PreparedSceneryAsset prepared;
         auto preparation = preparedSceneryAssetConfigs.find(cacheKey);
         if (preparation == preparedSceneryAssetConfigs.end()) {
-            prepared = prepareSceneryAsset(configPath, omsiRoot);
+            prepared = prepareSceneryAsset(configPath, omsiRoot, *sharedSceneryTextureImages_);
         } else {
             prepared = std::move(*preparation->second);
             preparedSceneryAssetConfigs.erase(preparation);
@@ -41,6 +41,8 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
         if (prepared.preparationError) {
             std::rethrow_exception(prepared.preparationError);
         }
+        sceneryTextureLookups += prepared.textureLookups;
+        sceneryTextureResolutions += prepared.textureResolutions;
         for (auto& [path, image] : prepared.decodedTextures) {
             rememberPreparedTexture(path, std::move(image));
         }

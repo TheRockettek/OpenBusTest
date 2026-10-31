@@ -282,8 +282,7 @@ struct BusSimulation::Impl {
                 pair = &counters.chassisPole;
             } else if (isWheelStaticContact) {
                 pair = &counters.wheelStatic;
-            } else if ((firstIsChassis && !secondHasBody) ||
-                       (secondIsChassis && !firstHasBody)) {
+            } else if ((firstIsChassis && !secondHasBody) || (secondIsChassis && !firstHasBody)) {
                 pair = &counters.chassisStatic;
             }
             ++pair->calls;
@@ -343,8 +342,8 @@ struct BusSimulation::Impl {
             return;
         }
         const auto pairSummary = [](const char* label, const CollisionPairCounters& pair) {
-            return std::string(label) + "=" + std::to_string(pair.calls) +
-                   " calls/" + std::to_string(pair.hits) + " hits";
+            return std::string(label) + "=" + std::to_string(pair.calls) + " calls/" +
+                   std::to_string(pair.hits) + " hits";
         };
         simulationLog.Log(
             LogLevel::Info,
@@ -354,11 +353,11 @@ struct BusSimulation::Impl {
                 ", dCollide calls=" + std::to_string(collisionProfileCounters.narrowphaseCalls) +
                 ", contacts=" + std::to_string(collisionProfileCounters.contacts) +
                 ", contact joints=" + std::to_string(collisionProfileCounters.contactJoints) +
-                "; " + pairSummary("wheel-static", collisionProfileCounters.wheelStatic) +
-                ", " + pairSummary("chassis-static", collisionProfileCounters.chassisStatic) +
-                ", " + pairSummary("wheel-pole", collisionProfileCounters.wheelPole) +
-                ", " + pairSummary("chassis-pole", collisionProfileCounters.chassisPole) +
-                ", " + pairSummary("other", collisionProfileCounters.other));
+                "; " + pairSummary("wheel-static", collisionProfileCounters.wheelStatic) + ", " +
+                pairSummary("chassis-static", collisionProfileCounters.chassisStatic) + ", " +
+                pairSummary("wheel-pole", collisionProfileCounters.wheelPole) + ", " +
+                pairSummary("chassis-pole", collisionProfileCounters.chassisPole) + ", " +
+                pairSummary("other", collisionProfileCounters.other));
         collisionProfileCounters = {};
         collisionProfileWindowStart = now;
     }

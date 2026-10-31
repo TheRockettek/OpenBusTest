@@ -1035,10 +1035,20 @@ its memory requirements, and raw data can require substantial disk space.
 Choose a different `OPENBUS_MEMORY_TRACE_FILE` to retain previous captures.
 
 Map textures release their prepared CPU image after a successful GPU upload.
+Concurrent scenery preparations share a decoded image while it is still needed;
+the sharing index does not keep the image alive after its last owner releases it.
 If the same texture is later needed with a different addressing mode, it may
 be decoded from disk again. The initial map-load summary logs the number and
 pixel-buffer capacity of prepared CPU images still held by the map loader;
 these figures exclude GPU textures and images held by other owners.
+The same summary includes scenery image decode attempts and shared-image uses,
+which can help assess how often preparations avoided a duplicate decode.
+Scenery key collection passes, path resolutions, and request batches are also
+reported; collected tile keys are reused across preparation batches rather than
+resolving every placement again for each batch.
+The summary also reports scenery texture lookups versus resolutions and terrain
+texture resolutions versus path reuses. Terrain paths are reused only within a
+tile preparation; missing paths are resolved again rather than cached.
 
 The Chrome CPU trace is separate. The Linux profiling script starts it
 automatically unless `--memory-only` is set; other instrumented runs start
