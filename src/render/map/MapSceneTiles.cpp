@@ -657,7 +657,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
         }
     }
     for (const auto& [path, image] : preparedRoads.decodedTextures) {
-        preparedTextureImages.try_emplace(path, image);
+        rememberPreparedTexture(path, image);
     }
     for (const auto& [path, error] : preparedRoads.textureErrors) {
         preparedTextureErrors.try_emplace(path, error);

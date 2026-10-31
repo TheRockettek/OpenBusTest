@@ -111,8 +111,8 @@ bool MapSceneLoader::finishLoad(bool waitForCompletion) {
     std::exception_ptr preparationError;
     try {
         Image image = baseTextureRequest_.get();
-        preparedTextureImages.emplace(openbus::pathToUtf8(baseTexturePath_.lexically_normal()),
-                                      std::make_shared<Image>(std::move(image)));
+        rememberPreparedTexture(openbus::pathToUtf8(baseTexturePath_.lexically_normal()),
+                                std::make_shared<Image>(std::move(image)));
     } catch (...) {
         preparationError = std::current_exception();
     }
@@ -1724,7 +1724,7 @@ bool MapSceneLoader::loadTerrainTiles(const std::unordered_set<std::uint64_t>& t
             pendingTerrainRequests.erase(request);
             tilePreparationFailures.erase(key);
             for (auto& [imageKey, image] : prepared.decodedTextures) {
-                preparedTextureImages.try_emplace(imageKey, std::move(image));
+                rememberPreparedTexture(imageKey, std::move(image));
             }
             for (auto& [imageKey, error] : prepared.textureErrors) {
                 if (!preparedTextureImages.contains(imageKey)) {
@@ -2171,29 +2171,40 @@ void MapSceneLoader::logSummary() const {
                 ", scenery script runtimes=" + std::to_string(impl_->sceneryScriptRuntimeCount) +
                 ", road batches=" + std::to_string(impl_->roadBatches.size()) +
                 ", water batches=" + std::to_string(impl_->waterBatches.size()) +
-                ", cached textures=" + std::to_string(textureCache.size()) + ".");
+                ", cached textures=" + std::to_string(textureCache.size()) +
+                ", prepared CPU images=" + std::to_string(preparedTextureImages.count()) +
+                ", prepared CPU image bytes=" + std::to_string(preparedTextureImages.bytes()) +
+                ".");
     logSkipped(skipped);
     gameLog.Log("Map loading complete in " + std::to_string(elapsedMilliseconds(mapLoadStart)) +
                 " ms.");
 }
 
-GLuint MapSceneLoader::uploadPreparedTexture(const std::filesystem::path& path, bool repeat) const {
+void MapSceneLoader::rememberPreparedTexture(const std::string& key,
+                                             std::shared_ptr<Image> image) {
+    const bool uploaded = textureCache.contains(key + "|repeat") ||
+                          textureCache.contains(key + "|clamp");
+    preparedTextureImages.remember(key, std::move(image), uploaded);
+}
+
+GLuint MapSceneLoader::uploadPreparedTexture(const std::filesystem::path& path, bool repeat) {
     const std::string imageKey = openbus::pathToUtf8(path.lexically_normal());
     const auto textureError = preparedTextureErrors.find(imageKey);
     if (textureError != preparedTextureErrors.end()) {
         throw std::runtime_error("Could not decode map texture " + openbus::pathToUtf8(path) +
                                  ": " + textureError->second);
     }
-    const auto preparedImage = preparedTextureImages.find(imageKey);
-    if (preparedImage != preparedTextureImages.end() && preparedImage->second) {
+    return preparedTextureImages.upload(imageKey, [&](const Image* image) {
+        if (image == nullptr) {
+            return loadTexture(path, repeat);
+        }
         try {
-            return uploadTextureImage(*preparedImage->second, repeat);
+            return uploadTextureImage(*image, repeat);
         } catch (const std::exception& error) {
             throw std::runtime_error("Could not upload map texture " + openbus::pathToUtf8(path) +
                                      ": " + error.what());
         }
-    }
-    return loadTexture(path, repeat);
+    });
 }
 
 GLuint MapSceneLoader::getTexture(const std::filesystem::path& path, bool repeat) {
@@ -2201,6 +2212,7 @@ GLuint MapSceneLoader::getTexture(const std::filesystem::path& path, bool repeat
         openbus::pathToUtf8(path.lexically_normal()) + (repeat ? "|repeat" : "|clamp");
     const auto found = textureCache.find(key);
     if (found != textureCache.end()) {
+        preparedTextureImages.discard(openbus::pathToUtf8(path.lexically_normal()));
         return found->second;
     }
     const GLuint texture = uploadPreparedTexture(path, repeat);

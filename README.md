@@ -1025,10 +1025,26 @@ Its output defaults to `openbus-memory.heaptrack` in the repository root;
 `OPENBUS_MEMORY_TRACE_FILE` selects another path. Open the capture with
 `heaptrack_gui` or inspect it with `heaptrack_print`.
 
-The Chrome CPU trace is separate. **Recording starts off.** Navigate to the
-place you want to profile, then press **F10** to start recording. Press **F10**
-again to pause and save; further presses resume/pause the same capture. Holding
-the key does not repeatedly toggle it. Recording state changes are logged.
+For a lower-overhead memory capture, run `./profile.sh --memory-only`: this
+disables automatic CPU trace recording, though F10 can still enable it. Run a
+short scenario and close the application normally so Heaptrack can finish.
+`./profile.sh --memory-only --raw` records raw Heaptrack data without running
+the interpreter during the game; follow the conversion command printed by
+Heaptrack before opening that capture. Deferring interpretation does not reduce
+its memory requirements, and raw data can require substantial disk space.
+Choose a different `OPENBUS_MEMORY_TRACE_FILE` to retain previous captures.
+
+Map textures release their prepared CPU image after a successful GPU upload.
+If the same texture is later needed with a different addressing mode, it may
+be decoded from disk again. The initial map-load summary logs the number and
+pixel-buffer capacity of prepared CPU images still held by the map loader;
+these figures exclude GPU textures and images held by other owners.
+
+The Chrome CPU trace is separate. The Linux profiling script starts it
+automatically unless `--memory-only` is set; other instrumented runs start
+paused unless `OPENBUS_TRACE=1` is set. Press **F10** to pause or resume
+recording. Holding the key does not repeatedly toggle it. Recording state
+changes are logged.
 
 The Chrome trace is written to `openbus_trace.json`; `OPENBUS_TRACE_FILE`
 overrides its path. Pausing drains pending events and leaves a valid JSON file

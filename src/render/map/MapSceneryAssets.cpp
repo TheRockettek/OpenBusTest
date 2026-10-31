@@ -42,7 +42,7 @@ MapSceneLoader::loadSceneryAsset(const std::filesystem::path& configPath) {
             std::rethrow_exception(prepared.preparationError);
         }
         for (auto& [path, image] : prepared.decodedTextures) {
-            preparedTextureImages.try_emplace(path, std::move(image));
+            rememberPreparedTexture(path, std::move(image));
         }
         const SceneryObjectConfig& objectConfiguration = prepared.objectConfiguration;
         sceneryAttachmentPoints[cacheKey] = objectConfiguration.attachmentPoints;

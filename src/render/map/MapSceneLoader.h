@@ -4,6 +4,7 @@
 // their tiles enter the active window.
 
 #include "render/map/MapRendererInternal.h"
+#include "render/map/PreparedMapTextures.h"
 #include "render/AssetRequestManager.h"
 
 #include <exception>
@@ -191,7 +192,8 @@ class MapSceneLoader {
     void resolveTrafficLightVariableParents();
     bool uploadRoadBatches(bool waitForCompletion);
 
-    GLuint uploadPreparedTexture(const std::filesystem::path& path, bool repeat) const;
+    void rememberPreparedTexture(const std::string& key, std::shared_ptr<Image> image);
+    GLuint uploadPreparedTexture(const std::filesystem::path& path, bool repeat);
     GLuint getTexture(const std::filesystem::path& path, bool repeat = true);
     [[nodiscard]] std::optional<double> sampleTerrainHeight(int tileX, int tileY, double localX,
                                                             double localY) const;
@@ -233,7 +235,7 @@ class MapSceneLoader {
     double baseTextureRepeatsPerTile = 1.0;
     SkipSummaries skipped;
     std::unordered_map<std::string, GLuint> textureCache;
-    std::unordered_map<std::string, std::shared_ptr<Image>> preparedTextureImages;
+    PreparedMapTextures preparedTextureImages;
     std::unordered_map<std::string, std::string> preparedTextureErrors;
     std::filesystem::path baseTexturePath_;
     std::future<Image> baseTextureRequest_;
