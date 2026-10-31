@@ -1596,7 +1596,8 @@ int main() {
                                     matchedRoute.routeStart.allowReverseTraversalForRequired,
                                     passengerStops, timetable.lineName, timetable.destinationName,
                                     std::nullopt, true, std::nullopt,
-                                    &registeredPassengerRouteIndex)) {
+                                    &registeredPassengerRouteIndex, false, {}, {},
+                                    timetable.timetableKey, timetable.tripName)) {
                                 applicationLog.Warning(
                                     "Player passenger stops are unavailable for timetable route " +
                                     timetable.lineName +
@@ -1663,7 +1664,8 @@ int main() {
                                     busPassengerStops, timetable.lineName,
                                     timetable.destinationName, std::nullopt, false,
                                     passengerRouteIndex, nullptr, false,
-                                    profilePartitions[partitionIndex], timetable.profiles)) {
+                                    profilePartitions[partitionIndex], timetable.profiles,
+                                    timetable.timetableKey, timetable.tripName)) {
                                 ++addedBuses;
                             } else {
                                 applicationLog.Warning(
@@ -2117,6 +2119,8 @@ int main() {
                             openbus::rendering::TraceScope playerTrace(
                                 "startup", "spawnSelectedMapBus.initializePlayerVehicle");
                             renderer.SetPlayerVehicle(playerVehicle);
+                            renderer.SetPlayerTimetableSelection(
+                                spawnRequest->timetableSelection);
                         }
                         reportedCollisionTileCount = collisionStreamer->loadedTileCount();
                         applicationLog.Log("Selected bus physics initialized; simulation resumed.");

@@ -962,6 +962,8 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
 
     for (const std::filesystem::path& linePath : lineFiles) {
         const std::vector<std::string> lineLines = splitLines(decodeText(linePath));
+        MapAiTimetableCourse course;
+        course.name = pathToUtf8(linePath.stem());
         for (std::size_t lineIndex = 0; lineIndex < lineLines.size(); ++lineIndex) {
             if (lowerAscii(trim(lineLines[lineIndex])) != "[addtrip]") {
                 continue;
@@ -1007,6 +1009,7 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                                         pathToUtf8(linePath.filename()));
             } else {
                 tripIndex = std::max(0, tripIndex);
+                course.trips.push_back({timetableKey, tripIndex, departureMinutes});
                 if (route != aiTraffic.timetableRoutes.end()) {
                     route->scheduledDepartureMinutes.push_back(departureMinutes);
                     route->scheduledDepartureProfileIndices.push_back(tripIndex);
@@ -1017,6 +1020,9 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                 }
             }
             lineIndex = next > 0 ? next - 1 : lineIndex;
+        }
+        if (!course.trips.empty()) {
+            aiTraffic.timetableCourses.push_back(std::move(course));
         }
     }
     const auto sortDepartures = [](std::vector<double>& minutes, std::vector<int>& profileIndices) {
@@ -2021,6 +2027,24 @@ mapAiTimetableStationPosition(const MapAiTimetableRoute& route,
         return std::nullopt;
     }
     return MapAiTimetableStationPosition{trackEntryIndex, 0.0};
+}
+
+std::optional<std::size_t>
+mapAiTimetableNextCourseTripIndex(const MapAiTimetableCourse& course,
+                                  std::size_t currentTripIndex,
+                                  std::span<const std::string> availableTimetableKeys) {
+    if (currentTripIndex >= course.trips.size()) {
+        return std::nullopt;
+    }
+    for (std::size_t tripIndex = currentTripIndex + 1; tripIndex < course.trips.size();
+         ++tripIndex) {
+        const auto& trip = course.trips[tripIndex];
+        if (std::ranges::find(availableTimetableKeys, trip.timetableKey) !=
+            availableTimetableKeys.end()) {
+            return tripIndex;
+        }
+    }
+    return std::nullopt;
 }
 
 std::vector<MapAiPassengerStopCall>

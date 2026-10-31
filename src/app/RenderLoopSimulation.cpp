@@ -170,10 +170,26 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
         const std::vector<std::size_t> passengerServiceUpdateOrder =
             openbus::map::mapPassengerServiceUpdateOrder(passengerServiceStopIds,
                                                          passengerServiceUpdateOffset_);
+        const auto hasOpenPassengerDoor = [](const Vehicle& vehicle,
+                                              const std::vector<int>& pathPoints,
+                                              const char* variablePrefix) {
+            const std::size_t doorCount = std::min(pathPoints.size(), std::size_t{8});
+            for (std::size_t doorIndex = 0; doorIndex < doorCount; ++doorIndex) {
+                if (vehicle.variables.get(std::string(variablePrefix) +
+                                          std::to_string(doorIndex) + "_open") > 0.5F) {
+                    return true;
+                }
+            }
+            return false;
+        };
         for (const std::size_t vehicleIndex : passengerServiceUpdateOrder) {
             const std::unique_ptr<Vehicle>& vehicle = vehicles_[vehicleIndex];
             const std::uint64_t stopRequestSequenceBefore =
                 vehicle->passengerService.passengerStopRequestSequence();
+            const bool entryOpen = hasOpenPassengerDoor(
+                *vehicle, vehicle->passengerEntryPathPoints, "pax_entry");
+            const bool exitOpen = hasOpenPassengerDoor(
+                *vehicle, vehicle->passengerExitPathPoints, "pax_exit");
             const auto activeStop = sharedQueueStops.find(vehicle.get());
             auto queue = activeStop != sharedQueueStops.end()
                              ? scheduledPassengerQueues_.find(activeStop->second)
@@ -181,9 +197,10 @@ void RenderLoop::updatePlayerVariables(const BusSimulation& simulation, double t
             if (queue != scheduledPassengerQueues_.end()) {
                 advanceMapPassengerServiceWithSharedQueue(vehicle->passengerService,
                                                           activeStop->second, queue->second,
-                                                          passengerServiceTimeStep);
+                                                          passengerServiceTimeStep, entryOpen,
+                                                          exitOpen);
             } else {
-                vehicle->passengerService.advance(passengerServiceTimeStep);
+                vehicle->passengerService.advance(passengerServiceTimeStep, entryOpen, exitOpen);
             }
             const std::uint64_t stopRequests =
                 vehicle->passengerService.passengerStopRequestSequence() -
@@ -673,11 +690,26 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             const auto departureAction = openbus::map::mapTrafficPassengerStopDepartureAction(
                 state.passengerStopArrived, state.vehicle->passengerService.dwelling(),
                 state.passengerStopDepartureRequested,
-                state.vehicle->variables.get("ai_scheduled_atstation"));
+                state.vehicle->variables.get("ai_scheduled_atstation"),
+                state.scheduledServiceCancelled);
             if (departureAction ==
                 openbus::map::MapTrafficPassengerStopDepartureAction::RequestDeparture) {
                 state.vehicle->variables.set("ai_scheduled_atstation", -1.0F);
                 state.passengerStopDepartureRequested = true;
+            } else if (departureAction ==
+                       openbus::map::MapTrafficPassengerStopDepartureAction::RetireRoute) {
+                state.passengerStopArrived = false;
+                state.passengerStopDepartureRequested = false;
+                state.populationEnabled = false;
+                state.actor.speedMetersPerSecond = 0.0;
+                state.vehicle->mapTrafficTileActive = false;
+                state.vehicle->mapTrafficRouteFinished = true;
+                state.vehicle->variables.set("velocity", 0.0);
+                state.vehicle->variables.set("velocity_ground", 0.0);
+                state.activeSpawnCandidateIndex.reset();
+                ++state.workerGeneration;
+                finishScheduledTrip(state);
+                continue;
             } else if (departureAction ==
                        openbus::map::MapTrafficPassengerStopDepartureAction::ResumeRoute) {
                 state.passengerStopArrived = false;
@@ -1160,7 +1192,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             for (std::size_t index = 0; index < trafficVehicles_.size(); ++index) {
                 const auto& state = trafficVehicles_[index];
                 if (state.vehicle != nullptr && !state.vehicleLoadFailed &&
-                    !state.deadlockRemovalCommitted) {
+                    !state.deadlockRemovalCommitted &&
+                    !(state.isBus && state.scheduledServiceCancelled)) {
                     admissionCandidates.push_back({index, state.workerGeneration,
                                                    state.actor.unscheduledGroupIndex, false,
                                                    state.isBus, state.populationEnabled});
@@ -1190,7 +1223,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
             for (const std::size_t stateIndex : populationDecisionOrder) {
                 auto& state = trafficVehicles_[stateIndex];
                 if (state.vehicle == nullptr || state.vehicleLoadFailed ||
-                    state.deadlockRemovalCommitted) {
+                    state.deadlockRemovalCommitted ||
+                    (state.isBus && state.scheduledServiceCancelled)) {
                     continue;
                 }
                 const auto& decision = populationDecisionsByVehicle[stateIndex];
@@ -1931,6 +1965,20 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
             }
         }
         if (activePlayerPassengerStop_ && !playerVehicle_->passengerService.dwelling()) {
+            const std::optional<std::size_t> completedRoute =
+                activePlayerPassengerStopRouteIndex_;
+            const std::optional<std::size_t> completedStop =
+                activePlayerPassengerStopIndex_;
+            if (playerTimetableState_ && completedRoute && completedStop &&
+                *completedRoute == playerTimetableState_->selection.passengerRouteIndex) {
+                const bool atTerminus =
+                    *completedStop + 1 >= passengerStopRoutes_[*completedRoute].stops.size();
+                if (atTerminus) {
+                    advancePlayerTimetableTrip();
+                } else {
+                    playerTimetableState_->nextStopIndex = *completedStop + 1;
+                }
+            }
             activePlayerPassengerStop_.reset();
             activePlayerPassengerStopRouteIndex_.reset();
             activePlayerPassengerStopIndex_.reset();
@@ -1960,9 +2008,19 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
                                                  latchedPose->position[1] - chassis.position[1]);
             }
         }
-        for (std::size_t routeIndex = 0; routeIndex < passengerStopRoutes_.size(); ++routeIndex) {
+        for (std::size_t routeIndex = 0;
+             playerPassengerServiceEnabled_ && routeIndex < passengerStopRoutes_.size();
+             ++routeIndex) {
+            if (playerTimetableState_ &&
+                routeIndex != playerTimetableState_->selection.passengerRouteIndex) {
+                continue;
+            }
             const PassengerStopRouteState& passengerRoute = passengerStopRoutes_[routeIndex];
             for (std::size_t stopIndex = 0; stopIndex < passengerRoute.stops.size(); ++stopIndex) {
+                if (playerTimetableState_ &&
+                    stopIndex < playerTimetableState_->nextStopIndex) {
+                    continue;
+                }
                 const openbus::map::MapTrafficPassengerStop& stop = passengerRoute.stops[stopIndex];
                 const auto pose = openbus::map::sampleMapTrafficRoute(
                     passengerRoute.actor.route, stop.routeDistanceMeters, 0.0);
@@ -1997,7 +2055,8 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
             playerPassengerStopLatchRouteIndex_.reset();
             playerPassengerStopLatchIndex_.reset();
         }
-        if (!activePlayerPassengerStop_ && !playerPassengerStopLatch_ &&
+        if (playerPassengerServiceEnabled_ && !activePlayerPassengerStop_ &&
+            !playerPassengerStopLatch_ &&
             nearestStop.distanceMeters <= 2.5 && std::abs(simulation.speed()) <= 0.35 &&
             playerVehicle_->passengerService.seatCount() > 0) {
             const openbus::map::MapTrafficPassengerStop& stop =

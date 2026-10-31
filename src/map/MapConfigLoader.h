@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -218,6 +219,23 @@ struct MapAiPassengerTimetable {
     std::vector<MapAiTimetableProfile> profiles;
 };
 
+struct MapAiTimetableCourseTrip {
+    std::string timetableKey;
+    int profileIndex = 0;
+    double departureMinutes = 0.0;
+    bool operator==(const MapAiTimetableCourseTrip&) const = default;
+};
+
+struct MapAiTimetableCourse {
+    std::string name;
+    std::vector<MapAiTimetableCourseTrip> trips;
+};
+
+std::optional<std::size_t>
+mapAiTimetableNextCourseTripIndex(const MapAiTimetableCourse& course,
+                                 std::size_t currentTripIndex,
+                                 std::span<const std::string> availableTimetableKeys);
+
 struct MapAiPassengerStopCall {
     int stationId = 0;
     std::optional<std::size_t> busStopIndex;
@@ -234,6 +252,7 @@ struct MapAiTrafficData {
     std::vector<MapAiBusTypeDefinition> busTypes;
     std::vector<MapAiDepotDefinition> depots;
     std::vector<MapAiTimetableRoute> timetableRoutes;
+    std::vector<MapAiTimetableCourse> timetableCourses;
     std::vector<MapAiBusStop> busStops;
     std::vector<MapAiStationLink> stationLinks;
     // Contains station-based bus trips, including trips without a driving .ttr.

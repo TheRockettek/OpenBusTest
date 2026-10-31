@@ -528,7 +528,8 @@ bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
     return true;
 }
 
-void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
+void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoarding,
+                                         bool allowAlighting) {
     if (!dwelling_ || !std::isfinite(elapsedSeconds) || elapsedSeconds <= 0.0) {
         return;
     }
@@ -537,7 +538,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
     const double dwellAtStartSeconds = dwellRemainingSeconds_;
     double elapsedForAlightingSeconds = 0.0;
     double alightingSeconds = elapsedSeconds;
-    while (alightingSeconds > 1.0e-9 && alightingSeat_) {
+    while (allowAlighting && alightingSeconds > 1.0e-9 && alightingSeat_) {
         const double timeToAlight = passengerAnimationSeconds - alightingAccumulatorSeconds_;
         const double alightingTime = std::min(alightingSeconds, timeToAlight);
         alightingAccumulatorSeconds_ += alightingTime;
@@ -558,12 +559,15 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
 
     const double dwellAfterAlightingSeconds =
         std::max(0.0, dwellAtStartSeconds - elapsedForAlightingSeconds);
-    double activeSeconds = std::min(std::max(0.0, elapsedSeconds - elapsedForAlightingSeconds),
-                                    dwellAfterAlightingSeconds);
+    double activeSeconds =
+        alightingSeat_
+            ? 0.0
+            : std::min(std::max(0.0, elapsedSeconds - elapsedForAlightingSeconds),
+                       dwellAfterAlightingSeconds);
     std::size_t& waiting = waitingByStop_[currentStopId_];
     while (activeSeconds > 1.0e-9) {
         if (!boardingSeat_) {
-            if (nextStopId_ == 0 || waiting == 0) {
+            if (!allowBoarding || nextStopId_ == 0 || waiting == 0) {
                 break;
             }
             const auto seat = std::find_if(
@@ -579,6 +583,9 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
                 mapScheduledPassengerModelIdentity(currentStopId_, waiting);
             boardingAccumulatorSeconds_ = 0.0;
             clearPassengerPathLinkProgressProfile();
+        }
+        if (!allowBoarding) {
+            break;
         }
         const double timeToBoard = boardingIntervalSeconds - boardingAccumulatorSeconds_;
         const double boardingTime = std::min(activeSeconds, timeToBoard);
@@ -597,7 +604,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
     dwellRemainingSeconds_ =
         std::max(0.0, dwellAtStartSeconds - std::min(elapsedSeconds, dwellAtStartSeconds));
     const double overrunSeconds = elapsedSeconds - std::min(elapsedSeconds, dwellAtStartSeconds);
-    if (boardingSeat_ && overrunSeconds > 0.0) {
+    if (allowBoarding && boardingSeat_ && overrunSeconds > 0.0) {
         boardingAccumulatorSeconds_ += overrunSeconds;
         if (boardingAccumulatorSeconds_ + 1.0e-9 >= boardingIntervalSeconds) {
             seatDestinations_[*boardingSeat_] = nextStopId_;
@@ -727,29 +734,41 @@ std::size_t MapPassengerServiceRuntime::seatCount() const noexcept {
 
 void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service, int stopId,
                                                std::size_t& sharedWaitingPassengers,
-                                               double elapsedSeconds) {
+                                               double elapsedSeconds, bool allowBoarding,
+                                               bool allowAlighting) {
     if (stopId == 0) {
         throw std::invalid_argument(trafficInputError(
             "Shared passenger queue requires a valid stop ID", "stopId=", stopId,
             "waitingPassengers=", sharedWaitingPassengers, "elapsedSeconds=", elapsedSeconds));
     }
     service.setWaitingPassengers(stopId, sharedWaitingPassengers);
-    service.advance(elapsedSeconds);
+    service.advance(elapsedSeconds, allowBoarding, allowAlighting);
     sharedWaitingPassengers = service.waitingPassengers(stopId);
 }
 
 MapTrafficPassengerStopDepartureAction
 mapTrafficPassengerStopDepartureAction(bool stopArrived, bool passengerServiceDwelling,
                                        bool departureRequested,
-                                       double aiScheduledAtStation) noexcept {
+                                       double aiScheduledAtStation,
+                                       bool retireAfterStop) noexcept {
     if (!stopArrived || passengerServiceDwelling) {
         return MapTrafficPassengerStopDepartureAction::None;
     }
     if (!departureRequested) {
         return MapTrafficPassengerStopDepartureAction::RequestDeparture;
     }
-    return aiScheduledAtStation == 0.0 ? MapTrafficPassengerStopDepartureAction::ResumeRoute
-                                       : MapTrafficPassengerStopDepartureAction::None;
+    if (aiScheduledAtStation != 0.0) {
+        return MapTrafficPassengerStopDepartureAction::None;
+    }
+    return retireAfterStop ? MapTrafficPassengerStopDepartureAction::RetireRoute
+                           : MapTrafficPassengerStopDepartureAction::ResumeRoute;
+}
+
+bool mapTrafficShouldCancelScheduledRouteForPlayerTrip(
+    std::string_view playerTimetableKey, std::string_view scheduledTimetableKey,
+    bool driveAsAdditionalBus) noexcept {
+    return !driveAsAdditionalBus && !playerTimetableKey.empty() &&
+           playerTimetableKey == scheduledTimetableKey;
 }
 
 double mapTrafficHourAtElapsedSeconds(double startHour, double elapsedSeconds) {

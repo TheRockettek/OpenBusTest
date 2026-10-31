@@ -140,7 +140,10 @@ contactshoe_#_freq 🔒
 OpenBus drives `PAX_Entry0_Req` when passenger service is active at a stop and
 exactly one cabin entry is configured. `PAX_Exit0_Req` is similarly driven
 when exactly one exit is configured. Multiple-door passenger assignment is
-not implemented.
+not implemented. Passenger boarding and alighting advance only while at least
+one configured entry or exit, respectively, reports open through
+`PAX_Entry#_Open` or `PAX_Exit#_Open`; a passenger already in motion pauses
+until that door state opens.
 
 Vehicle Strings:
 ident 🔒
@@ -436,10 +439,12 @@ The selected depot name is also exposed as `yard`. `coll_pos_x/y/z` and
 
 Other predefined names are declared with safe defaults or are script-owned;
 OpenBus does not currently simulate fuel level, maintenance condition, road
-wetness, environmental brightness, door request/open state, train coupling or
-rail telemetry, seat adjustment, force feedback, cabin-air or exterior dirt
-simulation, and scenery night-use/approach state. Scenery traffic-light phase
-is populated when its parent signal sequence is available.
+wetness, environmental brightness, door mechanics, train coupling or rail
+telemetry, seat adjustment, force feedback, cabin-air or exterior dirt
+simulation, and scenery night-use/approach state. Passenger service consumes
+script-provided door-open state but does not derive it from door mechanics.
+Scenery traffic-light phase is populated when its parent signal sequence is
+available.
 
 Macros With Runtime Behavior
 

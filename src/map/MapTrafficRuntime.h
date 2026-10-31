@@ -10,6 +10,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -305,7 +306,7 @@ class MapPassengerServiceRuntime {
     bool arrive(const MapPassengerStopService& stop);
     // Reserves a waiting passenger at the start of a boarding interval and seats them at
     // completion.
-    void advance(double elapsedSeconds);
+    void advance(double elapsedSeconds, bool allowBoarding = true, bool allowAlighting = true);
     bool dwelling() const noexcept;
     int currentStopId() const noexcept;
     bool boardingPassenger() const noexcept;
@@ -349,14 +350,24 @@ class MapPassengerServiceRuntime {
 
 void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& service, int stopId,
                                                std::size_t& sharedWaitingPassengers,
-                                               double elapsedSeconds);
+                                               double elapsedSeconds, bool allowBoarding = true,
+                                               bool allowAlighting = true);
 
-enum class MapTrafficPassengerStopDepartureAction { None, RequestDeparture, ResumeRoute };
+enum class MapTrafficPassengerStopDepartureAction {
+    None,
+    RequestDeparture,
+    ResumeRoute,
+    RetireRoute
+};
 
 MapTrafficPassengerStopDepartureAction
 mapTrafficPassengerStopDepartureAction(bool stopArrived, bool passengerServiceDwelling,
                                        bool departureRequested,
-                                       double aiScheduledAtStation) noexcept;
+                                       double aiScheduledAtStation,
+                                       bool retireAfterStop = false) noexcept;
+bool mapTrafficShouldCancelScheduledRouteForPlayerTrip(std::string_view playerTimetableKey,
+                                                       std::string_view scheduledTimetableKey,
+                                                       bool driveAsAdditionalBus) noexcept;
 
 MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath,
                                     double speedMetersPerSecond, double laneOffsetMagnitudeMeters,

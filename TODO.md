@@ -205,6 +205,14 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   transactions, and physical/audible coin output remain incomplete. Map
   ticket-pack/currency records now feed ticket and
   change-coin script macros for player and AI buses.
+- [~] The on-foot panel now selects a mapped line, ordered `.ttl` course,
+  course trip, and first passenger-service stop. Player service follows that
+  route and advances in `.ttl` order at the terminus; it stops at
+  course end or when the player chooses to stop after the current trip.
+  Disabling "Drive as an additional bus" suppresses future departures for a
+  matching scheduled AI route and retires an active bus after its next stop.
+  Course parsing/order, trip progression, and the stop-retirement handshake
+  have focused probes; end-to-end UI coverage remains incomplete.
 - [ ] Complete registration persistence and full selection UI; implement or
   explicitly scope out AI/network sections, route/timetable/HOF data, and
   vehicle-specific view systems.
@@ -234,9 +242,10 @@ by parser alignment and should not be described as supported:
   links, and timetable offsets position stops within their mapped spline
   segments; detailed native door/aisle semantics and passenger mass remain
   unverified.
-- Route/path selection, timetable/HOF lookup, stop announcements, and
-  arrival-board data used by the script system. Basic `[paths]` point/link
-  graphs and step metadata are loaded and covered by `OpenBusVehicleConfigProbe`.
+- HOF-backed route/path selection, timetable macros beyond the map player-trip
+  workflow, stop announcements, and arrival-board data used by the script
+  system. Basic `[paths]` point/link graphs and step metadata are loaded and
+  covered by `OpenBusVehicleConfigProbe`.
 - Registration-number persistence and full selection UI. Ordered number/plate
   pairing, runtime automatic/free selection, the distinct `number`/`ident`
   strings, initial plate-text rendering, and live odometer publication are
@@ -521,14 +530,18 @@ for alignment is not mistaken for supporting it.
 - [~] `humans_count` now reports the passenger service's occupied-seat count,
   matching `passengers_onboard` for player and AI vehicles. Replace default-only
   values for documented variable families whose producers are absent:
-  `AI_*`, `AI_Scheduled_*`, `PAX_Entry#_Open`, `PAX_Exit#_Open`, `GivenTicket`,
+  `AI_*`, `AI_Scheduled_*`, `GivenTicket`,
   `FF_Vib_*`, `Snd_*`,
   `Cabinair_*`, `Dirt_*`, `TrafficPriority*`, `Axle_Brakeforce_*`,
   `Axle_SurfaceID_*`, `articulation_*`, `boogie_*`, and
-  `contactshoe_*`.
+  `contactshoe_*`. `PAX_Entry#_Open` and `PAX_Exit#_Open` remain script-owned;
+  OpenBus consumes them for passenger service but does not derive them from
+  door mechanics.
 - [~] `PAX_Entry#_Req` and `PAX_Exit#_Req` reflect queued/active boarding and
   alighting when exactly one corresponding cabin entry/exit is configured.
-  Routing requests across multiple doors is not implemented.
+  Passenger movement is gated by configured `PAX_Entry#_Open` /
+  `PAX_Exit#_Open` states; routing requests across multiple doors is not
+  implemented.
 - [~] Add runtime producers for documented vehicle/scenery/human strings and
   state such as `act_route`, `act_busstop`, `SetLineTo`, `yard`,
   `file_schedule`, `Refresh_Strings`, `Switch`, `LastMovedDist`, `PAX_State`,

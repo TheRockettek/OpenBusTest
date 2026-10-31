@@ -303,6 +303,33 @@ void verifyPassengerSideOffsets() {
     }
 }
 
+void verifyPassengerDoorGating() {
+    using namespace openbus::map;
+    MapPassengerServiceRuntime service(1);
+    service.setWaitingPassengers(10, 1);
+    require(service.arrive({.stopId = 10, .dwellSeconds = 1.5, .nextStopId = 20}),
+            "door-gating fixture starts passenger service");
+    service.advance(0.75, false, true);
+    require(service.waitingPassengers(10) == 1 && service.onboardPassengerCount() == 0 &&
+                service.passengerStopRequestSequence() == 0,
+            "closed entry doors prevent boarding and stop requests");
+    service.advance(0.75, true, true);
+    require(service.waitingPassengers(10) == 0 && service.onboardPassengerCount() == 1 &&
+                service.passengerStopRequestSequence() == 1,
+            "opening an entry door allows the queued passenger to board");
+
+    require(service.arrive({.stopId = 20, .dwellSeconds = 0.75, .nextStopId = 30}),
+            "door-gating fixture reaches the passenger destination");
+    service.advance(0.75, true, false);
+    require(service.alightingPassenger() && service.onboardPassengerCount() == 1 &&
+                service.dwelling(),
+            "closed exit doors pause alighting and keep the vehicle at the stop");
+    service.advance(0.75, true, true);
+    require(!service.alightingPassenger() && service.onboardPassengerCount() == 0 &&
+                !service.dwelling(),
+            "opening an exit door resumes and completes alighting");
+}
+
 void verifyPassengerStopDepartureHandshake() {
     using namespace openbus::map;
     require(mapTrafficPassengerStopDepartureAction(false, false, false, 1.0) ==
@@ -321,6 +348,17 @@ void verifyPassengerStopDepartureHandshake() {
     require(mapTrafficPassengerStopDepartureAction(true, false, true, 0.0) ==
                 MapTrafficPassengerStopDepartureAction::ResumeRoute,
             "the bus resumes only after its script signals that departure can proceed");
+    require(mapTrafficPassengerStopDepartureAction(true, false, true, -1.0, true) ==
+                    MapTrafficPassengerStopDepartureAction::None &&
+                mapTrafficPassengerStopDepartureAction(true, false, true, 1.0, true) ==
+                    MapTrafficPassengerStopDepartureAction::None &&
+                mapTrafficPassengerStopDepartureAction(true, false, true, 0.0, true) ==
+                    MapTrafficPassengerStopDepartureAction::RetireRoute,
+            "a conflicting AI bus retires at its next stop after the script closes its doors");
+    require(mapTrafficShouldCancelScheduledRouteForPlayerTrip("line12", "line12", false) &&
+                !mapTrafficShouldCancelScheduledRouteForPlayerTrip("line12", "other", false) &&
+                !mapTrafficShouldCancelScheduledRouteForPlayerTrip("line12", "line12", true),
+            "only a matching scheduled route is suppressed when additional-bus mode is off");
 }
 
 void verifyPassengerServiceBehavior() {
@@ -5681,6 +5719,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--passenger-service") {
             verifyPassengerSideOffsets();
             verifyPassengerStopDepartureHandshake();
+            verifyPassengerDoorGating();
             verifyPassengerServiceBehavior();
             return 0;
         }
@@ -5700,6 +5739,7 @@ int main(int argc, char** argv) {
         verifyRearAxleTrafficPose();
         verifyPassengerSideOffsets();
         verifyPassengerStopDepartureHandshake();
+        verifyPassengerDoorGating();
         verifyPassengerServiceBehavior();
         verifyTrafficWaterClearance();
         verifyDrivingBehavior();

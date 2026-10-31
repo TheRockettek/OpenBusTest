@@ -374,7 +374,8 @@ bool RenderLoop::AddTrafficVehicle(
     std::optional<std::size_t> trafficRuleGroupIndex, bool registerPassengerRouteOnly,
     std::optional<std::size_t> passengerRouteIndex, std::size_t* registeredPassengerRouteIndex,
     bool requireActiveTileSpawnCandidate, std::vector<int> scheduledDepartureProfileIndices,
-    std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles) {
+    std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles,
+    std::string timetableKey, std::string timetableTripName) {
     TraceScope trace("startup", "RenderLoop::AddTrafficVehicle");
     if (mapRenderer_ == nullptr) {
         throw std::logic_error("Cannot add map traffic before loading a map");
@@ -547,6 +548,7 @@ bool RenderLoop::AddTrafficVehicle(
     trafficState.scheduledDepartureMinutes = std::move(scheduledDepartureMinutes);
     trafficState.scheduledDepartureProfileIndices = std::move(scheduledDepartureProfileIndices);
     trafficState.timetableProfiles = std::move(timetableProfiles);
+    trafficState.timetableKey = timetableKey;
     trafficState.timetableLineName = std::move(timetableLineName);
     trafficState.timetableDestinationName = std::move(timetableDestinationName);
     if (!isBus && !passengerStops.empty()) {
@@ -612,7 +614,10 @@ bool RenderLoop::AddTrafficVehicle(
                 "scheduled vehicle departures");
         }
         const std::size_t routeIndex = passengerStopRoutes_.size();
-        passengerStopRoutes_.push_back({trafficState.actor, trafficState.passengerStops});
+        passengerStopRoutes_.push_back({trafficState.actor, trafficState.passengerStops,
+                                        trafficState.timetableKey, trafficState.timetableLineName,
+                                        trafficState.timetableDestinationName,
+                                        std::move(timetableTripName)});
         if (registeredPassengerRouteIndex != nullptr) {
             *registeredPassengerRouteIndex = routeIndex;
         }
@@ -634,7 +639,11 @@ bool RenderLoop::AddTrafficVehicle(
             trafficState.passengerRouteIndex = passengerRouteIndex;
         } else {
             trafficState.passengerRouteIndex = passengerStopRoutes_.size();
-            passengerStopRoutes_.push_back({trafficState.actor, trafficState.passengerStops});
+            passengerStopRoutes_.push_back({trafficState.actor, trafficState.passengerStops,
+                                            trafficState.timetableKey,
+                                            trafficState.timetableLineName,
+                                            trafficState.timetableDestinationName,
+                                            std::move(timetableTripName)});
         }
     }
     for (const openbus::map::MapTrafficPassengerStop& stop : trafficState.passengerStops) {
@@ -890,6 +899,7 @@ void RenderLoop::SetSunAltitude(double altitudeDegrees) {
 void RenderLoop::SetPlayerVehicle(Vehicle* model) {
     playerVehicle_ = model;
     if (playerVehicle_ != nullptr) {
+        playerPassengerServiceEnabled_ = true;
         freeCameraEnabled_ = false;
         if (mouseLookEnabled_) {
             glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -899,6 +909,93 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
     }
 }
 
+void RenderLoop::SetPlayerTimetableSelection(
+    std::optional<SpawnBusRequest::TimetableSelection> selection) {
+    playerTimetableState_.reset();
+    if (!selection) {
+        return;
+    }
+    if (selection->passengerRouteIndex >= passengerStopRoutes_.size() ||
+        selection->courseIndex >= passengerTimetableCourses_.size()) {
+        throw std::out_of_range("Player timetable selection is outside the available catalog");
+    }
+    const auto& course = passengerTimetableCourses_[selection->courseIndex];
+    if (selection->courseTripIndex >= course.trips.size() ||
+        selection->firstStopIndex >=
+            passengerStopRoutes_[selection->passengerRouteIndex].stops.size()) {
+        throw std::out_of_range("Player timetable selection has an invalid trip or first stop");
+    }
+    const auto& trip = course.trips[selection->courseTripIndex];
+    const auto& route = passengerStopRoutes_[selection->passengerRouteIndex];
+    if (trip.timetableKey != route.timetableKey) {
+        throw std::invalid_argument("Player timetable trip does not match its passenger route");
+    }
+    playerTimetableState_ = PlayerTimetableState{*selection, selection->firstStopIndex,
+                                                  route.lineName};
+    playerPassengerServiceEnabled_ = true;
+    applyPlayerTripAiPolicy(trip.timetableKey, selection->driveAsAdditionalBus);
+}
+
+void RenderLoop::applyPlayerTripAiPolicy(const std::string& timetableKey,
+                                         bool additionalBus) {
+    if (additionalBus) {
+        return;
+    }
+    for (TrafficVehicleState& state : trafficVehicles_) {
+        if (state.isBus &&
+            openbus::map::mapTrafficShouldCancelScheduledRouteForPlayerTrip(
+                timetableKey, state.timetableKey, additionalBus) &&
+            !state.scheduledServiceCancelled) {
+            state.scheduledServiceCancelled = true;
+            ++state.workerGeneration;
+        }
+    }
+}
+
+void RenderLoop::advancePlayerTimetableTrip() {
+    if (!playerTimetableState_) {
+        return;
+    }
+    PlayerTimetableState& state = *playerTimetableState_;
+    if (state.stopAfterCurrentTrip ||
+        state.selection.courseIndex >= passengerTimetableCourses_.size()) {
+        playerTimetableState_.reset();
+        playerPassengerServiceEnabled_ = false;
+        return;
+    }
+    const auto& course = passengerTimetableCourses_[state.selection.courseIndex];
+    std::vector<std::string> availableTimetableKeys;
+    for (const PassengerStopRouteState& route : passengerStopRoutes_) {
+        if (!route.stops.empty() &&
+            std::ranges::find(availableTimetableKeys, route.timetableKey) ==
+                availableTimetableKeys.end()) {
+            availableTimetableKeys.push_back(route.timetableKey);
+        }
+    }
+    const auto nextTripIndex = openbus::map::mapAiTimetableNextCourseTripIndex(
+        course, state.selection.courseTripIndex, availableTimetableKeys);
+    if (nextTripIndex) {
+        const auto& trip = course.trips[*nextTripIndex];
+        const auto route = std::ranges::find_if(
+            passengerStopRoutes_, [&](const PassengerStopRouteState& candidate) {
+                return candidate.timetableKey == trip.timetableKey && !candidate.stops.empty();
+            });
+        if (route != passengerStopRoutes_.end()) {
+            state.selection.courseTripIndex = *nextTripIndex;
+            state.selection.passengerRouteIndex =
+                static_cast<std::size_t>(std::distance(passengerStopRoutes_.begin(), route));
+            state.selection.firstStopIndex = 0;
+            state.nextStopIndex = 0;
+            state.lineName = route->lineName;
+            applyPlayerTripAiPolicy(trip.timetableKey,
+                                    state.selection.driveAsAdditionalBus);
+            return;
+        }
+    }
+    playerTimetableState_.reset();
+    playerPassengerServiceEnabled_ = false;
+}
+
 void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
                         std::size_t groundTextureIndex, const std::filesystem::path& omsiRoot,
                         bool prepareInitialWindowAsync) {
@@ -906,6 +1003,7 @@ void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spaw
     if (spawnEntryPointIndex >= map.entryPoints.size()) {
         throw std::out_of_range("Selected map spawn entrypoint is outside [entrypoints]");
     }
+    passengerTimetableCourses_ = map.aiTraffic.timetableCourses;
     if (prepareInitialWindowAsync) {
         mapRenderer_.reset();
     }

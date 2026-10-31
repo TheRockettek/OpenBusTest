@@ -3243,6 +3243,7 @@ void RenderLoop::endFrame() {
     TraceScope trace("frame", "RenderLoop::endFrame.swapBuffers");
     if (imguiEnabled_) {
         drawOnFootUi();
+        drawPlayerTimetableUi();
         imguiLayer_->render();
     }
     glfwSwapBuffers(window_);

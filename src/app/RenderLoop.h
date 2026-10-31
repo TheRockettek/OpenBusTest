@@ -94,6 +94,14 @@ struct SpawnBusRequest {
     std::filesystem::path configurationPath;
     VehiclePlacement placement;
     VehicleSetupOptions setupOptions;
+    struct TimetableSelection {
+        std::size_t passengerRouteIndex = 0;
+        std::size_t courseIndex = 0;
+        std::size_t courseTripIndex = 0;
+        std::size_t firstStopIndex = 0;
+        bool driveAsAdditionalBus = false;
+    };
+    std::optional<TimetableSelection> timetableSelection;
 };
 
 struct TrafficSplineDebugLabel {
@@ -145,7 +153,8 @@ class RenderLoop {
                            std::size_t* registeredPassengerRouteIndex = nullptr,
                            bool requireActiveTileSpawnCandidate = false,
                            std::vector<int> scheduledDepartureProfileIndices = {},
-                           std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles = {});
+                           std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles = {},
+                           std::string timetableKey = {}, std::string timetableTripName = {});
     int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -196,6 +205,8 @@ class RenderLoop {
     void SetSunAltitude(double altitudeDegrees);
 
     void SetPlayerVehicle(Vehicle* vehicle);
+    void SetPlayerTimetableSelection(
+        std::optional<SpawnBusRequest::TimetableSelection> selection);
     bool runStartupMenu(const std::filesystem::path& omsiRoot, StartupSelection& selection);
     void SetNoBusSpawnPoint(const VehiclePlacement& placement);
     std::optional<SpawnBusRequest> consumeSpawnBusRequest();
@@ -245,6 +256,9 @@ class RenderLoop {
     double currentFieldOfView() const;
     void renderReflectionViews(const BusSimulation& simulation, const World& world);
     void drawOnFootUi();
+    void drawPlayerTimetableUi();
+    void applyPlayerTripAiPolicy(const std::string& timetableKey, bool additionalBus);
+    void advancePlayerTimetableTrip();
     void loadMapVehicleOptions();
 
     GLFWwindow* window_;
@@ -431,6 +445,7 @@ class RenderLoop {
         std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles;
         std::vector<openbus::map::MapTrafficPassengerStop> passengerStops;
         std::optional<std::size_t> passengerRouteIndex;
+        std::string timetableKey;
         std::string timetableLineName;
         std::string timetableDestinationName;
         std::size_t nextPassengerStopIndex = 0;
@@ -447,6 +462,7 @@ class RenderLoop {
         bool vehicleLoadFailed = false;
         bool reducedTrafficDetail = false;
         bool scheduledTripActive = false;
+        bool scheduledServiceCancelled = false;
         unsigned lastScheduledAdmissionDiagnosticBlockerMask = 16;
         double lastScheduledAdmissionDiagnosticCameraDistanceMeters = -1.0;
         double lastScheduledProgressDiagnosticDistanceMeters = -1.0;
@@ -468,6 +484,10 @@ class RenderLoop {
     struct PassengerStopRouteState {
         openbus::map::MapTrafficActor actor;
         std::vector<openbus::map::MapTrafficPassengerStop> stops;
+        std::string timetableKey;
+        std::string lineName;
+        std::string destinationName;
+        std::string tripName;
     };
     std::vector<TrafficVehicleState> trafficVehicles_;
     std::unordered_map<const openbus::map::MapTrafficActor*, const TrafficVehicleState*>
@@ -475,6 +495,22 @@ class RenderLoop {
     const TrafficVehicleState* indexedTrafficVehicleData_ = nullptr;
     std::size_t indexedTrafficVehicleCount_ = 0;
     std::vector<PassengerStopRouteState> passengerStopRoutes_;
+    std::vector<openbus::map::MapAiTimetableCourse> passengerTimetableCourses_;
+    std::string selectedPlayerLineName_;
+    std::size_t selectedPlayerCourseIndex_ = 0;
+    std::size_t selectedPlayerCourseTripIndex_ = 0;
+    std::size_t selectedPlayerFirstStopIndex_ = 0;
+    bool selectedPlayerUseTimetable_ = false;
+    bool selectedPlayerDriveAsAdditionalBus_ = false;
+    std::optional<SpawnBusRequest::TimetableSelection> selectedPlayerTimetableSelection_;
+    struct PlayerTimetableState {
+        SpawnBusRequest::TimetableSelection selection;
+        std::size_t nextStopIndex = 0;
+        std::string lineName;
+        bool stopAfterCurrentTrip = false;
+    };
+    std::optional<PlayerTimetableState> playerTimetableState_;
+    bool playerPassengerServiceEnabled_ = true;
     std::unordered_map<int, std::size_t> scheduledPassengerQueues_;
     std::unordered_map<int, std::size_t> scheduledPassengerInitialQueues_;
     std::map<int, std::vector<openbus::map::MapTrafficPose>> authoredPassengerPositions_;

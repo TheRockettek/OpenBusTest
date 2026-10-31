@@ -764,6 +764,29 @@ void runFixtureProbe() {
                             .profiles[1]
                             .departureOffsetSeconds == std::vector<double>{120.0},
                 "timetable routes retain stations, aligned profile selections, and stop times");
+        require(definition.aiTraffic.timetableCourses.size() == 2 &&
+                    definition.aiTraffic.timetableCourses[0].name == "BusOnly" &&
+                    definition.aiTraffic.timetableCourses[0].trips ==
+                        std::vector<openbus::map::MapAiTimetableCourseTrip>{
+                            {"busonly", 0, 495.0}} &&
+                    definition.aiTraffic.timetableCourses[1].name == "Fixture" &&
+                    definition.aiTraffic.timetableCourses[1].trips ==
+                        std::vector<openbus::map::MapAiTimetableCourseTrip>{
+                            {"fixturetrip", 1, 495.0}, {"fixturetrip", 0, 405.0}},
+                "timetable courses retain source order, trip keys, profiles, and departure times");
+        const openbus::map::MapAiTimetableCourse progressionCourse{
+            "Progression",
+            {{"unavailable", 0, 100.0}, {"fixturetrip", 0, 110.0}, {"otherline", 1, 120.0}}};
+        const std::vector<std::string> availableProgressionRoutes{"fixturetrip", "otherline"};
+        require(openbus::map::mapAiTimetableNextCourseTripIndex(
+                    progressionCourse, 0, availableProgressionRoutes) == 1 &&
+                    openbus::map::mapAiTimetableNextCourseTripIndex(
+                        progressionCourse, 1, availableProgressionRoutes) == 2 &&
+                    !openbus::map::mapAiTimetableNextCourseTripIndex(
+                        progressionCourse, 2, availableProgressionRoutes) &&
+                    !openbus::map::mapAiTimetableNextCourseTripIndex(
+                        progressionCourse, 3, availableProgressionRoutes),
+                "player course progression skips unavailable routes and preserves trip order");
         const auto preciseStationPosition = openbus::map::mapAiTimetableStationPosition(
             definition.aiTraffic.timetableRoutes[0],
             definition.aiTraffic.timetableRoutes[0].stations[0]);
