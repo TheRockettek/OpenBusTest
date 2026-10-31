@@ -43,6 +43,14 @@ std::string environmentValue(const char* name) {
     return value == nullptr ? std::string{} : std::string(value);
 }
 
+std::filesystem::path captureDirectoryFromEnvironment() {
+    const std::string configuredDirectory = environmentValue("OPENBUS_CAPTURE_DIR");
+    const std::filesystem::path directory = configuredDirectory.empty()
+                                                ? std::filesystem::path("screenshots")
+                                                : openbus::pathFromUtf8(configuredDirectory);
+    return std::filesystem::absolute(directory).lexically_normal();
+}
+
 bool booleanEnvironmentValue(const char* name, bool fallback) {
     std::string value = environmentValue(name);
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
@@ -2184,7 +2192,7 @@ int main() {
                 if (pendingCaptureRequest && renderer.isCaptureReady()) {
                     pendingCaptureRequest = false;
                     captureOnStartup = false;
-                    renderer.captureViews(*simulation, *world, "screenshots");
+                    renderer.captureViews(*simulation, *world, captureDirectoryFromEnvironment());
                     renderer.requestClose();
                 }
 

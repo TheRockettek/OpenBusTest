@@ -293,12 +293,22 @@ void Vehicle::load(const SharedVehicleDefinition& definition) {
         scripts->configureTextTextures(result.textTextures);
     }
     interiorLights = result.interiorLights;
+    enhancedLights = result.enhancedLights;
+    spotlights = result.spotlights;
     interiorLightControllers.clear();
     interiorLightControllers.reserve(interiorLights.size());
     for (const ModelInteriorLight& light : interiorLights) {
         char* parsedEnd = nullptr;
         const double numericValue = std::strtod(light.controller.c_str(), &parsedEnd);
         interiorLightControllers.push_back(
+            {parsedEnd != light.controller.c_str() && *parsedEnd == '\0', numericValue});
+    }
+    enhancedLightControllers.clear();
+    enhancedLightControllers.reserve(enhancedLights.size());
+    for (const ModelEnhancedLight& light : enhancedLights) {
+        char* parsedEnd = nullptr;
+        const double numericValue = std::strtod(light.controller.c_str(), &parsedEnd);
+        enhancedLightControllers.push_back(
             {parsedEnd != light.controller.c_str() && *parsedEnd == '\0', numericValue});
     }
     lodThresholds = result.lodThresholds;

@@ -65,6 +65,9 @@ constexpr dReal DOWNSHIFT_RPM = 950.0;
 constexpr dReal SHIFT_LOCKOUT = 0.0;
 constexpr dReal PI = 3.14159265358979323846;
 constexpr dReal MAX_FRAME_SECONDS = 0.25;
+constexpr int WHEEL_CONTACT_CANDIDATES = 32;
+constexpr int WHEEL_CONTACT_LIMIT = 8;
+constexpr int OTHER_CONTACT_LIMIT = 4;
 bool hasValidMomentOfInertia(const BusConfiguration& configuration) {
     return std::all_of(configuration.momentOfInertia.begin(), configuration.momentOfInertia.end(),
                        [](double value) { return std::isfinite(value) && value > 0.0; });
@@ -86,12 +89,22 @@ int checkedOdeCount(std::size_t count, const char* label) {
 } // namespace
 
 struct BusSimulation::Impl {
+    struct CollisionPairCounters {
+        std::uint64_t calls = 0;
+        std::uint64_t hits = 0;
+    };
+
     struct CollisionProfileCounters {
         std::uint64_t callbackPairs = 0;
         std::uint64_t filteredPairs = 0;
         std::uint64_t narrowphaseCalls = 0;
         std::uint64_t contacts = 0;
         std::uint64_t contactJoints = 0;
+        CollisionPairCounters wheelStatic;
+        CollisionPairCounters chassisStatic;
+        CollisionPairCounters wheelPole;
+        CollisionPairCounters chassisPole;
+        CollisionPairCounters other;
     };
 
     struct Corner {
@@ -225,7 +238,10 @@ struct BusSimulation::Impl {
         const bool firstIsPole = world.isMapPoleGeometry(first);
         const bool secondIsPole = world.isMapPoleGeometry(second);
         const bool isPoleContact = firstIsPole || secondIsPole;
-        if ((!firstHasBody && !secondHasBody) ||
+        // Kinematic poles are moved by the impact model, not by contact joints
+        // with static scenery or other poles.
+        if ((firstIsPole && (!secondHasBody || secondIsPole)) ||
+            (secondIsPole && (!firstHasBody || firstIsPole)) || (!firstHasBody && !secondHasBody) ||
             (firstHasBody && secondHasBody && !isPoleContact)) {
             if (profileRecording) {
                 ++simulation->collisionProfileCounters.filteredPairs;
@@ -234,21 +250,45 @@ struct BusSimulation::Impl {
         }
         const bool firstIsWheel = simulation->wheelGeometries.contains(first);
         const bool secondIsWheel = simulation->wheelGeometries.contains(second);
+        const bool firstIsChassis = dGeomGetBody(first) == simulation->chassis;
+        const bool secondIsChassis = dGeomGetBody(second) == simulation->chassis;
         const bool isWheelStaticContact =
             (firstIsWheel && !secondHasBody) || (secondIsWheel && !firstHasBody);
-        dContact contacts[4] = {};
+        dContact contacts[WHEEL_CONTACT_CANDIDATES] = {};
         int count = 0;
         {
             openbus::rendering::TraceScope narrowphase("physics",
                                                        "BusSimulation::nearCallback.dCollide");
-            count = dCollide(first, second, 4, &contacts[0].geom, sizeof(dContact));
+            count = dCollide(first, second,
+                             isWheelStaticContact ? WHEEL_CONTACT_CANDIDATES : OTHER_CONTACT_LIMIT,
+                             &contacts[0].geom, sizeof(dContact));
+        }
+        if (isWheelStaticContact && count > WHEEL_CONTACT_LIMIT) {
+            // Dense meshes can fill a small ODE contact buffer before it reaches
+            // the deepest triangles beneath the tire.
+            std::partial_sort(
+                contacts, contacts + WHEEL_CONTACT_LIMIT, contacts + count,
+                [](const dContact& a, const dContact& b) { return a.geom.depth > b.geom.depth; });
+            count = WHEEL_CONTACT_LIMIT;
         }
         if (profileRecording) {
-            ++simulation->collisionProfileCounters.narrowphaseCalls;
-            simulation->collisionProfileCounters.contacts += static_cast<std::uint64_t>(count);
+            CollisionProfileCounters& counters = simulation->collisionProfileCounters;
+            ++counters.narrowphaseCalls;
+            counters.contacts += static_cast<std::uint64_t>(count);
+            CollisionPairCounters* pair = &counters.other;
+            if (isPoleContact && (firstIsWheel || secondIsWheel)) {
+                pair = &counters.wheelPole;
+            } else if (isPoleContact && (firstIsChassis || secondIsChassis)) {
+                pair = &counters.chassisPole;
+            } else if (isWheelStaticContact) {
+                pair = &counters.wheelStatic;
+            } else if ((firstIsChassis && !secondHasBody) ||
+                       (secondIsChassis && !firstHasBody)) {
+                pair = &counters.chassisStatic;
+            }
+            ++pair->calls;
+            pair->hits += count > 0 ? 1 : 0;
         }
-        const bool firstIsChassis = dGeomGetBody(first) == simulation->chassis;
-        const bool secondIsChassis = dGeomGetBody(second) == simulation->chassis;
         if (count > 0 && firstIsChassis != secondIsChassis) {
             for (int index = 0; index < count; ++index) {
                 simulation->recordChassisCollision(contacts[index].geom);
@@ -302,6 +342,10 @@ struct BusSimulation::Impl {
         if (elapsedSeconds < 2.0) {
             return;
         }
+        const auto pairSummary = [](const char* label, const CollisionPairCounters& pair) {
+            return std::string(label) + "=" + std::to_string(pair.calls) +
+                   " calls/" + std::to_string(pair.hits) + " hits";
+        };
         simulationLog.Log(
             LogLevel::Info,
             "Physics collision profile (" + std::to_string(elapsedSeconds) +
@@ -309,7 +353,12 @@ struct BusSimulation::Impl {
                 ", filtered pairs=" + std::to_string(collisionProfileCounters.filteredPairs) +
                 ", dCollide calls=" + std::to_string(collisionProfileCounters.narrowphaseCalls) +
                 ", contacts=" + std::to_string(collisionProfileCounters.contacts) +
-                ", contact joints=" + std::to_string(collisionProfileCounters.contactJoints));
+                ", contact joints=" + std::to_string(collisionProfileCounters.contactJoints) +
+                "; " + pairSummary("wheel-static", collisionProfileCounters.wheelStatic) +
+                ", " + pairSummary("chassis-static", collisionProfileCounters.chassisStatic) +
+                ", " + pairSummary("wheel-pole", collisionProfileCounters.wheelPole) +
+                ", " + pairSummary("chassis-pole", collisionProfileCounters.chassisPole) +
+                ", " + pairSummary("other", collisionProfileCounters.other));
         collisionProfileCounters = {};
         collisionProfileWindowStart = now;
     }

@@ -877,10 +877,12 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   retire at their endpoint rather than reversing back along the path.
 - Press `U` to raise the player bus and its physics bodies 5 m at the current
   X/Y location; it then falls naturally under gravity.
-- VSync is enabled by default; set `OPENBUS_VSYNC=0`, `off`, or `false` before
-  launching to run above the display refresh cadence. Set `OPENBUS_FPS_CAP=60`
-  to limit rendered frames to 60 FPS independently of VSync; leave it unset for
-  no software frame-rate cap.
+- VSync is requested for the startup menu, regardless of `OPENBUS_VSYNC`.
+  Gameplay also requests VSync by default; set `OPENBUS_VSYNC=0`, `off`, or
+  `false` before launching to disable it for gameplay. The graphics driver or
+  display compositor may override the requested swap interval. Set
+  `OPENBUS_FPS_CAP=60` to limit rendered gameplay frames to 60 FPS independently
+  of VSync; leave it unset for no software frame-rate cap.
 - AI traffic, pedestrians, and traffic signals run on a dedicated worker loop.
   Set `OPENBUS_AI_HZ=60` to choose its update rate. If unset, AI follows the
   average rendered FPS over a rolling three-second window, divided by
@@ -1012,13 +1014,21 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
 
 The ground uses a world-space grid with highlighted ten-metre lines.
 
-## CPU profiling
+## CPU and memory profiling
 
-Use `profile.bat` (Windows) or `profile.sh` (Linux) to launch a Release build
-with tracing instrumentation. **Recording starts off.** Navigate to the place
-you want to profile, then press **F10** to start recording. Press **F10** again
-to pause and save; further presses resume/pause the same capture. Holding the
-key does not repeatedly toggle it. Recording state changes are logged.
+Use `profile.bat` (Windows) or `profile.sh` (Linux) to launch an instrumented
+build. On Linux, `profile.sh` requires Heaptrack and runs the application under
+it automatically; install the `heaptrack` package if it is unavailable. The
+Linux build uses `RelWithDebInfo` so allocation call stacks retain symbols.
+Heaptrack's allocation capture runs for the entire application session.
+Its output defaults to `openbus-memory.heaptrack` in the repository root;
+`OPENBUS_MEMORY_TRACE_FILE` selects another path. Open the capture with
+`heaptrack_gui` or inspect it with `heaptrack_print`.
+
+The Chrome CPU trace is separate. **Recording starts off.** Navigate to the
+place you want to profile, then press **F10** to start recording. Press **F10**
+again to pause and save; further presses resume/pause the same capture. Holding
+the key does not repeatedly toggle it. Recording state changes are logged.
 
 The Chrome trace is written to `openbus_trace.json`; `OPENBUS_TRACE_FILE`
 overrides its path. Pausing drains pending events and leaves a valid JSON file
@@ -1041,6 +1051,12 @@ without querying the driver. Trace durations are CPU wall times, not GPU
 execution times: driver backpressure can appear in a GL call or in
 `RenderLoop::endFrame.swapBuffers`. Compare whole `main` frame times rather than
 treating a shorter draw scope as an equal FPS gain.
+
+While tracing, the periodic `Physics collision profile` log breaks down
+`dCollide` calls and hit pairs by wheel/static, chassis/static, wheel/pole,
+chassis/pole, and other geometry pairs. These are counts over the logged
+interval, not elapsed times; compare them with the timing trace when
+investigating collision costs.
 
 Traffic captures break `RenderLoop::updateTrafficDriving.vehicleMovement` into
 actor collection and runtime advance.

@@ -1,5 +1,6 @@
 #include "physics/BusSimulation.h"
 #include "physics/World.h"
+#include "render/MatrixMath.h"
 
 #include <algorithm>
 #include <array>
@@ -137,6 +138,30 @@ double wheelPivotError(const BusConfiguration& configuration, const BodyPose& ch
     return std::hypot(localX - axle.position, localY - expectedY);
 }
 
+double wheelRenderCenterError(const BodyPose& chassis, const BodyPose& wheel) {
+    const double deltaX = wheel.position[0] - chassis.position[0];
+    const double deltaY = wheel.position[1] - chassis.position[1];
+    const double deltaZ = wheel.position[2] - chassis.position[2];
+    const std::array<double, 3> expectedCenter = {
+        chassis.rotation[0] * deltaX + chassis.rotation[3] * deltaY +
+            chassis.rotation[6] * deltaZ,
+        chassis.rotation[1] * deltaX + chassis.rotation[4] * deltaY +
+            chassis.rotation[7] * deltaZ,
+        chassis.rotation[2] * deltaX + chassis.rotation[5] * deltaY +
+            chassis.rotation[8] * deltaZ + 0.35,
+    };
+    constexpr std::array<double, 3> modelCenter = {0.13, -0.87, 0.41};
+    constexpr double modelOffsetZ = -0.35;
+    const openbus::rendering::Matrix4 transform =
+        openbus::rendering::makeOdeWheelAnimationTransform(chassis, wheel, modelCenter,
+                                                            modelOffsetZ);
+    const std::array<double, 4> renderedCenter = openbus::rendering::transformPoint(
+        transform, {modelCenter[0], modelCenter[1], modelCenter[2], 1.0});
+    return std::hypot(std::hypot(renderedCenter[0] - expectedCenter[0],
+                                 renderedCenter[1] - expectedCenter[1]),
+                      renderedCenter[2] - expectedCenter[2]);
+}
+
 double rotationDelta(const BodyPose& previous, const BodyPose& current) {
     double trace = 0.0;
     for (std::size_t index = 0; index < previous.rotation.size(); ++index) {
@@ -155,18 +180,23 @@ struct StressMetrics {
     double maximumRoll = 0.0;
     double settledWheelPivotError = 0.0;
     double maximumWheelPivotError = 0.0;
+    double maximumWheelRenderCenterError = 0.0;
     double maximumStraightPairDifference = 0.0;
     double speedAtHighSpeedBump = 0.0;
     double speedAtBrakeStart = 0.0;
     double speedAfterBraking = 0.0;
+    double finalX = 0.0;
+    double finalY = 0.0;
+    double finalZ = 0.0;
+    double finalPlanarSpeed = 0.0;
 };
 
-bool runStressCase(const std::string& name, BusConfiguration configuration) {
+bool runStressCase(const std::string& name, BusConfiguration configuration,
+                   StressMetrics& metrics) {
     const BusConfiguration alignmentConfiguration = configuration;
     World simulationWorld(0.0, {makeTerrain()});
     BusSimulation simulation(simulationWorld, std::move(configuration), VehiclePlacement{{15.0, -72.0, 0.0}, 0.0}, 60.0, 8);
     constexpr double fixedStep = 1.0 / 60.0;
-    StressMetrics metrics;
     BodyPose previousChassis = simulation.chassisPose();
     std::vector<BodyPose> previousWheels;
     std::vector<double> previousWheelRotation;
@@ -274,6 +304,13 @@ bool runStressCase(const std::string& name, BusConfiguration configuration) {
             metrics.maximumWheelPivotError = std::max(
                 metrics.maximumWheelPivotError,
                 wheelPivotError(alignmentConfiguration, chassis, pose, wheel));
+            const double renderCenterError = wheelRenderCenterError(chassis, pose);
+            if (!std::isfinite(renderCenterError)) {
+                std::cerr << name << ": non-finite rendered wheel center\n";
+                return false;
+            }
+            metrics.maximumWheelRenderCenterError =
+                std::max(metrics.maximumWheelRenderCenterError, renderCenterError);
             previousWheels[wheel] = pose;
             previousWheelRotation[wheel] = wheelRotation;
         }
@@ -299,6 +336,10 @@ bool runStressCase(const std::string& name, BusConfiguration configuration) {
         }
     }
 
+    metrics.finalX = simulation.positionX();
+    metrics.finalY = simulation.positionY();
+    metrics.finalZ = simulation.positionZ();
+    metrics.finalPlanarSpeed = simulation.speed();
     std::cout << name << " maxSpeed=" << metrics.maximumChassisSpeed
               << " maxAngularSpeed=" << metrics.maximumChassisAngularSpeed
               << " maxWheelSpeed=" << metrics.maximumWheelSpeed
@@ -307,10 +348,11 @@ bool runStressCase(const std::string& name, BusConfiguration configuration) {
               << " maxPitch=" << metrics.maximumPitch << " maxRoll=" << metrics.maximumRoll
               << " settledWheelPivotError=" << metrics.settledWheelPivotError
               << " maxWheelPivotError=" << metrics.maximumWheelPivotError
+              << " maxWheelRenderCenterError=" << metrics.maximumWheelRenderCenterError
               << " straightPairDifference=" << metrics.maximumStraightPairDifference
               << " speedAtBump=" << metrics.speedAtHighSpeedBump
-              << " finalPosition=" << simulation.positionX() << ',' << simulation.positionY() << ','
-              << simulation.positionZ() << " finalPlanarSpeed=" << simulation.speed()
+              << " finalPosition=" << metrics.finalX << ',' << metrics.finalY << ','
+              << metrics.finalZ << " finalPlanarSpeed=" << metrics.finalPlanarSpeed
               << " brake=" << metrics.speedAtBrakeStart << "->" << metrics.speedAfterBraking
               << '\n';
 
@@ -320,6 +362,7 @@ bool runStressCase(const std::string& name, BusConfiguration configuration) {
         metrics.maximumChassisSpeed > 45.0 || metrics.maximumChassisAngularSpeed > 2.5 ||
         metrics.maximumWheelSpeed > 60.0 || metrics.maximumWheelAngularSpeed > 120.0 ||
         metrics.maximumSuspensionTravel > 0.28 || metrics.maximumWheelPivotError > 0.15 ||
+        metrics.maximumWheelRenderCenterError > 1.0e-9 ||
         metrics.maximumStraightPairDifference > 0.12 || metrics.speedAtHighSpeedBump < 12.0 ||
         metrics.speedAtBrakeStart <= 1.0 ||
         metrics.speedAfterBraking >= metrics.speedAtBrakeStart * 0.75) {
@@ -329,11 +372,73 @@ bool runStressCase(const std::string& name, BusConfiguration configuration) {
     return true;
 }
 
+bool sameMetrics(const StressMetrics& first, const StressMetrics& second) {
+    constexpr double tolerance = 1.0e-9;
+    const std::array<double, 18> firstValues = {
+        first.maximumChassisSpeed,
+        first.maximumChassisAngularSpeed,
+        first.maximumWheelSpeed,
+        first.maximumWheelAngularSpeed,
+        first.maximumSuspensionTravel,
+        first.maximumPitch,
+        first.maximumRoll,
+        first.settledWheelPivotError,
+        first.maximumWheelPivotError,
+        first.maximumWheelRenderCenterError,
+        first.maximumStraightPairDifference,
+        first.speedAtHighSpeedBump,
+        first.speedAtBrakeStart,
+        first.speedAfterBraking,
+        first.finalX,
+        first.finalY,
+        first.finalZ,
+        first.finalPlanarSpeed,
+    };
+    const std::array<double, firstValues.size()> secondValues = {
+        second.maximumChassisSpeed,
+        second.maximumChassisAngularSpeed,
+        second.maximumWheelSpeed,
+        second.maximumWheelAngularSpeed,
+        second.maximumSuspensionTravel,
+        second.maximumPitch,
+        second.maximumRoll,
+        second.settledWheelPivotError,
+        second.maximumWheelPivotError,
+        second.maximumWheelRenderCenterError,
+        second.maximumStraightPairDifference,
+        second.speedAtHighSpeedBump,
+        second.speedAtBrakeStart,
+        second.speedAfterBraking,
+        second.finalX,
+        second.finalY,
+        second.finalZ,
+        second.finalPlanarSpeed,
+    };
+    for (std::size_t index = 0; index < firstValues.size(); ++index) {
+        if (std::abs(firstValues[index] - secondValues[index]) > tolerance) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
-    if (!runStressCase("two-axle", twoAxleConfiguration()) ||
-        !runStressCase("three-axle", threeAxleConfiguration())) {
+    StressMetrics twoAxleMetrics;
+    StressMetrics threeAxleMetrics;
+    StressMetrics repeatedTwoAxleMetrics;
+    StressMetrics repeatedThreeAxleMetrics;
+    if (!runStressCase("two-axle", twoAxleConfiguration(), twoAxleMetrics) ||
+        !runStressCase("three-axle", threeAxleConfiguration(), threeAxleMetrics) ||
+        !runStressCase("two-axle-repeat", twoAxleConfiguration(), repeatedTwoAxleMetrics) ||
+        !runStressCase("three-axle-repeat", threeAxleConfiguration(),
+                       repeatedThreeAxleMetrics)) {
+        return 1;
+    }
+    if (!sameMetrics(twoAxleMetrics, repeatedTwoAxleMetrics) ||
+        !sameMetrics(threeAxleMetrics, repeatedThreeAxleMetrics)) {
+        std::cerr << "stress probe produced different metrics on repeated runs\n";
         return 1;
     }
     return 0;

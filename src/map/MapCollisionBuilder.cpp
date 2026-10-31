@@ -127,6 +127,37 @@ bool applySurfaceHeightMap(MapRoadSectionGeometry& geometry, std::size_t rowCoun
         return false;
     }
 
+    const std::uint8_t constantRed = image.rgba.front();
+    bool constantSurface = true;
+    for (std::size_t offset = 4; offset < image.rgba.size(); offset += 4) {
+        if (image.rgba[offset] != constantRed) {
+            constantSurface = false;
+            break;
+        }
+    }
+    if (constantSurface) {
+        for (std::size_t row = 0; row + 1 < rowCount && constantSurface; ++row) {
+            for (std::size_t column = 0; column + 1 < columnCount; ++column) {
+                const auto& a = geometry.vertices[row * columnCount + column];
+                const auto& b = geometry.vertices[row * columnCount + column + 1];
+                const auto& c = geometry.vertices[(row + 1) * columnCount + column];
+                const auto& d = geometry.vertices[(row + 1) * columnCount + column + 1];
+                if (std::hypot((a.x - b.x) - (c.x - d.x), (a.y - b.y) - (c.y - d.y),
+                               (a.z - b.z) - (c.z - d.z)) > 1.0e-10) {
+                    constantSurface = false;
+                    break;
+                }
+            }
+        }
+    }
+    if (constantSurface) {
+        const double offset = (static_cast<double>(constantRed) / 255.0 - 0.5) * 0.04;
+        for (MapRoadVertex& vertex : geometry.vertices) {
+            vertex.z += offset;
+        }
+        return true;
+    }
+
     std::vector<MapRoadVertex> vertices;
     std::vector<int> indices;
     for (std::size_t row = 0; row + 1 < rowCount; ++row) {
@@ -473,6 +504,13 @@ std::optional<MapPoleCollision> makeMapPoleCollision(const MapSceneryCollisionOb
     return pole;
 }
 
+void flushTileCollisionMesh(StaticCollisionMesh& tileMesh, MapRoadCollisionResult& result) {
+    if (!tileMesh.indices.empty()) {
+        result.meshes.push_back(std::move(tileMesh));
+    }
+    tileMesh = {};
+}
+
 void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
                                    const MapSceneryCollisionIndex& index, int tileX, int tileY,
                                    MapRoadCollisionResult& result, const MapDefinition& map) {
@@ -512,13 +550,17 @@ void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
                            point[1] <= maxY;
                 });
             if (meshFitsTile) {
-                const std::size_t currentVertexCount = tileMesh.vertices.size() / 3;
-                if (worldPositions.size() > MAX_VERTICES_PER_TILE - currentVertexCount ||
-                    currentVertexCount + worldPositions.size() >
-                        static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+                if (worldPositions.size() > MAX_VERTICES_PER_TILE) {
                     ++result.sceneryCollisionMeshesMissing;
+                    gameLog.Warning("Map scenery collision mesh exceeds vertex limit: object ID=" +
+                                    std::to_string(object.mapObjectId) +
+                                    ", vertices=" + std::to_string(worldPositions.size()));
                     continue;
                 }
+                if (worldPositions.size() > MAX_VERTICES_PER_TILE - tileMesh.vertices.size() / 3) {
+                    flushTileCollisionMesh(tileMesh, result);
+                }
+                const std::size_t currentVertexCount = tileMesh.vertices.size() / 3;
                 const int baseVertex = static_cast<int>(currentVertexCount);
                 for (const auto& point : worldPositions) {
                     tileMesh.vertices.insert(tileMesh.vertices.end(),
@@ -554,13 +596,10 @@ void appendSceneryCollisionForTile(StaticCollisionMesh& tileMesh,
                     continue;
                 }
                 for (std::size_t corner = 1; corner + 1 < polygon.size(); ++corner) {
-                    const std::size_t currentVertexCount = tileMesh.vertices.size() / 3;
-                    if (currentVertexCount + 3 > MAX_VERTICES_PER_TILE ||
-                        currentVertexCount + 3 >
-                            static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-                        ++result.sceneryCollisionMeshesMissing;
-                        break;
+                    if (tileMesh.vertices.size() / 3 > MAX_VERTICES_PER_TILE - 3) {
+                        flushTileCollisionMesh(tileMesh, result);
                     }
+                    const std::size_t currentVertexCount = tileMesh.vertices.size() / 3;
                     const int baseVertex = static_cast<int>(currentVertexCount);
                     for (const auto& point : {polygon[0], polygon[corner], polygon[corner + 1]}) {
                         tileMesh.vertices.insert(tileMesh.vertices.end(),
@@ -990,13 +1029,15 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
                 if (sectionGeometry.vertices.empty() || sectionGeometry.indices.empty()) {
                     continue;
                 }
-                const std::size_t currentVertexCount = tileMesh.vertices.size() / 3;
-                if (sectionGeometry.vertices.size() > MAX_VERTICES_PER_TILE - currentVertexCount ||
-                    currentVertexCount + sectionGeometry.vertices.size() >
-                        static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-                    ++result.skippedSplines;
-                    continue;
+                if (sectionGeometry.vertices.size() > MAX_VERTICES_PER_TILE) {
+                    throw std::length_error("Road collision section exceeds vertex limit for " +
+                                            spline.assetPath);
                 }
+                if (sectionGeometry.vertices.size() >
+                    MAX_VERTICES_PER_TILE - tileMesh.vertices.size() / 3) {
+                    flushTileCollisionMesh(tileMesh, result);
+                }
+                const std::size_t currentVertexCount = tileMesh.vertices.size() / 3;
                 const int baseVertex = static_cast<int>(currentVertexCount);
                 for (const MapRoadVertex& vertex : sectionGeometry.vertices) {
                     tileMesh.vertices.insert(tileMesh.vertices.end(),
@@ -1025,9 +1066,7 @@ static MapRoadCollisionResult buildMapRoadCollisionImpl(const MapDefinition& map
             appendSceneryCollisionForTile(tileMesh, *scenery, tileReference.x, tileReference.y,
                                           result, map);
         }
-        if (!tileMesh.indices.empty()) {
-            result.meshes.push_back(std::move(tileMesh));
-        }
+        flushTileCollisionMesh(tileMesh, result);
     }
     return result;
 }

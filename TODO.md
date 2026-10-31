@@ -21,10 +21,11 @@ configuration behavior, and regression evidence all exist.
   remains.
 - [~] The wheel/static contact defaults use the more compliant settings, and
   the deterministic stress probe passes for both axle configurations (maximum
-  angular speed 0.227 rad/s; suspension travel 0.237 m or less). Further solver
-  tuning is blocked on a validated vehicle/reference envelope; the probe alone
-  does not establish native OMSI parity. Do not accept visual smoothness alone
-  as proof of stability.
+  chassis angular speed 0.297 rad/s; suspension travel 0.268 m or less). The
+  probe now repeats each axle scenario and checks that all reported metrics
+  match within 1e-9. Further solver tuning is blocked on a validated
+  vehicle/reference envelope; the probe alone does not establish native OMSI
+  parity. Do not accept visual smoothness alone as proof of stability.
 - [o] Articulated configuration remains parseable for inspection, but
   articulated vehicles are outside the currently supported scope; runtime
   physics, collision, and rendering treat vehicles as single-body.
@@ -41,9 +42,11 @@ both supported vehicles pass it without wheel shake or explosive motion.
   four chassis orientations; authored tire-to-arch clearance remains
   asset-specific and unverified.
 - [~] Deterministic two-/three-axle pose bounds cover dynamic wheel placement,
-  and static default/ODE captures now run from isolated working directories.
-  Model-specific steering, bump, and motion comparisons remain unverified; the
-  current capture routine writes screenshots relative to its working directory.
+  and the stress probe now checks dynamic simulated wheel poses through the
+  render transform for both axle layouts. Static default/ODE captures run from
+  isolated working directories, and `OPENBUS_CAPTURE_DIR` can direct captures
+  to distinct output directories. Model-specific steering, bump, and motion
+  comparisons remain unverified.
 
 Done when MAN DL05 and E400 wheel poses pass stationary, steering, bump, and
 motion checks in both supported rendering modes.
@@ -51,25 +54,31 @@ motion checks in both supported rendering modes.
 ## 3. Finish material and texture behavior
 
 - [~] Environment maps are wired through texture loading and a reflection
-  shader; a GPU probe now verifies directional sampling and blend opacity with
-  a generated map. Representative assets and in-game visual parity remain.
+  shader; a GPU probe verifies opposite reflection directions and zero,
+  partial, and full opacity with a generated map. Representative assets and
+  in-game visual parity remain.
 - [~] Transparent batches sort back-to-front with render type as a tie-breaker,
   and transmap triangles sort back-to-front within each batch. Probes cover
   overlapping alpha/no-Z-write behavior, both ordering rules, and separate
-  reflection triangle accounting; asset-level glass/decal overlaps and actual
-  mirror-framebuffer parity remain to validate.
+  reflection triangle accounting. A generated two-layer case checks sorted
+  alpha blending in the reflection framebuffer; asset-level glass/decal
+  overlaps and in-game mirror parity remain to validate.
 - [~] Bump-map rendering now has GPU regression coverage for generated-map
-  directional shading, zero strength, and strength clamping. Representative
-  OMSI visual parity and parallax semantics still need validation.
+  opposite-direction shading, zero strength, and strength clamping.
+  Representative OMSI visual parity and parallax semantics still need
+  validation.
 - [~] Parser-built material states verify `matl_change` item selection, and a
   focused runtime-helper probe covers case-insensitive CTC replacement and
-  texture-array layer clamping. Representative MAN DL05/E400 asset parity and
-  end-to-end texture reload behavior remain unverified without those assets.
+  texture-array layer clamping. A generated hidden-GL vehicle fixture switches
+  item-specific lightmaps through two controller values, verifies distinct
+  decoded/uploaded textures and restoration of the base material.
+  Native independent primary-texture replacement semantics and representative
+  MAN DL05/E400 asset parity remain unverified.
 - [~] A GPU regression verifies that a missing auxiliary transmap binds
   texture zero after a prior material used a transmap. An asset-request probe
   covers delayed decode completion, terminal decode failure, and a later valid
-  request; vehicle-side GL upload and same-entry retry/recovery still lack an
-  injected runtime test.
+  request. A hidden-GL vehicle probe injects DXT5 upload failure and verifies
+  the decoded fallback renders after retrying the same cache entry.
 - [~] Automated probes cover PNG RGBA, 32-bit alpha TGA, indexed/RLE TGA,
   DXT1/DXT4/DXT5 DDS, transmap alpha, lightmap, and free-texture rendering.
   JPEG decoding is covered by a compact grayscale fixture, and all five
@@ -89,10 +98,17 @@ it.
 
 - [~] Implemented the basic `[illumination_interior]`/`[interiorlight]`
   runtime path: assigned mesh groups receive controller-driven point-light
-  shading. A GPU probe verifies light color isolation, zero strength, and
-  distance attenuation. OMSI intensity parity and `[light_enh]`,
-  `[light_enh_2]`,
-  and `[spotlight]` runtime semantics remain incomplete.
+  shading. A vehicle-level probe verifies live controller updates and reset;
+  GPU coverage checks color isolation, zero strength, and distance attenuation.
+  `[light_enh]` now renders a camera-facing, alpha-masked bloom with authored
+  color/size, controller multiplier, sunlight attenuation, and exponential
+  time-constant smoothing. A hidden-GL vehicle probe verifies mask-channel
+  handling and controller timing. `[light_enh_2]` renders directional and
+  omnidirectional billboards with camera alignment modes and cone-angle
+  brightness. A hidden-GL probe verifies authored color/mask and cone rejection.
+  Starburst/fog/effect-only behavior, fog scattering, `[spotlight]` rendering,
+  and OMSI intensity/sunlight parity remain incomplete. Parsed `[spotlight]`
+  records now warn that their payload is retained but has no runtime renderer.
 - [~] A focused E400 display/light regression remains blocked on the external
   E400 model CFG/assets, which are not included in this checkout; parser and
   runtime probes do not replace the requested visual comparison.
@@ -111,8 +127,10 @@ change from their controlling variables without manual texture replacement.
   substitution. The active E400 configuration uses these records for dashboard
   and body variants, so retaining their payloads is not sufficient for visual
   parity.
-  assigned meshes, but `[light_enh_2]` and `[spotlight]` remain storage-only;
-  the comparison still shows dashboard-lighting parity gaps.
+  assigned meshes; `[light_enh_2]` now renders a base bloom, while `[spotlight]`
+  remains storage-only with an explicit unsupported-runtime warning.
+  E400-specific behavior and dashboard-lighting parity gaps still require the
+  external model assets.
   semantics, including strength and lighting interaction, then compare the
   dashboard binnacle and cab surfaces again.
   OMSI fonts, layout, and display-background/alpha semantics. Enhanced
@@ -274,7 +292,9 @@ by parser alignment and should not be described as supported:
 - Non-OMSI font edge cases such as Windows-1252 glyph validation and remaining
   text format semantics remain. `[texttexture_enh]` alignments 0–5 and grid
   spacing are handled by the text runtime. `[interiorlight]`, `[light_enh]`,
-  `[light_enh_2]`, and `[spotlight]` light emission remain incomplete.
+  and `[light_enh_2]` have partial light-emission paths; their OMSI parity and
+  remaining flags/fog semantics are incomplete. `[spotlight]` has no runtime
+  and emits an explicit retained-but-unsupported diagnostic.
 - Complete OMSI input configuration and action semantics. Vehicle bindings
   can inherit `[vehicles]`/`[entry]` assignments from `Inputs/keyboard.cfg`,
   with OpenBus defaults for unsupported or absent assignments.
@@ -369,14 +389,11 @@ for alignment is not mistaken for supporting it.
 - [~] Basic `[illumination_interior]`/`[interiorlight]` controller-driven
   point-light shading, mesh assignments, and distance attenuation are active;
   their retained records are serialized in model-config JSON. A GPU probe
-  covers color, zero strength, and near/far attenuation. OMSI intensity parity
-  remains unverified. `[light_enh]`, `[light_enh_2]`, and
-  `[spotlight]` geometry and render ordering remain pending.
-  `[light_enh]` and `[light_enh_2]` preserve all required numeric fields and
-  accept their optional bitmap when present, and serialize their retained data
-  in model-config JSON; enhanced-light runtime behavior is still pending.
-  `[spotlight]` preserves its twelve numeric parameters in model-config JSON;
-  spotlight rendering remains unimplemented.
+  covers color, zero strength, and near/far attenuation. `[light_enh]` and
+  `[light_enh_2]` render base alpha-masked bloom effects and preserve their
+  numeric payloads/mesh assignments in JSON. `[spotlight]` retains its twelve
+  values and emits an explicit unsupported-runtime warning. OMSI parity,
+  enhanced-light flags/fog, and spotlight rendering remain incomplete.
 - [~] `[origin_from_mesh]` uses source transform metadata when present and the
   parsed mesh bounds center as its pivot fallback; native pivot parity remains
   unverified.
@@ -628,9 +645,11 @@ for the explicit boundary.
   types `[selobject]` and `[selspline]` integer IDs before the opaque object
   payload, and preserves selector override lines as opaque data. Date-ranged
   scenario tile files are now selected at startup by inclusive
-  `[startdate]`/`[enddate]`; selector edits, `[delete]`, `[typ]`, and `[relabel]`
+  `[startdate]`/`[enddate]`; selector edits, `[delete]`, `[typ]`, and
+  `[relabel]`
   still have no independent runtime semantics.
-  Global identity/description, version, background/map-camera data, marker flags,
+  Global identity/description, version, background/map-camera data, marker
+  flags,
   seasons, and traffic-density records are retained as metadata, but fields such
   as `[worldcoordinates]` have no runtime effect; timetable/HOF and AI-list map
   state remain out of scope. Unsupported `global.cfg` and tile sections retain
@@ -663,10 +682,12 @@ for the explicit boundary.
   tile window, including tiles activated later during streaming. Spawn
   candidate tiles are derived from sampled world positions rather than the
   owning spline tile, so splines and point-backed scenery paths crossing tile
-  boundaries can use the active tile containing the candidate.   Initial pool construction prioritizes
+  boundaries can use the active tile containing the candidate. Initial pool
+  construction prioritizes
   routes with candidates in the current active tiles, verifies candidate
   positions against the active window before local-priority admission, then
-  fills remaining capacity with map-wide routes. Candidate positions keep a vehicle-sized
+  fills remaining capacity with map-wide routes. Candidate positions keep a
+  vehicle-sized
   margin from spline endpoints, remain over 50 m plus vehicle radius from the
   camera, and preserve collision clearance. Scheduled buses remain restricted
   to connected endpoints or their authored timetable origins. Population
@@ -694,13 +715,15 @@ for the explicit boundary.
   target at most 1.8 m/s^2 lateral acceleration, and curve speed has a 2 m/s
   floor (capped by cruise speed); routes beyond the minimum turn radius remain
   rejected at route selection. Following uses a speed-dependent
-  1.5 s time headway and 2 m standstill buffer. Oriented swept footprints prevent advancement
+  1.5 s time headway and 2 m standstill buffer. Oriented swept footprints
+  prevent advancement
   through player/AI/static vehicles. Same-route following respects route order
   across spline boundaries so a rear vehicle's reservation cannot block a
   leader on a curve. A gap- and relative-speed-based following target and a
   gentler signal approach envelope damp speed changes while retaining swept
   collision and stop-line safeguards. Conservative crossing reservations
-  age blocked junction movements at 8 priority points per second (capped at 255);
+  age blocked junction movements at 8 priority points per second (capped at
+  255);
   stopped actors queued at a signal or behind the player/AI bus reset their
   stuck timer, and pending removals are canceled while that wait remains valid.
   any vehicle part (front, center, or rear) inside a junction counts as
@@ -709,9 +732,11 @@ for the explicit boundary.
   across the main road. Committed vehicles use physical swept clearance within
   the junction instead of the larger approach headway, and accrued wait
   survives approach movement while a junction path is in lookahead. Regressions
-  cover queued T-junction exits, right-turn wait aging, clearance, and no-overlap.
+  cover queued T-junction exits, right-turn wait aging, clearance, and
+  no-overlap.
   Vehicles return to endpoint queues only after
-  an unconnected endpoint is off-screen; population reductions happen off-screen.
+  an unconnected endpoint is off-screen; population reductions happen
+  off-screen.
   Regressions exercise actual
   left/right turns below 4.5 m/s on 10 m curves, radius rejection, following
   gaps at different speeds,
@@ -723,7 +748,8 @@ for the explicit boundary.
   initialize their shared cycle from map time, and treat dark state 12 as
   permissive; regressions cover route-start, loop-wrap, conditional stops,
   jumps, and player approach-distance requests. Native stop-line fidelity,
-  sign-specific controls, right-of-way parity and deadlock recovery at live junctions,
+  sign-specific controls, right-of-way parity and deadlock recovery at live
+  junctions,
   same-direction overtaking/lane changes, and physical player-to-AI
   collision response are listed in the remaining-work checklist below.
 - [~] Match timetable bus paths against the complete ordered `.ttr` track-entry
@@ -744,7 +770,8 @@ for the explicit boundary.
   itinerary-inaccurate prefix fallback. It stops at the matched prefix end and
   does not register player passenger stops for the incomplete itinerary.
   Complete timetable matches are preferred over these fallbacks, so a partial
-  match cannot hide a later complete route. Road traffic paths authored inside placed scenery
+  match cannot hide a later complete route. Road traffic paths authored inside
+  placed scenery
   objects retain the parent object's map ID and path index, allowing repeated
   timetable `.ttr` entries for junction paths to match the directed lane graph.
   Repeated checkpoints on ordinary map splines are collapsed to one route
@@ -753,8 +780,9 @@ for the explicit boundary.
   itinerary fallbacks, so unrepresented or disconnected map paths remain.
   A live Cotterell startup recognized complete routes for line 12, U28, and one
   U18 trip; other candidate trips remain explicitly logged as partial
-  timetable-origin prefix fallbacks rather than timetable-faithful. A one-bus live run departed line 12
-  from endpoint spline 14089 at minute 483, emitted progress at 100 m intervals
+  timetable-origin prefix fallbacks rather than timetable-faithful. A one-bus
+  live run departed line 12 from endpoint spline 14089 at minute 483, emitted
+  progress at 100 m intervals
   through 700 m, and reached its open route end after 785.68 m. Full OMSI
   schedule parity and the remaining partial map routes still need validation.
   The current seven fallback candidates match only timetable suffixes, omitting
@@ -772,6 +800,13 @@ for the explicit boundary.
   either. This points to an absent map source record and a real graph break,
   rather than a turn-radius limit; do not silently skip it and label the route
   complete.
+  A live HK West Kowloon 8P diagnostic matches only 5 of 53 represented
+  checkpoints and reports a 68.3 m horizontal gap from spline 1596658 to
+  1583971. Map-wide indexing currently adds map-spline lanes, but scenery
+  object `[path]` lanes are added only while their tiles are active; scheduled
+  routes can therefore lack off-window checkpoints. Index scenery traffic
+  paths map-wide before evaluating this route further, then retain the
+  disconnected-transition diagnostic rather than relaxing exact matching.
 - [~] Spawn and move human actors on nearby type-1 spline routes using
   passenger-density settings. Configured `.hum` model first-LOD meshes now
   render at actor poses, uniformly scaled to the declared human height while
@@ -831,7 +866,8 @@ for the explicit boundary.
   configured hours and weekday classes. There is no fixed active population
   cap; separate group peaks can make the queued pool larger than any one
   simultaneous target. Split-peak and uncapped interior-rounding regressions
-  cover the reservation logic. Weekday schedules derive their starting weekday from the map
+  cover the reservation logic. Weekday schedules derive their starting
+  weekday from the map
   system calendar (`Day`, `Month`, `Year`, and `DayOfYear`); the date and time
   variables advance with elapsed simulation time. Verify native units,
   interpolation, and time-of-day policy before treating the behavior as
@@ -895,7 +931,8 @@ the outstanding implementation and validation tasks:
   new approaches; otherwise authored path/group priorities precede wait age,
   with wait aging fairly ordering equal-priority movements except for the
   provisional right-before-left preference at straight crossings. Before
-  claiming a junction, a vehicle on a lower-priority approach spline gives way to
+  claiming a junction, a vehicle on a lower-priority approach spline gives way
+  to
   higher-priority traffic only when predicted arrival times overlap at a
   crossing or merge, and releases an unused claim if such traffic appears;
   priority traffic ignores that unused claim. Deadlock exemptions follow
@@ -929,11 +966,13 @@ the outstanding implementation and validation tasks:
   transitions, and scheduled dispatch. Synthetic probes alone do not establish
   native OMSI parity.
 
-- [ ] Implement or explicitly scope out the remaining runtime effects of retained
+- [ ] Implement or explicitly scope out the remaining runtime effects of
+  retained
   `global.cfg` settings: `[description]`, `[NextIDCode]`,
   `[worldcoordinates]`, `[dynhelperactive]`, `[realrail]`, `[LHT]`,
   `[backgroundimage]`, `[mapcam]`, `[moneysystem]`, `[ticketpack]`,
-  `[repair_time_min]`, `[years]`, `[realyearoffset]`, `[standarddepot]`, `[addseason]`,
+  `[repair_time_min]`, `[years]`, `[realyearoffset]`, `[standarddepot]`,
+  `[addseason]`,
   `[trafficdensity_road]`, and `[trafficdensity_passenger]` beyond the
   provisional population multiplier above.
 - [~] Spline `skewStart`/`skewEnd` fields now drive a provisional longitudinal
@@ -942,7 +981,8 @@ the outstanding implementation and validation tasks:
   `[halfcantwidth]` now overrides the fallback width derived from valid
   `[heightprofile]` lateral extents for cant clamping; native visual parity and
   full authored height-profile behavior remain unresolved. The Cotterell log
-  reports 951 profile strips with fewer than two points (including `pavement_a.sli`).
+  reports 951 profile strips with fewer than two points (including
+  `pavement_a.sli`).
   Two currently installed `pavement_a.sli` copies each parse as two renderable
   strips with two points apiece and no invalid texture indices. This does not
   reproduce the retained log or identify its exact source asset/version; rerun
@@ -957,14 +997,9 @@ the outstanding implementation and validation tasks:
 - [ ] Resolve Chrono map variants using `[selobject]`, `[selspline]`,
   `[delete]`, `[typ]`, and `[relabel]`; these records are currently parser-only
   or have no independent runtime effect.
-- [x] Cotterell's retained runtime log shows the apparent terrain discrepancy
-  was an intermediate progress count: the progress line reports 26 uploads,
-  but the immediately following terrain-phase completion and final render
-  summary both report 27 meshes from 27 map tiles. Rebuilt
-  `OpenBusMapConfigProbe` against the installed map and confirmed all 27 terrain
-  sidecars decode and pass grid-size validation.
 - [ ] Investigate the 7 spline attachments with no local placement in the
-  Cotterell run (examples reference `splineIndex=154`, `102`, and `5`); determine
+  Cotterell run (examples reference `splineIndex=154`, `102`, and `5`);
+  determine
   whether they are unresolved repeater-master references, invalid local spline
   records, ambiguous IDs, or bad source placements. Unique reciprocal spline
   chains now resolve across tile boundaries for ordinary attachment rows.
@@ -974,7 +1009,8 @@ the outstanding implementation and validation tasks:
   threshold-to-distance mapping. Validate distance transitions and visual
   parity with representative installed scenery; 9 parts were skipped in the
   Cotterell run, including Streetobjects_RUE light models.
-- [~] An empty-name/empty-path texture request is now treated as an intentionally
+- [~] An empty-name/empty-path texture request is now treated as an
+  intentionally
   untextured batch instead of a decode failure, and decode failures include the
   source mesh path. The parked Opel Manta DDS remains unverified because its
   model asset is not present in this checkout.
@@ -994,7 +1030,8 @@ the outstanding implementation and validation tasks:
   covers mixed-case tags, textures, road geometry, paths, and disabled records.
   Malformed points and profile indices now produce line-numbered diagnostics
   rather than being silently dropped; recovery and logging have focused probes.
-  The earlier aggregate skipped-strip count has not been rechecked on a live map.
+  The earlier aggregate skipped-strip count has not been rechecked on a live
+  map.
   Retain `[nocollision]` to exclude marked profiles from road collision while
   preserving their render geometry; native OMSI profile semantics are still
   unverified. Apply explicit `[halfcantwidth]` to cant clamping as well. Spline
@@ -1011,8 +1048,26 @@ the outstanding implementation and validation tasks:
   through UV-based collision subdivision. A generated black/white marking
   fixture verifies depression, elevation, and collision tessellation; native
   asset orientation, scale, filtering, and OMSI suspension parity remain to
-  validate. The `C` collision wireframe outlines `.surf`-mapped road triangles
-  in cyan for visual inspection and shows dynamic `[crashmode_pole]` capsules,
+  validate. Uniform-red `.surf` maps on affine road quads now retain the
+  original road triangles with the same height offset rather than subdividing.
+  A focused probe checks the reduced count and preserves subdivision on curved
+  quads. Dense tile collision is split into multiple meshes instead of silently
+  dropping later road sections at one million vertices; a generated tile
+  exceeding that limit checks that all seven sections remain. A moving-wheel
+  probe stays supported on synthetic flat and rough 0.125 m triangle grids
+  without a fallback ground plane, including a 60 Hz regression measuring
+  penetration and wheel motion throughout acceleration to above 40 km/h.
+  Wheel contacts now select the deepest eight from up to 32 collision
+  candidates per static mesh; the earlier speed-gated ray/force recovery was
+  removed because it left substantial low-speed penetration. HK West Kowloon
+  tiles (7,5) and (8,5) still
+  contain 333,436 and 194,700 road triangles, mostly nonuniform `.surf`
+  subdivisions, and had no sections skipped in those samples. The user
+  confirmed that selecting deeper wheel contacts resolves the reported
+  installed-map fall-through and bounce. Safe reduction of nonuniform height
+  maps remains unverified. The `C` collision wireframe outlines
+  `.surf`-mapped road triangles in cyan for visual inspection and shows dynamic
+  `[crashmode_pole]` capsules,
   turning red while in contact. Pole radii are capped to keep collision close
   to the post shaft. `.cfg` surface behavior and material/friction semantics
   are not implemented.
@@ -1038,7 +1093,8 @@ the outstanding implementation and validation tasks:
   mouse events after those runtime semantics are verified. `[varparent]`
   script-variable inheritance remains distinct and unsupported.
 - [~] Decode `.map.water` sidecars into per-surface four-height records;
-  determine corner/quadrant ordering and validate provisional water rendering. Per-tile/
+  determine corner/quadrant ordering and validate provisional water rendering.
+  Per-tile/
   detail/seasonal ground textures, map lightmaps, and Chrono variant resolution
   remain. Chrono selector IDs and opaque override payload lines are parser-only.
 - [~] Map loading is being moved to background preparation with main-thread
@@ -1054,7 +1110,8 @@ the outstanding implementation and validation tasks:
   resources on the GL-owning thread, and stays open until the spawn window is
   ready; gameplay then keeps later tile requests asynchronous. Initial startup
   preparation failures are reported to the menu instead of leaving it waiting
-  indefinitely. Tile jobs are prioritized by distance to the requested center and
+  indefinitely. Tile jobs are prioritized by distance to the requested center
+  and
   capped to eight pending preparations per job type; map and terrain decoding
   overlap. Per-tile `.sco` and model configuration resolution/parsing is now
   scheduled on workers before scene publication; results are consumed and
@@ -1174,7 +1231,8 @@ limitations.
   p50/p95 and keep traced scope totals separate from frame time.
 - [~] Traffic driving reuses overlapping curvature samples and filters following
   and priority candidates with spatial indexes, retaining same-route leaders and
-  conservative fallbacks. `OpenBusMapTrafficRuntimeProbe --benchmark-traffic-scale`
+  conservative fallbacks. `OpenBusMapTrafficRuntimeProbe
+  --benchmark-traffic-scale`
   covers 333 separated actors, while `--benchmark-junctions` hashes junction
   state on every update. Uninstrumented Linux release runs measured
   approximately 22.3-23.6 ms/update before and 20.0-20.8 ms/update after for
@@ -1192,7 +1250,8 @@ limitations.
   footprint construction from active junction claims. Worker-rate adaptation
   now smooths requested-rate changes and only updates the worker when the
   configured rate has changed materially, avoiding per-render-frame lock and
-  wakeup churn. Validate rate stability under real backlog and high-load captures;
+  wakeup churn. Validate rate stability under real backlog and high-load
+  captures;
   do not change timestep or backlog behavior without those measurements.
 - [~] Traffic actors more than 500 m from the main camera use 2 m curve-speed
   sampling, promoted back to full sampling inside 400 m. Following, collision,
@@ -1231,9 +1290,11 @@ limitations.
   triangles through a cached, view-sorted index buffer, avoiding full vertex
   reordering and upload for each view. Index buffers are bounded to three view
   directions per batch; profiler scopes separate cache hits, CPU sorting, and
-  index uploads. Measure the new scopes in a crowded scene to quantify frame-time
+  index uploads. Measure the new scopes in a crowded scene to quantify
+  frame-time
   improvement.
-- [~] Within each traffic substep, junction ranges and unchanged actor footprints
+- [~] Within each traffic substep, junction ranges and unchanged actor
+  footprints
   are reused, and claim-section overlap checks are shared across samples.
   The traffic probe checks stationary leaders resuming across an occupancy-cell
   boundary. In three uninstrumented Linux release comparisons, the junction
@@ -1272,10 +1333,6 @@ limitations.
   using the exported Windows compile database. The repository-wide checks still
   report existing formatting/lint warnings outside the touched ranges. Linux
   application builds and focused probes have since been run.
-- [x] Restore `OpenBusMapConfigProbe` compilation after removal of the density
-  population-cap argument, and update group-pool reservations to cover
-  uncapped interior rounding peaks. Unrepresentable population counts are
-  rejected rather than converted out of range.
 
 Done when performance options have documented tradeoffs and both primary build
 platforms have a reproducible build-and-smoke procedure.

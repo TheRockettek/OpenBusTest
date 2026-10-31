@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <map>
+#include <numbers>
 #include <tuple>
 
 namespace {
@@ -87,6 +88,7 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
     material.texture = materialBatch ? 0 : batch.texture;
     material.textureArray = materialBatch ? false : batch.textureArray;
     material.textured = materialBatch ? false : batch.textured && !forceUntextured;
+    material.textureAlphaOnly = batch.textureAlphaOnly;
     material.textureWrapS = batch.textureWrapS;
     material.textureWrapT = batch.textureWrapT;
     material.lightmap = batch.lightmap.texture;
@@ -438,13 +440,17 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
             preparedIndirectBatch.select(batch.indirectSlot);
         }
     };
-    const auto visible = [&](const DisplayPart& part, std::size_t partIndex) {
+    const auto visible = [&](const DisplayPart& part, std::size_t partIndex,
+                             bool includeEnhancedLight = false) {
         // TraceScope phase("render", "Vehicle::draw.visible");
         if (partIndex >= variableVisibleParts.size() || !variableVisibleParts[partIndex]) {
             return false;
         }
-        if (indirect)
+        if (indirect && part.indirectEligible)
             return part.indirectEligible;
+        if (indirect && !includeEnhancedLight) {
+            return false;
+        }
         const std::array<double, 3> center = animatedPartCenter(part);
         const std::array<double, 4> local = {center[0], center[1], center[2], 1.0};
         const std::array<double, 4> eye = transformPoint(modelView, local);
@@ -589,6 +595,25 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
             popMatrix();
         }
     }
+    if (renderOpaque) {
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
+        glDepthMask(GL_FALSE);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        for (std::size_t partIndex = 0; partIndex < displayLists.size(); ++partIndex) {
+            DisplayPart& part = displayLists[partIndex];
+            if (part.enhancedLightBatches.empty() ||
+                !openbus::rendering::viewpointMatches(part.viewpoint, context) ||
+                !visible(part, partIndex, true)) {
+                continue;
+            }
+            pushMatrix();
+            applyDrawTransform(part, nullptr);
+            drawEnhancedLights(part);
+            popMatrix();
+        }
+    }
     if (renderTransparent) {
         {
             TraceScope phase("render", "Vehicle::draw.transparentDepthPrepass");
@@ -698,6 +723,202 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
         glDepthMask(GL_TRUE);
     }
     popMatrix();
+}
+
+void Vehicle::drawEnhancedLights(DisplayPart& part) {
+    const Matrix4 partModelView = openbus::rendering::modelViewMatrix();
+    using Vector3 = std::array<double, 3>;
+    const auto dot = [](const Vector3& first, const Vector3& second) {
+        return first[0] * second[0] + first[1] * second[1] + first[2] * second[2];
+    };
+    const auto cross = [](const Vector3& first, const Vector3& second) {
+        return Vector3{first[1] * second[2] - first[2] * second[1],
+                       first[2] * second[0] - first[0] * second[2],
+                       first[0] * second[1] - first[1] * second[0]};
+    };
+    const auto normalize = [](const Vector3& value) -> std::optional<Vector3> {
+        const double length =
+            std::sqrt(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
+        if (length <= 1.0e-9) {
+            return std::nullopt;
+        }
+        return Vector3{value[0] / length, value[1] / length, value[2] / length};
+    };
+    const auto scale = [](const Vector3& value, double amount) {
+        return Vector3{value[0] * amount, value[1] * amount, value[2] * amount};
+    };
+    const auto add = [](const Vector3& first, const Vector3& second) {
+        return Vector3{first[0] + second[0], first[1] + second[1], first[2] + second[2]};
+    };
+
+    for (DisplayPart::EnhancedLightBatch& lightBatch : part.enhancedLightBatches) {
+        if (lightBatch.lightIndex >= enhancedLights.size() ||
+            lightBatch.lightIndex >= enhancedLightControllers.size()) {
+            continue;
+        }
+        const ModelEnhancedLight& light = enhancedLights[lightBatch.lightIndex];
+        const std::vector<double>& parameters = light.parameters;
+        const std::size_t requiredParameters = light.enhanced ? 22 : 11;
+        if (parameters.size() < requiredParameters || lightBatch.currentBrightness <= 0.0) {
+            continue;
+        }
+        const std::size_t sizeIndex = light.enhanced ? 14 : 6;
+        const std::size_t colorIndex = light.enhanced ? 11 : 3;
+        const std::size_t offsetIndex = light.enhanced ? 18 : 8;
+        if (parameters[sizeIndex] <= 0.0) {
+            continue;
+        }
+        Batch& batch = lightBatch.batch;
+        ensureTexture(batch);
+        if (batch.texture == 0) {
+            continue;
+        }
+
+        const std::array<double, 4> localPosition = {parameters[1], -parameters[0], parameters[2],
+                                                     1.0};
+        const std::array<double, 4> transformedPosition =
+            transformPoint(partModelView, localPosition);
+        Vector3 center = {transformedPosition[0], transformedPosition[1], transformedPosition[2]};
+        center[2] += parameters[offsetIndex];
+        Vector3 planeNormal = {0.0, 0.0, 1.0};
+        Vector3 planeUp = {0.0, 1.0, 0.0};
+        double coneBrightness = 1.0;
+        if (light.enhanced) {
+            const auto transformedDirection =
+                transformPoint(partModelView, {parameters[4], -parameters[3], parameters[5], 0.0});
+            const auto viewDirection = normalize(
+                {transformedDirection[0], transformedDirection[1], transformedDirection[2]});
+            const auto transformedUp =
+                transformPoint(partModelView, {parameters[7], -parameters[6], parameters[8], 0.0});
+            auto up = normalize({transformedUp[0], transformedUp[1], transformedUp[2]});
+            const auto toCamera = normalize({-center[0], -center[1], -center[2]});
+            const int directionMode = static_cast<int>(std::lround(parameters[9]));
+            const int rotationMode = static_cast<int>(std::lround(parameters[10]));
+            if (!viewDirection || directionMode < 0 || directionMode > 1 || rotationMode < 0 ||
+                rotationMode > 2) {
+                continue;
+            }
+            if (directionMode == 0) {
+                if (!toCamera) {
+                    continue;
+                }
+                const double angle =
+                    std::acos(std::clamp(dot(*viewDirection, *toCamera), -1.0, 1.0)) *
+                    (180.0 / std::numbers::pi);
+                const double innerAngle = std::clamp(parameters[15], 0.0, 180.0);
+                const double outerAngle = std::clamp(parameters[16], 0.0, 180.0);
+                if (angle > innerAngle) {
+                    coneBrightness = outerAngle <= innerAngle || angle >= outerAngle
+                                         ? 0.0
+                                         : (outerAngle - angle) / (outerAngle - innerAngle);
+                }
+                if (coneBrightness <= 0.0) {
+                    continue;
+                }
+            }
+
+            if (!up) {
+                up = std::abs((*viewDirection)[1]) < 0.95
+                         ? std::optional<Vector3>(Vector3{0.0, 1.0, 0.0})
+                         : std::optional<Vector3>(Vector3{1.0, 0.0, 0.0});
+            }
+            planeNormal = *viewDirection;
+            if (rotationMode == 1 && toCamera) {
+                const double vertical = dot(planeNormal, *up);
+                const Vector3 cameraHorizontal = add(*toCamera, scale(*up, -dot(*toCamera, *up)));
+                if (const auto normalizedCameraHorizontal = normalize(cameraHorizontal)) {
+                    const double horizontalMagnitude =
+                        std::sqrt(std::max(0.0, 1.0 - vertical * vertical));
+                    planeNormal = add(scale(*normalizedCameraHorizontal, horizontalMagnitude),
+                                      scale(*up, vertical));
+                }
+            } else if (rotationMode == 2 && toCamera) {
+                planeNormal = *toCamera;
+            }
+            if (rotationMode == 2) {
+                planeUp = add(*up, scale(planeNormal, -dot(*up, planeNormal)));
+                if (!normalize(planeUp)) {
+                    planeUp = std::abs(planeNormal[1]) < 0.95 ? Vector3{0.0, 1.0, 0.0}
+                                                              : Vector3{1.0, 0.0, 0.0};
+                }
+            } else {
+                planeUp = *up;
+            }
+        }
+        const auto normalizedNormal = normalize(planeNormal);
+        if (!normalizedNormal) {
+            continue;
+        }
+        planeNormal = *normalizedNormal;
+        const auto normalizedUp = normalize(planeUp);
+        if (!normalizedUp) {
+            continue;
+        }
+        planeUp = *normalizedUp;
+        auto planeRight = normalize(cross(planeUp, planeNormal));
+        if (!planeRight) {
+            const Vector3 fallbackUp =
+                std::abs(planeNormal[1]) < 0.95 ? Vector3{0.0, 1.0, 0.0} : Vector3{1.0, 0.0, 0.0};
+            planeRight = normalize(cross(fallbackUp, planeNormal));
+        }
+        if (!planeRight) {
+            continue;
+        }
+        const auto orthogonalUp = normalize(cross(planeNormal, *planeRight));
+        if (!orthogonalUp) {
+            continue;
+        }
+        planeUp = *orthogonalUp;
+
+        const double halfSize = parameters[sizeIndex] * 0.5;
+        const auto corner = [&](double rightAmount, double upAmount) {
+            return add(center, add(scale(*planeRight, rightAmount * halfSize),
+                                   scale(planeUp, upAmount * halfSize)));
+        };
+        const auto vertex = [](const Vector3& position, float u, float v) {
+            return Vertex{static_cast<float>(position[0]),
+                          static_cast<float>(position[1]),
+                          static_cast<float>(position[2]),
+                          u,
+                          v,
+                          0.0F,
+                          0.0F,
+                          0.0F,
+                          1.0F};
+        };
+        batch.vertices = std::vector<Vertex>{
+            vertex(corner(-1.0, 1.0), 0.0F, 0.0F),  vertex(corner(1.0, -1.0), 1.0F, 1.0F),
+            vertex(corner(-1.0, -1.0), 0.0F, 1.0F), vertex(corner(-1.0, 1.0), 0.0F, 0.0F),
+            vertex(corner(1.0, 1.0), 1.0F, 0.0F),   vertex(corner(1.0, -1.0), 1.0F, 1.0F)};
+        batch.vertexCount = batch.vertices.size();
+        if (batch.buffer == 0) {
+            pglGenBuffers(1, &batch.buffer);
+            if (batch.buffer == 0) {
+                gameLog.Error("Could not allocate enhanced-light billboard geometry");
+                continue;
+            }
+            assets->trackBuffer(batch.buffer);
+            batch.bufferTracked = true;
+        }
+        pglBindBuffer(GL_ARRAY_BUFFER, batch.buffer);
+        pglBufferData(GL_ARRAY_BUFFER,
+                      static_cast<std::ptrdiff_t>(batch.vertices.size() * sizeof(Vertex)),
+                      batch.vertices.data(), GL_DYNAMIC_DRAW);
+
+        batch.alphaMode = 2;
+        batch.noZwrite = true;
+        batch.noZcheck = false;
+        batch.textureAlphaOnly = true;
+        batch.color = {std::clamp(parameters[colorIndex] / 255.0, 0.0, 1.0),
+                       std::clamp(parameters[colorIndex + 1] / 255.0, 0.0, 1.0),
+                       std::clamp(parameters[colorIndex + 2] / 255.0, 0.0, 1.0)};
+        batch.emissionColor = {1.0, 1.0, 1.0};
+
+        openbus::rendering::setModelViewMatrix(openbus::rendering::identityMatrix());
+        drawBatch(batch, std::clamp(lightBatch.currentBrightness * coneBrightness, 0.0, 1.0), false,
+                  nullptr, 2, true, 0, part.visibilityFade, true);
+        openbus::rendering::setModelViewMatrix(partModelView);
+    }
 }
 
 void Vehicle::drawEnvironmentMap(Batch& batch, double alpha) {

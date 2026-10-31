@@ -56,6 +56,7 @@ struct Uniforms {
     GLint detailTexture = -1;
     GLint detailTextureScale = -1;
     GLint useTexture = -1;
+    GLint textureAlphaOnly = -1;
     GLint useDetailTexture = -1;
     GLint useTextureArray = -1;
     GLint color = -1;
@@ -131,6 +132,7 @@ struct Uniforms {
 struct ModelUniformState {
     bool valid = false;
     bool textured = false;
+    bool textureAlphaOnly = false;
     bool textureArray = false;
     bool useDetailTexture = false;
     bool useLightmap = false;
@@ -446,6 +448,7 @@ uniform sampler2D uBumpmap;
 uniform sampler2D uFreeTexture;
 uniform sampler2D uTextTexture;
 uniform bool uUseTexture;
+uniform bool uTextureAlphaOnly;
 uniform bool uUseDetailTexture;
 uniform bool uUseTextureArray;
 uniform bool uUseLightmap;
@@ -484,7 +487,11 @@ void main() {
     } else if (uUseTextureArray) {
         color *= texture(uTextureArray, vec3(textureCoordinate, vTexCoord.z));
     } else if (uUseTexture) {
-        color *= texture(uTexture, textureCoordinate);
+        vec4 sampledTexture = texture(uTexture, textureCoordinate);
+        if (uTextureAlphaOnly) {
+            sampledTexture.rgb = vec3(1.0);
+        }
+        color *= sampledTexture;
     }
     // Empty text-atlas pixels must remain transparent and must not occlude other
     // scenery. Surviving glyph pixels can then safely write depth during the
@@ -780,6 +787,7 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.detailTexture = pglGetUniformLocation(program, "uDetailTexture");
         uniforms.detailTextureScale = pglGetUniformLocation(program, "uDetailTextureScale");
         uniforms.useTexture = pglGetUniformLocation(program, "uUseTexture");
+        uniforms.textureAlphaOnly = pglGetUniformLocation(program, "uTextureAlphaOnly");
         uniforms.useDetailTexture = pglGetUniformLocation(program, "uUseDetailTexture");
         uniforms.useTextureArray = pglGetUniformLocation(program, "uUseTextureArray");
         uniforms.color = pglGetUniformLocation(program, "uColor");
@@ -980,6 +988,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         static_cast<float>(alpha)};
     const bool flagsChanged =
         !modelUniformState.valid || modelUniformState.textured != material.textured ||
+        modelUniformState.textureAlphaOnly != material.textureAlphaOnly ||
         modelUniformState.textureArray != (material.textured && material.textureArray) ||
         modelUniformState.useDetailTexture != material.useDetailTexture ||
         modelUniformState.useLightmap != material.useLightmap ||
@@ -993,6 +1002,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
         modelUniformState.interiorLightCount != material.interiorLightCount;
     if (flagsChanged) {
         pglUniform1i(modelUniforms.useTexture, material.textured ? 1 : 0);
+        pglUniform1i(modelUniforms.textureAlphaOnly, material.textureAlphaOnly ? 1 : 0);
         pglUniform1i(modelUniforms.useTextureArray,
                      material.textured && material.textureArray ? 1 : 0);
         pglUniform1i(modelUniforms.useDetailTexture, material.useDetailTexture ? 1 : 0);
@@ -1084,6 +1094,7 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     }
     modelUniformState.valid = true;
     modelUniformState.textured = material.textured;
+    modelUniformState.textureAlphaOnly = material.textureAlphaOnly;
     modelUniformState.textureArray = material.textured && material.textureArray;
     modelUniformState.useDetailTexture = material.useDetailTexture;
     modelUniformState.useLightmap = material.useLightmap;

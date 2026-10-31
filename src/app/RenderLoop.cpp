@@ -241,11 +241,11 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
     }
     glfwSetScrollCallback(window_, &RenderLoop::scrollCallback);
     const char* vsyncSetting = openbus::getEnvironment("OPENBUS_VSYNC");
-    const bool vsyncEnabled = vsyncSetting == nullptr || (std::string(vsyncSetting) != "0" &&
-                                                          std::string(vsyncSetting) != "off" &&
-                                                          std::string(vsyncSetting) != "false");
-    glfwSwapInterval(vsyncEnabled ? 1 : 0);
-    gameLog.Log(std::string("VSync ") + (vsyncEnabled ? "enabled" : "disabled"));
+    vsyncEnabled_ = vsyncSetting == nullptr || (std::string(vsyncSetting) != "0" &&
+                                                std::string(vsyncSetting) != "off" &&
+                                                std::string(vsyncSetting) != "false");
+    glfwSwapInterval(vsyncEnabled_ ? 1 : 0);
+    gameLog.Log(std::string("VSync ") + (vsyncEnabled_ ? "enabled" : "disabled"));
     if (!loadOpenGLFunctions()) {
         glfwDestroyWindow(window_);
         window_ = nullptr;

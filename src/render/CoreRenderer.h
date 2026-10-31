@@ -41,6 +41,7 @@ struct ModelMaterial {
     GLuint detailTexture = 0;
     bool textureArray = false;
     bool textured = false;
+    bool textureAlphaOnly = false;
     bool useDetailTexture = false;
     std::array<float, 2> textureScale = {1.0F, 1.0F};
     std::array<float, 2> detailTextureScale = {1.0F, 1.0F};

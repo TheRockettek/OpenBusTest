@@ -845,12 +845,21 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     }
                 }
                 if (valid) {
+                    const std::size_t lightIndex = result.enhancedLights.size();
+                    if (ModelPart* current = part()) {
+                        current->enhancedLightIndexes.push_back(lightIndex);
+                        light.meshPartIndex = currentPartIndex;
+                    } else {
+                        result.diagnostics.warning(
+                            line.number, keyword,
+                            "enhanced light is not associated with a preceding mesh");
+                    }
                     result.enhancedLights.push_back(std::move(light));
                 }
             }
             continue;
         }
-        // [spotlight]: twelve position, direction, colour, range, and cone fields.
+        // [spotlight] payload semantics are not sufficiently verified for runtime use.
         if (keyword == "spotlight") {
             std::vector<std::string> values;
             if (readValues(reader, line.number, keyword, 12, values, result.diagnostics)) {
@@ -865,6 +874,13 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 }
                 if (valid) {
                     result.spotlights.push_back(std::move(spotlight));
+                    openbus::config::logUnhandledConfigurationTag(
+                        "model.cfg", configPath, line.number, line.keyword(),
+                        "payload is retained; spotlight rendering is not implemented");
+                    result.diagnostics.warning(
+                        line.number, keyword,
+                        "payload retained; spotlight rendering is not implemented because field "
+                        "semantics are unverified");
                 }
             }
             continue;
@@ -1367,13 +1383,6 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     validBounds = false;
                     break;
                 }
-            }
-            if (validBounds && (bounds.minimumAndMaximum[0] > bounds.minimumAndMaximum[3] ||
-                                bounds.minimumAndMaximum[1] > bounds.minimumAndMaximum[4] ||
-                                bounds.minimumAndMaximum[2] > bounds.minimumAndMaximum[5])) {
-                result.diagnostics.error(line.number, keyword,
-                                         "minimum display bounds must not exceed maximum bounds");
-                validBounds = false;
             }
             Line viewContextLine;
             if (reader.next(viewContextLine)) {

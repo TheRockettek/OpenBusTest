@@ -133,7 +133,8 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                     const VehicleKeyBinding& binding = bindings[index];
                     if (binding.action != "mouse_control_toggle" &&
                         binding.action != "debug_dump_variables" && binding.key != GLFW_KEY_F2 &&
-                        binding.key != GLFW_KEY_F3 && binding.key != GLFW_KEY_P) {
+                        binding.key != GLFW_KEY_F3 && binding.key != GLFW_KEY_F11 &&
+                        binding.key != GLFW_KEY_P) {
                         playerVehicle_->scripts->invokeKeyBinding(binding.action, false, false);
                     }
                 }
@@ -378,6 +379,16 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
                              : "disabled"));
         }
         previousCollisionDebugKeyState_ = collisionDebugKeyPressed;
+    }
+    {
+        const bool tileBoundaryDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_F11) == GLFW_PRESS;
+        if (tileBoundaryDebugKeyPressed && !previousTileBoundaryDebugKeyState_) {
+            tileBoundaryDebugOverlay_ = !tileBoundaryDebugOverlay_;
+            gameLog.Log(
+                std::string("Active map tile boundary overlay ") +
+                (tileBoundaryDebugOverlay_ ? "enabled (green lines follow terrain)" : "disabled"));
+        }
+        previousTileBoundaryDebugKeyState_ = tileBoundaryDebugKeyPressed;
     }
     {
         const bool trafficSplineDebugKeyPressed = glfwGetKey(window_, GLFW_KEY_F2) == GLFW_PRESS;

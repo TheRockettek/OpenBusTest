@@ -3,6 +3,7 @@
 #include "render/OpenGLFunctions.h"
 #include "render/RendererReflection.h"
 #include "render/map/MapRendererInternal.h"
+#include "app/vehicle/VehicleDrawSorting.h"
 #include "physics/BusSimulation.h"
 #include "physics/World.h"
 
@@ -574,18 +575,38 @@ int main() {
                  environmentPixels.data());
     invalidateTextureBindings();
     setModelViewMatrix(identityMatrix());
-    glClearColor(0, 0, 64.0F / 255.0F, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    drawEnvironmentBatch(buffer, 3, environment, 0.5);
-    glDisable(GL_BLEND);
-    glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+    const auto sampleEnvironment = [&](double alpha) {
+        glClearColor(0, 0, 64.0F / 255.0F, 1);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        drawEnvironmentBatch(buffer, 3, environment, alpha);
+        glDisable(GL_BLEND);
+        std::array<std::uint8_t, 4> result = {};
+        glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
+        return result;
+    };
+    pixel = sampleEnvironment(0.5);
     if (!close(pixel[0], 128) || !close(pixel[1], 0) || !close(pixel[2], 32) ||
         !close(pixel[3], 191)) {
         std::cerr << "environment reflection did not sample the expected direction and opacity: "
                   << static_cast<int>(pixel[0]) << ',' << static_cast<int>(pixel[1]) << ','
                   << static_cast<int>(pixel[2]) << ',' << static_cast<int>(pixel[3]) << '\n';
+        passed = false;
+    }
+    if (sampleEnvironment(0.0) != std::array<std::uint8_t, 4>{0, 0, 64, 255} ||
+        sampleEnvironment(1.0) != std::array<std::uint8_t, 4>{255, 0, 0, 255}) {
+        std::cerr << "environment reflection opacity endpoints were not respected\n";
+        passed = false;
+    }
+    for (std::size_t index = 0; index < environmentVertices.size(); index += 13) {
+        environmentVertices[index + 6] = -normalX;
+    }
+    pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+    pglBufferData(GL_ARRAY_BUFFER, sizeof(environmentVertices), environmentVertices.data(),
+                  GL_STATIC_DRAW);
+    if (sampleEnvironment(1.0) != std::array<std::uint8_t, 4>{0, 255, 0, 255}) {
+        std::cerr << "opposite surface normal did not sample the opposite environment direction\n";
         passed = false;
     }
     pglBindBuffer(GL_ARRAY_BUFFER, buffer);
@@ -740,6 +761,7 @@ int main() {
     pglBufferData(GL_ARRAY_BUFFER, sizeof(lightingVertices), lightingVertices.data(),
                   GL_STATIC_DRAW);
     const GLuint normalMap = texture({128, 220, 220, 255});
+    const GLuint inverseNormalMap = texture({128, 35, 220, 255});
     const std::vector<std::array<float, 4>> batchColors = {{{1, 1, 1, 1}}};
     const std::vector<GLuint> batchTextures = {white};
     GLuint indexBuffer = 0;
@@ -803,6 +825,13 @@ int main() {
                 std::cerr << "bump-map normal did not affect directional shading\n";
                 passed = false;
             }
+            material.bumpmap = inverseNormalMap;
+            const auto inverseStrength = drawLighting();
+            if (fullStrength[0] <= inverseStrength[0]) {
+                std::cerr << "opposite bump-map directions did not shade oppositely\n";
+                passed = false;
+            }
+            material.bumpmap = normalMap;
             material.bumpmapStrength = 1.5F;
             if (drawLighting() != fullStrength) {
                 std::cerr << "bump-map strength above one was not clamped\n";
@@ -932,6 +961,52 @@ int main() {
         ModelMaterial sceneMaterial;
         sceneMaterial.texture = blue;
         sceneMaterial.textured = true;
+        const std::array<GLuint, 2> reflectionLayerTextures = {
+            texture({255, 0, 0, 255}), texture({0, 255, 0, 255})};
+        struct ReflectionLayer {
+            double depth;
+            int renderType;
+            std::size_t textureIndex;
+        };
+        std::vector<ReflectionLayer> reflectionLayers = {{1.0, 0, 1}, {3.0, 0, 0}};
+        openbus::app::vehicle::sortTransparentBatches(reflectionLayers);
+        std::array<std::uint8_t, 4> reflectedPixel = {};
+        glClearColor(0, 0, 64.0F / 255.0F, 1);
+        bool renderedTransparency = false;
+        bool observedReflectionPass = false;
+        reflections.render(
+            simulation, cameras, {0, 0, 32, 32},
+            [](std::size_t) { return ReflectionRequirement{true, 64}; },
+            [&](const BusSimulation&, std::size_t, int width, int height) {
+                renderedTransparency = true;
+                observedReflectionPass = reflectionPassActive();
+                pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+                pglBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
+                setPerspective(width, height, 90);
+                setModelViewMatrix(identityMatrix());
+                glDisable(GL_DEPTH_TEST);
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                for (const ReflectionLayer& layer : reflectionLayers) {
+                    drawEnvironmentBatch(buffer, 3,
+                                         reflectionLayerTextures[layer.textureIndex], 0.5);
+                }
+                glReadPixels(width / 2, height / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                             reflectedPixel.data());
+            },
+            [](int width, int height) { setPerspective(width, height, 90); });
+        glDisable(GL_BLEND);
+        if (!renderedTransparency || !observedReflectionPass || reflectionPassActive() ||
+            !close(reflectedPixel[0], 64) || !close(reflectedPixel[1], 128) ||
+            !close(reflectedPixel[2], 16) || !close(reflectedPixel[3], 159)) {
+            std::cerr << "back-to-front transparency did not blend correctly in the reflection "
+                         "framebuffer or reflection-pass state was incorrect: "
+                      << static_cast<int>(reflectedPixel[0]) << ','
+                      << static_cast<int>(reflectedPixel[1]) << ','
+                      << static_cast<int>(reflectedPixel[2]) << ','
+                      << static_cast<int>(reflectedPixel[3]) << '\n';
+            passed = false;
+        }
         const std::vector<PrimitiveVertex> overlay = {
             {-2, -2, -1, 1, 0, 0}, {2, -2, -1, 1, 0, 0}, {0, 2, -1, 1, 0, 0}};
         GLuint streamedBuffer = 0;
@@ -998,7 +1073,8 @@ int main() {
         std::cerr << "OpenGL material probe failed\n";
         passed = false;
     }
-    const GLuint textures[] = {blue, white, mask, red, black, normalMap, environment};
+    const GLuint textures[] = {blue, white, mask, red, black, normalMap, inverseNormalMap,
+                               environment};
     glDeleteTextures(7, textures);
     pglDeleteBuffers(1, &indexBuffer);
     pglDeleteBuffers(1, &buffer);

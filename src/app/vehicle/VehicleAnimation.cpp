@@ -2,6 +2,8 @@
 
 #include "app/vehicle/Vehicle.h"
 
+#include <cmath>
+
 void Vehicle::updateAnimationStates() {
     TraceScope trace("render", "Vehicle::updateAnimationStates");
     ++animationGeneration;
@@ -42,6 +44,37 @@ void Vehicle::updateAnimationStates() {
                     std::clamp(nextAmount - state.currentAmount, -maximumStep, maximumStep);
             } else {
                 state.currentAmount = nextAmount;
+            }
+        }
+        for (DisplayPart::EnhancedLightBatch& lightBatch : part.enhancedLightBatches) {
+            if (lightBatch.lightIndex >= enhancedLights.size() ||
+                lightBatch.lightIndex >= enhancedLightControllers.size()) {
+                continue;
+            }
+            const ModelEnhancedLight& light = enhancedLights[lightBatch.lightIndex];
+            const InteriorLightController& controller =
+                enhancedLightControllers[lightBatch.lightIndex];
+            const std::size_t multiplierIndex = light.enhanced ? 17 : 7;
+            const std::size_t timeConstantIndex = light.enhanced ? 21 : 10;
+            if (light.parameters.size() <= timeConstantIndex) {
+                continue;
+            }
+            const double controllerValue =
+                controller.isNumeric ? controller.numericValue : variables.get(light.controller);
+            const double sunlightFactor =
+                std::clamp(std::max(static_cast<double>(variables.get("nightlighta")),
+                                    1.0 - static_cast<double>(variables.get("envir_brightness"))),
+                           0.0, 1.0);
+            const double targetBrightness =
+                std::max(0.0, controllerValue * light.parameters[multiplierIndex] * sunlightFactor);
+            const double timeConstant = std::max(0.0, light.parameters[timeConstantIndex]);
+            if (!lightBatch.brightnessInitialized || timeConstant == 0.0 || timeStep == 0.0) {
+                lightBatch.currentBrightness = targetBrightness;
+                lightBatch.brightnessInitialized = true;
+            } else {
+                const double change = 1.0 - std::exp(-timeStep / timeConstant);
+                lightBatch.currentBrightness +=
+                    (targetBrightness - lightBatch.currentBrightness) * change;
             }
         }
     }

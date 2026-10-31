@@ -75,6 +75,7 @@ int main(int argc, char** argv) {
               "[light_enh_2]"
               "\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\nBitmap_"
               "Controller\n49\n50\n51\n52\n53\nlight_mask.bmp\n"
+              "[spotlight]\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n"
               "[texttexture]\nident\nfont\n128\n32\n"
               "[usetexttexture]\n0\n";
     config.close();
@@ -372,7 +373,11 @@ int main(int argc, char** argv) {
         std::cerr << "Unicode _obj model directory did not resolve its source mesh sibling\n";
         return 1;
     }
-    if (result.enhancedLights.size() != 4 || !result.enhancedLights[0].textureName.empty() ||
+    if (result.enhancedLights.size() != 4 ||
+        result.parts[0].enhancedLightIndexes != std::vector<std::size_t>{0, 1, 2, 3} ||
+        result.enhancedLights[0].meshPartIndex != 0 ||
+        result.enhancedLights[3].meshPartIndex != 0 ||
+        !result.enhancedLights[0].textureName.empty() ||
         result.enhancedLights[1].textureName != "alpha_mask.bmp" ||
         result.enhancedLights[0].parameters.size() != 11 ||
         result.enhancedLights[1].parameters.size() != 11 || !result.enhancedLights[2].enhanced ||
@@ -441,10 +446,16 @@ int main(int argc, char** argv) {
         return 1;
     }
     bool shadowMarkerWarned = false;
+    bool spotlightRuntimeWarned = false;
     for (const ConfigurationDiagnostic& diagnostic : result.diagnostics.entries) {
         shadowMarkerWarned = shadowMarkerWarned ||
                              (diagnostic.severity == ConfigurationDiagnostic::Severity::Warning &&
                               diagnostic.keyword == "shadow");
+        spotlightRuntimeWarned =
+            spotlightRuntimeWarned ||
+            (diagnostic.severity == ConfigurationDiagnostic::Severity::Warning &&
+             diagnostic.keyword == "spotlight" &&
+             diagnostic.message.find("rendering is not implemented") != std::string::npos);
     }
     const std::filesystem::path oversizedConfigPath = root / "oversized.cfg";
     std::ofstream oversizedConfig(oversizedConfigPath);
@@ -551,9 +562,34 @@ int main(int argc, char** argv) {
         std::cerr << "empty material records changed later modifiers or item states\n";
         return 1;
     }
+    const std::filesystem::path vfdBoundsPath = root / "vfd_bounds.cfg";
+    std::ofstream vfdBoundsConfig(vfdBoundsPath);
+    vfdBoundsConfig << "[mesh]\ndisplay.obj\n"
+                       "[vfdmaxmin]\n1.5\n-4.7\n-0.5\n-1.5\n6\n4.5\n";
+    vfdBoundsConfig.close();
+    const ModelConfig vfdBounds =
+        loadModelConfig(vfdBoundsPath, root, ModelConfigKind::Bus, variables);
+    const std::array<double, 6> expectedVfdBounds = {1.5, -4.7, -0.5, -1.5, 6.0, 4.5};
+    if (vfdBounds.diagnostics.hasErrors() || vfdBounds.vfdDisplayBounds.size() != 1 ||
+        vfdBounds.vfdDisplayBounds[0].minimumAndMaximum != expectedVfdBounds) {
+        std::cerr << "finite VFD display values were rejected or changed; errors="
+                  << vfdBounds.diagnostics.hasErrors()
+                  << " records=" << vfdBounds.vfdDisplayBounds.size();
+        if (!vfdBounds.vfdDisplayBounds.empty()) {
+            for (double value : vfdBounds.vfdDisplayBounds[0].minimumAndMaximum) {
+                std::cerr << ' ' << value;
+            }
+        }
+        std::cerr << '\n';
+        for (const ConfigurationDiagnostic& diagnostic : vfdBounds.diagnostics.entries) {
+            std::cerr << diagnostic.keyword << ": " << diagnostic.message << '\n';
+        }
+        return 1;
+    }
     const std::filesystem::path invalidVfdBoundsPath = root / "invalid_vfd_bounds.cfg";
     std::ofstream invalidVfdBoundsConfig(invalidVfdBoundsPath);
-    invalidVfdBoundsConfig << "[vfdmaxmin]\n1\n0\n0\n0\n1\n1\n";
+    invalidVfdBoundsConfig << "[mesh]\ndisplay.obj\n"
+                              "[vfdmaxmin]\n1\n0\n0\nnot-a-number\n1\n1\n";
     invalidVfdBoundsConfig.close();
     const ModelConfig invalidVfdBounds =
         loadModelConfig(invalidVfdBoundsPath, root, ModelConfigKind::Bus, variables);
@@ -931,7 +967,11 @@ int main(int argc, char** argv) {
     }
     openbus::probe::removeProbeDirectory(root);
 
-    if (result.diagnostics.hasErrors() || shadowMarkerWarned || result.parts.size() != 1 ||
+    if (result.diagnostics.hasErrors() || shadowMarkerWarned || !spotlightRuntimeWarned ||
+        result.spotlights.size() != 1 ||
+        result.spotlights[0].parameters !=
+            std::array<double, 12>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12} ||
+        result.parts.size() != 1 ||
         !result.parts[0].isShadow || !result.parts[0].noCollision ||
         result.collisionMeshes.size() != 1 || !result.collisionMeshes[0].hasPart ||
         !result.hasBoundingBox || result.scriptTextures.size() != 1 ||
@@ -998,6 +1038,7 @@ int main(int argc, char** argv) {
     jsonConfig.spotlights.push_back(jsonSpotlight);
     ModelEnhancedLight jsonEnhancedLight;
     jsonEnhancedLight.enhanced = true;
+    jsonEnhancedLight.meshPartIndex = 2;
     jsonEnhancedLight.controller = "Light\"Controller";
     jsonEnhancedLight.parameters = {1.25, 2.5};
     jsonEnhancedLight.textureName = "light_mask.bmp";
@@ -1063,7 +1104,8 @@ int main(int argc, char** argv) {
             "\"spotlights\": [{\"parameters\":[1,2,3,4,5,6,7,8,9,10,11,12]}]") ==
             std::string::npos ||
         jsonOutput.str().find(
-            "\"enhanced_lights\": [{\"enhanced\":true,\"controller\":\"Light\\\"Controller\","
+            "\"enhanced_lights\": [{\"enhanced\":true,\"mesh_part_index\":2,"
+            "\"controller\":\"Light\\\"Controller\","
             "\"parameters\":[1.25,2.5],\"texture_name\":\"light_mask.bmp\"}]") ==
             std::string::npos ||
         jsonOutput.str().find(

@@ -2018,6 +2018,41 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             glDisable(GL_DEPTH_TEST);
         }
     }
+    if (!renderingReflection_ && tileBoundaryDebugOverlay_ && mapRenderer_ != nullptr) {
+        const std::vector<std::pair<int, int>>& activeTiles = mapRenderer_->activeTileCoordinates();
+        if (!tileBoundaryDebugBuilt_ || tileBoundaryDebugTiles_ != activeTiles) {
+            tileBoundaryDebugTiles_ = activeTiles;
+            tileBoundaryDebugVertices_.clear();
+            const double fallbackHeight =
+                mapRenderer_->terrainHeightAt(chassis.position[0], chassis.position[1])
+                    .value_or(playerVehicle_ != nullptr ? playerVehicle_->placement.position[2]
+                                                        : 0.0);
+            const std::vector<std::array<double, 3>> vertices =
+                mapRenderer_->activeTileBoundaryVertices(fallbackHeight);
+            tileBoundaryDebugVertices_.reserve(vertices.size());
+            for (const auto& vertex : vertices) {
+                tileBoundaryDebugVertices_.push_back(
+                    {static_cast<float>(vertex[0]), static_cast<float>(vertex[1]),
+                     static_cast<float>(vertex[2]), 0.25F, 1.0F, 0.35F});
+            }
+            tileBoundaryDebugBuilt_ = true;
+            ++tileBoundaryDebugRevision_;
+        }
+
+        GLboolean depthWasEnabled = GL_FALSE;
+        GLboolean depthWriteWasEnabled = GL_TRUE;
+        depthWasEnabled = glIsEnabled(GL_DEPTH_TEST);
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteWasEnabled);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        openbus::rendering::drawStaticPrimitives(tileBoundaryDebugBuffer_,
+                                                 tileBoundaryDebugVertices_, GL_LINES, 2.5F,
+                                                 tileBoundaryDebugRevision_);
+        glDepthMask(depthWriteWasEnabled);
+        if (!depthWasEnabled) {
+            glDisable(GL_DEPTH_TEST);
+        }
+    }
     std::vector<ActiveSceneryTrafficSegment> activeSceneryTrafficSegments;
     std::vector<const openbus::rendering::EditorPassengerDebugObject*> activeEditorPassengerObjects;
     if (!renderingReflection_ && trafficSplineDebugOverlay_ && mapRenderer_ != nullptr) {

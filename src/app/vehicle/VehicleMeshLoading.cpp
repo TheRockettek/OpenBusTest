@@ -55,6 +55,24 @@ bool Vehicle::loadSharedDisplayLists() {
             batch.selectedMaterialItem = false;
             batch.materialSelectionGeneration = 0;
         }
+        for (DisplayPart::EnhancedLightBatch& light : part.enhancedLightBatches) {
+            light.currentBrightness = 0.0;
+            light.brightnessInitialized = false;
+            light.batch.buffer = 0;
+            light.batch.bufferTracked = false;
+            light.batch.sharedGeometryBuffer = false;
+            light.batch.vertices = std::vector<Vertex>{};
+            light.batch.vertexCount = 0;
+            light.batch.texture = 0;
+            light.batch.textureArray = false;
+            light.batch.textureLoadAttempted = false;
+            light.batch.textureLoadStarted = false;
+            light.batch.textureRequest.reset();
+            light.batch.textureCacheEntry.reset();
+            light.batch.texturePath.clear();
+            light.batch.textured = false;
+            light.batch.materialSelectionGeneration = 0;
+        }
     }
     loaded = !displayLists.empty();
     hasSharedGeometry = loaded;
@@ -595,6 +613,29 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     displayPart.radius = boundsRadius;
     displayPart.animations = std::move(animations);
     displayPart.interiorLightIndexes = part.interiorLightIndexes;
+    displayPart.enhancedLightIndexes = part.enhancedLightIndexes;
+    for (const std::size_t lightIndex : part.enhancedLightIndexes) {
+        if (lightIndex >= enhancedLights.size()) {
+            continue;
+        }
+        const ModelEnhancedLight& light = enhancedLights[lightIndex];
+        const std::size_t requiredParameters = light.enhanced ? 22 : 11;
+        if (light.parameters.size() < requiredParameters) {
+            continue;
+        }
+        DisplayPart::EnhancedLightBatch lightBatch;
+        lightBatch.lightIndex = lightIndex;
+        lightBatch.batch.baseTextureName =
+            light.textureName.empty() ? "Texture/light.bmp" : light.textureName;
+        lightBatch.batch.textureName = lightBatch.batch.baseTextureName;
+        lightBatch.batch.textureRoot = part.objPath.parent_path();
+        lightBatch.batch.sourceMeshPath = part.objPath;
+        lightBatch.batch.textureAlphaOnly = true;
+        lightBatch.batch.alphaMode = 2;
+        lightBatch.batch.noZwrite = true;
+        lightBatch.batch.emissionColor = {1.0, 1.0, 1.0};
+        displayPart.enhancedLightBatches.push_back(std::move(lightBatch));
+    }
     const std::string wheelVariable = lower(part.wheelAnimation.rotationVariable);
     if (wheelVariable.rfind("wheel_rotation_", 0) == 0) {
         const std::size_t axleStart = std::string("wheel_rotation_").size();

@@ -284,6 +284,7 @@ struct Vehicle {
         std::shared_ptr<TextureCacheEntry> environmentTextureCacheEntry;
         std::array<double, 3> color = {0.65, 0.65, 0.65};
         bool textured = false;
+        bool textureAlphaOnly = false;
         GLenum textureWrapS = GL_REPEAT;
         GLenum textureWrapT = GL_REPEAT;
         bool hasNormals = false;
@@ -345,6 +346,13 @@ struct Vehicle {
     };
 
     struct DisplayPart {
+        struct EnhancedLightBatch {
+            std::size_t lightIndex = 0;
+            Batch batch;
+            double currentBrightness = 0.0;
+            bool brightnessInitialized = false;
+        };
+
         struct AnimationState {
             double currentAmount = 0.0;
             double targetAmount = 0.0;
@@ -373,6 +381,8 @@ struct Vehicle {
         double radius;
         std::vector<ModelAnimation> animations;
         std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
+        std::vector<std::size_t> enhancedLightIndexes;
+        std::vector<EnhancedLightBatch> enhancedLightBatches;
         std::vector<AnimationState> animationStates;
         std::vector<int> reflectionTextureIndices;
         bool pickOccluder = false;
@@ -420,6 +430,9 @@ struct Vehicle {
     bool deferredInitializationStarted = false;
     std::vector<ModelInteriorLight> interiorLights;
     std::vector<InteriorLightController> interiorLightControllers;
+    std::vector<ModelEnhancedLight> enhancedLights;
+    std::vector<InteriorLightController> enhancedLightControllers;
+    std::vector<ModelSpotlight> spotlights;
     Matrix4 interiorLightRootModelView = identityMatrix();
     std::string modelCacheKey;
     std::shared_ptr<const SharedVehicleDefinition> deferredDefinition;
@@ -861,6 +874,8 @@ struct Vehicle {
     void ensureEnvironmentTexture(Batch& batch, bool visible = true);
 
     void drawEnvironmentMap(Batch& batch, double alpha);
+
+    void drawEnhancedLights(DisplayPart& part);
 
     void preloadTextures();
 

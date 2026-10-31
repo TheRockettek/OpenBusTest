@@ -128,6 +128,7 @@ struct ModelInteriorLight {
 
 struct ModelEnhancedLight {
     bool enhanced = false;
+    std::optional<std::size_t> meshPartIndex;
     std::string controller;
     std::vector<double> parameters;
     std::string textureName;
@@ -202,6 +203,7 @@ struct ModelPart {
     std::string visibleVariable;
     int visibleValue = 0;
     std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
+    std::vector<std::size_t> enhancedLightIndexes;
     std::unordered_map<std::string, ModelMaterialState> materialStates;
     std::vector<ModelMaterialState> materialStatesInOrder;
     int lodIndex = -1;

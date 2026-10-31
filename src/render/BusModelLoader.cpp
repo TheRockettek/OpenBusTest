@@ -52,6 +52,7 @@ BusModelLoadResult loadModel(const std::filesystem::path& configPath,
         part.visibleVariable = source.visibleVariable;
         part.visibleValue = source.visibleValue;
         part.interiorLightIndexes = source.interiorLightIndexes;
+        part.enhancedLightIndexes = source.enhancedLightIndexes;
         part.meshIdentifier = source.meshIdentifier;
         part.animationParent = source.animationParent;
         part.mouseEvent = source.mouseEvent;

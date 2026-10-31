@@ -3,9 +3,16 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${BUILD_DIR:-${ROOT_DIR}/build-linux}"
+MEMORY_TRACE_FILE="${OPENBUS_MEMORY_TRACE_FILE:-${ROOT_DIR}/openbus-memory.heaptrack}"
 
 cd "$ROOT_DIR"
-cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DOPENBUS_ENABLE_PERF_TRACE=ON
+if ! command -v heaptrack >/dev/null 2>&1; then
+    printf 'Heaptrack is required for memory profiling. Install heaptrack, then rerun %s.\n' \
+        "${BASH_SOURCE[0]}" >&2
+    exit 1
+fi
+
+cmake -S . -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DOPENBUS_ENABLE_PERF_TRACE=ON
 cmake --build "$BUILD_DIR" --target OpenBus --parallel
 
 export OPENBUS_OMSI_ROOT="/home/rock/.local/share/Steam/steamapps/common/OMSI 2"
@@ -35,9 +42,10 @@ export OPENBUS_TRACE_MAX_EVENTS=10000000
 export OPENBUS_TRACE_MIN_US=1
 export OPENBUS_MAP_AI_SPAWN_DIAGNOSTICS=1
 export OPENBUS_CULLING_BACKEND=compute-indirect
-export OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT=10
-export OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT=1
+export OPENBUS_MIN_OBJECT_SIZE_MIRRORS_PERCENT=50
+export OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT=2
 
 export OPENBUS_MAP_AI_SPAWN_VISIBLE=1
 
-exec "$BUILD_DIR/OpenBus"
+printf 'Heaptrack output: %s\n' "$MEMORY_TRACE_FILE"
+exec heaptrack -o "$MEMORY_TRACE_FILE" "$BUILD_DIR/OpenBus"

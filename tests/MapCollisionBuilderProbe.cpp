@@ -48,7 +48,7 @@ void writeF32(std::ofstream& output, float value) {
     writeU32(output, std::bit_cast<std::uint32_t>(value));
 }
 
-void writeSurfaceBitmap(const std::filesystem::path& path) {
+void writeSurfaceBitmap(const std::filesystem::path& path, bool constant = false) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream output(path, std::ios::binary);
     if (!output) {
@@ -80,7 +80,9 @@ void writeSurfaceBitmap(const std::filesystem::path& path) {
     writeU32(0);
     writeU32(0);
     writeU32(0);
-    constexpr std::array<unsigned char, 8> row = {0, 0, 0, 255, 255, 255, 0, 0};
+    const std::array<unsigned char, 8> row =
+        constant ? std::array<unsigned char, 8>{0, 0, 0, 0, 0, 0, 0, 0}
+                 : std::array<unsigned char, 8>{0, 0, 0, 255, 255, 255, 0, 0};
     output.write(reinterpret_cast<const char*>(row.data()),
                  static_cast<std::streamsize>(row.size()));
 }
@@ -406,6 +408,67 @@ void runSurfaceHeightMapProbe() {
         require(firstEdgeX * secondEdgeY - firstEdgeY * secondEdgeX > 0.0,
                 "mirrored .surf collision winding remains upward-facing for ODE");
     }
+    writeSurfaceBitmap(surfacePath, true);
+    writeText(tile.textPath, tileText);
+    const MapRoadCollisionResult constantResult = buildMapSplineCollisionTile(map, omsiRoot, 0, 0);
+    require(constantResult.meshes.size() == 1, "constant surface road retains collision");
+    const auto& constantMesh = constantResult.meshes.front();
+    require(constantMesh.vertices.size() == 3 * 12 &&
+                constantMesh.indices.size() == 5 * 6 &&
+                constantMesh.surfaceHeightMapIndices == constantMesh.indices,
+            "constant surface uses the original road tessellation and remains tagged");
+    for (std::size_t index = 2; index < constantMesh.vertices.size(); index += 3) {
+        require(std::abs(constantMesh.vertices[index] - 1.98) < 1.0e-9,
+                "constant surface retains its exact height offset");
+    }
+    writeText(tile.textPath,
+              "[version]\n12\n[terrain]\n[spline]\ntest spline\nSplines/Markings.sli\n"
+              "1\n0\n0\n10\n2\n20\n0\n10\n20\n0\n0\n0\n0\n0\n0\n0\n0\n");
+    const auto curvedResult = buildMapSplineCollisionTile(map, omsiRoot, 0, 0);
+    require(curvedResult.meshes.size() == 1 &&
+                curvedResult.meshes.front().vertices.size() > constantMesh.vertices.size(),
+            "constant surface keeps subdivisions when road quads are not affine");
+    openbus::probe::removeProbeDirectory(root);
+}
+
+void runDenseTileCapacityProbe() {
+    using namespace openbus::map;
+    const auto root = openbus::probe::makeProbeDirectory("OpenBusDenseCollisionTileProbe");
+    const auto mapRoot = root / "map";
+    const auto omsiRoot = root / "omsi";
+    const auto profilePath = omsiRoot / "Splines" / "Dense.sli";
+    writeSurfaceBitmap(omsiRoot / "Splines" / "texture" / "road.bmp.surf");
+    std::string profile = "[texture]\nroad.bmp\n";
+    for (int section = 0; section < 7; ++section) {
+        profile += "[profile]\n0\n[profilepnt]\n-2\n0\n0\n5\n"
+                   "[profilepnt]\n2\n0\n1\n5\n";
+    }
+    writeText(profilePath, profile);
+    const std::string spline =
+        "[spline]\ntest spline\nSplines/Dense.sli\n"
+        "1\n0\n0\n10\n2\n20\n0\n4096\n0\n0\n0\n0\n0\n0\n0\n0\n0\n";
+    MapDefinition map;
+    map.rootPath = mapRoot;
+    MapTileReference tile;
+    tile.textPath = mapRoot / "tile_0_0.map";
+    writeText(tile.textPath, "[version]\n12\n[terrain]\n" + spline);
+    map.tiles.push_back(tile);
+
+    const auto result = buildMapSplineCollisionTile(map, omsiRoot, 0, 0);
+    std::size_t vertices = 0;
+    std::size_t triangles = 0;
+    for (const auto& mesh : result.meshes) {
+        require(mesh.vertices.size() / 3 <= 1'000'000,
+                "each streamed road mesh respects the vertex limit");
+        require(mesh.surfaceHeightMapIndices == mesh.indices,
+                "split meshes retain their surface-height debug triangles");
+        vertices += mesh.vertices.size() / 3;
+        triangles += mesh.indices.size() / 3;
+    }
+    require(result.meshes.size() >= 2 && vertices > 1'000'000 &&
+                result.splineSectionsAdded == 7 && result.skippedSplines == 0 &&
+                triangles == 7 * 2048 * 4 * 16 * 2,
+            "dense tile retains every road section when exceeding one mesh's vertex limit");
     openbus::probe::removeProbeDirectory(root);
 }
 
@@ -767,6 +830,7 @@ int main() {
         runLinkedProbe();
         runNoCollisionProbe();
         runSurfaceHeightMapProbe();
+        runDenseTileCapacityProbe();
         runSceneryGeometryFallbackProbe();
     } catch (const std::exception& error) {
         std::cerr << "map collision builder probe failed: " << error.what() << '\n';

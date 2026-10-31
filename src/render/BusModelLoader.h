@@ -42,6 +42,7 @@ struct BusModelPart {
     std::string visibleVariable;
     int visibleValue = 0;
     std::array<int, 4> interiorLightIndexes = {-1, -1, -1, -1};
+    std::vector<std::size_t> enhancedLightIndexes;
     std::string meshIdentifier;
     std::string animationParent;
     std::string mouseEvent;

@@ -195,8 +195,9 @@ One text-texture identifier/index applied to the current mesh/material.
 
 ### `[VFDmaxmin]`
 
-Six display bounds: minimum x/y/z followed by maximum x/y/z. A following
-view-context flag may restrict the display to interior, exterior, or AI views.
+Six finite numeric values and an optional view-context flag. Values are retained
+verbatim; their ordering has not been verified, so the parser does not infer
+minimum/maximum relationships. Display-region behavior is not implemented.
 
 ## 4. Camera definitions
 
@@ -473,15 +474,38 @@ vehicle CFGs use byte-scale RGB values (0–255). Positions use the model's loca
 coordinates. The format source available here does not specify physical units
 for intensity, so renderers should treat it as an authored relative strength.
 
+### `[light_enh]`
+
+Defines an omnidirectional, camera-facing bloom on the current mesh. The runtime
+builds the square billboard from its local position and size, uses the RGB
+values as its color, and takes alpha from the configured bitmap (default
+`Texture/light.bmp`). Controller brightness is multiplied by the authored
+multiplier and sunlight attenuation; a nonzero time constant smooths brightness
+exponentially. Z-offset moves the billboard toward the camera.
+
+The starburst, no-fog-scattering, and effect-only flags and fog scattering are
+not implemented. OMSI intensity and sunlight parity remain unverified.
+
 ### `[light_enh_2]`
 
-Enhanced light definition. The examples contain local position, direction,
-colour, intensity/range, and mode values.
+Enhanced light definition attached to the current mesh. Its payload contains
+local position, direction and up vectors, direction/rotation modes, RGB colour,
+range and cone angles, a brightness controller and multiplier, z-offset,
+effect/cone flags, time constant, and an optional texture. The parser and JSON
+export retain the payload and its mesh association. The runtime builds the
+billboard, supports directional/omnidirectional brightness and cone-angle
+attenuation, and applies the configured camera-alignment mode. Fog scattering,
+starburst/effect-only flags, and the triangular cone effect are not implemented;
+OMSI parity remains unverified.
 
 ### `[spotlight]`
 
-Defines a spot light. Common values include position, direction, RGB colour,
-range, inner angle, and outer angle.
+Defines a spot light. The parser retains twelve numeric values, but exact field
+semantics and runtime rendering are not yet implemented. Valid records emit a
+diagnostic stating that the payload was retained without a runtime renderer.
+
+The `[light_enh]` / `[light_enh_2]` field descriptions follow the
+[OMSI keyword reference](https://roadhog123.co.uk/omsi-wiki/keywords).
 
 ### `[isshadow]`
 

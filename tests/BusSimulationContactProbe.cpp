@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -59,6 +60,130 @@ StaticCollisionMesh makeCurb() {
                      maxX, maxY, height, minX, maxY, height};
     curb.indices = {0, 1, 2, 0, 2, 3};
     return curb;
+}
+
+void checkTessellatedRoadContact(double spacing, bool rough) {
+    constexpr int width = 8;
+    constexpr int length = 32;
+    const int columns = static_cast<int>(2.0 * width / spacing);
+    const int rows = static_cast<int>(2.0 * length / spacing);
+    StaticCollisionMesh road;
+    for (int row = 0; row <= rows; ++row) {
+        for (int column = 0; column <= columns; ++column) {
+            const double height =
+                rough ? 0.01 * std::sin(row * 0.71) * std::cos(column * 0.63) : 0.0;
+            road.vertices.insert(road.vertices.end(),
+                                 {-length + row * spacing, -width + column * spacing, height});
+        }
+    }
+    for (int row = 0; row < rows; ++row) {
+        for (int column = 0; column < columns; ++column) {
+            const int a = row * (columns + 1) + column;
+            const int b = a + columns + 1;
+            road.indices.insert(road.indices.end(), {a, b, b + 1, a, b + 1, a + 1});
+        }
+    }
+    World world(0.0, {}, {std::move(road)}, false);
+    BusSimulation simulation(world, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    for (int step = 0; step < 480; ++step) {
+        simulation.step(step < 300 ? 0.0 : 0.4, 0.0, step < 300 ? 1.0 : 0.0);
+        if (step < 180) {
+            continue;
+        }
+        for (std::size_t wheel = 0; wheel < simulation.wheelCount(); ++wheel) {
+            const double height = simulation.wheelPose(wheel).position[2];
+            if (!std::isfinite(height) || height < 0.38 || height > 0.56) {
+                throw std::runtime_error("wheel left tessellated road: spacing=" +
+                                         std::to_string(spacing) + ", height=" +
+                                         std::to_string(height));
+            }
+        }
+    }
+    if (simulation.positionX() < 3.0) {
+        throw std::runtime_error("bus did not traverse the tessellated road");
+    }
+}
+
+void checkFastTessellatedRoadContact(double phase) {
+    constexpr double spacing = 0.125;
+    constexpr int rows = 1600;
+    constexpr int columns = 128;
+    StaticCollisionMesh road;
+    road.vertices.reserve(static_cast<std::size_t>(rows + 1) *
+                          static_cast<std::size_t>(columns + 1) * 3);
+    for (int row = 0; row <= rows; ++row) {
+        for (int column = 0; column <= columns; ++column) {
+            const double height =
+                0.01 * std::sin(row * 0.71 + phase) * std::cos(column * 0.63 + phase);
+            road.vertices.insert(road.vertices.end(),
+                                 {-10.0 + row * spacing, -8.0 + column * spacing, height});
+        }
+    }
+    road.indices.reserve(static_cast<std::size_t>(rows) *
+                         static_cast<std::size_t>(columns) * 6);
+    for (int row = 0; row < rows; ++row) {
+        for (int column = 0; column < columns; ++column) {
+            const int a = row * (columns + 1) + column;
+            const int b = a + columns + 1;
+            road.indices.insert(road.indices.end(), {a, b, b + 1, a, b + 1, a + 1});
+        }
+    }
+
+    World world(0.0, {}, {std::move(road)}, false);
+    BusSimulation simulation(world, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    for (int step = 0; step < 300; ++step) {
+        simulation.step(0.0, 0.0, 1.0);
+    }
+
+    double maximumSpeed = 0.0;
+    double minimumWheelBottom = std::numeric_limits<double>::infinity();
+    double maximumWheelBottom = -std::numeric_limits<double>::infinity();
+    double maximumWheelVerticalSpeed = 0.0;
+    std::array<double, 4> previousWheelHeight{};
+    for (std::size_t wheel = 0; wheel < previousWheelHeight.size(); ++wheel) {
+        previousWheelHeight[wheel] = simulation.wheelPose(wheel).position[2];
+    }
+    int highSpeedSamples = 0;
+    for (int step = 0; step < 600; ++step) {
+        const double driveTorque = simulation.speed() < 12.0 ? 12000.0 : 0.0;
+        simulation.stepWithWheelTorque(driveTorque, 0.0, 0.0);
+        maximumSpeed = std::max(maximumSpeed, simulation.speed());
+        highSpeedSamples += simulation.speed() >= 40.0 / 3.6 ? 1 : 0;
+        for (std::size_t wheel = 0; wheel < simulation.wheelCount(); ++wheel) {
+            const auto pose = simulation.wheelPose(wheel);
+            if (!std::isfinite(pose.position[0]) || !std::isfinite(pose.position[1]) ||
+                !std::isfinite(pose.position[2]) || pose.position[0] < -9.0 ||
+                pose.position[0] > 189.0 ||
+                std::abs(pose.position[1]) > 7.0) {
+                throw std::runtime_error("wheel left the fast-road test surface");
+            }
+            const double bottom = pose.position[2] - simulation.wheelRadius(wheel);
+            minimumWheelBottom = std::min(minimumWheelBottom, bottom);
+            maximumWheelBottom = std::max(maximumWheelBottom, bottom);
+            maximumWheelVerticalSpeed = std::max(
+                maximumWheelVerticalSpeed,
+                std::abs(pose.position[2] - previousWheelHeight[wheel]) * 60.0);
+            previousWheelHeight[wheel] = pose.position[2];
+        }
+    }
+    std::cout << "dense road: max speed=" << maximumSpeed
+              << ", high-speed samples=" << highSpeedSamples
+              << ", wheel bottom range=" << minimumWheelBottom << " to " << maximumWheelBottom
+              << ", max wheel vertical speed=" << maximumWheelVerticalSpeed << '\n';
+    if (maximumSpeed < 40.0 / 3.6 || highSpeedSamples < 30 ||
+        minimumWheelBottom < -0.06 || maximumWheelBottom > 0.08 ||
+        maximumWheelVerticalSpeed > 5.0) {
+        throw std::runtime_error("wheel lost support on dense road at speed: maximum speed=" +
+                                 std::to_string(maximumSpeed) +
+                                 " m/s, high-speed samples=" +
+                                 std::to_string(highSpeedSamples) +
+                                 ", minimum wheel bottom=" +
+                                 std::to_string(minimumWheelBottom) +
+                                 " m, maximum wheel bottom=" +
+                                 std::to_string(maximumWheelBottom) +
+                                 " m, maximum wheel vertical speed=" +
+                                 std::to_string(maximumWheelVerticalSpeed) + " m/s");
+    }
 }
 
 struct ContactMetrics {
@@ -174,6 +299,40 @@ struct PoleImpactResult {
     MapPoleState finalState;
 };
 
+void checkOverlappingPolesDoNotReportBusContact() {
+    World world;
+    BusSimulation simulation(world, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
+    MapPoleCollision pole;
+    pole.mapObjectId = 101;
+    pole.basePosition = {20.0, 0.0, 0.0};
+    pole.topPosition = {20.0, 0.0, 4.0};
+    pole.radiusMeters = 0.25;
+    MapPoleCollision overlappingPole = pole;
+    overlappingPole.mapObjectId = 102;
+    world.addMapTileCollision(0, 0, std::nullopt, {}, {pole, overlappingPole});
+
+    std::array<dGeomID, 2> poleGeometries{};
+    std::size_t count = 0;
+    const dSpaceID space = world.collisionSpace();
+    for (int index = 0; index < dSpaceGetNumGeoms(space); ++index) {
+        const dGeomID geom = dSpaceGetGeom(space, index);
+        if (world.isMapPoleGeometry(geom) && count < poleGeometries.size()) {
+            poleGeometries[count++] = geom;
+        }
+    }
+    dContactGeom contact{};
+    if (count != 2 || dCollide(poleGeometries[0], poleGeometries[1], 1, &contact,
+                               sizeof(contact)) == 0) {
+        throw std::runtime_error("overlapping-pole fixture did not produce an ODE contact");
+    }
+    simulation.step(0.0, 0.0, 1.0);
+    const auto states = world.mapPoleStates();
+    if (states.size() != 2 || states[0].touchingBus || states[1].touchingBus ||
+        states[0].angleRadians != 0.0 || states[1].angleRadians != 0.0) {
+        throw std::runtime_error("overlapping poles incorrectly reported a bus collision");
+    }
+}
+
 PoleImpactResult runPoleImpact(double resistance, double breakAngle) {
     World world;
     BusSimulation simulation(world, testConfiguration(), VehiclePlacement{{0.0, 0.0, 0.0}, 0.0});
@@ -230,6 +389,11 @@ void printMetrics(const char* label, const ContactMetrics& metrics) {
 
 int main() {
     try {
+        checkTessellatedRoadContact(0.125, false);
+        checkTessellatedRoadContact(0.125, true);
+        checkFastTessellatedRoadContact(0.0);
+        checkFastTessellatedRoadContact(0.6);
+        checkOverlappingPolesDoNotReportBusContact();
         const ContactMetrics firm = runCrossing({0.8, 1.0e-6});
         const ContactMetrics compliant = runCrossing({0.65, 1.0e-5});
         const ContactMetrics firmCurb = runCurbCrossing({0.8, 1.0e-6});

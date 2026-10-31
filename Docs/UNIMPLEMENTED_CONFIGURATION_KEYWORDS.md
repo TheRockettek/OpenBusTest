@@ -23,7 +23,7 @@ These are the known bus-model keyword gaps:
 | `[texchanges]`, `[newtexchangemaster]`, `[entries]` | Partial | Variable-length payloads are retained in source order and serialized; count validation and replacement selection are not implemented. |
 | `[rendertype]` | Unsupported in bus models | The keyword is restricted to scenery-object model contexts. |
 | `[fixed]`, `[absheight]` | Partial | Only documented subsets of their model-family transform behavior are active. |
-| `[light_enh]`, `[light_enh_2]`, `[spotlight]` | Partial | Records are parsed; enhanced-light data and `[spotlight]` parameters are serialized, but full geometry and render-order behavior are missing. |
+| `[light_enh]`, `[light_enh_2]`, `[spotlight]` | Partial | Enhanced-light billboards support controller brightness, alpha masks, and base directional/cone behavior; flags and fog remain incomplete. `[spotlight]` parameters are serialized and a warning states that no renderer is active. |
 | `[smoke]` | Partial | Nineteen authored fields are retained and serialized; no exhaust or particle system is created. |
 | `[VFDmaxmin]` | Partial | Six display bounds and the optional view-context flag are retained; they do not affect rendering. |
 | `[tex_detail_factor]` | Partial | The finite factor is retained and serialized, but detail-texture rendering does not use it. |

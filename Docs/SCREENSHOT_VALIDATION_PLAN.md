@@ -28,6 +28,10 @@ visible. Record the executable build and asset revision with the capture set.
 The repository smoke path is `screenshot.bat`. With
 `OPENBUS_CAPTURE_VIEWS=1`, it captures four automated exterior PNG views to
 `screenshots\three-quarter.png`, `front.png`, `left.png`, and `right.png`.
+Set `OPENBUS_CAPTURE_DIR` to choose a different output directory; relative
+values resolve from the launch working directory. Use a distinct directory for
+each rendering mode to keep default and ODE captures separate. The default
+remains `screenshots`.
 Set `OPENBUS_VEHICLE=e400` before launching to exercise the
 SP E400 MMC configuration and its larger `[newanim]`/`[animparent]` set.
 
@@ -285,8 +289,8 @@ vehicle-specific visual validation.
 ### Bump-map materials
 
 `[matl_bumpmap]` uses derivative-based normal-map shading. The material GPU
-probe checks directional shading with a generated map, zero strength, and
-strength clamping; representative visual parity and parallax semantics remain
+probe checks opposite generated normal directions, zero strength, and strength
+clamping; representative visual parity and parallax semantics remain
 unverified.
 
 **Steps:**

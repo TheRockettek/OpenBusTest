@@ -94,6 +94,7 @@ class MapRenderer {
     bool leftHandTraffic() const noexcept;
     double tileSize() const noexcept;
     const std::vector<std::pair<int, int>>& activeTileCoordinates() const;
+    std::vector<std::array<double, 3>> activeTileBoundaryVertices(double fallbackHeight) const;
     MapRenderStats renderStats() const;
     std::uint64_t trafficDebugGeometryRevision() const noexcept;
     TrafficSignalDebugStats trafficSignalDebugStats() const;

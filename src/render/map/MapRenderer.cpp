@@ -343,6 +343,35 @@ const std::vector<std::pair<int, int>>& MapRenderer::activeTileCoordinates() con
     return impl_->activeTileCoordinates;
 }
 
+std::vector<std::array<double, 3>>
+MapRenderer::activeTileBoundaryVertices(double fallbackHeight) const {
+    std::vector<std::array<double, 3>> vertices;
+    vertices.reserve(impl_->activeTileCoordinates.size() * 8);
+    for (const auto& [tileX, tileY] : impl_->activeTileCoordinates) {
+        const auto transform = impl_->coordinates.tile(tileX, tileY);
+        const auto terrain = impl_->terrainByCoordinate.find(tileKey(tileX, tileY));
+        const auto corner = [&](double localX, double localY) {
+            const auto world = transform.toWorld(localX, localY);
+            const double height =
+                terrain == impl_->terrainByCoordinate.end()
+                    ? fallbackHeight
+                    : openbus::map::sampleMapTerrainHeight(terrain->second, localX, localY,
+                                                           impl_->coordinates.tileSize)
+                          .value_or(fallbackHeight);
+            return std::array<double, 3>{world[0], world[1], height + 0.05};
+        };
+        const std::array<std::array<double, 3>, 4> corners = {
+            corner(0.0, 0.0), corner(impl_->coordinates.tileSize, 0.0),
+            corner(impl_->coordinates.tileSize, impl_->coordinates.tileSize),
+            corner(0.0, impl_->coordinates.tileSize)};
+        for (std::size_t edge = 0; edge < corners.size(); ++edge) {
+            vertices.push_back(corners[edge]);
+            vertices.push_back(corners[(edge + 1) % corners.size()]);
+        }
+    }
+    return vertices;
+}
+
 MapRenderStats MapRenderer::renderStats() const {
     return impl_->renderStats;
 }

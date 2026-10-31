@@ -1,5 +1,6 @@
 #include "app/RenderLoopInternal.h"
 #include "app/ImGuiLayer.h"
+#include "app/ScopedSwapInterval.h"
 #include "config/VehicleCatalog.h"
 #include "core/Environment.h"
 #include "core/Logger.h"
@@ -66,6 +67,7 @@ std::string environmentValue(const char* name) {
 
 bool RenderLoop::runStartupMenu(const std::filesystem::path& omsiRoot,
                                 StartupSelection& selection) {
+    const openbus::app::ScopedSwapInterval menuVsync(glfwSwapInterval, 1, vsyncEnabled_ ? 1 : 0);
     imguiEnabled_ = true;
     glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     const std::vector<std::filesystem::path> maps = discoverMaps(omsiRoot);

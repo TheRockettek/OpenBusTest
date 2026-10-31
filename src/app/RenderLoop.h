@@ -266,6 +266,7 @@ class RenderLoop {
     void persistPlayerOdometer(bool force = false);
 
     GLFWwindow* window_;
+    bool vsyncEnabled_ = true;
     std::unique_ptr<ImGuiLayer> imguiLayer_;
     bool imguiEnabled_ = false;
     bool spawnBusRequestPending_ = false;
@@ -353,6 +354,11 @@ class RenderLoop {
     bool clickableDebugOverlay_ = false;
     bool previousCollisionDebugKeyState_ = false;
     bool collisionDebugOverlay_ = false;
+    bool previousTileBoundaryDebugKeyState_ = false;
+    bool tileBoundaryDebugOverlay_ = false;
+    bool tileBoundaryDebugBuilt_ = false;
+    std::uint64_t tileBoundaryDebugRevision_ = 0;
+    std::vector<std::pair<int, int>> tileBoundaryDebugTiles_;
     bool previousTrafficSplineDebugKeyState_ = false;
     bool trafficSplineDebugOverlay_ = false;
     Vehicle* trafficDebugHotVehicle_ = nullptr;
@@ -412,6 +418,8 @@ class RenderLoop {
     std::vector<openbus::rendering::PrimitiveVertex> collisionWireframeVertices_;
     openbus::rendering::StaticPrimitiveBuffer collisionSurfaceWireframeBuffer_;
     std::vector<openbus::rendering::PrimitiveVertex> collisionSurfaceWireframeVertices_;
+    openbus::rendering::StaticPrimitiveBuffer tileBoundaryDebugBuffer_;
+    std::vector<openbus::rendering::PrimitiveVertex> tileBoundaryDebugVertices_;
     openbus::rendering::StaticPrimitiveBuffer trafficSplineDebugBuffer_;
     std::vector<openbus::rendering::PrimitiveVertex> trafficSplineDebugVertices_;
     openbus::rendering::StaticPrimitiveBuffer trafficBehaviorDebugBuffer_;

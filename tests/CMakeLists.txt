@@ -64,6 +64,7 @@ openbus_add_probe(OpenBusHumanConfigProbe HumanConfigLoaderProbe.cpp
     ARGS "${OPENBUS_FIXTURES}/human_driver.hum")
 
 # Input
+openbus_add_probe(OpenBusScopedSwapIntervalProbe ScopedSwapIntervalProbe.cpp LIBS openbus_core)
 openbus_add_probe(OpenBusVehicleInputBindingsProbe VehicleInputBindingsProbe.cpp
     LIBS openbus_input)
 
@@ -79,7 +80,8 @@ openbus_add_probe(OpenBusXLoaderProbe XLoaderProbe.cpp LIBS openbus_assets ZLIB:
 openbus_add_probe(OpenBusOnFootMovementProbe OnFootMovementProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusPhysicsProbe BusSimulationSteeringProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusStabilityProbe BusSimulationStabilityProbe.cpp LIBS openbus_physics)
-openbus_add_probe(OpenBusPhysicsStressProbe BusSimulationStressProbe.cpp LIBS openbus_physics)
+openbus_add_probe(OpenBusPhysicsStressProbe BusSimulationStressProbe.cpp
+    LIBS openbus_physics openbus_render)
 openbus_add_probe(OpenBusPhysicsContactProbe BusSimulationContactProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusRoadFeaturesProbe RoadFeaturesProbe.cpp LIBS openbus_physics)
 openbus_add_probe(OpenBusBusConfigurationCollisionProbe BusConfigurationCollisionProbe.cpp
@@ -249,6 +251,25 @@ set_tests_properties(OpenBusVehicleIndirectReuseProbe PROPERTIES SKIP_RETURN_COD
     ENVIRONMENT "OPENBUS_REFLECTION_SIZE=64;OPENBUS_REFLECTION_INTERVAL=1;OPENBUS_REFLECTION_MAX_FPS=0;OPENBUS_REFLECTION_TRANSPARENT=1")
 add_test(NAME OpenBusVehicleTextureLookupProbe
     COMMAND OpenBusVehicleIndirectReuseProbe --texture-lookup)
+add_test(NAME OpenBusVehicleTextureUploadRetryProbe
+    COMMAND OpenBusVehicleIndirectReuseProbe --texture-upload-retry)
+set_tests_properties(OpenBusVehicleTextureUploadRetryProbe PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME OpenBusVehicleMaterialItemTextureReloadProbe
+    COMMAND OpenBusVehicleIndirectReuseProbe --material-item-texture-reload)
+set_tests_properties(OpenBusVehicleMaterialItemTextureReloadProbe
+    PROPERTIES SKIP_RETURN_CODE 77)
+add_test(NAME OpenBusVehicleInteriorLightControllerProbe
+    COMMAND OpenBusVehicleIndirectReuseProbe --interior-light-controller)
+set_tests_properties(OpenBusVehicleInteriorLightControllerProbe PROPERTIES
+    SKIP_RETURN_CODE 77)
+add_test(NAME OpenBusVehicleEnhancedLightBloomProbe
+    COMMAND OpenBusVehicleIndirectReuseProbe --enhanced-light-bloom)
+set_tests_properties(OpenBusVehicleEnhancedLightBloomProbe PROPERTIES
+    SKIP_RETURN_CODE 77)
+add_test(NAME OpenBusVehicleEnhancedLightDirectionalProbe
+    COMMAND OpenBusVehicleIndirectReuseProbe --enhanced-light-2)
+set_tests_properties(OpenBusVehicleEnhancedLightDirectionalProbe PROPERTIES
+    SKIP_RETURN_CODE 77)
 add_test(NAME OpenBusVehicleCompressedMipmapsProbe
     COMMAND OpenBusVehicleIndirectReuseProbe --compressed-mipmaps)
 set_tests_properties(OpenBusVehicleCompressedMipmapsProbe PROPERTIES SKIP_RETURN_CODE 77)

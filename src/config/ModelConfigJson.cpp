@@ -230,7 +230,14 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
             output << ',';
         }
         const ModelEnhancedLight& light = configuration.enhancedLights[index];
-        output << "{\"enhanced\":" << (light.enhanced ? "true" : "false") << ",\"controller\":";
+        output << "{\"enhanced\":" << (light.enhanced ? "true" : "false")
+               << ",\"mesh_part_index\":";
+        if (light.meshPartIndex) {
+            output << *light.meshPartIndex;
+        } else {
+            output << "null";
+        }
+        output << ",\"controller\":";
         writeJsonString(output, light.controller);
         output << ",\"parameters\":[";
         for (std::size_t parameterIndex = 0; parameterIndex < light.parameters.size();
