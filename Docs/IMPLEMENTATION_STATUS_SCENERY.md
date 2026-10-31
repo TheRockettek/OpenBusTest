@@ -59,7 +59,7 @@ including border, clamp, mirror, and mirror-once modes. A GPU probe verifies
 border sampling and shared-texture wrap changes; representative scenery visual
 parity is not yet established.
 
-`[terrainmapping]` belongs to the model/scenery CFG dialect, not the vehicle `.bus` file. It is not dispatched by the shared model-config loader, so terrain/material mapping remains unimplemented for scenery (and is not a BUS-level feature either).
+`[terrainmapping]` belongs to the model/scenery CFG dialect, not the vehicle `.bus` file. The shared model-config loader retains its variable-length payload verbatim, but terrain/material mapping remains unimplemented for scenery (and is not a BUS-level feature either).
 
 ## Not a keyword gap
 

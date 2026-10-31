@@ -57,7 +57,37 @@ void writeModelAnimationsJson(std::ostream& output, const std::vector<ModelAnima
                << animation.origin[2] << "],\"origin_rotation\":[" << animation.originRotation[0]
                << ',' << animation.originRotation[1] << ',' << animation.originRotation[2]
                << "],\"has_origin\":" << (animation.hasOrigin ? "true" : "false")
-               << ",\"origin_from_mesh\":" << (animation.originFromMesh ? "true" : "false") << '}';
+               << ",\"origin_from_mesh\":" << (animation.originFromMesh ? "true" : "false")
+               << ",\"origin_operations\":[";
+        for (std::size_t operationIndex = 0;
+             operationIndex < animation.originOperations.size(); ++operationIndex) {
+            if (operationIndex != 0) {
+                output << ',';
+            }
+            const ModelAnimationOrigin& operation = animation.originOperations[operationIndex];
+            const char* operationType = "translation";
+            switch (operation.type) {
+            case ModelAnimationOriginType::Translation:
+                operationType = "translation";
+                break;
+            case ModelAnimationOriginType::RotationX:
+                operationType = "rotation_x";
+                break;
+            case ModelAnimationOriginType::RotationY:
+                operationType = "rotation_y";
+                break;
+            case ModelAnimationOriginType::RotationZ:
+                operationType = "rotation_z";
+                break;
+            case ModelAnimationOriginType::FromMesh:
+                operationType = "from_mesh";
+                break;
+            }
+            output << "{\"type\":\"" << operationType << "\",\"value\":["
+                   << operation.value[0] << ',' << operation.value[1] << ','
+                   << operation.value[2] << "]}";
+        }
+        output << "]}";
     }
     output << ']';
 }
@@ -103,6 +133,180 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
     } else {
         output << "null";
     }
+    output << ",\n  \"texture_detail_factor\": ";
+    if (configuration.textureDetailFactor) {
+        output << *configuration.textureDetailFactor;
+    } else {
+        output << "null";
+    }
+    output << ",\n  \"terrain_mappings\": [";
+    for (std::size_t index = 0; index < configuration.terrainMappings.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        const ModelTerrainMapping& mapping = configuration.terrainMappings[index];
+        output << "{\"source_line\":" << mapping.sourceLine << ",\"payload\":[";
+        for (std::size_t valueIndex = 0; valueIndex < mapping.payload.size(); ++valueIndex) {
+            if (valueIndex != 0) {
+                output << ',';
+            }
+            writeJsonString(output, mapping.payload[valueIndex]);
+        }
+        output << "]}";
+    }
+    output << ']';
+    output << ",\n  \"texture_change_records\": [";
+    for (std::size_t index = 0; index < configuration.textureChangeRecords.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        const ModelTextureChangeRecord& record = configuration.textureChangeRecords[index];
+        output << "{\"keyword\":";
+        writeJsonString(output, record.keyword);
+        output << ",\"source_line\":" << record.sourceLine << ",\"payload\":[";
+        for (std::size_t valueIndex = 0; valueIndex < record.payload.size(); ++valueIndex) {
+            if (valueIndex != 0) {
+                output << ',';
+            }
+            writeJsonString(output, record.payload[valueIndex]);
+        }
+        output << "]}";
+    }
+    output << ']';
+    output << ",\n  \"vfd_display_bounds\": [";
+    for (std::size_t index = 0; index < configuration.vfdDisplayBounds.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        const ModelDisplayBounds& bounds = configuration.vfdDisplayBounds[index];
+        output << "{\"bounds\":[";
+        for (std::size_t valueIndex = 0; valueIndex < bounds.minimumAndMaximum.size();
+             ++valueIndex) {
+            if (valueIndex != 0) {
+                output << ',';
+            }
+            output << bounds.minimumAndMaximum[valueIndex];
+        }
+        output << "],\"view_context_flag\":";
+        if (bounds.viewContextFlag) {
+            writeJsonString(output, *bounds.viewContextFlag);
+        } else {
+            output << "null";
+        }
+        output << '}';
+    }
+    output << ']';
+    output << ",\n  \"smoke_emitters\": [";
+    for (std::size_t index = 0; index < configuration.smokes.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        output << "{\"fields\":[";
+        const ModelSmoke& smoke = configuration.smokes[index];
+        for (std::size_t fieldIndex = 0; fieldIndex < smoke.fields.size(); ++fieldIndex) {
+            if (fieldIndex != 0) {
+                output << ',';
+            }
+            writeJsonString(output, smoke.fields[fieldIndex]);
+        }
+        output << "]}";
+    }
+    output << ']';
+    output << ",\n  \"interior_lights\": [";
+    for (std::size_t index = 0; index < configuration.interiorLights.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        const ModelInteriorLight& light = configuration.interiorLights[index];
+        output << "{\"controller\":";
+        writeJsonString(output, light.controller);
+        output << ",\"intensity\":" << light.intensity << ",\"color\":["
+               << light.color[0] << ',' << light.color[1] << ',' << light.color[2]
+               << "],\"position\":[" << light.position[0] << ',' << light.position[1] << ','
+               << light.position[2] << "]}";
+    }
+    output << ']';
+    output << ",\n  \"enhanced_lights\": [";
+    for (std::size_t index = 0; index < configuration.enhancedLights.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        const ModelEnhancedLight& light = configuration.enhancedLights[index];
+        output << "{\"enhanced\":" << (light.enhanced ? "true" : "false")
+               << ",\"controller\":";
+        writeJsonString(output, light.controller);
+        output << ",\"parameters\":[";
+        for (std::size_t parameterIndex = 0; parameterIndex < light.parameters.size();
+             ++parameterIndex) {
+            if (parameterIndex != 0) {
+                output << ',';
+            }
+            output << light.parameters[parameterIndex];
+        }
+        output << "],\"texture_name\":";
+        writeJsonString(output, light.textureName);
+        output << '}';
+    }
+    output << ']';
+    output << ",\n  \"spotlights\": [";
+    for (std::size_t index = 0; index < configuration.spotlights.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        output << "{\"parameters\":[";
+        const ModelSpotlight& spotlight = configuration.spotlights[index];
+        for (std::size_t parameterIndex = 0; parameterIndex < spotlight.parameters.size();
+             ++parameterIndex) {
+            if (parameterIndex != 0) {
+                output << ',';
+            }
+            output << spotlight.parameters[parameterIndex];
+        }
+        output << "]}";
+    }
+    output << ']';
+    output << ",\n  \"ctc_templates\": [";
+    for (std::size_t index = 0; index < configuration.ctcTemplates.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        const ModelCtcTemplate& value = configuration.ctcTemplates[index];
+        output << "{\"name\":";
+        writeJsonString(output, value.name);
+        output << ",\"texture_path\":";
+        writeJsonString(output, value.texturePath);
+        output << ",\"index\":" << value.index << '}';
+    }
+    output << ']';
+    output << ",\n  \"ctc_textures\": [";
+    for (std::size_t index = 0; index < configuration.ctcTextures.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        const ModelCtcTexture& value = configuration.ctcTextures[index];
+        output << "{\"slot\":";
+        writeJsonString(output, value.slot);
+        output << ",\"texture_name\":";
+        writeJsonString(output, value.textureName);
+        output << '}';
+    }
+    output << ']';
+    output << ",\n  \"attachment_points\": [";
+    for (std::size_t index = 0; index < configuration.attachmentPoints.size(); ++index) {
+        if (index != 0) {
+            output << ',';
+        }
+        const ModelAttachmentPoint& attachment = configuration.attachmentPoints[index];
+        output << "{\"name\":";
+        writeJsonString(output, attachment.name);
+        output << ",\"translation\":[" << attachment.translation[0] << ','
+               << attachment.translation[1] << ',' << attachment.translation[2]
+               << "],\"rotation_degrees\":[" << attachment.rotationDegrees[0] << ','
+               << attachment.rotationDegrees[1] << ',' << attachment.rotationDegrees[2]
+               << "],\"has_translation\":" << (attachment.hasTranslation ? "true" : "false")
+               << ",\"has_rotation\":" << (attachment.hasRotation ? "true" : "false") << '}';
+    }
+    output << ']';
     output << ",\n  \"collision_meshes\": [";
     for (std::size_t index = 0; index < configuration.collisionMeshes.size(); ++index) {
         if (index != 0) {
@@ -128,7 +332,14 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
         }
         const ModelScriptTexture& texture = configuration.scriptTextures[index];
         output << "{\"slot\":" << texture.slot << ",\"width\":" << texture.width
-               << ",\"height\":" << texture.height << "}";
+               << ",\"height\":" << texture.height << ",\"options\":[";
+        for (std::size_t optionIndex = 0; optionIndex < texture.options.size(); ++optionIndex) {
+            if (optionIndex != 0) {
+                output << ',';
+            }
+            writeJsonString(output, texture.options[optionIndex]);
+        }
+        output << "]}";
     }
     output << "],\n  \"text_textures\": [";
     for (std::size_t index = 0; index < configuration.textTextures.size(); ++index) {
@@ -137,7 +348,16 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
         }
         const ModelTextTexture& texture = configuration.textTextures[index];
         output << "{\"slot\":" << texture.slot
-               << ",\"enhanced\":" << (texture.enhanced ? "true" : "false") << "}";
+               << ",\"enhanced\":" << (texture.enhanced ? "true" : "false")
+               << ",\"placement_label\":" << (texture.placementLabel ? "true" : "false")
+               << ",\"values\":[";
+        for (std::size_t valueIndex = 0; valueIndex < texture.values.size(); ++valueIndex) {
+            if (valueIndex != 0) {
+                output << ',';
+            }
+            writeJsonString(output, texture.values[valueIndex]);
+        }
+        output << "]}";
     }
     output << "],\n  \"parts\": [\n";
 

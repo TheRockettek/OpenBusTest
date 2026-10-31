@@ -236,6 +236,8 @@ add_test(NAME OpenBusVehicleTextureLookupProbe
     COMMAND OpenBusVehicleIndirectReuseProbe --texture-lookup)
 openbus_add_probe(OpenBusVehiclePartLoadingProbe VehiclePartLoadingProbe.cpp
     LIBS openbus_render)
+openbus_add_probe(OpenBusVehiclePassengerRequestProbe VehiclePassengerRequestProbe.cpp
+    LIBS openbus_core)
 openbus_add_probe(OpenBusVehicleMaterialSelectionProbe VehicleMaterialSelectionProbe.cpp
     LIBS openbus_render)
 openbus_add_probe(OpenBusWeatherEffectsProbe WeatherEffectsProbe.cpp LIBS openbus_render)

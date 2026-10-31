@@ -28,6 +28,8 @@ int main(int argc, char** argv) {
               "[CTC]\nColorscheme\nTexture\\Advert\n0\n"
               "[CTCTexture]\nFarbschema_Tex1\n3803_l.tga\n"
               "[mesh]\ndisplay.obj\n"
+              "[smoke]\n0\n1\n2\n3\n4\n5\nSmokeController\n7\n8\n9\n10\n11\n"
+              "12\n13\n14\n15\n16\n17\nSmoke\\Controller\n"
               "[newanim]\n"
               "----Lower left window 2---\n"
               "[visible]\nscenery_lamp\n1\n"
@@ -247,6 +249,22 @@ int main(int argc, char** argv) {
         std::cerr << "model texture address directives did not select their authored modes\n";
         return 1;
     }
+    const std::filesystem::path incompleteSmokePath = root / "incomplete_smoke.cfg";
+    std::ofstream incompleteSmokeConfig(incompleteSmokePath);
+    incompleteSmokeConfig << "[smoke]\n0\n[mesh]\ndisplay.obj\n";
+    incompleteSmokeConfig.close();
+    const ModelConfig incompleteSmoke =
+        loadModelConfig(incompleteSmokePath, root, ModelConfigKind::Bus, variables);
+    const std::size_t incompleteSmokeErrors = static_cast<std::size_t>(std::count_if(
+        incompleteSmoke.diagnostics.entries.begin(), incompleteSmoke.diagnostics.entries.end(),
+        [](const ConfigurationDiagnostic& diagnostic) {
+            return diagnostic.severity == ConfigurationDiagnostic::Severity::Error;
+        }));
+    if (incompleteSmokeErrors < 2 || incompleteSmoke.parts.size() != 1 ||
+        !incompleteSmoke.smokes.empty()) {
+        std::cerr << "smoke payload without a mesh was not consumed and diagnosed\n";
+        return 1;
+    }
     const std::filesystem::path pedestrianConfigPath = root / "pedestrian.cfg";
     std::ofstream pedestrianConfig(pedestrianConfigPath);
     pedestrianConfig << "[LOD]\n0.4\n[mesh]\ndisplay.obj\n"
@@ -419,6 +437,11 @@ int main(int argc, char** argv) {
     variants << "[mesh]\ndisplay.obj\n"
                 "[collision_mesh]\ncollision.obj\n"
                 "[boundingbox]\n2.5\n13.5\n3.66\n0\n0\n2.23\n"
+                "[vfdmaxmin]\n-1\n-2\n-3\n1\n2\n3\ninterior\n"
+                "[tex_detail_factor]\n0.35\n"
+                "[terrainmapping]\n"
+                "  terrain\\ground.dds  \n"
+                "descriptor \"alpha\"\n"
                 "[matl]\ndisplay.bmp\n0\n"
                 "[matl_alpha]\n2\n[usetexttexture]\n7\n"
                 "[matl_change]\ndisplay.bmp\n0\nDisplayMode\n"
@@ -429,7 +452,10 @@ int main(int argc, char** argv) {
                 "[matl_change]\ndisplay.bmp\n0\nAlternateMode\n"
                 "[matl_item]\n[matl_nightmap]\nalternate.bmp\n"
                 "[matl_change]\nstandalone.bmp\n2\nStandaloneMode\n"
-                "[matl_item]\n[matl_nightmap]\nstandalone_lit.bmp\n";
+                "[matl_item]\n[matl_nightmap]\nstandalone_lit.bmp\n"
+                "[texchanges]\n2\nreplacement.dds\n"
+                "[newtexchangemaster]\nbase.dds\nPaintSlot\n"
+                "[entries]\n2\nfirst.dds\nsecond.dds\n";
     variants.close();
     const ModelConfig conditional =
         loadModelConfig(configPath, root, ModelConfigKind::Bus, variables);
@@ -440,8 +466,35 @@ int main(int argc, char** argv) {
         conditional.collisionMeshes[0].resolvedPath != root / "collision.obj" ||
         !conditional.collisionMeshes[0].hasPart || conditional.collisionMeshes[0].partIndex != 0 ||
         !conditional.hasBoundingBox ||
-        conditional.boundingBox != std::array<double, 6>{2.5, 13.5, 3.66, 0.0, 0.0, 2.23}) {
+        conditional.boundingBox != std::array<double, 6>{2.5, 13.5, 3.66, 0.0, 0.0, 2.23} ||
+        conditional.vfdDisplayBounds.size() != 1 ||
+        conditional.vfdDisplayBounds[0].minimumAndMaximum !=
+            std::array<double, 6>{-1.0, -2.0, -3.0, 1.0, 2.0, 3.0} ||
+        conditional.vfdDisplayBounds[0].viewContextFlag != "interior" ||
+        conditional.textureDetailFactor != 0.35 || conditional.terrainMappings.size() != 1 ||
+        conditional.terrainMappings[0].payload !=
+            std::vector<std::string>{"  terrain\\ground.dds  ", "descriptor \"alpha\""} ||
+        conditional.textureChangeRecords.size() != 3 ||
+        conditional.textureChangeRecords[0].keyword != "texchanges" ||
+        conditional.textureChangeRecords[0].payload !=
+            std::vector<std::string>{"2", "replacement.dds"} ||
+        conditional.textureChangeRecords[1].keyword != "newtexchangemaster" ||
+        conditional.textureChangeRecords[1].payload !=
+            std::vector<std::string>{"base.dds", "PaintSlot"} ||
+        conditional.textureChangeRecords[2].keyword != "entries" ||
+        conditional.textureChangeRecords[2].payload !=
+            std::vector<std::string>{"2", "first.dds", "second.dds"}) {
         std::cerr << "conditional material fixture failed to parse\n";
+        return 1;
+    }
+    const std::filesystem::path invalidVfdBoundsPath = root / "invalid_vfd_bounds.cfg";
+    std::ofstream invalidVfdBoundsConfig(invalidVfdBoundsPath);
+    invalidVfdBoundsConfig << "[vfdmaxmin]\n1\n0\n0\n0\n1\n1\n";
+    invalidVfdBoundsConfig.close();
+    const ModelConfig invalidVfdBounds =
+        loadModelConfig(invalidVfdBoundsPath, root, ModelConfigKind::Bus, variables);
+    if (!invalidVfdBounds.diagnostics.hasErrors() || !invalidVfdBounds.vfdDisplayBounds.empty()) {
+        std::cerr << "invalid VFD display bounds were not rejected\n";
         return 1;
     }
     const std::filesystem::path twoValueChangePath = root / "two_value_change.cfg";
@@ -818,6 +871,8 @@ int main(int argc, char** argv) {
         !result.parts[0].isShadow || !result.parts[0].noCollision ||
         result.collisionMeshes.size() != 1 || !result.collisionMeshes[0].hasPart ||
         !result.hasBoundingBox || result.scriptTextures.size() != 1 ||
+        result.smokes.size() != 1 || result.smokes[0].fields[6] != "SmokeController" ||
+        result.smokes[0].fields[18] != "Smoke\\Controller" ||
         result.scriptTextures[0].slot != 0 || result.scriptTextures[0].width != 64 ||
         result.scriptTextures[0].height != 16 || result.textTextures.size() != 1 ||
         result.textTextures[0].slot != 0 || result.textTextures[0].values.empty() ||
@@ -853,6 +908,55 @@ int main(int argc, char** argv) {
         jsonConfig.diagnostics.entries.back().message.push_back(static_cast<char>(character));
     }
     std::ostringstream jsonOutput;
+    jsonConfig.textureDetailFactor = 0.35;
+    jsonConfig.vfdDisplayBounds.push_back(
+        {.minimumAndMaximum = {-1.0, -2.0, -3.0, 1.0, 2.0, 3.0}, .viewContextFlag = "3"});
+    jsonConfig.scriptTextures.push_back(
+        {.slot = 2, .width = 64, .height = 32, .options = {"front", "rear\"screen"}});
+    jsonConfig.textTextures.push_back(
+        {.slot = 3, .enhanced = true, .values = {"Line", "Route\"Name"}, .placementLabel = true});
+    jsonConfig.ctcTemplates.push_back(
+        {.name = "Paint\"Scheme", .texturePath = "Texture\\Advert", .index = 2});
+    jsonConfig.ctcTextures.push_back(
+        {.slot = "Farbschema_Tex1", .textureName = "3803_l.tga"});
+    jsonConfig.terrainMappings.push_back(
+        {.sourceLine = 42, .payload = {"terrain\\ground.dds", "descriptor \"alpha\""}});
+    jsonConfig.textureChangeRecords.push_back(
+        {.keyword = "newtexchangemaster",
+         .sourceLine = 43,
+         .payload = {"base.dds", "PaintSlot", "entry \"one\""}});
+    ModelSmoke jsonSmoke;
+    jsonSmoke.fields[6] = "Smoke\"\\Controller";
+    jsonConfig.smokes.push_back(std::move(jsonSmoke));
+    ModelSpotlight jsonSpotlight;
+    jsonSpotlight.parameters = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0,
+                                7.0, 8.0, 9.0, 10.0, 11.0, 12.0};
+    jsonConfig.spotlights.push_back(jsonSpotlight);
+    ModelEnhancedLight jsonEnhancedLight;
+    jsonEnhancedLight.enhanced = true;
+    jsonEnhancedLight.controller = "Light\"Controller";
+    jsonEnhancedLight.parameters = {1.25, 2.5};
+    jsonEnhancedLight.textureName = "light_mask.bmp";
+    jsonConfig.enhancedLights.push_back(jsonEnhancedLight);
+    jsonConfig.interiorLights.push_back(
+        {.controller = "Interior\"Light", .intensity = 0.75, .color = {0.125, 0.25, 0.5},
+         .position = {1.0, 2.0, 3.0}});
+    ModelAnimation jsonAnimation;
+    jsonAnimation.type = "anim_rot";
+    jsonAnimation.variable = "door_position";
+    jsonAnimation.originFromMesh = true;
+    jsonAnimation.originOperations = {
+        {ModelAnimationOriginType::Translation, {1.0, 2.0, 3.0}},
+        {ModelAnimationOriginType::FromMesh, {}}};
+    ModelPart jsonPart;
+    jsonPart.animations.push_back(std::move(jsonAnimation));
+    jsonConfig.parts.push_back(std::move(jsonPart));
+    jsonConfig.attachmentPoints.push_back(
+        {.name = "tow\"bar",
+         .translation = {1.0, 2.0, 3.0},
+         .rotationDegrees = {4.0, 5.0, 6.0},
+         .hasTranslation = true,
+         .hasRotation = true});
     writeModelConfigurationJson(jsonOutput, "model.cfg", jsonConfig);
     std::string escapedControlCharacters;
     for (unsigned char character = 0; character < 0x20U; ++character) {
@@ -876,8 +980,51 @@ int main(int argc, char** argv) {
         }
     }
     if (jsonOutput.str().find("\"message\":\"" + escapedControlCharacters + "\"") ==
-        std::string::npos) {
-        std::cerr << "model configuration JSON did not escape all control characters\n";
+            std::string::npos ||
+        jsonOutput.str().find("\"texture_detail_factor\": 0.34999999999999998") ==
+            std::string::npos ||
+        jsonOutput.str().find(
+            "\"terrain_mappings\": [{\"source_line\":42,\"payload\":[\"terrain\\\\ground.dds\","
+            "\"descriptor \\\"alpha\\\"\"]}]") == std::string::npos ||
+        jsonOutput.str().find(
+            "\"texture_change_records\": [{\"keyword\":\"newtexchangemaster\","
+            "\"source_line\":43,\"payload\":[\"base.dds\",\"PaintSlot\","
+            "\"entry \\\"one\\\"\"]}]") == std::string::npos ||
+        jsonOutput.str().find(
+            "\"vfd_display_bounds\": [{\"bounds\":[-1,-2,-3,1,2,3],\"view_context_flag\":\"3\"}]") ==
+            std::string::npos ||
+        jsonOutput.str().find("\"smoke_emitters\": [{\"fields\":[") == std::string::npos ||
+        jsonOutput.str().find("Smoke\\\"\\\\Controller") == std::string::npos ||
+        jsonOutput.str().find(
+            "\"spotlights\": [{\"parameters\":[1,2,3,4,5,6,7,8,9,10,11,12]}]") ==
+            std::string::npos ||
+        jsonOutput.str().find(
+            "\"enhanced_lights\": [{\"enhanced\":true,\"controller\":\"Light\\\"Controller\","
+            "\"parameters\":[1.25,2.5],\"texture_name\":\"light_mask.bmp\"}]") ==
+            std::string::npos ||
+        jsonOutput.str().find(
+            "\"interior_lights\": [{\"controller\":\"Interior\\\"Light\",\"intensity\":0.75,"
+            "\"color\":[0.125,0.25,0.5],\"position\":[1,2,3]}]") == std::string::npos ||
+        jsonOutput.str().find(
+            "\"script_textures\": [{\"slot\":2,\"width\":64,\"height\":32,"
+            "\"options\":[\"front\",\"rear\\\"screen\"]}]") == std::string::npos ||
+        jsonOutput.str().find(
+            "\"text_textures\": [{\"slot\":3,\"enhanced\":true,\"placement_label\":true,"
+            "\"values\":[\"Line\",\"Route\\\"Name\"]}]") == std::string::npos ||
+        jsonOutput.str().find(
+            "\"ctc_templates\": [{\"name\":\"Paint\\\"Scheme\","
+            "\"texture_path\":\"Texture\\\\Advert\",\"index\":2}]") == std::string::npos ||
+        jsonOutput.str().find(
+            "\"ctc_textures\": [{\"slot\":\"Farbschema_Tex1\","
+            "\"texture_name\":\"3803_l.tga\"}]") == std::string::npos ||
+        jsonOutput.str().find(
+            "\"origin_operations\":[{\"type\":\"translation\",\"value\":[1,2,3]},"
+            "{\"type\":\"from_mesh\",\"value\":[0,0,0]}]") == std::string::npos ||
+        jsonOutput.str().find(
+            "\"attachment_points\": [{\"name\":\"tow\\\"bar\",\"translation\":[1,2,3],"
+            "\"rotation_degrees\":[4,5,6],\"has_translation\":true,\"has_rotation\":true}]") ==
+            std::string::npos) {
+        std::cerr << "model configuration JSON did not serialize the parsed metadata correctly\n";
         return 1;
     }
     return 0;

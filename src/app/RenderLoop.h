@@ -435,6 +435,7 @@ class RenderLoop {
         std::string timetableDestinationName;
         std::size_t nextPassengerStopIndex = 0;
         bool passengerStopArrived = false;
+        bool passengerStopDepartureRequested = false;
         double nextScheduledDepartureElapsedSeconds = 0.0;
         double lastScheduledDepartureMinutes = 0.0;
         std::size_t nextScheduledDepartureIndex = 0;

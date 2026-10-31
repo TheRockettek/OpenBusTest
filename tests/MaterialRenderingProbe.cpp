@@ -359,6 +359,36 @@ int main() {
         std::cerr << "matl_noZwrite did not preserve blended overlap behavior\n";
         passed = false;
     }
+    const auto drawOverlappingTransmappedSurfaces = [&](bool noZwrite) {
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        glClearColor(0, 0, 0, 0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        ModelMaterial transmappedMaterial;
+        transmappedMaterial.emissionColor = {1, 1, 1};
+        transmappedMaterial.transmap = mask;
+        transmappedMaterial.useTransmap = true;
+        setTriangleDepth(-1.0F);
+        configureModelAlphaState(2, noZwrite);
+        drawModelBatch(buffer, 3, transmappedMaterial, {1, 0, 0}, 0.5, 2);
+        setTriangleDepth(-2.0F);
+        configureModelAlphaState(2, noZwrite);
+        drawModelBatch(buffer, 3, transmappedMaterial, {0, 0, 1}, 0.5, 2);
+        std::array<std::uint8_t, 4> overlapPixel = {};
+        glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, overlapPixel.data());
+        return overlapPixel;
+    };
+    const auto transmapDepthPixel = drawOverlappingTransmappedSurfaces(false);
+    if (transmapDepthPixel[0] <= 20 || transmapDepthPixel[2] > 4) {
+        std::cerr << "transmapped alpha mode 2 did not depth-occlude a later surface\n";
+        passed = false;
+    }
+    const auto transmapNoDepthWritePixel = drawOverlappingTransmappedSurfaces(true);
+    if (transmapNoDepthWritePixel[2] <= transmapNoDepthWritePixel[0]) {
+        std::cerr << "transmapped matl_noZwrite did not preserve blended overlap behavior\n";
+        passed = false;
+    }
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
 

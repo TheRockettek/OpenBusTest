@@ -317,8 +317,9 @@ for alignment is not mistaken for supporting it.
 - [~] Complete runtime material semantics for `[matl_bumpmap]`,
   `[matl_envmap]`, `[matl_freetex]`, `[matl_lightmap]`, and `[matl_nightmap]`;
   one or more shader, blending, controller, or texture-binding stages remain
-  incomplete. `[matl_transmap]` alpha sampling is implemented, but its
-  interaction with blended depth behavior still needs regression coverage.
+  incomplete.   `[matl_transmap]` alpha sampling and its interaction with blended depth
+  behavior, including `[matl_noZwrite]`, have regression coverage; representative
+  OMSI visual parity remains unverified.
 - [~] Vehicle runtime selects controller-driven `[matl_item]` states and
   applies supported auxiliary material properties. Independent item texture
   replacement and complete native item scope remain unimplemented.
@@ -334,27 +335,35 @@ for alignment is not mistaken for supporting it.
   surfaces remains incomplete.
 - [~] Basic `[illumination_interior]`/`[interiorlight]` controller-driven
   point-light shading, mesh assignments, and distance attenuation are active;
-  a GPU probe covers color, zero strength, and near/far attenuation. OMSI
-  intensity parity remains unverified. `[light_enh]`, `[light_enh_2]`, and
+  their retained records are serialized in model-config JSON. A GPU probe
+  covers color, zero strength, and near/far attenuation. OMSI intensity parity
+  remains unverified. `[light_enh]`, `[light_enh_2]`, and
   `[spotlight]` geometry and render ordering remain pending.
   `[light_enh]` and `[light_enh_2]` preserve all required numeric fields and
-  accept their optional bitmap when present; enhanced-light runtime behavior is
-  still pending.
-- [ ] Apply `origin_from_mesh` from mesh transformation metadata in every
-  supported mesh path; the current origin operation is identity when that
-  metadata is unavailable.
-- [ ] Implement `[smoke]` exhaust/particle emission instead of consuming its
-  nineteen fields for parser alignment.
-- [ ] Apply `[VFDmaxmin]` display bounds and `[tex_detail_factor]` to display
-  and texture rendering.
+  accept their optional bitmap when present, and serialize their retained data
+  in model-config JSON; enhanced-light runtime behavior is still pending.
+  `[spotlight]` preserves its twelve numeric parameters in model-config JSON;
+  spotlight rendering remains unimplemented.
+- [~] `[origin_from_mesh]` uses source transform metadata when present and the
+  parsed mesh bounds center as its pivot fallback; native pivot parity remains
+  unverified.
+- [~] `[smoke]` preserves its nineteen authored fields in model-config JSON;
+  exhaust/particle emission remains unimplemented.
+- [~] `[tex_detail_factor]` is retained as a finite model-config value and
+  included in model-config JSON; detail-texture rendering remains unimplemented.
+  `[VFDmaxmin]` bounds are validated and its optional view-context flag is
+  retained verbatim; VFD display-region behavior remains unimplemented.
 - [~] `[CTCTexture]` replacements are applied case-insensitively to base mesh
-  texture names and the resolver is unit-tested. `[CTC]` template/paint-scheme
-  selection and representative-asset substitution remain unsupported.
-- [ ] Add the documented texture-change records `[texchanges]`,
-  `[newtexchangemaster]`, and `[entries]`, including count validation and
-  runtime replacement behavior.
-- [ ] Implement model `[terrainmapping]` when terrain/material CFGs are
-  supported; it is documented but currently not dispatched.
+  texture names and the resolver is unit-tested; retained `[CTC]` template and
+  `[CTCTexture]` mapping metadata is serialized in model-config JSON.
+  `[CTC]` paint-scheme selection and representative-asset substitution remain
+  unsupported.
+- [~] `[texchanges]`, `[newtexchangemaster]`, and `[entries]` payloads are
+  retained in source order and serialized in model-config JSON. Count
+  validation and runtime replacement behavior remain unimplemented.
+- [~] `[terrainmapping]` variable-length payloads are retained verbatim and
+  serialized in model-config JSON; terrain/material rendering remains
+  unsupported.
 - [ ] Finish OMSI-compatible `[texttexture]` and `[texttexture_enh]` font,
   vertical/layout, and alpha semantics; horizontal alignments 0–5 and authored
   grid spacing are supported, but the fallback font rasterizer and remaining
@@ -509,15 +518,21 @@ for alignment is not mistaken for supporting it.
 - [~] `humans_count` now reports the passenger service's occupied-seat count,
   matching `passengers_onboard` for player and AI vehicles. Replace default-only
   values for documented variable families whose producers are absent:
-  `AI_*`, `AI_Scheduled_*`, `PAX_Entry#_*`, `PAX_Exit#_*`, `GivenTicket`,
+  `AI_*`, `AI_Scheduled_*`, `PAX_Entry#_Open`, `PAX_Exit#_Open`, `GivenTicket`,
   `FF_Vib_*`, `Snd_*`,
   `Cabinair_*`, `Dirt_*`, `TrafficPriority*`, `Axle_Brakeforce_*`,
   `Axle_SurfaceID_*`, `articulation_*`, `boogie_*`, and
   `contactshoe_*`.
-- [ ] Add runtime producers for documented vehicle/scenery/human strings and
+- [~] `PAX_Entry#_Req` and `PAX_Exit#_Req` reflect queued/active boarding and
+  alighting when exactly one corresponding cabin entry/exit is configured.
+  Routing requests across multiple doors is not implemented.
+- [~] Add runtime producers for documented vehicle/scenery/human strings and
   state such as `act_route`, `act_busstop`, `SetLineTo`, `yard`,
   `file_schedule`, `Refresh_Strings`, `Switch`, `LastMovedDist`, `PAX_State`,
   and `HeightOfSeat`, or document their supported default-only behavior.
+  Scheduled AI buses now hold at each passenger stop after requesting departure
+  until the script clears `AI_Scheduled_AtStation` to 0; other names listed here
+  remain unimplemented or default-only.
 
 Each item above needs a parser/runtime test or an explicit unsupported-status
 diagnostic before it can be moved to the implemented baseline.

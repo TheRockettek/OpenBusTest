@@ -661,9 +661,18 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                         state.vehicle->passengerService.waitingPassengers(completedStopId);
                 }
             }
-            if (state.passengerStopArrived && !state.vehicle->passengerService.dwelling()) {
-                state.passengerStopArrived = false;
+            const auto departureAction = openbus::map::mapTrafficPassengerStopDepartureAction(
+                state.passengerStopArrived, state.vehicle->passengerService.dwelling(),
+                state.passengerStopDepartureRequested,
+                state.vehicle->variables.get("ai_scheduled_atstation"));
+            if (departureAction ==
+                openbus::map::MapTrafficPassengerStopDepartureAction::RequestDeparture) {
                 state.vehicle->variables.set("ai_scheduled_atstation", -1.0F);
+                state.passengerStopDepartureRequested = true;
+            } else if (departureAction ==
+                       openbus::map::MapTrafficPassengerStopDepartureAction::ResumeRoute) {
+                state.passengerStopArrived = false;
+                state.passengerStopDepartureRequested = false;
                 ++state.nextPassengerStopIndex;
                 state.vehicle->variables.set(
                     "tt_busstop_index",
@@ -1673,6 +1682,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                             "Scheduled bus reached a passenger stop while already dwelling");
                     }
                     trafficVehicle.passengerStopArrived = true;
+                    trafficVehicle.passengerStopDepartureRequested = false;
                     trafficVehicle.vehicle->variables.set("ai_scheduled_atstation", 1.0F);
                     trafficVehicle.actor.scheduledStopDistanceMeters =
                         trafficVehicle.actor.distanceMeters;

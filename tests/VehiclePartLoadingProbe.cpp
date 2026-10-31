@@ -4,9 +4,38 @@
 #include <iostream>
 
 int main() {
+    using openbus::app::vehicle::applyAnimationMeshOrigin;
     using openbus::app::vehicle::cameraEyeFromModelView;
     using openbus::app::vehicle::vehiclePartLoadPriority;
     using openbus::app::vehicle::VehiclePartLoadPriority;
+
+    openbus::rendering::ParsedObj mesh;
+    mesh.boundsCenter = {4.0, -2.0, 7.0};
+    ModelAnimation boundsOriginAnimation;
+    boundsOriginAnimation.originFromMesh = true;
+    applyAnimationMeshOrigin(boundsOriginAnimation, mesh);
+    if (!boundsOriginAnimation.hasMeshTransform ||
+        boundsOriginAnimation.meshTransform[12] != mesh.boundsCenter[0] ||
+        boundsOriginAnimation.meshTransform[13] != mesh.boundsCenter[1] ||
+        boundsOriginAnimation.meshTransform[14] != mesh.boundsCenter[2]) {
+        std::cerr << "origin_from_mesh did not use the parsed bounds center fallback\n";
+        return 1;
+    }
+
+    mesh.hasTransform = true;
+    mesh.transform[12] = 2.0;
+    mesh.transform[13] = 5.0;
+    mesh.transform[14] = 3.0;
+    ModelAnimation transformOriginAnimation;
+    transformOriginAnimation.originFromMesh = true;
+    applyAnimationMeshOrigin(transformOriginAnimation, mesh);
+    if (!transformOriginAnimation.hasMeshTransform ||
+        transformOriginAnimation.meshTransform[12] != 5.0 ||
+        transformOriginAnimation.meshTransform[13] != -2.0 ||
+        transformOriginAnimation.meshTransform[14] != 3.0) {
+        std::cerr << "origin_from_mesh did not preserve source transform metadata\n";
+        return 1;
+    }
 
     if (vehiclePartLoadPriority(true, -1, 2) != VehiclePartLoadPriority::Required) {
         std::cerr << "parts outside [LOD] sections must load for every selected LOD\n";

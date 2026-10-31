@@ -350,6 +350,16 @@ void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& servi
                                                std::size_t& sharedWaitingPassengers,
                                                double elapsedSeconds);
 
+enum class MapTrafficPassengerStopDepartureAction {
+    None,
+    RequestDeparture,
+    ResumeRoute
+};
+
+MapTrafficPassengerStopDepartureAction mapTrafficPassengerStopDepartureAction(
+    bool stopArrived, bool passengerServiceDwelling, bool departureRequested,
+    double aiScheduledAtStation) noexcept;
+
 MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath,
                                     double speedMetersPerSecond, double laneOffsetMagnitudeMeters,
                                     bool leftHandTraffic,

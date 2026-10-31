@@ -137,6 +137,11 @@ contactshoe_#_volt_rail 🔒
 contactshoe_#_volt_veh 🔒
 contactshoe_#_freq 🔒
 
+OpenBus drives `PAX_Entry0_Req` when passenger service is active at a stop and
+exactly one cabin entry is configured. `PAX_Exit0_Req` is similarly driven
+when exactly one exit is configured. Multiple-door passenger assignment is
+not implemented.
+
 Vehicle Strings:
 ident 🔒
 number 🔒
@@ -420,10 +425,11 @@ counters are updated from vehicle displacement, passenger counts from the live
 passenger service, and precipitation from the selected environment.
 
 Scheduled map AI buses publish `SetLineTo`, `AI_target_index`,
-`target_index_int`, `act_busstop`, and `schedule_active`; they update
-`AI_Scheduled_AtStation` at stop arrival and departure. The selected depot name
-is also exposed as `yard`. `coll_pos_x/y/z` and `coll_energy` are populated
-before the `collision` trigger runs.
+`target_index_int`, `act_busstop`, and `schedule_active`. They set
+`AI_Scheduled_AtStation` to 1 on arrival, then to -1 when passenger service
+finishes; the bus remains stopped until its script sets the variable to 0.
+The selected depot name is also exposed as `yard`. `coll_pos_x/y/z` and
+`coll_energy` are populated before the `collision` trigger runs.
 
 Other predefined names are declared with safe defaults or are script-owned;
 OpenBus does not currently simulate fuel level, maintenance condition, road

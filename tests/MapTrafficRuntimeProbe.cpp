@@ -303,6 +303,26 @@ void verifyPassengerSideOffsets() {
     }
 }
 
+void verifyPassengerStopDepartureHandshake() {
+    using namespace openbus::map;
+    require(mapTrafficPassengerStopDepartureAction(false, false, false, 1.0) ==
+                    MapTrafficPassengerStopDepartureAction::None &&
+                mapTrafficPassengerStopDepartureAction(true, true, false, 1.0) ==
+                    MapTrafficPassengerStopDepartureAction::None,
+            "departure is not requested before arrival or while passenger service is active");
+    require(mapTrafficPassengerStopDepartureAction(true, false, false, 1.0) ==
+                MapTrafficPassengerStopDepartureAction::RequestDeparture,
+            "completed passenger service requests script-controlled door closure");
+    require(mapTrafficPassengerStopDepartureAction(true, false, true, -1.0) ==
+                    MapTrafficPassengerStopDepartureAction::None &&
+                mapTrafficPassengerStopDepartureAction(true, false, true, 1.0) ==
+                    MapTrafficPassengerStopDepartureAction::None,
+            "the bus remains at the stop until its script clears the departure state");
+    require(mapTrafficPassengerStopDepartureAction(true, false, true, 0.0) ==
+                MapTrafficPassengerStopDepartureAction::ResumeRoute,
+            "the bus resumes only after its script signals that departure can proceed");
+}
+
 void verifyPassengerServiceBehavior() {
     using namespace openbus::map;
     for (const std::size_t waiting : {1U, 3U, 7U, 10U}) {
@@ -5655,6 +5675,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--passenger-service") {
             verifyPassengerSideOffsets();
+            verifyPassengerStopDepartureHandshake();
             verifyPassengerServiceBehavior();
             return 0;
         }
@@ -5673,6 +5694,7 @@ int main(int argc, char** argv) {
         using namespace openbus::map;
         verifyRearAxleTrafficPose();
         verifyPassengerSideOffsets();
+        verifyPassengerStopDepartureHandshake();
         verifyPassengerServiceBehavior();
         verifyTrafficWaterClearance();
         verifyDrivingBehavior();

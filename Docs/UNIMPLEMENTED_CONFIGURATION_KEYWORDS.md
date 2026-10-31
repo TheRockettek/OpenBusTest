@@ -19,18 +19,19 @@ These are the known bus-model keyword gaps:
 | `[matl_bumpmap]`, `[matl_envmap]`, `[matl_freetex]`, `[matl_lightmap]`, `[matl_nightmap]` | Partial | Material loading and shader paths exist, but some controller, blending, binding, or visual-parity behavior remains incomplete. |
 | `[matl_transmap]`, `[matl_alpha]` | Partial | Transmap sampling and alpha mode 2 depth writes work; remaining native visual parity is unverified. |
 | `[matl_item]` | Partial | Controller-based item selection works; independent texture replacement and full native item scope do not. |
-| `[CTC]`, `[CTCTexture]` | Partial | Base-texture substitutions work; template/paint-scheme selection and full runtime replacement do not. |
-| `[texchanges]`, `[newtexchangemaster]`, `[entries]` | Not implemented | Texture-change tables and replacement selection are not loaded or applied. |
+| `[CTC]`, `[CTCTexture]` | Partial | Base-texture substitutions work and template/mapping metadata is serialized; paint-scheme selection and full runtime replacement do not. |
+| `[texchanges]`, `[newtexchangemaster]`, `[entries]` | Partial | Variable-length payloads are retained in source order and serialized; count validation and replacement selection are not implemented. |
 | `[rendertype]` | Unsupported in bus models | The keyword is restricted to scenery-object model contexts. |
 | `[fixed]`, `[absheight]` | Partial | Only documented subsets of their model-family transform behavior are active. |
-| `[light_enh]`, `[light_enh_2]`, `[spotlight]` | Partial | Records are parsed, but full geometry and render-order behavior are missing. |
-| `[smoke]` | Parsed only | No exhaust or particle system is created. |
-| `[VFDmaxmin]`, `[tex_detail_factor]` | Parsed only | Display bounds and detail scaling do not affect rendering. |
-| `[origin_from_mesh]` | Partial | The origin operation is retained, but is identity when mesh transform metadata is unavailable. |
+| `[light_enh]`, `[light_enh_2]`, `[spotlight]` | Partial | Records are parsed; enhanced-light data and `[spotlight]` parameters are serialized, but full geometry and render-order behavior are missing. |
+| `[smoke]` | Partial | Nineteen authored fields are retained and serialized; no exhaust or particle system is created. |
+| `[VFDmaxmin]` | Partial | Six display bounds and the optional view-context flag are retained; they do not affect rendering. |
+| `[tex_detail_factor]` | Partial | The finite factor is retained and serialized, but detail-texture rendering does not use it. |
+| `[origin_from_mesh]` | Partial | Source transform metadata supplies the pivot when available; otherwise the parsed mesh bounds center is used. Native pivot parity remains unverified. |
 | `[texttexture]`, `[texttexture_enh]` | Partial | Dynamic surfaces work; fallback font rasterization and some format/layout/alpha behavior differ from OMSI. |
-| `[illumination_interior]`, `[interiorlight]` | Partial | Point-light shading works, but controller integration and native intensity parity remain incomplete or unverified. |
+| `[illumination_interior]`, `[interiorlight]` | Partial | Point-light shading and metadata serialization work, but controller integration and native intensity parity remain incomplete or unverified. |
 | `[mouseevent]` | Partial | Vehicle picking and basic event transitions work; configurable key maps and scenery-object dispatch are incomplete. |
-| `[terrainmapping]` | Not implemented | Terrain/material mapping is not dispatched by the shared model-config loader. |
+| `[terrainmapping]` | Partial | Variable-length payloads are retained verbatim and serialized; terrain/material rendering is not implemented. |
 
 See [BUS and bus-model status](IMPLEMENTATION_STATUS_BUS.md#bus-model-cfg)
 and [scenery status](IMPLEMENTATION_STATUS_SCENERY.md) for full limitations.

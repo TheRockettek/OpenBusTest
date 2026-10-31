@@ -253,7 +253,8 @@ One detail-texture strength/scaling factor.
 
 Terrain/material mapping data for a model surface. Layout varies considerably;
 it can contain a texture or mapping descriptor rather than a simple numeric
-record.
+record. OpenBus retains the payload lines verbatim in model-config JSON;
+terrain/material rendering is not implemented.
 
 ## 3. Surface and texture CFGs
 

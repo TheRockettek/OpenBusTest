@@ -92,6 +92,10 @@ bool isKnownKeyword(const std::string& keyword) {
                                                              "texcoordtransy",
                                                              "texttexture",
                                                              "texttexture_enh",
+                                                             "terrainmapping",
+                                                             "texchanges",
+                                                             "newtexchangemaster",
+                                                             "entries",
                                                              "usescripttexture",
                                                              "usetexttexture",
                                                              "vfdmaxmin",
@@ -867,13 +871,20 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         }
         // [smoke]: nineteen position, direction, controller, and appearance fields.
         if (keyword == "smoke") {
-            if (requirePart() != nullptr) {
-                std::vector<std::string> values;
-                readValues(reader, line.number, keyword, 19, values, result.diagnostics);
+            ModelPart* current = requirePart();
+            std::vector<std::string> values;
+            if (readValues(reader, line.number, keyword, 19, values, result.diagnostics)) {
+                if (current != nullptr) {
+                    ModelSmoke smoke;
+                    for (std::size_t index = 0; index < smoke.fields.size(); ++index) {
+                        smoke.fields[index] = std::move(values[index]);
+                    }
+                    result.smokes.push_back(std::move(smoke));
+                }
             }
             openbus::config::logUnhandledConfigurationTag(
                 "model.cfg", configPath, line.number, line.keyword(),
-                "payload is consumed but smoke rendering is not implemented");
+                "fields are retained but smoke rendering is not implemented");
             continue;
         }
         // [newanim]: a variable-length block containing origin fields and anim_rot/
@@ -1325,19 +1336,97 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
         // [vfdmaxmin]: six numeric display limits for VFD/text rendering.
         if (keyword == "vfdmaxmin") {
             std::vector<std::string> values;
-            readValues(reader, line.number, keyword, 6, values, result.diagnostics);
-            openbus::config::logUnhandledConfigurationTag(
-                "model.cfg", configPath, line.number, line.keyword(),
-                "payload is consumed but VFD limits are not implemented");
+            if (!readValues(reader, line.number, keyword, 6, values, result.diagnostics)) {
+                continue;
+            }
+            ModelDisplayBounds bounds;
+            bool validBounds = true;
+            for (std::size_t index = 0; index < bounds.minimumAndMaximum.size(); ++index) {
+                if (!parseDouble(values[index], bounds.minimumAndMaximum[index])) {
+                    result.diagnostics.error(line.number, keyword,
+                                             "expected six finite display-bound values");
+                    validBounds = false;
+                    break;
+                }
+            }
+            if (validBounds &&
+                (bounds.minimumAndMaximum[0] > bounds.minimumAndMaximum[3] ||
+                 bounds.minimumAndMaximum[1] > bounds.minimumAndMaximum[4] ||
+                 bounds.minimumAndMaximum[2] > bounds.minimumAndMaximum[5])) {
+                result.diagnostics.error(line.number, keyword,
+                                         "minimum display bounds must not exceed maximum bounds");
+                validBounds = false;
+            }
+            Line viewContextLine;
+            if (reader.next(viewContextLine)) {
+                if (!viewContextLine.isKeyword() && !viewContextLine.text.empty()) {
+                    bounds.viewContextFlag = std::move(viewContextLine.text);
+                } else {
+                    reader.pushBack(std::move(viewContextLine));
+                }
+            }
+            if (validBounds) {
+                result.vfdDisplayBounds.push_back(std::move(bounds));
+                result.diagnostics.warning(
+                    line.number, keyword,
+                    "bounds retained; VFD display-region behavior is not implemented");
+            }
             continue;
         }
         // [tex_detail_factor]: one numeric texture-detail blend factor.
         if (keyword == "tex_detail_factor") {
-            std::vector<std::string> values;
-            readValues(reader, line.number, keyword, 1, values, result.diagnostics);
+            double value = 0.0;
+            if (readDoubleValue(reader, keyword, value, result.diagnostics)) {
+                result.textureDetailFactor = value;
+                result.diagnostics.warning(
+                    line.number, keyword,
+                    "factor retained; texture-detail rendering is not implemented");
+            }
+            continue;
+        }
+        // [terrainmapping]: retain the model-specific payload without assigning
+        // meaning to its version-dependent texture/mapping fields.
+        if (keyword == "terrainmapping") {
+            ModelTerrainMapping mapping;
+            mapping.sourceLine = line.number;
+            Line value;
+            while (reader.nextIncludingBlank(value)) {
+                if (value.isKeyword()) {
+                    reader.pushBack(std::move(value));
+                    break;
+                }
+                mapping.payload.push_back(value.raw);
+            }
+            result.terrainMappings.push_back(std::move(mapping));
             openbus::config::logUnhandledConfigurationTag(
                 "model.cfg", configPath, line.number, line.keyword(),
-                "payload is consumed but detail-factor behavior is not implemented");
+                "payload is retained but terrain-mapping rendering is not implemented");
+            result.diagnostics.warning(
+                line.number, keyword,
+                "payload retained; terrain-mapping rendering is not implemented");
+            continue;
+        }
+        if (keyword == "texchanges" || keyword == "newtexchangemaster" ||
+            keyword == "entries") {
+            ModelTextureChangeRecord record;
+            record.keyword = line.keyword();
+            record.sourceLine = line.number;
+            Line value;
+            while (reader.nextIncludingBlank(value)) {
+                if (value.isKeyword()) {
+                    reader.pushBack(std::move(value));
+                    break;
+                }
+                record.payload.push_back(value.raw);
+            }
+            result.textureChangeRecords.push_back(std::move(record));
+            openbus::config::logUnhandledConfigurationTag(
+                "model.cfg", configPath, line.number, line.keyword(),
+                "payload is retained but texture-change replacement is not implemented");
+            result.diagnostics.warning(
+                line.number, keyword,
+                "payload retained; texture-change count validation and replacement are not "
+                "implemented");
             continue;
         }
         // [ctc]: template name, source texture path, and template index.

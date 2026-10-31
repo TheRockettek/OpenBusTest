@@ -733,6 +733,19 @@ void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& servi
     sharedWaitingPassengers = service.waitingPassengers(stopId);
 }
 
+MapTrafficPassengerStopDepartureAction mapTrafficPassengerStopDepartureAction(
+    bool stopArrived, bool passengerServiceDwelling, bool departureRequested,
+    double aiScheduledAtStation) noexcept {
+    if (!stopArrived || passengerServiceDwelling) {
+        return MapTrafficPassengerStopDepartureAction::None;
+    }
+    if (!departureRequested) {
+        return MapTrafficPassengerStopDepartureAction::RequestDeparture;
+    }
+    return aiScheduledAtStation == 0.0 ? MapTrafficPassengerStopDepartureAction::ResumeRoute
+                                       : MapTrafficPassengerStopDepartureAction::None;
+}
+
 double mapTrafficHourAtElapsedSeconds(double startHour, double elapsedSeconds) {
     if (!std::isfinite(startHour) || !std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0) {
         throw std::invalid_argument(

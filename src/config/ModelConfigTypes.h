@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -136,6 +137,10 @@ struct ModelSpotlight {
     std::array<double, 12> parameters = {};
 };
 
+struct ModelSmoke {
+    std::array<std::string, 19> fields = {};
+};
+
 struct ModelCollisionMesh {
     std::filesystem::path sourcePath;
     std::filesystem::path resolvedPath;
@@ -150,6 +155,22 @@ struct ModelAttachmentPoint {
     std::array<double, 3> rotationDegrees = {};
     bool hasTranslation = false;
     bool hasRotation = false;
+};
+
+struct ModelDisplayBounds {
+    std::array<double, 6> minimumAndMaximum = {};
+    std::optional<std::string> viewContextFlag;
+};
+
+struct ModelTerrainMapping {
+    std::size_t sourceLine = 0;
+    std::vector<std::string> payload;
+};
+
+struct ModelTextureChangeRecord {
+    std::string keyword;
+    std::size_t sourceLine = 0;
+    std::vector<std::string> payload;
 };
 
 struct ModelCtcTemplate {
@@ -201,6 +222,7 @@ struct ModelConfig {
     std::vector<ModelInteriorLight> interiorLights;
     std::vector<ModelEnhancedLight> enhancedLights;
     std::vector<ModelSpotlight> spotlights;
+    std::vector<ModelSmoke> smokes;
     std::vector<ModelCtcTemplate> ctcTemplates;
     std::vector<ModelCtcTexture> ctcTextures;
     std::vector<ModelScriptTexture> scriptTextures;
@@ -210,6 +232,10 @@ struct ModelConfig {
     bool hasBoundingBox = false;
     // OMSI model bounds: size X/Y/Z followed by center X/Y/Z.
     std::array<double, 6> boundingBox = {};
+    std::optional<double> textureDetailFactor;
+    std::vector<ModelTerrainMapping> terrainMappings;
+    std::vector<ModelTextureChangeRecord> textureChangeRecords;
+    std::vector<ModelDisplayBounds> vfdDisplayBounds;
     std::vector<double> lodThresholds;
     bool absoluteHeight = false;
     ConfigurationDiagnostics diagnostics;

@@ -1,6 +1,7 @@
 // Vehicle lifecycle, scripting and simulation state synchronisation.
 
 #include "app/vehicle/Vehicle.h"
+#include "app/vehicle/PassengerRequestVariables.h"
 
 #include <numbers>
 
@@ -28,6 +29,17 @@ void Vehicle::updateScripts(bool isAiVehicle) {
             static_cast<float>(passengerService.onboardPassengerCount());
         variables.set("passengers_onboard", onboardPassengerCount);
         variables.set("humans_count", onboardPassengerCount);
+        const int stopId = passengerService.currentStopId();
+        const auto requests = openbus::app::vehicle::passengerRequestVariables(
+            passengerEntryPathPoints.size(), passengerExitPathPoints.size(),
+            passengerService.dwelling() && stopId != 0,
+            passengerService.waitingPassengers(stopId), passengerService.boardingPassenger(),
+            passengerService.alightingPassenger());
+        for (std::size_t index = 0; index < requests.entries.size(); ++index) {
+            const std::string suffix = std::to_string(index) + "_req";
+            variables.set("pax_entry" + suffix, requests.entries[index] ? 1.0 : 0.0);
+            variables.set("pax_exit" + suffix, requests.exits[index] ? 1.0 : 0.0);
+        }
     }
     {
         TraceScope runtime("script", "Vehicle::updateScripts.runtime");

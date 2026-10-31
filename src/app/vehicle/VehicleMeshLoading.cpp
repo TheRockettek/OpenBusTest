@@ -2,6 +2,7 @@
 
 #include "app/vehicle/Vehicle.h"
 #include "app/vehicle/VehiclePartLoading.h"
+#include "app/vehicle/VehiclePartLoading.h"
 #include "config/ScriptTextureLimits.h"
 
 bool Vehicle::areObjectsLoaded() const {
@@ -116,30 +117,7 @@ void Vehicle::loadObj(const Part& part, const std::shared_ptr<ParsedObj>& parsed
     std::vector<ModelAnimation> animations = part.animations;
     for (ModelAnimation& animation : animations) {
         animation.variable = lower(animation.variable);
-        if (animation.originFromMesh) {
-            if (parsed->hasTransform) {
-                // The converter preserves OBJ vertices and stores this transform as
-                // metadata. Only its source-space translation supplies the mesh pivot;
-                // applying its orientation again would double-transform the mesh.
-                if (!animation.hasOrigin) {
-                    animation.origin = {parsed->transform[13], -parsed->transform[12],
-                                        parsed->transform[14]};
-                    animation.hasOrigin = true;
-                }
-                animation.meshRotation = {
-                    parsed->transform[0], parsed->transform[1], parsed->transform[2],
-                    parsed->transform[4], parsed->transform[5], parsed->transform[6],
-                    parsed->transform[8], parsed->transform[9], parsed->transform[10]};
-                animation.hasMeshRotation = true;
-                const std::array<double, 3> meshOrigin = {
-                    parsed->transform[13], -parsed->transform[12], parsed->transform[14]};
-                animation.meshTransform = makeMeshTransform(animation.meshRotation, meshOrigin);
-                animation.hasMeshTransform = true;
-            } else if (!animation.hasOrigin) {
-                animation.origin = boundsCenter;
-                animation.hasOrigin = true;
-            }
-        }
+        openbus::app::vehicle::applyAnimationMeshOrigin(animation, *parsed);
     }
     if (verboseObjLoadLogs && !animations.empty()) {
         for (const ModelAnimation& animation : animations) {
