@@ -188,10 +188,13 @@ Chassis contacts populate `coll_pos_x/y/z` and `coll_energy` before dispatching
 energy. Scheduled map AI buses dispatch `ai_scheduled_settarget` when loaded or
 a trip begins, and `ai_scheduled_setbusstop` when their next stop changes.
 
-OpenBus currently has no event source for `int_haltewunsch`, `railbond_#`,
+OpenBus dispatches `int_haltewunsch` when a simulated passenger completes
+boarding and is assigned the next stop as their destination. This models the
+request at boarding completion; independent passenger request timing is not
+simulated. OpenBus currently has no event source for `railbond_#`,
 `malfunction_gettime`, `malfunction_reset`, or `veh_tank`; those triggers can
-still be invoked explicitly, but passenger stop requests, rail joints, repair,
-and refueling behavior are not simulated.
+still be invoked explicitly, but rail joints, repair, and refueling behavior
+are not simulated.
 
 System Macros
 

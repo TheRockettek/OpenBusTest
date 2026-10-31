@@ -315,6 +315,7 @@ class MapPassengerServiceRuntime {
     double alightingProgress() const noexcept;
     std::optional<std::size_t> alightingSeatIndex() const noexcept;
     std::optional<std::size_t> boardingPassengerModelIndex() const noexcept;
+    std::uint64_t passengerStopRequestSequence() const noexcept;
     std::size_t waitingPassengers(int stopId) const noexcept;
     void setPassengerPathLinkProgressProfile(
         std::vector<std::pair<double, std::optional<std::size_t>>> profile);
@@ -338,8 +339,8 @@ class MapPassengerServiceRuntime {
     std::optional<std::size_t> alightingSeat_;
     double alightingAccumulatorSeconds_ = 0.0;
     std::optional<std::size_t> passengerPathLinkIndex_;
-    std::vector<std::pair<double, std::optional<std::size_t>>>
-        passengerPathLinkProgressProfile_;
+    std::vector<std::pair<double, std::optional<std::size_t>>> passengerPathLinkProgressProfile_;
+    std::uint64_t passengerStopRequestSequence_ = 0;
     bool dwelling_ = false;
 
     void clearPassengerPathLinkProgressProfile() noexcept;
@@ -350,15 +351,12 @@ void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& servi
                                                std::size_t& sharedWaitingPassengers,
                                                double elapsedSeconds);
 
-enum class MapTrafficPassengerStopDepartureAction {
-    None,
-    RequestDeparture,
-    ResumeRoute
-};
+enum class MapTrafficPassengerStopDepartureAction { None, RequestDeparture, ResumeRoute };
 
-MapTrafficPassengerStopDepartureAction mapTrafficPassengerStopDepartureAction(
-    bool stopArrived, bool passengerServiceDwelling, bool departureRequested,
-    double aiScheduledAtStation) noexcept;
+MapTrafficPassengerStopDepartureAction
+mapTrafficPassengerStopDepartureAction(bool stopArrived, bool passengerServiceDwelling,
+                                       bool departureRequested,
+                                       double aiScheduledAtStation) noexcept;
 
 MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath,
                                     double speedMetersPerSecond, double laneOffsetMagnitudeMeters,

@@ -411,14 +411,19 @@ void verifyPassengerServiceBehavior() {
                 service.dwelling() && service.currentStopId() == 100 &&
                 service.onboardPassengerCount() == 0,
             "arrival opens a stop dwell and alights no more than occupied seats");
-    service.advance(0.75);
+    service.advance(0.5);
+    require(service.passengerStopRequestSequence() == 0,
+            "passenger stop request waits until boarding assigns the next-stop destination");
+    service.advance(0.25);
     require(service.passengerCountOnSeat(0) == 1 && service.passengerCountOnSeat(1) == 0 &&
-                service.waitingPassengers(100) == 3,
-            "passengers board into seats at the configured dwell interval");
+                service.waitingPassengers(100) == 3 &&
+                service.passengerStopRequestSequence() == 1,
+            "boarding assigns a next-stop destination and emits one passenger stop request");
     service.advance(1.25);
     require(!service.dwelling() && service.onboardPassengerCount() == 2 &&
-                service.waitingPassengers(100) == 2,
-            "dwell closes after time and boarding stops at the seat capacity");
+                service.waitingPassengers(100) == 2 &&
+                service.passengerStopRequestSequence() == 2,
+            "each completed boarding emits one request without exceeding seat capacity");
     service.setWaitingPassengers(200, 2);
     require(service.arrive({.stopId = 200, .dwellSeconds = 1.0, .nextStopId = 300}) &&
                 service.onboardPassengerCount() == 2 && service.alightingPassenger(),

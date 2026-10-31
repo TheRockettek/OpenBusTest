@@ -86,6 +86,7 @@ override is applied.
 - Boarding into configured seat slots and next-stop alighting are active. Boarding movement is only a roadside visual approximation; cabin path-link traversal and alighting movement are absent. Passenger mass is not applied, and seated humans are not rendered.
 - `PAX_Entry#_Req` and `PAX_Exit#_Req` reflect waiting/active passenger service when exactly one corresponding entry/exit is configured. Multi-door passenger assignment is not implemented.
 - Scheduled AI buses set `AI_Scheduled_AtStation` to 1 on stop arrival and -1 after passenger service; they hold position until the vehicle script clears it to 0.
+- `int_haltewunsch` fires when a simulated passenger completes boarding and receives the next stop as their destination; native-independent request timing is not simulated.
 - Map ticket-pack and currency coin records populate the `getticketname`, `getticketvalue`, and `givechangecoin` script macros for player and AI vehicles. Ticket requests, card/cash transactions, ticket-selling UI, and animated/audible/physical coin dispensing are absent.
 - Extended path fields and actual step-sound playback/route use remain incomplete.
 - HOF, stop-announcement, and arrival-board integration remains absent. Scheduled AI bus scripts receive timetable stop names, profile-selected arrival/departure times, and route-based delay; `GetTTTerminusIndex` returns the zero-based index of the last mapped stop on the bus route, or `-1` when no stops are mapped.

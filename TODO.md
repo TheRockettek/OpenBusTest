@@ -488,6 +488,9 @@ for alignment is not mistaken for supporting it.
 - [ ] Arrival-board lookups: `GetArrBusLine`, `GetArrBusTerminus`, and
   `GetArrBusTimeDiff` need the parent bus-stop association and arrival queue,
   which scenery script runtimes do not currently receive.
+- [~] `int_haltewunsch` is dispatched when a simulated passenger completes
+  boarding with the next stop assigned as their destination. Native-independent
+  passenger request timing is not simulated.
 - [~] Native and converted Lua backends now preserve the top string on chained
   `(S.$...)` stores, and native system-macro dispatch enforces object-kind
   availability like Lua registration. A cross-backend probe covers chained

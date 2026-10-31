@@ -587,6 +587,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
         if (boardingAccumulatorSeconds_ + 1.0e-9 >= boardingIntervalSeconds) {
             seatDestinations_[*boardingSeat_] = nextStopId_;
             seatPassengerModelIndices_[*boardingSeat_] = boardingPassengerModelIndex_;
+            ++passengerStopRequestSequence_;
             boardingSeat_.reset();
             boardingPassengerModelIndex_.reset();
             boardingAccumulatorSeconds_ = 0.0;
@@ -601,6 +602,7 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds) {
         if (boardingAccumulatorSeconds_ + 1.0e-9 >= boardingIntervalSeconds) {
             seatDestinations_[*boardingSeat_] = nextStopId_;
             seatPassengerModelIndices_[*boardingSeat_] = boardingPassengerModelIndex_;
+            ++passengerStopRequestSequence_;
             boardingSeat_.reset();
             boardingPassengerModelIndex_.reset();
             boardingAccumulatorSeconds_ = 0.0;
@@ -651,6 +653,10 @@ MapPassengerServiceRuntime::boardingPassengerModelIndex() const noexcept {
     return boardingPassengerModelIndex_;
 }
 
+std::uint64_t MapPassengerServiceRuntime::passengerStopRequestSequence() const noexcept {
+    return passengerStopRequestSequence_;
+}
+
 std::size_t MapPassengerServiceRuntime::waitingPassengers(int stopId) const noexcept {
     const auto found = waitingByStop_.find(stopId);
     return found == waitingByStop_.end() ? 0 : found->second;
@@ -661,8 +667,7 @@ void MapPassengerServiceRuntime::setPassengerPathLinkProgressProfile(
     double previousProgress = 0.0;
     for (const auto& segment : profile) {
         const double endProgress = segment.first;
-        if (!std::isfinite(endProgress) || endProgress <= previousProgress ||
-            endProgress > 1.0) {
+        if (!std::isfinite(endProgress) || endProgress <= previousProgress || endProgress > 1.0) {
             throw std::invalid_argument(
                 "Passenger path-link progress profile must have increasing ends in (0, 1]");
         }
@@ -733,9 +738,10 @@ void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& servi
     sharedWaitingPassengers = service.waitingPassengers(stopId);
 }
 
-MapTrafficPassengerStopDepartureAction mapTrafficPassengerStopDepartureAction(
-    bool stopArrived, bool passengerServiceDwelling, bool departureRequested,
-    double aiScheduledAtStation) noexcept {
+MapTrafficPassengerStopDepartureAction
+mapTrafficPassengerStopDepartureAction(bool stopArrived, bool passengerServiceDwelling,
+                                       bool departureRequested,
+                                       double aiScheduledAtStation) noexcept {
     if (!stopArrived || passengerServiceDwelling) {
         return MapTrafficPassengerStopDepartureAction::None;
     }
