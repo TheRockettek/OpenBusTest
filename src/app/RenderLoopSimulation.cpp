@@ -267,7 +267,8 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
         if (activePlayerPassengerStop_ && !playerVehicle_->passengers->service.dwelling()) {
             const std::optional<std::size_t> completedRoute = activePlayerPassengerStopRouteIndex_;
             const std::optional<std::size_t> completedStop = activePlayerPassengerStopIndex_;
-            if (playerTimetable_.state && completedRoute && completedStop &&
+            if (activePlayerPassengerStopCompletesTimetable_ && playerTimetable_.state &&
+                completedRoute && completedStop &&
                 *completedRoute == playerTimetable_.state->selection.passengerRouteIndex) {
                 const bool atTerminus =
                     *completedStop + 1 >= passengerNetwork_.routes[*completedRoute].stops.size();
@@ -280,6 +281,7 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
             activePlayerPassengerStop_.reset();
             activePlayerPassengerStopRouteIndex_.reset();
             activePlayerPassengerStopIndex_.reset();
+            activePlayerPassengerStopCompletesTimetable_ = false;
         }
 
         struct NearbyPassengerStop {
@@ -381,6 +383,7 @@ void RenderLoop::updatePostPhysicsVariables(BusSimulation& simulation) {
                 activePlayerPassengerStop_ = stop.stopId;
                 activePlayerPassengerStopRouteIndex_ = nearestStop.routeIndex;
                 activePlayerPassengerStopIndex_ = nearestStop.stopIndex;
+                activePlayerPassengerStopCompletesTimetable_ = playerTimetable_.state.has_value();
                 playerPassengerStopLatch_ = stop.stopId;
                 playerPassengerStopLatchRouteIndex_ = nearestStop.routeIndex;
                 playerPassengerStopLatchIndex_ = nearestStop.stopIndex;

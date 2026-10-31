@@ -329,10 +329,10 @@ makeBoundingBoxCollisionMesh(const std::array<double, 6>& boundingBox) {
     const double halfY = boundingBox[1] * 0.5;
     const double halfZ = boundingBox[2] * 0.5;
     for (int corner = 0; corner < 8; ++corner) {
-        const auto position = openbus::rendering::convertO3DPositionToMapAxes(
+        const std::array<double, 3> position = {
             boundingBox[3] + ((corner & 1) == 0 ? -halfX : halfX),
             boundingBox[4] + ((corner & 2) == 0 ? -halfY : halfY),
-            boundingBox[5] + ((corner & 4) == 0 ? -halfZ : halfZ));
+            boundingBox[5] + ((corner & 4) == 0 ? -halfZ : halfZ)};
         mesh->positions.push_back({position[0], position[1], position[2]});
     }
     constexpr std::array<std::array<int, 3>, 12> triangles = {{
@@ -352,7 +352,7 @@ makeBoundingBoxCollisionMesh(const std::array<double, 6>& boundingBox) {
     for (const auto& indices : triangles) {
         openbus::rendering::ObjTriangle triangle;
         for (std::size_t corner = 0; corner < indices.size(); ++corner) {
-            triangle.indices[corner].position = indices[corner] + 1;
+            triangle.indices[corner].position = indices[2 - corner] + 1;
         }
         mesh->triangles.push_back(std::move(triangle));
     }
@@ -412,34 +412,50 @@ std::optional<MapPoleCollision> makeMapPoleCollision(const MapSceneryCollisionOb
     if (!object.poleCrash.has_value()) {
         return std::nullopt;
     }
-    const std::array<double, 3> localBottom = {
-        (object.localBounds[0] + object.localBounds[3]) * 0.5,
-        (object.localBounds[1] + object.localBounds[4]) * 0.5, object.localBounds[2]};
+    // Lamp arms and signs can extend far beyond the shaft. Fit the horizontal
+    // center and width to the lowest fifth of the collision geometry.
+    const double lowerLimit = std::lerp(object.localBounds[2], object.localBounds[5], 0.2);
+    std::array<double, 4> shaftBounds = {
+        std::numeric_limits<double>::max(), std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::lowest(), std::numeric_limits<double>::lowest()};
+    for (const auto& mesh : object.meshes) {
+        for (const auto& vertex : mesh->positions) {
+            if (vertex.z <= lowerLimit) {
+                shaftBounds[0] = std::min(shaftBounds[0], vertex.x);
+                shaftBounds[1] = std::min(shaftBounds[1], vertex.y);
+                shaftBounds[2] = std::max(shaftBounds[2], vertex.x);
+                shaftBounds[3] = std::max(shaftBounds[3], vertex.y);
+            }
+        }
+    }
+    const std::array<double, 3> localBottom = {(shaftBounds[0] + shaftBounds[2]) * 0.5,
+                                               (shaftBounds[1] + shaftBounds[3]) * 0.5,
+                                               object.localBounds[2]};
     const std::array<double, 3> localTop = {localBottom[0], localBottom[1], object.localBounds[5]};
     const auto bottomOffset = transformMapSceneryVector(object.pose, localBottom);
     const auto topOffset = transformMapSceneryVector(object.pose, localTop);
     MapPoleCollision pole;
     pole.mapObjectId = object.mapObjectId;
-    pole.tileX = tileX;
-    pole.tileY = tileY;
+    pole.tileX = object.sourceTileX;
+    pole.tileY = object.sourceTileY;
     pole.basePosition = {object.pose.x + bottomOffset[0], object.pose.y + bottomOffset[1],
                          object.worldZ + bottomOffset[2]};
     pole.topPosition = {object.pose.x + topOffset[0], object.pose.y + topOffset[1],
                         object.worldZ + topOffset[2]};
-    const double horizontalWidth = object.localBounds[3] - object.localBounds[0];
-    const double horizontalDepth = object.localBounds[4] - object.localBounds[1];
+    const double horizontalWidth = shaftBounds[2] - shaftBounds[0];
+    const double horizontalDepth = shaftBounds[3] - shaftBounds[1];
     const double narrowestWidth = std::min(horizontalWidth, horizontalDepth) > 1.0e-4
                                       ? std::min(horizontalWidth, horizontalDepth)
                                       : std::max(horizontalWidth, horizontalDepth);
     const auto xAxis = transformMapSceneryVector(object.pose, {1.0, 0.0, 0.0});
     const auto yAxis = transformMapSceneryVector(object.pose, {0.0, 1.0, 0.0});
-    const double boundRadius =
-        0.5 * narrowestWidth *
-        std::max(std::hypot(xAxis[0], xAxis[1]), std::hypot(yAxis[0], yAxis[1]));
+    const double boundRadius = 0.5 * narrowestWidth *
+                               std::max(std::hypot(xAxis[0], xAxis[1], xAxis[2]),
+                                        std::hypot(yAxis[0], yAxis[1], yAxis[2]));
     const double poleLength = std::hypot(pole.topPosition[0] - pole.basePosition[0],
                                          pole.topPosition[1] - pole.basePosition[1],
                                          pole.topPosition[2] - pole.basePosition[2]);
-    pole.radiusMeters = std::min({boundRadius, 0.12, poleLength * 0.05});
+    pole.radiusMeters = std::min(boundRadius, std::max(0.0, (poleLength - 0.01) * 0.5));
     pole.resistanceRadiansPerTonneMeterPerSecond =
         object.poleCrash->resistanceRadiansPerTonneMeterPerSecond;
     pole.breakAngleRadians = object.poleCrash->breakAngleRadians;
@@ -756,6 +772,8 @@ buildMapSceneryCollisionIndex(const MapDefinition& map, const std::filesystem::p
 
             MapSceneryCollisionObject object;
             object.mapObjectId = placement.id;
+            object.sourceTileX = tileReference.x;
+            object.sourceTileY = tileReference.y;
             object.pose = *pose;
             object.poleCrash = collision.poleCrash;
             const double ground = collision.absoluteHeight

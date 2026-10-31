@@ -29,6 +29,8 @@ struct MapRoadCollisionResult {
 
 struct MapSceneryCollisionObject {
     int mapObjectId = 0;
+    int sourceTileX = 0;
+    int sourceTileY = 0;
     MapSceneryPose pose;
     double worldZ = 0.0;
     double minX = 0.0;

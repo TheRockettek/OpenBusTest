@@ -272,6 +272,8 @@ void ScriptRuntime::Impl::loadHofData() {
             if (code && name && terminusValue && lineValue) {
                 HofRoute route;
                 route.code = openbus::config::trim(*code);
+                route.name = openbus::config::trim(*name);
+                route.line = openbus::config::trim(*lineValue);
                 route.hasTerminusIndex =
                     openbus::config::parseInt(*terminusValue, route.terminusIndex);
                 parsed.routes.push_back(std::move(route));

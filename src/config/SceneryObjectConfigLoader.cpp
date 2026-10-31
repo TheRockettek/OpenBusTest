@@ -241,11 +241,11 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
             double cycleDuration = 0.0;
             if (reader.readPayload(value, result.diagnostics, keyword)) {
                 if (parseDouble(value.text, cycleDuration) && std::isfinite(cycleDuration) &&
-                    cycleDuration > 0.0) {
+                    cycleDuration >= 0.0) {
                     result.trafficLightsGroupDurationSeconds = cycleDuration;
                 } else {
                     result.diagnostics.warning(value.number, keyword,
-                                               "expected a positive cycle duration");
+                                               "expected a non-negative cycle duration");
                 }
             }
             continue;
@@ -316,21 +316,14 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                     std::copy(values.begin(), values.end(), stop.begin());
                     result.trafficLightStops.push_back(stop);
                 } else {
-                    const double interruptState = values[0];
-                    const double targetPhase = values[2];
-                    if (std::floor(interruptState) != interruptState || interruptState < 0.0 ||
-                        interruptState > 12.0 || !std::isfinite(values[1]) || values[1] < 0.0 ||
-                        std::floor(targetPhase) != targetPhase || targetPhase < 6.0 ||
-                        targetPhase > 8.0 || !std::isfinite(values[3]) || values[3] < 0.0) {
-                        result.diagnostics.warning(
-                            line.number, keyword,
-                            "expected an interrupt phase in [0, 12], a green target phase in "
-                            "[6, 8], and non-negative "
-                            "trigger distance/minimum green time");
+                    if (values[0] < 0.0 || std::floor(values[0]) != values[0] || values[1] < 0.0 ||
+                        values[3] < 0.0) {
+                        result.diagnostics.warning(line.number, keyword,
+                                                   "expected a light index and non-negative times");
                     } else {
-                        result.trafficLightBusPriorityRules.push_back(
-                            {static_cast<int>(interruptState), values[1],
-                             static_cast<int>(targetPhase), values[3]});
+                        std::array<double, 4> jump{};
+                        std::copy(values.begin(), values.end(), jump.begin());
+                        result.trafficLightJumps.push_back(jump);
                     }
                 }
             }
@@ -455,6 +448,18 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                                                       "unknown scenery-object keyword");
     }
 
+    double effectiveCycleDuration = result.trafficLightsGroupDurationSeconds;
+    if (effectiveCycleDuration <= 0.0) {
+        for (const SceneryObjectTrafficLight& light : result.trafficLights) {
+            double phaseDuration = 0.0;
+            for (const openbus::map::MapTrafficSignalPhase& phase : light.phases) {
+                phaseDuration += phase.durationSeconds;
+            }
+            effectiveCycleDuration = std::max(effectiveCycleDuration, phaseDuration);
+        }
+        result.trafficLightsGroupDurationSeconds = effectiveCycleDuration;
+    }
+
     const std::size_t originalTrafficLightCount = result.trafficLights.size();
     const std::size_t unreferencedLight = (std::numeric_limits<std::size_t>::max)();
     std::vector<std::size_t> trafficLightIndexRemap(originalTrafficLightCount, unreferencedLight);
@@ -485,20 +490,22 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
     }
 
     auto signalProgram = std::make_shared<openbus::map::MapTrafficSignalProgram>();
-    signalProgram->cycleDurationSeconds = result.trafficLightsGroupDurationSeconds;
+    signalProgram->cycleDurationSeconds = effectiveCycleDuration;
     for (const SceneryObjectTrafficLight& light : result.trafficLights) {
         signalProgram->lights.push_back(light.phases);
         signalProgram->approachDistancesMeters.push_back(light.approachDistanceMeters);
     }
-    signalProgram->busPriorityRules = result.trafficLightBusPriorityRules;
     const auto addControlPoint = [&](double rawLightIndex, double timeSeconds, double ifRequest,
-                                     const char* keyword) {
+                                     std::optional<double> jumpToSeconds, const char* keyword) {
         if (!std::isfinite(rawLightIndex) || rawLightIndex < 0.0 ||
             std::floor(rawLightIndex) != rawLightIndex ||
             rawLightIndex >= static_cast<double>(originalTrafficLightCount) ||
-            !std::isfinite(timeSeconds) || timeSeconds < 0.0 || !std::isfinite(ifRequest)) {
+            !std::isfinite(timeSeconds) || timeSeconds < 0.0 || !std::isfinite(ifRequest) ||
+            (jumpToSeconds.has_value() &&
+             (!std::isfinite(*jumpToSeconds) || *jumpToSeconds < 0.0))) {
             result.diagnostics.warning(
-                0, keyword, "expected an existing light index and finite non-negative times");
+                0, keyword,
+                "expected an existing light index, non-negative times, and finite if_request");
             return;
         }
         const std::size_t originalLightIndex = static_cast<std::size_t>(rawLightIndex);
@@ -506,36 +513,39 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         if (lightIndex == unreferencedLight) {
             return;
         }
-        signalProgram->controlPoints.push_back({lightIndex, timeSeconds, ifRequest > 0.5});
+        signalProgram->controlPoints.push_back(
+            {lightIndex, timeSeconds, ifRequest > 0.5, jumpToSeconds});
     };
     for (const std::array<double, 3>& stop : result.trafficLightStops) {
-        addControlPoint(stop[0], stop[1], stop[2], "traffic_light_stop");
+        addControlPoint(stop[0], stop[1], stop[2], std::nullopt, "traffic_light_stop");
     }
-    const bool signalProgramValid = !result.trafficLights.empty() &&
-                                    signalProgram->controlPoints.size() != 1 &&
-                                    openbus::map::mapTrafficSignalProgramValid(*signalProgram);
+    for (const std::array<double, 4>& jump : result.trafficLightJumps) {
+        addControlPoint(jump[0], jump[1], jump[2], jump[3], "traffic_light_jump");
+    }
+    const bool signalProgramValid =
+        !result.trafficLights.empty() && openbus::map::mapTrafficSignalProgramValid(*signalProgram);
     if (!signalProgramValid &&
-        (!result.trafficLightStops.empty() || !result.trafficLightBusPriorityRules.empty())) {
-        result.diagnostics.warning(0, "traffic_light_jump",
+        (!result.trafficLightStops.empty() || !result.trafficLightJumps.empty())) {
+        const char* keyword =
+            result.trafficLightStops.empty() ? "traffic_light_jump" : "traffic_light_stop";
+        result.diagnostics.warning(0, keyword,
                                    "conditional signal program is invalid and will be ignored");
     }
 
     result.trafficLightSchedules.resize(result.trafficLights.size());
     for (std::size_t lightIndex = 0; lightIndex < result.trafficLights.size(); ++lightIndex) {
-        if (result.trafficLightsGroupDurationSeconds <= 0.0) {
+        if (effectiveCycleDuration <= 0.0) {
             continue;
         }
         const SceneryObjectTrafficLight& light = result.trafficLights[lightIndex];
         openbus::map::MapTrafficSignalSchedule schedule;
-        schedule.cycleDurationSeconds = result.trafficLightsGroupDurationSeconds;
+        schedule.cycleDurationSeconds = effectiveCycleDuration;
         schedule.phases = light.phases;
         schedule.lightIndex = lightIndex;
         schedule.approachDistanceMeters = light.approachDistanceMeters;
         schedule.program = signalProgramValid ? signalProgram : nullptr;
         schedule.hasConditionalOverrides =
-            signalProgramValid &&
-            (!signalProgram->controlPoints.empty() || !signalProgram->busPriorityRules.empty());
-        schedule.hasBusPriority = signalProgramValid && !signalProgram->busPriorityRules.empty();
+            signalProgramValid && !signalProgram->controlPoints.empty();
         if (openbus::map::mapTrafficSignalStateAtTime(schedule, 0.0).has_value()) {
             result.trafficLightSchedules[lightIndex] = std::move(schedule);
         }
@@ -556,6 +566,22 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
         referencedTrafficLightStops.push_back(stop);
     }
     result.trafficLightStops = std::move(referencedTrafficLightStops);
+    std::vector<std::array<double, 4>> referencedTrafficLightJumps;
+    referencedTrafficLightJumps.reserve(result.trafficLightJumps.size());
+    for (std::array<double, 4> jump : result.trafficLightJumps) {
+        if (!std::isfinite(jump[0]) || jump[0] < 0.0 || std::floor(jump[0]) != jump[0] ||
+            jump[0] >= static_cast<double>(trafficLightIndexRemap.size())) {
+            continue;
+        }
+        const std::size_t originalLightIndex = static_cast<std::size_t>(jump[0]);
+        const std::size_t lightIndex = trafficLightIndexRemap[originalLightIndex];
+        if (lightIndex == unreferencedLight) {
+            continue;
+        }
+        jump[0] = static_cast<double>(lightIndex);
+        referencedTrafficLightJumps.push_back(jump);
+    }
+    result.trafficLightJumps = std::move(referencedTrafficLightJumps);
 
     for (SceneryObjectTrafficPath& path : result.trafficPaths) {
         if (path.trafficLightIndex < 0) {
@@ -566,7 +592,7 @@ SceneryObjectConfig loadSceneryObjectFile(const std::filesystem::path& configPat
                                        "path references a missing traffic light");
             continue;
         }
-        if (result.trafficLightsGroupDurationSeconds <= 0.0) {
+        if (effectiveCycleDuration <= 0.0) {
             result.diagnostics.warning(0, "traffic_lights_group",
                                        "signalized path has no valid group cycle duration");
             continue;

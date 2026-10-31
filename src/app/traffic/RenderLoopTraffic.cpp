@@ -366,6 +366,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         }
     }
     const double currentSimulationTime = simulation.simulationTime();
+    const double currentSignalClockSeconds =
+        mapTrafficSignalClockSeconds(currentSimulationTime, trafficFleet_.mapTrafficStartHour);
     const auto advanceScheduledDeparture = [&](TrafficVehicleState& state,
                                                double afterElapsedSeconds) {
         openbus::app::advanceScheduledBusDeparture(*state.bus, trafficFleet_.mapTrafficStartHour,
@@ -540,7 +542,7 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                 actor.speedMetersPerSecond > MAP_TRAFFIC_STOPPED_SPEED_METERS_PER_SECOND) {
                 return true;
             }
-            if (mapTrafficActorWaitingAtSignal(actor, currentSimulationTime) ||
+            if (mapTrafficActorWaitingAtSignal(actor, currentSignalClockSeconds) ||
                 (actor.blockingObstacleIndex.has_value() &&
                  actor.blockingObstacleIndex == playerObstacleIndex)) {
                 return true;
@@ -1294,16 +1296,16 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
         }
     }
     std::vector<std::shared_ptr<MapTrafficSignalController>> signalControllers;
-    std::vector<MapTrafficSignalBusPriorityRequest> busPriorityRequests;
+    std::vector<MapTrafficSignalRequest> signalRequests;
     if (mapRenderer_ != nullptr) {
         if (trafficInputDue) {
             TraceScope signalTrace("traffic", "RenderLoop::updateTrafficDriving.signalSnapshot");
             signalControllers = mapRenderer_->trafficSignalControllers();
             const auto playerPosition = streamingPosition(simulation);
-            busPriorityRequests = mapRenderer_->trafficSignalBusPriorityRequests(
-                std::array<double, 2>{playerPosition[0], playerPosition[1]});
+            signalRequests = mapRenderer_->trafficSignalRequests(
+                std::array<double, 2>{playerPosition[0], playerPosition[1]}, simulation.speed());
         }
-        mapRenderer_->updateTrafficSignalScripts(currentSimulationTime);
+        mapRenderer_->updateTrafficSignalScripts(currentSignalClockSeconds);
     }
     {
         TraceScope movementTrace("traffic", "RenderLoop::updateTrafficDriving.vehicleMovement");
@@ -1420,8 +1422,8 @@ void RenderLoop::updateTrafficDriving(const BusSimulation& simulation, double el
                                        "RenderLoop::updateTrafficDriving.vehicleMovement.submit");
                 trafficFleet_.worker->submit(
                     std::move(actors), std::move(humans), external, std::move(humanObstacles),
-                    std::move(signalControllers), std::move(busPriorityRequests),
-                    trafficInputElapsedSeconds, currentSimulationTime);
+                    std::move(signalControllers), std::move(signalRequests),
+                    trafficInputElapsedSeconds, currentSignalClockSeconds);
             }
         }
     }

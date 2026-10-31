@@ -83,6 +83,11 @@ openbus_add_probe(OpenBusBusConfigurationCollisionProbe BusConfigurationCollisio
 
 # Map
 openbus_add_probe(OpenBusMapConfigProbe MapConfigLoaderProbe.cpp LIBS openbus_map)
+openbus_add_probe(OpenBusMapHofCompatibilityProbe MapHofCompatibilityProbe.cpp
+    LIBS openbus_map openbus_scripting NO_TEST)
+target_sources(OpenBusMapHofCompatibilityProbe PRIVATE
+    "${OPENBUS_SOURCE_ROOT}/app/traffic/PlayerTimetableController.cpp")
+openbus_copy_lua_runtime(OpenBusMapHofCompatibilityProbe)
 openbus_add_probe(OpenBusMapChronoTileProbe MapChronoTileProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapSplineGeometryProbe MapSplineGeometryProbe.cpp LIBS openbus_map)
 openbus_add_probe(OpenBusMapRoadGeometryProbe MapRoadGeometryProbe.cpp LIBS openbus_map)
@@ -135,6 +140,8 @@ add_test(NAME OpenBusMapTrafficTJunctionProbe
     COMMAND OpenBusMapTrafficRuntimeProbe --t-junction)
 add_test(NAME OpenBusMapTrafficJunctionSubstepProbe
     COMMAND OpenBusMapTrafficRuntimeProbe --junction-substep-equivalence)
+add_test(NAME OpenBusMapTrafficRightOfWayProbe
+    COMMAND OpenBusMapTrafficRuntimeProbe --default-right-of-way)
 add_test(NAME OpenBusMapTrafficPriorityOrderProbe
     COMMAND OpenBusMapTrafficRuntimeProbe --authored-priority-order)
 add_test(NAME OpenBusMapTrafficDenseQueueProbe
@@ -238,6 +245,9 @@ set_tests_properties(OpenBusVehicleIndirectReuseProbe PROPERTIES SKIP_RETURN_COD
     ENVIRONMENT "OPENBUS_REFLECTION_SIZE=64;OPENBUS_REFLECTION_INTERVAL=1;OPENBUS_REFLECTION_MAX_FPS=0;OPENBUS_REFLECTION_TRANSPARENT=1")
 add_test(NAME OpenBusVehicleTextureLookupProbe
     COMMAND OpenBusVehicleIndirectReuseProbe --texture-lookup)
+add_test(NAME OpenBusVehicleCompressedMipmapsProbe
+    COMMAND OpenBusVehicleIndirectReuseProbe --compressed-mipmaps)
+set_tests_properties(OpenBusVehicleCompressedMipmapsProbe PROPERTIES SKIP_RETURN_CODE 77)
 openbus_add_probe(OpenBusVehiclePartLoadingProbe VehiclePartLoadingProbe.cpp
     LIBS openbus_render)
 openbus_add_probe(OpenBusVehiclePassengerRequestProbe VehiclePassengerRequestProbe.cpp

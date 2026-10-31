@@ -3,6 +3,7 @@
 #include "core/Variables.h"
 #include "config/VehicleConfigLoader.h"
 #include "config/ModelConfigTypes.h"
+#include "config/HofData.h"
 
 #include <filesystem>
 #include <cstdint>
@@ -35,6 +36,7 @@ class ScriptRuntime {
 
     bool valid() const;
     const std::vector<std::string>& errors() const;
+    const openbus::config::HofData& hofData() const;
     static void prepareFontSearch(const std::filesystem::path& sourcePath,
                                   const std::vector<std::string>& fontNames);
     void initialize();

@@ -41,7 +41,7 @@ and [scenery status](IMPLEMENTATION_STATUS_SCENERY.md) for full limitations.
 | Keyword(s) | Status | Details |
 | --- | --- | --- |
 | `[fixed]`, `[scriptshare]` | Not implemented | BUS-level fixed/static selection and shared-script semantics are not applied. |
-| `[view_schedule]`, `[view_ticketselling]` | Partial | View indexes and labels are retained, including repeated entries; runtime selection behavior remains unimplemented and is diagnosed. |
+| `[view_schedule]`, `[view_ticketselling]` | Partial | Camera markers and labelled view indexes are retained, including repeated entries; runtime selection behavior remains unimplemented and is diagnosed. |
 | `[cog]` | Partial | Its z coordinate supplies the CG height when `[schwerpunkt]` is absent. `[schwerpunkt]` takes precedence with a warning on disagreement; nonzero x/y offsets are retained and warned about but not applied. Native precedence remains unverified. |
 | `[rollwiderstand]`, `[ai_deltaheight]`, `[sound_ai]` | Partial | Working subsets exist; native physics, placement, and AI audio parity remain unverified. |
 | `[rot_pnt_long]` | Parsed only | The coordinate is retained and diagnosed, but does not affect vehicle physics. |
@@ -87,7 +87,7 @@ See [BUS and passenger/path status](IMPLEMENTATION_STATUS_BUS.md#passenger-cabin
 | Road-profile `.sli` records `[texture]`, `[profile]`, `[profilepnt]`, `[path]`, `[halfcantwidth]`, `[heightprofile]` | Partial | Static road-strip rendering, path metadata, and cant handling support subsets; profile surfaces and native visual/unit parity remain incomplete or unverified. |
 | Scenery-object `.sco` `[path]` | Partial | Geometry, path type, width, and linked traffic signals are used; the final two numeric fields are read but not used by the runtime. |
 | Chrono `[selobject]`, `[selspline]`, `[delete]`, `[typ]`, `[relabel]` | Partial / not implemented | Source data can be retained, but date selection and variant application are absent. |
-| `[traffic_lights_group]`, `[traffic_light]`, `[phase]`, `[traffic_light_stop]`, `[traffic_light_jump]`, `[use_traffic_light]`, `[approachdist]` | Partial | Fixed-cycle/request-aware behavior exists; cycle origin, model lamp animation, and native stop-line fidelity are unverified. |
+| `[traffic_lights_group]`, `[traffic_light]`, `[phase]`, `[traffic_light_stop]`, `[traffic_light_jump]`, `[use_traffic_light]`, `[approachdist]` | Partial | Fixed-cycle schedules, native-format conditional stops/jumps, selected-time cycle initialization, and request-distance handling exist. Native stop-line fidelity, model lamp animation, and full OMSI parity remain unverified. |
 | `.map.LM.bmp`, `.map.terrain_0.rdy` | Inventoried only | Paths/presence are detected; payloads are not decoded or applied. |
 
 See [map status](IMPLEMENTATION_STATUS_MAP.md) for individual behavior and

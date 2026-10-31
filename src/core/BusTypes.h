@@ -97,6 +97,7 @@ struct StaticCollisionMesh {
 
 struct MapPoleCollision {
     int mapObjectId = 0;
+    // Source placement tile, which may differ from the collider's streamed tile.
     int tileX = 0;
     int tileY = 0;
     std::array<double, 3> basePosition = {};

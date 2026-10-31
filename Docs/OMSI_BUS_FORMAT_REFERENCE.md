@@ -217,13 +217,17 @@ Three values defining the outside-camera look-at center: local `x`, `y`, and
 
 ### `[view_schedule]`
 
-One or more labelled view entries used by schedule/route displays. The
-following text is family-specific and is not a physics value.
+Parameterless marker assigning the preceding driver camera to the
+schedule/route view. OpenBus retains the driver-camera index, but does not yet
+implement switching to it. The existing labelled index form is also retained
+for compatibility.
 
 ### `[view_ticketselling]`
 
-One or more labelled ticket-selling view entries. The leading number in the
-examples is a view/attachment index followed by a human-readable label.
+Parameterless marker assigning the preceding driver camera to the ticket-selling
+view. OpenBus retains the driver-camera index, but does not yet implement
+switching to it. The existing labelled index form is also retained for
+compatibility.
 
 ## 6. Basic physical data
 

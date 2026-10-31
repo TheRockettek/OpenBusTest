@@ -1046,8 +1046,26 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
             }
             continue;
         }
-        // [matl_bumpmap]: texture plus mode; [matl_transmap]/[matl_nightmap]: one texture.
-        if (keyword == "matl_bumpmap" || keyword == "matl_transmap" || keyword == "matl_nightmap") {
+        if (keyword == "matl_transmap") {
+            ModelMaterialState* current = requireMaterial();
+            if (current != nullptr) {
+                Line value;
+                const bool hasValue = reader.next(value);
+                if (!hasValue || value.isKeyword() || isSeparatorLine(value.text)) {
+                    if (hasValue) {
+                        reader.pushBack(std::move(value));
+                    }
+                    current->transmapTextureName.clear();
+                    result.diagnostics.warning(line.number, keyword,
+                                               "empty transparency map; no map is applied");
+                } else {
+                    current->transmapTextureName = trim(value.text);
+                }
+            }
+            continue;
+        }
+        // [matl_bumpmap]: texture plus mode; [matl_nightmap]: one texture.
+        if (keyword == "matl_bumpmap" || keyword == "matl_nightmap") {
             ModelMaterialState* current = requireMaterial();
             if (current != nullptr) {
                 const std::size_t count = keyword == "matl_bumpmap" ? 2 : 1;
@@ -1059,8 +1077,6 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                             result.diagnostics.error(line.number, keyword,
                                                      "expected numeric strength");
                         }
-                    } else if (keyword == "matl_transmap") {
-                        current->transmapTextureName = trim(values[0]);
                     } else {
                         current->nightmapTextureName = trim(values[0]);
                     }
@@ -1174,8 +1190,11 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 currentMaterialIndex < current->materialStatesInOrder.size()) {
                 ModelMaterialState& base = current->materialStatesInOrder[currentMaterialIndex];
                 if (base.textureChanges.empty()) {
-                    result.diagnostics.error(line.number, keyword,
-                                             "item must follow [matl_change]");
+                    currentItem = nullptr;
+                    result.diagnostics.warning(
+                        line.number, keyword,
+                        "standalone item has no controller; subsequent modifiers apply to the "
+                        "base material");
                 } else {
                     auto item = std::make_shared<ModelMaterialState>(base);
                     item->textureChanges.clear();

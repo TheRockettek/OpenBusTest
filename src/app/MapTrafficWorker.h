@@ -194,8 +194,8 @@ class MapTrafficWorker {
            std::vector<openbus::map::MapTrafficObstacle> obstacles,
            std::vector<openbus::map::MapTrafficObstacle> humanObstacles,
            std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>> signalControllers,
-           std::vector<openbus::map::MapTrafficSignalBusPriorityRequest> busPriorityRequests,
-           double elapsedSeconds, double simulationTimeSeconds);
+           std::vector<openbus::map::MapTrafficSignalRequest> signalRequests, double elapsedSeconds,
+           double signalClockSeconds);
     void
     submitPopulationPlan(std::vector<PopulationCandidate> candidates, std::size_t roadTarget,
                          std::size_t busTarget, std::size_t humanTarget,

@@ -235,17 +235,26 @@ int main(int argc, char** argv) {
                        {}, {}, {signalController}, {},
                        0.05, 0.05);
 
-        const auto waitForResults = [&] {
+        const auto waitForResults = [&](double expectedElapsedSeconds) {
             std::optional<openbus::app::MapTrafficWorker::UpdateResults> results;
+            double elapsedSeconds = 0.0;
             const auto resultDeadline =
                 std::chrono::steady_clock::now() + std::chrono::seconds(2);
-            while (!results && std::chrono::steady_clock::now() < resultDeadline) {
-                results = worker.takeLatestResults();
+            while (elapsedSeconds + 1.0e-9 < expectedElapsedSeconds &&
+                   std::chrono::steady_clock::now() < resultDeadline) {
+                if (auto update = worker.takeLatestResults()) {
+                    elapsedSeconds += update->elapsedSeconds;
+                    results = std::move(update);
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
+            require(results.has_value() &&
+                        elapsedSeconds + 1.0e-9 >= expectedElapsedSeconds,
+                    "traffic worker did not publish the full submitted simulation interval");
+            results->elapsedSeconds = elapsedSeconds;
             return results;
         };
-        auto results = waitForResults();
+        auto results = waitForResults(0.05);
         require(results.has_value() && results->actors.size() == 1 &&
                     results->actors[0].generation == 0 &&
                     results->humans.size() == 2 && results->humans[0].generation == 0,
@@ -281,7 +290,7 @@ int main(int argc, char** argv) {
                        makeHumanInput(1, 1, std::move(inactivePedestrian), 0.2, false, true)},
                       {}, {}, {}, {},
                       0.05, 0.10);
-        results = waitForResults();
+        results = waitForResults(0.05);
         require(results.has_value() && results->actors.size() == 1 &&
                     results->actors[0].generation == 1 &&
                     std::abs(results->actors[0].motion.distanceMeters - 20.25) < 0.05 &&
@@ -293,7 +302,7 @@ int main(int argc, char** argv) {
 
         auto cachedInput = makeVehicleInput(5, 10, makeActor());
         worker.submit({cachedInput}, {}, {}, {}, {}, {}, 0.05, 0.15);
-        results = waitForResults();
+        results = waitForResults(0.05);
         require(results && results->actors.size() == 1,
                 "initial cached actor tick completes");
         const double firstDistance = results->actors[0].motion.distanceMeters;
@@ -302,7 +311,7 @@ int main(int argc, char** argv) {
         cachedInput.motion.scheduledStopDistanceMeters = 45.0;
         cachedInput.reducedSpeedLookahead = true;
         worker.submit({cachedInput}, {}, {}, {}, {}, {}, 0.05, 0.20);
-        results = waitForResults();
+        results = waitForResults(0.05);
         require(results && results->actors.size() == 1 &&
                     results->actors[0].motion.distanceMeters > firstDistance &&
                     results->actors[0].motion.distanceMeters < 20.0 &&
@@ -315,7 +324,7 @@ int main(int argc, char** argv) {
         cachedInput.actorTemplate =
             std::make_shared<const openbus::map::MapTrafficActor>(replacement);
         worker.submit({cachedInput}, {}, {}, {}, {}, {}, 0.05, 0.25);
-        results = waitForResults();
+        results = waitForResults(0.05);
         require(results && results->actors.size() == 1 &&
                     results->actors[0].motion.distanceMeters > secondDistance &&
                     results->actors[0].motion.distanceMeters < 20.0,
@@ -332,7 +341,7 @@ int main(int argc, char** argv) {
         ++cachedInput.generation;
         cachedInput.motion.scheduledStopDistanceMeters.reset();
         worker.submit({cachedInput}, {}, {}, {}, {}, {}, 0.05, 0.30);
-        results = waitForResults();
+        results = waitForResults(0.05);
         require(results && results->actors.size() == 1 &&
                     results->actors[0].generation == cachedInput.generation &&
                     results->actors[0].motion.distanceMeters >= 80.0 &&
@@ -348,20 +357,20 @@ int main(int argc, char** argv) {
         auto followingInput = makeVehicleInput(6, 1, std::move(following));
         auto leadingInput = makeVehicleInput(7, 1, std::move(leading));
         worker.submit({followingInput, leadingInput}, {}, {}, {}, {}, {}, 0.05, 0.35);
-        results = waitForResults();
+        results = waitForResults(0.05);
         require(results && results->actors.size() == 2 &&
                     results->actors[0].blockingActorStateIndex == 7 &&
                     results->actors[0].blockingActorGeneration == 1,
                 "worker resolves a following actor's blocker identity");
         worker.submit({followingInput, leadingInput}, {}, {}, {}, {}, {}, 0.05, 0.40);
-        results = waitForResults();
+        results = waitForResults(0.05);
         require(results && results->actors.size() == 2 &&
                     results->actors[0].blockingActorStateIndex == 7 &&
                     results->actors[0].blockingActorGeneration == 1,
                 "worker carries blocker identity across retained actor ticks");
         ++leadingInput.generation;
         worker.submit({followingInput, leadingInput}, {}, {}, {}, {}, {}, 0.05, 0.45);
-        results = waitForResults();
+        results = waitForResults(0.05);
         require(results && results->actors.size() == 2 &&
                     results->actors[0].blockingActorStateIndex == 7 &&
                     results->actors[0].blockingActorGeneration == 2,

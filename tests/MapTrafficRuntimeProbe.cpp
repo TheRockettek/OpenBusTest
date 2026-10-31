@@ -659,6 +659,109 @@ void verifyPlayerTimetableController() {
     }
     require(rejectedMismatchedRoute && !controller.state,
             "a selected trip must match its passenger route");
+    controller.select(selection, routes, courses);
+    require(!controller.select(std::nullopt, routes, courses) && !controller.state,
+            "cancellation immediately clears an active timetable selection");
+
+    auto hofStops = stops.values();
+    hofStops[0].name = "Central Station";
+    hofStops[1].name = "STOP_B";
+    const PassengerStopRouteState hofRoute{
+        actor, PassengerStops(hofStops), "hof-trip", "0100", {}, {}};
+    openbus::config::HofData hof;
+    hof.busstops = {{"STOP_A", {"Central Station"}}, {"STOP_B", {"Airport"}}};
+    hof.routes = {{"1001", 0, false, {"STOP_A", "STOP_B"}, "Outbound", "100"}};
+    require(passengerRouteMatchesHof(hofRoute, hof),
+            "HOF matching uses the line and ordered stop identifiers or display names");
+    auto tripKeyLine = hofRoute;
+    tripKeyLine.lineName = "outbound-trip-key";
+    require(passengerRouteHofRoute(tripKeyLine, hof) &&
+                passengerRouteHofRoute(tripKeyLine, hof)->line == "100",
+            "HOF supplies the public line when a map uses a trip key as its line label");
+    auto ambiguousHof = hof;
+    ambiguousHof.routes.push_back(
+        {"1011", 0, false, {"STOP_A", "STOP_B"}, "Other line", "101"});
+    require(!passengerRouteMatchesHof(tripKeyLine, ambiguousHof),
+            "ambiguous HOF lines cannot be inferred from a trip key");
+    require(passengerRouteMatchesHof(hofRoute, ambiguousHof),
+            "an authored line disambiguates identical HOF stop sequences");
+    auto extendedHof = hof;
+    extendedHof.busstops.push_back({"STOP_MID", {"Midtown"}});
+    extendedHof.routes[0].busstopIdents = {"STOP_A", "STOP_A", "STOP_MID", "STOP_B"};
+    require(passengerRouteMatchesHof(hofRoute, extendedHof),
+            "a scheduled partial route matches an ordered subset of its HOF stops");
+    auto reversePartialRoute = hofRoute;
+    auto reversePartialStops = hofStops;
+    std::ranges::reverse(reversePartialStops);
+    reversePartialRoute.stops = PassengerStops(std::move(reversePartialStops));
+    require(!passengerRouteMatchesHof(reversePartialRoute, extendedHof),
+            "partial HOF stop matching still distinguishes route direction");
+    openbus::config::HofData destinationOnlyHof;
+    destinationOnlyHof.termini = {{7, {"Central Hub"}}};
+    destinationOnlyHof.routes = {{"7001", 7, true, {}, "Outbound", "7"}};
+    auto destinationOnlyRoute = hofRoute;
+    destinationOnlyRoute.lineName = "7";
+    destinationOnlyRoute.destinationName = "7 Central Hub";
+    require(passengerRouteMatchesHof(destinationOnlyRoute, destinationOnlyHof),
+            "a stop-list-free HOF route matches by its line and exact terminus");
+    destinationOnlyRoute.destinationName = "7 Other Hub";
+    require(!passengerRouteMatchesHof(destinationOnlyRoute, destinationOnlyHof),
+            "a stop-list-free HOF route does not match by line alone");
+    const auto grundorfRoute = [&](std::vector<std::string> names) {
+        auto mapStops = stops.values();
+        mapStops.clear();
+        for (std::string& name : names) {
+            auto stop = stops.front();
+            stop.name = std::move(name);
+            mapStops.push_back(std::move(stop));
+        }
+        return PassengerStopRouteState{actor, PassengerStops(std::move(mapStops)),
+                                       "grundorf-trip", "76", {}, {}};
+    };
+    openbus::config::HofData grundorfHof;
+    grundorfHof.routes = {
+        {"7601", 0, false,
+         {"Bauernhof", "Nordspitze", "Elsterplatz", "Gaussdorf", "Einsteindorf Ausbau",
+          "Einsteindorf Marktpl", "Krankenhaus"},
+         "Bauernhof-Krankenhaus", "TML"},
+        {"7602", 0, false,
+         {"Krankenhaus", "Einsteindorf Ausbau", "Gaussdorf", "Elsterplatz", "Nordspitze",
+          "Bauernhof"},
+         "Krankenhaus-Bauernhof", "76"},
+    };
+    const auto grundorfOutbound = grundorfRoute(
+        {"Bauernhof", "Bauernhof", "Nordspitze", "Elsterplatz", "Gaussdorf",
+         "Einsteindorf Ausbau", "Einsteindorf Marktpl", "Krankenhaus"});
+    require(passengerRouteMatchesHof(grundorfOutbound, grundorfHof),
+            "Grundorf outbound HOF route matches when map has an additional terminal stop");
+    const auto grundorfInbound = grundorfRoute(
+        {"Krankenhaus", "Einsteindorf Marktpl", "Einsteindorf Ausbau", "Gaussdorf",
+         "Elsterplatz", "Nordspitze", "Bauernhof"});
+    require(passengerRouteMatchesHof(grundorfInbound, grundorfHof),
+            "Grundorf return HOF route matches when the map has an intermediate extra stop");
+    const auto wrongGrundorfDirection = grundorfRoute(
+        {"Bauernhof", "Nordspitze", "Elsterplatz", "Gaussdorf", "Einsteindorf Ausbau",
+         "Krankenhaus"});
+    require(passengerRouteMatchesHof(wrongGrundorfDirection, grundorfHof),
+            "a partial map timetable matches when its stops remain ordered in the HOF");
+    const auto unrelatedGrundorfRoute = grundorfRoute(
+        {"Bauernhof", "Nordspitze", "Unlisted stop", "Gaussdorf", "Einsteindorf Ausbau",
+         "Einsteindorf Marktpl", "Krankenhaus"});
+    require(!passengerRouteMatchesHof(unrelatedGrundorfRoute, grundorfHof),
+            "HOF matching rejects a route containing a stop outside the HOF sequence");
+    std::ranges::reverse(hofStops);
+    auto wrongDirection = hofRoute;
+    wrongDirection.stops = PassengerStops(hofStops);
+    require(!passengerRouteMatchesHof(wrongDirection, hof),
+            "HOF stop sequence matching distinguishes route direction");
+    require(!passengerRouteMatchesHof(hofRoute, {}),
+            "an absent or empty HOF does not expose unrelated map routes");
+    const std::vector<PassengerStopRouteState> hofRoutes{hofRoute, routes[1]};
+    const std::vector<openbus::map::MapAiTimetableCourse> hofCourses{
+        {"HOF course", {{"hof-trip", 0, 480.0}, {"return", 0, 520.0}}}};
+    controller.select(PlayerTimetableSelection{0, 0, 0, 0, false}, hofRoutes, hofCourses);
+    require(!controller.advance(hofRoutes, hofCourses, &hof) && !controller.state,
+            "course progression cannot switch to a trip outside the bus's HOF");
 }
 
 void verifyPassengerServiceBehavior() {
@@ -1219,90 +1322,74 @@ void verifyDrivingBehavior() {
     require(mapTrafficSignalStateAtTime(requestedSchedule, 4.0) == 6,
             "the active conditional phase is exposed for scenery signal rendering");
 
-    auto busPriorityProgram = std::make_shared<MapTrafficSignalProgram>();
-    busPriorityProgram->cycleDurationSeconds = 20.0;
-    busPriorityProgram->lights = {{{0, 5.0}, {6, 15.0}}, {{0, 20.0}}};
-    busPriorityProgram->approachDistancesMeters = {std::nullopt, std::nullopt};
-    busPriorityProgram->busPriorityRules = {{0, 25.0, 6, 3.0}};
-    auto busPriorityController = std::make_shared<MapTrafficSignalController>(busPriorityProgram);
-    MapTrafficSignalSchedule busPrioritySchedule;
-    busPrioritySchedule.cycleDurationSeconds = 20.0;
-    busPrioritySchedule.phases = busPriorityProgram->lights[0];
-    busPrioritySchedule.lightIndex = 0;
-    busPrioritySchedule.hasConditionalOverrides = true;
-    busPrioritySchedule.hasBusPriority = true;
-    busPrioritySchedule.program = busPriorityProgram;
-    busPrioritySchedule.controller = busPriorityController;
-    MapTrafficRouteSegment busPriorityPath = straight(1901, 0.0, 0.0, 0.0, 10.0);
-    busPriorityPath.trafficSignal = busPrioritySchedule;
-    MapTrafficRoute busPriorityRoute;
-    busPriorityRoute.segments = {straight(1902, 0.0, -30.0, 0.0, 30.0), busPriorityPath};
-    busPriorityRoute.cumulativeEndDistances = {30.0, 40.0};
-    busPriorityRoute.totalLength = 40.0;
-    auto priorityBus = makeMapTrafficActor(busPriorityRoute, "priority-bus.ovh", 0.0, 0.0, false);
-    priorityBus.isBus = true;
-    advanceMapTrafficSignalControllers({busPriorityController}, {&priorityBus}, 0.1, 0.0);
-    require(mapTrafficSignalStateAtTime(busPrioritySchedule, 0.1) == 0,
-            "bus-priority request does not trigger outside its configured approach distance");
-    priorityBus.distanceMeters = 3.0;
-    advanceMapTrafficSignalControllers({busPriorityController}, {&priorityBus}, 0.1, 0.1);
-    MapTrafficSignalSchedule conflictingSignalSchedule;
-    conflictingSignalSchedule.cycleDurationSeconds = 20.0;
-    conflictingSignalSchedule.phases = busPriorityProgram->lights[1];
-    conflictingSignalSchedule.lightIndex = 1;
-    conflictingSignalSchedule.hasConditionalOverrides = true;
-    conflictingSignalSchedule.program = busPriorityProgram;
-    conflictingSignalSchedule.controller = busPriorityController;
-    require(mapTrafficSignalStateAtTime(busPrioritySchedule, 0.2) == 6 &&
-                mapTrafficSignalStateAtTime(conflictingSignalSchedule, 0.2) == 0,
-            "an approaching bus receives minimum green while conflicting signals stay red");
-    advanceMapTrafficSignalControllers({busPriorityController}, {&priorityBus}, 1.0, 0.2);
-    require(mapTrafficSignalStateAtTime(busPrioritySchedule, 1.2) == 6,
-            "bus-priority green remains active for its configured minimum time");
-    advanceMapTrafficSignalControllers({busPriorityController}, {}, 2.1, 1.2);
-    require(mapTrafficSignalStateAtTime(busPrioritySchedule, 3.3) == 0,
-            "bus-priority override returns to the running fixed-cycle phase");
+    auto jumpProgram = std::make_shared<MapTrafficSignalProgram>();
+    jumpProgram->cycleDurationSeconds = 10.0;
+    jumpProgram->lights = {{{0, 2.0}, {6, 3.0}, {9, 5.0}}};
+    jumpProgram->approachDistancesMeters = {std::nullopt};
+    jumpProgram->controlPoints = {{0, 1.0, true, 5.0}};
+    MapTrafficSignalController unrequestedJump(jumpProgram);
+    unrequestedJump.advance(2.0, 0.0);
+    requireNear(unrequestedJump.clockSeconds(), 6.0,
+                "an if_request jump skips to its target when the light has no request");
+    MapTrafficSignalController requestedJump(jumpProgram);
+    requestedJump.request(0);
+    requestedJump.advance(2.0, 0.0);
+    requireNear(requestedJump.clockSeconds(), 2.0,
+                "an if_request jump does not fire while a vehicle requests its light");
 
-    auto nonBusPriorityController =
-        std::make_shared<MapTrafficSignalController>(busPriorityProgram);
-    busPrioritySchedule.controller = nonBusPriorityController;
-    priorityBus.isBus = false;
-    priorityBus.distanceMeters = 3.0;
-    advanceMapTrafficSignalControllers({nonBusPriorityController}, {&priorityBus}, 0.1, 0.0);
-    require(mapTrafficSignalStateAtTime(busPrioritySchedule, 0.1) == 0,
-            "ordinary traffic does not activate bus pre-emption");
+    auto rewindProgram = std::make_shared<MapTrafficSignalProgram>();
+    rewindProgram->cycleDurationSeconds = 10.0;
+    rewindProgram->lights = {{{0, 2.0}, {6, 3.0}, {0, 5.0}}};
+    rewindProgram->approachDistancesMeters = {std::nullopt};
+    rewindProgram->controlPoints = {{0, 5.0, false, 1.0}};
+    MapTrafficSignalController requestedRewind(rewindProgram);
+    requestedRewind.request(0);
+    requestedRewind.advance(5.5, 0.0);
+    requireNear(requestedRewind.clockSeconds(), 1.5,
+                "a requested backward jump rewinds the shared cycle clock");
+    requestedRewind.advance(0.5, 0.0);
+    requireNear(requestedRewind.clockSeconds(), 2.0,
+                "a backward jump does not immediately retrigger while replaying its interval");
 
-    auto conflictingProgram = std::make_shared<MapTrafficSignalProgram>(*busPriorityProgram);
-    conflictingProgram->lights[1] = {{6, 5.0}, {0, 15.0}};
-    auto conflictSafeController = std::make_shared<MapTrafficSignalController>(conflictingProgram);
-    MapTrafficSignalSchedule conflictSafeSchedule = busPrioritySchedule;
-    conflictSafeSchedule.program = conflictingProgram;
-    conflictSafeSchedule.controller = conflictSafeController;
-    MapTrafficRouteSegment conflictSafePath = straight(1903, 0.0, 0.0, 0.0, 10.0);
-    conflictSafePath.trafficSignal = conflictSafeSchedule;
-    MapTrafficRoute conflictSafeRoute;
-    conflictSafeRoute.segments = {straight(1904, 0.0, -30.0, 0.0, 30.0), conflictSafePath};
-    conflictSafeRoute.cumulativeEndDistances = {30.0, 40.0};
-    conflictSafeRoute.totalLength = 40.0;
-    auto conflictSafeBus =
-        makeMapTrafficActor(conflictSafeRoute, "conflict-safe-bus.ovh", 0.0, 0.0, false);
-    conflictSafeBus.isBus = true;
-    advanceMapTrafficSignalControllers({conflictSafeController}, {&conflictSafeBus}, 0.1, 0.0);
-    MapTrafficSignalSchedule opposingSchedule;
-    opposingSchedule.cycleDurationSeconds = 20.0;
-    opposingSchedule.phases = conflictingProgram->lights[1];
-    opposingSchedule.lightIndex = 1;
-    opposingSchedule.hasConditionalOverrides = true;
-    opposingSchedule.controller = conflictSafeController;
-    opposingSchedule.program = conflictingProgram;
-    require(mapTrafficSignalStateAtTime(conflictSafeSchedule, 0.1) == 0 &&
-                mapTrafficSignalStateAtTime(opposingSchedule, 0.1) == 6,
-            "bus priority waits instead of granting green against conflicting green");
-    advanceMapTrafficSignalControllers({conflictSafeController}, {&conflictSafeBus}, 5.1, 0.1);
-    advanceMapTrafficSignalControllers({conflictSafeController}, {&conflictSafeBus}, 0.1, 5.2);
-    require(mapTrafficSignalStateAtTime(conflictSafeSchedule, 5.3) == 6 &&
-                mapTrafficSignalStateAtTime(opposingSchedule, 5.3) == 0,
-            "waiting bus priority activates once conflicting green has cleared");
+    auto changeoverStopProgram = std::make_shared<MapTrafficSignalProgram>();
+    changeoverStopProgram->cycleDurationSeconds = 10.0;
+    changeoverStopProgram->lights = {{{4, 5.0}, {6, 5.0}}};
+    changeoverStopProgram->approachDistancesMeters = {std::nullopt};
+    changeoverStopProgram->controlPoints = {{0, 2.0, true}};
+    MapTrafficSignalController changeoverStop(changeoverStopProgram);
+    changeoverStop.advance(3.0, 0.0);
+    requireNear(changeoverStop.clockSeconds(), 3.0,
+                "a conditional stop does not hold a red-yellow changeover");
+
+    auto boundaryJumpProgram = std::make_shared<MapTrafficSignalProgram>();
+    boundaryJumpProgram->cycleDurationSeconds = 10.0;
+    boundaryJumpProgram->lights = {{{0, 5.0}, {6, 5.0}}};
+    boundaryJumpProgram->approachDistancesMeters = {std::nullopt};
+    boundaryJumpProgram->controlPoints = {{0, 0.0, true, 10.0}};
+    MapTrafficSignalController boundaryJump(boundaryJumpProgram);
+    boundaryJump.advance(0.1, 0.0);
+    requireNear(boundaryJump.clockSeconds(), 0.1,
+                "a jump to the cycle boundary does not freeze the signal clock");
+
+    MapTrafficSignalController dayTimeAligned(jumpProgram);
+    dayTimeAligned.advance(0.0, 12.0 * 60.0 * 60.0 + 2.5);
+    requireNear(dayTimeAligned.clockSeconds(), 2.5,
+                "signal cycle position initializes from the selected time of day");
+
+    MapTrafficSignalSchedule darkSignalSchedule;
+    darkSignalSchedule.cycleDurationSeconds = 10.0;
+    darkSignalSchedule.phases = {{12, 10.0}};
+    MapTrafficRouteSegment darkSignalPath = straight(1901, 0.0, 0.0, 0.0, 10.0);
+    darkSignalPath.trafficSignal = darkSignalSchedule;
+    auto darkSignalActor =
+        makeMapTrafficActor(oneSegment(darkSignalPath), "dark-signal-car.ovh", 0.0, 0.0, false);
+    require(!mapTrafficActorWaitingAtSignal(darkSignalActor, 0.0),
+            "a dark traffic signal is permissive for vehicles");
+    darkSignalActor.speedMetersPerSecond = 2.0;
+    darkSignalActor.cruiseSpeedMetersPerSecond = 2.0;
+    advanceMapTrafficDriving({&darkSignalActor}, {}, 0.5, 0.0);
+    require(darkSignalActor.distanceMeters > 0.0,
+            "vehicles continue across the stopline during the dark phase");
 
     MapTrafficLaneNetwork junction;
     for (int index = 0; index < 4; ++index) {
@@ -5852,6 +5939,45 @@ void verifyIncrementalLaneNetwork() {
             "incremental lane finalization matches a batch-built network");
 }
 
+void verifyDefaultRightOfWay() {
+    using namespace openbus::map;
+    const auto straight = [](int id, double x, double y, double heading, double length) {
+        MapTrafficRouteSegment segment{{makeSpline(id, 0, 0, y), 0, 0}};
+        segment.spline.placement.localX = x;
+        segment.spline.placement.elevation = 0.0;
+        segment.spline.placement.rotationDegrees = heading;
+        segment.spline.placement.length = length;
+        return segment;
+    };
+    const auto oneSegment = [](const MapTrafficRouteSegment& segment) {
+        MapTrafficRoute route;
+        route.segments = {segment};
+        route.totalLength = segment.spline.placement.length;
+        route.cumulativeEndDistances = {route.totalLength};
+        return route;
+    };
+    auto fromSouth = makeMapTrafficActor(
+        oneSegment(straight(1200, 0.0, -40.0, 0.0, 100.0)), "south-approach.ovh", 8.0, 0.0,
+        false);
+    auto fromEast = makeMapTrafficActor(
+        oneSegment(straight(1201, 40.0, 0.0, 270.0, 100.0)), "east-approach.ovh", 8.0, 0.0,
+        false);
+    fromSouth.distanceMeters = 35.0;
+    fromEast.distanceMeters = 35.0;
+    bool southYieldedToRight = false;
+    bool eastWasServedFirst = false;
+    for (int frame = 0; frame < 20; ++frame) {
+        advanceMapTrafficDriving({&fromSouth, &fromEast}, {}, 0.1);
+        southYieldedToRight =
+            southYieldedToRight ||
+            (fromSouth.speedMetersPerSecond < 0.3 && fromEast.distanceMeters > 35.1);
+        eastWasServedFirst =
+            eastWasServedFirst || fromEast.distanceMeters > fromSouth.distanceMeters + 0.1;
+    }
+    require(southYieldedToRight && eastWasServedFirst,
+            "an unmarked crossing yields to the vehicle approaching from the right");
+}
+
 void verifyAuthoredPriorityOrder() {
     using namespace openbus::map;
     const auto straight = [](int id, double x, double y, double heading, double length) {
@@ -5869,6 +5995,8 @@ void verifyAuthoredPriorityOrder() {
         route.cumulativeEndDistances = {route.totalLength};
         return route;
     };
+    verifyDefaultRightOfWay();
+
     MapTrafficRoute lowPriorityRoute = oneSegment(straight(1202, 0.0, -40.0, 0.0, 100.0));
     MapTrafficRoute highPriorityRoute = oneSegment(straight(1203, -40.0, 0.0, 90.0, 100.0));
     lowPriorityRoute.segments.front().pathRules =
@@ -6011,6 +6139,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--incremental-lane-network") {
             verifyIncrementalLaneNetwork();
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--default-right-of-way") {
+            verifyDefaultRightOfWay();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--authored-priority-order") {

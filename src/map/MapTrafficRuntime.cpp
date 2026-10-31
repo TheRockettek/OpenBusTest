@@ -4343,7 +4343,8 @@ bool trafficSignalBlocksActor(const MapTrafficActor& actor, const TrafficSignalA
     if (!state.has_value()) {
         return true;
     }
-    return (*state < 6 || *state > 8) && actor.committedSignalSegmentIndex != approach.segmentIndex;
+    return !mapTrafficSignalPhasePermissive(*state) &&
+           actor.committedSignalSegmentIndex != approach.segmentIndex;
 }
 
 bool updateTrafficSignalStopDecision(MapTrafficActor& actor,
@@ -4360,7 +4361,7 @@ bool updateTrafficSignalStopDecision(MapTrafficActor& actor,
     if (!state.has_value()) {
         return true;
     }
-    if (*state >= 6 && *state <= 8) {
+    if (mapTrafficSignalPhasePermissive(*state)) {
         actor.committedSignalSegmentIndex.reset();
         return false;
     }
@@ -4416,7 +4417,7 @@ mapTrafficNextSignalStopDebugInfo(const MapTrafficActor& actor, double signalClo
 void advanceMapTrafficSignalControllers(
     const std::vector<std::shared_ptr<MapTrafficSignalController>>& controllers,
     const std::vector<MapTrafficActor*>& actors, double elapsedSeconds, double initialClockSeconds,
-    const std::vector<MapTrafficSignalBusPriorityRequest>& busPriorityRequests) {
+    const std::vector<MapTrafficSignalRequest>& signalRequests) {
     if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
         !std::isfinite(initialClockSeconds) || initialClockSeconds < 0.0) {
         throw std::invalid_argument(trafficInputError(
@@ -4454,19 +4455,10 @@ void advanceMapTrafficSignalControllers(
             (approachDistance > 0.0 && approach->distanceToStopMeters <= approachDistance)) {
             approach->schedule->controller->request(approach->schedule->lightIndex);
         }
-        if (actor->isBus && approach->schedule->hasBusPriority &&
-            approach->schedule->program != nullptr &&
-            std::ranges::any_of(approach->schedule->program->busPriorityRules,
-                                [&](const MapTrafficSignalBusPriorityRule& rule) {
-                                    return approach->distanceToStopMeters <=
-                                           rule.triggerDistanceMeters;
-                                })) {
-            approach->schedule->controller->requestBusPriority(approach->schedule->lightIndex);
-        }
     }
-    for (const MapTrafficSignalBusPriorityRequest& request : busPriorityRequests) {
+    for (const MapTrafficSignalRequest& request : signalRequests) {
         if (request.controller != nullptr) {
-            request.controller->requestBusPriority(request.lightIndex);
+            request.controller->request(request.lightIndex);
         }
     }
     for (const auto& controller : controllers) {
@@ -5453,7 +5445,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         }
         if (const auto signal = nextTrafficSignalApproach(candidate)) {
             const auto state = trafficSignalStateAtTime(*signal->schedule, clockSeconds);
-            if (!state.has_value() || *state < 6 || *state > 8) {
+            if (!state.has_value() || !mapTrafficSignalPhasePermissive(*state)) {
                 to = std::min(to, candidate.distanceMeters + signal->distanceToStopMeters);
             }
         }
@@ -5916,9 +5908,9 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         // from higher-priority traffic already established on the junction path.
         std::vector<char> actorCenterInJunction(actors.size(), 0);
         std::vector<char> actorCommittedInJunction(actors.size(), 0);
-        // Equal authored priority: straight-on movements go before bends, bends before turns,
-        // and faster vehicles before slow or waiting ones that can more easily give way.
-        // Discrete classes keep the ordering transitive, so yields can never form a cycle.
+        // Equal-priority fallback: straight movements precede bends and turns; faster vehicles
+        // precede slower ones that can more easily give way. A separate right-of-way rule applies
+        // to straight crossing approaches and gives way to wait-age arbitration after 3 seconds.
         std::vector<int> movementTurnClass(actors.size(), 0);
         std::vector<int> movementSpeedClass(actors.size(), 0);
         for (std::size_t candidateIndex = 0; candidateIndex < actors.size(); ++candidateIndex) {
@@ -6026,6 +6018,39 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
         priorityIndexValid = priorityIndexValid && priorityCells.size() > 1;
         std::vector<std::size_t> priorityCandidates;
         std::vector<std::optional<std::array<double, 2>>> priorityHeadingByActor(actors.size());
+        std::vector<std::array<double, 2>> travelDirectionByActor(actors.size());
+        for (std::size_t index = 0; index < actors.size(); ++index) {
+            const double heading = occupied[obstacles.size() + index].pose.headingRadians;
+            travelDirectionByActor[index] = {std::sin(heading), std::cos(heading)};
+        }
+        const auto approachingFromRight = [&](std::size_t observerIndex, std::size_t otherIndex) {
+            const MapTrafficActor& observer = *actors[observerIndex];
+            const MapTrafficActor& other = *actors[otherIndex];
+            const auto& observerPosition = occupied[obstacles.size() + observerIndex].pose.position;
+            const auto& otherPosition = occupied[obstacles.size() + otherIndex].pose.position;
+            const auto& observerDirection = travelDirectionByActor[observerIndex];
+            const auto& otherDirection = travelDirectionByActor[otherIndex];
+            const double determinant =
+                observerDirection[0] * otherDirection[1] - observerDirection[1] * otherDirection[0];
+            if (std::abs(determinant) < 0.5) {
+                return false;
+            }
+            const double dx = otherPosition[0] - observerPosition[0];
+            const double dy = otherPosition[1] - observerPosition[1];
+            const double observerDistance =
+                (dx * otherDirection[1] - dy * otherDirection[0]) / determinant;
+            const double otherDistance =
+                (dx * observerDirection[1] - dy * observerDirection[0]) / determinant;
+            constexpr double maximumApproachDistanceMeters = 250.0;
+            if (observerDistance < -observer.lengthMeters * 0.5 ||
+                otherDistance < -other.lengthMeters * 0.5 ||
+                observerDistance > maximumApproachDistanceMeters ||
+                otherDistance > maximumApproachDistanceMeters) {
+                return false;
+            }
+            const double lateralOffset = dx * observerDirection[1] - dy * observerDirection[0];
+            return lateralOffset > 0.5;
+        };
         for (std::size_t lowIndex = 0; !singleRoutePriorityQueue && lowIndex < actors.size();
              ++lowIndex) {
             const MapTrafficActor& low = *actors[lowIndex];
@@ -6073,16 +6098,36 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     continue;
                 }
                 const MapTrafficActor& high = *actors[highIndex];
+                const bool equalPathPriority = priorities[highIndex] == priorities[lowIndex];
+                const bool rightOfWayApplies =
+                    equalPathPriority && movementTurnClass[highIndex] == 0 &&
+                    movementTurnClass[lowIndex] == 0 && !actorCommittedInJunction[highIndex] &&
+                    !actorCommittedInJunction[lowIndex] &&
+                    (low.junctionWaitSeconds < 3.0 && high.junctionWaitSeconds < 3.0) &&
+                    approachingFromRight(lowIndex, highIndex) !=
+                        approachingFromRight(highIndex, lowIndex);
+                bool legacyTieBreaksInFavorOfHigh = false;
+                if (movementTurnClass[highIndex] != movementTurnClass[lowIndex]) {
+                    legacyTieBreaksInFavorOfHigh =
+                        movementTurnClass[highIndex] < movementTurnClass[lowIndex];
+                } else if (movementSpeedClass[highIndex] != movementSpeedClass[lowIndex]) {
+                    legacyTieBreaksInFavorOfHigh =
+                        movementSpeedClass[highIndex] > movementSpeedClass[lowIndex];
+                } else if (junctionArrivals[highIndex] != junctionArrivals[lowIndex]) {
+                    legacyTieBreaksInFavorOfHigh =
+                        junctionArrivals[highIndex] < junctionArrivals[lowIndex];
+                } else if (high.junctionWaitSeconds > low.junctionWaitSeconds + 1.0e-6) {
+                    legacyTieBreaksInFavorOfHigh = true;
+                } else if (low.junctionWaitSeconds > high.junctionWaitSeconds + 1.0e-6) {
+                    legacyTieBreaksInFavorOfHigh = false;
+                } else {
+                    legacyTieBreaksInFavorOfHigh = highIndex < lowIndex;
+                }
                 const bool tieBreaksInFavorOfHigh =
-                    priorities[highIndex] == priorities[lowIndex] &&
-                    (movementTurnClass[highIndex] < movementTurnClass[lowIndex] ||
-                     (movementTurnClass[highIndex] == movementTurnClass[lowIndex] &&
-                      (movementSpeedClass[highIndex] > movementSpeedClass[lowIndex] ||
-                       (movementSpeedClass[highIndex] == movementSpeedClass[lowIndex] &&
-                        (junctionArrivals[highIndex] < junctionArrivals[lowIndex] ||
-                         (junctionArrivals[highIndex] == junctionArrivals[lowIndex] &&
-                          highIndex < lowIndex))))));
-                const bool highHasAuthoredPriority =
+                    equalPathPriority &&
+                    (rightOfWayApplies ? approachingFromRight(lowIndex, highIndex)
+                                       : legacyTieBreaksInFavorOfHigh);
+                const bool highHasPrecedence =
                     priorities[highIndex] > priorities[lowIndex] || tieBreaksInFavorOfHigh;
                 // A long vehicle's nose can enter the junction while it is still alongside
                 // through traffic on the approach. Treat that as a yieldable turn only if
@@ -6125,16 +6170,15 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
                     actorCommittedInJunction[highIndex] && yieldingOnJunction[lowIndex];
                 const bool highIsEstablishedInJunction =
                     actorCenterInJunction[highIndex] && !actorCenterInJunction[lowIndex] &&
-                    movementTurnClass[lowIndex] > 0 && highHasAuthoredPriority;
+                    movementTurnClass[lowIndex] > 0 && highHasPrecedence;
                 const bool highHasPriority =
-                    lowIsAdjacentFrontOnlyTurn || highIsAdjacentFrontOnlyTurn
-                        ? highHasAuthoredPriority
+                    lowIsAdjacentFrontOnlyTurn || highIsAdjacentFrontOnlyTurn ? highHasPrecedence
                     : highPrecedesJunctionYielder
-                        ? highHasAuthoredPriority
+                        ? highHasPrecedence
                         : highIsEstablishedInJunction ||
                               (committedTurnPrecedenceDiffers
                                    ? committedTurningInJunction[highIndex] != 0
-                                   : highHasAuthoredPriority);
+                                   : highHasPrecedence);
                 if (highIndex == lowIndex || !highHasPriority || priorityHeld[highIndex]) {
                     continue;
                 }

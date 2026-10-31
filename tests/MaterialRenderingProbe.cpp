@@ -2,6 +2,7 @@
 #include "render/MatrixMath.h"
 #include "render/OpenGLFunctions.h"
 #include "render/RendererReflection.h"
+#include "render/map/MapRendererInternal.h"
 #include "physics/BusSimulation.h"
 #include "physics/World.h"
 
@@ -17,6 +18,22 @@
 using namespace openbus::rendering;
 
 int main() {
+    MapPoleState pole;
+    pole.basePosition = {51.0, 50.3, 5.5};
+    pole.rotationAxis = {0.0, 1.0, 0.0};
+    pole.angleRadians = std::numbers::pi / 2.0;
+    const Matrix4 bent = map_detail::bentPoleTransform(translationMatrix({50.0, 50.0, 5.0}), pole);
+    const auto base = transformPoint(bent, {1.0, 0.3, 0.5, 1.0});
+    const auto top = transformPoint(bent, {1.0, 0.3, 4.5, 1.0});
+    if (std::abs(base[0] - 51.0) > 1.0e-8 ||
+        std::abs(base[1] - 50.3) > 1.0e-8 ||
+        std::abs(base[2] - 5.5) > 1.0e-8 ||
+        std::abs(top[0] - 55.0) > 1.0e-8 ||
+        std::abs(top[1] - 50.3) > 1.0e-8 ||
+        std::abs(top[2] - 5.5) > 1.0e-8) {
+        std::cerr << "bent model does not rotate about the collision base\n";
+        return 1;
+    }
     if (!glfwInit()) {
         return 77;
     }
@@ -439,6 +456,26 @@ int main() {
     }
 
     material = {};
+    setTriangleDepth(-1.0F);
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glClearColor(0, 0, 0, 0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    drawModelBatch(buffer, 3, material, {1, 1, 1}, 1.0, 2, false, std::nullopt, 0.5);
+    std::array<std::uint8_t, 4> fadePixel = {};
+    glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, fadePixel.data());
+    if (!close(fadePixel[3], 128)) {
+        std::cerr << "model visibility fade did not scale fragment opacity\n";
+        passed = false;
+    }
+    const std::vector<std::array<float, 4>> materialColors = {{1, 1, 1, 1}};
+    drawMaterialBatch(buffer, 3, materialColors, {white}, {false}, 0, 0.5);
+    fadePixel = {};
+    glReadPixels(16, 16, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, fadePixel.data());
+    if (!close(fadePixel[3], 128)) {
+        std::cerr << "multi-material visibility fade did not scale fragment opacity\n";
+        passed = false;
+    }
     material.useTextTexture = true;
     material.textTexture = blue;
     auto pixel = draw(material, {1, 1, 1}, 1.0);

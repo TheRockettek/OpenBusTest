@@ -668,12 +668,12 @@ understood weight or probability.
 The map's `signalroutes.cfg` is only a seven-line header/template and contains
 no actual signal-route records. This does not establish that the map has no
 traffic signals: signal objects or scripts may carry additional behavior. It
-does mean the inspected route file is not enough to derive a signal state
-machine or AI stopping rules. Together with the unresolved timetable-to-route
-and spawn scheduling behavior, the installed evidence is insufficient for a
-dependable AI-traffic or signal-compliance implementation. Defer those runtime
-features until route, signal, and scheduling data can be verified; the current
-OpenBus static vehicle-grid option is a development aid, not OMSI AI traffic.
+does mean the inspected route file is not enough to derive native signal-route
+semantics. OpenBus now has limited AI-traffic, HOF/timetable, and SCO signal
+runtime paths, but those implementations rely on the data that can be parsed
+and do not establish OMSI traffic or signal compliance. Timetable coverage is
+map-specific, and signal stop-line placement and signal-route behavior remain
+unverified against the native simulator.
 
 ## 12. Known gaps and implementation cautions
 

@@ -10,10 +10,9 @@
 #include <cmath>
 
 namespace openbus::rendering {
-namespace {
+namespace map_detail {
 
-Matrix4 bentPoleTransform(const Matrix4& baseTransform, const std::array<double, 3>& base,
-                          const MapPoleState& state) {
+Matrix4 bentPoleTransform(const Matrix4& baseTransform, const MapPoleState& state) {
     if (!std::isfinite(state.angleRadians) || std::abs(state.angleRadians) <= 1.0e-8) {
         return baseTransform;
     }
@@ -48,6 +47,7 @@ Matrix4 bentPoleTransform(const Matrix4& baseTransform, const std::array<double,
         }
     }
     const std::array<double, 3> origin = {baseTransform[12], baseTransform[13], baseTransform[14]};
+    const auto& base = state.basePosition;
     const auto bentOffset = rotate({origin[0] - base[0], origin[1] - base[1], origin[2] - base[2]});
     transformed[12] = base[0] + bentOffset[0];
     transformed[13] = base[1] + bentOffset[1];
@@ -55,7 +55,7 @@ Matrix4 bentPoleTransform(const Matrix4& baseTransform, const std::array<double,
     return transformed;
 }
 
-} // namespace
+} // namespace map_detail
 
 MapRenderer::Impl::~Impl() {
     releaseStaticPrimitiveBuffer(occlusionProxyBuffer);
@@ -332,11 +332,9 @@ void MapRenderer::updatePoleStates(const std::vector<MapPoleState>& states) {
             }
             const auto state = statesByPlacement.find(
                 std::tuple{instance.sourceTileX, instance.sourceTileY, *instance.mapObjectId});
-            instance.transform =
-                state == statesByPlacement.end()
-                    ? instance.baseTransform
-                    : bentPoleTransform(instance.baseTransform,
-                                        {instance.x, instance.y, instance.z}, state->second);
+            instance.transform = state == statesByPlacement.end()
+                                     ? instance.baseTransform
+                                     : bentPoleTransform(instance.baseTransform, state->second);
         }
     }
 }
@@ -361,10 +359,8 @@ TrafficSignalDebugStats MapRenderer::trafficSignalDebugStats() const {
             continue;
         }
         ++stats.activeSignalModels;
-        stats.controllerDrivenModels += (scriptState.trafficSignal->hasConditionalOverrides ||
-                                         scriptState.trafficSignal->hasBusPriority)
-                                            ? 1U
-                                            : 0U;
+        stats.controllerDrivenModels +=
+            scriptState.trafficSignal->hasConditionalOverrides ? 1U : 0U;
         const auto phase = scriptState.variables.numericValues().find("trafficlightphase");
         if (phase == scriptState.variables.numericValues().end() || !std::isfinite(phase->second) ||
             phase->second < 0.0F || phase->second > 12.0F ||
@@ -992,13 +988,21 @@ MapRenderer::trafficSignalControllers() const {
     return impl_->trafficSignalControllers;
 }
 
-std::vector<openbus::map::MapTrafficSignalBusPriorityRequest>
-MapRenderer::trafficSignalBusPriorityRequests(
-    std::optional<std::array<double, 2>> playerBusPosition) const {
-    std::vector<openbus::map::MapTrafficSignalBusPriorityRequest> playerBusRequests;
+std::vector<openbus::map::MapTrafficSignalRequest>
+MapRenderer::trafficSignalRequests(std::optional<std::array<double, 2>> playerBusPosition,
+                                   double playerSpeedMetersPerSecond) const {
+    if (!std::isfinite(playerSpeedMetersPerSecond)) {
+        throw std::invalid_argument("Player traffic-signal request speed must be finite");
+    }
+    if (playerBusPosition.has_value() &&
+        (!std::isfinite((*playerBusPosition)[0]) || !std::isfinite((*playerBusPosition)[1]))) {
+        throw std::invalid_argument("Player traffic-signal request position must be finite");
+    }
+    std::vector<openbus::map::MapTrafficSignalRequest> playerRequests;
     if (playerBusPosition.has_value()) {
         for (const TrafficPathDebugSegment& segment : impl_->sceneryTrafficPathSegments) {
-            if (!segment.trafficSignal.has_value() || !segment.trafficSignal->hasBusPriority ||
+            if (!segment.trafficSignal.has_value() ||
+                !segment.trafficSignal->hasConditionalOverrides ||
                 segment.trafficSignal->controller == nullptr ||
                 segment.trafficSignal->program == nullptr || segment.points.size() < 2) {
                 continue;
@@ -1011,25 +1015,26 @@ MapRenderer::trafficSignalBusPriorityRequests(
             if (directionLength <= 1.0e-9) {
                 continue;
             }
-            double triggerDistance = 0.0;
-            for (const openbus::map::MapTrafficSignalBusPriorityRule& rule :
-                 segment.trafficSignal->program->busPriorityRules) {
-                triggerDistance = std::max(triggerDistance, rule.triggerDistanceMeters);
-            }
+            const double approachDistance =
+                segment.trafficSignal->approachDistanceMeters.value_or(50.0);
             const double unitX = directionX / directionLength;
             const double unitY = directionY / directionLength;
             const double offsetX = (*playerBusPosition)[0] - start[0];
             const double offsetY = (*playerBusPosition)[1] - start[1];
             const double distanceToStart = -(offsetX * unitX + offsetY * unitY);
             const double lateralDistance = -offsetX * unitY + offsetY * unitX;
-            if (distanceToStart >= -0.5 && distanceToStart <= triggerDistance &&
+            const bool stoppedAtLine = std::abs(playerSpeedMetersPerSecond) < 0.5 &&
+                                       distanceToStart >= -0.5 && distanceToStart <= 3.0;
+            const bool withinApproachDistance = approachDistance > 0.0 && distanceToStart >= -0.5 &&
+                                                distanceToStart <= approachDistance;
+            if ((stoppedAtLine || withinApproachDistance) &&
                 std::abs(lateralDistance) <= segment.widthMeters * 0.5 + 1.5) {
-                playerBusRequests.push_back(
+                playerRequests.push_back(
                     {segment.trafficSignal->controller, segment.trafficSignal->lightIndex});
             }
         }
     }
-    return playerBusRequests;
+    return playerRequests;
 }
 
 void MapRenderer::updateTrafficSignalScripts(double signalClockSeconds) const {

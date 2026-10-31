@@ -81,29 +81,10 @@ struct ScriptRuntime::Impl {
         lua_CFunction function = nullptr;
     };
 
-    struct HofTerminus {
-        int code = 0;
-        std::vector<std::string> strings;
-    };
-
-    struct HofBusstop {
-        std::string ident;
-        std::vector<std::string> strings;
-    };
-
-    struct HofRoute {
-        std::string code;
-        int terminusIndex = 0;
-        bool hasTerminusIndex = false;
-        std::vector<std::string> busstopIdents;
-    };
-
-    struct HofData {
-        std::vector<HofTerminus> termini;
-        std::vector<HofBusstop> busstops;
-        std::vector<HofRoute> routes;
-        std::vector<std::string> globalStrings;
-    };
+    using HofTerminus = openbus::config::HofTerminus;
+    using HofBusstop = openbus::config::HofBusstop;
+    using HofRoute = openbus::config::HofRoute;
+    using HofData = openbus::config::HofData;
 
     lua_State* state = nullptr;
     VehicleConfig configuration;

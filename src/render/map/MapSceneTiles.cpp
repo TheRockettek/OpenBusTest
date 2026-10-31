@@ -341,8 +341,7 @@ void MapSceneLoader::buildTileContent(const openbus::map::MapTileReference& tile
             sceneryTrafficSignalsByLightIndex;
         std::shared_ptr<openbus::map::MapTrafficSignalController> signalController;
         const auto attachController = [&](openbus::map::MapTrafficSignalSchedule schedule) {
-            if ((schedule.hasConditionalOverrides || schedule.hasBusPriority) &&
-                schedule.program != nullptr) {
+            if (schedule.hasConditionalOverrides && schedule.program != nullptr) {
                 if (!signalController) {
                     signalController = std::make_shared<openbus::map::MapTrafficSignalController>(
                         schedule.program);

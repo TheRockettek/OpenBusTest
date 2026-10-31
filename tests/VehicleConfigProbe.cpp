@@ -11,7 +11,35 @@
 #include <iostream>
 #include <vector>
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc >= 3 && std::string(argv[1]) == "--inspect-view-markers") {
+        bool passed = true;
+        for (int index = 2; index < argc; ++index) {
+            const VehicleConfig parsed =
+                loadVehicleConfig(argv[index], VehicleFileKind::Bus, false);
+            for (const ConfigurationDiagnostic& diagnostic : parsed.diagnostics.entries) {
+                if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error &&
+                    (diagnostic.keyword == "view_schedule" ||
+                     diagnostic.keyword == "view_ticketselling")) {
+                    std::cerr << argv[index] << ':' << diagnostic.line << " ["
+                              << diagnostic.keyword << "] " << diagnostic.message << '\n';
+                    passed = false;
+                }
+            }
+            std::cout << argv[index] << ": schedule=" << parsed.scheduleViews.size()
+                      << " ticket=" << parsed.ticketSellingViews.size() << " schedule_indices=";
+            for (const VehicleViewEntry& view : parsed.scheduleViews) {
+                std::cout << view.viewIndex << ',';
+            }
+            std::cout << " ticket_indices=";
+            for (const VehicleViewEntry& view : parsed.ticketSellingViews) {
+                std::cout << view.viewIndex << ',';
+            }
+            std::cout << '\n';
+            passed &= !parsed.scheduleViews.empty() && !parsed.ticketSellingViews.empty();
+        }
+        return passed ? 0 : 1;
+    }
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_vehicle_config_probe");
     std::filesystem::create_directories(root);
@@ -188,6 +216,28 @@ int main() {
         loadVehicleConfig(invalidViewPath, VehicleFileKind::Bus, false);
     const bool invalidViewRejected =
         invalidView.diagnostics.hasErrors() && invalidView.scheduleViews.empty();
+    const std::filesystem::path markerPath = root / "view_markers.bus";
+    writeResistanceConfig(markerPath,
+                          "[add_camera_driver]\n1\n2\n3\n0\n40\n10\n-5\n"
+                          "[view_schedule]\n\n8: next camera\n"
+                          "[add_camera_pax]\n1\n2\n3\n0\n40\n10\n-5\n"
+                          "[add_camera_driver]\n4\n5\n6\n0\n40\n10\n-5\n"
+                          "[view_ticketselling]\n");
+    const VehicleConfig markers = loadVehicleConfig(markerPath, VehicleFileKind::Bus, false);
+    const std::filesystem::path invalidMarkerPath = root / "invalid_view_marker.bus";
+    writeResistanceConfig(invalidMarkerPath,
+                          "[add_camera_pax]\n1\n2\n3\n0\n40\n10\n-5\n"
+                          "[view_schedule]\n"
+                          "[add_camera_driver]\n1\n2\n3\n0\n40\n10\n-5\n");
+    const VehicleConfig invalidMarker =
+        loadVehicleConfig(invalidMarkerPath, VehicleFileKind::Bus, false);
+    const bool markersParsed =
+        !markers.diagnostics.hasErrors() && markers.cameras.size() == 3 &&
+        markers.scheduleViews.size() == 1 && markers.scheduleViews[0].viewIndex == 0 &&
+        markers.scheduleViews[0].label.empty() && markers.ticketSellingViews.size() == 1 &&
+        markers.ticketSellingViews[0].viewIndex == 1 &&
+        markers.ticketSellingViews[0].label.empty() && invalidMarker.diagnostics.hasErrors() &&
+        invalidMarker.scheduleViews.empty() && invalidMarker.cameras.size() == 2;
     const std::filesystem::path axleLabelsPath = root / "axle_labels.bus";
     std::ofstream axleLabels(axleLabelsPath);
     axleLabels << "[model]\nmodel.cfg\n"
@@ -243,7 +293,7 @@ int main() {
     openbus::probe::removeProbeDirectory(root);
 
     if (!reflectionCameraKeywordsParsed || !ovhModelLoaded || !inactiveRecordsReported ||
-        !invalidViewRejected) {
+        !invalidViewRejected || !markersParsed) {
         std::cerr << "Reflection camera parsing or OVH vehicle model loading failed\n";
         return 1;
     }

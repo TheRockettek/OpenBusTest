@@ -60,6 +60,7 @@ struct Uniforms {
     GLint useTextureArray = -1;
     GLint color = -1;
     GLint alphaMode = -1;
+    GLint visibilityFade = -1;
     GLint cullBackFaces = -1;
     GLint lightmap = -1;
     GLint nightmap = -1;
@@ -465,6 +466,7 @@ uniform float uInteriorLightStrength;
 uniform vec3 uInteriorLightColor;
 uniform vec4 uColor;
 uniform int uAlphaMode;
+uniform float uVisibilityFade;
 uniform bool uCullBackFaces;
 out vec4 fragmentColor;
 void main() {
@@ -594,6 +596,7 @@ void main() {
         }
         color.rgb = clamp(color.rgb, 0.0, 1.0);
     }
+    color.a *= clamp(uVisibilityFade, 0.0, 1.0);
     if (uAlphaMode == 1 && color.a < 0.5) {
         discard;
     }
@@ -614,6 +617,7 @@ uniform bool uFlipTextureY[8];
 uniform vec3 uLightDirection;
 uniform float uAmbientLight;
 uniform float uDiffuseLight;
+uniform float uVisibilityFade;
 out vec4 fragmentColor;
 void main() {
     int materialIndex = clamp(int(vTexCoord.z + 0.5), 0, 127);
@@ -642,6 +646,7 @@ void main() {
     vec3 surfaceNormal = normalize(vNormal);
     float diffuse = max(dot(surfaceNormal, normalize(uLightDirection)), 0.0);
     color.rgb *= clamp(uAmbientLight + uDiffuseLight * diffuse, 0.0, 1.0);
+    color.a *= clamp(uVisibilityFade, 0.0, 1.0);
     fragmentColor = color;
 }
 )GLSL";
@@ -779,6 +784,7 @@ Uniforms modelUniformsFor(GLuint program, bool environment) {
         uniforms.useTextureArray = pglGetUniformLocation(program, "uUseTextureArray");
         uniforms.color = pglGetUniformLocation(program, "uColor");
         uniforms.alphaMode = pglGetUniformLocation(program, "uAlphaMode");
+        uniforms.visibilityFade = pglGetUniformLocation(program, "uVisibilityFade");
         uniforms.cullBackFaces = pglGetUniformLocation(program, "uCullBackFaces");
         uniforms.lightmap = pglGetUniformLocation(program, "uLightmap");
         uniforms.nightmap = pglGetUniformLocation(program, "uNightmap");
@@ -857,6 +863,7 @@ Uniforms materialUniformsFor(GLuint program) {
     Uniforms uniforms;
     uniforms.projection = pglGetUniformLocation(program, "uProjection");
     uniforms.modelView = pglGetUniformLocation(program, "uModelView");
+    uniforms.visibilityFade = pglGetUniformLocation(program, "uVisibilityFade");
     uniforms.materialColors = pglGetUniformLocation(program, "uMaterialColors");
     uniforms.lightDirection = pglGetUniformLocation(program, "uLightDirection");
     uniforms.ambientLight = pglGetUniformLocation(program, "uAmbientLight");
@@ -967,7 +974,7 @@ void setTextureWrap(GLenum target, GLuint texture, GLint wrapS, GLint wrapT) {
 }
 
 void uploadModelUniforms(const ModelMaterial& material, const std::array<double, 3>& color,
-                         double alpha, int alphaMode) {
+                         double alpha, int alphaMode, double visibilityFade) {
     const std::array<float, 4> colorValue = {
         static_cast<float>(color[0]), static_cast<float>(color[1]), static_cast<float>(color[2]),
         static_cast<float>(alpha)};
@@ -1002,6 +1009,8 @@ void uploadModelUniforms(const ModelMaterial& material, const std::array<double,
     if (!modelUniformState.valid || modelUniformState.alphaMode != alphaMode) {
         pglUniform1i(modelUniforms.alphaMode, alphaMode);
     }
+    pglUniform1f(modelUniforms.visibilityFade,
+                 static_cast<GLfloat>(std::clamp(visibilityFade, 0.0, 1.0)));
     if (!modelUniformState.valid ||
         modelUniformState.lightmapStrength != material.lightmapStrength) {
         pglUniform1f(modelUniforms.lightmapStrength, material.lightmapStrength);
@@ -1323,14 +1332,15 @@ void configureModelAlphaState(int alphaMode, bool noZwrite) {
 
 void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial& material,
                     const std::array<double, 3>& color, double alpha, int alphaMode,
-                    bool cullBackFaces, std::optional<HumanGaitParameters> humanGait) {
+                    bool cullBackFaces, std::optional<HumanGaitParameters> humanGait,
+                    double visibilityFade) {
     TraceScope trace("render", "CoreRenderer::drawModelBatch");
     if (modelProgram == 0 || buffer == 0 || vertexCount == 0) {
         return;
     }
     useProgram(modelProgram);
     uploadMatrices(modelUniforms);
-    uploadModelUniforms(material, color, alpha, alphaMode);
+    uploadModelUniforms(material, color, alpha, alphaMode, visibilityFade);
     pglUniform1i(modelUniforms.cullBackFaces, cullBackFaces && !modelViewReversesWinding() ? 1 : 0);
     const bool animateHuman = humanGait.has_value() && humanGait->heightMeters > 0.0;
     pglUniform1i(modelUniforms.humanGaitEnabled, animateHuman ? 1 : 0);
@@ -1419,14 +1429,14 @@ void drawModelBatch(GLuint buffer, std::size_t vertexCount, const ModelMaterial&
 
 void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexCount,
                            const ModelMaterial& material, const std::array<double, 3>& color,
-                           double alpha, int alphaMode, bool cullBackFaces) {
+                           double alpha, int alphaMode, bool cullBackFaces, double visibilityFade) {
     TraceScope trace("render", "CoreRenderer::drawIndexedModelBatch");
     if (modelProgram == 0 || buffer == 0 || indexBuffer == 0 || indexCount == 0) {
         return;
     }
     useProgram(modelProgram);
     uploadMatrices(modelUniforms);
-    uploadModelUniforms(material, color, alpha, alphaMode);
+    uploadModelUniforms(material, color, alpha, alphaMode, visibilityFade);
     pglUniform1i(modelUniforms.cullBackFaces, cullBackFaces && !modelViewReversesWinding() ? 1 : 0);
     pglUniform1i(modelUniforms.humanGaitEnabled, GL_FALSE);
     selectTextureUnit(GL_TEXTURE0);
@@ -1470,7 +1480,7 @@ void drawIndexedModelBatch(GLuint buffer, GLuint indexBuffer, std::size_t indexC
 void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
                        const std::vector<std::array<float, 4>>& colors,
                        const std::vector<GLuint>& textures, const std::vector<bool>& flipTextureY,
-                       GLuint indexBuffer) {
+                       GLuint indexBuffer, double visibilityFade) {
     TraceScope trace("render", "CoreRenderer::drawMaterialBatch");
     if (materialProgram == 0 || buffer == 0 || vertexCount == 0 || colors.empty() ||
         textures.empty()) {
@@ -1478,6 +1488,8 @@ void drawMaterialBatch(GLuint buffer, std::size_t vertexCount,
     }
     useProgram(materialProgram);
     uploadMatrices(materialUniforms);
+    pglUniform1f(materialUniforms.visibilityFade,
+                 static_cast<GLfloat>(std::clamp(visibilityFade, 0.0, 1.0)));
     for (std::size_t index = 0; index < MAX_MATERIAL_TEXTURES; ++index) {
         pglUniform1i(materialUniforms.materialFlipTextureY[index],
                      flipTextureY.size() > index && flipTextureY[index] ? 1 : 0);

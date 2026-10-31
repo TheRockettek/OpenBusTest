@@ -71,6 +71,41 @@ int main(int argc, char** argv) {
                                                      0.0, 0.02),
                  "Zero-radius sphere rejected by projected-size test")) return 1;
     const auto sizeSettings = makeCullingProjectedSize(screenProjection, 0.02);
+    if (!require(projectedSizeFadeStart(0.02) == 0.01,
+                 "Projected-size fade did not start at half the configured threshold")) return 1;
+    const auto fadeBelowStart = projectedSizeFadeAlpha(
+        identityView, screenProjection, {0, 0, -(0.1 + 0.1 / 0.005)}, 0.1, 0.02);
+    const auto fadeMidpoint = projectedSizeFadeAlpha(
+        identityView, screenProjection, {0, 0, -(0.1 + 0.1 / 0.015)}, 0.1, 0.02);
+    const auto fadeAtThreshold = projectedSizeFadeAlpha(
+        identityView, screenProjection, {0, 0, -(0.1 + 0.1 / 0.02)}, 0.1, 0.02);
+    if (!require(fadeBelowStart == 0.0, "Projected-size fade started below its fade band") ||
+        !require(std::abs(fadeMidpoint - 0.5) < 1.0e-9,
+                 "Projected-size fade was not smooth at its midpoint") ||
+        !require(fadeAtThreshold == 1.0,
+                 "Projected-size fade was not fully opaque at its configured threshold") ||
+        !require(projectedSizeFadeAlpha(identityView, screenProjection, {0, 0, -10}, 0.1, 0.0) ==
+                     1.0,
+                 "Disabled projected-size cutoff faded an object") ||
+        !require(projectedSizeFadeAlpha(identityView, screenProjection, {0, 0, -0.5}, 1.0, 0.02) ==
+                     1.0,
+                 "Near-camera projected-size bounds were not retained fully opaque")) return 1;
+    const auto fadeBandSettings =
+        makeCullingProjectedSize(screenProjection, projectedSizeFadeStart(0.02));
+    auto fadeBandItem =
+        makeCullingItem(identityView, {0, 0, -(0.1 + 0.1 / 0.015)}, 0.1);
+    fadeBandItem.metadata[0] = CullProjectedSize;
+    auto belowFadeBandItem =
+        makeCullingItem(identityView, {0, 0, -(0.1 + 0.1 / 0.005)}, 0.1);
+    belowFadeBandItem.metadata[0] = CullProjectedSize;
+    const CullingPlanes unboundedPlanes = {};
+    if (!require(cullingProjectedSizeMayPass(fadeBandItem, fadeBandSettings) &&
+                     cullingItemVisible(fadeBandItem, unboundedPlanes, {}, fadeBandSettings),
+                 "Projected-size culling removed an object inside the fade band") ||
+        !require(!cullingProjectedSizeMayPass(belowFadeBandItem, fadeBandSettings) &&
+                     !cullingItemVisible(belowFadeBandItem, unboundedPlanes, {},
+                                         fadeBandSettings),
+                 "Projected-size culling retained an object below the fade band")) return 1;
     auto sizeItem = makeCullingItem(identity, {0, 0, -10}, 0.1);
     sizeItem.metadata[0] = CullProjectedSize;
     if (!require(!cullingProjectedSizeMayPass(sizeItem, sizeSettings),

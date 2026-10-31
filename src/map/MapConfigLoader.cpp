@@ -1060,12 +1060,108 @@ void parseAiTimetableRoutes(const std::filesystem::path& directory, MapAiTraffic
                         [&](const MapAiTimetableRoute& route) {
                             return route.timetableKey == timetable.timetableKey;
                         });
-        if (hasDrivingRoute || timetable.scheduledDepartureMinutes.empty()) {
+        if (timetable.scheduledDepartureMinutes.empty()) {
             continue;
         }
 
         const std::vector<MapAiPassengerStopCall> calls =
             mapAiPassengerStopCalls(aiTraffic, timetable);
+        const auto drivingRoute =
+            std::find_if(aiTraffic.timetableRoutes.begin(), aiTraffic.timetableRoutes.end(),
+                         [&](const MapAiTimetableRoute& route) {
+                             return route.timetableKey == timetable.timetableKey;
+                         });
+        if (hasDrivingRoute) {
+            if (drivingRoute == aiTraffic.timetableRoutes.end() ||
+                !drivingRoute->stations.empty()) {
+                continue;
+            }
+            if (drivingRoute->stationIds != timetable.stationIds || calls.size() < 2 ||
+                calls.size() != timetable.stationIds.size() || drivingRoute->trackEntries.empty()) {
+                diagnostics.warning(
+                    0, "passenger_timetable",
+                    "timetable " + timetable.timetableKey +
+                        " has passenger stop IDs that cannot be mapped to its driving route");
+                continue;
+            }
+
+            std::vector<std::size_t> linkStartIndices;
+            linkStartIndices.reserve(calls.size() - 1);
+            std::size_t earliestTrackEntry = 0;
+            bool completeRoute = true;
+            for (std::size_t stationIndex = 0; stationIndex + 1 < calls.size(); ++stationIndex) {
+                const std::optional<std::size_t> linkIndex =
+                    calls[stationIndex].outgoingStationLinkIndex;
+                if (!linkIndex || *linkIndex >= aiTraffic.stationLinks.size()) {
+                    completeRoute = false;
+                    break;
+                }
+                const MapAiStationLink& link = aiTraffic.stationLinks[*linkIndex];
+                if (link.entries.empty()) {
+                    completeRoute = false;
+                    break;
+                }
+                std::optional<std::size_t> linkStartIndex;
+                if (link.entries.size() <= drivingRoute->trackEntries.size()) {
+                    const std::size_t lastStart =
+                        drivingRoute->trackEntries.size() - link.entries.size();
+                    for (std::size_t start = earliestTrackEntry; start <= lastStart; ++start) {
+                        const auto trackEntry =
+                            drivingRoute->trackEntries.begin() + static_cast<std::ptrdiff_t>(start);
+                        if (std::equal(
+                                link.entries.begin(), link.entries.end(), trackEntry,
+                                [](const MapAiStationLink::Entry& stationEntry,
+                                   const MapAiTimetableRoute::TrackEntry& timetableEntry) {
+                                    return stationEntry.splineId == timetableEntry.splineId &&
+                                           stationEntry.pathIndex == timetableEntry.pathIndex &&
+                                           stationEntry.tileIndex == timetableEntry.tileIndex;
+                                })) {
+                            linkStartIndex = start;
+                            break;
+                        }
+                    }
+                }
+                if (!linkStartIndex) {
+                    completeRoute = false;
+                    break;
+                }
+                linkStartIndices.push_back(*linkStartIndex);
+                earliestTrackEntry = *linkStartIndex + link.entries.size() - 1;
+            }
+            if (!completeRoute || linkStartIndices.size() + 1 != calls.size()) {
+                diagnostics.warning(
+                    0, "passenger_timetable",
+                    "timetable " + timetable.timetableKey +
+                        " station links do not align with its driving route track entries");
+                continue;
+            }
+
+            std::vector<MapAiTimetableRoute::Station> stations;
+            stations.reserve(calls.size());
+            for (std::size_t stationIndex = 0; stationIndex < calls.size(); ++stationIndex) {
+                const MapAiPassengerStopCall& call = calls[stationIndex];
+                const MapAiBusStop& busStop = aiTraffic.busStops[*call.busStopIndex];
+                MapAiTimetableRoute::Station station;
+                station.id = call.stationId;
+                station.name = busStop.name;
+                station.tileIndex = busStop.tileIndex;
+                if (stationIndex + 1 < calls.size()) {
+                    station.trackEntryIndex = static_cast<int>(linkStartIndices[stationIndex]);
+                } else {
+                    const MapAiStationLink& incomingLink =
+                        aiTraffic.stationLinks[*calls[stationIndex - 1].outgoingStationLinkIndex];
+                    const std::size_t previousEntryIndex =
+                        linkStartIndices.back() + incomingLink.entries.size() - 1;
+                    station.trackEntryIndex = static_cast<int>(previousEntryIndex + 1);
+                    station.positionOnPreviousTrackEntryMeters =
+                        drivingRoute->trackEntries[previousEntryIndex].lengthMeters;
+                }
+                stations.push_back(std::move(station));
+            }
+            drivingRoute->stations = std::move(stations);
+            continue;
+        }
+
         MapAiTimetableRoute route;
         route.timetableKey = timetable.timetableKey;
         route.tripName = timetable.timetableKey;

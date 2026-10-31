@@ -247,8 +247,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         auto& lodBoundaries = impl_->cullingLodBoundariesScratch;
         auto& lodOffsets = impl_->cullingLodOffsetsScratch;
         const auto cullingPlanes = makeCullingPlanes(projectionMatrix());
-        const auto projectedSize =
-            makeCullingProjectedSize(projectionMatrix(), minimumObjectViewportFraction);
+        const auto projectedSize = makeCullingProjectedSize(
+            projectionMatrix(), projectedSizeFadeStart(minimumObjectViewportFraction));
         cullingItems.clear();
         lodBoundaries.clear();
         lodOffsets.clear();
@@ -700,7 +700,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
     const auto drawSceneryInstance = [&](const Impl::SceneryInstance& instance,
                                          const Impl::ModelBatch& batch,
                                          const ModelMaterial& sceneryMaterial, int alphaMode,
-                                         OcclusionPassState* occlusionState = nullptr) {
+                                         OcclusionPassState* occlusionState = nullptr,
+                                         double visibilityFade = 1.0) {
         selectIndirect(&instance);
         const bool conditionalRender =
             !instance.poleCrash && beginOcclusionProxy({instance.x, instance.y, instance.z},
@@ -708,7 +709,7 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
         pushMatrix();
         multiplyMatrix(instance.transform);
         drawModelBatch(batch.buffer, batch.vertexCount, sceneryMaterial, batch.color, batch.alpha,
-                       alphaMode, batch.cullBackFaces);
+                       alphaMode, batch.cullBackFaces, std::nullopt, visibilityFade);
         popMatrix();
         if (conditionalRender) {
             pglEndConditionalRender();
@@ -767,12 +768,19 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                                                    instance.y + instance.boundingRadius) ||
                            sphereBelowMinimumViewportFraction(
                                view, projectionMatrix(), {instance.x, instance.y, instance.z},
-                               instance.boundingRadius, minimumObjectViewportFraction) ||
+                               instance.boundingRadius,
+                               projectedSizeFadeStart(minimumObjectViewportFraction)) ||
                            outsideMapFrustum(frustum, view, {instance.x, instance.y, instance.z},
                                              instance.boundingRadius))) {
                     continue;
                 }
                 const Impl::ModelBatch& batch = impl_->sceneryBatches[instance.batchIndex];
+                const double visibilityFade = projectedSizeFadeAlpha(
+                    view, projectionMatrix(), {instance.x, instance.y, instance.z},
+                    instance.boundingRadius, minimumObjectViewportFraction);
+                if (visibilityFade <= 0.0) {
+                    continue;
+                }
                 const std::vector<double>* lodThresholds =
                     instance.lodThresholdSetIndex < impl_->sceneryLodThresholdSets.size()
                         ? &impl_->sceneryLodThresholdSets[instance.lodThresholdSetIndex]
@@ -837,10 +845,13 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                         }
                     }
                 }
+                if (visibilityFade < 1.0) {
+                    alphaMode = 2;
+                }
                 const double viewDepth = -(view[2] * instance.x + view[6] * instance.y +
                                            view[10] * instance.z + view[14]);
-                sceneryDraws.push_back(
-                    {&instance, &batch, std::move(sceneryMaterial), alphaMode, viewDepth});
+                sceneryDraws.push_back({&instance, &batch, std::move(sceneryMaterial), alphaMode,
+                                        viewDepth, visibilityFade});
             }
         }
     }
@@ -920,7 +931,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                                 depthOcclusionQueries && scenery->alphaMode == 0 &&
                                         !scenery->batch->noZwrite && !scenery->batch->noZcheck
                                     ? &occlusionState
-                                    : nullptr);
+                                    : nullptr,
+                                scenery->visibilityFade);
             if (skipDepthCheck) {
                 glEnable(GL_DEPTH_TEST);
             }
@@ -957,7 +969,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                 // The shader's alpha-mode-3 threshold keeps only fully opaque
                 // transmap texels. Record those surfaces in depth before the
                 // blended pass, matching the vehicle renderer's treatment.
-                drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material, 3);
+                drawSceneryInstance(*scenery->instance, *scenery->batch, scenery->material, 3,
+                                    nullptr, scenery->visibilityFade);
             }
             glColorMask(previousColorMask[0], previousColorMask[1], previousColorMask[2],
                         previousColorMask[3]);
@@ -986,7 +999,8 @@ void MapRenderer::draw(bool renderTypeFourOnly, double minimumObjectViewportFrac
                                 transparentOcclusionQueries && !scenery->batch->noZwrite &&
                                         !scenery->batch->noZcheck
                                     ? &occlusionState
-                                    : nullptr);
+                                    : nullptr,
+                                scenery->visibilityFade);
         }
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);

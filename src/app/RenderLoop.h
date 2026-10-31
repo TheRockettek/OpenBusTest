@@ -98,7 +98,6 @@ struct SpawnBusRequest {
     VehiclePlacement placement;
     VehicleSetupOptions setupOptions;
     using TimetableSelection = openbus::app::PlayerTimetableSelection;
-    std::optional<TimetableSelection> timetableSelection;
 };
 
 struct TrafficSplineDebugLabel {
@@ -252,6 +251,7 @@ class RenderLoop {
     void renderReflectionViews(const BusSimulation& simulation, const World& world);
     void drawOnFootUi();
     void drawPlayerTimetableUi();
+    void drawPlayerTimetableSelectionUi();
     void applyPlayerTripAiPolicy(const openbus::map::MapAiTimetableCourseTrip& trip,
                                  bool additionalBus);
     void clearPlayerTripAiPolicy();
@@ -438,6 +438,7 @@ class RenderLoop {
     std::optional<std::size_t> playerPassengerStopLatchRouteIndex_;
     std::optional<std::size_t> playerPassengerStopLatchIndex_;
     std::optional<int> activePlayerPassengerStop_;
+    bool activePlayerPassengerStopCompletesTimetable_ = false;
     std::optional<std::size_t> activePlayerPassengerStopRouteIndex_;
     std::optional<std::size_t> activePlayerPassengerStopIndex_;
     void publishTrafficTimetableData(Vehicle& vehicle, const TrafficVehicleState& state,

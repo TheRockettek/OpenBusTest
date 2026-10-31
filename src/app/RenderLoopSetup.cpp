@@ -359,10 +359,6 @@ std::optional<SpawnBusRequest> RenderLoop::consumeSpawnBusRequest() {
     }
     spawnBusRequestPending_ = false;
     spawnBusError_.clear();
-    if (selectedPlayerUseTimetable_ && !selectedPlayerTimetableSelection_) {
-        spawnBusError_ = "Select an available scheduled trip before spawning.";
-        return std::nullopt;
-    }
     selectedMapVehicleIndex_ = std::min(selectedMapVehicleIndex_, vehicleCatalog_.size() - 1);
     SpawnBusRequest request;
     request.configurationPath = vehicleCatalog_[selectedMapVehicleIndex_].configurationPath;
@@ -381,7 +377,6 @@ std::optional<SpawnBusRequest> RenderLoop::consumeSpawnBusRequest() {
         request.setupOptions.depotPath = depot.path;
         request.setupOptions.depotName = depot.name;
     }
-    request.timetableSelection = selectedPlayerTimetableSelection_;
     const std::size_t registrationCount = registrationOptionCount(*mapVehicleConfig_);
     if (registrationCount > 0) {
         VehicleConfig registration = *mapVehicleConfig_;
@@ -595,33 +590,100 @@ void RenderLoop::drawOnFootUi() {
                 ImGui::TextUnformatted("Registration: not configured");
             }
         }
-        selectedPlayerTimetableSelection_.reset();
-        if (ImGui::Checkbox("Drive a scheduled trip", &selectedPlayerUseTimetable_) &&
-            !selectedPlayerUseTimetable_) {
-            selectedPlayerTimetableSelection_.reset();
+        if (!mapVehicleLoadError_.empty()) {
+            ImGui::TextWrapped("Unable to load bus options: %s", mapVehicleLoadError_.c_str());
         }
-        if (selectedPlayerUseTimetable_) {
-            std::vector<std::string> lines;
-            for (const PassengerStopRouteState& route : passengerNetwork_.routes) {
-                if (!route.stops.empty() && !route.lineName.empty() &&
-                    std::ranges::find(lines, route.lineName) == lines.end()) {
-                    lines.push_back(route.lineName);
+    }
+    ImGui::BeginDisabled(vehicleCatalog_.empty() || !mapVehicleConfig_);
+    if (ImGui::Button("Spawn selected bus", ImVec2(220.0F, 36.0F))) {
+        spawnBusRequestPending_ = true;
+    }
+    ImGui::EndDisabled();
+    if (!spawnBusError_.empty()) {
+        ImGui::TextWrapped("Unable to spawn bus: %s", spawnBusError_.c_str());
+    }
+    ImGui::TextUnformatted("Select a scheduled trip in the timetable panel after spawning.");
+    ImGui::TextUnformatted("WASD: walk | Space: jump | F4: toggle mouse look");
+    ImGui::TextUnformatted("Press F4 to release the cursor and use this panel.");
+    ImGui::End();
+}
+
+void RenderLoop::drawPlayerTimetableSelectionUi() {
+    selectedPlayerTimetableSelection_.reset();
+    if (ImGui::Checkbox("Drive a scheduled trip", &selectedPlayerUseTimetable_) &&
+        !selectedPlayerUseTimetable_) {
+        selectedPlayerTimetableSelection_.reset();
+    }
+    if (selectedPlayerUseTimetable_) {
+        const auto& hof = playerVehicle_->scripts->hofData();
+        const auto selectableRoute = [&](const PassengerStopRouteState& route) {
+            return openbus::app::passengerRouteMatchesHof(route, hof);
+        };
+        const auto hofLineName = [&](const PassengerStopRouteState& route) {
+            const auto* matched = openbus::app::passengerRouteHofRoute(route, hof);
+            return matched ? matched->line : std::string{};
+        };
+        std::vector<std::string> lines;
+        for (const PassengerStopRouteState& route : passengerNetwork_.routes) {
+            if (selectableRoute(route) &&
+                std::ranges::find(lines, hofLineName(route)) == lines.end()) {
+                lines.push_back(hofLineName(route));
+            }
+        }
+        std::ranges::sort(lines);
+        if (!lines.empty()) {
+            if (std::ranges::find(lines, selectedPlayerLineName_) == lines.end()) {
+                selectedPlayerLineName_ = lines.front();
+                selectedPlayerCourseIndex_ = 0;
+                selectedPlayerCourseTripIndex_ = 0;
+                selectedPlayerFirstStopIndex_ = 0;
+            }
+            if (ImGui::BeginCombo("Line", selectedPlayerLineName_.c_str())) {
+                for (const std::string& line : lines) {
+                    const bool selected = line == selectedPlayerLineName_;
+                    if (ImGui::Selectable(line.c_str(), selected)) {
+                        selectedPlayerLineName_ = line;
+                        selectedPlayerCourseIndex_ = 0;
+                        selectedPlayerCourseTripIndex_ = 0;
+                        selectedPlayerFirstStopIndex_ = 0;
+                    }
+                    if (selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            std::vector<std::size_t> courses;
+            for (std::size_t courseIndex = 0; courseIndex < passengerTimetableCourses_.size();
+                 ++courseIndex) {
+                const auto& course = passengerTimetableCourses_[courseIndex];
+                const bool hasLineTrip = std::ranges::any_of(
+                    course.trips, [&](const openbus::map::MapAiTimetableCourseTrip& trip) {
+                        return std::ranges::any_of(
+                            passengerNetwork_.routes, [&](const PassengerStopRouteState& route) {
+                                return route.timetableKey == trip.timetableKey &&
+                                       hofLineName(route) == selectedPlayerLineName_ &&
+                                       selectableRoute(route);
+                            });
+                    });
+                if (hasLineTrip) {
+                    courses.push_back(courseIndex);
                 }
             }
-            std::ranges::sort(lines);
-            if (!lines.empty()) {
-                if (std::ranges::find(lines, selectedPlayerLineName_) == lines.end()) {
-                    selectedPlayerLineName_ = lines.front();
-                    selectedPlayerCourseIndex_ = 0;
+            if (!courses.empty()) {
+                if (std::ranges::find(courses, selectedPlayerCourseIndex_) == courses.end()) {
+                    selectedPlayerCourseIndex_ = courses.front();
                     selectedPlayerCourseTripIndex_ = 0;
                     selectedPlayerFirstStopIndex_ = 0;
                 }
-                if (ImGui::BeginCombo("Line", selectedPlayerLineName_.c_str())) {
-                    for (const std::string& line : lines) {
-                        const bool selected = line == selectedPlayerLineName_;
-                        if (ImGui::Selectable(line.c_str(), selected)) {
-                            selectedPlayerLineName_ = line;
-                            selectedPlayerCourseIndex_ = 0;
+                const auto& displayedCourse =
+                    passengerTimetableCourses_[selectedPlayerCourseIndex_];
+                if (ImGui::BeginCombo("Tour / course", displayedCourse.name.c_str())) {
+                    for (const std::size_t courseIndex : courses) {
+                        const auto& option = passengerTimetableCourses_[courseIndex];
+                        const bool selected = courseIndex == selectedPlayerCourseIndex_;
+                        if (ImGui::Selectable(option.name.c_str(), selected)) {
+                            selectedPlayerCourseIndex_ = courseIndex;
                             selectedPlayerCourseTripIndex_ = 0;
                             selectedPlayerFirstStopIndex_ = 0;
                         }
@@ -631,106 +693,86 @@ void RenderLoop::drawOnFootUi() {
                     }
                     ImGui::EndCombo();
                 }
-                std::vector<std::size_t> courses;
-                for (std::size_t courseIndex = 0; courseIndex < passengerTimetableCourses_.size();
-                     ++courseIndex) {
-                    const auto& course = passengerTimetableCourses_[courseIndex];
-                    const bool hasLineTrip = std::ranges::any_of(
-                        course.trips, [&](const openbus::map::MapAiTimetableCourseTrip& trip) {
-                            return std::ranges::any_of(
-                                passengerNetwork_.routes,
-                                [&](const PassengerStopRouteState& route) {
-                                    return route.timetableKey == trip.timetableKey &&
-                                           route.lineName == selectedPlayerLineName_ &&
-                                           !route.stops.empty();
-                                });
-                        });
-                    if (hasLineTrip) {
-                        courses.push_back(courseIndex);
+                const auto& course = passengerTimetableCourses_[selectedPlayerCourseIndex_];
+                std::vector<std::size_t> trips;
+                for (std::size_t tripIndex = 0; tripIndex < course.trips.size(); ++tripIndex) {
+                    const auto& trip = course.trips[tripIndex];
+                    if (std::ranges::any_of(
+                            passengerNetwork_.routes, [&](const PassengerStopRouteState& route) {
+                                return route.timetableKey == trip.timetableKey &&
+                                       hofLineName(route) == selectedPlayerLineName_ &&
+                                       selectableRoute(route);
+                            })) {
+                        trips.push_back(tripIndex);
                     }
                 }
-                if (!courses.empty()) {
-                    if (std::ranges::find(courses, selectedPlayerCourseIndex_) == courses.end()) {
-                        selectedPlayerCourseIndex_ = courses.front();
-                        selectedPlayerCourseTripIndex_ = 0;
+                if (!trips.empty()) {
+                    if (std::ranges::find(trips, selectedPlayerCourseTripIndex_) == trips.end()) {
+                        selectedPlayerCourseTripIndex_ = trips.front();
                         selectedPlayerFirstStopIndex_ = 0;
                     }
-                    const auto& displayedCourse =
-                        passengerTimetableCourses_[selectedPlayerCourseIndex_];
-                    if (ImGui::BeginCombo("Tour / course", displayedCourse.name.c_str())) {
-                        for (const std::size_t courseIndex : courses) {
-                            const auto& option = passengerTimetableCourses_[courseIndex];
-                            const bool selected = courseIndex == selectedPlayerCourseIndex_;
-                            if (ImGui::Selectable(option.name.c_str(), selected)) {
-                                selectedPlayerCourseIndex_ = courseIndex;
-                                selectedPlayerCourseTripIndex_ = 0;
-                                selectedPlayerFirstStopIndex_ = 0;
+                    const auto& trip = course.trips[selectedPlayerCourseTripIndex_];
+                    const auto route = std::ranges::find_if(
+                        passengerNetwork_.routes, [&](const PassengerStopRouteState& candidate) {
+                            return candidate.timetableKey == trip.timetableKey &&
+                                   hofLineName(candidate) == selectedPlayerLineName_ &&
+                                   selectableRoute(candidate);
+                        });
+                    if (route != passengerNetwork_.routes.end()) {
+                        const auto tripDisplayLabel = [](const std::string& tripName,
+                                                         double departureMinutes) {
+                            const int minuteOfDay = static_cast<int>(std::floor(departureMinutes));
+                            const int minute = minuteOfDay % 60;
+                            return (tripName.empty() ? std::string("Trip") : tripName) + " (" +
+                                   std::to_string((minuteOfDay / 60) % 24) + ":" +
+                                   (minute < 10 ? "0" : "") + std::to_string(minute) + ")";
+                        };
+                        const std::string tripLabel =
+                            tripDisplayLabel(route->tripName, trip.departureMinutes);
+                        if (ImGui::BeginCombo("Trip", tripLabel.c_str())) {
+                            for (const std::size_t tripIndex : trips) {
+                                const auto& optionTrip = course.trips[tripIndex];
+                                const auto optionRoute = std::ranges::find_if(
+                                    passengerNetwork_.routes,
+                                    [&](const PassengerStopRouteState& candidate) {
+                                        return candidate.timetableKey == optionTrip.timetableKey &&
+                                               hofLineName(candidate) == selectedPlayerLineName_ &&
+                                               selectableRoute(candidate);
+                                    });
+                                const std::string label = tripDisplayLabel(
+                                    optionRoute->tripName, optionTrip.departureMinutes);
+                                const bool selected = tripIndex == selectedPlayerCourseTripIndex_;
+                                if (ImGui::Selectable(label.c_str(), selected)) {
+                                    selectedPlayerCourseTripIndex_ = tripIndex;
+                                    selectedPlayerFirstStopIndex_ = 0;
+                                }
+                                if (selected) {
+                                    ImGui::SetItemDefaultFocus();
+                                }
                             }
-                            if (selected) {
-                                ImGui::SetItemDefaultFocus();
-                            }
+                            ImGui::EndCombo();
                         }
-                        ImGui::EndCombo();
-                    }
-                    const auto& course = passengerTimetableCourses_[selectedPlayerCourseIndex_];
-                    std::vector<std::size_t> trips;
-                    for (std::size_t tripIndex = 0; tripIndex < course.trips.size(); ++tripIndex) {
-                        const auto& trip = course.trips[tripIndex];
-                        if (std::ranges::any_of(passengerNetwork_.routes,
-                                                [&](const PassengerStopRouteState& route) {
-                                                    return route.timetableKey ==
-                                                               trip.timetableKey &&
-                                                           route.lineName ==
-                                                               selectedPlayerLineName_ &&
-                                                           !route.stops.empty();
-                                                })) {
-                            trips.push_back(tripIndex);
-                        }
-                    }
-                    if (!trips.empty()) {
-                        if (std::ranges::find(trips, selectedPlayerCourseTripIndex_) ==
-                            trips.end()) {
-                            selectedPlayerCourseTripIndex_ = trips.front();
-                            selectedPlayerFirstStopIndex_ = 0;
-                        }
-                        const auto& trip = course.trips[selectedPlayerCourseTripIndex_];
-                        const auto route = std::ranges::find_if(
+                        const auto& selectedTrip = course.trips[selectedPlayerCourseTripIndex_];
+                        const auto selectedRoute = std::ranges::find_if(
                             passengerNetwork_.routes,
                             [&](const PassengerStopRouteState& candidate) {
-                                return candidate.timetableKey == trip.timetableKey &&
-                                       candidate.lineName == selectedPlayerLineName_ &&
-                                       !candidate.stops.empty();
+                                return candidate.timetableKey == selectedTrip.timetableKey &&
+                                       hofLineName(candidate) == selectedPlayerLineName_ &&
+                                       selectableRoute(candidate);
                             });
-                        if (route != passengerNetwork_.routes.end()) {
-                            const auto tripDisplayLabel = [](const std::string& tripName,
-                                                             double departureMinutes) {
-                                const int minuteOfDay =
-                                    static_cast<int>(std::floor(departureMinutes));
-                                const int minute = minuteOfDay % 60;
-                                return (tripName.empty() ? std::string("Trip") : tripName) + " (" +
-                                       std::to_string((minuteOfDay / 60) % 24) + ":" +
-                                       (minute < 10 ? "0" : "") + std::to_string(minute) + ")";
-                            };
-                            const std::string tripLabel =
-                                tripDisplayLabel(route->tripName, trip.departureMinutes);
-                            if (ImGui::BeginCombo("Trip", tripLabel.c_str())) {
-                                for (const std::size_t tripIndex : trips) {
-                                    const auto& optionTrip = course.trips[tripIndex];
-                                    const auto optionRoute = std::ranges::find_if(
-                                        passengerNetwork_.routes,
-                                        [&](const PassengerStopRouteState& candidate) {
-                                            return candidate.timetableKey ==
-                                                       optionTrip.timetableKey &&
-                                                   candidate.lineName == selectedPlayerLineName_ &&
-                                                   !candidate.stops.empty();
-                                        });
-                                    const std::string label = tripDisplayLabel(
-                                        optionRoute->tripName, optionTrip.departureMinutes);
-                                    const bool selected =
-                                        tripIndex == selectedPlayerCourseTripIndex_;
+                        if (selectedRoute != passengerNetwork_.routes.end()) {
+                            const std::size_t selectedStopIndex = std::min(
+                                selectedPlayerFirstStopIndex_, selectedRoute->stops.size() - 1);
+                            selectedPlayerFirstStopIndex_ = selectedStopIndex;
+                            const std::string& stopLabel =
+                                selectedRoute->stops[selectedStopIndex].name;
+                            if (ImGui::BeginCombo("First stop", stopLabel.c_str())) {
+                                for (std::size_t stopIndex = 0;
+                                     stopIndex < selectedRoute->stops.size(); ++stopIndex) {
+                                    const bool selected = stopIndex == selectedStopIndex;
+                                    const std::string& label = selectedRoute->stops[stopIndex].name;
                                     if (ImGui::Selectable(label.c_str(), selected)) {
-                                        selectedPlayerCourseTripIndex_ = tripIndex;
-                                        selectedPlayerFirstStopIndex_ = 0;
+                                        selectedPlayerFirstStopIndex_ = stopIndex;
                                     }
                                     if (selected) {
                                         ImGui::SetItemDefaultFocus();
@@ -738,76 +780,60 @@ void RenderLoop::drawOnFootUi() {
                                 }
                                 ImGui::EndCombo();
                             }
-                            const auto& selectedTrip = course.trips[selectedPlayerCourseTripIndex_];
-                            const auto selectedRoute = std::ranges::find_if(
-                                passengerNetwork_.routes,
-                                [&](const PassengerStopRouteState& candidate) {
-                                    return candidate.timetableKey == selectedTrip.timetableKey &&
-                                           candidate.lineName == selectedPlayerLineName_ &&
-                                           !candidate.stops.empty();
-                                });
-                            if (selectedRoute != passengerNetwork_.routes.end()) {
-                                const std::size_t selectedStopIndex = std::min(
-                                    selectedPlayerFirstStopIndex_, selectedRoute->stops.size() - 1);
-                                selectedPlayerFirstStopIndex_ = selectedStopIndex;
-                                const std::string& stopLabel =
-                                    selectedRoute->stops[selectedStopIndex].name;
-                                if (ImGui::BeginCombo("First stop", stopLabel.c_str())) {
-                                    for (std::size_t stopIndex = 0;
-                                         stopIndex < selectedRoute->stops.size(); ++stopIndex) {
-                                        const bool selected = stopIndex == selectedStopIndex;
-                                        const std::string& label =
-                                            selectedRoute->stops[stopIndex].name;
-                                        if (ImGui::Selectable(label.c_str(), selected)) {
-                                            selectedPlayerFirstStopIndex_ = stopIndex;
-                                        }
-                                        if (selected) {
-                                            ImGui::SetItemDefaultFocus();
-                                        }
-                                    }
-                                    ImGui::EndCombo();
-                                }
-                                ImGui::Checkbox("Drive as an additional bus",
-                                                &selectedPlayerDriveAsAdditionalBus_);
-                                selectedPlayerTimetableSelection_ =
-                                    SpawnBusRequest::TimetableSelection{
-                                        static_cast<std::size_t>(std::distance(
-                                            passengerNetwork_.routes.begin(), selectedRoute)),
-                                        selectedPlayerCourseIndex_, selectedPlayerCourseTripIndex_,
-                                        selectedPlayerFirstStopIndex_,
-                                        selectedPlayerDriveAsAdditionalBus_};
-                            }
+                            ImGui::Checkbox("Drive as an additional bus",
+                                            &selectedPlayerDriveAsAdditionalBus_);
+                            selectedPlayerTimetableSelection_ = SpawnBusRequest::TimetableSelection{
+                                static_cast<std::size_t>(
+                                    std::distance(passengerNetwork_.routes.begin(), selectedRoute)),
+                                selectedPlayerCourseIndex_, selectedPlayerCourseTripIndex_,
+                                selectedPlayerFirstStopIndex_, selectedPlayerDriveAsAdditionalBus_};
                         }
-                    } else {
-                        ImGui::TextUnformatted("No selectable trips are available for this line.");
                     }
                 } else {
-                    ImGui::TextUnformatted("No tours are available for this line.");
+                    ImGui::TextUnformatted("No selectable trips are available for this line.");
                 }
             } else {
-                ImGui::TextUnformatted("No passenger timetable routes are available.");
+                ImGui::TextUnformatted("No tours are available for this line.");
+            }
+        } else {
+            if (playerVehicle_->variables.getString("hof_file").empty()) {
+                ImGui::TextUnformatted("Select a Depot (HOF) when spawning the bus.");
+            } else if (hof.routes.empty()) {
+                ImGui::TextUnformatted("The selected HOF has no loaded routes.");
+                for (const auto& error : playerVehicle_->scripts->errors()) {
+                    ImGui::TextWrapped("%s", error.c_str());
+                }
+            } else {
+                ImGui::TextUnformatted(
+                    "No map timetable routes have an unambiguous matching HOF stop sequence.");
             }
         }
-        if (!mapVehicleLoadError_.empty()) {
-            ImGui::TextWrapped("Unable to load bus options: %s", mapVehicleLoadError_.c_str());
+        ImGui::BeginDisabled(!selectedPlayerTimetableSelection_);
+        if (ImGui::Button("Start selected trip")) {
+            SetPlayerTimetableSelection(selectedPlayerTimetableSelection_);
+            selectedPlayerUseTimetable_ = false;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel selection")) {
+            selectedPlayerUseTimetable_ = false;
+            selectedPlayerTimetableSelection_.reset();
         }
     }
-    ImGui::BeginDisabled(vehicleCatalog_.empty() || !mapVehicleConfig_ ||
-                         (selectedPlayerUseTimetable_ && !selectedPlayerTimetableSelection_));
-    if (ImGui::Button("Spawn selected bus", ImVec2(220.0F, 36.0F))) {
-        spawnBusRequestPending_ = true;
-    }
-    ImGui::EndDisabled();
-    if (!spawnBusError_.empty()) {
-        ImGui::TextWrapped("Unable to spawn bus: %s", spawnBusError_.c_str());
-    }
-    ImGui::TextUnformatted("WASD: walk | Space: jump | F4: toggle mouse look");
-    ImGui::TextUnformatted("Press F4 to release the cursor and use this panel.");
-    ImGui::End();
 }
 
 void RenderLoop::drawPlayerTimetableUi() {
-    if (!imguiEnabled_ || playerVehicle_ == nullptr || !playerTimetable_.state) {
+    if (!imguiEnabled_ || playerVehicle_ == nullptr || renderingReflection_ || captureMode_) {
+        return;
+    }
+    ImGui::SetNextWindowPos(ImVec2(20.0F, 20.0F), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.82F);
+    ImGui::Begin("Player timetable", nullptr,
+                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_NoNav);
+    if (!playerTimetable_.state) {
+        drawPlayerTimetableSelectionUi();
+        ImGui::End();
         return;
     }
     const PlayerTimetableState& state = *playerTimetable_.state;
@@ -819,17 +845,17 @@ void RenderLoop::drawPlayerTimetableUi() {
     }
     const auto& course = passengerTimetableCourses_[state.selection.courseIndex];
     const auto& route = passengerNetwork_.routes[state.selection.passengerRouteIndex];
-    ImGui::SetNextWindowPos(ImVec2(20.0F, 20.0F), ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(0.82F);
-    ImGui::Begin("Player timetable", nullptr,
-                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
-                     ImGuiWindowFlags_NoNav);
     ImGui::Text("Line %s | %s", state.lineName.c_str(), course.name.c_str());
     ImGui::Text("Trip: %s to %s", route.tripName.c_str(), route.destinationName.c_str());
     if (state.stopAfterCurrentTrip) {
         ImGui::TextUnformatted("Driving will stop at this trip's terminus.");
     } else if (ImGui::Button("Stop driving after this trip")) {
         playerTimetable_.state->stopAfterCurrentTrip = true;
+    }
+    if (ImGui::Button("Cancel trip now")) {
+        SetPlayerTimetableSelection(std::nullopt);
+        selectedPlayerUseTimetable_ = false;
+        selectedPlayerTimetableSelection_.reset();
     }
     ImGui::End();
 }

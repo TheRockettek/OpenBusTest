@@ -56,6 +56,13 @@ bool checkHofMacros(const VehicleConfig& configuration, const char* backend) {
         std::cerr << backend << ": HOF system macro lookups returned unexpected data\n";
         return false;
     }
+    const auto& hof = runtime.hofData();
+    if (hof.routes.size() != 1 || hof.routes.front().code != "1001" ||
+        hof.routes.front().line != "100" || hof.routes.front().name != "Route A" ||
+        hof.routes.front().busstopIdents != std::vector<std::string>{"STOP_A", "STOP_B"}) {
+        std::cerr << backend << ": timetable catalog lost HOF route metadata\n";
+        return false;
+    }
     local.setString("number", "1001");
     local.set("random_seed", 42.0F);
     runtime.invokeEntryPoint("trigger_random_seed");

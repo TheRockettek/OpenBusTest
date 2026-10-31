@@ -502,7 +502,7 @@ void advanceMapTrafficDriving(const std::vector<MapTrafficActor*>& actors,
 void advanceMapTrafficSignalControllers(
     const std::vector<std::shared_ptr<MapTrafficSignalController>>& controllers,
     const std::vector<MapTrafficActor*>& actors, double elapsedSeconds, double initialClockSeconds,
-    const std::vector<MapTrafficSignalBusPriorityRequest>& busPriorityRequests = {});
+    const std::vector<MapTrafficSignalRequest>& signalRequests = {});
 
 class MapTrafficRouteNetwork {
   public:

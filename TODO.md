@@ -701,12 +701,12 @@ for the explicit boundary.
   blockage, crossing wait-age priority, right-turn merge clearance, and
   four-approach no-overlap/progress. Crossing reservations distinguish
   same-direction traffic on a curved shared path from conflicting movements.
-  Fixed-cycle SCO signals linked to road paths hold AI traffic on non-permissive
-  phases and release it on states 6-8; regressions cover route-start, loop-wrap,
-  conditional stop timing, and bus-priority phase/distance/minimum-green rules.
-  Cycle origin, stop-line
-  fidelity, signs, native right-of-way and deadlock recovery at live junctions,
-  overtaking, lane changing, articulated dynamics, and physical player-to-AI
+  SCO signals linked to road paths now use native stop/jump conditions,
+  initialize their shared cycle from map time, and treat dark state 12 as
+  permissive; regressions cover route-start, loop-wrap, conditional stops,
+  jumps, and player approach-distance requests. Native stop-line fidelity,
+  sign-specific controls, right-of-way parity and deadlock recovery at live junctions,
+  same-direction overtaking/lane changes, and physical player-to-AI
   collision response are listed in the remaining-work checklist below.
 - [~] Match timetable bus paths against the complete ordered `.ttr` track-entry
   sequence, including repeated scenery-object IDs and their path selectors, and
@@ -861,22 +861,39 @@ the outstanding implementation and validation tasks:
   departures, and unique departure ownership. Validate an intended
   service-priority policy for undersized pools before changing which routes
   receive the initial buses.
-- [ ] **Complete traffic control:** verify SCO signal cycle origin, approach
-  distance and stop-line placement; implement traffic-sign rules.
+- [~] **Complete traffic control:** SCO fixed-cycle signals now initialize from
+  the selected map time, derive a zero group cycle from the longest configured
+  light schedule, and run native-format conditional stop/jump controls from
+  AI, pedestrian, and player requests. Dark phase 12 is permissive. Focused
+  probes cover request conditions, jump/rewind behavior, player
+  `[approachdist]`, and selected-time initialization. Tile `[rule]` path/group
+  priorities are supported, but no separate sign-object behavior is inferred.
+  Equal-priority, uncommitted straight crossings provisionally give precedence
+  to the vehicle approaching from the right; after either actor waits 3 seconds,
+  the preference yields to the existing tie-breakers. Native behavior for
+  turning approaches, stop-line placement, and full OMSI parity remain
+  unverified.
 - [~] **Improve junction control:** committed junction-path actors clear before
   new approaches; otherwise authored path/group priorities precede wait age,
-  with wait aging fairly ordering equal-priority movements. Before claiming a
-  junction, a vehicle on a lower-priority approach spline gives way to
+  with wait aging fairly ordering equal-priority movements except for the
+  provisional right-before-left preference at straight crossings. Before
+  claiming a junction, a vehicle on a lower-priority approach spline gives way to
   higher-priority traffic only when predicted arrival times overlap at a
   crossing or merge, and releases an unused claim if such traffic appears;
   priority traffic ignores that unused claim. Deadlock exemptions follow
   actual blocker chains instead of bus proximity. Synthetic
   regressions cover separation, progress, junction clearing, priority-over-
-  wait, main-road priority at T-junctions, unobstructed turn transitions, and
-  approach stop distance. Validate native right-of-way behavior and deadlock
-  recovery at representative live junctions.
+  wait, default straight-crossing right-of-way, main-road priority at
+  T-junctions, unobstructed turn transitions, and approach stop distance.
+  Validate native turning/right-of-way behavior and deadlock recovery at
+  representative live junctions.
 - [ ] **Add advanced vehicle behavior:** implement safe overtaking and lane
-  changes, then extend swept-footprint handling to articulated vehicles.
+  changes, initially limited to verified same-direction adjacent lanes. Do not
+  infer opposing-lane passes without validated visibility and prohibition
+  semantics.
+- [o] Extend swept-footprint handling to articulated vehicles; articulated
+  runtime behavior remains outside the currently supported scope (see Section
+  1).
 - [~] **Render configured human models:** pedestrians now render the configured
   `.hum` first-LOD meshes instead of primitive proxies. `.hum`/model CFG
   parsing, mesh parsing, and texture decoding are asynchronous; OpenGL upload
@@ -1057,23 +1074,31 @@ the outstanding implementation and validation tasks:
   are incomplete.
 - [ ] Measure tile-boundary p95/p99 frame time, memory, and upload cost;
   validate visual and collision continuity in-game.
-- [ ] Move AI traffic route/decision calculations to a dedicated worker using
-  immutable simulation, route, signal, and obstacle snapshots. Publish results
-  at a defined fixed-step boundary on the simulation/main owner thread; do not
-  let the worker mutate vehicles, scripts, renderer state, or ODE objects.
-  Preserve deterministic ordering and safe shutdown, and add concurrency and
-  replay/regression coverage before enabling it by default.
+- [~] AI traffic driving, pedestrian movement, signal advancement, and
+  population searches run on a dedicated worker using value snapshots for
+  actors, routes, humans, obstacles, and signal requests. The worker advances
+  the shared traffic-signal controllers; the owner thread applies
+  generation-matched motion/pose results and the worker does not mutate
+  vehicles, scripts, renderer state, or ODE objects. Fixed-step accumulation,
+  generation changes, blocker identity, population planning, signal clocks,
+  and worker progress under population load have focused probes. The worker is
+  active by default; stress/replay determinism and shutdown/failure behavior
+  under representative live traffic still need validation.
 - [ ] Keep collision mesh CPU preparation on workers and ODE publication/removal
   on the simulation thread; measure publication cost and contact readiness,
   then define safe behavior for fast travel, teleports, worker failures, and
   contact continuity. Validate live driving across representative tile seams
   before claiming hitch-free streaming.
-- [ ] Complete HOF-backed map state and validate remaining timetable/traffic
-  control semantics. Scheduled AI dispatch uses parsed departures only when a
-  route matches an endpoint. Linked SCO fixed-cycle signals are enforced from
-  `[phase]` states; request-driven jump/stop timing and native cycle-origin
-  semantics remain unverified. The inspected Grande Porto signal-route file is
-  only a header/template.
+- [~] Complete HOF-backed map state and validate remaining timetable/traffic
+  control semantics. Scheduled player trips use the spawned bus's HOF and
+  matched timetable routes, with selection and cancellation covered by focused
+  lifecycle probes. Scheduled AI dispatch uses parsed departures only when a
+  route matches an endpoint; unmatched map itineraries remain unsupported.
+  Linked SCO signals use fixed phases and native-format conditional stop/jump
+  controls, with cycle initialization from selected map time. Native stop-line
+  placement, `signalroutes.cfg` routing, remaining timetable matches, and full
+  OMSI parity remain unverified; the inspected Grande Porto signal-route file
+  is only a header/template.
 
 ### GPU visibility and draw submission
 

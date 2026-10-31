@@ -147,8 +147,9 @@ class MapRenderer {
                                double gaitWeight) const;
     std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>>
     trafficSignalControllers() const;
-    std::vector<openbus::map::MapTrafficSignalBusPriorityRequest>
-    trafficSignalBusPriorityRequests(std::optional<std::array<double, 2>> playerBusPosition) const;
+    std::vector<openbus::map::MapTrafficSignalRequest>
+    trafficSignalRequests(std::optional<std::array<double, 2>> playerBusPosition,
+                          double playerSpeedMetersPerSecond) const;
     void updateTrafficSignalScripts(double signalClockSeconds) const;
     bool addTrafficActor(openbus::map::MapTrafficActor actor);
     std::size_t updateTrafficActors(double elapsedSeconds);

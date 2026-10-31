@@ -43,6 +43,11 @@ bool sphereBelowMinimumViewportFraction(const std::array<double, 16>& modelView,
                                         const std::array<double, 16>& projection,
                                         const std::array<double, 3>& center, double radius,
                                         double minimumFraction);
+double projectedSizeFadeStart(double minimumFraction);
+double projectedSizeFadeAlpha(const std::array<double, 16>& modelView,
+                              const std::array<double, 16>& projection,
+                              const std::array<double, 3>& center, double radius,
+                              double minimumFraction);
 std::uint32_t appendCullingLodBoundaries(std::vector<float>& boundaries,
                                          std::span<const double> thresholds);
 bool cullingItemVisible(const CullingItem& item, const CullingPlanes& planes,

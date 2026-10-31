@@ -176,23 +176,45 @@ GLuint Vehicle::uploadCompressedTexture(const std::filesystem::path& path,
     if (textureArray && pglCompressedTexImage3D == nullptr) {
         return 0;
     }
+    if (textureArray) {
+        const auto maxSize = static_cast<std::size_t>(std::numeric_limits<GLsizei>::max());
+        if (textureArrayLayers > maxSize) {
+            textureLog.Error("Compressed texture array has too many layers: " +
+                             path.generic_string());
+            return 0;
+        }
+        for (std::size_t level = 0; level < image.levels(); ++level) {
+            if (image.size(level) > maxSize / textureArrayLayers) {
+                textureLog.Error("Compressed texture array level is too large: " +
+                                 path.generic_string());
+                return 0;
+            }
+        }
+    }
     GLuint texture = 0;
     glGenTextures(1, &texture);
     const GLenum target = textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
     glBindTexture(target, texture);
     glTexParameteri(target, GL_TEXTURE_MIN_FILTER,
                     image.levels() > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_MAX_LEVEL, static_cast<GLint>(image.levels() - 1));
     glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    std::vector<std::uint8_t> arrayLevel;
     for (std::size_t level = 0; level < image.levels(); ++level) {
         const auto extent = image.extent(level);
         if (textureArray) {
+            const std::size_t layerSize = image.size(level);
+            arrayLevel.resize(layerSize * textureArrayLayers);
+            for (std::size_t layer = 0; layer < textureArrayLayers; ++layer) {
+                const auto* source = static_cast<const std::uint8_t*>(image.data(layer, 0, level));
+                std::copy_n(source, layerSize, arrayLevel.data() + layer * layerSize);
+            }
             pglCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, static_cast<GLint>(level), format.Internal,
                                     static_cast<GLsizei>(extent.x), static_cast<GLsizei>(extent.y),
                                     static_cast<GLsizei>(textureArrayLayers), 0,
-                                    static_cast<GLsizei>(image.size(level)),
-                                    image.data(0, 0, level));
+                                    static_cast<GLsizei>(arrayLevel.size()), arrayLevel.data());
         } else {
             pglCompressedTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(level), format.Internal,
                                     static_cast<GLsizei>(extent.x), static_cast<GLsizei>(extent.y),
@@ -225,6 +247,8 @@ GLuint Vehicle::uploadCompressedDds(const std::filesystem::path& path, const Com
     glBindTexture(GL_TEXTURE_2D, texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
                     image.levels.size() > 1 ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,
+                    static_cast<GLint>(image.levels.size() - 1));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);

@@ -716,18 +716,40 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                 result.diagnostics.error(line.number, keyword,
                                          "keyword is only valid in a Bus configuration");
             }
-            std::vector<std::string> values;
-            if (!readValues(reader, keyword, 2, values, result.diagnostics)) {
-                continue;
-            }
             VehicleViewEntry entry;
-            entry.label = trim(values[1]);
-            if (!parseInt(values[0], entry.viewIndex) || entry.viewIndex < 0 ||
-                entry.label.empty()) {
-                result.diagnostics.error(
-                    line.number, keyword,
-                    "expected a non-negative view index and a non-empty label");
-                continue;
+            Line next;
+            const bool hasNext = reader.next(next);
+            int explicitIndex = -1;
+            if (hasNext && !next.isKeyword() && parseInt(next.text, explicitIndex)) {
+                Line label;
+                if (!reader.readPayload(label, result.diagnostics, keyword)) {
+                    continue;
+                }
+                entry.viewIndex = explicitIndex;
+                entry.label = trim(label.text);
+                if (entry.viewIndex < 0 || entry.label.empty()) {
+                    result.diagnostics.error(
+                        line.number, keyword,
+                        "expected a non-negative view index and a non-empty label");
+                    continue;
+                }
+            } else {
+                if (hasNext) {
+                    reader.pushBack(std::move(next));
+                }
+                if (result.cameras.empty() ||
+                    result.cameras.back().kind != VehicleCameraKind::Driver) {
+                    result.diagnostics.error(line.number, keyword,
+                                             "marker must follow a driver camera");
+                    continue;
+                }
+                entry.viewIndex =
+                    static_cast<int>(std::count_if(result.cameras.begin(), result.cameras.end(),
+                                                   [](const VehicleCamera& camera) {
+                                                       return camera.kind ==
+                                                              VehicleCameraKind::Driver;
+                                                   })) -
+                    1;
             }
             if (keyword == "view_schedule") {
                 scheduleLine = line.number;
@@ -737,7 +759,7 @@ VehicleConfig loadVehicleConfig(const std::filesystem::path& configPath, Vehicle
                 result.ticketSellingViews.push_back(std::move(entry));
             }
             result.diagnostics.warning(line.number, keyword,
-                                       "view index and label retained; view selection is not "
+                                       "camera association retained; view selection is not "
                                        "implemented");
             continue;
         }

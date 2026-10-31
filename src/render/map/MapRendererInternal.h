@@ -180,6 +180,7 @@ Matrix4 makeSceneryInstanceTransform(double x, double y, double z,
                                      const std::array<double, 6>& rotationDegrees,
                                      std::size_t rotationCount,
                                      const std::array<double, 9>* orientationMatrix);
+Matrix4 bentPoleTransform(const Matrix4& baseTransform, const MapPoleState& state);
 
 } // namespace map_detail
 
@@ -398,6 +399,7 @@ struct MapRenderer::Impl {
         ModelMaterial material;
         int alphaMode = 0;
         double viewDepth = 0.0;
+        double visibilityFade = 1.0;
     };
 
     static constexpr std::size_t SCENERY_DRAW_GROUP_COUNT = 7;

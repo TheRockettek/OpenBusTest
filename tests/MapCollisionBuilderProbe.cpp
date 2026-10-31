@@ -128,11 +128,13 @@ void writePoleO3D(const std::filesystem::path& path) {
     output.put(static_cast<char>(0x19));
     output.put(static_cast<char>(3));
     output.put(static_cast<char>(0x17));
-    writeU16(output, 3);
-    const std::array<std::array<float, 3>, 3> positions = {
-        std::array<float, 3>{-0.1F, 0.0F, 0.0F},
-        std::array<float, 3>{0.1F, 0.0F, 0.0F},
-        std::array<float, 3>{0.0F, 2.0F, 0.0F}};
+    writeU16(output, 5);
+    const std::array<std::array<float, 3>, 5> positions = {
+        std::array<float, 3>{0.9F, 0.5F, 0.3F},
+        std::array<float, 3>{1.1F, 0.5F, 0.3F},
+        std::array<float, 3>{1.0F, 4.5F, 0.3F},
+        std::array<float, 3>{4.0F, 4.5F, 0.3F},
+        std::array<float, 3>{4.0F, 4.0F, 0.3F}};
     for (const auto& position : positions) {
         for (float value : position) {
             writeF32(output, value);
@@ -142,10 +144,14 @@ void writePoleO3D(const std::filesystem::path& path) {
         }
     }
     output.put(static_cast<char>(0x49));
-    writeU16(output, 1);
+    writeU16(output, 2);
     writeU16(output, 0);
     writeU16(output, 2);
     writeU16(output, 1);
+    writeU16(output, 0);
+    writeU16(output, 2);
+    writeU16(output, 3);
+    writeU16(output, 4);
     writeU16(output, 0);
 }
 
@@ -603,20 +609,30 @@ void runProbe() {
                   "[version]\n12\n[terrain]\n[object]\n0\n"
                   "Sceneryobjects\\Test\\Pole.sco\n77\n50\n50\n5\n0\n0\n0\n0\n"
                   "[object]\n0\nSceneryobjects\\Test\\BoundingBoxPole.sco\n"
-                  "78\n60\n50\n5\n0\n0\n0\n0\n");
+                  "78\n60\n50\n5\n0\n0\n0\n0\n"
+                  "[object]\n0\nSceneryobjects\\Test\\Pole.sco\n"
+                  "79\n299.5\n50\n5\n0\n0\n0\n0\n"
+                  "[object]\n0\nSceneryobjects\\Test\\BoundingBoxPole.sco\n"
+                  "80\n90\n50\n5\n90\n0\n0\n0\n");
         poleMap.tiles.push_back(poleTile);
+        MapTileReference adjacentPoleTile;
+        adjacentPoleTile.x = 1;
+        adjacentPoleTile.y = 0;
+        adjacentPoleTile.textPath = mapRoot / "pole_adjacent.map";
+        writeText(adjacentPoleTile.textPath, "[version]\n12\n[terrain]\n");
+        poleMap.tiles.push_back(adjacentPoleTile);
         writeText(omsiRoot / "Sceneryobjects" / "Test" / "Pole.sco",
                   "[model]\npole.cfg\n[crashmode_pole]\n0.25\n1.2\n");
         writeText(omsiRoot / "Sceneryobjects" / "Test" / "BoundingBoxPole.sco",
                   "[model]\nboundingboxpole.cfg\n[crashmode_pole]\n0.25\n1.2\n");
         writeText(omsiRoot / "Sceneryobjects" / "Test" / "boundingboxpole.cfg",
-                  "[boundingbox]\n1\n2\n1\n0\n0\n0\n");
+                  "[boundingbox]\n0.4\n0.4\n4\n0.8\n-0.5\n2\n");
         writeText(omsiRoot / "Sceneryobjects" / "Test" / "pole.cfg",
                   "[collision_mesh]\npole.o3d\n");
         writePoleO3D(omsiRoot / "Sceneryobjects" / "Test" / "pole.o3d");
         const auto poleCollisions = buildMapPoleCollisionTile(poleMap, omsiRoot, 0, 0);
         require(
-            poleCollisions.size() == 2 && poleCollisions.front().mapObjectId == 77 &&
+            poleCollisions.size() == 3 && poleCollisions.front().mapObjectId == 77 &&
                 poleCollisions.front().radiusMeters > 0.0 &&
                 poleCollisions.front().radiusMeters <= 0.12 &&
                 std::hypot(
@@ -626,17 +642,43 @@ void runProbe() {
                         poleCollisions.front().basePosition[2]) > 0.1 &&
                 poleCollisions.front().resistanceRadiansPerTonneMeterPerSecond == 0.25 &&
                 poleCollisions.front().breakAngleRadians == 1.2 &&
-                poleCollisions.back().mapObjectId == 78 &&
-                poleCollisions.back().radiusMeters > 0.0 &&
-                poleCollisions.back().radiusMeters <= 0.12 &&
+                poleCollisions[1].mapObjectId == 78 &&
+                poleCollisions[1].radiusMeters > 0.0 &&
                 std::hypot(
-                    poleCollisions.back().topPosition[0] - poleCollisions.back().basePosition[0],
-                    poleCollisions.back().topPosition[1] - poleCollisions.back().basePosition[1],
-                    poleCollisions.back().topPosition[2] - poleCollisions.back().basePosition[2]) >
+                    poleCollisions[1].topPosition[0] - poleCollisions[1].basePosition[0],
+                    poleCollisions[1].topPosition[1] - poleCollisions[1].basePosition[1],
+                    poleCollisions[1].topPosition[2] - poleCollisions[1].basePosition[2]) >
                     0.1,
             "[crashmode_pole] produces streamed collisions from mesh or bounding-box bounds");
+        const auto& meshPole = poleCollisions.front();
+        const auto& boxPole = poleCollisions[1];
+        require(std::abs(meshPole.basePosition[0] - 51.0) < 1.0e-5 &&
+                    std::abs(meshPole.basePosition[1] - 50.3) < 1.0e-5 &&
+                    std::abs(meshPole.basePosition[2] - 5.5) < 1.0e-5 &&
+                    std::abs(meshPole.topPosition[0] - 51.0) < 1.0e-5 &&
+                    std::abs(meshPole.topPosition[2] - 9.5) < 1.0e-5 &&
+                    std::abs(meshPole.radiusMeters - 0.1) < 1.0e-5,
+                "pole shaft center and radius ignore the offset lamp arm");
+        require(std::abs(boxPole.basePosition[0] - 60.8) < 1.0e-8 &&
+                    std::abs(boxPole.basePosition[1] - 49.5) < 1.0e-8 &&
+                    std::abs(boxPole.basePosition[2] - 5.0) < 1.0e-8 &&
+                    std::abs(boxPole.topPosition[2] - 9.0) < 1.0e-8 &&
+                    std::abs(boxPole.radiusMeters - 0.2) < 1.0e-8,
+                "authored bounding box uses z as vertical and retains its offset");
+        const auto& rotatedPole = poleCollisions.back();
+        require(rotatedPole.mapObjectId == 80 &&
+                    std::abs(rotatedPole.basePosition[0] - 89.5) < 1.0e-8 &&
+                    std::abs(rotatedPole.basePosition[1] - 49.2) < 1.0e-8 &&
+                    std::abs(rotatedPole.basePosition[2] - 5.0) < 1.0e-8 &&
+                    std::abs(rotatedPole.topPosition[2] - 9.0) < 1.0e-8,
+                "rotated pole bounds use the same placement transform as scenery");
+        const auto adjacentPoles = buildMapPoleCollisionTile(poleMap, omsiRoot, 1, 0);
+        require(adjacentPoles.size() == 1 && adjacentPoles.front().mapObjectId == 79 &&
+                    adjacentPoles.front().tileX == 0 && adjacentPoles.front().tileY == 0 &&
+                    std::abs(adjacentPoles.front().basePosition[0] - 300.5) < 1.0e-5,
+                "cross-tile pole keeps its source placement identity for rendering");
         const auto poleTileCollision = buildMapRoadCollisionTile(poleMap, omsiRoot, 0, 0);
-        require(poleTileCollision.poles.size() == 2 &&
+        require(poleTileCollision.poles.size() == 3 &&
                     poleTileCollision.sceneryCollisionObjectsAdded == 0 &&
                     poleTileCollision.meshes.empty(),
                 "mesh and bounding-box poles stay dynamic instead of entering the static mesh");
@@ -684,10 +726,36 @@ void runSceneryGeometryFallbackProbe() {
     const auto index = buildMapSceneryCollisionIndex(map, omsiRoot);
     require(index->objects.size() == 4,
             "surface and ordinary scenery use model or box fallback while no-surface nocollision is honored");
+    const auto box = std::find_if(index->objects.begin(), index->objects.end(),
+                                  [](const MapSceneryCollisionObject& object) {
+                                      return object.mapObjectId == 3;
+                                  });
+    require(box != index->objects.end() &&
+                box->localBounds == std::array<double, 6>{0.0, -2.0, -3.0, 2.0, 2.0, 3.0},
+            "static bounding-box collision uses map axes");
     const auto result = buildMapRoadCollisionTile(map, omsiRoot, 0, 0, nullptr, index.get());
     require(result.sceneryCollisionObjectsAdded == 4 && result.meshes.size() == 1 &&
                 result.meshes.front().indices.size() == 45,
             "fallback model meshes and authored bounding boxes contribute scenery collision, including after a bad collision mesh");
+    require(dInitODE2(0) != 0, "ODE initializes for bounding-box contact regression");
+    require(dAllocateODEDataForThread(dAllocateFlagCollisionData) != 0,
+            "ODE allocates bounding-box collision data");
+    const auto& collision = result.meshes.front();
+    dTriMeshDataID data = dGeomTriMeshDataCreate();
+    dGeomTriMeshDataBuildDouble(data, collision.vertices.data(), 3 * sizeof(double),
+                                static_cast<int>(collision.vertices.size() / 3),
+                                collision.indices.data(),
+                                static_cast<int>(collision.indices.size()), 3 * sizeof(int));
+    dGeomID geometry = dCreateTriMesh(nullptr, data, nullptr, nullptr, nullptr);
+    dGeomID sphere = dCreateSphere(nullptr, 0.25);
+    dGeomSetPosition(sphere, 71.0, 50.0, 7.1);
+    dContactGeom contacts[4] = {};
+    require(dCollide(sphere, geometry, 4, contacts, sizeof(dContactGeom)) > 0,
+            "bounding-box top face has outward collision winding");
+    dGeomDestroy(sphere);
+    dGeomDestroy(geometry);
+    dGeomTriMeshDataDestroy(data);
+    dCloseODE();
     openbus::probe::removeProbeDirectory(root);
 }
 

@@ -12,12 +12,18 @@
 #endif
 #include <GLFW/glfw3.h>
 
+#include <cmath>
+
 namespace openbus::app {
 
 inline constexpr double DEFAULT_FIELD_OF_VIEW = 60.0;
 inline constexpr double MIN_FIELD_OF_VIEW = 20.0;
 inline constexpr double MAX_FIELD_OF_VIEW = 120.0;
 inline constexpr double GROUND_SHADOW_OFFSET_Z = 0.015;
+
+inline double mapTrafficSignalClockSeconds(double elapsedSeconds, double startHour) noexcept {
+    return startHour * 3600.0 + elapsedSeconds;
+}
 
 } // namespace openbus::app
 

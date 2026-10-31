@@ -1401,13 +1401,20 @@ int main() {
         {
             openbus::rendering::TraceScope busTrafficTrace("startup",
                                                            "main.prepareScheduledBusTraffic");
-            const std::vector<std::string> aiBusConfigurations =
+            std::vector<std::string> aiBusConfigurations =
                 openbus::map::mapAiBusAssetPaths(mapDefinition.aiTraffic);
-            if (aiBusConfigurations.empty()) {
+            const auto scheduledAiBusConfigurations = aiBusConfigurations;
+            // Player route registration must not depend on the map's AI depot list.
+            if (std::ranges::find(aiBusConfigurations, busConfigPath.string()) ==
+                aiBusConfigurations.end()) {
+                aiBusConfigurations.push_back(busConfigPath.string());
+            }
+            if (scheduledAiBusConfigurations.empty()) {
                 applicationLog.Warning(
                     "Map AI buses not spawned: ailists.cfg has no loadable depot bus "
                     "configurations.");
-            } else {
+            }
+            {
                 constexpr double busTrafficSpeedMetersPerSecond = 11.0;
                 std::size_t addedBuses = 0;
                 std::size_t eligibleTimetableRoutes = 0;
@@ -1527,10 +1534,14 @@ int main() {
                 std::vector<std::size_t> departureCounts;
                 departureCounts.reserve(matchedBusRoutes.size());
                 for (const MatchedBusRoute& matchedRoute : matchedBusRoutes) {
-                    departureCounts.push_back(
+                    const bool playerRouteOnly =
+                        std::ranges::find(scheduledAiBusConfigurations, matchedRoute.busPath) ==
+                        scheduledAiBusConfigurations.end();
+                    const auto& timetable =
                         mapDefinition.aiTraffic
-                            .timetableRoutes[matchedRoute.routeStart.timetableRouteIndex]
-                            .scheduledDepartureMinutes.size());
+                            .timetableRoutes[matchedRoute.routeStart.timetableRouteIndex];
+                    departureCounts.push_back(
+                        playerRouteOnly ? 0 : timetable.scheduledDepartureMinutes.size());
                 }
                 const std::vector<std::size_t> busesPerRoute =
                     openbus::map::mapTrafficAllocateScheduledBuses(departureCounts, busPoolLimit);
@@ -2122,7 +2133,6 @@ int main() {
                             openbus::rendering::TraceScope playerTrace(
                                 "startup", "spawnSelectedMapBus.initializePlayerVehicle");
                             renderer.SetPlayerVehicle(playerVehicle);
-                            renderer.SetPlayerTimetableSelection(spawnRequest->timetableSelection);
                         }
                         reportedCollisionTileCount = collisionStreamer->loadedTileCount();
                         applicationLog.Log("Selected bus physics initialized; simulation resumed.");

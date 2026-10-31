@@ -380,6 +380,7 @@ struct Vehicle {
         mutable Matrix4 cachedAnimationTransform = {};
         mutable std::uint64_t viewDepthCacheGeneration = 0;
         mutable double cachedViewDepth = 0.0;
+        mutable double visibilityFade = 1.0;
         bool indirectEligible = false;
     };
 
@@ -788,7 +789,8 @@ struct Vehicle {
 
     void drawBatch(Batch& batch, double alpha, bool forceUntextured = false,
                    const std::array<double, 3>* overrideColor = nullptr, int alphaModeOverride = -1,
-                   bool forceDepthTest = false, GLuint transparentIndexBuffer = 0);
+                   bool forceDepthTest = false, GLuint transparentIndexBuffer = 0,
+                   double visibilityFade = 1.0, bool forceNoDepthWrite = false);
 
     GLuint sortTransparentBatch(Batch& batch, const DisplayPart& part, std::size_t batchIndex);
 

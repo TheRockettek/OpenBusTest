@@ -2,6 +2,7 @@
 
 #include "app/traffic/PassengerNetwork.h"
 #include "map/MapConfigLoader.h"
+#include "config/HofData.h"
 
 #include <cstddef>
 #include <optional>
@@ -9,6 +10,11 @@
 #include <vector>
 
 namespace openbus::app {
+
+bool passengerRouteMatchesHof(const PassengerStopRouteState& route,
+                              const openbus::config::HofData& hof);
+const openbus::config::HofRoute* passengerRouteHofRoute(const PassengerStopRouteState& route,
+                                                        const openbus::config::HofData& hof);
 
 struct PlayerTimetableSelection {
     std::size_t passengerRouteIndex = 0;
@@ -36,7 +42,8 @@ class PlayerTimetableController {
 
     const openbus::map::MapAiTimetableCourseTrip*
     advance(const std::vector<PassengerStopRouteState>& routes,
-            const std::vector<openbus::map::MapAiTimetableCourse>& courses);
+            const std::vector<openbus::map::MapAiTimetableCourse>& courses,
+            const openbus::config::HofData* hof = nullptr);
 };
 
 } // namespace openbus::app

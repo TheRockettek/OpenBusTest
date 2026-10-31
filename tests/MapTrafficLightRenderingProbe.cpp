@@ -190,9 +190,9 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     writeText(root / "controller.sco",
               "[onlyeditor]\n[traffic_lights_group]\n6\n"
               "[traffic_light]\nSelected approach\n[phase]\n0\n2\n"
-              "[phase]\n6\n2\n[phase]\n9\n2\n"
-              "[traffic_light]\nOther approach\n[phase]\n0\n6\n"
-              "[traffic_light_jump]\n0\n10\n6\n2\n"
+              "[phase]\n6\n2\n[phase]\n9\n2\n[approachdist]\n5\n"
+              "[traffic_light]\nOther approach\n[phase]\n0\n6\n[approachdist]\n5\n"
+              "[traffic_light_jump]\n0\n0.2\n0\n2\n"
               "[path]\n60\n0\n0\n0\n0\n10\n0\n0\n0\n3\n0\n0\n"
               "[use_traffic_light]\n0\n"
               "[path]\n80\n0\n0\n0\n0\n10\n0\n0\n0\n3\n0\n0\n"
@@ -286,7 +286,8 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
               paths.front().pathIndex == 0 && paths.front().widthMeters == 3.0 &&
               paths.front().trafficSignal->lightIndex == 0 &&
               paths.front().trafficSignal->program != nullptr &&
-              paths.front().trafficSignal->program->controlPoints.size() == (conditional ? 2U : 0U) &&
+              paths.front().trafficSignal->program->controlPoints.size() ==
+                  (conditional ? 3U : 1U) &&
               paths.front().pathRules.groups.size() == 1 &&
               paths.front().pathRules.groups.front().priority == 192.0 &&
               paths.back().trafficSignal.has_value() &&
@@ -359,22 +360,30 @@ void runProbe(const std::filesystem::path& root, bool conditional) {
     drawPhase(4, 9, {255, 255, 0});
     drawPhase(6, 0, {255, 0, 0});
     const auto& signalPath = paths.front().points;
-    check(signalPath.size() >= 2, "bus-priority signal path has direction geometry");
+    check(signalPath.size() >= 2, "signal path has direction geometry");
     const double directionX = signalPath[1][0] - signalPath[0][0];
     const double directionY = signalPath[1][1] - signalPath[0][1];
     const double directionLength = std::hypot(directionX, directionY);
-    check(directionLength > 0.0, "bus-priority signal path has non-zero direction");
+    check(directionLength > 0.0, "signal path has non-zero direction");
     const std::array<double, 2> playerBusPosition = {
-        signalPath[0][0] - directionX / directionLength * 5.0,
-        signalPath[0][1] - directionY / directionLength * 5.0};
+        signalPath[0][0] - directionX / directionLength * 4.9,
+        signalPath[0][1] - directionY / directionLength * 4.9};
+    const std::array<double, 2> outsideApproachPosition = {
+        signalPath[0][0] - directionX / directionLength * 5.1,
+        signalPath[0][1] - directionY / directionLength * 5.1};
+    const auto playerRequests = renderer.trafficSignalRequests(playerBusPosition, 0.0);
+    check(playerRequests.size() == 1 && playerRequests.front().lightIndex == 0,
+          "the player requests a conditional light within its configured approach distance");
+    check(renderer.trafficSignalRequests(outsideApproachPosition, 1.0).empty(),
+          "the player does not request a conditional light outside its approach distance");
     openbus::map::advanceMapTrafficSignalControllers(
         renderer.trafficSignalControllers(), {}, 0.1, 6.1,
-        renderer.trafficSignalBusPriorityRequests(playerBusPosition));
+        playerRequests);
     renderer.updateTrafficSignalScripts(6.2);
     renderer.updateScripts();
-    const auto priorityStats = renderer.trafficSignalDebugStats();
-    check(priorityStats.modelsByPhase[6] >= 1 && priorityStats.controllerDrivenModels == 3,
-          "player bus approaching the stopline activates its configured green priority phase");
+    const auto requestStats = renderer.trafficSignalDebugStats();
+    check(requestStats.modelsByPhase[6] >= 1 && requestStats.controllerDrivenModels == 3,
+          "a stopped player bus request activates the SCO conditional jump");
     check(glGetError() == GL_NO_ERROR, "Traffic-light rendering produced an OpenGL error");
 
     SimulationState asyncSimulation;

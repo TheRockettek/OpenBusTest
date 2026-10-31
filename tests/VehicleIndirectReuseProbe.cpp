@@ -26,6 +26,162 @@ struct VehicleTextureLookupProbe {
         }
         return passed;
     }
+
+    static bool compressedMipmaps(Vehicle& vehicle,
+                                  const std::vector<std::filesystem::path>& installedAssets) {
+        using namespace openbus::rendering;
+        const std::array<Vehicle::Vertex, 3> vertices = {{
+            {-1, -1, -2, 0, 0, 0, 0, 0, 1},
+            {1, -1, -2, 1, 0, 0, 0, 0, 1},
+            {0, 1, -2, 0.5, 1, 0, 0, 0, 1},
+        }};
+        GLuint buffer = 0;
+        pglGenBuffers(1, &buffer);
+        pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+        pglBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
+        setPerspective(64, 64, 90);
+        setModelViewMatrix(identityMatrix());
+        setLightingViewMatrix(identityMatrix());
+        glViewport(0, 0, 64, 64);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_DITHER);
+
+        const auto check = [&](const char* label, GLuint texture, bool array, int maxLevel,
+                               bool green = false) {
+            if (texture == 0) {
+                std::cerr << label << " texture upload failed\n";
+                return false;
+            }
+            const GLenum target = array ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+            glBindTexture(target, texture);
+            GLint actualMaxLevel = -1;
+            glGetTexParameteriv(target, GL_TEXTURE_MAX_LEVEL, &actualMaxLevel);
+            invalidateTextureBindings();
+            ModelMaterial material;
+            material.texture = texture;
+            material.textured = true;
+            material.textureArray = array;
+            glClearColor(0, 0, 0, 1);
+            glClear(GL_COLOR_BUFFER_BIT);
+            drawModelBatch(buffer, vertices.size(), material, {1, 1, 1}, 1.0, 0);
+            std::array<std::uint8_t, 4> pixel = {};
+            glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel.data());
+            if (actualMaxLevel != maxLevel || pixel[green ? 1 : 0] < 100 ||
+                pixel[green ? 0 : 1] > 10 || pixel[2] > 10) {
+                std::cerr << label << " mipmap texture is incomplete or rendered incorrectly: max="
+                          << actualMaxLevel << " pixel=" << static_cast<int>(pixel[0]) << ','
+                          << static_cast<int>(pixel[1]) << ',' << static_cast<int>(pixel[2]) << '\n';
+                return false;
+            }
+            return true;
+        };
+        const auto fillDxt1 = [](gli::texture& image) {
+            auto* bytes = static_cast<std::uint8_t*>(image.data());
+            for (std::size_t offset = 0; offset < image.size(); offset += 8) {
+                const std::array<std::uint8_t, 8> red = {0, 0xf8, 0, 0xf8, 0, 0, 0, 0};
+                std::copy(red.begin(), red.end(), bytes + offset);
+            }
+        };
+        bool passed = true;
+        for (const int levels : {1, 2, 4}) {
+            gli::texture2d image(gli::FORMAT_RGB_DXT1_UNORM_BLOCK8, {8, 8}, levels);
+            fillDxt1(image);
+            bool array = false;
+            std::size_t layers = 0;
+            const GLuint texture =
+                vehicle.uploadCompressedTexture("fixture.dds", image, array, layers);
+            passed &= !array && layers == 1 && check("DXT1", texture, array, levels - 1);
+        }
+        gli::texture2d_array arrayImage(gli::FORMAT_RGB_DXT1_UNORM_BLOCK8, {8, 8}, 2, 2);
+        fillDxt1(arrayImage);
+        for (std::size_t level = 0; level < arrayImage.levels(); ++level) {
+            auto* bytes = static_cast<std::uint8_t*>(arrayImage.data(1, 0, level));
+            const std::array<std::uint8_t, 8> green = {0xe0, 0x07, 0xe0, 0x07, 0, 0, 0, 0};
+            for (std::size_t offset = 0; offset < arrayImage.size(level); offset += green.size()) {
+                std::copy(green.begin(), green.end(), bytes + offset);
+            }
+        }
+        bool array = false;
+        std::size_t layers = 0;
+        const GLuint arrayTexture =
+            vehicle.uploadCompressedTexture("array.dds", arrayImage, array, layers);
+        passed &= array && layers == 2 && check("DXT1 array", arrayTexture, array, 1);
+        auto secondLayer = vertices;
+        for (auto& vertex : secondLayer) vertex.layer = 1;
+        pglBindBuffer(GL_ARRAY_BUFFER, buffer);
+        pglBufferData(GL_ARRAY_BUFFER, sizeof(secondLayer), secondLayer.data(), GL_STATIC_DRAW);
+        passed &= check("DXT1 array second layer", arrayTexture, array, 1, true);
+        pglBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(), GL_STATIC_DRAW);
+
+        CompressedDds dxt5;
+        dxt5.width = 8;
+        dxt5.height = 8;
+        const std::array<std::uint8_t, 16> redDxt5 = {
+            255, 255, 0, 0, 0, 0, 0, 0, 0, 0xf8, 0, 0xf8, 0, 0, 0, 0};
+        dxt5.levels.resize(2);
+        for (int block = 0; block < 4; ++block) {
+            dxt5.levels[0].insert(dxt5.levels[0].end(), redDxt5.begin(), redDxt5.end());
+        }
+        dxt5.levels[1].assign(redDxt5.begin(), redDxt5.end());
+        const GLuint dxt5Texture = vehicle.uploadCompressedDds("dxt5.dds", dxt5);
+        passed &= check("DXT5", dxt5Texture, false, 1);
+        for (const auto& path : installedAssets) {
+            TextureAsset asset;
+            if (!loadTextureAsset(path, asset)) {
+                std::cerr << "Could not load installed DDS: " << path << '\n';
+                passed = false;
+                continue;
+            }
+            bool textureArray = false;
+            std::size_t textureLayers = 0;
+            GLuint texture = 0;
+            std::size_t levels = 0;
+            if (asset.compressedTexture) {
+                levels = asset.compressedTexture->levels();
+                texture = vehicle.uploadCompressedTexture(path, *asset.compressedTexture,
+                                                           textureArray, textureLayers);
+            } else if (asset.compressedDds) {
+                levels = asset.compressedDds->levels.size();
+                texture = vehicle.uploadCompressedDds(path, *asset.compressedDds);
+            }
+            if (texture == 0 || levels == 0) {
+                std::cerr << "Could not upload installed compressed DDS: " << path << '\n';
+                passed = false;
+                continue;
+            }
+            const GLenum target = textureArray ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+            glBindTexture(target, texture);
+            GLint maxLevel = -1;
+            glGetTexParameteriv(target, GL_TEXTURE_MAX_LEVEL, &maxLevel);
+            invalidateTextureBindings();
+            ModelMaterial material;
+            material.texture = texture;
+            material.textured = true;
+            material.textureArray = textureArray;
+            glClear(GL_COLOR_BUFFER_BIT);
+            drawModelBatch(buffer, vertices.size(), material, {1, 1, 1}, 1.0, 0);
+            std::array<std::uint8_t, 64 * 64 * 4> pixels = {};
+            glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            std::size_t coloredPixels = 0;
+            for (std::size_t pixel = 0; pixel < pixels.size(); pixel += 4) {
+                if (pixels[pixel] > 16 || pixels[pixel + 1] > 16 || pixels[pixel + 2] > 16) {
+                    ++coloredPixels;
+                }
+            }
+            if (maxLevel != static_cast<GLint>(levels - 1) || coloredPixels == 0) {
+                std::cerr << "Installed DDS rendered black or has an invalid mip limit: " << path
+                          << '\n';
+                passed = false;
+            } else {
+                std::cout << "Rendered installed DDS: " << path << " levels=" << levels
+                          << " coloredPixels=" << coloredPixels << '\n';
+            }
+        }
+        deleteRendererBuffers(1, &buffer);
+        return passed;
+    }
 };
 
 namespace {
@@ -57,6 +213,35 @@ int main(int argc, char** argv) {
     }
     glfwMakeContextCurrent(window);
     if (!loadOpenGLFunctions() || !initializeCoreRenderer()) return 1;
+    if (argc >= 2 && std::string(argv[1]) == "--compressed-mipmaps") {
+        if (!hasOpenGLExtension("GL_EXT_texture_compression_s3tc") &&
+            !hasOpenGLExtension("GL_S3_s3tc")) {
+            std::cerr << "Skipping compressed mipmap rendering: S3TC is unavailable\n";
+            shutdownCoreRenderer();
+            glfwDestroyWindow(window);
+            glfwTerminate();
+            return 77;
+        }
+        bool passed = false;
+        {
+            SimulationState simulation;
+            AssetRequestManager assets;
+            SoundEngine sound;
+            ViewpointContext soundView = ViewpointContext::PlayerExterior;
+            auto definition = std::make_shared<SharedVehicleDefinition>();
+            Vehicle vehicle(definition, {}, 0.0, {}, assets, simulation, sound, soundView, false,
+                            true);
+            std::vector<std::filesystem::path> installedAssets;
+            for (int index = 2; index < argc; ++index) {
+                installedAssets.emplace_back(argv[index]);
+            }
+            passed = VehicleTextureLookupProbe::compressedMipmaps(vehicle, installedAssets);
+        }
+        shutdownCoreRenderer();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return passed ? 0 : 1;
+    }
     initializeComputeCulling(false, true);
     if (!indirectCullingAvailable()) return 1;
 
@@ -115,7 +300,8 @@ int main(int argc, char** argv) {
         vehicle.loaded = true;
         auto& sortingBatch = vehicle.displayLists[0].batches[1];
         setModelViewMatrix(identityMatrix());
-        const GLuint firstSortedIndexBuffer = vehicle.sortTransparentBatch(sortingBatch);
+        const GLuint firstSortedIndexBuffer =
+            vehicle.sortTransparentBatch(sortingBatch, vehicle.displayLists[0], 1);
         std::array<GLuint, 6> identitySortedIndices = {};
         if (firstSortedIndexBuffer == 0 || pglGetBufferSubData == nullptr) {
             std::cerr << "Transparent sorting did not create an inspectable index buffer\n";
@@ -128,12 +314,14 @@ int main(int argc, char** argv) {
                 std::cerr << "Transparent index buffer did not sort triangles far-to-near\n";
                 passed = false;
             }
-            if (vehicle.sortTransparentBatch(sortingBatch) != firstSortedIndexBuffer) {
+            if (vehicle.sortTransparentBatch(sortingBatch, vehicle.displayLists[0], 1) !=
+                firstSortedIndexBuffer) {
                 std::cerr << "Transparent sorting did not reuse the same-view index buffer\n";
                 passed = false;
             }
             setModelViewMatrix(rotationMatrix(180, 0, 1, 0));
-            const GLuint reversedSortedIndexBuffer = vehicle.sortTransparentBatch(sortingBatch);
+            const GLuint reversedSortedIndexBuffer =
+                vehicle.sortTransparentBatch(sortingBatch, vehicle.displayLists[0], 1);
             std::array<GLuint, 6> reversedSortedIndices = {};
             if (reversedSortedIndexBuffer == 0 ||
                 reversedSortedIndexBuffer == firstSortedIndexBuffer) {
@@ -236,12 +424,11 @@ int main(int argc, char** argv) {
         vehicle.draw(ViewpointContext::PlayerInterior, VehicleRenderPass::Transparent);
         expect(13, "Changed viewpoint reused stale commands");
         vehicle.variableVisibleParts[0] = false;
+        resetFrameTriangleCount();
         draw(VehicleRenderPass::Opaque);
-        for (const auto& batch : vehicle.displayLists[0].batches) {
-            if (batch.indirectSlot != std::numeric_limits<std::size_t>::max()) {
-                std::cerr << "Hidden part retained a previous indirect slot\n";
-                passed = false;
-            }
+        if (vehicle.displayLists[0].indirectEligible || frameTriangleCount() != 0) {
+            std::cerr << "Hidden part was eligible or submitted\n";
+            passed = false;
         }
         vehicle.variableVisibleParts[0] = true;
         draw(VehicleRenderPass::Opaque);
@@ -260,6 +447,7 @@ int main(int argc, char** argv) {
             setModelViewMatrix(identityMatrix());
             draw(VehicleRenderPass::Opaque);
             setModelViewMatrix(translationMatrix({100, 0, 0}));
+            other.prepareFrameVisibility(ViewpointContext::PlayerExterior, 64, 64, 0.0);
             other.draw(ViewpointContext::PlayerExterior, VehicleRenderPass::Opaque);
             if (other.displayLists[0].indirectEligible) {
                 std::cerr << "Vehicle frustum broad phase retained an off-screen part\n";
@@ -289,12 +477,6 @@ int main(int argc, char** argv) {
             frameTriangleCount() != 0) {
             std::cerr << "Undersized vehicle part was classified or submitted\n";
             passed = false;
-        }
-        for (const auto& batch : vehicle.displayLists[0].batches) {
-            if (batch.indirectSlot != std::numeric_limits<std::size_t>::max()) {
-                std::cerr << "Undersized vehicle part received an indirect slot\n";
-                passed = false;
-            }
         }
         expect(15, "Undersized vehicle dispatched compute");
         draw(VehicleRenderPass::Opaque);

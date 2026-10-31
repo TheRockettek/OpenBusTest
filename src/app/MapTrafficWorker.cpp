@@ -376,7 +376,7 @@ struct MapTrafficWorker::Impl {
         std::vector<openbus::map::MapTrafficObstacle> obstacles;
         std::vector<openbus::map::MapTrafficObstacle> humanObstacles;
         std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>> signalControllers;
-        std::vector<openbus::map::MapTrafficSignalBusPriorityRequest> busPriorityRequests;
+        std::vector<openbus::map::MapTrafficSignalRequest> signalRequests;
     };
 
     struct WorkingActor {
@@ -547,7 +547,7 @@ struct MapTrafficWorker::Impl {
             const double simulationStepSecondsForTick = simulationStepSeconds;
             pendingElapsedSeconds -= simulationStepSecondsForTick;
             const double signalClockSeconds = std::max(
-                0.0, simulationTimeSeconds - pendingElapsedSeconds - simulationStepSecondsForTick);
+                0.0, signalClockSeconds_ - pendingElapsedSeconds - simulationStepSecondsForTick);
             lock.unlock();
 
             try {
@@ -556,7 +556,7 @@ struct MapTrafficWorker::Impl {
                 const auto& tickObstacles = tickInput->obstacles;
                 const auto& humanObstacles = tickInput->humanObstacles;
                 const auto& tickSignalControllers = tickInput->signalControllers;
-                const auto& tickBusPriorityRequests = tickInput->busPriorityRequests;
+                const auto& tickSignalRequests = tickInput->signalRequests;
                 std::unordered_map<std::size_t, std::size_t> previousActorByState;
                 previousActorByState.reserve(workingActors.size());
                 for (std::size_t index = 0; index < workingActors.size(); ++index) {
@@ -681,7 +681,7 @@ struct MapTrafficWorker::Impl {
                 }
                 openbus::map::advanceMapTrafficSignalControllers(
                     tickSignalControllers, signalActors, simulationStepSecondsForTick,
-                    signalClockSeconds, tickBusPriorityRequests);
+                    signalClockSeconds, tickSignalRequests);
                 openbus::map::advanceMapTrafficDriving(actorPointers, tickObstacles,
                                                        simulationStepSecondsForTick,
                                                        signalClockSeconds, actorRouteMetadata);
@@ -780,7 +780,7 @@ struct MapTrafficWorker::Impl {
     bool hasInput = false;
     double simulationStepSeconds = 1.0 / kDefaultTrafficSimulationRateHz;
     double pendingElapsedSeconds = 0.0;
-    double simulationTimeSeconds = 0.0;
+    double signalClockSeconds_ = 0.0;
     std::shared_ptr<const InputSnapshot> submittedInput;
     std::vector<PopulationCandidate> populationCandidates;
     std::size_t populationRoadTarget = 0;
@@ -827,10 +827,10 @@ void MapTrafficWorker::submit(
     std::vector<openbus::map::MapTrafficObstacle> obstacles,
     std::vector<openbus::map::MapTrafficObstacle> humanObstacles,
     std::vector<std::shared_ptr<openbus::map::MapTrafficSignalController>> signalControllers,
-    std::vector<openbus::map::MapTrafficSignalBusPriorityRequest> busPriorityRequests,
-    double elapsedSeconds, double simulationTimeSeconds) {
+    std::vector<openbus::map::MapTrafficSignalRequest> signalRequests, double elapsedSeconds,
+    double signalClockSeconds) {
     if (!std::isfinite(elapsedSeconds) || elapsedSeconds < 0.0 ||
-        !std::isfinite(simulationTimeSeconds) || simulationTimeSeconds < 0.0) {
+        !std::isfinite(signalClockSeconds) || signalClockSeconds < 0.0) {
         throw std::invalid_argument("Map traffic worker received an invalid simulation time");
     }
     if (std::any_of(actors.begin(), actors.end(),
@@ -839,14 +839,14 @@ void MapTrafficWorker::submit(
     }
     auto input = std::make_shared<Impl::InputSnapshot>(Impl::InputSnapshot{
         std::move(actors), std::move(humans), std::move(obstacles), std::move(humanObstacles),
-        std::move(signalControllers), std::move(busPriorityRequests)});
+        std::move(signalControllers), std::move(signalRequests)});
     std::lock_guard lock(impl_->mutex);
     if (impl_->workerException) {
         std::rethrow_exception(impl_->workerException);
     }
     impl_->submittedInput = std::move(input);
     impl_->pendingElapsedSeconds += elapsedSeconds;
-    impl_->simulationTimeSeconds = simulationTimeSeconds;
+    impl_->signalClockSeconds_ = signalClockSeconds;
     impl_->hasInput = true;
     impl_->wake.notify_one();
 }

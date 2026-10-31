@@ -25,12 +25,13 @@ void Vehicle::setOneSidedFrontFaceConvention() {
 
 void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
                         const std::array<double, 3>* overrideColor, int alphaModeOverride,
-                        bool forceDepthTest, GLuint transparentIndexBuffer) {
+                        bool forceDepthTest, GLuint transparentIndexBuffer, double visibilityFade,
+                        bool forceNoDepthWrite) {
     if (alpha <= 0.0) {
         return;
     }
     const int alphaMode = alphaModeOverride >= 0 ? alphaModeOverride : batch.alphaMode;
-    const bool noZwrite = alphaModeOverride >= 0 ? false : batch.noZwrite;
+    const bool noZwrite = forceNoDepthWrite || (alphaModeOverride >= 0 ? false : batch.noZwrite);
     openbus::rendering::configureModelAlphaState(alphaMode, noZwrite);
     // Ground-projected fake shadows must still be occluded by vehicle
     // geometry; keep their noZwrite behavior but honor the depth test.
@@ -138,14 +139,15 @@ void Vehicle::drawBatch(Batch& batch, double alpha, bool forceUntextured,
     }
     if (materialBatch) {
         drawMaterialBatch(batch.buffer, batch.vertexCount, batch.materialColors,
-                          *materialTextureIds, batch.materialTextureFlips, transparentIndexBuffer);
+                          *materialTextureIds, batch.materialTextureFlips, transparentIndexBuffer,
+                          visibilityFade);
     } else if (transparentIndexBuffer != 0) {
-        openbus::rendering::drawIndexedModelBatch(batch.buffer, transparentIndexBuffer,
-                                                  batch.vertexCount, material, color, alpha,
-                                                  forceUntextured ? 0 : alphaMode, true);
+        openbus::rendering::drawIndexedModelBatch(
+            batch.buffer, transparentIndexBuffer, batch.vertexCount, material, color, alpha,
+            forceUntextured ? 0 : alphaMode, true, visibilityFade);
     } else {
         drawModelBatch(batch.buffer, batch.vertexCount, material, color, alpha,
-                       forceUntextured ? 0 : alphaMode, true);
+                       forceUntextured ? 0 : alphaMode, true, std::nullopt, visibilityFade);
     }
     if (noZcheck) {
         glEnable(GL_DEPTH_TEST);
@@ -284,6 +286,10 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
     const bool classifyTransparent =
         !reflectionPass || openbus::rendering::reflectionTransparentEnabled();
     const bool renderTransparent = renderPass != VehicleRenderPass::Opaque && classifyTransparent;
+    const double cullingMinimumFraction =
+        reflectionPass && !classifyTransparent
+            ? minimumObjectViewportFraction
+            : openbus::rendering::projectedSizeFadeStart(minimumObjectViewportFraction);
     if (!reflectionPass && renderPass != VehicleRenderPass::Transparent) {
         updateAnimationStates();
     }
@@ -335,8 +341,7 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
         boundaries.clear();
         appendCullingLodBoundaries(boundaries, lodThresholds);
         const auto cullingPlanes = makeCullingPlanes(projection);
-        const auto projectedSize =
-            makeCullingProjectedSize(projection, minimumObjectViewportFraction);
+        const auto projectedSize = makeCullingProjectedSize(projection, cullingMinimumFraction);
         const bool profileRecording = openbus::rendering::IsRecording();
         {
             TraceScope itemBuild("render", "Vehicle::draw.prepareIndirect.collectItems");
@@ -360,6 +365,11 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                     continue;
                 }
                 auto item = makeCullingItem(modelView, animatedPartCenter(part), part.radius);
+                part.visibilityFade =
+                    classifyTransparent
+                        ? projectedSizeFadeAlpha(modelView, projection, animatedPartCenter(part),
+                                                 part.radius, minimumObjectViewportFraction)
+                        : 1.0;
                 item.metadata[0] = frustumCulling ? CullFrustum : 0U;
                 item.metadata[0] |= CullProjectedSize;
                 if (part.lodIndex >= 0 && !boundaries.empty()) {
@@ -440,8 +450,15 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
         const std::array<double, 4> eye = transformPoint(modelView, local);
         part.cachedViewDepth = -eye[2];
         part.viewDepthCacheGeneration = viewDepthGeneration;
+        part.visibilityFade = classifyTransparent ? openbus::rendering::projectedSizeFadeAlpha(
+                                                        modelView, projection, center, part.radius,
+                                                        minimumObjectViewportFraction)
+                                                  : 1.0;
+        if (part.visibilityFade <= 0.0) {
+            return false;
+        }
         if (openbus::rendering::sphereBelowMinimumViewportFraction(
-                modelView, projection, center, part.radius, minimumObjectViewportFraction)) {
+                modelView, projection, center, part.radius, cullingMinimumFraction)) {
             return false;
         }
         const double distance = std::sqrt(eye[0] * eye[0] + eye[1] * eye[1] + eye[2] * eye[2]);
@@ -505,9 +522,10 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                     updateMaterialChange(batch);
                     const bool textTexture = batch.textTextureIndex >= 0;
                     hasOpaqueBatch =
-                        hasOpaqueBatch || (batch.alphaMode == 0 && !batch.noZwrite && !textTexture);
-                    if (classifyTransparent &&
-                        (batch.alphaMode != 0 || batch.noZwrite || textTexture)) {
+                        hasOpaqueBatch || (part.visibilityFade >= 1.0 && batch.alphaMode == 0 &&
+                                           !batch.noZwrite && !textTexture);
+                    if (classifyTransparent && (batch.alphaMode != 0 || batch.noZwrite ||
+                                                textTexture || part.visibilityFade < 1.0)) {
                         transparentBatches.push_back(
                             {&batch, &part, viewDepth(part), part.renderType});
                     }
@@ -591,7 +609,8 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                 const double alpha = alphaScale(batch);
                 if (alpha > 0.0) {
                     selectIndirect(batch);
-                    drawBatch(batch, alpha, false, nullptr, 3);
+                    drawBatch(batch, alpha, false, nullptr, 3, false, 0,
+                              transparent.part->visibilityFade);
                 }
                 popMatrix();
             }
@@ -623,7 +642,8 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
             TraceScope phase("render", "Vehicle::draw.transparentPass");
             for (const TransparentBatch& transparent : transparentBatches) {
                 Batch& batch = *transparent.batch;
-                const int alphaMode = batch.textTextureIndex >= 0 ? 2 : batch.alphaMode;
+                const bool fading = transparent.part->visibilityFade < 1.0;
+                const int alphaMode = batch.textTextureIndex >= 0 || fading ? 2 : batch.alphaMode;
                 pushMatrix();
                 applyDrawTransform(*transparent.part, groundShadowTransform);
                 const double alpha = alphaScale(batch);
@@ -657,10 +677,12 @@ void Vehicle::draw(RenderViewContext context, VehicleRenderPass renderPass,
                         sortTransparentBatch(batch, *transparent.part, batchIndex);
                 }
                 selectIndirect(batch);
-                drawBatch(batch, alpha, false, nullptr, batch.textTextureIndex >= 0 ? 2 : -1,
-                          transparent.part->isShadow, transparentIndexBuffer);
+                drawBatch(batch, alpha, false, nullptr,
+                          batch.textTextureIndex >= 0 || fading ? 2 : -1,
+                          transparent.part->isShadow, transparentIndexBuffer,
+                          transparent.part->visibilityFade, fading);
                 if (!reflectionPass) {
-                    drawEnvironmentMap(batch, alpha);
+                    drawEnvironmentMap(batch, alpha * transparent.part->visibilityFade);
                 }
                 popMatrix();
             }

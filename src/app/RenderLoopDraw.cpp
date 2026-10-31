@@ -426,28 +426,20 @@ trafficSignalDebugLabel(const openbus::rendering::TrafficPathDebugSegment& segme
     }
     lines.push_back(phaseLine.str());
 
-    if ((schedule.hasConditionalOverrides || schedule.hasBusPriority) &&
-        schedule.program != nullptr) {
+    if (schedule.hasConditionalOverrides && schedule.program != nullptr) {
         for (const openbus::map::MapTrafficSignalControlPoint& point :
              schedule.program->controlPoints) {
             if (point.lightIndex != schedule.lightIndex) {
                 continue;
             }
             std::ostringstream controlLine;
-            controlLine << "CP" << std::fixed << std::setprecision(2) << point.timeSeconds;
-            controlLine << 'H';
-            if (point.ifRequest) {
-                controlLine << 'R';
+            controlLine << "CP" << std::fixed << std::setprecision(2) << point.timeSeconds
+                        << (point.jumpToSeconds.has_value() ? " J->" : " S");
+            if (point.jumpToSeconds.has_value()) {
+                controlLine << *point.jumpToSeconds;
             }
+            controlLine << " if_request=" << (point.ifRequest ? 1 : 0);
             lines.push_back(controlLine.str());
-        }
-        for (const openbus::map::MapTrafficSignalBusPriorityRule& rule :
-             schedule.program->busPriorityRules) {
-            std::ostringstream priorityLine;
-            priorityLine << "BP" << rule.phaseToInterrupt << "D" << std::fixed
-                         << std::setprecision(2) << rule.triggerDistanceMeters << "T"
-                         << rule.targetPhase << "G" << rule.minimumGreenSeconds;
-            lines.push_back(priorityLine.str());
         }
     }
     return lines;
@@ -2189,12 +2181,17 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             const std::array<double, 3> stopCenter = {start[0] - forwardX * 0.75,
                                                       start[1] - forwardY * 0.75, start[2] + 0.16};
             const std::optional<int> phase = openbus::map::mapTrafficSignalStateAtTime(
-                *segment.trafficSignal, simulation.simulationTime());
+                *segment.trafficSignal,
+                mapTrafficSignalClockSeconds(simulation.simulationTime(),
+                                             trafficFleet_.mapTrafficStartHour));
+            const bool permissive =
+                phase.has_value() && openbus::map::mapTrafficSignalPhasePermissive(*phase);
+            const bool clearance =
+                phase.has_value() && openbus::map::mapTrafficSignalPhaseClearance(*phase);
             const std::array<float, 3> stopColor =
-                !phase.has_value() || *phase < 6 || *phase > 8
-                    ? std::array<float, 3>{1.0F, 0.12F, 0.08F}
-                    : (*phase >= 9 && *phase <= 11 ? std::array<float, 3>{1.0F, 0.72F, 0.05F}
-                                                   : std::array<float, 3>{0.08F, 1.0F, 0.18F});
+                !permissive && !clearance ? std::array<float, 3>{1.0F, 0.12F, 0.08F}
+                                          : (clearance ? std::array<float, 3>{1.0F, 0.72F, 0.05F}
+                                                       : std::array<float, 3>{0.08F, 1.0F, 0.18F});
             std::array<double, 3> lineStart = stopCenter;
             std::array<double, 3> lineEnd = stopCenter;
             for (std::size_t axis = 0; axis < 2; ++axis) {
@@ -2206,8 +2203,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                       trafficDebugOrigin);
         }
         const auto appendSignalStopBox = [&](const openbus::map::MapTrafficActor& actor) {
-            const auto stop =
-                openbus::map::mapTrafficNextSignalStopDebugInfo(actor, simulation.simulationTime());
+            const auto stop = openbus::map::mapTrafficNextSignalStopDebugInfo(
+                actor, mapTrafficSignalClockSeconds(simulation.simulationTime(),
+                                                    trafficFleet_.mapTrafficStartHour));
             if (!stop.has_value() || stop->distanceAheadMeters > 50.0 ||
                 !openbus::map::mapTrafficPoseOnActiveTile(stop->pose, activeTiles, tileSize)) {
                 return;
@@ -2883,7 +2881,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         signalStats.activeSignalModels, signalStats.controllerDrivenModels,
                         signalStats.modelsWithoutPhase);
             const auto signalHeads =
-                mapRenderer_->trafficSignalHeadDebugInfo(simulation.simulationTime());
+                mapRenderer_->trafficSignalHeadDebugInfo(mapTrafficSignalClockSeconds(
+                    simulation.simulationTime(), trafficFleet_.mapTrafficStartHour));
             ImGui::Text("Signal heads (including unresolved links):");
             if (signalHeads.empty()) {
                 ImGui::TextDisabled("No traffic-light model objects found in active tiles");
@@ -2891,7 +2890,9 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
             for (std::size_t index = 0; index < signalHeads.size(); ++index) {
                 const auto& head = signalHeads[index];
                 ImVec4 phaseColor(1.0F, 0.3F, 0.25F, 1.0F);
-                if (head.phase && *head.phase >= 6 && *head.phase <= 8) {
+                if (head.phase && *head.phase == 12) {
+                    phaseColor = ImVec4(0.65F, 0.65F, 0.68F, 1.0F);
+                } else if (head.phase && *head.phase >= 6 && *head.phase <= 8) {
                     phaseColor = ImVec4(0.2F, 1.0F, 0.3F, 1.0F);
                 } else if (head.phase && *head.phase >= 9 && *head.phase <= 11) {
                     phaseColor = ImVec4(1.0F, 0.75F, 0.15F, 1.0F);
@@ -2940,20 +2941,26 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         segment.points.size() < 2) {
                         continue;
                     }
+                    const double signalClockSeconds = mapTrafficSignalClockSeconds(
+                        simulation.simulationTime(), trafficFleet_.mapTrafficStartHour);
                     const auto lines =
-                        trafficSignalDebugLabel(segment, fallbackId, simulation.simulationTime());
+                        trafficSignalDebugLabel(segment, fallbackId, signalClockSeconds);
                     if (lines.empty()) {
                         continue;
                     }
                     const std::optional<int> currentState =
                         openbus::map::mapTrafficSignalStateAtTime(*segment.trafficSignal,
-                                                                  simulation.simulationTime());
-                    const ImVec4 phaseColor =
-                        !currentState.has_value() || *currentState < 6 || *currentState > 8
-                            ? ImVec4(1.0F, 0.2F, 0.16F, 1.0F)
-                            : (*currentState >= 9 && *currentState <= 11
-                                   ? ImVec4(1.0F, 0.75F, 0.15F, 1.0F)
-                                   : ImVec4(0.2F, 1.0F, 0.3F, 1.0F));
+                                                                  signalClockSeconds);
+                    const bool permissive =
+                        currentState.has_value() &&
+                        openbus::map::mapTrafficSignalPhasePermissive(*currentState);
+                    const bool clearance =
+                        currentState.has_value() &&
+                        openbus::map::mapTrafficSignalPhaseClearance(*currentState);
+                    const ImVec4 phaseColor = !permissive && !clearance
+                                                  ? ImVec4(1.0F, 0.2F, 0.16F, 1.0F)
+                                                  : (clearance ? ImVec4(1.0F, 0.75F, 0.15F, 1.0F)
+                                                               : ImVec4(0.2F, 1.0F, 0.3F, 1.0F));
                     ImGui::PushID(static_cast<int>(fallbackId));
                     ImGui::TextColored(phaseColor, "%s", lines.front().c_str());
                     for (std::size_t lineIndex = 1; lineIndex < lines.size(); ++lineIndex) {
@@ -3010,7 +3017,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                                IM_COL32(32, 24, 16, 220));
             }
             const auto worldSignalHeads =
-                mapRenderer_->trafficSignalHeadDebugInfo(simulation.simulationTime());
+                mapRenderer_->trafficSignalHeadDebugInfo(mapTrafficSignalClockSeconds(
+                    simulation.simulationTime(), trafficFleet_.mapTrafficStartHour));
             for (const auto& head : worldSignalHeads) {
                 std::array<double, 3> labelPosition = head.position;
                 labelPosition[2] += 2.2;

@@ -76,7 +76,7 @@ struct SceneryObjectConfig {
     std::vector<SceneryObjectTrafficLight> trafficLights;
     std::vector<std::optional<openbus::map::MapTrafficSignalSchedule>> trafficLightSchedules;
     std::vector<std::array<double, 3>> trafficLightStops;
-    std::vector<openbus::map::MapTrafficSignalBusPriorityRule> trafficLightBusPriorityRules;
+    std::vector<std::array<double, 4>> trafficLightJumps;
     std::vector<ModelAttachmentPoint> attachmentPoints;
     ConfigurationDiagnostics diagnostics;
 };

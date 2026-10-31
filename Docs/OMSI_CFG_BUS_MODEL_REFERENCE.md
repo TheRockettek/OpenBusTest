@@ -68,7 +68,9 @@ The common record is:
 ### `[matl_item]`
 
 Starts a material-item subrecord. The following material modifiers apply to
-that item until the next material declaration.
+that item until the next material declaration. If no `[matl_change]` controller
+exists, OpenBus warns and applies subsequent supported modifiers to the base
+material; native behavior for such standalone items is unverified.
 
 ### `[matl_change]`
 
@@ -106,7 +108,8 @@ nightmap's authored colour.
 ### `[matl_transmap]`
 
 One transparency-map expression or texture reference, commonly a script
-expression such as `\S:1`.
+expression such as `\S:1`. Empty records are accepted with a warning and do
+not apply a transparency map.
 
 ### `[matl_alpha]`
 

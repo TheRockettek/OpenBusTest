@@ -7,7 +7,7 @@ Scope: the vehicle `.bus` file, its model CFG, and the passenger-cabin/path file
 | Keyword / family | Status | Current boundary |
 | --- | --- | --- |
 | `[fixed]`, `[scriptshare]` | Not implemented | BUS-level fixed/static selection and shared-script semantics are not applied. |
-| `[view_schedule]`, `[view_ticketselling]` | Partial | View indexes and labels are retained, including repeated entries; runtime schedule/ticket view selection is not implemented. |
+| `[view_schedule]`, `[view_ticketselling]` | Partial | Parameterless markers retain the preceding driver-camera index; labelled index records and repeated entries are also retained. Runtime schedule/ticket view selection is not implemented. |
 | `[cog]` | Partial | Its z coordinate supplies the physics height when `[schwerpunkt]` is absent. OpenBus gives `[schwerpunkt]` precedence and warns on disagreement; nonzero x/y offsets are retained and warned about but not applied. Native precedence is unverified. |
 | `[rollwiderstand]` | Active subset | A non-negative authored force in newtons opposes longitudinal motion; negative values are rejected, and when absent the previous mass-scaled OpenBus fallback is retained. Native OMSI physics parity remains unverified. |
 | `[rot_pnt_long]` | Parsed only | The longitudinal rotation point is retained and diagnosed but does not affect vehicle physics. |
@@ -33,6 +33,8 @@ vehicle renderer while preserving scenery texture orientation.
 Static `.x` material diffuse colour, alpha, texture, specular highlight, and emissive
 colour are carried into vehicle and scenery shading. Exact native lighting parity is
 not verified.
+Vehicle compressed DDS uploads limit mipmap sampling to the levels actually supplied,
+including partial chains used by BRT Berlin traffic and vehicle texture arrays.
 
 Auxiliary material maps can reference live script textures with `\S:<slot>`
 (including the DL05 VDV and Atron transparency masks), rather than treating
@@ -61,8 +63,8 @@ override is applied.
 | Keyword / family | Status | Current boundary |
 | --- | --- | --- |
 | `[matl_bumpmap]`, `[matl_envmap]`, `[matl_freetex]`, `[matl_lightmap]`, `[matl_nightmap]` | Partial | Loading/shader/material paths exist, but controller, blending, binding, or visual-parity details remain incomplete. Environment-map behavior still needs representative visual validation. |
-| `[matl_transmap]` with `[matl_alpha]` mode `2` | Active subset | Transmap alpha sampling and mode-2 depth writes are active; `[matl_noZwrite]` suppresses writes. An OpenGL overlap probe covers both modes, but representative OMSI visual parity remains unverified. |
-| `[matl_item]` | Partial | Item material states are selected from their controller through the vehicle runtime, including supported auxiliary material properties. Independent texture replacement and full native item scope are not implemented. |
+| `[matl_transmap]` with `[matl_alpha]` mode `2` | Active subset | Transmap alpha sampling and mode-2 depth writes are active; `[matl_noZwrite]` suppresses writes. Empty records warn and apply no map. An OpenGL overlap probe covers both modes, but representative OMSI visual parity remains unverified. |
+| `[matl_item]` | Partial | Item material states are selected from their controller through the vehicle runtime, including supported auxiliary material properties. Standalone items warn and subsequent supported modifiers apply to the base material; native behavior is unverified. Independent texture replacement and full native item scope are not implemented. |
 | `[CTC]`, `[CTCTexture]` | Partial | `[CTCTexture]` substitutions are applied case-insensitively to base mesh texture names, and retained template/mapping metadata is serialized in model-config JSON. `[CTC]` paint-scheme selection and full runtime substitution remain incomplete. |
 | `[texchanges]`, `[newtexchangemaster]`, `[entries]` | Partial | Variable-length payloads are retained in source order and serialized in model-config JSON; count validation and replacement selection are not implemented. |
 | `[rendertype]` | Not supported for BUS models | The loader currently restricts this keyword to scenery-object configuration; BUS/vehicle model contexts are diagnosed as invalid. Scenery support is tracked in [scenery status](IMPLEMENTATION_STATUS_SCENERY.md). |

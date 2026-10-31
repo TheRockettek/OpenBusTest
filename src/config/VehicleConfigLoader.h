@@ -30,6 +30,7 @@ struct VehicleCamera {
 
 struct VehicleViewEntry {
     int viewIndex = -1;
+    // Empty for the parameterless marker on a driver camera.
     std::string label;
 };
 

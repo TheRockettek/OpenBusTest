@@ -13,6 +13,10 @@ ScriptRuntime::ScriptRuntime(
 
 ScriptRuntime::~ScriptRuntime() = default;
 
+const openbus::config::HofData& ScriptRuntime::hofData() const {
+    return impl_->hofData;
+}
+
 void ScriptRuntime::prepareFontSearch(const std::filesystem::path& sourcePath,
                                       const std::vector<std::string>& fontNames) {
     script_detail::prepareFontSearch(sourcePath, fontNames);

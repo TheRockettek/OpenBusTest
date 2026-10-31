@@ -53,10 +53,16 @@ configured independently for the main view and mirror/camera views:
 
 Values are percentages of viewport height, from `0` through `100`. Unset,
 empty, or `0` values disable the cutoff for that view. Invalid values are logged
-and ignored. The CPU backend applies the cutoff before submission; the optional
-GPU backend first excludes objects certainly below the cutoff on the CPU, then
-calculates the final decision in compute and gates indirect commands. Its
-conservative broad phase retains uncertain and near-threshold bounds.
+and ignored. Objects now fade smoothly from zero opacity at half the configured
+size to full opacity at the configured threshold. The main view applies this
+fade to map scenery and vehicle parts; mirror/camera views use their independent
+threshold, with vehicle fading enabled when transparent reflection rendering is
+enabled. Fading objects are rendered through the transparent path so their
+depth and sorting behavior remains consistent with blending. The CPU
+backend culls only below the start of the fade band; the optional GPU backend
+uses the same lower boundary, first excluding objects certainly below it on the
+CPU and then calculating the final decision in compute. Its conservative broad
+phase retains uncertain and near-threshold bounds.
 The traffic-light raster probe exercises red, green, and yellow phases with both
 cutoffs disabled, including CPU and indirect rendering with queries enabled.
 The GPU test uses float inputs and a small conservative boundary margin, so

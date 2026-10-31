@@ -13,6 +13,27 @@
 #include <sstream>
 
 int main(int argc, char** argv) {
+    if (argc >= 3 && std::string(argv[1]) == "--inspect-material-records") {
+        bool passed = true;
+        for (int index = 2; index < argc; ++index) {
+            const std::filesystem::path path = argv[index];
+            Variables variables(ScriptObjectKind::Vehicle);
+            const ModelConfig parsed =
+                loadModelConfig(path, path.parent_path(), ModelConfigKind::Bus, variables);
+            for (const ConfigurationDiagnostic& diagnostic : parsed.diagnostics.entries) {
+                if (diagnostic.severity == ConfigurationDiagnostic::Severity::Error &&
+                    (diagnostic.keyword == "matl_transmap" ||
+                     diagnostic.keyword == "matl_item")) {
+                    std::cerr << path << ':' << diagnostic.line << " [" << diagnostic.keyword
+                              << "] " << diagnostic.message << '\n';
+                    passed = false;
+                }
+            }
+            std::cout << path << ": parts=" << parsed.parts.size() << '\n';
+            passed &= !parsed.parts.empty();
+        }
+        return passed ? 0 : 1;
+    }
     const std::filesystem::path root =
         openbus::probe::makeProbeDirectory("openbus_model_config_probe");
     std::filesystem::create_directories(root);
@@ -106,9 +127,9 @@ int main(int argc, char** argv) {
                      "[traffic_light]\nRoad\n[phase]\n0\n3\n[phase]\n6\n7\n"
                      "[approachdist]\n5\n[path]\n"
                      "1\n2\n3\n4\n5\n6\n7\n8\n0\n2.5\n0\n0\n"
-                     "[use_traffic_light]\n0\n[traffic_light_stop]\n0\n1\n2\n"
-                     "[traffic_light_stop]\n0\n2\n2\n"
-                     "[traffic_light_jump]\n0\n25\n6\n3\n"
+                     "[use_traffic_light]\n0\n[traffic_light_stop]\n0\n1\n1\n"
+                     "[traffic_light_stop]\n0\n2\n1\n"
+                     "[traffic_light_jump]\n0\n8\n1\n0\n"
                      "[mesh]\ndisplay.obj\n";
     trafficObject.close();
     const ModelConfig trafficModel =
@@ -122,10 +143,12 @@ int main(int argc, char** argv) {
         trafficScenery.trafficLights[0].approachDistanceMeters != 5.0 ||
         trafficScenery.trafficPaths[0].trafficLightIndex != 0 ||
         !trafficScenery.trafficPaths[0].trafficSignal ||
-        !trafficScenery.trafficPaths[0].trafficSignal->hasBusPriority ||
+        !trafficScenery.trafficPaths[0].trafficSignal->hasConditionalOverrides ||
         !trafficScenery.trafficPaths[0].trafficSignal->program ||
-        trafficScenery.trafficPaths[0].trafficSignal->program->controlPoints.size() != 2 ||
-        trafficScenery.trafficLightBusPriorityRules.size() != 1) {
+        trafficScenery.trafficPaths[0].trafficSignal->program->controlPoints.size() != 3 ||
+        trafficScenery.trafficLightJumps.size() != 1 ||
+        trafficScenery.trafficPaths[0].trafficSignal->program->controlPoints[2]
+                .jumpToSeconds != 0.0) {
         std::cerr << "SCO traffic directives were not handled by the scenery parser\n";
         return 1;
     }
@@ -485,6 +508,47 @@ int main(int argc, char** argv) {
         conditional.textureChangeRecords[2].payload !=
             std::vector<std::string>{"2", "first.dds", "second.dds"}) {
         std::cerr << "conditional material fixture failed to parse\n";
+        return 1;
+    }
+    const std::filesystem::path emptyMaterialPath = root / "empty_material.cfg";
+    std::ofstream emptyMaterial(emptyMaterialPath);
+    emptyMaterial << "[mesh]\ndisplay.obj\n"
+                     "[matl]\ndisplay.bmp\n0\n"
+                     "[matl_transmap]\nmask.tga\n"
+                     "[matl_transmap]\n\n---------------\n"
+                     "[matl_noZwrite]\n"
+                     "[matl_item]\n[matl_alpha]\n2\n"
+                     "[matl]\nother.bmp\n0\n"
+                     "[matl_transmap]\n\n[matl_alpha]\n1\n"
+                     "[matl_change]\nother.bmp\n0\nMode\n"
+                     "[matl_item]\n[matl_transmap]\n\\S:1\n"
+                     "[matl_item]\n[matl_transmap]\n";
+    emptyMaterial.close();
+    const ModelConfig emptyMaterials =
+        loadModelConfig(emptyMaterialPath, root, ModelConfigKind::Bus, variables);
+    const auto warningsFor = [&](const std::string& keyword) {
+        return std::count_if(emptyMaterials.diagnostics.entries.begin(),
+                             emptyMaterials.diagnostics.entries.end(),
+                             [&](const ConfigurationDiagnostic& diagnostic) {
+                                 return diagnostic.keyword == keyword &&
+                                        diagnostic.severity ==
+                                            ConfigurationDiagnostic::Severity::Warning;
+                             });
+    };
+    if (emptyMaterials.diagnostics.hasErrors() || emptyMaterials.parts.size() != 1 ||
+        emptyMaterials.parts[0].materialStatesInOrder.size() != 2 ||
+        warningsFor("matl_transmap") != 3 || warningsFor("matl_item") != 1) {
+        std::cerr << "empty transparency maps or standalone material item were misparsed\n";
+        return 1;
+    }
+    const auto& baseMaterials = emptyMaterials.parts[0].materialStatesInOrder;
+    if (!baseMaterials[0].transmapTextureName.empty() || !baseMaterials[0].noZwrite ||
+        baseMaterials[0].alphaMode != 2 || baseMaterials[1].alphaMode != 1 ||
+        baseMaterials[1].textureChanges.size() != 1 ||
+        baseMaterials[1].textureChanges[0].items.size() != 2 ||
+        baseMaterials[1].textureChanges[0].items[0]->transmapTextureName != "\\S:1" ||
+        !baseMaterials[1].textureChanges[0].items[1]->transmapTextureName.empty()) {
+        std::cerr << "empty material records changed later modifiers or item states\n";
         return 1;
     }
     const std::filesystem::path invalidVfdBoundsPath = root / "invalid_vfd_bounds.cfg";

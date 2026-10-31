@@ -20,7 +20,7 @@ prove end-to-end rendering or runtime semantics.
 | Scripts and dynamic displays | Vehicle script/text textures and scenery per-placement script/text texture surfaces, `init`/`frame`, and `[visible]` control are active; full OMSI behavior remains partial. | [`ScriptRuntime.cpp`](src/scripting/ScriptRuntime.cpp), [`MapRenderer.cpp`](src/render/map/MapRenderer.cpp) | [`ScriptTextureRuntimeProbe.cpp`](tests/ScriptTextureRuntimeProbe.cpp) |
 | Weather | Partial first slice: configurable exterior rain/snow particles use the shared `PrecipType` and `PrecipRate` system variables; map weather schedules, fog, windshield effects, and accumulation are not implemented. | [`WeatherEffects.cpp`](src/render/WeatherEffects.cpp), [`RenderLoopDraw.cpp`](src/app/RenderLoopDraw.cpp) | [`WeatherEffectsProbe.cpp`](tests/WeatherEffectsProbe.cpp); rain and snow visually validated in app captures |
 | Sound | Player sound runtime is active; AI vehicles select `[sound_ai]` when configured and otherwise fall back to `[sound]`. Full OMSI sound and AI event coverage remain incomplete. | [`VehicleSoundBank.cpp`](src/audio/VehicleSoundBank.cpp), [`VehicleConfigLoader.cpp`](src/config/VehicleConfigLoader.cpp) | [`SoundEngineProbe.cpp`](tests/SoundEngineProbe.cpp), [`VehicleConfigProbe.cpp`](tests/VehicleConfigProbe.cpp) |
-| AI traffic, pedestrians, and routes | Partial runtime: asynchronous `.ovh` vehicle construction and model/script loading, asynchronous pedestrian `.hum`/model CFG and mesh loading, scheduled map buses, group-scoped path traffic rules (including `no_unsched_traffic`) for unscheduled road vehicles, route-end retirement, sidewalk pedestrians, fixed-cycle plus request-aware SCO signal timing, route-based AI turn indicators, and `unsched_trafficdens.txt` group/day curves for group-specific active targets are active. Pedestrian populations use passenger-density schedules on human paths; vehicle `[rule]` restrictions target unscheduled groups and do not apply to scheduled buses or pedestrians. Group quotas change over time with safe off-screen admission/retirement; the maximum reserved pool is fixed at startup, and unfilled reservations are retried as connected road lanes stream in. AI driver models, lane changing/overtaking, and full OMSI parity remain incomplete. | [traffic runtime](src/map/MapTrafficRuntime.cpp), [map configuration](src/map/MapConfigLoader.cpp), [render loop](src/app/RenderLoop.cpp) | [MapTrafficRuntimeProbe.cpp](tests/MapTrafficRuntimeProbe.cpp), [MapConfigLoaderProbe.cpp](tests/MapConfigLoaderProbe.cpp), [AssetRequestManagerProbe.cpp](tests/AssetRequestManagerProbe.cpp); see the [completion TODO](TODO.md) |
+| AI traffic, pedestrians, and routes | Partial runtime: asynchronous `.ovh` vehicle construction and model/script loading, asynchronous pedestrian `.hum`/model CFG and mesh loading, scheduled map buses, group-scoped path traffic rules (including `no_unsched_traffic`) for unscheduled road vehicles, provisional right-before-left precedence at equal-priority straight crossings, route-end retirement, sidewalk pedestrians, fixed-cycle plus request-aware SCO signal timing, route-based AI turn indicators, and `unsched_trafficdens.txt` group/day curves for group-specific active targets are active. Pedestrian populations use passenger-density schedules on human paths; vehicle `[rule]` restrictions target unscheduled groups and do not apply to scheduled buses or pedestrians. Group quotas change over time with safe off-screen admission/retirement; the maximum reserved pool is fixed at startup, and unfilled reservations are retried as connected road lanes stream in. AI driver models, lane changing/overtaking, and full OMSI parity remain incomplete. | [traffic runtime](src/map/MapTrafficRuntime.cpp), [map configuration](src/map/MapConfigLoader.cpp), [render loop](src/app/RenderLoop.cpp) | [MapTrafficRuntimeProbe.cpp](tests/MapTrafficRuntimeProbe.cpp), [MapConfigLoaderProbe.cpp](tests/MapConfigLoaderProbe.cpp), [AssetRequestManagerProbe.cpp](tests/AssetRequestManagerProbe.cpp); see the [completion TODO](TODO.md) |
 
 For a consolidated list of configuration keywords with incomplete support,
 including bus model CFG keywords selected by `OPENBUS_MODEL_CONFIG`, see the
@@ -48,8 +48,20 @@ Interactive startup opens an ImGui setup screen. It lists maps with a
 choose its default appearance or a discovered `.cti` livery, an optional HOF
 depot, and a configured number/registration. CTI texture replacements apply to
 the selected vehicle. The depot's HOF path and name are exposed to vehicle
-scripts as `hof_file` and `hof_name`; HOF timetable and destination loading are
-not implemented yet. Choose a map and one of its entrypoints; the date/time
+scripts as `hof_file` and `hof_name`. After a bus is spawned, its **Player timetable**
+panel offers **Drive a scheduled trip**. Select a line, tour/course, trip, and first
+stop, then **Start selected trip**. Available routes match the selected HOF's
+ordered stop sequence (stop identifiers or display names): the map may include
+extra stops between HOF-listed stops, or a shorter map trip may be an ordered
+subset of the HOF route. If an HOF route has no stop list, it is available only
+when its line and destination/terminus match the map route. Public line numbers
+come from the HOF and departure times from the map timetable; HOF files do not
+supply departure times.
+Player route registration does not require an AI depot bus or an active AI bus
+population. **Cancel selection** closes setup, **Cancel trip now** immediately
+releases the assigned trip and its AI replacement policy, and **Stop driving after
+this trip** ends the assignment at the terminus. Course progression also stays
+within the bus's HOF. Choose a map and one of its entrypoints; the date/time
 defaults to the host's current local date and time. **Start in bus** enters the
 selected vehicle immediately, while **Start on foot** lets the player enter it
 later. Use **WASD** to walk relative to your view and **Space** to jump while
@@ -233,15 +245,19 @@ include the authored road skew and height offsets. The configured rearmost axle
 follows the route and the vehicle body pivots around it; when axle data is
 unavailable, the rear axle is estimated at 30% of the configured bounding-box
 length behind the model origin. AI collision footprints and their F2
-visualizations use the same body pose. Among equal priorities, movements under
-45° are treated as straight-like, 45–100° bends go next, and sharper turns go
-last. Faster approaches (under 3 m/s, under 8 m/s, or more, based on cruise
-speed so braking does not reverse the ranking) go before slower ones, and only
-then does the earlier junction arrival win; yielding vehicles leave an
-additional 2 m before conflict points. Right turns yielding to straight-through
-traffic stop 4 m before the junction entry when needed, keeping the waiting
-vehicle clear of the crossing path so through traffic can pass instead of
-deadlocking against it. Synthetic regressions verify that a waiting
+visualizations use the same body pose. At equal priority, straight crossing
+approaches provisionally give precedence to the vehicle approaching from the
+right. Once either approach has waited 3 seconds, that preference yields to the
+normal tie-breakers to avoid persistent multi-approach cycles. Other
+equal-priority movements order straight-like paths (under 45°) before
+45–100° bends and sharper turns; faster approaches (under 3 m/s, under 8 m/s,
+or more, based on cruise speed so braking does not reverse the ranking) go
+before slower ones, then earlier junction arrival and wait age break ties.
+Yielding vehicles leave an additional 2 m before conflict points. Right turns
+yielding to straight-through traffic stop 4 m before the junction entry when
+needed, keeping the waiting vehicle clear of the crossing path so through
+traffic can pass instead of deadlocking against it. Synthetic regressions verify
+that a waiting
 lower-priority movement yields to an approaching higher-priority vehicle,
 crossing movements remain clear, and both make progress. When a long turning
 vehicle's front extends into the junction while its center is still alongside a
@@ -313,9 +329,11 @@ and still wait for a clear, off-screen admission position. Set
 `OPENBUS_MAP_BUS_COUNT` to control their population (default `20`, maximum
 `200`; `0` disables map AI buses). The bounded bus pool is created at startup
 and buses are admitted at scheduled times. Traffic remains lane-constrained and
-kinematic: signal/sign compliance, overtaking, lane changing, articulated
-swept-body physics, and collision response when the player drives into AI are
-not implemented.
+kinematic: linked SCO signal timing and stop/jump controls are active, but
+native stop-line/sign behavior is incomplete. Safe overtaking and lane changes
+are not implemented; opposing-lane passing is not inferred. Articulated runtime
+is outside the current supported scope, and physical collision response when
+the player drives into AI is not implemented.
 
 Road and timetable route networks are indexed from every tile listed in
 `global.cfg` at map startup. AI vehicles retain those predefined lane routes
@@ -335,13 +353,17 @@ models marked `[trafficlight]` inherit the signal phase schedule from their
 referenced parent so their scripts can drive the visible lamps. When a parent
 defines multiple signal groups, the numeric placement label selects the matching
 group; uncovered time at the end of a group's cycle is phase `12` (off). SCO
-`[traffic_light_jump]` entries are read as `phase_to_interrupt`,
-`trigger_distance`, `target_phase`, and `min_green_time`; the target uses OMSI
-green states `6`-`8`. An approaching player bus or AI bus requests pre-emption
-for its linked signal; the target phase is applied when the configured interrupt
-state is active and other signal groups are not green, held for the configured
-minimum, then the fixed cycle resumes. F2 path diagnostics show these entries as
-`BP...`. Other scenery-script variable inheritance is not evaluated, and
+`[traffic_light_stop]` and `[traffic_light_jump]` entries use the native
+`light, time, if_request[, jump_to]` layout. A stop holds the shared cycle
+clock while its request condition is active; a jump moves that clock to
+`jump_to`. A true `if_request` activates when no traffic actor requests the
+light; false activates when one does. Vehicle, pedestrian, and player
+requests use `[approachdist]`; a zero-distance approach requests only at the
+line while stopped. A zero `[traffic_lights_group]` cycle falls back to the
+longest configured light schedule, and the cycle starts from the selected map
+time. State `12` remains dark and is permissive for vehicles. Signal requests
+and stop-line placement are still approximations pending native OMSI
+validation. Other scenery-script variable inheritance is not evaluated, and
 `[varparent]` is not a spatial attachment link. `[spline_terrain_align]`
 currently tilts marked scenery so its local up axis follows the sampled terrain
 normal, without changing its position. OMSI's exact semantics for this marker
@@ -412,9 +434,10 @@ The following map behavior is **not implemented** or remains explicitly partial:
   when the junction controller is `[onlyeditor]`; its geometry remains hidden.
   The GPU traffic-light probe verifies red, green, yellow, and back to red for
   fixed-cycle and controller-driven schedules through the placement loader,
-  model script, visibility, and rendered pixels. Bus-priority rules are
-  supported, while `signalroutes.cfg` routing, model-specific lamp animation,
-  and full in-game OMSI parity have not been validated.
+  model script, visibility, and rendered pixels. Conditional SCO signal
+  controls use aggregated traffic requests; `signalroutes.cfg` routing,
+  model-specific lamp animation, and full in-game OMSI parity remain
+  unverified.
 
 The existing centerline probe validates linked endpoints and signed curve
 directions, but does not validate cross-section profile placement, sidewalks,
@@ -832,7 +855,7 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   or a matching map or scenery path endpoint within 0.5 m horizontally and
   vertically. Matching endpoints are joined in the overlay with a short colored
   connector when a visible gap remains; this does not change AI route
-  connectivity. Traffic-light phase, cycle, control-point, and bus priority
+  connectivity. Traffic-light phase, cycle, and control-point
   diagnostics appear in an ImGui panel while F2 is active. The top-left ImGui
   status panel shows the simulation date and time to the second, player
   coordinates, the current map tile and whether it is active, along with
@@ -840,8 +863,8 @@ Cashdesk, IBIS, and rollband actions are intentionally not assigned yet.
   authored path width, placed 0.75 m before the controlled path entry (the AI
   stopping boundary). The ImGui traffic-light panel lists junction/object ID
   (`J`), path (`P`), light (`L`), current phase (`PH`), controller clock (`T`),
-  cycle and each phase/duration (`C`/`S`), conditional stop control points
-  (`CP`), and bus-priority rules (`BP`). Signal stoplines are red for stop
+  cycle and each phase/duration (`C`/`S`), and conditional stop/jump controls
+  (`CP`, with `J->` showing the jump target). Signal stoplines are red for stop
   phases, amber for changeover phases, and green for permissive phases.
   Editor-only junction controller records remain included in this diagnostic
   overlay. The status overlay also reports active traffic-light models (`TL`),
