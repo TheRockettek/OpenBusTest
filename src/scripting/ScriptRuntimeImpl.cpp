@@ -87,8 +87,8 @@ void ScriptRuntime::Impl::loadHofData() {
         if (lines.empty() && line.starts_with("\xEF\xBB\xBF")) {
             line.erase(0, 3);
         }
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\t' ||
-                                 line.back() == ' ')) {
+        while (!line.empty() &&
+               (line.back() == '\r' || line.back() == '\t' || line.back() == ' ')) {
             line.pop_back();
         }
         lines.push_back(std::move(line));
@@ -139,9 +139,8 @@ void ScriptRuntime::Impl::loadHofData() {
         std::size_t start = 0;
         while (true) {
             const std::size_t separator = value.find('\t', start);
-            fields.push_back(value.substr(start, separator == std::string::npos
-                                                    ? std::string::npos
-                                                    : separator - start));
+            fields.push_back(value.substr(
+                start, separator == std::string::npos ? std::string::npos : separator - start));
             if (separator == std::string::npos) {
                 return fields;
             }
@@ -161,8 +160,8 @@ void ScriptRuntime::Impl::loadHofData() {
             ++valueIndex;
         }
         int count = 0;
-        if (valueIndex < lines.size() &&
-            openbus::config::parseInt(lines[valueIndex], count) && count >= 0) {
+        if (valueIndex < lines.size() && openbus::config::parseInt(lines[valueIndex], count) &&
+            count >= 0) {
             if (directive == "stringcount_terminus") {
                 terminusStringCount = static_cast<std::size_t>(count);
             } else {
@@ -239,8 +238,7 @@ void ScriptRuntime::Impl::loadHofData() {
             if (ident) {
                 HofBusstop busstop;
                 busstop.ident = openbus::config::trim(*ident);
-                for (std::size_t stringIndex = 0; stringIndex < busstopStringCount;
-                     ++stringIndex) {
+                for (std::size_t stringIndex = 0; stringIndex < busstopStringCount; ++stringIndex) {
                     const std::optional<std::string> value = nextCountedPayload(cursor);
                     if (!value) {
                         break;

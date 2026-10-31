@@ -1742,21 +1742,21 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                     }
                     return pose;
                 };
-                const auto drawPassengerBetweenPoses =
-                    [&](const PassengerCabinTravelPathData& path, double progress,
-                        double startHeading, double endHeading, std::size_t modelIndex) {
-                        const double easedProgress = progress * progress * (3.0 - 2.0 * progress);
-                        service.setPassengerPathLinkProgressProfile(
-                            passengerPathLinkProgressProfile(path.positions,
-                                                             path.segmentLinkIndices));
-                        if (stopInRange) {
-                            const auto passengerPose = samplePassengerTravelPath(
-                                path.positions, easedProgress, startHeading, endHeading);
-                            mapRenderer_->drawHumanTrafficActor(
-                                scheduledPassengerHumanModels_[modelIndex], passengerPose,
-                                simulation.simulationTime() * 2.0, 1.0);
-                        }
-                    };
+                const auto drawPassengerBetweenPoses = [&](const PassengerCabinTravelPathData& path,
+                                                           double progress, double startHeading,
+                                                           double endHeading,
+                                                           std::size_t modelIndex) {
+                    const double easedProgress = progress * progress * (3.0 - 2.0 * progress);
+                    service.setPassengerPathLinkProgressProfile(
+                        passengerPathLinkProgressProfile(path.positions, path.segmentLinkIndices));
+                    if (stopInRange) {
+                        const auto passengerPose = samplePassengerTravelPath(
+                            path.positions, easedProgress, startHeading, endHeading);
+                        mapRenderer_->drawHumanTrafficActor(
+                            scheduledPassengerHumanModels_[modelIndex], passengerPose,
+                            simulation.simulationTime() * 2.0, 1.0);
+                    }
+                };
                 if (service.alightingPassenger()) {
                     const auto seat = service.alightingSeatIndex();
                     if (seat && *seat < bus.passengerPositions.size()) {
@@ -1773,8 +1773,8 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         const std::size_t modelIndex =
                             scheduledPassengerHumanModels_.empty()
                                 ? 0
-                                : service.passengerModelIndexOnSeat(*seat).value_or(
-                                      modelOffset + *seat) %
+                                : service.passengerModelIndexOnSeat(*seat).value_or(modelOffset +
+                                                                                    *seat) %
                                       scheduledPassengerHumanModels_.size();
                         drawPassengerBetweenPoses(path, service.alightingProgress(),
                                                   seatPose.headingRadians,
@@ -1810,8 +1810,7 @@ void RenderLoop::draw(const BusSimulation& simulation, const World& world) {
                         if (!scheduledPassengerHumanModels_.empty() && stopInRange) {
                             const std::size_t modelIndex =
                                 service.boardingPassengerModelIndex().value_or(
-                                    modelOffset +
-                                    static_cast<std::size_t>(boardingStop->stopId)) %
+                                    modelOffset + static_cast<std::size_t>(boardingStop->stopId)) %
                                 scheduledPassengerHumanModels_.size();
                             mapRenderer_->drawHumanTrafficActor(
                                 scheduledPassengerHumanModels_[modelIndex], curbPose(),

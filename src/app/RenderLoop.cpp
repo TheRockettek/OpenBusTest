@@ -873,11 +873,10 @@ void RenderLoop::SetWeather(int precipitationType, double precipitationRate) {
 }
 
 void RenderLoop::SetWeather(int precipitationType, double precipitationRate,
-                            double temperatureCelsius,
-                            double absoluteHumidityGramsPerCubicMeter) {
-    simulationState_.sharedVariables().setWeather(
-        precipitationType, precipitationRate, temperatureCelsius,
-        absoluteHumidityGramsPerCubicMeter);
+                            double temperatureCelsius, double absoluteHumidityGramsPerCubicMeter) {
+    simulationState_.sharedVariables().setWeather(precipitationType, precipitationRate,
+                                                  temperatureCelsius,
+                                                  absoluteHumidityGramsPerCubicMeter);
 }
 
 void RenderLoop::SetAutoClutch(bool enabled) {

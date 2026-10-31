@@ -1349,10 +1349,9 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                     break;
                 }
             }
-            if (validBounds &&
-                (bounds.minimumAndMaximum[0] > bounds.minimumAndMaximum[3] ||
-                 bounds.minimumAndMaximum[1] > bounds.minimumAndMaximum[4] ||
-                 bounds.minimumAndMaximum[2] > bounds.minimumAndMaximum[5])) {
+            if (validBounds && (bounds.minimumAndMaximum[0] > bounds.minimumAndMaximum[3] ||
+                                bounds.minimumAndMaximum[1] > bounds.minimumAndMaximum[4] ||
+                                bounds.minimumAndMaximum[2] > bounds.minimumAndMaximum[5])) {
                 result.diagnostics.error(line.number, keyword,
                                          "minimum display bounds must not exceed maximum bounds");
                 validBounds = false;
@@ -1406,8 +1405,7 @@ ModelConfig loadModelConfig(const std::filesystem::path& configPath,
                 "payload retained; terrain-mapping rendering is not implemented");
             continue;
         }
-        if (keyword == "texchanges" || keyword == "newtexchangemaster" ||
-            keyword == "entries") {
+        if (keyword == "texchanges" || keyword == "newtexchangemaster" || keyword == "entries") {
             ModelTextureChangeRecord record;
             record.keyword = line.keyword();
             record.sourceLine = line.number;

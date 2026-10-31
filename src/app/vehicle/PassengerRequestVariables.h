@@ -10,9 +10,10 @@ struct PassengerRequestVariables {
     std::array<bool, 8> exits = {};
 };
 
-inline PassengerRequestVariables passengerRequestVariables(
-    std::size_t entryCount, std::size_t exitCount, bool atPassengerStop,
-    std::size_t waitingPassengers, bool boardingPassenger, bool alightingPassenger) {
+inline PassengerRequestVariables
+passengerRequestVariables(std::size_t entryCount, std::size_t exitCount, bool atPassengerStop,
+                          std::size_t waitingPassengers, bool boardingPassenger,
+                          bool alightingPassenger) {
     PassengerRequestVariables requests;
     if (!atPassengerStop) {
         return requests;

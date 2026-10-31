@@ -59,8 +59,8 @@ void writeModelAnimationsJson(std::ostream& output, const std::vector<ModelAnima
                << "],\"has_origin\":" << (animation.hasOrigin ? "true" : "false")
                << ",\"origin_from_mesh\":" << (animation.originFromMesh ? "true" : "false")
                << ",\"origin_operations\":[";
-        for (std::size_t operationIndex = 0;
-             operationIndex < animation.originOperations.size(); ++operationIndex) {
+        for (std::size_t operationIndex = 0; operationIndex < animation.originOperations.size();
+             ++operationIndex) {
             if (operationIndex != 0) {
                 output << ',';
             }
@@ -83,9 +83,8 @@ void writeModelAnimationsJson(std::ostream& output, const std::vector<ModelAnima
                 operationType = "from_mesh";
                 break;
             }
-            output << "{\"type\":\"" << operationType << "\",\"value\":["
-                   << operation.value[0] << ',' << operation.value[1] << ','
-                   << operation.value[2] << "]}";
+            output << "{\"type\":\"" << operationType << "\",\"value\":[" << operation.value[0]
+                   << ',' << operation.value[1] << ',' << operation.value[2] << "]}";
         }
         output << "]}";
     }
@@ -220,10 +219,9 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
         const ModelInteriorLight& light = configuration.interiorLights[index];
         output << "{\"controller\":";
         writeJsonString(output, light.controller);
-        output << ",\"intensity\":" << light.intensity << ",\"color\":["
-               << light.color[0] << ',' << light.color[1] << ',' << light.color[2]
-               << "],\"position\":[" << light.position[0] << ',' << light.position[1] << ','
-               << light.position[2] << "]}";
+        output << ",\"intensity\":" << light.intensity << ",\"color\":[" << light.color[0] << ','
+               << light.color[1] << ',' << light.color[2] << "],\"position\":[" << light.position[0]
+               << ',' << light.position[1] << ',' << light.position[2] << "]}";
     }
     output << ']';
     output << ",\n  \"enhanced_lights\": [";
@@ -232,8 +230,7 @@ void writeModelConfigurationJson(std::ostream& output, const std::filesystem::pa
             output << ',';
         }
         const ModelEnhancedLight& light = configuration.enhancedLights[index];
-        output << "{\"enhanced\":" << (light.enhanced ? "true" : "false")
-               << ",\"controller\":";
+        output << "{\"enhanced\":" << (light.enhanced ? "true" : "false") << ",\"controller\":";
         writeJsonString(output, light.controller);
         output << ",\"parameters\":[";
         for (std::size_t parameterIndex = 0; parameterIndex < light.parameters.size();

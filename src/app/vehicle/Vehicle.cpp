@@ -32,9 +32,8 @@ void Vehicle::updateScripts(bool isAiVehicle) {
         const int stopId = passengerService.currentStopId();
         const auto requests = openbus::app::vehicle::passengerRequestVariables(
             passengerEntryPathPoints.size(), passengerExitPathPoints.size(),
-            passengerService.dwelling() && stopId != 0,
-            passengerService.waitingPassengers(stopId), passengerService.boardingPassenger(),
-            passengerService.alightingPassenger());
+            passengerService.dwelling() && stopId != 0, passengerService.waitingPassengers(stopId),
+            passengerService.boardingPassenger(), passengerService.alightingPassenger());
         for (std::size_t index = 0; index < requests.entries.size(); ++index) {
             const std::string suffix = std::to_string(index) + "_req";
             variables.set("pax_entry" + suffix, requests.entries[index] ? 1.0 : 0.0);

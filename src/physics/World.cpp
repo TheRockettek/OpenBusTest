@@ -765,14 +765,14 @@ std::optional<double> World::raycastStatic(const std::array<double, 3>& origin,
                                            const std::array<double, 3>& direction,
                                            double maxDistance) const {
     if (!std::isfinite(maxDistance) || maxDistance <= 0.0 ||
-        !std::all_of(origin.begin(), origin.end(), [](double value) { return std::isfinite(value); }) ||
+        !std::all_of(origin.begin(), origin.end(),
+                     [](double value) { return std::isfinite(value); }) ||
         !std::all_of(direction.begin(), direction.end(),
                      [](double value) { return std::isfinite(value); })) {
         return std::nullopt;
     }
-    const double directionLength =
-        std::sqrt(direction[0] * direction[0] + direction[1] * direction[1] +
-                  direction[2] * direction[2]);
+    const double directionLength = std::sqrt(
+        direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]);
     if (directionLength <= std::numeric_limits<double>::epsilon()) {
         return std::nullopt;
     }

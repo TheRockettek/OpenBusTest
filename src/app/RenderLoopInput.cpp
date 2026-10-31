@@ -114,16 +114,14 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
             if (playerVehicle_ != nullptr && playerVehicle_->scripts) {
                 const auto& bindings = vehicleKeyBindings();
                 for (std::size_t index = 0;
-                     index < bindings.size() && index < previousVehicleKeyStates_.size();
-                     ++index) {
+                     index < bindings.size() && index < previousVehicleKeyStates_.size(); ++index) {
                     if (!previousVehicleKeyStates_[index]) {
                         continue;
                     }
                     const VehicleKeyBinding& binding = bindings[index];
                     if (binding.action != "mouse_control_toggle" &&
-                        binding.action != "debug_dump_variables" &&
-                        binding.key != GLFW_KEY_F2 && binding.key != GLFW_KEY_F3 &&
-                        binding.key != GLFW_KEY_P) {
+                        binding.action != "debug_dump_variables" && binding.key != GLFW_KEY_F2 &&
+                        binding.key != GLFW_KEY_F3 && binding.key != GLFW_KEY_P) {
                         playerVehicle_->scripts->invokeKeyBinding(binding.action, false, false);
                     }
                 }
@@ -135,8 +133,7 @@ void RenderLoop::beginFrame(double fixedTimeStep) {
         }
         paused_ = !paused_;
         simulationState_.sharedVariables().setPaused(paused_);
-        gameLog.Log(paused_ ? "Simulation paused (press P to resume)"
-                            : "Simulation resumed");
+        gameLog.Log(paused_ ? "Simulation paused (press P to resume)" : "Simulation resumed");
     }
     previousPauseToggleState_ = pauseTogglePressed;
 

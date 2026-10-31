@@ -174,12 +174,11 @@ struct BusSimulation::Impl {
         const double dx = contact.pos[0] - bodyPosition[0];
         const double dy = contact.pos[1] - bodyPosition[1];
         const double dz = contact.pos[2] - bodyPosition[2];
-        chassisCollisionStepEvent = {
-            {rotation[0] * dx + rotation[4] * dy + rotation[8] * dz,
-             rotation[1] * dx + rotation[5] * dy + rotation[9] * dz,
-             rotation[2] * dx + rotation[6] * dy + rotation[10] * dz +
-                 configuration.centerOfGravityHeight},
-            energy};
+        chassisCollisionStepEvent = {{rotation[0] * dx + rotation[4] * dy + rotation[8] * dz,
+                                      rotation[1] * dx + rotation[5] * dy + rotation[9] * dz,
+                                      rotation[2] * dx + rotation[6] * dy + rotation[10] * dz +
+                                          configuration.centerOfGravityHeight},
+                                     energy};
     }
 
     dReal suspensionAnchorZ(std::size_t index) const {
@@ -916,8 +915,8 @@ void BusSimulation::updateVariables(openbus::scripting::Vehicle& variables, doub
         totalBrakeForce += impl_->corners[index].brakeForce;
         if (impl_->configuration.axles[axleIndex].driven) {
             drivenWheelSpeed += wheelSpeedRpm;
-            drivenWheelLinearSpeed += impl_->corners[index].wheelOmega *
-                                      impl_->corners[index].wheelRadius;
+            drivenWheelLinearSpeed +=
+                impl_->corners[index].wheelOmega * impl_->corners[index].wheelRadius;
             ++drivenWheelCount;
         }
     }
@@ -1016,14 +1015,14 @@ std::optional<BusCollisionEvent> BusSimulation::consumeCollisionEvent() {
 }
 
 std::optional<double> BusSimulation::heightAbovePoint(double x, double y, double z,
-                                                       double modelOffsetZ) const {
+                                                      double modelOffsetZ) const {
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) ||
         !std::isfinite(modelOffsetZ)) {
         return std::nullopt;
     }
     const BodyPose pose = chassisPose();
-    const std::array<double, 3> local = {x, y, z + modelOffsetZ -
-                                                    impl_->configuration.centerOfGravityHeight};
+    const std::array<double, 3> local = {
+        x, y, z + modelOffsetZ - impl_->configuration.centerOfGravityHeight};
     const std::array<double, 3> worldPoint = {
         pose.position[0] + pose.rotation[0] * local[0] + pose.rotation[1] * local[1] +
             pose.rotation[2] * local[2],

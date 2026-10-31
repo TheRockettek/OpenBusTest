@@ -165,12 +165,11 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
         if (!hasHofData) {
             warnUnavailableMacro(name);
         }
-        const auto found = validCode
-                               ? std::find_if(hofData.termini.begin(), hofData.termini.end(),
-                                              [code](const HofTerminus& terminus) {
-                                                  return terminus.code == code;
-                                              })
-                               : hofData.termini.end();
+        const auto found = validCode ? std::find_if(hofData.termini.begin(), hofData.termini.end(),
+                                                    [code](const HofTerminus& terminus) {
+                                                        return terminus.code == code;
+                                                    })
+                                     : hofData.termini.end();
         pushNumber(found == hofData.termini.end()
                        ? -1.0F
                        : static_cast<float>(std::distance(hofData.termini.begin(), found)));
@@ -209,11 +208,10 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
         if (!hasHofData) {
             warnUnavailableMacro(name);
         }
-        const auto found = std::find_if(hofData.busstops.begin(), hofData.busstops.end(),
-                                        [&ident](const HofBusstop& busstop) {
-                                            return openbus::config::lower(busstop.ident) ==
-                                                   openbus::config::lower(ident);
-                                        });
+        const auto found = std::find_if(
+            hofData.busstops.begin(), hofData.busstops.end(), [&ident](const HofBusstop& busstop) {
+                return openbus::config::lower(busstop.ident) == openbus::config::lower(ident);
+            });
         pushNumber(found == hofData.busstops.end()
                        ? -1.0F
                        : static_cast<float>(std::distance(hofData.busstops.begin(), found)));
@@ -224,14 +222,13 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
             warnUnavailableMacro(name);
         }
         const auto found =
-            validCode
-                ? std::find_if(hofData.routes.begin(), hofData.routes.end(),
-                               [code](const HofRoute& route) {
-                                   int routeCode = 0;
-                                   return openbus::config::parseInt(route.code, routeCode) &&
-                                          routeCode == code;
-                               })
-                : hofData.routes.end();
+            validCode ? std::find_if(hofData.routes.begin(), hofData.routes.end(),
+                                     [code](const HofRoute& route) {
+                                         int routeCode = 0;
+                                         return openbus::config::parseInt(route.code, routeCode) &&
+                                                routeCode == code;
+                                     })
+                      : hofData.routes.end();
         pushNumber(found == hofData.routes.end()
                        ? -1.0F
                        : static_cast<float>(std::distance(hofData.routes.begin(), found)));
@@ -246,11 +243,10 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
                 ? &hofData.routes[static_cast<std::size_t>(routeIndex)]
                 : nullptr;
         const float result =
-            route == nullptr
-                ? 0.0F
-                : name == "getrouteterminusindex"
-                      ? (route->hasTerminusIndex ? static_cast<float>(route->terminusIndex) : 0.0F)
-                      : static_cast<float>(route->busstopIdents.size());
+            route == nullptr ? 0.0F
+            : name == "getrouteterminusindex"
+                ? (route->hasTerminusIndex ? static_cast<float>(route->terminusIndex) : 0.0F)
+                : static_cast<float>(route->busstopIdents.size());
         pushNumber(result);
     } else if (name == "getroutebusstopident") {
         int stopIndex = -1;
@@ -282,9 +278,8 @@ void ScriptRuntime::Impl::executeSystemMacro(const std::string& name) {
         if (!hasHofData) {
             warnUnavailableMacro(name);
         }
-        stringStack.push_back(validIndex &&
-                                      static_cast<std::size_t>(stringIndex) <
-                                          hofData.globalStrings.size()
+        stringStack.push_back(validIndex && static_cast<std::size_t>(stringIndex) <
+                                                hofData.globalStrings.size()
                                   ? hofData.globalStrings[static_cast<std::size_t>(stringIndex)]
                                   : std::string{});
     } else if (name == "getarrbusline" || name == "getarrbusterminus") {

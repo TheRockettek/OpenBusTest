@@ -113,10 +113,9 @@ bool Variables::supportsSystemMacro(const std::string& name) const {
 
 bool Variables::supportsSystemTrigger(const std::string& name) const {
     std::string normalized = name;
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-                   [](unsigned char character) {
-                       return static_cast<char>(std::tolower(character));
-                   });
+    std::transform(
+        normalized.begin(), normalized.end(), normalized.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
     static const std::unordered_set<std::string> vehicleTriggers = {
         "collision",
         "int_haltewunsch",
@@ -126,9 +125,9 @@ bool Variables::supportsSystemTrigger(const std::string& name) const {
         "malfunction_reset",
         "veh_tank",
     };
-    const bool railBondTrigger =
-        normalized.size() == 10 && normalized.compare(0, 9, "railbond_") == 0 &&
-        normalized.back() >= '0' && normalized.back() <= '3';
+    const bool railBondTrigger = normalized.size() == 10 &&
+                                 normalized.compare(0, 9, "railbond_") == 0 &&
+                                 normalized.back() >= '0' && normalized.back() <= '3';
     if (objectKind_ == ScriptObjectKind::Vehicle) {
         return vehicleTriggers.count(normalized) != 0 || railBondTrigger;
     }

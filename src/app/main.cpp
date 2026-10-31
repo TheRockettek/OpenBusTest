@@ -112,15 +112,13 @@ WeatherSettings weatherSettingsFromEnvironment() {
     }
     settings.temperatureCelsius =
         finiteEnvironmentDouble("OPENBUS_WEATHER_TEMPERATURE", settings.temperatureCelsius);
-    settings.absoluteHumidityGramsPerCubicMeter =
-        finiteEnvironmentDouble("OPENBUS_WEATHER_ABSHUM",
-                                settings.absoluteHumidityGramsPerCubicMeter);
+    settings.absoluteHumidityGramsPerCubicMeter = finiteEnvironmentDouble(
+        "OPENBUS_WEATHER_ABSHUM", settings.absoluteHumidityGramsPerCubicMeter);
     if (settings.temperatureCelsius <= -273.15) {
         throw std::runtime_error("OPENBUS_WEATHER_TEMPERATURE must be above absolute zero");
     }
     if (settings.absoluteHumidityGramsPerCubicMeter < 0.0) {
-        throw std::runtime_error(
-            "OPENBUS_WEATHER_ABSHUM must be non-negative");
+        throw std::runtime_error("OPENBUS_WEATHER_ABSHUM must be non-negative");
     }
     return settings;
 }
@@ -1077,26 +1075,22 @@ int main() {
 
         const WeatherSettings weather = weatherSettingsFromEnvironment();
         renderer.SetWeather(weather.precipitationType, weather.precipitationRate,
-                            weather.temperatureCelsius,
-                            weather.absoluteHumidityGramsPerCubicMeter);
-        const bool automaticClutchEnabled =
-            booleanEnvironmentValue("OPENBUS_AUTO_CLUTCH", false);
+                            weather.temperatureCelsius, weather.absoluteHumidityGramsPerCubicMeter);
+        const bool automaticClutchEnabled = booleanEnvironmentValue("OPENBUS_AUTO_CLUTCH", false);
         renderer.SetAutoClutch(automaticClutchEnabled);
-        const double sunAltitude =
-            finiteEnvironmentDouble("OPENBUS_SUN_ALTITUDE", 60.0);
+        const double sunAltitude = finiteEnvironmentDouble("OPENBUS_SUN_ALTITUDE", 60.0);
         renderer.SetSunAltitude(sunAltitude);
         const char* weatherName = weather.precipitationType == 1   ? "rain"
                                   : weather.precipitationType == 2 ? "snow"
                                                                    : "clear";
-        applicationLog.Log("Weather initialized: " + std::string(weatherName) +
-                           ", precipitation rate=" +
-                           std::to_string(weather.precipitationRate) +
-                           ", temperature C=" + std::to_string(weather.temperatureCelsius) +
-                           ", absolute humidity g/m3=" +
-                           std::to_string(weather.absoluteHumidityGramsPerCubicMeter) +
-                           ", auto clutch=" +
-                           std::string(automaticClutchEnabled ? "enabled" : "disabled") +
-                           ", sun altitude degrees=" + std::to_string(sunAltitude) + ".");
+        applicationLog.Log(
+            "Weather initialized: " + std::string(weatherName) +
+            ", precipitation rate=" + std::to_string(weather.precipitationRate) +
+            ", temperature C=" + std::to_string(weather.temperatureCelsius) +
+            ", absolute humidity g/m3=" +
+            std::to_string(weather.absoluteHumidityGramsPerCubicMeter) +
+            ", auto clutch=" + std::string(automaticClutchEnabled ? "enabled" : "disabled") +
+            ", sun altitude degrees=" + std::to_string(sunAltitude) + ".");
         applicationLog.Log("Loading map scene: terrain, tile index, scenery and roads.");
         renderer.showStartupStatus("Loading map assets and preparing the spawn-area render tiles.");
         openbus::rendering::TraceScope mapSceneTrace("startup", "main.initializeMapScene");

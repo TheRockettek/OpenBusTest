@@ -208,8 +208,8 @@ float ScriptRuntime::invokeSystemTrigger(const std::string& triggerName) {
     const bool invoked = impl_->nativeBackend ? impl_->executeNativeFunction(functionName)
                                               : impl_->invoke(functionName.c_str());
     if (!invoked && impl_->errors.size() == errorCount) {
-        impl_->log(LogLevel::Warning, "warning: system trigger " + triggerName + " -> " +
-                                          functionName + " not found");
+        impl_->log(LogLevel::Warning,
+                   "warning: system trigger " + triggerName + " -> " + functionName + " not found");
     }
     return impl_->nativePeekFloat();
 }

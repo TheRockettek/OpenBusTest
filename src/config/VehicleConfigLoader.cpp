@@ -1072,9 +1072,8 @@ std::vector<int> passengerPathRoute(const std::vector<PassengerPathPoint>& point
 }
 
 std::vector<std::pair<double, std::optional<std::size_t>>>
-passengerPathLinkProgressProfile(
-    const std::vector<std::array<double, 3>>& path,
-    const std::vector<std::optional<std::size_t>>& segmentLinks) {
+passengerPathLinkProgressProfile(const std::vector<std::array<double, 3>>& path,
+                                 const std::vector<std::optional<std::size_t>>& segmentLinks) {
     std::vector<std::pair<double, std::optional<std::size_t>>> profile;
     if (path.size() < 2 || segmentLinks.size() != path.size() - 1) {
         return profile;
@@ -1083,8 +1082,7 @@ passengerPathLinkProgressProfile(
     for (std::size_t index = 1; index < path.size(); ++index) {
         const auto& from = path[index - 1];
         const auto& to = path[index];
-        const double length =
-            std::hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+        const double length = std::hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
         if (!std::isfinite(length) || !std::isfinite(totalLength + length)) {
             return {};
         }
@@ -1099,8 +1097,7 @@ passengerPathLinkProgressProfile(
     for (std::size_t index = 1; index < path.size(); ++index) {
         const auto& from = path[index - 1];
         const auto& to = path[index];
-        const double length =
-            std::hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+        const double length = std::hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
         if (length <= 1.0e-9) {
             continue;
         }
@@ -1125,8 +1122,8 @@ passengerPathLinkAtProgress(const std::vector<std::array<double, 3>>& path,
     }
     const auto profile = passengerPathLinkProgressProfile(path, segmentLinks);
     const double clampedProgress = std::clamp(progress, 0.0, 1.0);
-    const auto segment = std::find_if(
-        profile.begin(), profile.end(), [clampedProgress](const auto& candidate) {
+    const auto segment =
+        std::find_if(profile.begin(), profile.end(), [clampedProgress](const auto& candidate) {
             return clampedProgress <= candidate.first;
         });
     return segment == profile.end() ? std::nullopt : segment->second;
