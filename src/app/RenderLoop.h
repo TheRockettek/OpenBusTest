@@ -1,6 +1,9 @@
 #pragma once
 
 #include "core/BusTypes.h"
+#include "app/traffic/PassengerNetwork.h"
+#include "app/traffic/PlayerTimetableController.h"
+#include "app/traffic/TrafficFleet.h"
 #include "render/CameraMath.h"
 #include "map/MapConfigLoader.h"
 #include "map/MapTrafficRuntime.h"
@@ -94,13 +97,7 @@ struct SpawnBusRequest {
     std::filesystem::path configurationPath;
     VehiclePlacement placement;
     VehicleSetupOptions setupOptions;
-    struct TimetableSelection {
-        std::size_t passengerRouteIndex = 0;
-        std::size_t courseIndex = 0;
-        std::size_t courseTripIndex = 0;
-        std::size_t firstStopIndex = 0;
-        bool driveAsAdditionalBus = false;
-    };
+    using TimetableSelection = openbus::app::PlayerTimetableSelection;
     std::optional<TimetableSelection> timetableSelection;
 };
 
@@ -132,29 +129,28 @@ class RenderLoop {
                         const std::filesystem::path& modelConfigPath,
                         const VehiclePlacement& placement, ModelLoadingPolicy loadingPolicy = {},
                         bool isAiVehicle = false, VehicleSetupOptions setupOptions = {});
-    bool AddTrafficVehicle(int splineId, int pathTypeCode,
-                           const std::filesystem::path& busConfigPath,
-                           std::optional<std::string> driverModelPath, double speedMetersPerSecond,
-                           ModelLoadingPolicy loadingPolicy = {}, bool isBus = false,
-                           std::size_t laneSelector = 0, std::size_t routeSeed = 1,
-                           std::vector<double> scheduledDepartureMinutes = {},
-                           std::optional<std::size_t> unscheduledGroupIndex = std::nullopt,
-                           int defaultVehicleType = 0, std::vector<int> requiredRouteSplineIds = {},
-                           std::vector<std::optional<std::size_t>> requiredSceneryPathSequence = {},
-                           bool stopAtRequiredSequenceEnd = false,
-                           bool allowIntermediarySegmentsBetweenRequired = false,
-                           bool allowReverseTraversalForRequired = false,
-                           std::vector<openbus::map::MapTrafficPassengerStop> passengerStops = {},
-                           std::string timetableLineName = {},
-                           std::string timetableDestinationName = {},
-                           std::optional<std::size_t> trafficRuleGroupIndex = std::nullopt,
-                           bool registerPassengerRouteOnly = false,
-                           std::optional<std::size_t> passengerRouteIndex = std::nullopt,
-                           std::size_t* registeredPassengerRouteIndex = nullptr,
-                           bool requireActiveTileSpawnCandidate = false,
-                           std::vector<int> scheduledDepartureProfileIndices = {},
-                           std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles = {},
-                           std::string timetableKey = {}, std::string timetableTripName = {});
+    bool AddTrafficVehicle(
+        int splineId, int pathTypeCode, const std::filesystem::path& busConfigPath,
+        std::optional<std::string> driverModelPath, double speedMetersPerSecond,
+        ModelLoadingPolicy loadingPolicy = {}, bool isBus = false, std::size_t laneSelector = 0,
+        std::size_t routeSeed = 1, std::vector<double> scheduledDepartureMinutes = {},
+        std::optional<std::size_t> unscheduledGroupIndex = std::nullopt, int defaultVehicleType = 0,
+        std::vector<int> requiredRouteSplineIds = {},
+        std::vector<std::optional<std::size_t>> requiredSceneryPathSequence = {},
+        bool stopAtRequiredSequenceEnd = false,
+        bool allowIntermediarySegmentsBetweenRequired = false,
+        bool allowReverseTraversalForRequired = false,
+        std::vector<openbus::map::MapTrafficPassengerStop> passengerStops = {},
+        std::string timetableLineName = {}, std::string timetableDestinationName = {},
+        std::optional<std::size_t> trafficRuleGroupIndex = std::nullopt,
+        bool registerPassengerRouteOnly = false,
+        std::optional<std::size_t> passengerRouteIndex = std::nullopt,
+        std::size_t* registeredPassengerRouteIndex = nullptr,
+        bool requireActiveTileSpawnCandidate = false,
+        std::vector<int> scheduledDepartureProfileIndices = {},
+        std::shared_ptr<const std::vector<openbus::map::MapAiTimetableProfile>> timetableProfiles =
+            {},
+        std::string timetableKey = {}, std::string timetableTripName = {});
     int trafficVehicleType(const std::filesystem::path& vehicleConfigPath,
                            int defaultVehicleType) const;
     double trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -205,8 +201,7 @@ class RenderLoop {
     void SetSunAltitude(double altitudeDegrees);
 
     void SetPlayerVehicle(Vehicle* vehicle);
-    void SetPlayerTimetableSelection(
-        std::optional<SpawnBusRequest::TimetableSelection> selection);
+    void SetPlayerTimetableSelection(std::optional<SpawnBusRequest::TimetableSelection> selection);
     bool runStartupMenu(const std::filesystem::path& omsiRoot, StartupSelection& selection);
     void SetNoBusSpawnPoint(const VehiclePlacement& placement);
     std::optional<SpawnBusRequest> consumeSpawnBusRequest();
@@ -257,7 +252,9 @@ class RenderLoop {
     void renderReflectionViews(const BusSimulation& simulation, const World& world);
     void drawOnFootUi();
     void drawPlayerTimetableUi();
-    void applyPlayerTripAiPolicy(const std::string& timetableKey, bool additionalBus);
+    void applyPlayerTripAiPolicy(const openbus::map::MapAiTimetableCourseTrip& trip,
+                                 bool additionalBus);
+    void clearPlayerTripAiPolicy();
     void advancePlayerTimetableTrip();
     void loadMapVehicleOptions();
 
@@ -418,83 +415,10 @@ class RenderLoop {
     openbus::rendering::ViewpointContext soundViewpoint_ =
         openbus::rendering::ViewpointContext::PlayerExterior;
     std::vector<std::unique_ptr<Vehicle>> vehicles_;
-    struct TrafficVehicleState {
-        Vehicle* vehicle = nullptr;
-        std::future<std::unique_ptr<Vehicle>> pendingVehicle;
-        std::unique_ptr<Vehicle> pendingInitializationVehicle;
-        openbus::map::MapTrafficActor actor;
-        std::shared_ptr<const openbus::map::MapTrafficActor> workerActorTemplate;
-        std::optional<std::size_t> blockingActorStateIndex;
-        std::optional<std::uint64_t> blockingActorGeneration;
-        openbus::map::MapTrafficBlockReason debugDisplayedBlockReason =
-            openbus::map::MapTrafficBlockReason::None;
-        openbus::map::MapTrafficBlockReason debugCandidateBlockReason =
-            openbus::map::MapTrafficBlockReason::None;
-        double debugCandidateBlockSeconds = 0.0;
-        double debugBlockReasonHoldSeconds = 0.0;
-        std::optional<openbus::map::MapTrafficPose> cachedPose;
-        double cachedPoseDistanceMeters = 0.0;
-        double cachedPoseLateralOffsetMeters = 0.0;
-        double cachedTravelHeadingRadians = 0.0;
-        std::uint64_t cachedPoseGeneration = 0;
-        std::vector<openbus::map::MapTrafficSpawnCandidate> spawnCandidates;
-        std::shared_ptr<const std::vector<openbus::map::MapTrafficSpawnCandidate>>
-            workerSpawnCandidates;
-        std::vector<double> scheduledDepartureMinutes;
-        std::vector<int> scheduledDepartureProfileIndices;
-        std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles;
-        std::vector<openbus::map::MapTrafficPassengerStop> passengerStops;
-        std::optional<std::size_t> passengerRouteIndex;
-        std::string timetableKey;
-        std::string timetableLineName;
-        std::string timetableDestinationName;
-        std::size_t nextPassengerStopIndex = 0;
-        bool passengerStopArrived = false;
-        bool passengerStopDepartureRequested = false;
-        double nextScheduledDepartureElapsedSeconds = 0.0;
-        double lastScheduledDepartureMinutes = 0.0;
-        std::size_t nextScheduledDepartureIndex = 0;
-        std::size_t activeTimetableDepartureIndex = 0;
-        double activeScheduledDepartureElapsedSeconds = 0.0;
-        int timetableTerminusIndex = -1;
-        bool isBus = false;
-        bool populationEnabled = false;
-        bool vehicleLoadFailed = false;
-        bool reducedTrafficDetail = false;
-        bool scheduledTripActive = false;
-        bool scheduledServiceCancelled = false;
-        unsigned lastScheduledAdmissionDiagnosticBlockerMask = 16;
-        double lastScheduledAdmissionDiagnosticCameraDistanceMeters = -1.0;
-        double lastScheduledProgressDiagnosticDistanceMeters = -1.0;
-        bool deadlocked = false;
-        bool deadlockRemovalCommitted = false;
-        std::optional<std::size_t> activeSpawnCandidateIndex;
-        std::vector<std::size_t> rejectedSpawnCandidateIndices;
-        double spawnedAtDistanceMeters = 0.0;
-        double wheelTravelDistanceMeters = 0.0;
-        double previousWheelRouteDistanceMeters = 0.0;
-        bool wheelRouteDistanceInitialized = false;
-        bool movedSinceSpawn = false;
-        double lastProgressDistanceMeters = 0.0;
-        double stoppedSecondsSinceProgress = 0.0;
-        bool stuckDiagnosticLogged = false;
-        std::uint64_t workerGeneration = 0;
-        std::optional<std::uint64_t> inactiveResetGeneration;
-    };
-    struct PassengerStopRouteState {
-        openbus::map::MapTrafficActor actor;
-        std::vector<openbus::map::MapTrafficPassengerStop> stops;
-        std::string timetableKey;
-        std::string lineName;
-        std::string destinationName;
-        std::string tripName;
-    };
-    std::vector<TrafficVehicleState> trafficVehicles_;
-    std::unordered_map<const openbus::map::MapTrafficActor*, const TrafficVehicleState*>
-        trafficStateByActor_;
-    const TrafficVehicleState* indexedTrafficVehicleData_ = nullptr;
-    std::size_t indexedTrafficVehicleCount_ = 0;
-    std::vector<PassengerStopRouteState> passengerStopRoutes_;
+    using TrafficVehicleState = openbus::app::TrafficVehicleState;
+    using PassengerStopRouteState = openbus::app::PassengerStopRouteState;
+    openbus::app::TrafficFleet trafficFleet_;
+    openbus::app::PassengerNetwork passengerNetwork_;
     std::vector<openbus::map::MapAiTimetableCourse> passengerTimetableCourses_;
     std::string selectedPlayerLineName_;
     std::size_t selectedPlayerCourseIndex_ = 0;
@@ -503,53 +427,19 @@ class RenderLoop {
     bool selectedPlayerUseTimetable_ = false;
     bool selectedPlayerDriveAsAdditionalBus_ = false;
     std::optional<SpawnBusRequest::TimetableSelection> selectedPlayerTimetableSelection_;
-    struct PlayerTimetableState {
-        SpawnBusRequest::TimetableSelection selection;
-        std::size_t nextStopIndex = 0;
-        std::string lineName;
-        bool stopAfterCurrentTrip = false;
-    };
-    std::optional<PlayerTimetableState> playerTimetableState_;
+    using PlayerTimetableState = openbus::app::PlayerTimetableState;
+    openbus::app::PlayerTimetableController playerTimetable_;
     bool playerPassengerServiceEnabled_ = true;
-    std::unordered_map<int, std::size_t> scheduledPassengerQueues_;
-    std::unordered_map<int, std::size_t> scheduledPassengerInitialQueues_;
     std::map<int, std::vector<openbus::map::MapTrafficPose>> authoredPassengerPositions_;
     std::map<int, std::size_t> authoredPassengerQueueCounts_;
     std::size_t authoredPassengerObjectCount_ = 0;
     std::unordered_set<int> reportedPassengerFallbackStops_;
-    std::size_t passengerServiceUpdateOffset_ = 0;
     std::optional<int> playerPassengerStopLatch_;
     std::optional<std::size_t> playerPassengerStopLatchRouteIndex_;
     std::optional<std::size_t> playerPassengerStopLatchIndex_;
     std::optional<int> activePlayerPassengerStop_;
     std::optional<std::size_t> activePlayerPassengerStopRouteIndex_;
     std::optional<std::size_t> activePlayerPassengerStopIndex_;
-    std::size_t targetRoadTrafficCount_ = 0;
-    std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> targetRoadGroupPopulations_;
-    bool useGroupRoadPopulation_ = false;
-    std::size_t roadRouteRefreshCursor_ = 0;
-    std::size_t roadRouteRefreshSeed_ = 0;
-    double roadRouteRefreshElapsedSeconds_ = 0.0;
-    std::size_t targetBusTrafficCount_ = 0;
-    double mapTrafficStartHour_ = 12.0;
-    bool mapTrafficSpawnInView_ = false;
-    bool trafficSpawnDiagnosticsEnabled_ = false;
-    double trafficSpawnDiagnosticElapsedSeconds_ = 0.0;
-    std::size_t roadTrafficRecycledOutsideTiles_ = 0;
-    std::size_t roadRouteRefreshAttempts_ = 0;
-    std::size_t roadRouteRefreshSuccesses_ = 0;
-    double aiSimulationRateHz_ = 0.0;
-    double aiMaximumRateHz_ = 0.0;
-    double aiRateDivisor_ = 1.0;
-    double trafficWorkerInputAccumulatorSeconds_ = 0.0;
-    double currentAiSimulationRateHz_ = 0.0;
-    double configuredAiSimulationRateHz_ = 0.0;
-    double currentAiWorkerTickMilliseconds_ = 0.0;
-    std::unique_ptr<openbus::app::MapTrafficWorker> trafficWorker_;
-    bool trafficPopulationPlanPending_ = false;
-    const openbus::map::MapAiTimetableProfile*
-    trafficTimetableProfileForDeparture(const TrafficVehicleState& state,
-                                        std::size_t departureIndex) const;
     void publishTrafficTimetableData(Vehicle& vehicle, const TrafficVehicleState& state,
                                      std::size_t departureIndex) const;
     void finishPendingTrafficVehicleLoads();

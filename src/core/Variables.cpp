@@ -1,4 +1,5 @@
 #include "core/Variables.h"
+#include "core/PassengerVariables.h"
 
 #include <algorithm>
 #include <chrono>
@@ -355,8 +356,10 @@ void configureVehicle(Variables& variables) {
         });
     }
     for (int index = 0; index < 8; ++index) {
+        variables.set("door_" + std::to_string(index), 0.0F);
+    }
+    for (std::size_t index = 0; index < openbus::scripting::passengerDoorSlotCount; ++index) {
         variables.setValues({
-            {"door_" + std::to_string(index), 0.0},
             {"pax_entry" + std::to_string(index) + "_open", 0.0},
             {"pax_exit" + std::to_string(index) + "_open", 0.0},
             {"pax_entry" + std::to_string(index) + "_req", 0.0},

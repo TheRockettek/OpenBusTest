@@ -232,9 +232,8 @@ struct MapAiTimetableCourse {
 };
 
 std::optional<std::size_t>
-mapAiTimetableNextCourseTripIndex(const MapAiTimetableCourse& course,
-                                 std::size_t currentTripIndex,
-                                 std::span<const std::string> availableTimetableKeys);
+mapAiTimetableNextCourseTripIndex(const MapAiTimetableCourse& course, std::size_t currentTripIndex,
+                                  std::span<const std::string> availableTimetableKeys);
 
 struct MapAiPassengerStopCall {
     int stationId = 0;

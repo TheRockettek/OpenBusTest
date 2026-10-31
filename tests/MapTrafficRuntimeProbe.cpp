@@ -1,5 +1,11 @@
 #include "map/MapTrafficRuntime.h"
 #include "map/MapSplineGeometry.h"
+#include "app/traffic/ScheduledBusState.h"
+#include "app/traffic/PlayerTripPolicy.h"
+#include "app/traffic/PassengerNetwork.h"
+#include "app/traffic/ScheduledBusTiming.h"
+#include "app/traffic/PlayerTimetableController.h"
+#include "app/vehicle/PassengerState.h"
 
 #include <algorithm>
 #include <array>
@@ -330,6 +336,60 @@ void verifyPassengerDoorGating() {
             "opening an exit door resumes and completes alighting");
 }
 
+void verifyPassengerServiceRetirement() {
+    using namespace openbus::map;
+    MapPassengerServiceRuntime service(2);
+    service.setWaitingPassengers(10, 1);
+    require(service.arrive({.stopId = 10, .dwellSeconds = 0.75, .nextStopId = 20}),
+            "retirement fixture begins the first stop");
+    service.advance(0.75);
+    require(service.onboardPassengerCount() == 1, "retirement fixture boards a passenger");
+    service.setWaitingPassengers(15, 2);
+    require(service.arrive({.stopId = 15, .dwellSeconds = 2.0, .nextStopId = 30}),
+            "retirement fixture begins the next stop");
+    service.advance(0.25);
+    require(service.boardingPassenger() && service.waitingPassengers(15) == 1,
+            "a passenger is boarding when retirement begins");
+    service.endServiceAtCurrentStop();
+    require(!service.acceptsBoarding() && !service.boardingPassenger() &&
+                service.waitingPassengers(15) == 2 && service.alightingPassenger(),
+            "retirement returns the boarding passenger to the queue and unloads onboard riders");
+    service.endServiceAtCurrentStop();
+    service.advance(1.0, true, false);
+    require(service.onboardPassengerCount() == 1 && service.waitingPassengers(15) == 2,
+            "retirement respects closed exit doors and does not board waiting passengers");
+    service.advance(2.0, true, true);
+    require(service.onboardPassengerCount() == 0 && service.waitingPassengers(15) == 2 &&
+                !service.dwelling(),
+            "retirement unloads all passengers without consuming the shared queue");
+
+    MapPassengerServiceRuntime enRoute(2);
+    enRoute.setWaitingPassengers(10, 2);
+    require(enRoute.arrive({.stopId = 10, .dwellSeconds = 1.5, .nextStopId = 20}),
+            "en-route retirement fixture begins boarding");
+    enRoute.advance(1.5);
+    openbus::map::MapTrafficPassengerStop nextStop;
+    nextStop.stopId = 15;
+    nextStop.dwellSeconds = 1.0;
+    openbus::map::MapTrafficPassengerStop terminus;
+    terminus.stopId = 30;
+    openbus::app::ScheduledBusState bus;
+    bus.passengerStops = openbus::app::PassengerStops({nextStop, terminus});
+    const auto normalStop = openbus::app::scheduledBusStopService(bus, enRoute);
+    require(normalStop.nextStopId == 30 && normalStop.passengersAlighting == 0,
+            "non-retiring service keeps its normal stop behavior");
+    bus.scheduledServiceCancelled = true;
+    const auto retirementStop = openbus::app::scheduledBusStopService(bus, enRoute);
+    require(retirementStop.nextStopId == 0 && retirementStop.passengersAlighting == 2,
+            "retiring service unloads every onboard passenger at the next stop");
+    enRoute.setWaitingPassengers(15, 3);
+    require(enRoute.arrive(retirementStop), "retiring bus arrives at the next stop");
+    enRoute.advance(3.0);
+    require(enRoute.onboardPassengerCount() == 0 && enRoute.waitingPassengers(15) == 3 &&
+                !enRoute.dwelling(),
+            "en-route retirement unloads everyone without boarding from the stop queue");
+}
+
 void verifyPassengerStopDepartureHandshake() {
     using namespace openbus::map;
     require(mapTrafficPassengerStopDepartureAction(false, false, false, 1.0) ==
@@ -353,12 +413,252 @@ void verifyPassengerStopDepartureHandshake() {
                 mapTrafficPassengerStopDepartureAction(true, false, true, 1.0, true) ==
                     MapTrafficPassengerStopDepartureAction::None &&
                 mapTrafficPassengerStopDepartureAction(true, false, true, 0.0, true) ==
-                    MapTrafficPassengerStopDepartureAction::RetireRoute,
-            "a conflicting AI bus retires at its next stop after the script closes its doors");
-    require(mapTrafficShouldCancelScheduledRouteForPlayerTrip("line12", "line12", false) &&
-                !mapTrafficShouldCancelScheduledRouteForPlayerTrip("line12", "other", false) &&
-                !mapTrafficShouldCancelScheduledRouteForPlayerTrip("line12", "line12", true),
-            "only a matching scheduled route is suppressed when additional-bus mode is off");
+                    MapTrafficPassengerStopDepartureAction::BeginRetirementRun,
+            "a conflicting AI bus leaves the stop after the script closes its doors");
+    require(mapTrafficPlayerTripMatchesScheduledRoute("line12", "line12", false) &&
+                !mapTrafficPlayerTripMatchesScheduledRoute("line12", "other", false) &&
+                !mapTrafficPlayerTripMatchesScheduledRoute("", "", false) &&
+                !mapTrafficPlayerTripMatchesScheduledRoute("line12", "line12", true),
+            "takeover matches the selected trip route without departure-time checks");
+    openbus::app::ScheduledBusState bus;
+    bus.suppressedDeparture = openbus::app::ScheduledDepartureSuppression{1, 120.0};
+    bus.nextScheduledDepartureIndex = 0;
+    bus.nextScheduledDepartureElapsedSeconds = 60.0;
+    require(!openbus::app::shouldSuppressScheduledDeparture(bus, 60.0),
+            "an earlier unrelated departure is not suppressed");
+    bus.nextScheduledDepartureIndex = 1;
+    bus.nextScheduledDepartureElapsedSeconds = 120.0;
+    require(!openbus::app::shouldSuppressScheduledDeparture(bus, 119.0) &&
+                openbus::app::shouldSuppressScheduledDeparture(bus, 120.0),
+            "only the selected departure is suppressed when it is due");
+    bus.scheduledTripActive = true;
+    require(!openbus::app::shouldSuppressScheduledDeparture(bus, 120.0),
+            "an active bus cannot dispatch a second trip");
+    bus.scheduledTripActive = false;
+    bus.nextScheduledDepartureElapsedSeconds += 86400.0;
+    require(!openbus::app::shouldSuppressScheduledDeparture(bus, 86520.0),
+            "suppression does not repeat on the following day");
+    bus.suppressedDeparture.reset();
+    bus.nextScheduledDepartureElapsedSeconds = 120.0;
+    require(!openbus::app::shouldSuppressScheduledDeparture(bus, 120.0),
+            "clearing takeover restores an unconsumed departure");
+    bus.scheduledTripActive = true;
+    bus.scheduledServiceCancelled = true;
+    bus.suppressedDeparture = openbus::app::ScheduledDepartureSuppression{1, 120.0};
+    openbus::app::finishScheduledBusTrip(bus, 119.0);
+    require(!bus.scheduledTripActive && !bus.scheduledServiceCancelled &&
+                bus.suppressedDeparture.has_value(),
+            "retiring a bus releases cancellation while preserving a future suppression");
+    bus.scheduledTripActive = true;
+    openbus::app::finishScheduledBusTrip(bus, 120.0);
+    require(!bus.suppressedDeparture,
+            "finishing an overlapping trip clears an already missed suppression");
+}
+
+void verifyPassengerComponentAllocation() {
+    auto definition = std::make_shared<SharedVehicleDefinition>();
+    require(!openbus::app::vehicle::makePassengerState(definition, false),
+            "a car without passenger configuration has no passenger component");
+    const auto emptyBus = openbus::app::vehicle::makePassengerState(definition, true);
+    require(emptyBus && emptyBus->service.seatCount() == 0,
+            "a scheduled bus without seats still has passenger service");
+    definition->vehicleConfiguration.passengerPositions.emplace_back();
+    const auto first = openbus::app::vehicle::makePassengerState(definition, false);
+    const auto second = openbus::app::vehicle::makePassengerState(definition, false);
+    require(first && second && first->service.seatCount() == 1 &&
+                &first->configuration() == &second->configuration(),
+            "passenger-capable vehicles share immutable cabin geometry");
+    require(&first->service != &second->service,
+            "each passenger-capable vehicle has independent service state");
+}
+
+void verifyPassengerStopSharing() {
+    openbus::map::MapTrafficPassengerStop stop;
+    stop.stopId = 12;
+    stop.routeDistanceMeters = 35.0;
+    const openbus::app::PassengerStops catalog({stop});
+    const auto matching = openbus::app::PassengerStops::shareIfEqual({stop}, catalog);
+    require(&matching.values() == &catalog.values(),
+            "identical mapped stops share catalog storage");
+    stop.routeDistanceMeters = 36.0;
+    const auto different = openbus::app::PassengerStops::shareIfEqual({stop}, catalog);
+    require(&different.values() != &catalog.values() &&
+                different[0].routeDistanceMeters == 36.0,
+            "route-specific stop distances retain separate storage");
+    auto actor = std::make_shared<const openbus::map::MapTrafficActor>();
+    const std::weak_ptr<const openbus::map::MapTrafficActor> snapshot = actor;
+    openbus::app::PassengerStopRouteState route{actor, catalog, {}, {}, {}, {}};
+    actor.reset();
+    require(!snapshot.expired() && route.actor == snapshot.lock(),
+            "passenger routes retain the immutable worker actor snapshot");
+}
+
+void verifyPlayerTripPolicyLifecycle() {
+    using namespace openbus::app;
+    ScheduledBusState first;
+    ScheduledBusState second;
+    first.timetableKey = second.timetableKey = "route";
+    first.scheduledDepartureMinutes = second.scheduledDepartureMinutes = {480.0, 490.0};
+    first.scheduledDepartureProfileIndices = second.scheduledDepartureProfileIndices = {1, 1};
+    first.nextScheduledDepartureElapsedSeconds = second.nextScheduledDepartureElapsedSeconds =
+        28800.0;
+    std::uint64_t firstGeneration = 0;
+    std::uint64_t secondGeneration = 0;
+    const std::array targets{PlayerTripPolicyTarget{first, firstGeneration},
+                             PlayerTripPolicyTarget{second, secondGeneration}};
+    const openbus::map::MapAiTimetableCourseTrip trip{"route", 1, 480.0};
+
+    applyPlayerTripPolicy(targets, trip, true);
+    require(!first.suppressedDeparture && !second.suppressedDeparture && firstGeneration == 0,
+            "additional buses leave AI departures unchanged");
+    applyPlayerTripPolicy(targets, trip, false);
+    require(first.suppressedDeparture && !second.suppressedDeparture && firstGeneration == 1,
+            "one matching duplicate departure is selected deterministically");
+    clearPlayerTripPolicy(targets);
+    require(!first.suppressedDeparture && firstGeneration == 2,
+            "releasing a pending takeover invalidates worker decisions");
+    applyPlayerTripPolicy(targets, trip, false);
+    require(first.suppressedDeparture &&
+                first.suppressedDeparture->departureElapsedSeconds == 28800.0,
+            "an overdue pending departure can still be taken over");
+    require(consumeSuppressedDeparture(first, 0.0, 28801.0) &&
+                first.nextScheduledDepartureIndex == 1 &&
+                first.nextScheduledDepartureElapsedSeconds == 29400.0 &&
+                !first.suppressedDeparture,
+            "the selected departure is consumed once and the next trip remains available");
+    const std::array firstTarget{PlayerTripPolicyTarget{first, firstGeneration}};
+    applyPlayerTripPolicy(firstTarget, trip, false);
+    require(first.suppressedDeparture && first.suppressedDeparture->departureIndex == 1,
+            "pending takeover matches the route despite a different departure time");
+    clearPlayerTripPolicy(firstTarget);
+    advanceScheduledBusDeparture(first, 0.0, 29400.0);
+    require(first.nextScheduledDepartureIndex == 0 &&
+                first.nextScheduledDepartureElapsedSeconds == 115200.0 &&
+                !consumeSuppressedDeparture(first, 0.0, 115200.0),
+            "the same departure runs normally on the following day");
+    first.scheduledTripActive = true;
+    first.activeTimetableDepartureIndex = 1;
+    first.activeScheduledDepartureElapsedSeconds = 1.0;
+    first.scheduledDepartureProfileIndices[1] = 3;
+    second.scheduledTripActive = true;
+    second.activeTimetableDepartureIndex = 0;
+    second.timetableKey = "other";
+    applyPlayerTripPolicy(targets, trip, false);
+    require(first.scheduledServiceCancelled && !second.scheduledServiceCancelled,
+            "active buses on unrelated trip routes continue normally");
+    second.timetableKey = "route";
+    applyPlayerTripPolicy(targets, trip, false);
+    require(first.scheduledServiceCancelled && second.scheduledServiceCancelled &&
+                !second.suppressedDeparture,
+            "active matching buses retire regardless of their departure time or profile");
+    clearPlayerTripPolicy(targets);
+    require(first.scheduledServiceCancelled,
+            "an already active takeover remains committed when the player advances");
+    openbus::map::MapTrafficPassengerStop firstStop;
+    firstStop.routeDistanceMeters = 50.0;
+    openbus::map::MapTrafficPassengerStop lastStop;
+    lastStop.routeDistanceMeters = 200.0;
+    first.passengerStops = PassengerStops({firstStop, lastStop});
+    first.passengerStopArrived = true;
+    first.passengerStopDepartureRequested = true;
+    beginScheduledBusRetirementRun(first);
+    require(first.retirementDrivingToTerminus && !first.passengerStopArrived &&
+                !first.passengerStopDepartureRequested &&
+                first.nextPassengerStopIndex == first.passengerStops.size() &&
+                scheduledBusRetirementTerminus(first) == 200.0,
+            "after unloading the bus skips intermediate stops and targets the terminus");
+    require(!scheduledBusReachedRetirementTerminus(first, 199.9, 0.0, 0.2) &&
+                !scheduledBusReachedRetirementTerminus(first, 200.0, 0.5, 0.2) &&
+                scheduledBusReachedRetirementTerminus(first, 199.96, 0.0, 0.2),
+            "retiring buses despawn only after stopping at the terminus");
+    finishScheduledBusTrip(first, 115210.0);
+    require(!first.scheduledTripActive && !first.scheduledServiceCancelled &&
+                !first.retirementDrivingToTerminus,
+            "retirement releases the bus for later departures");
+}
+
+void verifyScheduledBusTiming() {
+    openbus::app::ScheduledBusState bus;
+    openbus::map::MapTrafficActor actor;
+    openbus::map::MapTrafficPassengerStop first;
+    openbus::map::MapTrafficPassengerStop second;
+    first.timetableStationIndex = 0;
+    second.timetableStationIndex = 1;
+    second.routeDistanceMeters = 100.0;
+    bus.passengerStops = openbus::app::PassengerStops({first, second});
+    bus.scheduledDepartureProfileIndices = {0};
+    openbus::map::MapAiTimetableProfile profile;
+    profile.arrivalOffsetSeconds = {0.0, 300.0};
+    profile.departureOffsetSeconds = {60.0, 320.0};
+    bus.timetableProfiles =
+        std::make_shared<const std::vector<openbus::map::MapAiTimetableProfile>>(
+            std::vector{profile});
+    requireNear(openbus::app::scheduledBusDelaySeconds(bus, actor, 30.0), 0.0,
+                "inactive scheduled trips have no delay");
+    bus.scheduledTripActive = true;
+    requireNear(openbus::app::scheduledBusDelaySeconds(bus, actor, 30.0), 0.0,
+                "scheduled dwell time does not count as delay");
+    actor.distanceMeters = 50.0;
+    requireNear(openbus::app::scheduledBusDelaySeconds(bus, actor, 170.0), -10.0,
+                "scheduled travel delay interpolates between stop times");
+    actor.distanceMeters = 100.0;
+    requireNear(openbus::app::scheduledBusDelaySeconds(bus, actor, 340.0), 20.0,
+                "delay after the final stop reflects its departure time");
+    bus.activeTimetableDepartureIndex = 1;
+    requireNear(openbus::app::scheduledBusDelaySeconds(bus, actor, 340.0), 0.0,
+                "missing departure profiles preserve the existing zero delay");
+}
+
+void verifyPlayerTimetableController() {
+    using namespace openbus::app;
+    openbus::map::MapTrafficPassengerStop stop;
+    const PassengerStops stops({stop, stop});
+    const auto actor = std::make_shared<const openbus::map::MapTrafficActor>();
+    const std::vector<PassengerStopRouteState> routes{
+        {actor, stops, "outbound", "line A", {}, {}},
+        {actor, stops, "return", "line B", {}, {}},
+    };
+    const std::vector<openbus::map::MapAiTimetableCourse> courses{
+        {"course", {{"outbound", 0, 480.0}, {"unavailable", 0, 500.0},
+                    {"return", 0, 520.0}}},
+    };
+    PlayerTimetableController controller;
+    const PlayerTimetableSelection selection{0, 0, 0, 1, true};
+    const auto* trip = controller.select(selection, routes, courses);
+    require(trip && trip->timetableKey == "outbound" && controller.state &&
+                controller.state->nextStopIndex == 1 &&
+                controller.state->selection.driveAsAdditionalBus,
+            "selection retains the requested course, first stop, and additional-bus mode");
+    trip = controller.advance(routes, courses);
+    require(trip && trip->timetableKey == "return" && controller.state &&
+                controller.state->selection.courseTripIndex == 2 &&
+                controller.state->selection.passengerRouteIndex == 1 &&
+                controller.state->nextStopIndex == 0 &&
+                controller.state->selection.driveAsAdditionalBus,
+            "terminus progression selects the next available course trip");
+    controller.state->stopAfterCurrentTrip = true;
+    require(!controller.advance(routes, courses) && !controller.state,
+            "stop-after-trip ends player timetable service");
+    controller.select(selection, routes, courses);
+    controller.advance(routes, courses);
+    require(!controller.advance(routes, courses) && !controller.state,
+            "course end clears player timetable service");
+    bool rejectedInvalidStop = false;
+    try {
+        controller.select(PlayerTimetableSelection{0, 0, 0, 2, false}, routes, courses);
+    } catch (const std::out_of_range&) {
+        rejectedInvalidStop = true;
+    }
+    require(rejectedInvalidStop && !controller.state,
+            "invalid first stops cannot start timetable service");
+    bool rejectedMismatchedRoute = false;
+    try {
+        controller.select(PlayerTimetableSelection{1, 0, 0, 0, false}, routes, courses);
+    } catch (const std::invalid_argument&) {
+        rejectedMismatchedRoute = true;
+    }
+    require(rejectedMismatchedRoute && !controller.state,
+            "a selected trip must match its passenger route");
 }
 
 void verifyPassengerServiceBehavior() {
@@ -371,6 +671,7 @@ void verifyPassengerServiceBehavior() {
         for (std::size_t passenger = waiting - visible; passenger < waiting; ++passenger) {
             occupied.insert(mapScheduledPassengerQueueSlot(initial, passenger) % capacity);
         }
+
         require(occupied.size() == visible,
                 "visible waiting passengers occupy distinct authored slots");
         const auto nextBoardingSlot = mapScheduledPassengerQueueSlot(initial, waiting - 1);
@@ -5720,7 +6021,13 @@ int main(int argc, char** argv) {
             verifyPassengerSideOffsets();
             verifyPassengerStopDepartureHandshake();
             verifyPassengerDoorGating();
+            verifyPassengerServiceRetirement();
             verifyPassengerServiceBehavior();
+            verifyPassengerComponentAllocation();
+            verifyPassengerStopSharing();
+            verifyPlayerTripPolicyLifecycle();
+            verifyScheduledBusTiming();
+            verifyPlayerTimetableController();
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--committed-left-turn") {
@@ -5740,7 +6047,13 @@ int main(int argc, char** argv) {
         verifyPassengerSideOffsets();
         verifyPassengerStopDepartureHandshake();
         verifyPassengerDoorGating();
+        verifyPassengerServiceRetirement();
         verifyPassengerServiceBehavior();
+        verifyPassengerComponentAllocation();
+        verifyPassengerStopSharing();
+        verifyPlayerTripPolicyLifecycle();
+        verifyScheduledBusTiming();
+        verifyPlayerTimetableController();
         verifyTrafficWaterClearance();
         verifyDrivingBehavior();
         verifyTrafficRules();

@@ -1,13 +1,17 @@
 #pragma once
 
+#include "core/PassengerVariables.h"
+#include "core/Variables.h"
+
 #include <array>
 #include <cstddef>
+#include <string>
 
 namespace openbus::app::vehicle {
 
 struct PassengerRequestVariables {
-    std::array<bool, 8> entries = {};
-    std::array<bool, 8> exits = {};
+    std::array<bool, openbus::scripting::passengerDoorSlotCount> entries = {};
+    std::array<bool, openbus::scripting::passengerDoorSlotCount> exits = {};
 };
 
 inline PassengerRequestVariables
@@ -25,6 +29,15 @@ passengerRequestVariables(std::size_t entryCount, std::size_t exitCount, bool at
         requests.exits[0] = true;
     }
     return requests;
+}
+
+inline void publishPassengerRequestVariables(Variables& variables,
+                                             const PassengerRequestVariables& requests) {
+    for (std::size_t index = 0; index < requests.entries.size(); ++index) {
+        const std::string suffix = std::to_string(index) + "_req";
+        variables.set("pax_entry" + suffix, requests.entries[index] ? 1.0F : 0.0F);
+        variables.set("pax_exit" + suffix, requests.exits[index] ? 1.0F : 0.0F);
+    }
 }
 
 } // namespace openbus::app::vehicle

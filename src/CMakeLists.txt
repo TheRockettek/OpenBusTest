@@ -174,6 +174,11 @@ add_executable(OpenBus
     app/RenderLoopInput.cpp
     app/RenderLoopSimulation.cpp
     app/RenderLoopSetup.cpp
+    app/traffic/PlayerTimetable.cpp
+    app/traffic/PlayerTimetableController.cpp
+    app/traffic/PlayerTripPolicy.cpp
+    app/traffic/ScheduledBusTiming.cpp
+    app/traffic/RenderLoopTraffic.cpp
     app/main.cpp
     app/vehicle/Vehicle.cpp
     app/vehicle/VehicleAnimation.cpp

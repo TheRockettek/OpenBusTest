@@ -528,6 +528,36 @@ bool MapPassengerServiceRuntime::arrive(const MapPassengerStopService& stop) {
     return true;
 }
 
+void MapPassengerServiceRuntime::endServiceAtCurrentStop() {
+    if (currentStopId_ == 0) {
+        throw std::logic_error("Cannot end passenger service without a current stop");
+    }
+    nextStopId_ = 0;
+    if (boardingSeat_) {
+        if (waitingByStop_[currentStopId_] == (std::numeric_limits<std::size_t>::max)()) {
+            throw std::overflow_error("Cannot return a boarding passenger to a full queue");
+        }
+        ++waitingByStop_[currentStopId_];
+        boardingSeat_.reset();
+        boardingPassengerModelIndex_.reset();
+        boardingAccumulatorSeconds_ = 0.0;
+        clearPassengerPathLinkProgressProfile();
+    }
+    queuedAlightingSeats_.clear();
+    for (std::size_t seat = 0; seat < seatDestinations_.size(); ++seat) {
+        if (seatDestinations_[seat] && alightingSeat_ != seat) {
+            queuedAlightingSeats_.push_back(seat);
+        }
+    }
+    if (!alightingSeat_ && !queuedAlightingSeats_.empty()) {
+        alightingSeat_ = queuedAlightingSeats_.front();
+        queuedAlightingSeats_.erase(queuedAlightingSeats_.begin());
+        alightingAccumulatorSeconds_ = 0.0;
+        clearPassengerPathLinkProgressProfile();
+    }
+    dwelling_ = dwelling_ || alightingSeat_.has_value();
+}
+
 void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoarding,
                                          bool allowAlighting) {
     if (!dwelling_ || !std::isfinite(elapsedSeconds) || elapsedSeconds <= 0.0) {
@@ -560,10 +590,9 @@ void MapPassengerServiceRuntime::advance(double elapsedSeconds, bool allowBoardi
     const double dwellAfterAlightingSeconds =
         std::max(0.0, dwellAtStartSeconds - elapsedForAlightingSeconds);
     double activeSeconds =
-        alightingSeat_
-            ? 0.0
-            : std::min(std::max(0.0, elapsedSeconds - elapsedForAlightingSeconds),
-                       dwellAfterAlightingSeconds);
+        alightingSeat_ ? 0.0
+                       : std::min(std::max(0.0, elapsedSeconds - elapsedForAlightingSeconds),
+                                  dwellAfterAlightingSeconds);
     std::size_t& waiting = waitingByStop_[currentStopId_];
     while (activeSeconds > 1.0e-9) {
         if (!boardingSeat_) {
@@ -633,6 +662,10 @@ int MapPassengerServiceRuntime::currentStopId() const noexcept {
 
 bool MapPassengerServiceRuntime::boardingPassenger() const noexcept {
     return boardingSeat_.has_value();
+}
+
+bool MapPassengerServiceRuntime::acceptsBoarding() const noexcept {
+    return nextStopId_ != 0;
 }
 
 double MapPassengerServiceRuntime::boardingProgress() const noexcept {
@@ -748,8 +781,7 @@ void advanceMapPassengerServiceWithSharedQueue(MapPassengerServiceRuntime& servi
 
 MapTrafficPassengerStopDepartureAction
 mapTrafficPassengerStopDepartureAction(bool stopArrived, bool passengerServiceDwelling,
-                                       bool departureRequested,
-                                       double aiScheduledAtStation,
+                                       bool departureRequested, double aiScheduledAtStation,
                                        bool retireAfterStop) noexcept {
     if (!stopArrived || passengerServiceDwelling) {
         return MapTrafficPassengerStopDepartureAction::None;
@@ -760,13 +792,13 @@ mapTrafficPassengerStopDepartureAction(bool stopArrived, bool passengerServiceDw
     if (aiScheduledAtStation != 0.0) {
         return MapTrafficPassengerStopDepartureAction::None;
     }
-    return retireAfterStop ? MapTrafficPassengerStopDepartureAction::RetireRoute
+    return retireAfterStop ? MapTrafficPassengerStopDepartureAction::BeginRetirementRun
                            : MapTrafficPassengerStopDepartureAction::ResumeRoute;
 }
 
-bool mapTrafficShouldCancelScheduledRouteForPlayerTrip(
-    std::string_view playerTimetableKey, std::string_view scheduledTimetableKey,
-    bool driveAsAdditionalBus) noexcept {
+bool mapTrafficPlayerTripMatchesScheduledRoute(std::string_view playerTimetableKey,
+                                               std::string_view scheduledTimetableKey,
+                                               bool driveAsAdditionalBus) noexcept {
     return !driveAsAdditionalBus && !playerTimetableKey.empty() &&
            playerTimetableKey == scheduledTimetableKey;
 }

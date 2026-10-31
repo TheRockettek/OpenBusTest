@@ -15,31 +15,35 @@ void Vehicle::updateFrameVariables(bool isAiVehicle, double timeStep) {
 
 void Vehicle::updateScripts(bool isAiVehicle) {
     TraceScope trace("script", "Vehicle::updateScripts");
-    {
+    openbus::app::vehicle::PassengerRequestVariables requests;
+    if (!passengers) {
+        variables.set("passengers_onboard", 0.0F);
+        variables.set("humans_count", 0.0F);
+    } else {
         TraceScope passengerVariables("script", "Vehicle::updateScripts.passengerVariables");
-        for (std::size_t seatIndex = 0; seatIndex < passengerService.seatCount(); ++seatIndex) {
+        const auto& cabin = passengers->configuration();
+        for (std::size_t seatIndex = 0; seatIndex < passengers->service.seatCount(); ++seatIndex) {
             variables.set("human_count_on_seat_" + std::to_string(seatIndex),
-                          static_cast<float>(passengerService.passengerCountOnSeat(seatIndex)));
+                          static_cast<float>(passengers->service.passengerCountOnSeat(seatIndex)));
         }
-        for (std::size_t linkIndex = 0; linkIndex < passengerPathLinks.size(); ++linkIndex) {
-            variables.set("human_count_on_path_link_" + std::to_string(linkIndex),
-                          static_cast<float>(passengerService.passengerCountOnPathLink(linkIndex)));
+        for (std::size_t linkIndex = 0; linkIndex < cabin.passengerPathLinks.size(); ++linkIndex) {
+            variables.set(
+                "human_count_on_path_link_" + std::to_string(linkIndex),
+                static_cast<float>(passengers->service.passengerCountOnPathLink(linkIndex)));
         }
         const float onboardPassengerCount =
-            static_cast<float>(passengerService.onboardPassengerCount());
+            static_cast<float>(passengers->service.onboardPassengerCount());
         variables.set("passengers_onboard", onboardPassengerCount);
         variables.set("humans_count", onboardPassengerCount);
-        const int stopId = passengerService.currentStopId();
-        const auto requests = openbus::app::vehicle::passengerRequestVariables(
-            passengerEntryPathPoints.size(), passengerExitPathPoints.size(),
-            passengerService.dwelling() && stopId != 0, passengerService.waitingPassengers(stopId),
-            passengerService.boardingPassenger(), passengerService.alightingPassenger());
-        for (std::size_t index = 0; index < requests.entries.size(); ++index) {
-            const std::string suffix = std::to_string(index) + "_req";
-            variables.set("pax_entry" + suffix, requests.entries[index] ? 1.0 : 0.0);
-            variables.set("pax_exit" + suffix, requests.exits[index] ? 1.0 : 0.0);
-        }
+        const int stopId = passengers->service.currentStopId();
+        requests = openbus::app::vehicle::passengerRequestVariables(
+            cabin.passengerEntryPathPoints.size(), cabin.passengerExitPathPoints.size(),
+            passengers->service.dwelling() && stopId != 0,
+            passengers->service.acceptsBoarding() ? passengers->service.waitingPassengers(stopId)
+                                                  : 0,
+            passengers->service.boardingPassenger(), passengers->service.alightingPassenger());
     }
+    openbus::app::vehicle::publishPassengerRequestVariables(variables, requests);
     {
         TraceScope runtime("script", "Vehicle::updateScripts.runtime");
         if (scripts) {

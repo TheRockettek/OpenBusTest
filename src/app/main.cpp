@@ -1634,6 +1634,9 @@ int main() {
                         profilePartitions[departureIndex % profilePartitions.size()].push_back(
                             timetable.scheduledDepartureProfileIndices[departureIndex]);
                     }
+                    const auto sharedTimetableProfiles =
+                        std::make_shared<const std::vector<openbus::map::MapAiTimetableProfile>>(
+                            timetable.profiles);
                     for (std::size_t partitionIndex = 0;
                          partitionIndex < departurePartitions.size(); ++partitionIndex) {
                         const auto& departures = departurePartitions[partitionIndex];
@@ -1664,7 +1667,7 @@ int main() {
                                     busPassengerStops, timetable.lineName,
                                     timetable.destinationName, std::nullopt, false,
                                     passengerRouteIndex, nullptr, false,
-                                    profilePartitions[partitionIndex], timetable.profiles,
+                                    profilePartitions[partitionIndex], sharedTimetableProfiles,
                                     timetable.timetableKey, timetable.tripName)) {
                                 ++addedBuses;
                             } else {
@@ -2119,8 +2122,7 @@ int main() {
                             openbus::rendering::TraceScope playerTrace(
                                 "startup", "spawnSelectedMapBus.initializePlayerVehicle");
                             renderer.SetPlayerVehicle(playerVehicle);
-                            renderer.SetPlayerTimetableSelection(
-                                spawnRequest->timetableSelection);
+                            renderer.SetPlayerTimetableSelection(spawnRequest->timetableSelection);
                         }
                         reportedCollisionTileCount = collisionStreamer->loadedTileCount();
                         applicationLog.Log("Selected bus physics initialized; simulation resumed.");

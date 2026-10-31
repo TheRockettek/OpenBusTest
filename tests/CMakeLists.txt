@@ -119,6 +119,10 @@ add_test(NAME OpenBusMapSplineInspectionProbe COMMAND OpenBusMapSplineProfilePro
 set_tests_properties(OpenBusMapSplineInspectionProbe PROPERTIES
     PASS_REGULAR_EXPRESSION "profile strips: 1, renderable: 1, fewer than two points: 0, invalid texture index: 0")
 openbus_add_probe(OpenBusMapTrafficRuntimeProbe MapTrafficRuntimeProbe.cpp LIBS openbus_map)
+target_sources(OpenBusMapTrafficRuntimeProbe PRIVATE
+    "${OPENBUS_SOURCE_ROOT}/app/traffic/PlayerTripPolicy.cpp"
+    "${OPENBUS_SOURCE_ROOT}/app/traffic/PlayerTimetableController.cpp"
+    "${OPENBUS_SOURCE_ROOT}/app/traffic/ScheduledBusTiming.cpp")
 openbus_add_probe(OpenBusTrafficDebugDirectionProbe TrafficDebugDirectionProbe.cpp LIBS openbus_map)
 add_executable(OpenBusMapTrafficWorkerProbe MapTrafficWorkerProbe.cpp
     "${OPENBUS_SOURCE_ROOT}/app/MapTrafficWorker.cpp")

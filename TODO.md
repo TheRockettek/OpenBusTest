@@ -209,10 +209,15 @@ recognized-but-incomplete semantics, not missing keyword dispatch entries.
   course trip, and first passenger-service stop. Player service follows that
   route and advances in `.ttl` order at the terminus; it stops at
   course end or when the player chooses to stop after the current trip.
-  Disabling "Drive as an additional bus" suppresses future departures for a
-  matching scheduled AI route and retires an active bus after its next stop.
-  Course parsing/order, trip progression, and the stop-retirement handshake
-  have focused probes; end-to-end UI coverage remains incomplete.
+  Disabling "Drive as an additional bus" targets one matching AI departure
+  (route, departure time, and profile): a pending departure is skipped once,
+  or an active bus retires at its next mapped stop; a bus without another
+  mapped stop finishes its route. Indistinguishable duplicate
+  departures cannot yet be matched to a particular course. Course parsing,
+  trip progression, takeover-policy lifecycle, and stop-retirement handshakes
+  have focused probes. A BRT Berlin UI smoke test covered selection, spawning,
+  additional-bus mode, and the stop request; driving to the terminus remains
+  unverified end to end.
 - [ ] Complete registration persistence and full selection UI; implement or
   explicitly scope out AI/network sections, route/timetable/HOF data, and
   vehicle-specific view systems.

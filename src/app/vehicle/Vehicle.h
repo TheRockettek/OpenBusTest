@@ -5,6 +5,7 @@
 // are split across app/vehicle/Vehicle*.cpp by concern.
 
 #include "app/RenderLoop.h"
+#include "app/vehicle/PassengerState.h"
 #include "app/vehicle/VehicleDefinition.h"
 #include "assets/ObjLoader.h"
 #include "assets/ScreenshotWriter.h"
@@ -408,12 +409,7 @@ struct Vehicle {
     std::unordered_map<int, int> reflectionRequiredSizes;
     openbus::scripting::Vehicle variables;
     std::unique_ptr<ScriptRuntime> scripts;
-    openbus::map::MapPassengerServiceRuntime passengerService;
-    std::vector<PassengerCabinPosition> passengerPositions;
-    std::vector<PassengerPathPoint> passengerPathPoints;
-    std::vector<PassengerPathLink> passengerPathLinks;
-    std::vector<int> passengerEntryPathPoints;
-    std::vector<int> passengerExitPathPoints;
+    std::unique_ptr<openbus::app::vehicle::PassengerState> passengers;
     SoundEngine* soundPlayback = nullptr;
     VehicleSoundBank soundBank;
     bool soundEventsEnabled = false;
@@ -568,7 +564,8 @@ struct Vehicle {
                      SimulationState& simulationState, SoundEngine& soundEngine,
                      openbus::rendering::ViewpointContext& soundViewpoint, bool isAiVehicle,
                      bool deferTrafficInitialization = false,
-                     VehicleSetupOptions selectedSetupOptions = {})
+                     VehicleSetupOptions selectedSetupOptions = {},
+                     bool passengerServiceRequired = false)
         : loadingPolicy(policy), variables(), soundPlayback(&soundEngine),
           modelCacheKey(definition->cacheKey + "|" + selectedSetupOptions.appearanceKey),
           assets(&manager), placement(configuredPlacement), modelOffsetZ(configuredModelOffsetZ),
@@ -592,13 +589,8 @@ struct Vehicle {
         }
 #endif
         VehicleConfig vehicleConfiguration = definition->vehicleConfiguration;
-        passengerService = openbus::map::MapPassengerServiceRuntime(
-            vehicleConfiguration.passengerPositions.size());
-        passengerPositions = vehicleConfiguration.passengerPositions;
-        passengerPathPoints = vehicleConfiguration.passengerPathPoints;
-        passengerPathLinks = vehicleConfiguration.passengerPathLinks;
-        passengerEntryPathPoints = vehicleConfiguration.passengerEntryPathPoints;
-        passengerExitPathPoints = vehicleConfiguration.passengerExitPathPoints;
+        passengers =
+            openbus::app::vehicle::makePassengerState(definition, passengerServiceRequired);
         trafficAxles = vehicleConfiguration.axles;
         trafficWheelHalfWidthMeters = vehicleConfiguration.wheelHalfWidth;
         const auto axleIndexForVariable =

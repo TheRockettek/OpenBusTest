@@ -296,6 +296,8 @@ struct MapTrafficPassengerStop {
     std::optional<double> splinePositionMeters;
     std::string name;
     std::size_t timetableStationIndex = 0;
+
+    bool operator==(const MapTrafficPassengerStop&) const = default;
 };
 
 class MapPassengerServiceRuntime {
@@ -304,12 +306,14 @@ class MapPassengerServiceRuntime {
 
     void setWaitingPassengers(int stopId, std::size_t count);
     bool arrive(const MapPassengerStopService& stop);
+    void endServiceAtCurrentStop();
     // Reserves a waiting passenger at the start of a boarding interval and seats them at
     // completion.
     void advance(double elapsedSeconds, bool allowBoarding = true, bool allowAlighting = true);
     bool dwelling() const noexcept;
     int currentStopId() const noexcept;
     bool boardingPassenger() const noexcept;
+    bool acceptsBoarding() const noexcept;
     double boardingProgress() const noexcept;
     std::optional<std::size_t> boardingSeatIndex() const noexcept;
     bool alightingPassenger() const noexcept;
@@ -357,17 +361,16 @@ enum class MapTrafficPassengerStopDepartureAction {
     None,
     RequestDeparture,
     ResumeRoute,
-    RetireRoute
+    BeginRetirementRun
 };
 
 MapTrafficPassengerStopDepartureAction
 mapTrafficPassengerStopDepartureAction(bool stopArrived, bool passengerServiceDwelling,
-                                       bool departureRequested,
-                                       double aiScheduledAtStation,
+                                       bool departureRequested, double aiScheduledAtStation,
                                        bool retireAfterStop = false) noexcept;
-bool mapTrafficShouldCancelScheduledRouteForPlayerTrip(std::string_view playerTimetableKey,
-                                                       std::string_view scheduledTimetableKey,
-                                                       bool driveAsAdditionalBus) noexcept;
+bool mapTrafficPlayerTripMatchesScheduledRoute(std::string_view playerTimetableKey,
+                                               std::string_view scheduledTimetableKey,
+                                               bool driveAsAdditionalBus) noexcept;
 
 MapTrafficActor makeMapTrafficActor(MapTrafficRoute route, std::string modelPath,
                                     double speedMetersPerSecond, double laneOffsetMagnitudeMeters,

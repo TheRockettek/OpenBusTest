@@ -2030,8 +2030,7 @@ mapAiTimetableStationPosition(const MapAiTimetableRoute& route,
 }
 
 std::optional<std::size_t>
-mapAiTimetableNextCourseTripIndex(const MapAiTimetableCourse& course,
-                                  std::size_t currentTripIndex,
+mapAiTimetableNextCourseTripIndex(const MapAiTimetableCourse& course, std::size_t currentTripIndex,
                                   std::span<const std::string> availableTimetableKeys) {
     if (currentTripIndex >= course.trips.size()) {
         return std::nullopt;

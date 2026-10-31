@@ -86,17 +86,17 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         drivetrainDiagnosticsEnabled_ = std::string(diagnostics) == "1";
     }
     if (const char* diagnostics = openbus::getEnvironment("OPENBUS_MAP_AI_SPAWN_DIAGNOSTICS")) {
-        trafficSpawnDiagnosticsEnabled_ = std::string(diagnostics) == "1";
+        trafficFleet_.trafficSpawnDiagnosticsEnabled = std::string(diagnostics) == "1";
     }
-    if (trafficSpawnDiagnosticsEnabled_) {
+    if (trafficFleet_.trafficSpawnDiagnosticsEnabled) {
         gameLog.Log("Map AI spawn-admission diagnostics enabled (1 Hz)");
     }
     if (drivetrainDiagnosticsEnabled_) {
         gameLog.Log("Native drivetrain variable diagnostics enabled (1 Hz)");
     }
-    aiSimulationRateHz_ = positiveEnvironmentRate("OPENBUS_AI_HZ", 0.0);
-    aiMaximumRateHz_ = positiveEnvironmentRate("OPENBUS_MAX_FPS", 0.0);
-    aiRateDivisor_ = positiveEnvironmentRate("OPENBUS_AI_HZ_DIVISOR", 1.0);
+    trafficFleet_.aiSimulationRateHz = positiveEnvironmentRate("OPENBUS_AI_HZ", 0.0);
+    trafficFleet_.aiMaximumRateHz = positiveEnvironmentRate("OPENBUS_MAX_FPS", 0.0);
+    trafficFleet_.aiRateDivisor = positiveEnvironmentRate("OPENBUS_AI_HZ_DIVISOR", 1.0);
     renderFpsCapHz_ = positiveEnvironmentRate("OPENBUS_FPS_CAP", 0.0);
     mainViewMinimumObjectViewportFraction_ =
         minimumObjectViewportFraction("OPENBUS_MIN_OBJECT_SIZE_MAIN_VIEW_PERCENT");
@@ -110,13 +110,15 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
         gameLog.Log("Mirror/camera minimum object size culling set to " +
                     std::to_string(reflectionMinimumObjectViewportFraction_ * 100.0) + "%");
     }
-    gameLog.Log(
-        aiSimulationRateHz_ > 0.0
-            ? "AI traffic simulation rate set to " + std::to_string(aiSimulationRateHz_) + " Hz"
-            : "AI traffic simulation rate follows average FPS divided by " +
-                  std::to_string(aiRateDivisor_) + " (60 Hz until an FPS average is available)");
-    if (aiMaximumRateHz_ > 0.0) {
-        gameLog.Log("AI traffic rate capped at " + std::to_string(aiMaximumRateHz_) + " Hz");
+    gameLog.Log(trafficFleet_.aiSimulationRateHz > 0.0
+                    ? "AI traffic simulation rate set to " +
+                          std::to_string(trafficFleet_.aiSimulationRateHz) + " Hz"
+                    : "AI traffic simulation rate follows average FPS divided by " +
+                          std::to_string(trafficFleet_.aiRateDivisor) +
+                          " (60 Hz until an FPS average is available)");
+    if (trafficFleet_.aiMaximumRateHz > 0.0) {
+        gameLog.Log("AI traffic rate capped at " + std::to_string(trafficFleet_.aiMaximumRateHz) +
+                    " Hz");
     }
     if (renderFpsCapHz_ > 0.0) {
         gameLog.Log("Render frame rate capped at " + std::to_string(renderFpsCapHz_) + " FPS");
@@ -247,8 +249,8 @@ RenderLoop::RenderLoop(int width, int height, const char* title)
 RenderLoop::~RenderLoop() {
     gameLog.Log("RenderLoop shutting down");
     imguiLayer_.reset();
-    trafficWorker_.reset();
-    for (TrafficVehicleState& state : trafficVehicles_) {
+    trafficFleet_.worker.reset();
+    for (TrafficVehicleState& state : trafficFleet_.vehicles) {
         if (!state.pendingVehicle.valid()) {
             continue;
         }
@@ -353,7 +355,8 @@ Vehicle* RenderLoop::AddVehicle(const std::filesystem::path& vehicleConfigPath,
         model = std::make_unique<Vehicle>(
             definition, placementForVehicle(vehicleConfiguration, placement, isAiVehicle),
             modelOffsetZ, loadingPolicy, *assetRequestManager_, simulationState_, soundEngine_,
-            soundViewpoint_, isAiVehicle, false, std::move(setupOptions));
+            soundViewpoint_, isAiVehicle, false, std::move(setupOptions),
+            configKind == VehicleFileKind::Bus);
     }
     Vehicle* result = model.get();
     vehicles_.push_back(std::move(model));
@@ -374,7 +377,7 @@ bool RenderLoop::AddTrafficVehicle(
     std::optional<std::size_t> trafficRuleGroupIndex, bool registerPassengerRouteOnly,
     std::optional<std::size_t> passengerRouteIndex, std::size_t* registeredPassengerRouteIndex,
     bool requireActiveTileSpawnCandidate, std::vector<int> scheduledDepartureProfileIndices,
-    std::vector<openbus::map::MapAiTimetableProfile> timetableProfiles,
+    std::shared_ptr<const std::vector<openbus::map::MapAiTimetableProfile>> timetableProfiles,
     std::string timetableKey, std::string timetableTripName) {
     TraceScope trace("startup", "RenderLoop::AddTrafficVehicle");
     if (mapRenderer_ == nullptr) {
@@ -473,20 +476,30 @@ bool RenderLoop::AddTrafficVehicle(
             scheduledDepartureMinutes[index] = scheduledTrips[index].first;
             scheduledDepartureProfileIndices[index] = scheduledTrips[index].second;
         }
-        for (const openbus::map::MapAiTimetableProfile& profile : timetableProfiles) {
-            const auto validOffsets = [](const std::vector<double>& offsets) {
-                return std::all_of(offsets.begin(), offsets.end(), [](double seconds) {
-                    return std::isfinite(seconds) && seconds >= 0.0;
-                });
-            };
-            if (profile.arrivalOffsetSeconds.size() != profile.departureOffsetSeconds.size() ||
-                !validOffsets(profile.arrivalOffsetSeconds) ||
-                !validOffsets(profile.departureOffsetSeconds)) {
-                throw std::invalid_argument("Map bus timetable profile times are invalid");
+        if (timetableProfiles) {
+            for (const openbus::map::MapAiTimetableProfile& profile : *timetableProfiles) {
+                const auto validOffsets = [](const std::vector<double>& offsets) {
+                    return std::all_of(offsets.begin(), offsets.end(), [](double seconds) {
+                        return std::isfinite(seconds) && seconds >= 0.0;
+                    });
+                };
+                if (profile.arrivalOffsetSeconds.size() != profile.departureOffsetSeconds.size() ||
+                    !validOffsets(profile.arrivalOffsetSeconds) ||
+                    !validOffsets(profile.departureOffsetSeconds)) {
+                    throw std::invalid_argument("Map bus timetable profile times are invalid");
+                }
+                for (std::size_t station = 0; station < profile.arrivalOffsetSeconds.size();
+                     ++station) {
+                    if (profile.departureOffsetSeconds[station] <
+                        profile.arrivalOffsetSeconds[station]) {
+                        throw std::invalid_argument(
+                            "Map bus timetable departure offset precedes arrival offset");
+                    }
+                }
             }
         }
     } else if (!scheduledDepartureMinutes.empty() || !scheduledDepartureProfileIndices.empty() ||
-               !timetableProfiles.empty()) {
+               (timetableProfiles && !timetableProfiles->empty())) {
         throw std::invalid_argument("Only map buses can have timetable departures");
     }
     actor.speedMetersPerSecond = 0.0;
@@ -539,128 +552,137 @@ bool RenderLoop::AddTrafficVehicle(
     trafficState.actor = std::move(actor);
     trafficState.workerActorTemplate =
         std::make_shared<const openbus::map::MapTrafficActor>(trafficState.actor);
-    trafficState.spawnCandidates = std::move(spawnCandidates);
     if (!isBus) {
-        trafficState.workerSpawnCandidates =
+        trafficState.spawnCandidates =
             std::make_shared<const std::vector<openbus::map::MapTrafficSpawnCandidate>>(
-                trafficState.spawnCandidates);
+                std::move(spawnCandidates));
     }
-    trafficState.scheduledDepartureMinutes = std::move(scheduledDepartureMinutes);
-    trafficState.scheduledDepartureProfileIndices = std::move(scheduledDepartureProfileIndices);
-    trafficState.timetableProfiles = std::move(timetableProfiles);
-    trafficState.timetableKey = timetableKey;
-    trafficState.timetableLineName = std::move(timetableLineName);
-    trafficState.timetableDestinationName = std::move(timetableDestinationName);
-    if (!isBus && !passengerStops.empty()) {
+    if (!isBus && (!passengerStops.empty() || registerPassengerRouteOnly)) {
         throw std::invalid_argument("Only scheduled map buses can service passenger stops");
     }
-    std::size_t routeSegmentCursor = 0;
-    for (openbus::map::MapTrafficPassengerStop& stop : passengerStops) {
-        if (stop.stopId == 0 || stop.dwellSeconds < 0.0 || !std::isfinite(stop.dwellSeconds) ||
-            (stop.splinePositionMeters &&
-             (!std::isfinite(*stop.splinePositionMeters) || *stop.splinePositionMeters < 0.0))) {
-            throw std::invalid_argument("Scheduled map bus passenger stop is invalid");
-        }
-        const auto logUnmatchedStop = [&] {
-            gameLog.Warning(
-                "Scheduled passenger stop could not be matched to the bus route; "
-                "stopId=" +
-                std::to_string(stop.stopId) + " spline=" + std::to_string(stop.splineId) +
-                " path=" + std::to_string(stop.pathIndex) + " bus=" + busConfigPath.string());
-        };
-        if (stop.splinePositionMeters) {
-            const auto routePosition = openbus::map::mapTrafficRoutePositionOnSpline(
-                trafficState.actor.route, stop.splineId, stop.pathIndex, *stop.splinePositionMeters,
-                routeSegmentCursor);
-            if (!routePosition) {
+    if (isBus) {
+        trafficState.bus = std::make_unique<openbus::app::ScheduledBusState>();
+        trafficState.bus->scheduledDepartureMinutes = std::move(scheduledDepartureMinutes);
+        trafficState.bus->scheduledDepartureProfileIndices =
+            std::move(scheduledDepartureProfileIndices);
+        trafficState.bus->timetableProfiles = std::move(timetableProfiles);
+        trafficState.bus->timetableKey = timetableKey;
+        trafficState.bus->timetableLineName = std::move(timetableLineName);
+        trafficState.bus->timetableDestinationName = std::move(timetableDestinationName);
+        std::vector<openbus::map::MapTrafficPassengerStop> mappedStops;
+        std::size_t routeSegmentCursor = 0;
+        for (openbus::map::MapTrafficPassengerStop& stop : passengerStops) {
+            if (stop.stopId == 0 || stop.dwellSeconds < 0.0 || !std::isfinite(stop.dwellSeconds) ||
+                (stop.splinePositionMeters && (!std::isfinite(*stop.splinePositionMeters) ||
+                                               *stop.splinePositionMeters < 0.0))) {
+                throw std::invalid_argument("Scheduled map bus passenger stop is invalid");
+            }
+            const auto logUnmatchedStop = [&] {
+                gameLog.Warning(
+                    "Scheduled passenger stop could not be matched to the bus route; "
+                    "stopId=" +
+                    std::to_string(stop.stopId) + " spline=" + std::to_string(stop.splineId) +
+                    " path=" + std::to_string(stop.pathIndex) + " bus=" + busConfigPath.string());
+            };
+            if (stop.splinePositionMeters) {
+                const auto routePosition = openbus::map::mapTrafficRoutePositionOnSpline(
+                    trafficState.actor.route, stop.splineId, stop.pathIndex,
+                    *stop.splinePositionMeters, routeSegmentCursor);
+                if (!routePosition) {
+                    logUnmatchedStop();
+                    continue;
+                }
+                routeSegmentCursor = routePosition->segmentIndex;
+                stop.routeDistanceMeters = routePosition->distanceMeters;
+                mappedStops.push_back(std::move(stop));
+                continue;
+            }
+            const auto segment =
+                std::find_if(trafficState.actor.route.segments.begin() +
+                                 static_cast<std::ptrdiff_t>(routeSegmentCursor),
+                             trafficState.actor.route.segments.end(),
+                             [&](const openbus::map::MapTrafficRouteSegment& candidate) {
+                                 return candidate.spline.placement.splineId == stop.splineId &&
+                                        candidate.sceneryPathIndex == stop.pathIndex;
+                             });
+            if (segment == trafficState.actor.route.segments.end()) {
                 logUnmatchedStop();
                 continue;
             }
-            routeSegmentCursor = routePosition->segmentIndex;
-            stop.routeDistanceMeters = routePosition->distanceMeters;
-            trafficState.passengerStops.push_back(std::move(stop));
-            continue;
+            routeSegmentCursor = static_cast<std::size_t>(
+                std::distance(trafficState.actor.route.segments.begin(), segment));
+            const std::size_t segmentIndex = routeSegmentCursor;
+            stop.routeDistanceMeters =
+                segmentIndex == 0
+                    ? 0.0
+                    : trafficState.actor.route.cumulativeEndDistances[segmentIndex - 1];
+            mappedStops.push_back(std::move(stop));
         }
-        const auto segment =
-            std::find_if(trafficState.actor.route.segments.begin() +
-                             static_cast<std::ptrdiff_t>(routeSegmentCursor),
-                         trafficState.actor.route.segments.end(),
-                         [&](const openbus::map::MapTrafficRouteSegment& candidate) {
-                             return candidate.spline.placement.splineId == stop.splineId &&
-                                    candidate.sceneryPathIndex == stop.pathIndex;
-                         });
-        if (segment == trafficState.actor.route.segments.end()) {
-            logUnmatchedStop();
-            continue;
+        if (!mappedStops.empty()) {
+            mappedStops.back().passengersAlighting = (std::numeric_limits<std::size_t>::max)();
+            trafficState.bus->timetableTerminusIndex = static_cast<int>(mappedStops.size() - 1);
         }
-        routeSegmentCursor = static_cast<std::size_t>(
-            std::distance(trafficState.actor.route.segments.begin(), segment));
-        const std::size_t segmentIndex = routeSegmentCursor;
-        stop.routeDistanceMeters =
-            segmentIndex == 0 ? 0.0
-                              : trafficState.actor.route.cumulativeEndDistances[segmentIndex - 1];
-        trafficState.passengerStops.push_back(std::move(stop));
-    }
-    if (!trafficState.passengerStops.empty()) {
-        trafficState.passengerStops.back().passengersAlighting =
-            (std::numeric_limits<std::size_t>::max)();
-        trafficState.timetableTerminusIndex =
-            static_cast<int>(trafficState.passengerStops.size() - 1);
-    }
-    if (registerPassengerRouteOnly) {
-        if (!isBus || trafficState.passengerStops.empty()) {
-            throw std::invalid_argument(
-                "Passenger-route-only registration requires a bus route with stops and no "
-                "scheduled vehicle departures");
-        }
-        const std::size_t routeIndex = passengerStopRoutes_.size();
-        passengerStopRoutes_.push_back({trafficState.actor, trafficState.passengerStops,
-                                        trafficState.timetableKey, trafficState.timetableLineName,
-                                        trafficState.timetableDestinationName,
-                                        std::move(timetableTripName)});
-        if (registeredPassengerRouteIndex != nullptr) {
-            *registeredPassengerRouteIndex = routeIndex;
-        }
-        trafficState.passengerRouteIndex = routeIndex;
-        for (const openbus::map::MapTrafficPassengerStop& stop : trafficState.passengerStops) {
-            const auto [queue, inserted] =
-                scheduledPassengerQueues_.try_emplace(stop.stopId, stop.waitingPassengers);
-            if (inserted) {
-                scheduledPassengerInitialQueues_.emplace(stop.stopId, queue->second);
-            }
-        }
-        return true;
-    }
-    if (isBus && !trafficState.passengerStops.empty()) {
-        if (passengerRouteIndex) {
-            if (*passengerRouteIndex >= passengerStopRoutes_.size()) {
+        if (!registerPassengerRouteOnly && passengerRouteIndex && !mappedStops.empty()) {
+            if (*passengerRouteIndex >= passengerNetwork_.routes.size()) {
                 throw std::invalid_argument("Passenger route catalog index is out of range");
             }
-            trafficState.passengerRouteIndex = passengerRouteIndex;
+            trafficState.bus->passengerStops = openbus::app::PassengerStops::shareIfEqual(
+                std::move(mappedStops), passengerNetwork_.routes[*passengerRouteIndex].stops);
         } else {
-            trafficState.passengerRouteIndex = passengerStopRoutes_.size();
-            passengerStopRoutes_.push_back({trafficState.actor, trafficState.passengerStops,
-                                            trafficState.timetableKey,
-                                            trafficState.timetableLineName,
-                                            trafficState.timetableDestinationName,
-                                            std::move(timetableTripName)});
+            trafficState.bus->passengerStops = openbus::app::PassengerStops(std::move(mappedStops));
+        }
+        if (registerPassengerRouteOnly) {
+            if (!isBus || trafficState.bus->passengerStops.empty()) {
+                throw std::invalid_argument(
+                    "Passenger-route-only registration requires a bus route with stops and no "
+                    "scheduled vehicle departures");
+            }
+            const std::size_t routeIndex = passengerNetwork_.routes.size();
+            passengerNetwork_.routes.push_back(
+                {trafficState.workerActorTemplate, trafficState.bus->passengerStops,
+                 trafficState.bus->timetableKey, trafficState.bus->timetableLineName,
+                 trafficState.bus->timetableDestinationName, std::move(timetableTripName)});
+            if (registeredPassengerRouteIndex != nullptr) {
+                *registeredPassengerRouteIndex = routeIndex;
+            }
+            trafficState.bus->passengerRouteIndex = routeIndex;
+            for (const openbus::map::MapTrafficPassengerStop& stop :
+                 trafficState.bus->passengerStops) {
+                const auto [queue, inserted] =
+                    passengerNetwork_.queues.try_emplace(stop.stopId, stop.waitingPassengers);
+                if (inserted) {
+                    passengerNetwork_.initialQueues.emplace(stop.stopId, queue->second);
+                }
+            }
+            return true;
+        }
+        if (isBus && !trafficState.bus->passengerStops.empty()) {
+            if (passengerRouteIndex) {
+                trafficState.bus->passengerRouteIndex = passengerRouteIndex;
+            } else {
+                trafficState.bus->passengerRouteIndex = passengerNetwork_.routes.size();
+                passengerNetwork_.routes.push_back(
+                    {trafficState.workerActorTemplate, trafficState.bus->passengerStops,
+                     trafficState.bus->timetableKey, trafficState.bus->timetableLineName,
+                     trafficState.bus->timetableDestinationName, std::move(timetableTripName)});
+            }
+        }
+        for (const openbus::map::MapTrafficPassengerStop& stop : trafficState.bus->passengerStops) {
+            const auto [queue, inserted] =
+                passengerNetwork_.queues.try_emplace(stop.stopId, stop.waitingPassengers);
+            if (inserted) {
+                passengerNetwork_.initialQueues.emplace(stop.stopId, queue->second);
+            }
         }
     }
-    for (const openbus::map::MapTrafficPassengerStop& stop : trafficState.passengerStops) {
-        const auto [queue, inserted] =
-            scheduledPassengerQueues_.try_emplace(stop.stopId, stop.waitingPassengers);
-        if (inserted) {
-            scheduledPassengerInitialQueues_.emplace(stop.stopId, queue->second);
-        }
-    }
-    trafficState.isBus = isBus;
     if (isBus) {
-        trafficState.nextScheduledDepartureIndex = openbus::map::mapTrafficNextDepartureIndex(
-            mapTrafficStartHour_, 0.0, trafficState.scheduledDepartureMinutes);
-        trafficState.nextScheduledDepartureElapsedSeconds =
+        trafficState.bus->nextScheduledDepartureIndex = openbus::map::mapTrafficNextDepartureIndex(
+            trafficFleet_.mapTrafficStartHour, 0.0, trafficState.bus->scheduledDepartureMinutes);
+        trafficState.bus->nextScheduledDepartureElapsedSeconds =
             openbus::map::mapTrafficNextDepartureElapsedSeconds(
-                mapTrafficStartHour_, 0.0,
-                trafficState.scheduledDepartureMinutes[trafficState.nextScheduledDepartureIndex]);
+                trafficFleet_.mapTrafficStartHour, 0.0,
+                trafficState.bus
+                    ->scheduledDepartureMinutes[trafficState.bus->nextScheduledDepartureIndex]);
     }
     AssetRequestManager* const assetRequests = assetRequestManager_.get();
     SimulationState* const simulationState = &simulationState_;
@@ -668,13 +690,14 @@ bool RenderLoop::AddTrafficVehicle(
     openbus::rendering::ViewpointContext* const soundViewpoint = &soundViewpoint_;
     std::future<std::unique_ptr<Vehicle>> pendingVehicle =
         assetRequests->submit([definition, configuredPlacement, modelOffsetZ, loadingPolicy,
-                               assetRequests, simulationState, soundEngine, soundViewpoint] {
+                               assetRequests, simulationState, soundEngine, soundViewpoint, isBus] {
             return std::make_unique<Vehicle>(definition, configuredPlacement, modelOffsetZ,
                                              loadingPolicy, *assetRequests, *simulationState,
-                                             *soundEngine, *soundViewpoint, true, true);
+                                             *soundEngine, *soundViewpoint, true, true,
+                                             VehicleSetupOptions{}, isBus);
         });
     trafficState.pendingVehicle = std::move(pendingVehicle);
-    trafficVehicles_.push_back(std::move(trafficState));
+    trafficFleet_.vehicles.push_back(std::move(trafficState));
     return true;
 }
 
@@ -696,16 +719,16 @@ void RenderLoop::SetMapTrafficStartHour(double startHour) {
     if (!std::isfinite(startHour) || startHour < 0.0 || startHour >= 24.0) {
         throw std::invalid_argument("Map traffic start hour must be between 0 and 24");
     }
-    mapTrafficStartHour_ = startHour;
+    trafficFleet_.mapTrafficStartHour = startHour;
 }
 
 void RenderLoop::SetMapCalendar(int year, int month, int day, double timeSeconds) {
     simulationState_.sharedVariables().configureSimulationClock(year, month, day, timeSeconds);
-    mapTrafficStartHour_ = timeSeconds / 3600.0;
+    trafficFleet_.mapTrafficStartHour = timeSeconds / 3600.0;
 }
 
 void RenderLoop::SetMapTrafficSpawnInView(bool enabled) {
-    mapTrafficSpawnInView_ = enabled;
+    trafficFleet_.mapTrafficSpawnInView = enabled;
 }
 
 double RenderLoop::trafficMinimumTurnRadius(const std::filesystem::path& vehicleConfigPath,
@@ -779,10 +802,10 @@ void RenderLoop::SetMapTrafficPopulation(
     std::size_t roadVehicleCount, std::size_t busCount,
     std::vector<openbus::map::MapAiRoadTrafficGroupPopulation> roadGroupPopulations,
     bool useGroupRoadPopulation) {
-    targetRoadTrafficCount_ = roadVehicleCount;
-    targetRoadGroupPopulations_ = std::move(roadGroupPopulations);
-    useGroupRoadPopulation_ = useGroupRoadPopulation;
-    targetBusTrafficCount_ = busCount;
+    trafficFleet_.targetRoadTrafficCount = roadVehicleCount;
+    trafficFleet_.targetRoadGroupPopulations = std::move(roadGroupPopulations);
+    trafficFleet_.useGroupRoadPopulation = useGroupRoadPopulation;
+    trafficFleet_.targetBusTrafficCount = busCount;
 }
 
 void RenderLoop::SetHumanTrafficPopulation(std::size_t count) {
@@ -870,11 +893,12 @@ std::vector<openbus::map::MapTrafficRouteRequirement> RenderLoop::trafficRouteSe
 }
 
 std::size_t RenderLoop::trafficVehicleCount() const {
-    return static_cast<std::size_t>(std::count_if(
-        trafficVehicles_.begin(), trafficVehicles_.end(), [](const TrafficVehicleState& state) {
-            return state.populationEnabled && state.vehicle != nullptr &&
-                   !state.vehicle->mapTrafficRouteFinished;
-        }));
+    return static_cast<std::size_t>(
+        std::count_if(trafficFleet_.vehicles.begin(), trafficFleet_.vehicles.end(),
+                      [](const TrafficVehicleState& state) {
+                          return state.populationEnabled && state.vehicle != nullptr &&
+                                 !state.vehicle->mapTrafficRouteFinished;
+                      }));
 }
 
 void RenderLoop::SetWeather(int precipitationType, double precipitationRate) {
@@ -907,93 +931,6 @@ void RenderLoop::SetPlayerVehicle(Vehicle* model) {
         }
         playerVehicle_->initializePlayerSystems();
     }
-}
-
-void RenderLoop::SetPlayerTimetableSelection(
-    std::optional<SpawnBusRequest::TimetableSelection> selection) {
-    playerTimetableState_.reset();
-    if (!selection) {
-        return;
-    }
-    if (selection->passengerRouteIndex >= passengerStopRoutes_.size() ||
-        selection->courseIndex >= passengerTimetableCourses_.size()) {
-        throw std::out_of_range("Player timetable selection is outside the available catalog");
-    }
-    const auto& course = passengerTimetableCourses_[selection->courseIndex];
-    if (selection->courseTripIndex >= course.trips.size() ||
-        selection->firstStopIndex >=
-            passengerStopRoutes_[selection->passengerRouteIndex].stops.size()) {
-        throw std::out_of_range("Player timetable selection has an invalid trip or first stop");
-    }
-    const auto& trip = course.trips[selection->courseTripIndex];
-    const auto& route = passengerStopRoutes_[selection->passengerRouteIndex];
-    if (trip.timetableKey != route.timetableKey) {
-        throw std::invalid_argument("Player timetable trip does not match its passenger route");
-    }
-    playerTimetableState_ = PlayerTimetableState{*selection, selection->firstStopIndex,
-                                                  route.lineName};
-    playerPassengerServiceEnabled_ = true;
-    applyPlayerTripAiPolicy(trip.timetableKey, selection->driveAsAdditionalBus);
-}
-
-void RenderLoop::applyPlayerTripAiPolicy(const std::string& timetableKey,
-                                         bool additionalBus) {
-    if (additionalBus) {
-        return;
-    }
-    for (TrafficVehicleState& state : trafficVehicles_) {
-        if (state.isBus &&
-            openbus::map::mapTrafficShouldCancelScheduledRouteForPlayerTrip(
-                timetableKey, state.timetableKey, additionalBus) &&
-            !state.scheduledServiceCancelled) {
-            state.scheduledServiceCancelled = true;
-            ++state.workerGeneration;
-        }
-    }
-}
-
-void RenderLoop::advancePlayerTimetableTrip() {
-    if (!playerTimetableState_) {
-        return;
-    }
-    PlayerTimetableState& state = *playerTimetableState_;
-    if (state.stopAfterCurrentTrip ||
-        state.selection.courseIndex >= passengerTimetableCourses_.size()) {
-        playerTimetableState_.reset();
-        playerPassengerServiceEnabled_ = false;
-        return;
-    }
-    const auto& course = passengerTimetableCourses_[state.selection.courseIndex];
-    std::vector<std::string> availableTimetableKeys;
-    for (const PassengerStopRouteState& route : passengerStopRoutes_) {
-        if (!route.stops.empty() &&
-            std::ranges::find(availableTimetableKeys, route.timetableKey) ==
-                availableTimetableKeys.end()) {
-            availableTimetableKeys.push_back(route.timetableKey);
-        }
-    }
-    const auto nextTripIndex = openbus::map::mapAiTimetableNextCourseTripIndex(
-        course, state.selection.courseTripIndex, availableTimetableKeys);
-    if (nextTripIndex) {
-        const auto& trip = course.trips[*nextTripIndex];
-        const auto route = std::ranges::find_if(
-            passengerStopRoutes_, [&](const PassengerStopRouteState& candidate) {
-                return candidate.timetableKey == trip.timetableKey && !candidate.stops.empty();
-            });
-        if (route != passengerStopRoutes_.end()) {
-            state.selection.courseTripIndex = *nextTripIndex;
-            state.selection.passengerRouteIndex =
-                static_cast<std::size_t>(std::distance(passengerStopRoutes_.begin(), route));
-            state.selection.firstStopIndex = 0;
-            state.nextStopIndex = 0;
-            state.lineName = route->lineName;
-            applyPlayerTripAiPolicy(trip.timetableKey,
-                                    state.selection.driveAsAdditionalBus);
-            return;
-        }
-    }
-    playerTimetableState_.reset();
-    playerPassengerServiceEnabled_ = false;
 }
 
 void RenderLoop::SetMap(const openbus::map::MapDefinition& map, std::size_t spawnEntryPointIndex,
